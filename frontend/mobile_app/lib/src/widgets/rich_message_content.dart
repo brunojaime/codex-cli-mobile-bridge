@@ -49,6 +49,19 @@ class RichMessageContent extends StatelessWidget {
             fontWeight: FontWeight.w700,
           ),
         ),
+      _SectionBlock() => _SectionCard(
+          title: block.title,
+          textColor: textColor,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              for (var index = 0; index < block.blocks.length; index++) ...[
+                _buildBlock(context, block.blocks[index]),
+                if (index != block.blocks.length - 1) const SizedBox(height: 10),
+              ],
+            ],
+          ),
+        ),
       _BulletListBlock() => Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: block.items
@@ -85,6 +98,10 @@ class RichMessageContent extends StatelessWidget {
                 ),
               )
               .toList(),
+        ),
+      _ValidationBlock() => _ValidationCard(
+          title: block.title,
+          items: block.items,
         ),
       _OptionListBlock() => Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -195,6 +212,153 @@ class _CodeCard extends StatelessWidget {
   }
 }
 
+class _SectionCard extends StatelessWidget {
+  const _SectionCard({
+    required this.title,
+    required this.child,
+    required this.textColor,
+  });
+
+  final String title;
+  final Widget child;
+  final Color textColor;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0x141C273D),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFF2A3654)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: TextStyle(
+              color: textColor,
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0.4,
+            ),
+          ),
+          const SizedBox(height: 10),
+          child,
+        ],
+      ),
+    );
+  }
+}
+
+class _ValidationCard extends StatelessWidget {
+  const _ValidationCard({
+    required this.title,
+    required this.items,
+  });
+
+  final String title;
+  final List<_ValidationItem> items;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFF111A2E),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFF2C3B60)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Row(
+            children: [
+              Icon(Icons.verified_outlined, color: Color(0xFF7CF2D4), size: 16),
+              SizedBox(width: 8),
+              Text(
+                'Validation',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
+          if (title.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text(
+              title,
+              style: const TextStyle(
+                color: Color(0xFF9EB3D8),
+                fontSize: 12,
+              ),
+            ),
+          ],
+          const SizedBox(height: 10),
+          for (final item in items) ...[
+            _ValidationRow(item: item),
+            if (item != items.last) const SizedBox(height: 8),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _ValidationRow extends StatelessWidget {
+  const _ValidationRow({required this.item});
+
+  final _ValidationItem item;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+      decoration: BoxDecoration(
+        color: const Color(0xFF18233C),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: Text(
+              item.label,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 13,
+                height: 1.35,
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            decoration: BoxDecoration(
+              color: item.statusColor.withValues(alpha: 0.16),
+              borderRadius: BorderRadius.circular(999),
+            ),
+            child: Text(
+              item.result,
+              style: TextStyle(
+                color: item.statusColor,
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 sealed class _MessageBlock {}
 
 class _ParagraphBlock extends _MessageBlock {
@@ -207,9 +371,29 @@ class _HeadingBlock extends _MessageBlock {
   final String text;
 }
 
+class _SectionBlock extends _MessageBlock {
+  _SectionBlock({
+    required this.title,
+    required this.blocks,
+  });
+
+  final String title;
+  final List<_MessageBlock> blocks;
+}
+
 class _BulletListBlock extends _MessageBlock {
   _BulletListBlock(this.items);
   final List<String> items;
+}
+
+class _ValidationBlock extends _MessageBlock {
+  _ValidationBlock({
+    required this.title,
+    required this.items,
+  });
+
+  final String title;
+  final List<_ValidationItem> items;
 }
 
 class _OptionListBlock extends _MessageBlock {
@@ -230,6 +414,28 @@ class _CodeBlock extends _MessageBlock {
 class _MessageOption {
   _MessageOption(this.text);
   final String text;
+}
+
+class _ValidationItem {
+  _ValidationItem({
+    required this.label,
+    required this.result,
+    required this.statusColor,
+  });
+
+  final String label;
+  final String result;
+  final Color statusColor;
+}
+
+class _FileReference {
+  _FileReference({
+    required this.label,
+    required this.path,
+  });
+
+  final String label;
+  final String path;
 }
 
 List<_MessageBlock> _parseBlocks(String rawText) {
@@ -303,6 +509,30 @@ List<_MessageBlock> _parseTextChunk(String chunk) {
       continue;
     }
 
+    final sectionMatch = RegExp(r'^([A-Z][A-Za-z0-9 /-]{2,}):$').firstMatch(lines.first.trim());
+    if (sectionMatch != null && lines.length > 1) {
+      final body = lines.sublist(1).join('\n');
+      final sectionBlocks = _parseTextChunk(body);
+      final validationBlock = _maybeValidationBlock(lines.first.trim(), lines.sublist(1));
+      if (validationBlock != null) {
+        blocks.add(validationBlock);
+      } else {
+        blocks.add(
+          _SectionBlock(
+            title: sectionMatch.group(1)!.trim(),
+            blocks: sectionBlocks,
+          ),
+        );
+      }
+      continue;
+    }
+
+    final validationBlock = _maybeValidationBlock('', lines);
+    if (validationBlock != null) {
+      blocks.add(validationBlock);
+      continue;
+    }
+
     final optionMatches = lines
         .map((line) => RegExp(r'^\d+[.)]\s+(.+)$').firstMatch(line.trim()))
         .toList();
@@ -335,51 +565,179 @@ List<_MessageBlock> _parseTextChunk(String chunk) {
   return blocks;
 }
 
+_ValidationBlock? _maybeValidationBlock(String titleLine, List<String> lines) {
+  if (lines.isEmpty) {
+    return null;
+  }
+
+  final items = <_ValidationItem>[];
+  for (final line in lines) {
+    final cleaned = line.trim().replaceFirst(RegExp(r'^[-*]\s+'), '');
+    final arrowIndex = cleaned.indexOf('->');
+    if (arrowIndex < 0) {
+      return null;
+    }
+    final left = cleaned.substring(0, arrowIndex).trim();
+    final right = cleaned.substring(arrowIndex + 2).trim();
+    if (left.isEmpty || right.isEmpty) {
+      return null;
+    }
+    items.add(
+      _ValidationItem(
+        label: left,
+        result: right,
+        statusColor: _statusColorForResult(right),
+      ),
+    );
+  }
+
+  if (items.isEmpty) {
+    return null;
+  }
+
+  final normalizedTitle = titleLine.endsWith(':')
+      ? titleLine.substring(0, titleLine.length - 1).trim()
+      : titleLine.trim();
+
+  return _ValidationBlock(
+    title: normalizedTitle == 'Validation' ? '' : normalizedTitle,
+    items: items,
+  );
+}
+
+Color _statusColorForResult(String value) {
+  final normalized = value.toLowerCase();
+  if (normalized.contains('pass') || normalized.contains('ok') || normalized.contains('success')) {
+    return const Color(0xFF7CF2D4);
+  }
+  if (normalized.contains('fail') || normalized.contains('error')) {
+    return const Color(0xFFFFA8A8);
+  }
+  return const Color(0xFFB9D8FF);
+}
+
 TextSpan _inlineSpans(
   String text, {
   required Color textColor,
 }) {
-  final matches = RegExp(r'`([^`]+)`').allMatches(text).toList();
-  if (matches.isEmpty) {
-    return TextSpan(text: text, style: TextStyle(color: textColor));
-  }
-
-  final children = <InlineSpan>[];
+  final tokens = <_InlineToken>[];
+  final pattern = RegExp(r'`([^`]+)`|\[([^\]]+)\]\(([^)]+)\)');
   var cursor = 0;
-  for (final match in matches) {
+  for (final match in pattern.allMatches(text)) {
     if (match.start > cursor) {
-      children.add(TextSpan(text: text.substring(cursor, match.start)));
+      tokens.add(_InlineText(text.substring(cursor, match.start)));
     }
-    children.add(
-      WidgetSpan(
-        alignment: PlaceholderAlignment.middle,
-        child: Container(
-          margin: const EdgeInsets.symmetric(horizontal: 1),
-          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-          decoration: BoxDecoration(
-            color: const Color(0x2218203A),
-            borderRadius: BorderRadius.circular(6),
-            border: Border.all(color: const Color(0x33455C87)),
-          ),
-          child: Text(
-            match.group(1)!,
-            style: const TextStyle(
-              color: Color(0xFFE7EEF9),
-              fontFamily: 'monospace',
-              fontSize: 12.5,
-            ),
+
+    if (match.group(1) != null) {
+      tokens.add(_InlineCode(match.group(1)!));
+    } else if (match.group(2) != null && match.group(3) != null) {
+      tokens.add(
+        _InlineFileReference(
+          _FileReference(
+            label: match.group(2)!.trim(),
+            path: match.group(3)!.trim(),
           ),
         ),
-      ),
-    );
+      );
+    }
     cursor = match.end;
   }
+
   if (cursor < text.length) {
-    children.add(TextSpan(text: text.substring(cursor)));
+    tokens.add(_InlineText(text.substring(cursor)));
+  }
+
+  if (tokens.isEmpty) {
+    return TextSpan(text: text, style: TextStyle(color: textColor));
   }
 
   return TextSpan(
     style: TextStyle(color: textColor),
-    children: children,
+    children: [
+      for (final token in tokens)
+        switch (token) {
+          _InlineText() => TextSpan(text: token.text),
+          _InlineCode() => WidgetSpan(
+              alignment: PlaceholderAlignment.middle,
+              child: Container(
+                margin: const EdgeInsets.symmetric(horizontal: 1),
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: const Color(0x2218203A),
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(color: const Color(0x33455C87)),
+                ),
+                child: Text(
+                  token.code,
+                  style: const TextStyle(
+                    color: Color(0xFFE7EEF9),
+                    fontFamily: 'monospace',
+                    fontSize: 12.5,
+                  ),
+                ),
+              ),
+            ),
+          _InlineFileReference() => WidgetSpan(
+              alignment: PlaceholderAlignment.middle,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 2),
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(999),
+                  onTap: () async {
+                    await Clipboard.setData(ClipboardData(text: token.reference.path));
+                  },
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF203150),
+                      borderRadius: BorderRadius.circular(999),
+                      border: Border.all(color: const Color(0xFF35517A)),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(
+                          Icons.description_outlined,
+                          size: 13,
+                          color: Color(0xFFB9D8FF),
+                        ),
+                        const SizedBox(width: 5),
+                        ConstrainedBox(
+                          constraints: const BoxConstraints(maxWidth: 170),
+                          child: Text(
+                            token.reference.label,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: Color(0xFFE7EEF9),
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+        },
+    ],
   );
+}
+
+sealed class _InlineToken {}
+
+class _InlineText extends _InlineToken {
+  _InlineText(this.text);
+  final String text;
+}
+
+class _InlineCode extends _InlineToken {
+  _InlineCode(this.code);
+  final String code;
+}
+
+class _InlineFileReference extends _InlineToken {
+  _InlineFileReference(this.reference);
+  final _FileReference reference;
 }

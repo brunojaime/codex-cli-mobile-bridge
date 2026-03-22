@@ -13,4 +13,11 @@ class Workspace {
       path: json['path'] as String,
     );
   }
+
+  Map<String, dynamic> toJson() {
+    return <String, dynamic>{
+      'name': name,
+      'path': path,
+    };
+  }
 }

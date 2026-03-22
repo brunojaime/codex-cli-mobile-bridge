@@ -1,8 +1,12 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, WebSocket
+from pathlib import Path
+from tempfile import NamedTemporaryFile
+
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, WebSocket
 
 from backend.app.api.schemas import (
+    AudioMessageAcceptedResponse,
     CreateSessionRequest,
     HealthResponse,
     JobResponse,
@@ -15,6 +19,10 @@ from backend.app.api.schemas import (
 from backend.app.application.services.message_service import MessageService
 from backend.app.container import AppContainer
 from backend.app.infrastructure.network.tailscale import detect_tailscale_info
+from backend.app.infrastructure.transcription.base import (
+    AudioTranscriptionError,
+    AudioTranscriptionUnavailableError,
+)
 
 
 router = APIRouter()
@@ -33,10 +41,15 @@ async def healthcheck(
     container: AppContainer = Depends(get_container),
 ) -> HealthResponse:
     tailscale = detect_tailscale_info(container.settings.tailscale_socket)
+    audio_status = container.audio_transcriber.status()
     return HealthResponse(
         server_name=container.settings.server_name,
         backend_mode=container.settings.effective_backend_mode,
         projects_root=container.settings.projects_root,
+        audio_transcription_backend=container.settings.audio_transcription_backend,
+        audio_transcription_resolved_backend=audio_status.backend,
+        audio_transcription_ready=audio_status.ready,
+        audio_transcription_detail=audio_status.detail,
         tailscale_installed=tailscale.installed,
         tailscale_online=tailscale.online,
         tailscale_tailnet_name=tailscale.tailnet_name,
@@ -61,6 +74,44 @@ async def post_message(
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return MessageAcceptedResponse.from_domain(job)
+
+
+@router.post("/message/audio", response_model=AudioMessageAcceptedResponse, status_code=202)
+async def post_audio_message(
+    audio: UploadFile = File(...),
+    session_id: str | None = Form(default=None),
+    workspace_path: str | None = Form(default=None),
+    language: str | None = Form(default=None),
+    container: AppContainer = Depends(get_container),
+) -> AudioMessageAcceptedResponse:
+    temp_path = await _store_uploaded_audio(
+        audio,
+        max_bytes=container.settings.audio_max_upload_bytes,
+    )
+
+    try:
+        submission = container.message_service.submit_audio_message(
+            str(temp_path),
+            filename=audio.filename or temp_path.name,
+            content_type=audio.content_type,
+            session_id=session_id,
+            workspace_path=workspace_path,
+            language=language,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except AudioTranscriptionUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except AudioTranscriptionError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    finally:
+        temp_path.unlink(missing_ok=True)
+        await audio.close()
+
+    return AudioMessageAcceptedResponse.from_domain(
+        submission.job,
+        transcript=submission.transcript,
+    )
 
 
 @router.get("/workspaces", response_model=list[WorkspaceResponse])
@@ -180,3 +231,28 @@ async def job_updates(
         job_id=job_id,
         service=container.message_service,
     )
+
+
+async def _store_uploaded_audio(
+    audio: UploadFile,
+    *,
+    max_bytes: int,
+) -> Path:
+    suffix = Path(audio.filename or "voice-note.m4a").suffix or ".m4a"
+    total_bytes = 0
+
+    with NamedTemporaryFile(delete=False, suffix=suffix) as temp_file:
+        while True:
+            chunk = await audio.read(1024 * 1024)
+            if not chunk:
+                break
+            total_bytes += len(chunk)
+            if total_bytes > max_bytes:
+                Path(temp_file.name).unlink(missing_ok=True)
+                raise HTTPException(
+                    status_code=413,
+                    detail=f"Audio upload exceeds the {max_bytes} byte limit.",
+                )
+            temp_file.write(chunk)
+
+    return Path(temp_file.name)

@@ -9,9 +9,11 @@ description = "Remote-control a local Codex CLI from a mobile chat frontend."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "faster-whisper>=1.2,<2.0",
     "fastapi>=0.115,<1.0",
     "httpx>=0.28,<1.0",
     "pydantic-settings>=2.6,<3.0",
+    "python-multipart>=0.0.9,<1.0",
     "python-dotenv>=1.0,<2.0",
     "uvicorn[standard]>=0.35,<1.0",
 ]

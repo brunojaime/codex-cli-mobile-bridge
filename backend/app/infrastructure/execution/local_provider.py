@@ -286,12 +286,9 @@ class LocalExecutionProvider(ExecutionProvider):
         )
 
     def _handle_stderr_line(self, job_id: str, line: str) -> None:
-        self._set_state(
-            job_id,
-            status=JobStatus.RUNNING,
-            phase="Running Codex",
-            latest_activity=line,
-        )
+        # Keep stderr for terminal diagnostics, but do not surface transient
+        # transport/auth noise in the live chat UI while the run is still active.
+        return
 
     def _resolve_output(
         self,

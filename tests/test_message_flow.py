@@ -32,6 +32,20 @@ def build_session_client() -> TestClient:
     return TestClient(app)
 
 
+def build_audio_client() -> TestClient:
+    settings = Settings(
+        codex_command="python3 tests/fixtures/fake_codex.py",
+        codex_use_exec=False,
+        projects_root="..",
+        execution_timeout_seconds=10,
+        poll_interval_seconds=0,
+        audio_transcription_backend="command",
+        audio_transcription_command="python3 tests/fixtures/fake_transcriber.py {filename} {file}",
+    )
+    app = create_app(settings)
+    return TestClient(app)
+
+
 def wait_for_job(client: TestClient, job_id: str, *, timeout_seconds: float = 5.0) -> dict:
     deadline = time.monotonic() + timeout_seconds
     payload: dict | None = None
@@ -150,3 +164,35 @@ def test_job_response_exposes_phase_metadata() -> None:
     assert assistant_message["job_status"] == "completed"
     assert assistant_message["job_phase"] == "Completed"
     assert assistant_message["job_elapsed_seconds"] >= 0
+
+
+def test_health_endpoint_exposes_audio_transcription_status() -> None:
+    client = build_test_client()
+
+    response = client.get("/health")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["audio_transcription_backend"] == "auto"
+    assert payload["audio_transcription_resolved_backend"] == "faster_whisper"
+    assert payload["audio_transcription_ready"] is True
+    assert payload["audio_transcription_detail"] == "Local faster-whisper model: small"
+
+
+def test_audio_message_flow_transcribes_then_submits_prompt() -> None:
+    client = build_audio_client()
+
+    create_response = client.post(
+        "/message/audio",
+        files={"audio": ("voice-note.m4a", b"fake audio bytes", "audio/mp4")},
+    )
+
+    assert create_response.status_code == 202
+    assert create_response.json()["transcript"] == "Transcribed audio from voice-note.m4a"
+
+    job_id = create_response.json()["job_id"]
+    payload = wait_for_job(client, job_id)
+
+    assert payload["status"] == "completed"
+    assert payload["message"] == "Transcribed audio from voice-note.m4a"
+    assert payload["response"] == "Codex response: Transcribed audio from voice-note.m4a"

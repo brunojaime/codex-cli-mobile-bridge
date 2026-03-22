@@ -14,6 +14,7 @@ void main() {
 
     expect(find.text('Codex Remote'), findsOneWidget);
     expect(find.textContaining('local machine'), findsOneWidget);
+    expect(find.byIcon(Icons.mic_rounded), findsOneWidget);
   });
 
   testWidgets('renders assistant options as quick actions', (tester) async {
@@ -39,5 +40,34 @@ void main() {
     expect(find.text('Quick options'), findsOneWidget);
     expect(find.text('Summarize the repo'), findsOneWidget);
     expect(find.text('Show changed files'), findsOneWidget);
+  });
+
+  testWidgets('renders validation blocks and file reference chips', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ChatBubble(
+            message: ChatMessage(
+              id: 'assistant-2',
+              text:
+                  'Updated [docker-compose.yml](/tmp/docker-compose.yml) and [README.md](/tmp/README.md).\n\nValidation:\n- backend tests -> 8 passed\n- flutter analyze -> no issues found',
+              isUser: false,
+              status: ChatMessageStatus.completed,
+              createdAt: DateTime.utc(2026, 1, 1),
+              updatedAt: DateTime.utc(2026, 1, 1),
+              jobStatus: 'completed',
+              jobPhase: 'Completed',
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('docker-compose.yml'), findsOneWidget);
+    expect(find.text('README.md'), findsOneWidget);
+    expect(find.text('Validation'), findsOneWidget);
+    expect(find.text('backend tests'), findsOneWidget);
+    expect(find.text('8 passed'), findsOneWidget);
+    expect(find.text('flutter analyze'), findsOneWidget);
   });
 }

@@ -26,6 +26,7 @@ class ChatController extends ChangeNotifier {
   String? _selectedSessionId;
   String? _errorText;
   bool _isLoading = false;
+  bool _isSendingAudio = false;
   bool _pollInFlight = false;
   Timer? _pollTimer;
 
@@ -35,6 +36,7 @@ class ChatController extends ChangeNotifier {
   String? get selectedSessionId => _selectedSessionId;
   String? get errorText => _errorText;
   bool get isLoading => _isLoading;
+  bool get isSendingAudio => _isSendingAudio;
   bool get hasSessions => _sessions.isNotEmpty;
   List<ChatMessage> get messages => _currentSession?.messages ?? const <ChatMessage>[];
 
@@ -59,6 +61,7 @@ class ChatController extends ChangeNotifier {
     _sessions
       ..clear()
       ..addAll(sessions);
+    _errorText = null;
     notifyListeners();
   }
 
@@ -67,7 +70,29 @@ class ChatController extends ChangeNotifier {
     _workspaces
       ..clear()
       ..addAll(workspaces);
+    _errorText = null;
     notifyListeners();
+  }
+
+  Future<void> handleAppResumed() async {
+    try {
+      await refreshSessions();
+      if (_selectedSessionId != null) {
+        await _reloadCurrentSession();
+      } else if (_sessions.isNotEmpty) {
+        await selectSession(_sessions.first.id);
+      }
+
+      for (final jobId in _pendingJobs.keys.toList()) {
+        _ensureJobStream(jobId);
+      }
+      if (_pendingJobs.isNotEmpty) {
+        _ensurePolling();
+      }
+    } catch (error) {
+      _errorText = 'Failed to reconnect to the backend.\n$error';
+      notifyListeners();
+    }
   }
 
   Future<void> createNewSession({String? workspacePath}) async {
@@ -94,6 +119,7 @@ class ChatController extends ChangeNotifier {
       final session = await _apiClient.getSession(sessionId);
       _currentSession = _overlaySessionWithJobSnapshots(session);
       _selectedSessionId = sessionId;
+      _reconcilePendingJobsForSession(_currentSession);
       _trackPendingJobsFromSession(_currentSession);
       _errorText = null;
       notifyListeners();
@@ -127,6 +153,37 @@ class ChatController extends ChangeNotifier {
       _ensurePolling();
     } catch (error) {
       _errorText = 'Failed to send message.\n$error';
+      notifyListeners();
+    }
+  }
+
+  Future<void> sendAudioMessage(
+    String audioPath, {
+    String? language,
+  }) async {
+    _isSendingAudio = true;
+    notifyListeners();
+
+    try {
+      _errorText = null;
+      final accepted = await _apiClient.sendAudioMessage(
+        audioPath,
+        sessionId: _selectedSessionId,
+        workspacePath: _currentSession?.workspacePath,
+        language: language,
+      );
+      _selectedSessionId = accepted.sessionId;
+      _pendingJobs[accepted.jobId] = accepted.sessionId;
+      _jobSnapshots[accepted.jobId] = accepted;
+      await refreshSessions();
+      await _reloadCurrentSession();
+      _ensureJobStream(accepted.jobId);
+      _ensurePolling();
+    } catch (error) {
+      _errorText = 'Failed to send audio message.\n$error';
+      notifyListeners();
+    } finally {
+      _isSendingAudio = false;
       notifyListeners();
     }
   }
@@ -166,6 +223,7 @@ class ChatController extends ChangeNotifier {
           final result = await _apiClient.getJob(entry.key);
           _pollFailures.remove(entry.key);
           _applyJobSnapshot(result);
+          _errorText = null;
           if (result.isTerminal) {
             completedJobs.add(entry.key);
             shouldRefreshSessions = true;
@@ -176,9 +234,15 @@ class ChatController extends ChangeNotifier {
         } catch (error) {
           final failures = (_pollFailures[entry.key] ?? 0) + 1;
           _pollFailures[entry.key] = failures;
-          if (failures >= 3) {
+          final errorText = '$error';
+          if (errorText.contains('404') || errorText.contains('Job not found')) {
             completedJobs.add(entry.key);
-            _errorText = 'Failed to poll backend after $failures attempts.\n$error';
+            continue;
+          }
+          if (failures >= 3) {
+            _errorText =
+                'Connection to the backend was interrupted. Retrying automatically.\n$error';
+            notifyListeners();
           }
         }
       }
@@ -208,8 +272,34 @@ class ChatController extends ChangeNotifier {
 
     final session = await _apiClient.getSession(_selectedSessionId!);
     _currentSession = _overlaySessionWithJobSnapshots(session);
+    _reconcilePendingJobsForSession(_currentSession);
     _trackPendingJobsFromSession(_currentSession);
+    _errorText = null;
     notifyListeners();
+  }
+
+  void _reconcilePendingJobsForSession(SessionDetail? session) {
+    if (session == null) {
+      return;
+    }
+
+    final activePendingJobIds = session.messages
+        .where((message) {
+          final jobStatus = message.jobStatus ?? '';
+          return message.jobId != null &&
+              (message.isPendingLike || jobStatus == 'pending' || jobStatus == 'running');
+        })
+        .map((message) => message.jobId!)
+        .toSet();
+
+    final staleJobIds = _pendingJobs.entries
+        .where((entry) => entry.value == session.id && !activePendingJobIds.contains(entry.key))
+        .map((entry) => entry.key)
+        .toList(growable: false);
+
+    for (final jobId in staleJobIds) {
+      _finishTrackingJob(jobId);
+    }
   }
 
   void _trackPendingJobsFromSession(SessionDetail? session) {
@@ -267,6 +357,7 @@ class ChatController extends ChangeNotifier {
           }
           final snapshot = JobStatusResponse.fromJson(payload);
           _applyJobSnapshot(snapshot);
+          _errorText = null;
           if (snapshot.isTerminal) {
             _finishTrackingJob(jobId);
             refreshSessions();
@@ -279,9 +370,15 @@ class ChatController extends ChangeNotifier {
         },
         onError: (_) {
           _jobChannels.remove(jobId);
+          if (_pendingJobs.containsKey(jobId)) {
+            _ensurePolling();
+          }
         },
         onDone: () {
           _jobChannels.remove(jobId);
+          if (_pendingJobs.containsKey(jobId)) {
+            _ensurePolling();
+          }
         },
         cancelOnError: true,
       );

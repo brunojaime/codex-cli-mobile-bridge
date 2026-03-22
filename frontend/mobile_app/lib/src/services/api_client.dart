@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
@@ -109,6 +110,44 @@ class ApiClient {
 
     if (response.statusCode != 202) {
       throw Exception('Failed to create job: ${response.body}');
+    }
+
+    final payload = jsonDecode(response.body) as Map<String, dynamic>;
+    return JobStatusResponse.fromJson(payload);
+  }
+
+  Future<JobStatusResponse> sendAudioMessage(
+    String audioPath, {
+    String? sessionId,
+    String? workspacePath,
+    String? language,
+  }) async {
+    final request = http.MultipartRequest(
+      'POST',
+      Uri.parse('$baseUrl/message/audio'),
+    );
+    if (sessionId != null) {
+      request.fields['session_id'] = sessionId;
+    }
+    if (workspacePath != null) {
+      request.fields['workspace_path'] = workspacePath;
+    }
+    if (language != null) {
+      request.fields['language'] = language;
+    }
+
+    request.files.add(
+      await http.MultipartFile.fromPath(
+        'audio',
+        audioPath,
+        filename: audioPath.split(Platform.pathSeparator).last,
+      ),
+    );
+
+    final streamedResponse = await _client.send(request);
+    final response = await http.Response.fromStream(streamedResponse);
+    if (response.statusCode != 202) {
+      throw Exception('Failed to upload audio message: ${response.body}');
     }
 
     final payload = jsonDecode(response.body) as Map<String, dynamic>;

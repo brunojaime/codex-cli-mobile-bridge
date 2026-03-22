@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/server_profile.dart';
+import '../models/workspace.dart';
 
 class ServerProfileStore {
   static const _profilesKey = 'server_profiles';
@@ -14,7 +15,8 @@ class ServerProfileStore {
     final preferences = await SharedPreferences.getInstance();
     final rawProfiles = preferences.getStringList(_profilesKey) ?? <String>[];
     final profiles = rawProfiles
-        .map((item) => ServerProfile.fromJson(jsonDecode(item) as Map<String, dynamic>))
+        .map((item) =>
+            ServerProfile.fromJson(jsonDecode(item) as Map<String, dynamic>))
         .toList();
 
     if (profiles.isEmpty) {
@@ -47,5 +49,31 @@ class ServerProfileStore {
   Future<void> saveActiveProfileId(String profileId) async {
     final preferences = await SharedPreferences.getInstance();
     await preferences.setString(_activeProfileIdKey, profileId);
+  }
+
+  Future<List<Workspace>> loadSidebarWorkspaces(String serverBaseUrl) async {
+    final preferences = await SharedPreferences.getInstance();
+    final rawWorkspaces =
+        preferences.getStringList(_sidebarWorkspacesKey(serverBaseUrl)) ??
+            <String>[];
+    return rawWorkspaces
+        .map((item) =>
+            Workspace.fromJson(jsonDecode(item) as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<void> saveSidebarWorkspaces(
+    String serverBaseUrl,
+    List<Workspace> workspaces,
+  ) async {
+    final preferences = await SharedPreferences.getInstance();
+    await preferences.setStringList(
+      _sidebarWorkspacesKey(serverBaseUrl),
+      workspaces.map((workspace) => jsonEncode(workspace.toJson())).toList(),
+    );
+  }
+
+  String _sidebarWorkspacesKey(String serverBaseUrl) {
+    return 'sidebar_workspaces::$serverBaseUrl';
   }
 }

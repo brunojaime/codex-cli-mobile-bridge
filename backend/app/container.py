@@ -9,6 +9,13 @@ from backend.app.infrastructure.execution.lambda_provider import LambdaExecution
 from backend.app.infrastructure.execution.local_provider import LocalExecutionProvider
 from backend.app.infrastructure.persistence.in_memory_chat_repository import InMemoryChatRepository
 from backend.app.infrastructure.realtime.job_stream_hub import JobStreamHub
+from backend.app.infrastructure.transcription.base import AudioTranscriber
+from backend.app.infrastructure.transcription.command_transcriber import CommandAudioTranscriber
+from backend.app.infrastructure.transcription.disabled_transcriber import DisabledAudioTranscriber
+from backend.app.infrastructure.transcription.faster_whisper_transcriber import (
+    FasterWhisperAudioTranscriber,
+)
+from backend.app.infrastructure.transcription.openai_transcriber import OpenAIAudioTranscriber
 
 
 @dataclass(slots=True)
@@ -16,16 +23,19 @@ class AppContainer:
     settings: Settings
     message_service: MessageService
     job_stream_hub: JobStreamHub
+    audio_transcriber: AudioTranscriber
 
 
 def build_container(settings: Settings | None = None) -> AppContainer:
     resolved_settings = settings or Settings()
     repository = InMemoryChatRepository(projects_root=resolved_settings.projects_root)
     provider = _build_execution_provider(resolved_settings)
+    audio_transcriber = _build_audio_transcriber(resolved_settings)
     message_service = MessageService(
         repository=repository,
         execution_provider=provider,
         default_workspace_path=resolved_settings.codex_workdir,
+        audio_transcriber=audio_transcriber,
     )
     job_stream_hub = JobStreamHub(
         poll_interval_seconds=resolved_settings.poll_interval_seconds,
@@ -34,6 +44,7 @@ def build_container(settings: Settings | None = None) -> AppContainer:
         settings=resolved_settings,
         message_service=message_service,
         job_stream_hub=job_stream_hub,
+        audio_transcriber=audio_transcriber,
     )
 
 
@@ -52,3 +63,51 @@ def _build_execution_provider(settings: Settings) -> ExecutionProvider:
         workdir=settings.codex_workdir,
         timeout_seconds=settings.execution_timeout_seconds,
     )
+
+
+def _build_audio_transcriber(settings: Settings) -> AudioTranscriber:
+    if settings.audio_transcription_backend == "auto":
+        if settings.audio_transcription_command:
+            return CommandAudioTranscriber(
+                command=settings.audio_transcription_command,
+                timeout_seconds=settings.audio_transcription_timeout_seconds,
+            )
+
+        if settings.openai_api_key:
+            return OpenAIAudioTranscriber(
+                api_key=settings.openai_api_key,
+                model=settings.audio_transcription_model,
+                base_url=settings.openai_base_url,
+                timeout_seconds=settings.audio_transcription_timeout_seconds,
+                default_language=settings.audio_transcription_language,
+            )
+
+        return FasterWhisperAudioTranscriber(
+            model=settings.audio_transcription_local_model,
+            device=settings.audio_transcription_local_device,
+            compute_type=settings.audio_transcription_local_compute_type,
+        )
+
+    if settings.audio_transcription_backend == "command":
+        return CommandAudioTranscriber(
+            command=settings.audio_transcription_command,
+            timeout_seconds=settings.audio_transcription_timeout_seconds,
+        )
+
+    if settings.audio_transcription_backend == "openai":
+        return OpenAIAudioTranscriber(
+            api_key=settings.openai_api_key,
+            model=settings.audio_transcription_model,
+            base_url=settings.openai_base_url,
+            timeout_seconds=settings.audio_transcription_timeout_seconds,
+            default_language=settings.audio_transcription_language,
+        )
+
+    if settings.audio_transcription_backend == "faster_whisper":
+        return FasterWhisperAudioTranscriber(
+            model=settings.audio_transcription_local_model,
+            device=settings.audio_transcription_local_device,
+            compute_type=settings.audio_transcription_local_compute_type,
+        )
+
+    return DisabledAudioTranscriber()

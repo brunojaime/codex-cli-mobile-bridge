@@ -3,8 +3,12 @@ class ServerHealth {
     required this.serverName,
     required this.backendMode,
     required this.projectsRoot,
+    required this.audioTranscriptionBackend,
+    required this.audioTranscriptionResolvedBackend,
+    required this.audioTranscriptionReady,
     required this.tailscaleInstalled,
     required this.tailscaleOnline,
+    this.audioTranscriptionDetail,
     this.tailscaleTailnetName,
     this.tailscaleDeviceName,
     this.tailscaleMagicDnsName,
@@ -15,6 +19,10 @@ class ServerHealth {
   final String serverName;
   final String backendMode;
   final String projectsRoot;
+  final String audioTranscriptionBackend;
+  final String audioTranscriptionResolvedBackend;
+  final bool audioTranscriptionReady;
+  final String? audioTranscriptionDetail;
   final bool tailscaleInstalled;
   final bool tailscaleOnline;
   final String? tailscaleTailnetName;
@@ -28,6 +36,11 @@ class ServerHealth {
       serverName: json['server_name'] as String,
       backendMode: json['backend_mode'] as String,
       projectsRoot: json['projects_root'] as String,
+      audioTranscriptionBackend: json['audio_transcription_backend'] as String? ?? 'auto',
+      audioTranscriptionResolvedBackend:
+          json['audio_transcription_resolved_backend'] as String? ?? 'unknown',
+      audioTranscriptionReady: json['audio_transcription_ready'] as bool? ?? false,
+      audioTranscriptionDetail: json['audio_transcription_detail'] as String?,
       tailscaleInstalled: json['tailscale_installed'] as bool? ?? false,
       tailscaleOnline: json['tailscale_online'] as bool? ?? false,
       tailscaleTailnetName: json['tailscale_tailnet_name'] as String?,

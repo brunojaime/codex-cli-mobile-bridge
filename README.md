@@ -8,6 +8,7 @@
 - Returns async job results to a mobile chat UI
 - Supports persistent multi-turn chat sessions
 - Supports multiple workspaces and multiple backend servers
+- Supports push-to-talk voice notes that transcribe into prompts before execution
 - Supports remote access patterns such as USB, Tailscale, and other tunnels
 
 ## Stack
@@ -74,20 +75,35 @@ Important variables:
 - `SERVER_NAME=my-machine`
 - `CODEX_COMMAND=codex`
 - `CODEX_USE_EXEC=true`
-- `CODEX_EXEC_ARGS=--skip-git-repo-check --color never`
-- `CODEX_RESUME_ARGS=--skip-git-repo-check`
+- `CODEX_EXEC_ARGS=--skip-git-repo-check --color never --dangerously-bypass-approvals-and-sandbox`
+- `CODEX_RESUME_ARGS=--skip-git-repo-check --dangerously-bypass-approvals-and-sandbox`
 - `PROJECTS_ROOT=/absolute/path/to/your/projects`
 - `API_HOST=0.0.0.0`
 - `API_PORT=8000`
 - `API_BASE_URL=http://localhost:8000`
 - `TAILSCALE_SOCKET=/path/to/tailscaled.sock`
+- `AUDIO_TRANSCRIPTION_BACKEND=auto|disabled|command|openai|faster_whisper`
+- `AUDIO_TRANSCRIPTION_COMMAND=/absolute/path/to/your/transcriber-wrapper {file}`
+- `AUDIO_TRANSCRIPTION_MODEL=gpt-4o-mini-transcribe`
+- `AUDIO_TRANSCRIPTION_LOCAL_MODEL=small`
+- `OPENAI_API_KEY=...`
 
 Recommended defaults:
 
 - `BACKEND_MODE=local`
 - `CODEX_USE_EXEC=true`
+- `CODEX_EXEC_ARGS=--skip-git-repo-check --color never --dangerously-bypass-approvals-and-sandbox`
+- `CODEX_RESUME_ARGS=--skip-git-repo-check --dangerously-bypass-approvals-and-sandbox`
 
 The backend uses `codex exec` for new messages and `codex exec resume` for follow-up messages inside the same chat session.
+
+Voice-note transcription options:
+
+- `AUDIO_TRANSCRIPTION_BACKEND=auto` is now the default. It prefers a configured command wrapper first, then OpenAI if `OPENAI_API_KEY` is present, and otherwise falls back to local `faster-whisper`.
+- `AUDIO_TRANSCRIPTION_BACKEND=command` keeps execution local and lets you call a wrapper script around `whisper`, `faster-whisper`, or another speech-to-text tool. The command should print only the transcript to stdout.
+- `AUDIO_TRANSCRIPTION_BACKEND=openai` sends the recorded audio file to OpenAI speech-to-text, then submits the returned transcript to the local Codex CLI.
+- `AUDIO_TRANSCRIPTION_BACKEND=faster_whisper` forces the local model path and avoids any external API call.
+- `AUDIO_TRANSCRIPTION_BACKEND=disabled` turns the feature off explicitly.
 
 ## Run Locally
 
@@ -105,6 +121,22 @@ Start the backend:
 python main.py
 ```
 
+If you want it to keep running after closing the terminal:
+
+```bash
+chmod +x scripts/run_backend_detached.sh scripts/stop_backend.sh
+./scripts/run_backend_detached.sh
+```
+
+That keeps the backend alive after the shell window closes. Logs go to `.run/backend.log`.
+Stop it with:
+
+```bash
+./scripts/stop_backend.sh
+```
+
+Important: this only solves closing the terminal. If the computer sleeps, reboots, or shuts down, the backend stops. For true always-on access, run it on a machine that stays on, or install it as a system service.
+
 The backend exposes:
 
 - `GET /health`
@@ -113,6 +145,7 @@ The backend exposes:
 - `POST /sessions`
 - `GET /sessions/{session_id}`
 - `POST /message`
+- `POST /message/audio`
 - `POST /sessions/{session_id}/messages`
 - `GET /response/{job_id}`
 - `GET /ws/jobs/{job_id}`
@@ -152,6 +185,7 @@ Notes:
 - Android emulator typically uses `10.0.2.2` for host access. Replace it with your actual server URL when needed.
 - iOS simulator can typically use `http://localhost:8000`
 - Real devices should use a reachable backend URL, such as a LAN IP, Tailscale URL, or tunnel URL
+- Android and iOS will request microphone permission the first time you record a voice note
 
 ## Multi-Server Support
 
@@ -273,6 +307,7 @@ flutter analyze
 ## Security
 
 - This project does not use the OpenAI API for execution
+- Audio transcription can optionally use the OpenAI API if you enable `AUDIO_TRANSCRIPTION_BACKEND=openai`
 - The backend executes commands on the host machine through the local `codex` CLI
 - Do not expose the backend publicly without adding authentication
 - Do not commit your `.env` file or any Codex credentials

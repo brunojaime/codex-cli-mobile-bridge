@@ -35,6 +35,9 @@ def main() -> int:
         if current == "--skip-git-repo-check":
             index += 1
             continue
+        if current == "--dangerously-bypass-approvals-and-sandbox":
+            index += 1
+            continue
         if current == "--color":
             index += 2
             continue

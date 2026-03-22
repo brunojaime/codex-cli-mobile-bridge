@@ -40,6 +40,25 @@ class MessageAcceptedResponse(BaseModel):
         )
 
 
+class AudioMessageAcceptedResponse(MessageAcceptedResponse):
+    transcript: str
+
+    @classmethod
+    def from_domain(
+        cls,
+        job: Job,
+        *,
+        transcript: str,
+    ) -> "AudioMessageAcceptedResponse":
+        return cls(
+            job_id=job.id,
+            session_id=job.session_id,
+            status=job.status,
+            provider_session_id=job.provider_session_id,
+            transcript=transcript,
+        )
+
+
 class ChatMessageResponse(BaseModel):
     id: str
     role: ChatMessageRole
@@ -171,6 +190,10 @@ class HealthResponse(BaseModel):
     server_name: str
     backend_mode: str
     projects_root: str
+    audio_transcription_backend: str
+    audio_transcription_resolved_backend: str
+    audio_transcription_ready: bool
+    audio_transcription_detail: str | None = None
     tailscale_installed: bool
     tailscale_online: bool
     tailscale_tailnet_name: str | None = None

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
 
@@ -13,6 +14,13 @@ from backend.app.domain.entities.job import Job, JobStatus
 from backend.app.domain.entities.workspace import Workspace
 from backend.app.domain.repositories.chat_repository import ChatRepository
 from backend.app.infrastructure.execution.base import ExecutionProvider
+from backend.app.infrastructure.transcription.base import AudioTranscriber, AudioTranscriptionError
+
+
+@dataclass(slots=True)
+class AudioSubmission:
+    job: Job
+    transcript: str
 
 
 class MessageService:
@@ -22,10 +30,12 @@ class MessageService:
         repository: ChatRepository,
         execution_provider: ExecutionProvider,
         default_workspace_path: str,
+        audio_transcriber: AudioTranscriber,
     ) -> None:
         self._repository = repository
         self._execution_provider = execution_provider
         self._default_workspace_path = str(Path(default_workspace_path).resolve())
+        self._audio_transcriber = audio_transcriber
 
     def create_session(
         self,
@@ -105,6 +115,32 @@ class MessageService:
         self._repository.save_job(job)
         self._repository.save_session(session)
         return job
+
+    def submit_audio_message(
+        self,
+        audio_path: str,
+        *,
+        filename: str | None = None,
+        content_type: str | None = None,
+        session_id: str | None = None,
+        workspace_path: str | None = None,
+        language: str | None = None,
+    ) -> AudioSubmission:
+        transcript = self._audio_transcriber.transcribe(
+            Path(audio_path),
+            filename=filename,
+            content_type=content_type,
+            language=language,
+        ).strip()
+        if not transcript:
+            raise AudioTranscriptionError("Transcription returned an empty prompt.")
+
+        job = self.submit_message(
+            transcript,
+            session_id=session_id,
+            workspace_path=workspace_path,
+        )
+        return AudioSubmission(job=job, transcript=transcript)
 
     def get_job(self, job_id: str) -> Job | None:
         job = self._repository.get_job(job_id)

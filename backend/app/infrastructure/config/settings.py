@@ -33,6 +33,23 @@ class Settings(BaseSettings):
     execution_timeout_seconds: int = 900
     lambda_endpoint: str = "http://localhost:9000"
     poll_interval_seconds: int = 2
+    audio_max_upload_bytes: int = 25_000_000
+    audio_transcription_backend: Literal[
+        "auto",
+        "disabled",
+        "command",
+        "openai",
+        "faster_whisper",
+    ] = "auto"
+    audio_transcription_command: str | None = None
+    audio_transcription_model: str = "gpt-4o-mini-transcribe"
+    audio_transcription_language: str | None = None
+    audio_transcription_timeout_seconds: int = 120
+    audio_transcription_local_model: str = "small"
+    audio_transcription_local_compute_type: str = "int8"
+    audio_transcription_local_device: str = "auto"
+    openai_api_key: str | None = None
+    openai_base_url: str = "https://api.openai.com/v1"
 
     @computed_field
     @property
