@@ -48,9 +48,20 @@ class ChatMessageResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     job_id: str | None = None
+    job_status: JobStatus | None = None
+    job_phase: str | None = None
+    job_latest_activity: str | None = None
+    job_elapsed_seconds: int | None = None
+    provider_session_id: str | None = None
+    completed_at: datetime | None = None
 
     @classmethod
-    def from_domain(cls, message: ChatMessage) -> "ChatMessageResponse":
+    def from_domain(
+        cls,
+        message: ChatMessage,
+        *,
+        job: Job | None = None,
+    ) -> "ChatMessageResponse":
         return cls(
             id=message.id,
             role=message.role,
@@ -59,6 +70,12 @@ class ChatMessageResponse(BaseModel):
             created_at=message.created_at,
             updated_at=message.updated_at,
             job_id=message.job_id,
+            job_status=job.status if job else None,
+            job_phase=job.phase if job else None,
+            job_latest_activity=job.latest_activity if job else None,
+            job_elapsed_seconds=job.elapsed_seconds if job else None,
+            provider_session_id=job.provider_session_id if job else None,
+            completed_at=job.completed_at if job else None,
         )
 
 
@@ -90,6 +107,7 @@ class SessionDetailResponse(BaseModel):
         session: ChatSession,
         *,
         messages: list[ChatMessage],
+        jobs_by_id: dict[str, Job] | None = None,
     ) -> "SessionDetailResponse":
         return cls(
             id=session.id,
@@ -99,7 +117,13 @@ class SessionDetailResponse(BaseModel):
             provider_session_id=session.provider_session_id,
             created_at=session.created_at,
             updated_at=session.updated_at,
-            messages=[ChatMessageResponse.from_domain(message) for message in messages],
+            messages=[
+                ChatMessageResponse.from_domain(
+                    message,
+                    job=jobs_by_id.get(message.job_id) if jobs_by_id and message.job_id else None,
+                )
+                for message in messages
+            ],
         )
 
 
@@ -116,6 +140,9 @@ class JobResponse(BaseModel):
     response: str | None = None
     error: str | None = None
     provider_session_id: str | None = None
+    phase: str | None = None
+    latest_activity: str | None = None
+    elapsed_seconds: int
     created_at: datetime
     updated_at: datetime
     completed_at: datetime | None = None
@@ -130,6 +157,9 @@ class JobResponse(BaseModel):
             response=job.response,
             error=job.error,
             provider_session_id=job.provider_session_id,
+            phase=job.phase,
+            latest_activity=job.latest_activity,
+            elapsed_seconds=job.elapsed_seconds,
             created_at=job.created_at,
             updated_at=job.updated_at,
             completed_at=job.completed_at,

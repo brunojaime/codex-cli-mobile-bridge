@@ -130,3 +130,23 @@ def test_workspaces_endpoint_and_session_workspace_binding() -> None:
     payload = create_response.json()
     assert payload["workspace_name"] == "cli-codex-project"
     assert payload["workspace_path"] == target_workspace["path"]
+
+
+def test_job_response_exposes_phase_metadata() -> None:
+    client = build_session_client()
+
+    create_response = client.post("/message", json={"message": "phase check"})
+    assert create_response.status_code == 202
+
+    payload = wait_for_job(client, create_response.json()["job_id"])
+    assert payload["status"] == "completed"
+    assert payload["phase"] == "Completed"
+    assert payload["latest_activity"] == "Codex returned a final response."
+    assert payload["elapsed_seconds"] >= 0
+
+    session_detail = client.get(f"/sessions/{payload['session_id']}")
+    assert session_detail.status_code == 200
+    assistant_message = session_detail.json()["messages"][1]
+    assert assistant_message["job_status"] == "completed"
+    assert assistant_message["job_phase"] == "Completed"
+    assert assistant_message["job_elapsed_seconds"] >= 0

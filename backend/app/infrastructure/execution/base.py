@@ -13,6 +13,8 @@ class ExecutionSnapshot:
     response: str | None = None
     error: str | None = None
     provider_session_id: str | None = None
+    phase: str | None = None
+    latest_activity: str | None = None
 
 
 class ExecutionProvider(ABC):
@@ -45,8 +47,18 @@ class ExecutionProvider(ABC):
             response=self.get_result(job_id),
             error=self.get_error(job_id),
             provider_session_id=self.get_provider_session_id(job_id),
+            phase=self.get_phase(job_id),
+            latest_activity=self.get_latest_activity(job_id),
         )
 
     @abstractmethod
     def get_provider_session_id(self, job_id: str) -> str | None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_phase(self, job_id: str) -> str | None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_latest_activity(self, job_id: str) -> str | None:
         raise NotImplementedError

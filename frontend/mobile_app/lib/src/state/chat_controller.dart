@@ -1,9 +1,12 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
+import 'package:web_socket_channel/web_socket_channel.dart';
 
 import '../models/chat_message.dart';
 import '../models/chat_session_summary.dart';
+import '../models/job_status_response.dart';
 import '../models/session_detail.dart';
 import '../models/workspace.dart';
 import '../services/api_client.dart';
@@ -16,6 +19,8 @@ class ChatController extends ChangeNotifier {
   final List<Workspace> _workspaces = <Workspace>[];
   final Map<String, String> _pendingJobs = <String, String>{};
   final Map<String, int> _pollFailures = <String, int>{};
+  final Map<String, JobStatusResponse> _jobSnapshots = <String, JobStatusResponse>{};
+  final Map<String, WebSocketChannel> _jobChannels = <String, WebSocketChannel>{};
 
   SessionDetail? _currentSession;
   String? _selectedSessionId;
@@ -39,6 +44,9 @@ class ChatController extends ChangeNotifier {
       await refreshWorkspaces();
       if (_sessions.isNotEmpty) {
         await selectSession(_sessions.first.id);
+      } else {
+        _errorText = null;
+        notifyListeners();
       }
     } catch (error) {
       _errorText = '$error';
@@ -70,6 +78,7 @@ class ChatController extends ChangeNotifier {
       await refreshSessions();
       _selectedSessionId = session.id;
       _currentSession = session;
+      _trackPendingJobsFromSession(session);
       notifyListeners();
     } catch (error) {
       _errorText = '$error';
@@ -82,8 +91,10 @@ class ChatController extends ChangeNotifier {
   Future<void> selectSession(String sessionId) async {
     _setLoading(true);
     try {
-      _currentSession = await _apiClient.getSession(sessionId);
+      final session = await _apiClient.getSession(sessionId);
+      _currentSession = _overlaySessionWithJobSnapshots(session);
       _selectedSessionId = sessionId;
+      _trackPendingJobsFromSession(_currentSession);
       _errorText = null;
       notifyListeners();
     } catch (error) {
@@ -109,8 +120,10 @@ class ChatController extends ChangeNotifier {
       );
       _selectedSessionId = accepted.sessionId;
       _pendingJobs[accepted.jobId] = accepted.sessionId;
+      _jobSnapshots[accepted.jobId] = accepted;
       await refreshSessions();
       await _reloadCurrentSession();
+      _ensureJobStream(accepted.jobId);
       _ensurePolling();
     } catch (error) {
       _errorText = 'Failed to send message.\n$error';
@@ -121,6 +134,10 @@ class ChatController extends ChangeNotifier {
   @override
   void dispose() {
     _pollTimer?.cancel();
+    for (final channel in _jobChannels.values) {
+      channel.sink.close();
+    }
+    _jobChannels.clear();
     super.dispose();
   }
 
@@ -144,10 +161,11 @@ class ChatController extends ChangeNotifier {
       var shouldRefreshSessions = false;
       var shouldReloadCurrentSession = false;
 
-      for (final entry in _pendingJobs.entries) {
+      for (final entry in _pendingJobs.entries.toList()) {
         try {
           final result = await _apiClient.getJob(entry.key);
           _pollFailures.remove(entry.key);
+          _applyJobSnapshot(result);
           if (result.isTerminal) {
             completedJobs.add(entry.key);
             shouldRefreshSessions = true;
@@ -166,8 +184,7 @@ class ChatController extends ChangeNotifier {
       }
 
       for (final jobId in completedJobs) {
-        _pendingJobs.remove(jobId);
-        _pollFailures.remove(jobId);
+        _finishTrackingJob(jobId);
       }
 
       if (shouldRefreshSessions) {
@@ -189,12 +206,164 @@ class ChatController extends ChangeNotifier {
       return;
     }
 
-    _currentSession = await _apiClient.getSession(_selectedSessionId!);
+    final session = await _apiClient.getSession(_selectedSessionId!);
+    _currentSession = _overlaySessionWithJobSnapshots(session);
+    _trackPendingJobsFromSession(_currentSession);
     notifyListeners();
+  }
+
+  void _trackPendingJobsFromSession(SessionDetail? session) {
+    if (session == null) {
+      return;
+    }
+
+    for (final message in session.messages) {
+      if (message.jobId == null) {
+        continue;
+      }
+      final jobStatus = message.jobStatus ?? '';
+      final isPending = message.isPendingLike || jobStatus == 'pending' || jobStatus == 'running';
+      if (!isPending) {
+        continue;
+      }
+      _pendingJobs[message.jobId!] = session.id;
+      _jobSnapshots[message.jobId!] ??= JobStatusResponse(
+        jobId: message.jobId!,
+        sessionId: session.id,
+        status: jobStatus.isNotEmpty ? jobStatus : 'pending',
+        elapsedSeconds: message.jobElapsedSeconds ?? 0,
+        providerSessionId: message.providerSessionId,
+        phase: message.jobPhase,
+        latestActivity: message.jobLatestActivity,
+        updatedAt: message.updatedAt,
+        completedAt: message.completedAt,
+      );
+      _ensureJobStream(message.jobId!);
+    }
+
+    if (_pendingJobs.isNotEmpty) {
+      _ensurePolling();
+    }
+  }
+
+  void _ensureJobStream(String jobId) {
+    if (_jobChannels.containsKey(jobId)) {
+      return;
+    }
+
+    try {
+      final channel = WebSocketChannel.connect(_apiClient.jobStreamUri(jobId));
+      _jobChannels[jobId] = channel;
+      channel.stream.listen(
+        (event) {
+          if (event is! String) {
+            return;
+          }
+          final payload = jsonDecode(event) as Map<String, dynamic>;
+          if (payload.containsKey('error')) {
+            _errorText = payload['error'] as String?;
+            notifyListeners();
+            return;
+          }
+          final snapshot = JobStatusResponse.fromJson(payload);
+          _applyJobSnapshot(snapshot);
+          if (snapshot.isTerminal) {
+            _finishTrackingJob(jobId);
+            refreshSessions();
+            if (snapshot.sessionId == _selectedSessionId) {
+              _reloadCurrentSession();
+            } else {
+              notifyListeners();
+            }
+          }
+        },
+        onError: (_) {
+          _jobChannels.remove(jobId);
+        },
+        onDone: () {
+          _jobChannels.remove(jobId);
+        },
+        cancelOnError: true,
+      );
+    } catch (_) {
+      // Keep polling as the fallback path.
+    }
+  }
+
+  void _applyJobSnapshot(JobStatusResponse snapshot) {
+    _jobSnapshots[snapshot.jobId] = snapshot;
+
+    if (_currentSession == null) {
+      notifyListeners();
+      return;
+    }
+
+    final updatedMessages = _currentSession!.messages
+        .map((message) => _applySnapshotToMessage(message, snapshot))
+        .toList(growable: false);
+
+    _currentSession = _currentSession!.copyWith(messages: updatedMessages);
+    notifyListeners();
+  }
+
+  ChatMessage _applySnapshotToMessage(ChatMessage message, JobStatusResponse snapshot) {
+    if (message.jobId != snapshot.jobId) {
+      return message;
+    }
+
+    return message.copyWith(
+      text: snapshot.isTerminal
+          ? (snapshot.status == 'failed'
+              ? (snapshot.error ?? message.text)
+              : (snapshot.response ?? message.text))
+          : message.text,
+      status: _statusFromJob(snapshot.status),
+      jobStatus: snapshot.status,
+      jobPhase: snapshot.phase,
+      jobLatestActivity: snapshot.latestActivity,
+      jobElapsedSeconds: snapshot.elapsedSeconds,
+      providerSessionId: snapshot.providerSessionId,
+      updatedAt: snapshot.updatedAt ?? message.updatedAt,
+      completedAt: snapshot.completedAt ?? message.completedAt,
+    );
+  }
+
+  SessionDetail _overlaySessionWithJobSnapshots(SessionDetail session) {
+    final messages = session.messages
+        .map((message) {
+          if (message.jobId == null) {
+            return message;
+          }
+          final snapshot = _jobSnapshots[message.jobId!];
+          if (snapshot == null) {
+            return message;
+          }
+          return _applySnapshotToMessage(message, snapshot);
+        })
+        .toList(growable: false);
+
+    return session.copyWith(messages: messages);
+  }
+
+  void _finishTrackingJob(String jobId) {
+    _pendingJobs.remove(jobId);
+    _pollFailures.remove(jobId);
+    _jobChannels.remove(jobId)?.sink.close();
   }
 
   void _setLoading(bool value) {
     _isLoading = value;
     notifyListeners();
+  }
+}
+
+ChatMessageStatus _statusFromJob(String status) {
+  switch (status) {
+    case 'failed':
+      return ChatMessageStatus.failed;
+    case 'completed':
+      return ChatMessageStatus.completed;
+    default:
+      return ChatMessageStatus.pending;
   }
 }

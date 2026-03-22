@@ -17,6 +17,8 @@ class _LambdaState:
     response: str | None = None
     error: str | None = None
     provider_session_id: str | None = None
+    phase: str | None = None
+    latest_activity: str | None = None
 
 
 class LambdaExecutionProvider(ExecutionProvider):
@@ -69,6 +71,14 @@ class LambdaExecutionProvider(ExecutionProvider):
         state = self._get_state(job_id)
         return state.provider_session_id if state else None
 
+    def get_phase(self, job_id: str) -> str | None:
+        state = self._get_state(job_id)
+        return state.phase if state else None
+
+    def get_latest_activity(self, job_id: str) -> str | None:
+        state = self._get_state(job_id)
+        return state.latest_activity if state else None
+
     async def _dispatch(
         self,
         job_id: str,
@@ -76,7 +86,12 @@ class LambdaExecutionProvider(ExecutionProvider):
         provider_session_id: str | None = None,
         workdir: str | None = None,
     ) -> None:
-        self._set_state(job_id, status=JobStatus.RUNNING)
+        self._set_state(
+            job_id,
+            status=JobStatus.RUNNING,
+            phase="Dispatching request",
+            latest_activity="Sending prompt to Lambda execution endpoint.",
+        )
 
         try:
             async with httpx.AsyncClient(timeout=self._timeout_seconds) as client:
@@ -110,6 +125,9 @@ class LambdaExecutionProvider(ExecutionProvider):
                             provider_session_id=payload.get("provider_session_id")
                             or remote_provider_session_id
                             or provider_session_id,
+                            phase=payload.get("phase") or "Completed",
+                            latest_activity=payload.get("latest_activity")
+                            or "Remote execution finished successfully.",
                         )
                         return
 
@@ -121,15 +139,31 @@ class LambdaExecutionProvider(ExecutionProvider):
                             provider_session_id=payload.get("provider_session_id")
                             or remote_provider_session_id
                             or provider_session_id,
+                            phase=payload.get("phase") or "Failed",
+                            latest_activity=payload.get("latest_activity")
+                            or payload.get("error")
+                            or "Remote execution failed.",
                         )
                         return
 
+                    self._set_state(
+                        job_id,
+                        status=status,
+                        provider_session_id=payload.get("provider_session_id")
+                        or remote_provider_session_id
+                        or provider_session_id,
+                        phase=payload.get("phase") or "Running",
+                        latest_activity=payload.get("latest_activity")
+                        or "Waiting for remote execution result.",
+                    )
                     await asyncio.sleep(2)
         except Exception as exc:  # pragma: no cover - stub transport
             self._set_state(
                 job_id,
                 status=JobStatus.FAILED,
                 error=f"Lambda provider is configured but unreachable: {exc}",
+                phase="Failed",
+                latest_activity="Could not reach the configured Lambda endpoint.",
             )
 
     def _set_state(
@@ -140,6 +174,8 @@ class LambdaExecutionProvider(ExecutionProvider):
         response: str | None = None,
         error: str | None = None,
         provider_session_id: str | None = None,
+        phase: str | None = None,
+        latest_activity: str | None = None,
     ) -> None:
         with self._lock:
             self._states[job_id] = _LambdaState(
@@ -147,6 +183,8 @@ class LambdaExecutionProvider(ExecutionProvider):
                 response=response,
                 error=error,
                 provider_session_id=provider_session_id,
+                phase=phase,
+                latest_activity=latest_activity,
             )
 
     def _get_state(self, job_id: str) -> _LambdaState | None:

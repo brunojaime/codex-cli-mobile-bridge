@@ -179,7 +179,10 @@ class _ChatScreenState extends State<ChatScreen> {
                                   alignment: message.isUser
                                       ? Alignment.centerRight
                                       : Alignment.centerLeft,
-                                  child: ChatBubble(message: message),
+                                  child: ChatBubble(
+                                    message: message,
+                                    onOptionSelected: _handleSuggestedReply,
+                                  ),
                                 );
                               },
                             ),
@@ -200,6 +203,18 @@ class _ChatScreenState extends State<ChatScreen> {
     final text = _textController.text;
     _textController.clear();
     await _chatController.sendMessage(text);
+  }
+
+  void _handleSuggestedReply(String value) {
+    _textController
+      ..text = value
+      ..selection = TextSelection.collapsed(offset: value.length);
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Suggestion inserted into the composer.'),
+        duration: Duration(seconds: 1),
+      ),
+    );
   }
 
   Future<void> _openWorkspacePicker() async {

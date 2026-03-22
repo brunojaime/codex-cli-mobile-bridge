@@ -24,9 +24,15 @@ class JobStreamHub:
                 await websocket.send_json(
                     {
                         "job_id": job.id,
+                        "session_id": job.session_id,
                         "status": job.status,
                         "response": job.response,
                         "error": job.error,
+                        "provider_session_id": job.provider_session_id,
+                        "phase": job.phase,
+                        "latest_activity": job.latest_activity,
+                        "elapsed_seconds": job.elapsed_seconds,
+                        "completed_at": job.completed_at.isoformat() if job.completed_at else None,
                         "updated_at": job.updated_at.isoformat(),
                     }
                 )

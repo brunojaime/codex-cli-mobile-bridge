@@ -117,6 +117,8 @@ class MessageService:
             response=snapshot.response,
             error=snapshot.error,
             provider_session_id=snapshot.provider_session_id,
+            phase=snapshot.phase,
+            latest_activity=snapshot.latest_activity,
         )
         self._repository.save_job(job)
         self._sync_job_side_effects(job)

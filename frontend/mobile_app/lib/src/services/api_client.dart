@@ -17,6 +17,15 @@ class ApiClient {
   final String baseUrl;
   final http.Client _client;
 
+  Uri jobStreamUri(String jobId) {
+    final httpUri = Uri.parse(baseUrl);
+    final scheme = httpUri.scheme == 'https' ? 'wss' : 'ws';
+    return httpUri.replace(
+      scheme: scheme,
+      path: '${httpUri.path.replaceAll(RegExp(r'/$'), '')}/ws/jobs/$jobId',
+    );
+  }
+
   Future<List<ChatSessionSummary>> listSessions() async {
     final response = await _client.get(Uri.parse('$baseUrl/sessions'));
 

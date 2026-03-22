@@ -21,6 +21,27 @@ class SessionDetail {
   final DateTime updatedAt;
   final List<ChatMessage> messages;
 
+  SessionDetail copyWith({
+    String? title,
+    String? workspacePath,
+    String? workspaceName,
+    String? providerSessionId,
+    DateTime? createdAt,
+    DateTime? updatedAt,
+    List<ChatMessage>? messages,
+  }) {
+    return SessionDetail(
+      id: id,
+      title: title ?? this.title,
+      workspacePath: workspacePath ?? this.workspacePath,
+      workspaceName: workspaceName ?? this.workspaceName,
+      createdAt: createdAt ?? this.createdAt,
+      updatedAt: updatedAt ?? this.updatedAt,
+      messages: messages ?? this.messages,
+      providerSessionId: providerSessionId ?? this.providerSessionId,
+    );
+  }
+
   factory SessionDetail.fromJson(Map<String, dynamic> json) {
     final rawMessages = json['messages'] as List<dynamic>? ?? <dynamic>[];
     return SessionDetail(

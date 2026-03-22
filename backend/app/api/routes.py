@@ -125,9 +125,18 @@ async def get_session(
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found.")
 
+    messages = service.list_messages(session_id)
+    jobs_by_id = {}
+    for message in messages:
+        if message.job_id:
+            synced_job = service.get_job(message.job_id)
+            if synced_job is not None:
+                jobs_by_id[message.job_id] = synced_job
+
     return SessionDetailResponse.from_domain(
         session,
         messages=service.list_messages(session_id),
+        jobs_by_id=jobs_by_id,
     )
 
 

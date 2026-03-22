@@ -1,11 +1,18 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../models/chat_message.dart';
+import 'rich_message_content.dart';
 
 class ChatBubble extends StatelessWidget {
-  const ChatBubble({super.key, required this.message});
+  const ChatBubble({
+    super.key,
+    required this.message,
+    this.onOptionSelected,
+  });
 
   final ChatMessage message;
+  final ValueChanged<String>? onOptionSelected;
 
   @override
   Widget build(BuildContext context) {
@@ -24,7 +31,7 @@ class ChatBubble extends StatelessWidget {
       crossAxisAlignment: alignment,
       children: <Widget>[
         Container(
-          constraints: const BoxConstraints(maxWidth: 320),
+          constraints: const BoxConstraints(maxWidth: 360),
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
           decoration: BoxDecoration(
             color: bubbleColor,
@@ -40,32 +47,68 @@ class ChatBubble extends StatelessWidget {
           child: Column(
             crossAxisAlignment: alignment,
             children: <Widget>[
-              if (!isUser &&
-                  (message.status == ChatMessageStatus.pending ||
-                      message.status == ChatMessageStatus.sending)) ...<Widget>[
-                const Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: <Widget>[
-                    SizedBox(
-                      height: 14,
-                      width: 14,
-                      child: CircularProgressIndicator(strokeWidth: 2),
+              if (!isUser) _AssistantHeader(message: message, textColor: textColor),
+              if (!isUser) const SizedBox(height: 10),
+              if (message.jobLatestActivity != null && message.jobLatestActivity!.isNotEmpty) ...[
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    message.jobLatestActivity!,
+                    style: TextStyle(
+                      color: textColor.withValues(alpha: 0.72),
+                      fontSize: 12,
+                      height: 1.4,
                     ),
-                    SizedBox(width: 10),
-                    Text('Processing...'),
-                  ],
-                ),
-                if (message.text.isNotEmpty) const SizedBox(height: 10),
-              ],
-              if (message.text.isNotEmpty)
-                SelectableText(
-                  message.text,
-                  style: TextStyle(
-                    color: textColor,
-                    height: 1.45,
-                    fontSize: 15,
                   ),
                 ),
+                const SizedBox(height: 10),
+              ],
+              if (message.text.isNotEmpty)
+                RichMessageContent(
+                  text: message.text,
+                  textColor: textColor,
+                  onOptionSelected: isUser ? null : onOptionSelected,
+                )
+              else if (!isUser && message.isPendingLike)
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    'Waiting for Codex output...',
+                    style: TextStyle(
+                      color: textColor.withValues(alpha: 0.78),
+                      fontSize: 14,
+                    ),
+                  ),
+                ),
+              if (!isUser && message.text.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _MessageAction(
+                      icon: Icons.copy_rounded,
+                      label: 'Copy',
+                      onTap: () async {
+                        await Clipboard.setData(ClipboardData(text: message.text));
+                      },
+                    ),
+                    if (message.providerSessionId != null &&
+                        message.providerSessionId!.isNotEmpty) ...[
+                      const SizedBox(width: 8),
+                      Flexible(
+                        child: Text(
+                          'Session ${_shortId(message.providerSessionId!)}',
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: textColor.withValues(alpha: 0.64),
+                            fontSize: 11,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ],
             ],
           ),
         ),
@@ -73,4 +116,157 @@ class ChatBubble extends StatelessWidget {
       ],
     );
   }
+}
+
+class _AssistantHeader extends StatelessWidget {
+  const _AssistantHeader({
+    required this.message,
+    required this.textColor,
+  });
+
+  final ChatMessage message;
+  final Color textColor;
+
+  @override
+  Widget build(BuildContext context) {
+    final phase = message.jobPhase ?? _fallbackPhase(message);
+    final elapsedLabel = _formatElapsed(message.jobElapsedSeconds);
+
+    return Row(
+      children: [
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          decoration: BoxDecoration(
+            color: const Color(0xFF223153),
+            borderRadius: BorderRadius.circular(999),
+          ),
+          child: Text(
+            _statusLabel(message),
+            style: TextStyle(
+              color: _statusColor(message),
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            phase,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: textColor.withValues(alpha: 0.92),
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+        if (elapsedLabel != null)
+          Text(
+            elapsedLabel,
+            style: TextStyle(
+              color: textColor.withValues(alpha: 0.64),
+              fontSize: 11,
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _MessageAction extends StatelessWidget {
+  const _MessageAction({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      borderRadius: BorderRadius.circular(999),
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 15, color: const Color(0xFF9FB3D6)),
+            const SizedBox(width: 4),
+            Text(
+              label,
+              style: const TextStyle(
+                color: Color(0xFF9FB3D6),
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+String _statusLabel(ChatMessage message) {
+  final jobStatus = message.jobStatus ?? '';
+  if (jobStatus == 'running') {
+    return 'RUNNING';
+  }
+  if (message.status == ChatMessageStatus.failed || jobStatus == 'failed') {
+    return 'FAILED';
+  }
+  if (message.isPendingLike || jobStatus == 'pending') {
+    return 'PENDING';
+  }
+  return 'READY';
+}
+
+Color _statusColor(ChatMessage message) {
+  final jobStatus = message.jobStatus ?? '';
+  if (message.status == ChatMessageStatus.failed || jobStatus == 'failed') {
+    return const Color(0xFFFFA8A8);
+  }
+  if (message.isPendingLike || jobStatus == 'pending' || jobStatus == 'running') {
+    return const Color(0xFFB9D8FF);
+  }
+  return const Color(0xFF7CF2D4);
+}
+
+String _fallbackPhase(ChatMessage message) {
+  final jobStatus = message.jobStatus ?? '';
+  if (jobStatus == 'running') {
+    return 'Codex is working';
+  }
+  if (message.status == ChatMessageStatus.failed || jobStatus == 'failed') {
+    return 'Execution failed';
+  }
+  if (message.isPendingLike || jobStatus == 'pending') {
+    return 'Queued';
+  }
+  return 'Completed';
+}
+
+String? _formatElapsed(int? seconds) {
+  if (seconds == null) {
+    return null;
+  }
+  if (seconds < 60) {
+    return '${seconds}s';
+  }
+  final minutes = seconds ~/ 60;
+  final remaining = seconds % 60;
+  return '${minutes}m ${remaining}s';
+}
+
+String _shortId(String value) {
+  if (value.length <= 8) {
+    return value;
+  }
+  return value.substring(0, 8);
 }
