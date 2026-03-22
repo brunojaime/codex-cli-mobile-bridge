@@ -1,0 +1,282 @@
+# Codex CLI Mobile Bridge
+
+`Codex CLI Mobile Bridge` lets you control a local `codex` CLI from a mobile Flutter chat app. The app behaves like a Codex-style client, but execution stays on your own machine through the local CLI, not the OpenAI API.
+
+## What It Does
+
+- Runs Codex prompts on the machine where the backend is installed
+- Returns async job results to a mobile chat UI
+- Supports persistent multi-turn chat sessions
+- Supports multiple workspaces and multiple backend servers
+- Supports remote access patterns such as USB, Tailscale, and other tunnels
+
+## Stack
+
+- Backend: FastAPI
+- Frontend: Flutter
+- Execution: local `codex` CLI via `codex exec` and `codex exec resume`
+- Transport: REST polling, with optional WebSocket job updates
+
+## Architecture
+
+The backend follows a layered design:
+
+- Transport layer: FastAPI routes and WebSocket endpoint
+- Application layer: `MessageService` orchestration
+- Domain layer: chat sessions, messages, jobs, repositories
+- Infrastructure layer: execution providers, persistence, realtime streaming, network helpers
+
+Execution is provider-driven:
+
+- `LocalExecutionProvider` runs Codex locally through background subprocess jobs
+- `LambdaExecutionProvider` is a prepared stub for future remote execution
+
+## Repository Layout
+
+```text
+backend/
+  app/
+    api/
+    application/
+    domain/
+    infrastructure/
+frontend/mobile_app/
+scripts/
+tests/
+docker-compose.yml
+main.py
+```
+
+## Requirements
+
+- Python 3.12+
+- Flutter SDK
+- `uv`
+- A working local `codex` CLI installation authenticated on the backend machine
+
+Optional:
+
+- Docker / Docker Compose
+- Tailscale for private remote access
+- `adb` for Android USB debugging
+
+## Configuration
+
+Copy the template first:
+
+```bash
+cp .env.example .env
+```
+
+Important variables:
+
+- `BACKEND_MODE=local|lambda`
+- `SERVER_NAME=my-machine`
+- `CODEX_COMMAND=codex`
+- `CODEX_USE_EXEC=true`
+- `CODEX_EXEC_ARGS=--skip-git-repo-check --color never`
+- `CODEX_RESUME_ARGS=--skip-git-repo-check`
+- `PROJECTS_ROOT=/absolute/path/to/your/projects`
+- `API_HOST=0.0.0.0`
+- `API_PORT=8000`
+- `API_BASE_URL=http://localhost:8000`
+- `TAILSCALE_SOCKET=/path/to/tailscaled.sock`
+
+Recommended defaults:
+
+- `BACKEND_MODE=local`
+- `CODEX_USE_EXEC=true`
+
+The backend uses `codex exec` for new messages and `codex exec resume` for follow-up messages inside the same chat session.
+
+## Run Locally
+
+Install dependencies:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+uv pip install -e '.[dev]'
+```
+
+Start the backend:
+
+```bash
+python main.py
+```
+
+The backend exposes:
+
+- `GET /health`
+- `GET /workspaces`
+- `GET /sessions`
+- `POST /sessions`
+- `GET /sessions/{session_id}`
+- `POST /message`
+- `POST /sessions/{session_id}/messages`
+- `GET /response/{job_id}`
+- `GET /ws/jobs/{job_id}`
+
+## Backend Flow
+
+1. Create a chat with `POST /sessions`, or let the first message create one.
+2. Send a message.
+3. Receive a `job_id` immediately.
+4. Poll `GET /response/{job_id}` until it is `completed` or `failed`.
+5. Load the full conversation with `GET /sessions/{session_id}`.
+6. Send follow-up turns to `POST /sessions/{session_id}/messages`.
+
+Quick test:
+
+```bash
+python scripts/test_message_flow.py "Summarize this repository"
+```
+
+## Run the Flutter App
+
+Install dependencies:
+
+```bash
+cd frontend/mobile_app
+flutter pub get
+```
+
+Run the app:
+
+```bash
+flutter run --dart-define=API_BASE_URL=http://10.0.2.2:8000
+```
+
+Notes:
+
+- Android emulator typically uses `10.0.2.2` for host access. Replace it with your actual server URL when needed.
+- iOS simulator can typically use `http://localhost:8000`
+- Real devices should use a reachable backend URL, such as a LAN IP, Tailscale URL, or tunnel URL
+
+## Multi-Server Support
+
+The mobile app can store multiple backend servers and switch between them.
+
+Typical setup:
+
+- One backend per computer
+- Each backend gets its own `SERVER_NAME`
+- Each backend can point at a different `PROJECTS_ROOT`
+
+Examples:
+
+- `SERVER_NAME=personal`
+- `SERVER_NAME=workstation`
+
+Add each backend URL in the app from the server picker.
+
+## Workspace-Aware Chats
+
+Each chat session is tied to a workspace directory. When creating a new chat, the app can fetch available projects from `PROJECTS_ROOT` and start the Codex session inside the selected project.
+
+This allows separate chats such as:
+
+- one chat for `project-a`
+- one chat for `project-b`
+- one chat for `mobile-app`
+
+The mobile UI groups chats by project for easier navigation.
+
+## Remote Access Options
+
+### USB Debugging
+
+Useful for local mobile development:
+
+```bash
+adb reverse tcp:8000 tcp:8000
+flutter run --dart-define=API_BASE_URL=http://127.0.0.1:8000
+```
+
+### Tailscale
+
+Recommended when only your own devices should access the backend over the internet.
+
+High-level flow:
+
+1. Install Tailscale on the backend machine and phone.
+2. Sign both devices into the same tailnet.
+3. Start the backend locally.
+4. Expose the backend through Tailscale Serve if you are using userspace Tailscale.
+5. Add the resulting Tailscale URL in the app.
+
+Example:
+
+```bash
+tailscale serve --http=80 --bg http://127.0.0.1:8000
+```
+
+Then use:
+
+```text
+http://your-machine.your-tailnet.ts.net
+```
+
+### Other Tunnels
+
+The app can also connect to:
+
+- LAN URLs such as `http://192.168.1.10:8000`
+- ngrok URLs
+- Cloudflare Tunnel URLs
+
+## Docker
+
+Run the backend with Docker:
+
+```bash
+docker compose up --build
+```
+
+Host execution is still the preferred setup when the backend needs direct access to the same `codex` CLI installation and credentials as your terminal session.
+
+## Switch to Lambda Later
+
+Set:
+
+```env
+BACKEND_MODE=lambda
+USE_LAMBDA=true
+LAMBDA_ENDPOINT=https://your-lambda-adapter.example.com
+```
+
+The repository already includes a replaceable execution provider abstraction so the backend can move from local CLI execution to a remote worker without changing the app or API contracts.
+
+## Testing
+
+Backend tests:
+
+```bash
+pytest
+```
+
+Flutter checks:
+
+```bash
+cd frontend/mobile_app
+flutter test
+flutter analyze
+```
+
+## Development Notes
+
+- The repository is designed for replaceable execution providers
+- Job state is currently stored in memory
+- Tailscale helpers are included, but network setup still depends on your machine configuration
+- Public deployment should add authentication before exposing the backend to the internet
+
+## Security
+
+- This project does not use the OpenAI API for execution
+- The backend executes commands on the host machine through the local `codex` CLI
+- Do not expose the backend publicly without adding authentication
+- Do not commit your `.env` file or any Codex credentials
+
+## License
+
+MIT

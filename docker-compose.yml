@@ -1,0 +1,26 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    env_file:
+      - .env
+    environment:
+      BACKEND_MODE: ${BACKEND_MODE:-local}
+      USE_LAMBDA: ${USE_LAMBDA:-false}
+      CODEX_COMMAND: ${CODEX_COMMAND:-codex}
+      CODEX_WORKDIR: ${CODEX_WORKDIR:-/app}
+      API_HOST: 0.0.0.0
+      API_PORT: 8000
+      API_BASE_URL: ${API_BASE_URL:-http://localhost:8000}
+      LAMBDA_ENDPOINT: ${LAMBDA_ENDPOINT:-http://host.docker.internal:9000}
+      EXECUTION_TIMEOUT_SECONDS: ${EXECUTION_TIMEOUT_SECONDS:-900}
+      POLL_INTERVAL_SECONDS: ${POLL_INTERVAL_SECONDS:-2}
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app
+      # Optional: mount your host Codex binary or wrapper into the container.
+      # - /absolute/path/to/codex:/usr/local/bin/codex:ro
+      # Optional: mount Codex home/config if your CLI depends on local credentials.
+      # - ${HOME}/.codex:/root/.codex:ro

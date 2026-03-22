@@ -1,0 +1,119 @@
+import 'dart:convert';
+
+import 'package:http/http.dart' as http;
+
+import '../models/job_status_response.dart';
+import '../models/session_detail.dart';
+import '../models/chat_session_summary.dart';
+import '../models/server_health.dart';
+import '../models/workspace.dart';
+
+class ApiClient {
+  ApiClient({
+    required this.baseUrl,
+    http.Client? client,
+  }) : _client = client ?? http.Client();
+
+  final String baseUrl;
+  final http.Client _client;
+
+  Future<List<ChatSessionSummary>> listSessions() async {
+    final response = await _client.get(Uri.parse('$baseUrl/sessions'));
+
+    if (response.statusCode != 200) {
+      throw Exception('Failed to list sessions: ${response.body}');
+    }
+
+    final payload = jsonDecode(response.body) as List<dynamic>;
+    return payload
+        .map((item) => ChatSessionSummary.fromJson(item as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<ServerHealth> getHealth() async {
+    final response = await _client.get(Uri.parse('$baseUrl/health'));
+
+    if (response.statusCode != 200) {
+      throw Exception('Failed to fetch health: ${response.body}');
+    }
+
+    return ServerHealth.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+  }
+
+  Future<List<Workspace>> listWorkspaces() async {
+    final response = await _client.get(Uri.parse('$baseUrl/workspaces'));
+
+    if (response.statusCode != 200) {
+      throw Exception('Failed to list workspaces: ${response.body}');
+    }
+
+    final payload = jsonDecode(response.body) as List<dynamic>;
+    return payload
+        .map((item) => Workspace.fromJson(item as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<SessionDetail> createSession({
+    String? title,
+    String? workspacePath,
+  }) async {
+    final response = await _client.post(
+      Uri.parse('$baseUrl/sessions'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        'title': title,
+        if (workspacePath != null) 'workspace_path': workspacePath,
+      }),
+    );
+
+    if (response.statusCode != 201) {
+      throw Exception('Failed to create session: ${response.body}');
+    }
+
+    return SessionDetail.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+  }
+
+  Future<SessionDetail> getSession(String sessionId) async {
+    final response = await _client.get(Uri.parse('$baseUrl/sessions/$sessionId'));
+
+    if (response.statusCode != 200) {
+      throw Exception('Failed to fetch session: ${response.body}');
+    }
+
+    return SessionDetail.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+  }
+
+  Future<JobStatusResponse> sendMessage(
+    String message, {
+    String? sessionId,
+    String? workspacePath,
+  }) async {
+    final response = await _client.post(
+      Uri.parse('$baseUrl/message'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        'message': message,
+        if (sessionId != null) 'session_id': sessionId,
+        if (workspacePath != null) 'workspace_path': workspacePath,
+      }),
+    );
+
+    if (response.statusCode != 202) {
+      throw Exception('Failed to create job: ${response.body}');
+    }
+
+    final payload = jsonDecode(response.body) as Map<String, dynamic>;
+    return JobStatusResponse.fromJson(payload);
+  }
+
+  Future<JobStatusResponse> getJob(String jobId) async {
+    final response = await _client.get(Uri.parse('$baseUrl/response/$jobId'));
+
+    if (response.statusCode != 200) {
+      throw Exception('Failed to fetch job: ${response.body}');
+    }
+
+    final payload = jsonDecode(response.body) as Map<String, dynamic>;
+    return JobStatusResponse.fromJson(payload);
+  }
+}

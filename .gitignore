@@ -1,0 +1,23 @@
+.env
+.venv/
+.pytest_cache/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+*.iml
+.DS_Store
+
+# Flutter
+frontend/mobile_app/.dart_tool/
+frontend/mobile_app/.flutter-plugins
+frontend/mobile_app/.flutter-plugins-dependencies
+frontend/mobile_app/.packages
+frontend/mobile_app/build/
+frontend/mobile_app/android/local.properties
+frontend/mobile_app/.idea/
+
+# Local IDE files
+.idea/
+.vscode/
