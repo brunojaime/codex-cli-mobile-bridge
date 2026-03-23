@@ -29,11 +29,16 @@ class Settings(BaseSettings):
     codex_resume_args: str = "--skip-git-repo-check"
     codex_workdir: str = str(Path.cwd())
     projects_root: str = str(Path.cwd().parent)
+    chat_store_backend: Literal["sqlite", "memory"] = "sqlite"
+    chat_store_path: str = str(Path.cwd() / ".data" / "chat_store.sqlite3")
     tailscale_socket: str | None = None
-    execution_timeout_seconds: int = 900
+    execution_timeout_seconds: int = 0
     lambda_endpoint: str = "http://localhost:9000"
     poll_interval_seconds: int = 2
     audio_max_upload_bytes: int = 25_000_000
+    document_max_upload_bytes: int = 25_000_000
+    document_text_char_limit: int = 20_000
+    image_max_upload_bytes: int = 25_000_000
     audio_transcription_backend: Literal[
         "auto",
         "disabled",

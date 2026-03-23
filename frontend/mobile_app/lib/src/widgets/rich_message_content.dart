@@ -7,11 +7,13 @@ class RichMessageContent extends StatelessWidget {
     required this.text,
     required this.textColor,
     this.onOptionSelected,
+    this.onLinkTap,
   });
 
   final String text;
   final Color textColor;
   final ValueChanged<String>? onOptionSelected;
+  final Future<void> Function(String target)? onLinkTap;
 
   @override
   Widget build(BuildContext context) {
@@ -33,6 +35,7 @@ class RichMessageContent extends StatelessWidget {
           _inlineSpans(
             block.text,
             textColor: textColor,
+            onLinkTap: onLinkTap,
           ),
           style: TextStyle(
             color: textColor,
@@ -57,7 +60,8 @@ class RichMessageContent extends StatelessWidget {
             children: [
               for (var index = 0; index < block.blocks.length; index++) ...[
                 _buildBlock(context, block.blocks[index]),
-                if (index != block.blocks.length - 1) const SizedBox(height: 10),
+                if (index != block.blocks.length - 1)
+                  const SizedBox(height: 10),
               ],
             ],
           ),
@@ -85,7 +89,11 @@ class RichMessageContent extends StatelessWidget {
                       const SizedBox(width: 10),
                       Expanded(
                         child: SelectableText.rich(
-                          _inlineSpans(item, textColor: textColor),
+                          _inlineSpans(
+                            item,
+                            textColor: textColor,
+                            onLinkTap: onLinkTap,
+                          ),
                           style: TextStyle(
                             color: textColor,
                             height: 1.5,
@@ -152,7 +160,8 @@ class _CodeCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final title = (language?.trim().isNotEmpty ?? false) ? language!.trim() : 'code';
+    final title =
+        (language?.trim().isNotEmpty ?? false) ? language!.trim() : 'code';
     return Container(
       width: double.infinity,
       decoration: BoxDecoration(
@@ -168,7 +177,8 @@ class _CodeCard extends StatelessWidget {
             child: Row(
               children: [
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                   decoration: BoxDecoration(
                     color: const Color(0xFF1B2742),
                     borderRadius: BorderRadius.circular(999),
@@ -461,7 +471,8 @@ List<_MessageBlock> _parseBlocks(String rawText) {
       final language = trimmed.substring(3).trim();
       index += 1;
       final codeLines = <String>[];
-      while (index < lines.length && !lines[index].trimLeft().startsWith('```')) {
+      while (
+          index < lines.length && !lines[index].trimLeft().startsWith('```')) {
         codeLines.add(lines[index]);
         index += 1;
       }
@@ -503,17 +514,20 @@ List<_MessageBlock> _parseTextChunk(String chunk) {
       continue;
     }
 
-    final headingMatch = RegExp(r'^#{1,3}\s+(.+)$').firstMatch(lines.first.trim());
+    final headingMatch =
+        RegExp(r'^#{1,3}\s+(.+)$').firstMatch(lines.first.trim());
     if (lines.length == 1 && headingMatch != null) {
       blocks.add(_HeadingBlock(headingMatch.group(1)!.trim()));
       continue;
     }
 
-    final sectionMatch = RegExp(r'^([A-Z][A-Za-z0-9 /-]{2,}):$').firstMatch(lines.first.trim());
+    final sectionMatch =
+        RegExp(r'^([A-Z][A-Za-z0-9 /-]{2,}):$').firstMatch(lines.first.trim());
     if (sectionMatch != null && lines.length > 1) {
       final body = lines.sublist(1).join('\n');
       final sectionBlocks = _parseTextChunk(body);
-      final validationBlock = _maybeValidationBlock(lines.first.trim(), lines.sublist(1));
+      final validationBlock =
+          _maybeValidationBlock(lines.first.trim(), lines.sublist(1));
       if (validationBlock != null) {
         blocks.add(validationBlock);
       } else {
@@ -607,7 +621,9 @@ _ValidationBlock? _maybeValidationBlock(String titleLine, List<String> lines) {
 
 Color _statusColorForResult(String value) {
   final normalized = value.toLowerCase();
-  if (normalized.contains('pass') || normalized.contains('ok') || normalized.contains('success')) {
+  if (normalized.contains('pass') ||
+      normalized.contains('ok') ||
+      normalized.contains('success')) {
     return const Color(0xFF7CF2D4);
   }
   if (normalized.contains('fail') || normalized.contains('error')) {
@@ -619,6 +635,7 @@ Color _statusColorForResult(String value) {
 TextSpan _inlineSpans(
   String text, {
   required Color textColor,
+  Future<void> Function(String target)? onLinkTap,
 }) {
   final tokens = <_InlineToken>[];
   final pattern = RegExp(r'`([^`]+)`|\[([^\]]+)\]\(([^)]+)\)');
@@ -684,10 +701,17 @@ TextSpan _inlineSpans(
                 child: InkWell(
                   borderRadius: BorderRadius.circular(999),
                   onTap: () async {
-                    await Clipboard.setData(ClipboardData(text: token.reference.path));
+                    if (onLinkTap != null) {
+                      await onLinkTap(token.reference.path);
+                      return;
+                    }
+                    await Clipboard.setData(
+                      ClipboardData(text: token.reference.path),
+                    );
                   },
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                     decoration: BoxDecoration(
                       color: const Color(0xFF203150),
                       borderRadius: BorderRadius.circular(999),

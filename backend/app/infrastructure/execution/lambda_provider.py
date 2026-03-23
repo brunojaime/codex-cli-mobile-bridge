@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import threading
 from dataclasses import dataclass
+from pathlib import Path
 from uuid import uuid4
 
 import httpx
@@ -22,9 +23,18 @@ class _LambdaState:
 
 
 class LambdaExecutionProvider(ExecutionProvider):
-    def __init__(self, *, endpoint: str, timeout_seconds: int = 30) -> None:
+    def __init__(
+        self,
+        *,
+        endpoint: str,
+        timeout_seconds: float | None = 30,
+    ) -> None:
         self._endpoint = endpoint.rstrip("/")
-        self._timeout_seconds = timeout_seconds
+        self._timeout_seconds = (
+            None
+            if timeout_seconds is None or timeout_seconds <= 0
+            else timeout_seconds
+        )
         self._states: dict[str, _LambdaState] = {}
         self._lock = threading.RLock()
 
@@ -32,6 +42,8 @@ class LambdaExecutionProvider(ExecutionProvider):
         self,
         message: str,
         *,
+        image_paths: list[str] | None = None,
+        cleanup_paths: list[str] | None = None,
         provider_session_id: str | None = None,
         workdir: str | None = None,
     ) -> str:
@@ -43,14 +55,28 @@ class LambdaExecutionProvider(ExecutionProvider):
         except RuntimeError:
             worker = threading.Thread(
                 target=lambda: asyncio.run(
-                    self._dispatch(job_id, message, provider_session_id, workdir),
+                    self._dispatch(
+                        job_id,
+                        message,
+                        image_paths,
+                        cleanup_paths,
+                        provider_session_id,
+                        workdir,
+                    ),
                 ),
                 daemon=True,
             )
             worker.start()
         else:
             loop.create_task(
-                self._dispatch(job_id, message, provider_session_id, workdir),
+                self._dispatch(
+                    job_id,
+                    message,
+                    image_paths,
+                    cleanup_paths,
+                    provider_session_id,
+                    workdir,
+                ),
             )
 
         return job_id
@@ -66,6 +92,9 @@ class LambdaExecutionProvider(ExecutionProvider):
     def get_error(self, job_id: str) -> str | None:
         state = self._get_state(job_id)
         return state.error if state else "Unknown Lambda job id."
+
+    def has_job(self, job_id: str) -> bool:
+        return self._get_state(job_id) is not None
 
     def get_provider_session_id(self, job_id: str) -> str | None:
         state = self._get_state(job_id)
@@ -83,6 +112,8 @@ class LambdaExecutionProvider(ExecutionProvider):
         self,
         job_id: str,
         message: str,
+        image_paths: list[str] | None = None,
+        cleanup_paths: list[str] | None = None,
         provider_session_id: str | None = None,
         workdir: str | None = None,
     ) -> None:
@@ -99,6 +130,7 @@ class LambdaExecutionProvider(ExecutionProvider):
                     f"{self._endpoint}/message",
                     json={
                         "message": message,
+                        "image_paths": image_paths or [],
                         "client_job_id": job_id,
                         "provider_session_id": provider_session_id,
                         "workdir": workdir,
@@ -165,6 +197,18 @@ class LambdaExecutionProvider(ExecutionProvider):
                 phase="Failed",
                 latest_activity="Could not reach the configured Lambda endpoint.",
             )
+        finally:
+            self._cleanup_paths(cleanup_paths)
+
+    def _cleanup_paths(self, paths: list[str] | None) -> None:
+        if not paths:
+            return
+
+        for path in paths:
+            try:
+                Path(path).unlink(missing_ok=True)
+            except OSError:
+                pass
 
     def _set_state(
         self,

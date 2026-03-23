@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sys
+import time
 import uuid
 from pathlib import Path
 
@@ -26,6 +27,7 @@ def main() -> int:
 
     output_path: Path | None = None
     prompt: str | None = None
+    attached_images: list[Path] = []
 
     while index < len(args):
         current = args[index]
@@ -45,6 +47,12 @@ def main() -> int:
             output_path = Path(args[index + 1])
             index += 2
             continue
+        if current == "-i":
+            index += 1
+            while index < len(args) and not args[index].startswith("-"):
+                attached_images.append(Path(args[index]))
+                index += 1
+            continue
         if mode == "resume" and provider_session_id is None:
             provider_session_id = current
             index += 1
@@ -57,12 +65,21 @@ def main() -> int:
         print("missing prompt", file=sys.stderr)
         return 1
 
+    if attached_images:
+        time.sleep(0.1)
+        missing_images = [str(path) for path in attached_images if not path.exists()]
+        if missing_images:
+            print(f"missing image file(s): {', '.join(missing_images)}", file=sys.stderr)
+            return 1
+
     if prompt.startswith("fail:"):
         print(prompt.split(":", maxsplit=1)[1], file=sys.stderr)
         return 1
 
     thread_id = provider_session_id or f"thread-{uuid.uuid4()}"
     response = f"{mode}:{thread_id}:{prompt}"
+    if attached_images:
+        response = f"{response} [images: {', '.join(path.name for path in attached_images)}]"
 
     print(json.dumps({"type": "thread.started", "thread_id": thread_id}))
     print(json.dumps({"type": "turn.started"}))

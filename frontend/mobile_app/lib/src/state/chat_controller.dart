@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:cross_file/cross_file.dart';
 import 'package:flutter/foundation.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
@@ -19,26 +20,69 @@ class ChatController extends ChangeNotifier {
   final List<Workspace> _workspaces = <Workspace>[];
   final Map<String, String> _pendingJobs = <String, String>{};
   final Map<String, int> _pollFailures = <String, int>{};
-  final Map<String, JobStatusResponse> _jobSnapshots = <String, JobStatusResponse>{};
-  final Map<String, WebSocketChannel> _jobChannels = <String, WebSocketChannel>{};
+  final Map<String, JobStatusResponse> _jobSnapshots =
+      <String, JobStatusResponse>{};
+  final Map<String, WebSocketChannel> _jobChannels =
+      <String, WebSocketChannel>{};
+  final Map<String, int> _outgoingAudioUploads = <String, int>{};
 
   SessionDetail? _currentSession;
   String? _selectedSessionId;
   String? _errorText;
   bool _isLoading = false;
-  bool _isSendingAudio = false;
+  int _sendingAudioCount = 0;
+  int _sendingDocumentCount = 0;
+  int _sendingImageCount = 0;
   bool _pollInFlight = false;
   Timer? _pollTimer;
 
-  List<ChatSessionSummary> get sessions => List<ChatSessionSummary>.unmodifiable(_sessions);
+  List<ChatSessionSummary> get sessions =>
+      List<ChatSessionSummary>.unmodifiable(_sessions);
   List<Workspace> get workspaces => List<Workspace>.unmodifiable(_workspaces);
   SessionDetail? get currentSession => _currentSession;
   String? get selectedSessionId => _selectedSessionId;
   String? get errorText => _errorText;
   bool get isLoading => _isLoading;
-  bool get isSendingAudio => _isSendingAudio;
+  bool get isSendingAudio => _sendingAudioCount > 0;
+  bool get isSendingDocument => _sendingDocumentCount > 0;
+  bool get isSendingImage => _sendingImageCount > 0;
   bool get hasSessions => _sessions.isNotEmpty;
-  List<ChatMessage> get messages => _currentSession?.messages ?? const <ChatMessage>[];
+  List<ChatMessage> get messages =>
+      _currentSession?.messages ?? const <ChatMessage>[];
+
+  int activeJobCountForSession(String sessionId) {
+    return _pendingJobs.values
+        .where((trackedSessionId) => trackedSessionId == sessionId)
+        .length;
+  }
+
+  SessionActiveJobSummary? activeJobSummaryForSession(String sessionId) {
+    final jobIds = _pendingJobs.entries
+        .where((entry) => entry.value == sessionId)
+        .map((entry) => entry.key)
+        .toList(growable: false);
+
+    if (jobIds.isEmpty) {
+      return null;
+    }
+
+    var maxElapsedSeconds = 0;
+    for (final jobId in jobIds) {
+      final elapsedSeconds = _jobSnapshots[jobId]?.elapsedSeconds ?? 0;
+      if (elapsedSeconds > maxElapsedSeconds) {
+        maxElapsedSeconds = elapsedSeconds;
+      }
+    }
+
+    return SessionActiveJobSummary(
+      activeJobCount: jobIds.length,
+      maxElapsedSeconds: maxElapsedSeconds,
+    );
+  }
+
+  int outgoingAudioUploadCountForSession(String sessionId) {
+    return _outgoingAudioUploads[sessionId] ?? 0;
+  }
 
   Future<void> initialize() async {
     try {
@@ -98,7 +142,8 @@ class ChatController extends ChangeNotifier {
   Future<void> createNewSession({String? workspacePath}) async {
     _setLoading(true);
     try {
-      final session = await _apiClient.createSession(workspacePath: workspacePath);
+      final session =
+          await _apiClient.createSession(workspacePath: workspacePath);
       _errorText = null;
       await refreshSessions();
       _selectedSessionId = session.id;
@@ -131,59 +176,180 @@ class ChatController extends ChangeNotifier {
     }
   }
 
-  Future<void> sendMessage(String rawText) async {
+  Future<bool> sendMessage(String rawText) async {
     final text = rawText.trim();
     if (text.isEmpty) {
-      return;
+      return false;
     }
+    final originSessionId = _selectedSessionId;
+    final originWorkspacePath = _currentSession?.workspacePath;
 
     try {
       _errorText = null;
       final accepted = await _apiClient.sendMessage(
         text,
-        sessionId: _selectedSessionId,
-        workspacePath: _currentSession?.workspacePath,
+        sessionId: originSessionId,
+        workspacePath: originWorkspacePath,
       );
-      _selectedSessionId = accepted.sessionId;
-      _pendingJobs[accepted.jobId] = accepted.sessionId;
-      _jobSnapshots[accepted.jobId] = accepted;
-      await refreshSessions();
-      await _reloadCurrentSession();
-      _ensureJobStream(accepted.jobId);
-      _ensurePolling();
+      await _registerAcceptedJob(
+        accepted,
+        originSessionId: originSessionId,
+      );
+      return true;
     } catch (error) {
       _errorText = 'Failed to send message.\n$error';
       notifyListeners();
+      return false;
     }
   }
 
-  Future<void> sendAudioMessage(
-    String audioPath, {
+  Future<bool> sendAudioMessage(
+    XFile audioFile, {
     String? language,
   }) async {
-    _isSendingAudio = true;
+    final originSessionId = _selectedSessionId;
+    final originWorkspacePath = _currentSession?.workspacePath;
+    _sendingAudioCount += 1;
+    if (originSessionId != null) {
+      _outgoingAudioUploads[originSessionId] =
+          (_outgoingAudioUploads[originSessionId] ?? 0) + 1;
+    }
     notifyListeners();
 
     try {
       _errorText = null;
       final accepted = await _apiClient.sendAudioMessage(
-        audioPath,
-        sessionId: _selectedSessionId,
-        workspacePath: _currentSession?.workspacePath,
+        audioFile,
+        sessionId: originSessionId,
+        workspacePath: originWorkspacePath,
         language: language,
       );
-      _selectedSessionId = accepted.sessionId;
-      _pendingJobs[accepted.jobId] = accepted.sessionId;
-      _jobSnapshots[accepted.jobId] = accepted;
-      await refreshSessions();
-      await _reloadCurrentSession();
-      _ensureJobStream(accepted.jobId);
-      _ensurePolling();
+      await _registerAcceptedJob(
+        accepted,
+        originSessionId: originSessionId,
+      );
+      return true;
     } catch (error) {
       _errorText = 'Failed to send audio message.\n$error';
       notifyListeners();
+      return false;
     } finally {
-      _isSendingAudio = false;
+      _sendingAudioCount -= 1;
+      if (originSessionId != null) {
+        final remainingUploads =
+            (_outgoingAudioUploads[originSessionId] ?? 1) - 1;
+        if (remainingUploads > 0) {
+          _outgoingAudioUploads[originSessionId] = remainingUploads;
+        } else {
+          _outgoingAudioUploads.remove(originSessionId);
+        }
+      }
+      notifyListeners();
+    }
+  }
+
+  Future<bool> sendImageMessage(
+    XFile imageFile, {
+    String? message,
+  }) async {
+    final originSessionId = _selectedSessionId;
+    final originWorkspacePath = _currentSession?.workspacePath;
+    _sendingImageCount += 1;
+    notifyListeners();
+
+    try {
+      _errorText = null;
+      final accepted = await _apiClient.sendImageMessage(
+        imageFile,
+        message: message,
+        sessionId: originSessionId,
+        workspacePath: originWorkspacePath,
+      );
+      await _registerAcceptedJob(
+        accepted,
+        originSessionId: originSessionId,
+      );
+      return true;
+    } catch (error) {
+      _errorText = 'Failed to send image message.\n$error';
+      notifyListeners();
+      return false;
+    } finally {
+      _sendingImageCount -= 1;
+      notifyListeners();
+    }
+  }
+
+  Future<bool> sendDocumentMessage(
+    XFile documentFile, {
+    String? message,
+    String? language,
+  }) async {
+    final originSessionId = _selectedSessionId;
+    final originWorkspacePath = _currentSession?.workspacePath;
+    _sendingDocumentCount += 1;
+    notifyListeners();
+
+    try {
+      _errorText = null;
+      final accepted = await _apiClient.sendDocumentMessage(
+        documentFile,
+        message: message,
+        sessionId: originSessionId,
+        workspacePath: originWorkspacePath,
+        language: language,
+      );
+      await _registerAcceptedJob(
+        accepted,
+        originSessionId: originSessionId,
+      );
+      return true;
+    } catch (error) {
+      _errorText = 'Failed to send document.\n$error';
+      notifyListeners();
+      return false;
+    } finally {
+      _sendingDocumentCount -= 1;
+      notifyListeners();
+    }
+  }
+
+  Future<bool> sendAttachmentsMessage(
+    List<XFile> attachments, {
+    String? message,
+    String? language,
+  }) async {
+    if (attachments.isEmpty) {
+      return false;
+    }
+
+    final originSessionId = _selectedSessionId;
+    final originWorkspacePath = _currentSession?.workspacePath;
+    _sendingDocumentCount += 1;
+    _sendingImageCount += 1;
+    notifyListeners();
+
+    try {
+      _errorText = null;
+      final accepted = await _apiClient.sendAttachmentsMessage(
+        attachments,
+        message: message,
+        sessionId: originSessionId,
+        workspacePath: originWorkspacePath,
+        language: language,
+      );
+      await _registerAcceptedJob(
+        accepted,
+        originSessionId: originSessionId,
+      );
+      return true;
+    } catch (error) {
+      _errorText = 'Failed to send attachments.\n$error';
+      notifyListeners();
+      return false;
+    } finally {
+      _sendingDocumentCount -= 1;
+      _sendingImageCount -= 1;
       notifyListeners();
     }
   }
@@ -199,7 +365,8 @@ class ChatController extends ChangeNotifier {
   }
 
   void _ensurePolling() {
-    _pollTimer ??= Timer.periodic(const Duration(seconds: 2), (_) => _pollJobs());
+    _pollTimer ??=
+        Timer.periodic(const Duration(seconds: 2), (_) => _pollJobs());
     _pollJobs();
   }
 
@@ -235,7 +402,8 @@ class ChatController extends ChangeNotifier {
           final failures = (_pollFailures[entry.key] ?? 0) + 1;
           _pollFailures[entry.key] = failures;
           final errorText = '$error';
-          if (errorText.contains('404') || errorText.contains('Job not found')) {
+          if (errorText.contains('404') ||
+              errorText.contains('Job not found')) {
             completedJobs.add(entry.key);
             continue;
           }
@@ -278,6 +446,27 @@ class ChatController extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> _registerAcceptedJob(
+    JobStatusResponse accepted, {
+    required String? originSessionId,
+  }) async {
+    final shouldKeepOriginSessionSelected =
+        _selectedSessionId == null || _selectedSessionId == originSessionId;
+
+    _pendingJobs[accepted.jobId] = accepted.sessionId;
+    _jobSnapshots[accepted.jobId] = accepted;
+    _ensureJobStream(accepted.jobId);
+    _ensurePolling();
+
+    await refreshSessions();
+
+    if (shouldKeepOriginSessionSelected ||
+        _selectedSessionId == accepted.sessionId) {
+      _selectedSessionId = accepted.sessionId;
+      await _reloadCurrentSession();
+    }
+  }
+
   void _reconcilePendingJobsForSession(SessionDetail? session) {
     if (session == null) {
       return;
@@ -287,13 +476,17 @@ class ChatController extends ChangeNotifier {
         .where((message) {
           final jobStatus = message.jobStatus ?? '';
           return message.jobId != null &&
-              (message.isPendingLike || jobStatus == 'pending' || jobStatus == 'running');
+              (message.isPendingLike ||
+                  jobStatus == 'pending' ||
+                  jobStatus == 'running');
         })
         .map((message) => message.jobId!)
         .toSet();
 
     final staleJobIds = _pendingJobs.entries
-        .where((entry) => entry.value == session.id && !activePendingJobIds.contains(entry.key))
+        .where((entry) =>
+            entry.value == session.id &&
+            !activePendingJobIds.contains(entry.key))
         .map((entry) => entry.key)
         .toList(growable: false);
 
@@ -312,7 +505,9 @@ class ChatController extends ChangeNotifier {
         continue;
       }
       final jobStatus = message.jobStatus ?? '';
-      final isPending = message.isPendingLike || jobStatus == 'pending' || jobStatus == 'running';
+      final isPending = message.isPendingLike ||
+          jobStatus == 'pending' ||
+          jobStatus == 'running';
       if (!isPending) {
         continue;
       }
@@ -403,7 +598,8 @@ class ChatController extends ChangeNotifier {
     notifyListeners();
   }
 
-  ChatMessage _applySnapshotToMessage(ChatMessage message, JobStatusResponse snapshot) {
+  ChatMessage _applySnapshotToMessage(
+      ChatMessage message, JobStatusResponse snapshot) {
     if (message.jobId != snapshot.jobId) {
       return message;
     }
@@ -426,18 +622,16 @@ class ChatController extends ChangeNotifier {
   }
 
   SessionDetail _overlaySessionWithJobSnapshots(SessionDetail session) {
-    final messages = session.messages
-        .map((message) {
-          if (message.jobId == null) {
-            return message;
-          }
-          final snapshot = _jobSnapshots[message.jobId!];
-          if (snapshot == null) {
-            return message;
-          }
-          return _applySnapshotToMessage(message, snapshot);
-        })
-        .toList(growable: false);
+    final messages = session.messages.map((message) {
+      if (message.jobId == null) {
+        return message;
+      }
+      final snapshot = _jobSnapshots[message.jobId!];
+      if (snapshot == null) {
+        return message;
+      }
+      return _applySnapshotToMessage(message, snapshot);
+    }).toList(growable: false);
 
     return session.copyWith(messages: messages);
   }
@@ -463,4 +657,14 @@ ChatMessageStatus _statusFromJob(String status) {
     default:
       return ChatMessageStatus.pending;
   }
+}
+
+class SessionActiveJobSummary {
+  const SessionActiveJobSummary({
+    required this.activeJobCount,
+    required this.maxElapsedSeconds,
+  });
+
+  final int activeJobCount;
+  final int maxElapsedSeconds;
 }

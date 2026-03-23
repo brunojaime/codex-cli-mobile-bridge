@@ -42,7 +42,8 @@ void main() {
     expect(find.text('Show changed files'), findsOneWidget);
   });
 
-  testWidgets('renders validation blocks and file reference chips', (tester) async {
+  testWidgets('renders validation blocks and file reference chips',
+      (tester) async {
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
@@ -69,5 +70,38 @@ void main() {
     expect(find.text('backend tests'), findsOneWidget);
     expect(find.text('8 passed'), findsOneWidget);
     expect(find.text('flutter analyze'), findsOneWidget);
+  });
+
+  testWidgets('dispatches inline link taps through the chat bubble callback', (
+    tester,
+  ) async {
+    var tappedTarget = '';
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ChatBubble(
+            message: ChatMessage(
+              id: 'assistant-3',
+              text: 'Open [README.md](/tmp/README.md)',
+              isUser: false,
+              status: ChatMessageStatus.completed,
+              createdAt: DateTime.utc(2026, 1, 1),
+              updatedAt: DateTime.utc(2026, 1, 1),
+              jobStatus: 'completed',
+              jobPhase: 'Completed',
+            ),
+            onLinkTap: (target) async {
+              tappedTarget = target;
+            },
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('README.md'));
+    await tester.pump();
+
+    expect(tappedTarget, '/tmp/README.md');
   });
 }

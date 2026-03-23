@@ -10,6 +10,8 @@ services:
       USE_LAMBDA: ${USE_LAMBDA:-false}
       CODEX_COMMAND: ${CODEX_COMMAND:-codex}
       CODEX_WORKDIR: ${CODEX_WORKDIR:-/app}
+      CHAT_STORE_BACKEND: ${CHAT_STORE_BACKEND:-sqlite}
+      CHAT_STORE_PATH: ${CHAT_STORE_PATH:-/data/chat_store.sqlite3}
       API_HOST: 0.0.0.0
       API_PORT: 8000
       API_BASE_URL: ${API_BASE_URL:-http://localhost:8000}
@@ -20,7 +22,11 @@ services:
       - "8000:8000"
     volumes:
       - .:/app
+      - backend-data:/data
       # Optional: mount your host Codex binary or wrapper into the container.
       # - /absolute/path/to/codex:/usr/local/bin/codex:ro
       # Optional: mount Codex home/config if your CLI depends on local credentials.
       # - ${HOME}/.codex:/root/.codex:ro
+
+volumes:
+  backend-data:

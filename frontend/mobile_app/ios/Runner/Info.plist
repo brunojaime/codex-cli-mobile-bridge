@@ -28,6 +28,8 @@
 	<true/>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Codex Mobile Frontend needs microphone access to record voice prompts.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Codex Mobile Frontend needs photo library access to attach images to Codex prompts.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

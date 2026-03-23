@@ -1,6 +1,6 @@
-import 'dart:io';
 import 'dart:convert';
 
+import 'package:cross_file/cross_file.dart';
 import 'package:http/http.dart' as http;
 
 import '../models/job_status_response.dart';
@@ -36,7 +36,8 @@ class ApiClient {
 
     final payload = jsonDecode(response.body) as List<dynamic>;
     return payload
-        .map((item) => ChatSessionSummary.fromJson(item as Map<String, dynamic>))
+        .map(
+            (item) => ChatSessionSummary.fromJson(item as Map<String, dynamic>))
         .toList();
   }
 
@@ -47,7 +48,8 @@ class ApiClient {
       throw Exception('Failed to fetch health: ${response.body}');
     }
 
-    return ServerHealth.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+    return ServerHealth.fromJson(
+        jsonDecode(response.body) as Map<String, dynamic>);
   }
 
   Future<List<Workspace>> listWorkspaces() async {
@@ -80,17 +82,20 @@ class ApiClient {
       throw Exception('Failed to create session: ${response.body}');
     }
 
-    return SessionDetail.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+    return SessionDetail.fromJson(
+        jsonDecode(response.body) as Map<String, dynamic>);
   }
 
   Future<SessionDetail> getSession(String sessionId) async {
-    final response = await _client.get(Uri.parse('$baseUrl/sessions/$sessionId'));
+    final response =
+        await _client.get(Uri.parse('$baseUrl/sessions/$sessionId'));
 
     if (response.statusCode != 200) {
       throw Exception('Failed to fetch session: ${response.body}');
     }
 
-    return SessionDetail.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+    return SessionDetail.fromJson(
+        jsonDecode(response.body) as Map<String, dynamic>);
   }
 
   Future<JobStatusResponse> sendMessage(
@@ -117,7 +122,7 @@ class ApiClient {
   }
 
   Future<JobStatusResponse> sendAudioMessage(
-    String audioPath, {
+    XFile audioFile, {
     String? sessionId,
     String? workspacePath,
     String? language,
@@ -137,17 +142,129 @@ class ApiClient {
     }
 
     request.files.add(
-      await http.MultipartFile.fromPath(
-        'audio',
-        audioPath,
-        filename: audioPath.split(Platform.pathSeparator).last,
-      ),
+      await _multipartFileFromXFile('audio', audioFile),
     );
 
     final streamedResponse = await _client.send(request);
     final response = await http.Response.fromStream(streamedResponse);
     if (response.statusCode != 202) {
       throw Exception('Failed to upload audio message: ${response.body}');
+    }
+
+    final payload = jsonDecode(response.body) as Map<String, dynamic>;
+    return JobStatusResponse.fromJson(payload);
+  }
+
+  Future<JobStatusResponse> sendImageMessage(
+    XFile imageFile, {
+    String? message,
+    String? sessionId,
+    String? workspacePath,
+  }) async {
+    final request = http.MultipartRequest(
+      'POST',
+      Uri.parse('$baseUrl/message/image'),
+    );
+    if (message != null && message.trim().isNotEmpty) {
+      request.fields['message'] = message.trim();
+    }
+    if (sessionId != null) {
+      request.fields['session_id'] = sessionId;
+    }
+    if (workspacePath != null) {
+      request.fields['workspace_path'] = workspacePath;
+    }
+
+    request.files.add(
+      await _multipartFileFromXFile('image', imageFile),
+    );
+
+    final streamedResponse = await _client.send(request);
+    final response = await http.Response.fromStream(streamedResponse);
+    if (response.statusCode != 202) {
+      throw Exception('Failed to upload image message: ${response.body}');
+    }
+
+    final payload = jsonDecode(response.body) as Map<String, dynamic>;
+    return JobStatusResponse.fromJson(payload);
+  }
+
+  Future<JobStatusResponse> sendDocumentMessage(
+    XFile documentFile, {
+    String? message,
+    String? sessionId,
+    String? workspacePath,
+    String? language,
+  }) async {
+    final request = http.MultipartRequest(
+      'POST',
+      Uri.parse('$baseUrl/message/document'),
+    );
+    if (message != null && message.trim().isNotEmpty) {
+      request.fields['message'] = message.trim();
+    }
+    if (sessionId != null) {
+      request.fields['session_id'] = sessionId;
+    }
+    if (workspacePath != null) {
+      request.fields['workspace_path'] = workspacePath;
+    }
+    if (language != null) {
+      request.fields['language'] = language;
+    }
+
+    request.files.add(
+      await _multipartFileFromXFile('document', documentFile),
+    );
+
+    final streamedResponse = await _client.send(request);
+    final response = await http.Response.fromStream(streamedResponse);
+    if (response.statusCode != 202) {
+      throw Exception('Failed to upload document message: ${response.body}');
+    }
+
+    final payload = jsonDecode(response.body) as Map<String, dynamic>;
+    return JobStatusResponse.fromJson(payload);
+  }
+
+  Future<JobStatusResponse> sendAttachmentsMessage(
+    List<XFile> attachments, {
+    String? message,
+    String? sessionId,
+    String? workspacePath,
+    String? language,
+  }) async {
+    if (attachments.isEmpty) {
+      throw Exception('No attachments were provided.');
+    }
+
+    final request = http.MultipartRequest(
+      'POST',
+      Uri.parse('$baseUrl/message/attachments'),
+    );
+    if (message != null && message.trim().isNotEmpty) {
+      request.fields['message'] = message.trim();
+    }
+    if (sessionId != null) {
+      request.fields['session_id'] = sessionId;
+    }
+    if (workspacePath != null) {
+      request.fields['workspace_path'] = workspacePath;
+    }
+    if (language != null) {
+      request.fields['language'] = language;
+    }
+
+    for (final attachment in attachments) {
+      request.files.add(
+        await _multipartFileFromXFile('attachments', attachment),
+      );
+    }
+
+    final streamedResponse = await _client.send(request);
+    final response = await http.Response.fromStream(streamedResponse);
+    if (response.statusCode != 202) {
+      throw Exception('Failed to upload attachments: ${response.body}');
     }
 
     final payload = jsonDecode(response.body) as Map<String, dynamic>;
@@ -163,5 +280,16 @@ class ApiClient {
 
     final payload = jsonDecode(response.body) as Map<String, dynamic>;
     return JobStatusResponse.fromJson(payload);
+  }
+
+  Future<http.MultipartFile> _multipartFileFromXFile(
+    String field,
+    XFile file,
+  ) async {
+    return http.MultipartFile.fromBytes(
+      field,
+      await file.readAsBytes(),
+      filename: file.name,
+    );
   }
 }

@@ -8,7 +8,9 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, W
 from backend.app.api.schemas import (
     AudioMessageAcceptedResponse,
     CreateSessionRequest,
+    DocumentMessageAcceptedResponse,
     HealthResponse,
+    ImageMessageAcceptedResponse,
     JobResponse,
     MessageAcceptedResponse,
     MessageRequest,
@@ -16,7 +18,12 @@ from backend.app.api.schemas import (
     SessionSummaryResponse,
     WorkspaceResponse,
 )
-from backend.app.application.services.message_service import MessageService
+from backend.app.application.services.message_service import (
+    AttachmentInput,
+    DocumentProcessingError,
+    MessageService,
+    UnsupportedDocumentError,
+)
 from backend.app.container import AppContainer
 from backend.app.infrastructure.network.tailscale import detect_tailscale_info
 from backend.app.infrastructure.transcription.base import (
@@ -112,6 +119,145 @@ async def post_audio_message(
         submission.job,
         transcript=submission.transcript,
     )
+
+
+@router.post("/message/image", response_model=ImageMessageAcceptedResponse, status_code=202)
+async def post_image_message(
+    image: UploadFile = File(...),
+    message: str | None = Form(default=None),
+    session_id: str | None = Form(default=None),
+    workspace_path: str | None = Form(default=None),
+    container: AppContainer = Depends(get_container),
+) -> ImageMessageAcceptedResponse:
+    temp_path = await _store_uploaded_file(
+        image,
+        max_bytes=container.settings.image_max_upload_bytes,
+        default_filename="image-upload.bin",
+        size_limit_label="Image",
+    )
+    should_cleanup_immediately = True
+
+    try:
+        prompt = (message or "").strip() or "Please analyze the attached image."
+        job = container.message_service.submit_message(
+            prompt,
+            session_id=session_id,
+            workspace_path=workspace_path,
+            image_paths=[str(temp_path)],
+            cleanup_paths=[str(temp_path)],
+        )
+        should_cleanup_immediately = False
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    finally:
+        if should_cleanup_immediately:
+            temp_path.unlink(missing_ok=True)
+        await image.close()
+
+    return ImageMessageAcceptedResponse.from_domain(
+        job,
+        attached_image_name=image.filename or temp_path.name,
+    )
+
+
+@router.post("/message/document", response_model=DocumentMessageAcceptedResponse, status_code=202)
+async def post_document_message(
+    document: UploadFile = File(...),
+    message: str | None = Form(default=None),
+    session_id: str | None = Form(default=None),
+    workspace_path: str | None = Form(default=None),
+    language: str | None = Form(default=None),
+    container: AppContainer = Depends(get_container),
+) -> DocumentMessageAcceptedResponse:
+    temp_path = await _store_uploaded_file(
+        document,
+        max_bytes=container.settings.document_max_upload_bytes,
+        default_filename="document-upload.bin",
+        size_limit_label="Document",
+    )
+    should_cleanup_immediately = True
+
+    try:
+        submission = container.message_service.submit_document_message(
+            str(temp_path),
+            filename=document.filename or temp_path.name,
+            content_type=document.content_type,
+            message=message,
+            session_id=session_id,
+            workspace_path=workspace_path,
+            language=language,
+        )
+        should_cleanup_immediately = False
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except UnsupportedDocumentError as exc:
+        raise HTTPException(status_code=415, detail=str(exc)) from exc
+    except AudioTranscriptionUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except (AudioTranscriptionError, DocumentProcessingError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    finally:
+        if should_cleanup_immediately:
+            temp_path.unlink(missing_ok=True)
+        await document.close()
+
+    return DocumentMessageAcceptedResponse.from_domain(
+        submission.job,
+        attached_document_name=submission.attached_document_name,
+        document_kind=submission.document_kind,
+        transcript=submission.transcript,
+        extracted_text_preview=submission.extracted_text_preview,
+    )
+
+
+@router.post("/message/attachments", response_model=MessageAcceptedResponse, status_code=202)
+async def post_attachment_message(
+    attachments: list[UploadFile] = File(...),
+    message: str | None = Form(default=None),
+    session_id: str | None = Form(default=None),
+    workspace_path: str | None = Form(default=None),
+    language: str | None = Form(default=None),
+    container: AppContainer = Depends(get_container),
+) -> MessageAcceptedResponse:
+    stored_files = await _store_uploaded_files(
+        attachments,
+        max_bytes=container.settings.document_max_upload_bytes,
+        default_filename="attachment-upload.bin",
+        size_limit_label="Attachment",
+    )
+    should_cleanup_immediately = True
+
+    try:
+        job = container.message_service.submit_attachment_message(
+            [
+                AttachmentInput(
+                    path=str(stored.path),
+                    filename=stored.filename,
+                    content_type=stored.content_type,
+                )
+                for stored in stored_files
+            ],
+            message=message,
+            session_id=session_id,
+            workspace_path=workspace_path,
+            language=language,
+        )
+        should_cleanup_immediately = False
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except UnsupportedDocumentError as exc:
+        raise HTTPException(status_code=415, detail=str(exc)) from exc
+    except AudioTranscriptionUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except (AudioTranscriptionError, DocumentProcessingError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    finally:
+        if should_cleanup_immediately:
+            _cleanup_stored_uploads(stored_files)
+        for attachment in attachments:
+            await attachment.close()
+
+    return MessageAcceptedResponse.from_domain(job)
 
 
 @router.get("/workspaces", response_model=list[WorkspaceResponse])
@@ -238,12 +384,27 @@ async def _store_uploaded_audio(
     *,
     max_bytes: int,
 ) -> Path:
-    suffix = Path(audio.filename or "voice-note.m4a").suffix or ".m4a"
+    return await _store_uploaded_file(
+        audio,
+        max_bytes=max_bytes,
+        default_filename="voice-note.m4a",
+        size_limit_label="Audio",
+    )
+
+
+async def _store_uploaded_file(
+    upload: UploadFile,
+    *,
+    max_bytes: int,
+    default_filename: str,
+    size_limit_label: str,
+) -> Path:
+    suffix = Path(upload.filename or default_filename).suffix or Path(default_filename).suffix
     total_bytes = 0
 
     with NamedTemporaryFile(delete=False, suffix=suffix) as temp_file:
         while True:
-            chunk = await audio.read(1024 * 1024)
+            chunk = await upload.read(1024 * 1024)
             if not chunk:
                 break
             total_bytes += len(chunk)
@@ -251,8 +412,55 @@ async def _store_uploaded_audio(
                 Path(temp_file.name).unlink(missing_ok=True)
                 raise HTTPException(
                     status_code=413,
-                    detail=f"Audio upload exceeds the {max_bytes} byte limit.",
+                    detail=f"{size_limit_label} upload exceeds the {max_bytes} byte limit.",
                 )
             temp_file.write(chunk)
 
     return Path(temp_file.name)
+
+
+class _StoredUpload:
+    def __init__(
+        self,
+        *,
+        path: Path,
+        filename: str,
+        content_type: str | None,
+    ) -> None:
+        self.path = path
+        self.filename = filename
+        self.content_type = content_type
+
+
+async def _store_uploaded_files(
+    uploads: list[UploadFile],
+    *,
+    max_bytes: int,
+    default_filename: str,
+    size_limit_label: str,
+) -> list[_StoredUpload]:
+    stored_uploads: list[_StoredUpload] = []
+    try:
+        for upload in uploads:
+            path = await _store_uploaded_file(
+                upload,
+                max_bytes=max_bytes,
+                default_filename=default_filename,
+                size_limit_label=size_limit_label,
+            )
+            stored_uploads.append(
+                _StoredUpload(
+                    path=path,
+                    filename=upload.filename or path.name,
+                    content_type=upload.content_type,
+                )
+            )
+    except Exception:
+        _cleanup_stored_uploads(stored_uploads)
+        raise
+    return stored_uploads
+
+
+def _cleanup_stored_uploads(stored_uploads: list[_StoredUpload]) -> None:
+    for stored in stored_uploads:
+        stored.path.unlink(missing_ok=True)

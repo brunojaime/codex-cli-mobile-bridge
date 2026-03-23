@@ -23,6 +23,8 @@ class ExecutionProvider(ABC):
         self,
         message: str,
         *,
+        image_paths: list[str] | None = None,
+        cleanup_paths: list[str] | None = None,
         provider_session_id: str | None = None,
         workdir: str | None = None,
     ) -> str:
@@ -39,6 +41,9 @@ class ExecutionProvider(ABC):
     @abstractmethod
     def get_error(self, job_id: str) -> str | None:
         raise NotImplementedError
+
+    def has_job(self, job_id: str) -> bool:
+        return False
 
     def get_snapshot(self, job_id: str) -> ExecutionSnapshot:
         return ExecutionSnapshot(

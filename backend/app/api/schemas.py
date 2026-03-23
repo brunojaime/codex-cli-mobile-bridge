@@ -59,6 +59,53 @@ class AudioMessageAcceptedResponse(MessageAcceptedResponse):
         )
 
 
+class ImageMessageAcceptedResponse(MessageAcceptedResponse):
+    attached_image_name: str
+
+    @classmethod
+    def from_domain(
+        cls,
+        job: Job,
+        *,
+        attached_image_name: str,
+    ) -> "ImageMessageAcceptedResponse":
+        return cls(
+            job_id=job.id,
+            session_id=job.session_id,
+            status=job.status,
+            provider_session_id=job.provider_session_id,
+            attached_image_name=attached_image_name,
+        )
+
+
+class DocumentMessageAcceptedResponse(MessageAcceptedResponse):
+    attached_document_name: str
+    document_kind: str
+    transcript: str | None = None
+    extracted_text_preview: str | None = None
+
+    @classmethod
+    def from_domain(
+        cls,
+        job: Job,
+        *,
+        attached_document_name: str,
+        document_kind: str,
+        transcript: str | None = None,
+        extracted_text_preview: str | None = None,
+    ) -> "DocumentMessageAcceptedResponse":
+        return cls(
+            job_id=job.id,
+            session_id=job.session_id,
+            status=job.status,
+            provider_session_id=job.provider_session_id,
+            attached_document_name=attached_document_name,
+            document_kind=document_kind,
+            transcript=transcript,
+            extracted_text_preview=extracted_text_preview,
+        )
+
+
 class ChatMessageResponse(BaseModel):
     id: str
     role: ChatMessageRole

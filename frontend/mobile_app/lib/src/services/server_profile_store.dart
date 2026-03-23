@@ -8,6 +8,7 @@ import '../models/workspace.dart';
 class ServerProfileStore {
   static const _profilesKey = 'server_profiles';
   static const _activeProfileIdKey = 'active_server_profile_id';
+  static const _sidebarExpandedKey = 'sidebar_expanded';
 
   Future<List<ServerProfile>> loadProfiles({
     required String defaultBaseUrl,
@@ -51,6 +52,16 @@ class ServerProfileStore {
     await preferences.setString(_activeProfileIdKey, profileId);
   }
 
+  Future<bool> loadSidebarExpanded() async {
+    final preferences = await SharedPreferences.getInstance();
+    return preferences.getBool(_sidebarExpandedKey) ?? false;
+  }
+
+  Future<void> saveSidebarExpanded(bool expanded) async {
+    final preferences = await SharedPreferences.getInstance();
+    await preferences.setBool(_sidebarExpandedKey, expanded);
+  }
+
   Future<List<Workspace>> loadSidebarWorkspaces(String serverBaseUrl) async {
     final preferences = await SharedPreferences.getInstance();
     final rawWorkspaces =
@@ -75,5 +86,42 @@ class ServerProfileStore {
 
   String _sidebarWorkspacesKey(String serverBaseUrl) {
     return 'sidebar_workspaces::$serverBaseUrl';
+  }
+
+  Future<Map<String, DateTime>> loadSessionReadMarkers(
+    String serverBaseUrl,
+  ) async {
+    final preferences = await SharedPreferences.getInstance();
+    final rawMarkers =
+        preferences.getString(_sessionReadMarkersKey(serverBaseUrl));
+    if (rawMarkers == null || rawMarkers.isEmpty) {
+      return <String, DateTime>{};
+    }
+
+    final decoded = jsonDecode(rawMarkers) as Map<String, dynamic>;
+    return decoded.map(
+      (sessionId, value) => MapEntry(
+        sessionId,
+        DateTime.parse(value as String),
+      ),
+    );
+  }
+
+  Future<void> saveSessionReadMarkers(
+    String serverBaseUrl,
+    Map<String, DateTime> markers,
+  ) async {
+    final preferences = await SharedPreferences.getInstance();
+    final serialized = markers.map(
+      (sessionId, value) => MapEntry(sessionId, value.toIso8601String()),
+    );
+    await preferences.setString(
+      _sessionReadMarkersKey(serverBaseUrl),
+      jsonEncode(serialized),
+    );
+  }
+
+  String _sessionReadMarkersKey(String serverBaseUrl) {
+    return 'session_read_markers::$serverBaseUrl';
   }
 }

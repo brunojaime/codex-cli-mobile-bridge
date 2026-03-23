@@ -3,11 +3,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from backend.app.application.services.message_service import MessageService
+from backend.app.domain.repositories.chat_repository import ChatRepository
 from backend.app.infrastructure.config.settings import Settings
 from backend.app.infrastructure.execution.base import ExecutionProvider
 from backend.app.infrastructure.execution.lambda_provider import LambdaExecutionProvider
 from backend.app.infrastructure.execution.local_provider import LocalExecutionProvider
 from backend.app.infrastructure.persistence.in_memory_chat_repository import InMemoryChatRepository
+from backend.app.infrastructure.persistence.sqlite_chat_repository import SqliteChatRepository
 from backend.app.infrastructure.realtime.job_stream_hub import JobStreamHub
 from backend.app.infrastructure.transcription.base import AudioTranscriber
 from backend.app.infrastructure.transcription.command_transcriber import CommandAudioTranscriber
@@ -28,7 +30,7 @@ class AppContainer:
 
 def build_container(settings: Settings | None = None) -> AppContainer:
     resolved_settings = settings or Settings()
-    repository = InMemoryChatRepository(projects_root=resolved_settings.projects_root)
+    repository = _build_repository(resolved_settings)
     provider = _build_execution_provider(resolved_settings)
     audio_transcriber = _build_audio_transcriber(resolved_settings)
     message_service = MessageService(
@@ -36,6 +38,7 @@ def build_container(settings: Settings | None = None) -> AppContainer:
         execution_provider=provider,
         default_workspace_path=resolved_settings.codex_workdir,
         audio_transcriber=audio_transcriber,
+        document_text_char_limit=resolved_settings.document_text_char_limit,
     )
     job_stream_hub = JobStreamHub(
         poll_interval_seconds=resolved_settings.poll_interval_seconds,
@@ -45,6 +48,16 @@ def build_container(settings: Settings | None = None) -> AppContainer:
         message_service=message_service,
         job_stream_hub=job_stream_hub,
         audio_transcriber=audio_transcriber,
+    )
+
+
+def _build_repository(settings: Settings) -> ChatRepository:
+    if settings.chat_store_backend == "memory":
+        return InMemoryChatRepository(projects_root=settings.projects_root)
+
+    return SqliteChatRepository(
+        database_path=settings.chat_store_path,
+        projects_root=settings.projects_root,
     )
 
 

@@ -7,17 +7,33 @@ environment:
   sdk: ">=3.4.0 <4.0.0"
 
 dependencies:
+  cross_file: ^0.3.5+2
+  file_picker: ^10.3.10
   flutter:
     sdk: flutter
   http: ^1.2.2
+  image_picker: ^1.1.2
   record: ^6.2.0
   shared_preferences: ^2.5.3
+  url_launcher: ^6.3.2
+  web: ^1.1.1
   web_socket_channel: ^3.0.3
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^5.0.0
+  flutter_launcher_icons: ^0.14.4
+
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: assets/branding/app_icon.png
+  image_path_ios: assets/branding/app_icon_ios.png
+  adaptive_icon_background: "#0D1427"
+  adaptive_icon_foreground: assets/branding/app_icon_foreground.png
+  remove_alpha_ios: true
+  min_sdk_android: 21
 
 flutter:
   uses-material-design: true

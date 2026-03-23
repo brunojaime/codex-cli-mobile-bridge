@@ -6,7 +6,7 @@
 
 - Runs Codex prompts on the machine where the backend is installed
 - Returns async job results to a mobile chat UI
-- Supports persistent multi-turn chat sessions
+- Stores chat history persistently across backend restarts and redeploys
 - Supports multiple workspaces and multiple backend servers
 - Supports push-to-talk voice notes that transcribe into prompts before execution
 - Supports remote access patterns such as USB, Tailscale, and other tunnels
@@ -48,6 +48,11 @@ docker-compose.yml
 main.py
 ```
 
+## Design Review
+
+- Figma board: https://www.figma.com/design/qmN9KrBZgqhvwOjGKyMjPG?node-id=3-2
+- HTML source for the imported board: `design/codex-mobile-ux-board.html`
+
 ## Requirements
 
 - Python 3.12+
@@ -77,7 +82,10 @@ Important variables:
 - `CODEX_USE_EXEC=true`
 - `CODEX_EXEC_ARGS=--skip-git-repo-check --color never --dangerously-bypass-approvals-and-sandbox`
 - `CODEX_RESUME_ARGS=--skip-git-repo-check --dangerously-bypass-approvals-and-sandbox`
+- `EXECUTION_TIMEOUT_SECONDS=0`
 - `PROJECTS_ROOT=/absolute/path/to/your/projects`
+- `CHAT_STORE_BACKEND=sqlite|memory`
+- `CHAT_STORE_PATH=.data/chat_store.sqlite3`
 - `API_HOST=0.0.0.0`
 - `API_PORT=8000`
 - `API_BASE_URL=http://localhost:8000`
@@ -94,8 +102,14 @@ Recommended defaults:
 - `CODEX_USE_EXEC=true`
 - `CODEX_EXEC_ARGS=--skip-git-repo-check --color never --dangerously-bypass-approvals-and-sandbox`
 - `CODEX_RESUME_ARGS=--skip-git-repo-check --dangerously-bypass-approvals-and-sandbox`
+- `EXECUTION_TIMEOUT_SECONDS=0`
+- `CHAT_STORE_BACKEND=sqlite`
 
 The backend uses `codex exec` for new messages and `codex exec resume` for follow-up messages inside the same chat session.
+
+`EXECUTION_TIMEOUT_SECONDS=0` disables the backend execution timeout entirely.
+
+Chat sessions, messages, and job history are stored in SQLite by default. Keep `CHAT_STORE_BACKEND=sqlite` and point `CHAT_STORE_PATH` at a persistent location if you deploy with containers or redeploy often.
 
 Voice-note transcription options:
 
@@ -120,6 +134,8 @@ Start the backend:
 ```bash
 python main.py
 ```
+
+This creates the chat database automatically at `.data/chat_store.sqlite3` unless you override `CHAT_STORE_PATH`.
 
 If you want it to keep running after closing the terminal:
 

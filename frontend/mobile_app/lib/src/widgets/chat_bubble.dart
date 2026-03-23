@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -9,17 +10,37 @@ class ChatBubble extends StatelessWidget {
     super.key,
     required this.message,
     this.onOptionSelected,
+    this.onLinkTap,
   });
 
   final ChatMessage message;
   final ValueChanged<String>? onOptionSelected;
+  final Future<void> Function(String target)? onLinkTap;
 
   @override
   Widget build(BuildContext context) {
     final isUser = message.isUser;
-    final bubbleColor = isUser ? const Color(0xFF55D6BE) : const Color(0xFF1A2440);
+    final screenWidth = MediaQuery.sizeOf(context).width;
+    final useWideWebLayout = kIsWeb && screenWidth >= 900;
+    final shouldPreferWideBubble =
+        message.text.length >= 120 || message.text.contains('\n');
+    final maxBubbleWidth = switch ((screenWidth, isUser)) {
+      (>= 1600, true) => 980.0,
+      (>= 1600, false) => 1280.0,
+      (>= 1280, true) => screenWidth * 0.62,
+      (>= 1280, false) => screenWidth * 0.8,
+      (>= 900, true) => screenWidth * 0.72,
+      (>= 900, false) => screenWidth * 0.86,
+      _ => screenWidth * 0.88,
+    };
+    final preferredBubbleWidth = useWideWebLayout && shouldPreferWideBubble
+        ? (isUser ? screenWidth * 0.52 : screenWidth * 0.78)
+        : null;
+    final bubbleColor =
+        isUser ? const Color(0xFF55D6BE) : const Color(0xFF1A2440);
     final textColor = isUser ? const Color(0xFF09111F) : Colors.white;
-    final alignment = isUser ? CrossAxisAlignment.end : CrossAxisAlignment.start;
+    final alignment =
+        isUser ? CrossAxisAlignment.end : CrossAxisAlignment.start;
     final radius = BorderRadius.only(
       topLeft: const Radius.circular(18),
       topRight: const Radius.circular(18),
@@ -31,7 +52,10 @@ class ChatBubble extends StatelessWidget {
       crossAxisAlignment: alignment,
       children: <Widget>[
         Container(
-          constraints: const BoxConstraints(maxWidth: 360),
+          width: preferredBubbleWidth?.clamp(320.0, isUser ? 980.0 : 1280.0),
+          constraints: BoxConstraints(
+            maxWidth: maxBubbleWidth.clamp(280.0, isUser ? 980.0 : 1280.0),
+          ),
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
           decoration: BoxDecoration(
             color: bubbleColor,
@@ -47,18 +71,17 @@ class ChatBubble extends StatelessWidget {
           child: Column(
             crossAxisAlignment: alignment,
             children: <Widget>[
-              if (!isUser) _AssistantHeader(message: message, textColor: textColor),
+              if (!isUser)
+                _AssistantHeader(message: message, textColor: textColor),
               if (!isUser) const SizedBox(height: 10),
-              if (message.jobLatestActivity != null && message.jobLatestActivity!.isNotEmpty) ...[
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    message.jobLatestActivity!,
-                    style: TextStyle(
-                      color: textColor.withValues(alpha: 0.72),
-                      fontSize: 12,
-                      height: 1.4,
-                    ),
+              if (message.jobLatestActivity != null &&
+                  message.jobLatestActivity!.isNotEmpty) ...[
+                Text(
+                  message.jobLatestActivity!,
+                  style: TextStyle(
+                    color: textColor.withValues(alpha: 0.72),
+                    fontSize: 12,
+                    height: 1.4,
                   ),
                 ),
                 const SizedBox(height: 10),
@@ -68,16 +91,14 @@ class ChatBubble extends StatelessWidget {
                   text: message.text,
                   textColor: textColor,
                   onOptionSelected: isUser ? null : onOptionSelected,
+                  onLinkTap: isUser ? null : onLinkTap,
                 )
               else if (!isUser && message.isPendingLike)
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    'Waiting for Codex output...',
-                    style: TextStyle(
-                      color: textColor.withValues(alpha: 0.78),
-                      fontSize: 14,
-                    ),
+                Text(
+                  'Waiting for Codex output...',
+                  style: TextStyle(
+                    color: textColor.withValues(alpha: 0.78),
+                    fontSize: 14,
                   ),
                 ),
               if (!isUser && message.text.isNotEmpty) ...[
@@ -89,7 +110,8 @@ class ChatBubble extends StatelessWidget {
                       icon: Icons.copy_rounded,
                       label: 'Copy',
                       onTap: () async {
-                        await Clipboard.setData(ClipboardData(text: message.text));
+                        await Clipboard.setData(
+                            ClipboardData(text: message.text));
                       },
                     ),
                     if (message.providerSessionId != null &&
@@ -133,6 +155,7 @@ class _AssistantHeader extends StatelessWidget {
     final elapsedLabel = _formatElapsed(message.jobElapsedSeconds);
 
     return Row(
+      mainAxisSize: MainAxisSize.min,
       children: [
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -150,7 +173,8 @@ class _AssistantHeader extends StatelessWidget {
           ),
         ),
         const SizedBox(width: 8),
-        Expanded(
+        Flexible(
+          fit: FlexFit.loose,
           child: Text(
             phase,
             maxLines: 1,
@@ -162,6 +186,7 @@ class _AssistantHeader extends StatelessWidget {
             ),
           ),
         ),
+        if (elapsedLabel != null) const SizedBox(width: 8),
         if (elapsedLabel != null)
           Text(
             elapsedLabel,
@@ -232,7 +257,9 @@ Color _statusColor(ChatMessage message) {
   if (message.status == ChatMessageStatus.failed || jobStatus == 'failed') {
     return const Color(0xFFFFA8A8);
   }
-  if (message.isPendingLike || jobStatus == 'pending' || jobStatus == 'running') {
+  if (message.isPendingLike ||
+      jobStatus == 'pending' ||
+      jobStatus == 'running') {
     return const Color(0xFFB9D8FF);
   }
   return const Color(0xFF7CF2D4);

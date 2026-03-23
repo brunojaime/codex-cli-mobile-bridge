@@ -20,6 +20,14 @@ String _defaultApiBaseUrl() {
     return 'http://10.0.2.2:8000';
   }
 
+  if (kIsWeb) {
+    final host = Uri.base.host;
+    if (host == 'localhost' || host == '127.0.0.1') {
+      return 'http://localhost:8000';
+    }
+    return Uri.base.origin;
+  }
+
   return 'http://localhost:8000';
 }
 

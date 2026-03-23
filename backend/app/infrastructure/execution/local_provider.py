@@ -34,7 +34,7 @@ class LocalExecutionProvider(ExecutionProvider):
         exec_args: str = "--skip-git-repo-check --color never",
         resume_args: str = "--skip-git-repo-check",
         workdir: str | None = None,
-        timeout_seconds: int = 900,
+        timeout_seconds: int | None = None,
     ) -> None:
         self._command = command
         self._use_exec_mode = use_exec_mode
@@ -49,6 +49,8 @@ class LocalExecutionProvider(ExecutionProvider):
         self,
         message: str,
         *,
+        image_paths: list[str] | None = None,
+        cleanup_paths: list[str] | None = None,
         provider_session_id: str | None = None,
         workdir: str | None = None,
     ) -> str:
@@ -61,7 +63,7 @@ class LocalExecutionProvider(ExecutionProvider):
         )
         worker = threading.Thread(
             target=self._run_job,
-            args=(job_id, message, provider_session_id, workdir),
+            args=(job_id, message, image_paths, cleanup_paths, provider_session_id, workdir),
             daemon=True,
         )
         worker.start()
@@ -79,6 +81,9 @@ class LocalExecutionProvider(ExecutionProvider):
         state = self._get_state(job_id)
         return state.error if state else "Unknown job id."
 
+    def has_job(self, job_id: str) -> bool:
+        return self._get_state(job_id) is not None
+
     def get_provider_session_id(self, job_id: str) -> str | None:
         state = self._get_state(job_id)
         return state.provider_session_id if state else None
@@ -95,6 +100,8 @@ class LocalExecutionProvider(ExecutionProvider):
         self,
         job_id: str,
         message: str,
+        image_paths: list[str] | None = None,
+        cleanup_paths: list[str] | None = None,
         provider_session_id: str | None = None,
         workdir: str | None = None,
     ) -> None:
@@ -105,115 +112,123 @@ class LocalExecutionProvider(ExecutionProvider):
             latest_activity="Launching the local Codex subprocess.",
             provider_session_id=provider_session_id,
         )
-        command_parts, output_path = self._build_command(
-            message,
-            provider_session_id=provider_session_id,
-        )
-
+        output_path: str | None = None
         try:
-            process = subprocess.Popen(
-                command_parts,
-                cwd=workdir or self._workdir,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                bufsize=1,
+            command_parts, output_path = self._build_command(
+                message,
+                image_paths=image_paths,
+                provider_session_id=provider_session_id,
             )
-        except FileNotFoundError as exc:
-            self._set_state(
-                job_id,
-                status=JobStatus.FAILED,
-                error=f"Codex command not found: {exc}",
-                phase="Failed",
-                latest_activity="The configured Codex command was not found.",
-            )
-            self._cleanup_output_file(output_path)
-            return
-        except Exception as exc:  # pragma: no cover - defensive path
-            self._set_state(
-                job_id,
-                status=JobStatus.FAILED,
-                error=f"Unexpected execution error: {exc}",
-                phase="Failed",
-                latest_activity="The local Codex subprocess could not be started.",
-            )
-            self._cleanup_output_file(output_path)
-            return
 
-        stdout_lines: list[str] = []
-        stderr_lines: list[str] = []
-        stdout_thread = threading.Thread(
-            target=self._consume_stream,
-            args=(job_id, process.stdout, stdout_lines, True),
-            daemon=True,
-        )
-        stderr_thread = threading.Thread(
-            target=self._consume_stream,
-            args=(job_id, process.stderr, stderr_lines, False),
-            daemon=True,
-        )
-        stdout_thread.start()
-        stderr_thread.start()
+            try:
+                process = subprocess.Popen(
+                    command_parts,
+                    cwd=workdir or self._workdir,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    bufsize=1,
+                )
+            except FileNotFoundError as exc:
+                self._set_state(
+                    job_id,
+                    status=JobStatus.FAILED,
+                    error=f"Codex command not found: {exc}",
+                    phase="Failed",
+                    latest_activity="The configured Codex command was not found.",
+                )
+                return
+            except Exception as exc:  # pragma: no cover - defensive path
+                self._set_state(
+                    job_id,
+                    status=JobStatus.FAILED,
+                    error=f"Unexpected execution error: {exc}",
+                    phase="Failed",
+                    latest_activity="The local Codex subprocess could not be started.",
+                )
+                return
 
-        try:
-            return_code = process.wait(timeout=self._timeout_seconds)
-        except subprocess.TimeoutExpired:
-            process.kill()
+            stdout_lines: list[str] = []
+            stderr_lines: list[str] = []
+            stdout_thread = threading.Thread(
+                target=self._consume_stream,
+                args=(job_id, process.stdout, stdout_lines, True),
+                daemon=True,
+            )
+            stderr_thread = threading.Thread(
+                target=self._consume_stream,
+                args=(job_id, process.stderr, stderr_lines, False),
+                daemon=True,
+            )
+            stdout_thread.start()
+            stderr_thread.start()
+
+            try:
+                if self._timeout_seconds is None or self._timeout_seconds <= 0:
+                    return_code = process.wait()
+                else:
+                    return_code = process.wait(timeout=self._timeout_seconds)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                stdout_thread.join(timeout=1)
+                stderr_thread.join(timeout=1)
+                self._set_state(
+                    job_id,
+                    status=JobStatus.FAILED,
+                    error=f"Execution timed out after {self._timeout_seconds} seconds.",
+                    phase="Timed out",
+                    latest_activity="The Codex subprocess exceeded the configured timeout.",
+                )
+                return
+
             stdout_thread.join(timeout=1)
             stderr_thread.join(timeout=1)
+
+            stdout_text = "\n".join(stdout_lines).strip()
+            stderr_text = "\n".join(stderr_lines).strip()
+            resolved_provider_session_id = self._extract_provider_session_id(stdout_text)
+            output = self._resolve_output(
+                output_path=output_path,
+                stdout_text=stdout_text,
+                stderr_text=stderr_text,
+            )
+
+            if return_code == 0:
+                self._set_state(
+                    job_id,
+                    status=JobStatus.COMPLETED,
+                    response=output or "Execution completed with no output.",
+                    provider_session_id=resolved_provider_session_id or provider_session_id,
+                    phase="Completed",
+                    latest_activity="Codex returned a final response.",
+                )
+                return
+
             self._set_state(
                 job_id,
                 status=JobStatus.FAILED,
-                error=f"Execution timed out after {self._timeout_seconds} seconds.",
-                phase="Timed out",
-                latest_activity="The Codex subprocess exceeded the configured timeout.",
-            )
-            self._cleanup_output_file(output_path)
-            return
-
-        stdout_thread.join(timeout=1)
-        stderr_thread.join(timeout=1)
-
-        stdout_text = "\n".join(stdout_lines).strip()
-        stderr_text = "\n".join(stderr_lines).strip()
-        resolved_provider_session_id = self._extract_provider_session_id(stdout_text)
-        output = self._resolve_output(
-            output_path=output_path,
-            stdout_text=stdout_text,
-            stderr_text=stderr_text,
-        )
-
-        if return_code == 0:
-            self._set_state(
-                job_id,
-                status=JobStatus.COMPLETED,
-                response=output or "Execution completed with no output.",
+                error=output or f"Codex exited with code {return_code}.",
                 provider_session_id=resolved_provider_session_id or provider_session_id,
-                phase="Completed",
-                latest_activity="Codex returned a final response.",
+                phase="Failed",
+                latest_activity=self._first_non_empty(stderr_lines)
+                or "Codex exited with a non-zero status.",
             )
-            return
-
-        self._set_state(
-            job_id,
-            status=JobStatus.FAILED,
-            error=output or f"Codex exited with code {return_code}.",
-            provider_session_id=resolved_provider_session_id or provider_session_id,
-            phase="Failed",
-            latest_activity=self._first_non_empty(stderr_lines)
-            or "Codex exited with a non-zero status.",
-        )
+        finally:
+            self._cleanup_output_file(output_path)
+            self._cleanup_paths(cleanup_paths)
 
     def _build_command(
         self,
         message: str,
         *,
+        image_paths: list[str] | None = None,
         provider_session_id: str | None = None,
     ) -> tuple[list[str], str | None]:
         base_parts = shlex.split(self._command)
+        image_args = self._build_image_args(image_paths)
 
         if not self._use_exec_mode:
-            return [*base_parts, message], None
+            return [*base_parts, message, *image_args], None
 
         file_descriptor, output_path = tempfile.mkstemp(
             prefix="codex-last-message-",
@@ -230,6 +245,7 @@ class LocalExecutionProvider(ExecutionProvider):
                 *resume_options,
                 provider_session_id,
                 message,
+                *image_args,
             ]
         else:
             exec_options = [*shlex.split(self._exec_args), "--json", "-o", output_path]
@@ -238,8 +254,18 @@ class LocalExecutionProvider(ExecutionProvider):
                 "exec",
                 *exec_options,
                 message,
+                *image_args,
             ]
         return exec_parts, output_path
+
+    def _build_image_args(self, image_paths: list[str] | None) -> list[str]:
+        if not image_paths:
+            return []
+
+        image_args: list[str] = []
+        for image_path in image_paths:
+            image_args.extend(["-i", image_path])
+        return image_args
 
     def _consume_stream(
         self,
@@ -338,6 +364,16 @@ class LocalExecutionProvider(ExecutionProvider):
             Path(output_path).unlink(missing_ok=True)
         except OSError:
             pass
+
+    def _cleanup_paths(self, paths: list[str] | None) -> None:
+        if not paths:
+            return
+
+        for path in paths:
+            try:
+                Path(path).unlink(missing_ok=True)
+            except OSError:
+                pass
 
     def _parse_json_line(self, line: str) -> dict[str, object] | None:
         if not line.startswith("{"):

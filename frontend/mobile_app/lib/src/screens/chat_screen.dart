@@ -1,7 +1,11 @@
 import 'dart:async';
-import 'dart:io';
+import 'dart:math' as math;
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../models/chat_session_summary.dart';
 import '../models/server_health.dart';
@@ -9,6 +13,8 @@ import '../models/server_profile.dart';
 import '../models/workspace.dart';
 import '../services/api_client.dart';
 import '../services/audio_note_recorder.dart';
+import '../services/clipboard_image_paste_listener_stub.dart'
+    if (dart.library.js_interop) '../services/clipboard_image_paste_listener_web.dart';
 import '../services/server_profile_store.dart';
 import '../state/chat_controller.dart';
 import '../widgets/chat_bubble.dart';
@@ -32,9 +38,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   late ChatController _chatController;
   List<ServerProfile> _serverProfiles = <ServerProfile>[];
   List<Workspace> _sidebarWorkspaces = <Workspace>[];
+  Map<String, DateTime> _sessionReadMarkers = <String, DateTime>{};
   ServerProfile? _activeServer;
   ServerHealth? _activeServerHealth;
   String? _serverErrorText;
+  bool _sidebarExpanded = false;
   bool _stickToBottom = true;
   String? _lastObservedSessionId;
 
@@ -73,9 +81,56 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       animation: _chatController,
       builder: (context, _) {
         final messages = _chatController.messages;
+        final screenWidth = MediaQuery.sizeOf(context).width;
+        final drawerWidth = math.min(
+          screenWidth - 24,
+          _sidebarExpanded ? 440.0 : 340.0,
+        );
+        final totalUnreadChatsCount = _totalUnreadChatsCount();
+        final totalActivePinnedProjectsCount =
+            _totalActivePinnedProjectsCount();
+        final totalActivePinnedJobsCount = _totalActivePinnedJobsCount();
         return Scaffold(
-          resizeToAvoidBottomInset: false,
           appBar: AppBar(
+            leading: Builder(
+              builder: (context) {
+                return IconButton(
+                  onPressed: () => Scaffold.of(context).openDrawer(),
+                  tooltip: 'Projects',
+                  icon: Stack(
+                    clipBehavior: Clip.none,
+                    children: <Widget>[
+                      Icon(
+                        Icons.menu,
+                        color: totalActivePinnedProjectsCount > 0
+                            ? const Color(0xFFFFC857)
+                            : null,
+                      ),
+                      if (totalActivePinnedProjectsCount > 0)
+                        Positioned(
+                          left: -10,
+                          top: -6,
+                          child: _MenuStatusBadge(
+                            label: totalActivePinnedJobsCount.toString(),
+                            backgroundColor: const Color(0xFFFFC857),
+                            foregroundColor: const Color(0xFF2A1600),
+                          ),
+                        ),
+                      if (totalUnreadChatsCount > 0)
+                        Positioned(
+                          right: -8,
+                          top: -6,
+                          child: _MenuStatusBadge(
+                            label: totalUnreadChatsCount.toString(),
+                            backgroundColor: const Color(0xFF55D6BE),
+                            foregroundColor: const Color(0xFF07131D),
+                          ),
+                        ),
+                    ],
+                  ),
+                );
+              },
+            ),
             title: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: <Widget>[
@@ -99,7 +154,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                       if (_activeServerHealth != null)
                         TextSpan(
                           text:
-                              '  •  ${_activeServerHealth!.audioTranscriptionReady ? 'Voice ready' : 'Voice unavailable'}',
+                              '  •  ${_activeServerHealth!.audioTranscriptionReady ? 'Audio ready' : 'Audio unavailable'}',
                         ),
                     ],
                   ),
@@ -126,22 +181,45 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             ],
           ),
           drawer: Drawer(
+            width: drawerWidth,
             backgroundColor: const Color(0xFF101931),
             child: SafeArea(
               child: Column(
                 children: <Widget>[
                   ListTile(
                     title: const Text('Projects'),
-                    subtitle: const Text('Choose a project or open a chat'),
-                    trailing: IconButton(
-                      onPressed: () async {
-                        await _openWorkspacePicker();
-                        if (context.mounted) {
-                          Navigator.of(context).pop();
-                        }
-                      },
-                      icon: const Icon(Icons.add),
-                      tooltip: 'Choose project for new chat',
+                    subtitle: Text(
+                      _sidebarExpanded
+                          ? 'Expanded sidebar: more room for projects and chats'
+                          : 'Choose a project or open a chat',
+                    ),
+                    trailing: Wrap(
+                      spacing: 4,
+                      children: <Widget>[
+                        IconButton(
+                          onPressed: () async {
+                            await _toggleSidebarExpanded();
+                          },
+                          icon: Icon(
+                            _sidebarExpanded
+                                ? Icons.close_fullscreen_rounded
+                                : Icons.open_in_full_rounded,
+                          ),
+                          tooltip: _sidebarExpanded
+                              ? 'Use compact sidebar'
+                              : 'Expand sidebar',
+                        ),
+                        IconButton(
+                          onPressed: () async {
+                            await _openWorkspacePicker();
+                            if (context.mounted) {
+                              Navigator.of(context).pop();
+                            }
+                          },
+                          icon: const Icon(Icons.add),
+                          tooltip: 'Choose project for new chat',
+                        ),
+                      ],
                     ),
                   ),
                   const Divider(height: 1),
@@ -214,14 +292,30 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                     itemCount: messages.length,
                                     itemBuilder: (context, index) {
                                       final message = messages[index];
+                                      final nextMessage =
+                                          index + 1 < messages.length
+                                              ? messages[index + 1]
+                                              : null;
+                                      final extraBottomSpacing =
+                                          nextMessage != null &&
+                                                  nextMessage.isUser !=
+                                                      message.isUser
+                                              ? 10.0
+                                              : 0.0;
                                       return Align(
                                         alignment: message.isUser
                                             ? Alignment.centerRight
                                             : Alignment.centerLeft,
-                                        child: ChatBubble(
-                                          message: message,
-                                          onOptionSelected:
-                                              _handleSuggestedReply,
+                                        child: Padding(
+                                          padding: EdgeInsets.only(
+                                            bottom: extraBottomSpacing,
+                                          ),
+                                          child: ChatBubble(
+                                            message: message,
+                                            onOptionSelected:
+                                                _handleSuggestedReply,
+                                            onLinkTap: _handleMessageLinkTap,
+                                          ),
                                         ),
                                       );
                                     },
@@ -265,11 +359,14 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                             ),
                 ),
                 _Composer(
+                  sessionId: _chatController.selectedSessionId,
                   controller: _textController,
                   onSend: _handleSend,
                   onSendAudio: _handleSendAudio,
+                  onSendAttachments: _handleSendAttachments,
                   isBusy: _chatController.isLoading ||
-                      _chatController.isSendingAudio,
+                      _chatController.isSendingDocument ||
+                      _chatController.isSendingImage,
                   voiceEnabled:
                       _activeServerHealth?.audioTranscriptionReady ?? true,
                   voiceStatusText: _resolveVoiceStatusText(),
@@ -282,18 +379,41 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     );
   }
 
-  Future<void> _handleSend() async {
-    final text = _textController.text;
-    _textController.clear();
-    _updateStickToBottom(true);
-    _scrollToBottom();
-    await _chatController.sendMessage(text);
+  Future<bool> _handleSend() async {
+    final sessionIdBeforeSend = _chatController.selectedSessionId;
+    final didSend = await _chatController.sendMessage(_textController.text);
+    if (didSend && _chatController.selectedSessionId == sessionIdBeforeSend) {
+      _textController.clear();
+      _updateStickToBottom(true);
+      _scrollToBottom();
+    }
+    return didSend;
   }
 
-  Future<void> _handleSendAudio(String audioPath) async {
-    _updateStickToBottom(true);
-    _scrollToBottom();
-    await _chatController.sendAudioMessage(audioPath);
+  Future<bool> _handleSendAudio(XFile audioFile) async {
+    final sessionIdBeforeSend = _chatController.selectedSessionId;
+    final didSend = await _chatController.sendAudioMessage(audioFile);
+    if (didSend && _chatController.selectedSessionId == sessionIdBeforeSend) {
+      _updateStickToBottom(true);
+      _scrollToBottom();
+    }
+    return didSend;
+  }
+
+  Future<bool> _handleSendAttachments(
+    List<_PendingAttachmentDraft> attachments, {
+    String? prompt,
+  }) async {
+    final sessionIdBeforeSend = _chatController.selectedSessionId;
+    final didSend = await _chatController.sendAttachmentsMessage(
+      attachments.map((attachment) => attachment.file).toList(),
+      message: prompt,
+    );
+    if (didSend && _chatController.selectedSessionId == sessionIdBeforeSend) {
+      _updateStickToBottom(true);
+      _scrollToBottom();
+    }
+    return didSend;
   }
 
   void _handleSuggestedReply(String value) {
@@ -304,6 +424,80 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       const SnackBar(
         content: Text('Suggestion inserted into the composer.'),
         duration: Duration(seconds: 1),
+      ),
+    );
+  }
+
+  Future<void> _handleMessageLinkTap(String target) async {
+    final trimmedTarget = target.trim();
+    final uri = _parseMessageTarget(trimmedTarget);
+
+    if (uri == null) {
+      await _copyLinkTarget(
+        trimmedTarget,
+        message: 'Invalid link target. Copied instead.',
+      );
+      return;
+    }
+
+    try {
+      final launched = await launchUrl(
+        uri,
+        mode: _launchModeForUri(uri),
+      );
+      if (launched) {
+        return;
+      }
+    } catch (_) {
+      // Fall back to copying the target if the platform cannot open it.
+    }
+
+    await _copyLinkTarget(
+      trimmedTarget,
+      message: 'Could not open link here. Copied target instead.',
+    );
+  }
+
+  Uri? _parseMessageTarget(String target) {
+    if (target.isEmpty) {
+      return null;
+    }
+
+    final parsed = Uri.tryParse(target);
+    if (parsed != null && parsed.hasScheme) {
+      return parsed;
+    }
+
+    if (target.startsWith('/')) {
+      return Uri.file(target);
+    }
+
+    if (RegExp(r'^[A-Za-z]:[\\/]').hasMatch(target)) {
+      return Uri.file(target);
+    }
+
+    return parsed;
+  }
+
+  LaunchMode _launchModeForUri(Uri uri) {
+    return switch (uri.scheme) {
+      'http' || 'https' => LaunchMode.externalApplication,
+      _ => LaunchMode.platformDefault,
+    };
+  }
+
+  Future<void> _copyLinkTarget(
+    String target, {
+    required String message,
+  }) async {
+    await Clipboard.setData(ClipboardData(text: target));
+    if (!mounted) {
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        duration: const Duration(seconds: 2),
       ),
     );
   }
@@ -400,6 +594,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       defaultBaseUrl: widget.initialApiBaseUrl,
     );
     final activeProfileId = await _serverProfileStore.loadActiveProfileId();
+    final sidebarExpanded = await _serverProfileStore.loadSidebarExpanded();
     final resolvedActiveProfile = profiles.firstWhere(
       (profile) => profile.id == activeProfileId,
       orElse: () => profiles.first,
@@ -409,6 +604,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       _serverProfiles = profiles;
       _activeServer = resolvedActiveProfile;
       _activeServerHealth = null;
+      _sidebarExpanded = sidebarExpanded;
     });
 
     await _switchToServer(resolvedActiveProfile, initialize: true);
@@ -423,6 +619,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     final sidebarWorkspaces = await _serverProfileStore.loadSidebarWorkspaces(
       profile.baseUrl,
     );
+    final sessionReadMarkers = await _serverProfileStore.loadSessionReadMarkers(
+      profile.baseUrl,
+    );
     nextController.addListener(_handleChatControllerChanged);
 
     final previousController = _chatController;
@@ -431,6 +630,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       _activeServer = profile;
       _activeServerHealth = null;
       _sidebarWorkspaces = sidebarWorkspaces;
+      _sessionReadMarkers = sessionReadMarkers;
       _serverErrorText = null;
     });
     _lastObservedSessionId = null;
@@ -477,6 +677,14 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     }
   }
 
+  Future<void> _toggleSidebarExpanded() async {
+    final nextValue = !_sidebarExpanded;
+    setState(() {
+      _sidebarExpanded = nextValue;
+    });
+    await _serverProfileStore.saveSidebarExpanded(nextValue);
+  }
+
   Future<ServerProfile?> _addServerProfile(String name, String baseUrl) async {
     final normalizedBaseUrl = baseUrl.trim().replaceAll(RegExp(r'/$'), '');
     final client = ApiClient(baseUrl: normalizedBaseUrl);
@@ -512,15 +720,15 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   String _resolveVoiceStatusText() {
     final health = _activeServerHealth;
     if (health == null) {
-      return 'Voice status unavailable.';
+      return 'Audio status unavailable.';
     }
 
     if (health.audioTranscriptionReady) {
-      return 'Voice input ready via ${health.audioTranscriptionResolvedBackend}.';
+      return 'Audio transcription ready via ${health.audioTranscriptionResolvedBackend}.';
     }
 
     return health.audioTranscriptionDetail ??
-        'Voice input is not available on this server.';
+        'Audio transcription is not available on this server.';
   }
 
   List<Widget> _buildSessionGroups() {
@@ -538,85 +746,190 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       final hasSelected = sessions.any(
         (session) => session.id == _chatController.selectedSessionId,
       );
+      final activeJobCount = sessions.fold(
+        0,
+        (total, session) =>
+            total + _chatController.activeJobCountForSession(session.id),
+      );
+      final activeChatCount = sessions
+          .where(
+            (session) =>
+                _chatController.activeJobCountForSession(session.id) > 0,
+          )
+          .length;
+      final unreadChatsCount = sessions
+          .where((session) => _unreadCountForSession(session) > 0)
+          .length;
+      final projectCardColor =
+          hasSelected ? const Color(0xFF16213C) : const Color(0xFF121A31);
+      final projectBorderColor = activeJobCount > 0
+          ? const Color(0x44FFC857)
+          : unreadChatsCount > 0
+              ? const Color(0x3355D6BE)
+              : const Color(0xFF23304F);
 
-      return Theme(
-        data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
-        child: ExpansionTile(
-          key: PageStorageKey<String>('workspace-${workspace.path}'),
-          initiallyExpanded: hasSelected,
-          tilePadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
-          childrenPadding: EdgeInsets.zero,
-          iconColor: const Color(0xFF8B97B5),
-          collapsedIconColor: const Color(0xFF8B97B5),
-          title: Row(
-            children: <Widget>[
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: <Widget>[
-                    Text(
-                      workspace.name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      '${workspace.path} • ${sessions.length} chat${sessions.length == 1 ? '' : 's'}',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: Color(0xFF8B97B5),
-                        fontSize: 12,
-                      ),
-                    ),
-                  ],
+      return Container(
+        margin: const EdgeInsets.fromLTRB(10, 6, 10, 6),
+        decoration: BoxDecoration(
+          color: projectCardColor,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: projectBorderColor),
+        ),
+        child: Theme(
+          data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+          child: ExpansionTile(
+            key: PageStorageKey<String>('workspace-${workspace.path}'),
+            initiallyExpanded: hasSelected,
+            tilePadding:
+                const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+            childrenPadding: const EdgeInsets.only(bottom: 10),
+            iconColor: const Color(0xFF9AA8C8),
+            collapsedIconColor: const Color(0xFF9AA8C8),
+            title: Row(
+              children: <Widget>[
+                Container(
+                  width: 38,
+                  height: 38,
+                  decoration: BoxDecoration(
+                    color: activeJobCount > 0
+                        ? const Color(0x33FFC857)
+                        : const Color(0xFF1B2745),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  alignment: Alignment.center,
+                  child: Icon(
+                    Icons.folder_rounded,
+                    color: activeJobCount > 0
+                        ? const Color(0xFFFFC857)
+                        : unreadChatsCount > 0
+                            ? const Color(0xFF55D6BE)
+                            : const Color(0xFF9AA8C8),
+                  ),
                 ),
-              ),
-              IconButton(
-                onPressed: () async {
-                  Navigator.of(context).pop();
-                  await _createNewChatForWorkspace(workspace);
-                },
-                icon: const Icon(Icons.add_circle_outline),
-                tooltip: 'New chat in ${workspace.name}',
-              ),
-            ],
-          ),
-          children: sessions.isEmpty
-              ? <Widget>[
-                  const Padding(
-                    padding: EdgeInsets.fromLTRB(24, 0, 24, 16),
-                    child: Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text(
-                        'No chats yet for this project',
-                        style: TextStyle(color: Color(0xFF8B97B5)),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      Text(
+                        workspace.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: activeJobCount > 0
+                              ? const Color(0xFFFFC857)
+                              : unreadChatsCount > 0
+                                  ? const Color(0xFF55D6BE)
+                                  : const Color(0xFFE7EEF9),
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        '${workspace.path} • ${sessions.length} chat${sessions.length == 1 ? '' : 's'}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Color(0xFF8B97B5),
+                          fontSize: 12,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      _ProjectStatusPill(
+                        active: activeJobCount > 0,
+                        label: activeJobCount > 0
+                            ? '$activeJobCount active job${activeJobCount == 1 ? '' : 's'} in $activeChatCount chat${activeChatCount == 1 ? '' : 's'}'
+                            : 'No active jobs',
+                      ),
+                    ],
+                  ),
+                ),
+                if (activeJobCount > 0)
+                  Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: Text(
+                      activeJobCount.toString(),
+                      style: const TextStyle(
+                        color: Color(0xFFFFC857),
+                        fontWeight: FontWeight.w700,
                       ),
                     ),
                   ),
-                ]
-              : sessions
-                  .map(
-                    (session) => Padding(
-                      padding: const EdgeInsets.only(left: 10),
-                      child: _SessionTile(
-                        session: session,
-                        selected:
-                            session.id == _chatController.selectedSessionId,
-                        onTap: () async {
-                          Navigator.of(context).pop();
-                          await _chatController.selectSession(session.id);
-                        },
+                if (unreadChatsCount > 0)
+                  Container(
+                    margin: const EdgeInsets.only(right: 8),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF55D6BE),
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: Text(
+                      unreadChatsCount.toString(),
+                      style: const TextStyle(
+                        color: Color(0xFF07131D),
+                        fontWeight: FontWeight.w700,
                       ),
                     ),
-                  )
-                  .toList(),
+                  ),
+                IconButton(
+                  onPressed: () async {
+                    Navigator.of(context).pop();
+                    await _createNewChatForWorkspace(workspace);
+                  },
+                  icon: const Icon(Icons.add_circle_outline),
+                  tooltip: 'New chat in ${workspace.name}',
+                ),
+              ],
+            ),
+            children: sessions.isEmpty
+                ? <Widget>[
+                    const Padding(
+                      padding: EdgeInsets.fromLTRB(24, 0, 24, 16),
+                      child: Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          'No chats yet for this project',
+                          style: TextStyle(color: Color(0xFF8B97B5)),
+                        ),
+                      ),
+                    ),
+                  ]
+                : sessions
+                    .map(
+                      (session) => Padding(
+                        padding: const EdgeInsets.only(left: 10, right: 10),
+                        child: _SessionTile(
+                          activeJobSummary:
+                              _chatController.activeJobSummaryForSession(
+                            session.id,
+                          ),
+                          outgoingAudioUploadCount: _chatController
+                              .outgoingAudioUploadCountForSession(
+                            session.id,
+                          ),
+                          session: session,
+                          unreadCount: _unreadCountForSession(session),
+                          selected:
+                              session.id == _chatController.selectedSessionId,
+                          onTap: () async {
+                            Navigator.of(context).pop();
+                            await _chatController.selectSession(session.id);
+                          },
+                        ),
+                      ),
+                    )
+                    .toList(),
+          ),
         ),
       );
     }).toList();
   }
 
   void _handleChatControllerChanged() {
+    _markCurrentSessionAsRead();
     final currentSessionId = _chatController.selectedSessionId;
     final sessionChanged = currentSessionId != _lastObservedSessionId;
     if (sessionChanged) {
@@ -627,6 +940,78 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     if (_stickToBottom) {
       _scrollToBottom(jumpToBottom: sessionChanged);
     }
+  }
+
+  int _unreadCountForSession(ChatSessionSummary session) {
+    if (session.id == _chatController.selectedSessionId ||
+        session.hasPendingMessages) {
+      return 0;
+    }
+
+    final lastReadAt = _sessionReadMarkers[session.id];
+    if (lastReadAt == null) {
+      return 0;
+    }
+
+    return session.updatedAt.isAfter(lastReadAt) ? 1 : 0;
+  }
+
+  int _totalUnreadChatsCount() {
+    final sidebarPaths =
+        _sidebarWorkspaces.map((workspace) => workspace.path).toSet();
+    return _chatController.sessions
+        .where((session) => sidebarPaths.contains(session.workspacePath))
+        .where((session) => _unreadCountForSession(session) > 0)
+        .length;
+  }
+
+  int _totalActivePinnedProjectsCount() {
+    return _sidebarWorkspaces
+        .where((workspace) => _activeJobCountForWorkspace(workspace.path) > 0)
+        .length;
+  }
+
+  int _totalActivePinnedJobsCount() {
+    return _sidebarWorkspaces.fold(
+        0,
+        (total, workspace) =>
+            total + _activeJobCountForWorkspace(workspace.path));
+  }
+
+  int _activeJobCountForWorkspace(String workspacePath) {
+    return _chatController.sessions
+        .where((session) => session.workspacePath == workspacePath)
+        .fold(
+          0,
+          (total, session) =>
+              total + _chatController.activeJobCountForSession(session.id),
+        );
+  }
+
+  Future<void> _markCurrentSessionAsRead() async {
+    final currentSession = _chatController.currentSession;
+    if (currentSession == null) {
+      return;
+    }
+
+    final lastReadAt = _sessionReadMarkers[currentSession.id];
+    if (lastReadAt != null && !currentSession.updatedAt.isAfter(lastReadAt)) {
+      return;
+    }
+
+    final updatedMarkers = <String, DateTime>{
+      ..._sessionReadMarkers,
+      currentSession.id: currentSession.updatedAt,
+    };
+    setState(() {
+      _sessionReadMarkers = updatedMarkers;
+    });
+
+    final activeBaseUrl = _activeServer?.baseUrl ?? widget.initialApiBaseUrl;
+    await _serverProfileStore.saveSessionReadMarkers(
+      activeBaseUrl,
+      updatedMarkers,
+    );
   }
 
   bool _handleScrollNotification(ScrollNotification notification) {
@@ -677,41 +1062,264 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
 
 class _SessionTile extends StatelessWidget {
   const _SessionTile({
+    required this.activeJobSummary,
+    required this.outgoingAudioUploadCount,
     required this.session,
+    required this.unreadCount,
     required this.selected,
     required this.onTap,
   });
 
+  final SessionActiveJobSummary? activeJobSummary;
+  final int outgoingAudioUploadCount;
   final ChatSessionSummary session;
+  final int unreadCount;
   final bool selected;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    return ListTile(
-      selected: selected,
-      selectedTileColor: const Color(0xFF1C2745),
-      title: Text(
-        session.title,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
+    final activeRuntimeLabel = _formatSessionRuntime(activeJobSummary);
+    final isActive = activeJobSummary != null;
+    final isUploadingAudio = outgoingAudioUploadCount > 0;
+    final tileBackgroundColor = selected
+        ? const Color(0xFF1C2745)
+        : isActive
+            ? const Color(0x1455D6BE)
+            : isUploadingAudio
+                ? const Color(0x123F5EF7)
+                : Colors.transparent;
+    final tileBorderColor = selected
+        ? const Color(0xFF2F3F68)
+        : isActive
+            ? const Color(0x2855D6BE)
+            : isUploadingAudio
+                ? const Color(0x283F5EF7)
+                : Colors.transparent;
+    final titleColor = selected
+        ? Colors.white
+        : isActive
+            ? const Color(0xFFE3FBF5)
+            : isUploadingAudio
+                ? const Color(0xFFEAF0FF)
+                : null;
+    final previewColor = isActive || isUploadingAudio
+        ? const Color(0xFFA8C7C0)
+        : const Color(0xFF8B97B5);
+
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 180),
+      margin: const EdgeInsets.symmetric(vertical: 2),
+      decoration: BoxDecoration(
+        color: tileBackgroundColor,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: tileBorderColor),
       ),
-      subtitle: Text(
-        session.lastMessagePreview?.isNotEmpty == true
-            ? session.lastMessagePreview!
-            : 'No messages yet',
-        maxLines: 2,
-        overflow: TextOverflow.ellipsis,
-        style: const TextStyle(color: Color(0xFF8B97B5)),
+      child: ListTile(
+        selected: selected,
+        selectedTileColor: Colors.transparent,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+        ),
+        title: Text(
+          session.title,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            color: titleColor,
+            fontWeight: isActive ? FontWeight.w600 : null,
+          ),
+        ),
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            Text(
+              session.lastMessagePreview?.isNotEmpty == true
+                  ? session.lastMessagePreview!
+                  : 'No messages yet',
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(color: previewColor),
+            ),
+            if (activeRuntimeLabel != null) ...<Widget>[
+              const SizedBox(height: 6),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF3D2D08),
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: Text(
+                  activeRuntimeLabel,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Color(0xFFFFC857),
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ],
+            if (isUploadingAudio) ...<Widget>[
+              const SizedBox(height: 6),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF15265A),
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: Text(
+                  outgoingAudioUploadCount == 1
+                      ? 'Sending audio'
+                      : 'Sending $outgoingAudioUploadCount audios',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Color(0xFFB8CCFF),
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ],
+          ],
+        ),
+        trailing: session.hasPendingMessages
+            ? const SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            : isUploadingAudio
+                ? const Icon(
+                    Icons.graphic_eq_rounded,
+                    color: Color(0xFF8CA8FF),
+                  )
+                : unreadCount > 0
+                    ? const Icon(
+                        Icons.mark_chat_unread_rounded,
+                        color: Color(0xFF55D6BE),
+                      )
+                    : null,
+        onTap: onTap,
       ),
-      trailing: session.hasPendingMessages
-          ? const SizedBox(
-              width: 18,
-              height: 18,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            )
-          : null,
-      onTap: onTap,
+    );
+  }
+}
+
+String? _formatSessionRuntime(SessionActiveJobSummary? summary) {
+  if (summary == null) {
+    return null;
+  }
+
+  final elapsedLabel = _formatElapsed(summary.maxElapsedSeconds);
+  if (elapsedLabel == null) {
+    return null;
+  }
+
+  if (summary.activeJobCount == 1) {
+    return 'Running for $elapsedLabel';
+  }
+
+  return '${summary.activeJobCount} jobs running • $elapsedLabel';
+}
+
+String? _formatElapsed(int? seconds) {
+  if (seconds == null) {
+    return null;
+  }
+  if (seconds < 60) {
+    return '${seconds}s';
+  }
+  final minutes = seconds ~/ 60;
+  final remainingSeconds = seconds % 60;
+  return '${minutes}m ${remainingSeconds}s';
+}
+
+class _MenuStatusBadge extends StatelessWidget {
+  const _MenuStatusBadge({
+    required this.label,
+    required this.backgroundColor,
+    required this.foregroundColor,
+  });
+
+  final String label;
+  final Color backgroundColor;
+  final Color foregroundColor;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: backgroundColor,
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          color: foregroundColor,
+          fontSize: 11,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+    );
+  }
+}
+
+class _ProjectStatusPill extends StatelessWidget {
+  const _ProjectStatusPill({
+    required this.active,
+    required this.label,
+  });
+
+  final bool active;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final backgroundColor =
+        active ? const Color(0xFF3D2D08) : const Color(0xFF18223D);
+    final foregroundColor =
+        active ? const Color(0xFFFFC857) : const Color(0xFF8B97B5);
+
+    return SizedBox(
+      width: double.infinity,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        decoration: BoxDecoration(
+          color: backgroundColor,
+          borderRadius: BorderRadius.circular(999),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.max,
+          children: <Widget>[
+            Container(
+              width: 8,
+              height: 8,
+              decoration: BoxDecoration(
+                color: foregroundColor,
+                shape: BoxShape.circle,
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: foregroundColor,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -858,50 +1466,65 @@ class _EmptyState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 28),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: <Widget>[
-            const Text(
-              'Start a new Codex session',
-              style: TextStyle(fontSize: 24, fontWeight: FontWeight.w600),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        return SingleChildScrollView(
+          padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 24),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(minHeight: constraints.maxHeight),
+            child: Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  const Text(
+                    'Start a new Codex session',
+                    style: TextStyle(fontSize: 24, fontWeight: FontWeight.w600),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 12),
+                  const Text(
+                    'Each chat maps to a real Codex CLI session and follow-up messages continue that session.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: Color(0xFF8B97B5), height: 1.5),
+                  ),
+                  const SizedBox(height: 20),
+                  FilledButton.icon(
+                    onPressed: () async {
+                      await onCreateChat();
+                    },
+                    icon: const Icon(Icons.add_comment_outlined),
+                    label: const Text('New Chat'),
+                  ),
+                ],
+              ),
             ),
-            const SizedBox(height: 12),
-            const Text(
-              'Each chat maps to a real Codex CLI session and follow-up messages continue that session.',
-              textAlign: TextAlign.center,
-              style: TextStyle(color: Color(0xFF8B97B5), height: 1.5),
-            ),
-            const SizedBox(height: 20),
-            FilledButton.icon(
-              onPressed: () async {
-                await onCreateChat();
-              },
-              icon: const Icon(Icons.add_comment_outlined),
-              label: const Text('New Chat'),
-            ),
-          ],
-        ),
-      ),
+          ),
+        );
+      },
     );
   }
 }
 
 class _Composer extends StatefulWidget {
   const _Composer({
+    required this.sessionId,
     required this.controller,
     required this.onSend,
     required this.onSendAudio,
+    required this.onSendAttachments,
     required this.isBusy,
     required this.voiceEnabled,
     required this.voiceStatusText,
   });
 
+  final String? sessionId;
   final TextEditingController controller;
-  final Future<void> Function() onSend;
-  final Future<void> Function(String audioPath) onSendAudio;
+  final Future<bool> Function() onSend;
+  final Future<bool> Function(XFile audioFile) onSendAudio;
+  final Future<bool> Function(
+    List<_PendingAttachmentDraft> attachments, {
+    String? prompt,
+  }) onSendAttachments;
   final bool isBusy;
   final bool voiceEnabled;
   final String voiceStatusText;
@@ -911,19 +1534,29 @@ class _Composer extends StatefulWidget {
 }
 
 class _ComposerState extends State<_Composer> {
-  final AudioNoteRecorder _audioRecorder = AudioNoteRecorder();
+  late AudioNoteRecorder _audioRecorder;
+  final FocusNode _composerFocusNode = FocusNode();
+  final ImagePicker _imagePicker = ImagePicker();
+  late final ClipboardImagePasteListener _clipboardImagePasteListener;
   Stopwatch? _recordingStopwatch;
   Timer? _recordingTicker;
   bool _hasText = false;
   bool _isRecording = false;
-  bool _isUploadingVoiceNote = false;
-  String? _pendingRecordingPath;
+  final List<_PendingAttachmentDraft> _pendingAttachments =
+      <_PendingAttachmentDraft>[];
+  final List<_PendingAttachmentDraft> _uploadingAttachments =
+      <_PendingAttachmentDraft>[];
 
   @override
   void initState() {
     super.initState();
+    _audioRecorder = AudioNoteRecorder();
     _hasText = widget.controller.text.trim().isNotEmpty;
     widget.controller.addListener(_handleTextChanged);
+    _clipboardImagePasteListener = attachClipboardImagePasteListener(
+      canHandlePaste: _canAcceptPastedImages,
+      onImagesPasted: _handlePastedImages,
+    );
   }
 
   @override
@@ -934,14 +1567,19 @@ class _ComposerState extends State<_Composer> {
       _hasText = widget.controller.text.trim().isNotEmpty;
       widget.controller.addListener(_handleTextChanged);
     }
+    if (oldWidget.sessionId != widget.sessionId) {
+      _resetRecorderForSessionChange();
+    }
   }
 
   @override
   void dispose() {
+    _clipboardImagePasteListener.dispose();
+    _composerFocusNode.dispose();
     widget.controller.removeListener(_handleTextChanged);
     _recordingTicker?.cancel();
-    if (_pendingRecordingPath != null) {
-      _deleteRecordedFile(_pendingRecordingPath!);
+    if (_isRecording) {
+      _audioRecorder.cancel();
     }
     _audioRecorder.dispose();
     super.dispose();
@@ -949,86 +1587,180 @@ class _ComposerState extends State<_Composer> {
 
   @override
   Widget build(BuildContext context) {
-    final showMicAction = !_hasText && !_isRecording;
-    final isDisabled = widget.isBusy || _isUploadingVoiceNote;
-    final viewInsetsBottom = MediaQuery.of(context).viewInsets.bottom;
+    final hasPendingAttachment = _pendingAttachments.isNotEmpty;
+    final showMicAction = !_hasText && !_isRecording && !hasPendingAttachment;
+    final isDisabled = widget.isBusy || _uploadingAttachments.isNotEmpty;
+    final showAttachmentActions =
+        !_isRecording && _uploadingAttachments.isEmpty;
 
-    return AnimatedPadding(
-      duration: const Duration(milliseconds: 180),
-      curve: Curves.easeOut,
-      padding: EdgeInsets.only(bottom: viewInsetsBottom),
-      child: SafeArea(
-        top: false,
-        child: Container(
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
-          decoration: const BoxDecoration(
-            color: Color(0xFF0D1427),
-            border: Border(
-              top: BorderSide(color: Color(0xFF1F2945)),
-            ),
+    return SafeArea(
+      top: false,
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+        decoration: const BoxDecoration(
+          color: Color(0xFF0D1427),
+          border: Border(
+            top: BorderSide(color: Color(0xFF1F2945)),
           ),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: <Widget>[
-              Expanded(
-                child: _buildComposerBody(),
-              ),
-              const SizedBox(width: 12),
-              if (_isRecording)
-                Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: <Widget>[
-                    FilledButton(
-                      onPressed: _isUploadingVoiceNote
-                          ? null
-                          : _confirmCancelRecording,
-                      style: _actionButtonStyle(
-                        backgroundColor: const Color(0xFF31405F),
-                        foregroundColor: const Color(0xFFE8ECF8),
+        ),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final useCompactRecordingLayout =
+                _isRecording && constraints.maxWidth < 380;
+            final useCompactAttachmentLayout = !_isRecording &&
+                hasPendingAttachment &&
+                constraints.maxWidth < 430;
+
+            if (useCompactRecordingLayout) {
+              return Column(
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  _buildComposerBody(),
+                  const SizedBox(height: 10),
+                  Row(
+                    children: <Widget>[
+                      Expanded(
+                        child: FilledButton.icon(
+                          onPressed: _confirmCancelRecording,
+                          style: _actionButtonStyle(
+                            backgroundColor: const Color(0xFF31405F),
+                            foregroundColor: const Color(0xFFE8ECF8),
+                          ),
+                          icon: const Icon(Icons.close_rounded),
+                          label: const Text('Cancel'),
+                        ),
                       ),
-                      child: const Icon(Icons.close_rounded),
-                    ),
-                    const SizedBox(width: 8),
-                    FilledButton(
-                      onPressed:
-                          _isUploadingVoiceNote ? null : _stopRecordingAndSend,
-                      style: _actionButtonStyle(
-                        backgroundColor: const Color(0xFFFF7A7A),
-                        foregroundColor: const Color(0xFF2C0710),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: FilledButton.icon(
+                          onPressed: _stopRecordingAndSend,
+                          style: _actionButtonStyle(
+                            backgroundColor: const Color(0xFFFF7A7A),
+                            foregroundColor: const Color(0xFF2C0710),
+                          ),
+                          icon: const Icon(Icons.send_rounded),
+                          label: const Text('Send'),
+                        ),
                       ),
-                      child: const Icon(Icons.send_rounded),
+                    ],
+                  ),
+                ],
+              );
+            }
+
+            if (useCompactAttachmentLayout) {
+              return Column(
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  _buildComposerBody(),
+                  const SizedBox(height: 10),
+                  Row(
+                    children: <Widget>[
+                      if (showAttachmentActions) ...<Widget>[
+                        FilledButton(
+                          onPressed: isDisabled ? null : _openAttachmentPicker,
+                          style: _actionButtonStyle(
+                            backgroundColor: const Color(0xFF1F4D45),
+                            foregroundColor: const Color(0xFFB6F4E4),
+                          ),
+                          child: const Icon(Icons.attach_file_rounded),
+                        ),
+                        const SizedBox(width: 10),
+                      ],
+                      Expanded(
+                        child: FilledButton.icon(
+                          onPressed: isDisabled ? null : _handlePrimaryAction,
+                          style: _actionButtonStyle(
+                            backgroundColor: const Color(0xFF55D6BE),
+                            foregroundColor: const Color(0xFF07131D),
+                          ),
+                          icon: const Icon(Icons.arrow_upward_rounded),
+                          label: const Text('Send'),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              );
+            }
+
+            return Row(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: <Widget>[
+                if (showAttachmentActions) ...<Widget>[
+                  FilledButton(
+                    onPressed: isDisabled ? null : _openAttachmentPicker,
+                    style: _actionButtonStyle(
+                      backgroundColor: hasPendingAttachment
+                          ? const Color(0xFF1F4D45)
+                          : const Color(0xFF31405F),
+                      foregroundColor: hasPendingAttachment
+                          ? const Color(0xFFB6F4E4)
+                          : const Color(0xFFE8ECF8),
                     ),
-                  ],
-                )
-              else if (showMicAction && !widget.voiceEnabled)
-                FilledButton(
-                  onPressed: _showVoiceUnavailableMessage,
-                  style: _actionButtonStyle(
-                    backgroundColor: const Color(0xFF31405F),
-                    foregroundColor: const Color(0xFF9EABC9),
+                    child: const Icon(Icons.attach_file_rounded),
                   ),
-                  child: const Icon(Icons.mic_off_rounded),
-                )
-              else if (showMicAction)
-                FilledButton(
-                  onPressed: isDisabled ? null : _toggleRecording,
-                  style: _actionButtonStyle(
-                    backgroundColor: const Color(0xFF3F5EF7),
-                    foregroundColor: Colors.white,
-                  ),
-                  child: const Icon(Icons.mic_rounded),
-                )
-              else
-                FilledButton(
-                  onPressed: isDisabled ? null : () async => widget.onSend(),
-                  style: _actionButtonStyle(
-                    backgroundColor: const Color(0xFF55D6BE),
-                    foregroundColor: const Color(0xFF07131D),
-                  ),
-                  child: const Icon(Icons.arrow_upward_rounded),
+                  const SizedBox(width: 12),
+                ],
+                Expanded(
+                  child: _buildComposerBody(),
                 ),
-            ],
-          ),
+                const SizedBox(width: 12),
+                if (_isRecording)
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: <Widget>[
+                      FilledButton(
+                        onPressed: _confirmCancelRecording,
+                        style: _actionButtonStyle(
+                          backgroundColor: const Color(0xFF31405F),
+                          foregroundColor: const Color(0xFFE8ECF8),
+                          minimumSize: const Size(52, 52),
+                        ),
+                        child: const Icon(Icons.close_rounded),
+                      ),
+                      const SizedBox(width: 6),
+                      FilledButton(
+                        onPressed: _stopRecordingAndSend,
+                        style: _actionButtonStyle(
+                          backgroundColor: const Color(0xFFFF7A7A),
+                          foregroundColor: const Color(0xFF2C0710),
+                          minimumSize: const Size(52, 52),
+                        ),
+                        child: const Icon(Icons.send_rounded),
+                      ),
+                    ],
+                  )
+                else if (showMicAction && !widget.voiceEnabled)
+                  FilledButton(
+                    onPressed: _showVoiceUnavailableMessage,
+                    style: _actionButtonStyle(
+                      backgroundColor: const Color(0xFF31405F),
+                      foregroundColor: const Color(0xFF9EABC9),
+                    ),
+                    child: const Icon(Icons.mic_off_rounded),
+                  )
+                else if (showMicAction)
+                  FilledButton(
+                    onPressed: isDisabled ? null : _toggleRecording,
+                    style: _actionButtonStyle(
+                      backgroundColor: const Color(0xFF3F5EF7),
+                      foregroundColor: Colors.white,
+                    ),
+                    child: const Icon(Icons.mic_rounded),
+                  )
+                else
+                  FilledButton(
+                    onPressed: isDisabled ? null : _handlePrimaryAction,
+                    style: _actionButtonStyle(
+                      backgroundColor: const Color(0xFF55D6BE),
+                      foregroundColor: const Color(0xFF07131D),
+                    ),
+                    child: const Icon(Icons.arrow_upward_rounded),
+                  ),
+              ],
+            );
+          },
         ),
       ),
     );
@@ -1038,46 +1770,86 @@ class _ComposerState extends State<_Composer> {
     if (_isRecording) {
       return _VoiceStatusCard(
         icon: Icons.mic_rounded,
-        title: 'Recording voice note',
-        subtitle:
-            'Tap send to upload or cancel to discard • ${_formatDuration()}',
+        title: 'Recording',
+        subtitle: 'Send to upload or cancel to discard',
         color: const Color(0xFFFF7A7A),
+        trailing: _StatusPill(
+          label: _formatDuration(),
+          backgroundColor: const Color(0xFF3B1521),
+          foregroundColor: const Color(0xFFFFB3B3),
+        ),
+        titleMaxLines: 1,
+        subtitleMaxLines: 1,
       );
     }
 
-    if (_isUploadingVoiceNote) {
-      return const _VoiceStatusCard(
-        icon: Icons.cloud_upload_rounded,
-        title: 'Sending voice note',
-        subtitle: 'Uploading audio and transcribing it on the backend',
-        color: Color(0xFF55D6BE),
+    if (_uploadingAttachments.isNotEmpty) {
+      final isSingleAttachment = _uploadingAttachments.length == 1;
+      final primaryAttachment = _uploadingAttachments.first;
+      return _VoiceStatusCard(
+        icon: primaryAttachment.isImage
+            ? Icons.image_rounded
+            : Icons.insert_drive_file_rounded,
+        title: isSingleAttachment
+            ? (primaryAttachment.isImage ? 'Sending image' : 'Sending file')
+            : 'Sending ${_uploadingAttachments.length} attachments',
+        subtitle: isSingleAttachment
+            ? (primaryAttachment.isImage
+                ? 'Uploading ${primaryAttachment.name} and forwarding it to Codex'
+                : 'Uploading ${primaryAttachment.name} and preparing it for Codex')
+            : 'Uploading ${_uploadingAttachments.length} attachments to one Codex turn',
+        color: const Color(0xFF55D6BE),
         showSpinner: true,
+        trailing: _StatusPill(
+          label: isSingleAttachment
+              ? primaryAttachment.badgeLabel
+              : '${_uploadingAttachments.length} files',
+          backgroundColor: const Color(0xFF11352E),
+          foregroundColor: const Color(0xFF9FF0DC),
+        ),
       );
     }
 
-    return TextField(
-      controller: widget.controller,
-      minLines: 1,
-      maxLines: 6,
-      enabled: !widget.isBusy,
-      textInputAction: TextInputAction.send,
-      onSubmitted: (_) async {
-        await widget.onSend();
-      },
-      decoration: const InputDecoration(
-        hintText: 'Send a command to your local Codex CLI',
-      ),
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: <Widget>[
+        if (_pendingAttachments.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 10),
+            child: _PendingAttachmentTray(
+              attachments: _pendingAttachments,
+              busy: widget.isBusy,
+              onRemove: _removePendingAttachment,
+              onClearAll: _clearPendingAttachments,
+            ),
+          ),
+        TextField(
+          controller: widget.controller,
+          focusNode: _composerFocusNode,
+          minLines: 1,
+          maxLines: 6,
+          enabled: !widget.isBusy,
+          textInputAction: TextInputAction.send,
+          onSubmitted: (_) async {
+            await _handlePrimaryAction();
+          },
+          decoration: InputDecoration(
+            hintText: _composerHintText(),
+          ),
+        ),
+      ],
     );
   }
 
   ButtonStyle _actionButtonStyle({
     required Color backgroundColor,
     required Color foregroundColor,
+    Size minimumSize = const Size(56, 56),
   }) {
     return FilledButton.styleFrom(
       backgroundColor: backgroundColor,
       foregroundColor: foregroundColor,
-      minimumSize: const Size(56, 56),
+      minimumSize: minimumSize,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(18),
       ),
@@ -1101,8 +1873,134 @@ class _ComposerState extends State<_Composer> {
     await _startRecording();
   }
 
+  Future<void> _openAttachmentPicker() async {
+    final choice = await showModalBottomSheet<_AttachmentSourceAction>(
+      context: context,
+      backgroundColor: const Color(0xFF101931),
+      builder: (context) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              const ListTile(
+                title: Text('Add attachment'),
+                subtitle: Text('Stage it in the composer before sending'),
+              ),
+              ListTile(
+                leading: const Icon(Icons.photo_library_outlined),
+                title: const Text('Photo library'),
+                subtitle: const Text('Preview an image and add instructions'),
+                onTap: () => Navigator.of(context).pop(
+                  _AttachmentSourceAction.image,
+                ),
+              ),
+              ListTile(
+                leading: const Icon(Icons.insert_drive_file_outlined),
+                title: const Text('Browse files'),
+                subtitle:
+                    const Text('Attach documents, code, text files, or images'),
+                onTap: () => Navigator.of(context).pop(
+                  _AttachmentSourceAction.file,
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+
+    if (!mounted || choice == null) {
+      return;
+    }
+
+    switch (choice) {
+      case _AttachmentSourceAction.image:
+        await _pickImage();
+        break;
+      case _AttachmentSourceAction.file:
+        await _pickDocument();
+        break;
+    }
+  }
+
+  Future<void> _pickImage() async {
+    try {
+      final pickedImages = await _imagePicker.pickMultiImage(
+        imageQuality: 90,
+      );
+      if (pickedImages.isEmpty || !mounted) {
+        return;
+      }
+      final attachments = <_PendingAttachmentDraft>[];
+      for (final picked in pickedImages) {
+        final previewBytes = await picked.readAsBytes();
+        attachments.add(
+          _PendingAttachmentDraft(
+            file: picked,
+            name: picked.name,
+            kind: _AttachmentDraftKind.image,
+            sizeBytes: await picked.length(),
+            previewBytes: previewBytes,
+          ),
+        );
+      }
+      _appendPendingAttachments(attachments);
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('$error')),
+      );
+    }
+  }
+
+  Future<void> _pickDocument() async {
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.any,
+        allowMultiple: true,
+        withData: true,
+      );
+      if (result == null || !mounted) {
+        return;
+      }
+      final attachments = <_PendingAttachmentDraft>[];
+      for (final file in result.files) {
+        final xFile = file.xFile;
+        final kind = _resolveAttachmentKind(
+          fileName: file.name,
+          mimeType: xFile.mimeType,
+        );
+        attachments.add(
+          _PendingAttachmentDraft(
+            file: xFile,
+            name: file.name,
+            kind: kind,
+            sizeBytes: file.size > 0 ? file.size : await xFile.length(),
+            previewBytes: kind == _AttachmentDraftKind.image
+                ? (file.bytes ?? await xFile.readAsBytes())
+                : null,
+          ),
+        );
+      }
+      if (attachments.isEmpty) {
+        throw Exception(
+            'The selected files are not accessible on this device.');
+      }
+      _appendPendingAttachments(attachments);
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('$error')),
+      );
+    }
+  }
+
   Future<void> _confirmCancelRecording() async {
-    if (!_isRecording || _isUploadingVoiceNote) {
+    if (!_isRecording) {
       return;
     }
 
@@ -1134,12 +2032,12 @@ class _ComposerState extends State<_Composer> {
   }
 
   Future<void> _startRecording() async {
-    if (_isRecording || widget.isBusy || _isUploadingVoiceNote) {
+    if (_isRecording || widget.isBusy) {
       return;
     }
 
     try {
-      final path = await _audioRecorder.start();
+      await _audioRecorder.start();
       _recordingStopwatch = Stopwatch()..start();
       _recordingTicker?.cancel();
       _recordingTicker = Timer.periodic(const Duration(seconds: 1), (_) {
@@ -1148,7 +2046,6 @@ class _ComposerState extends State<_Composer> {
         }
       });
       setState(() {
-        _pendingRecordingPath = path;
         _isRecording = true;
       });
     } catch (error) {
@@ -1166,33 +2063,73 @@ class _ComposerState extends State<_Composer> {
       return;
     }
 
+    final recorder = _audioRecorder;
+    _audioRecorder = AudioNoteRecorder();
     _recordingTicker?.cancel();
     _recordingStopwatch?.stop();
-    final audioPath = await _audioRecorder.stop();
+    final audioFile = await recorder.stop();
+    _recordingStopwatch = null;
 
     setState(() {
       _isRecording = false;
-      _isUploadingVoiceNote = true;
     });
 
-    try {
-      if (audioPath != null) {
-        await widget.onSendAudio(audioPath);
-      }
-    } finally {
-      if (audioPath != null) {
-        _deleteRecordedFile(audioPath);
-      }
-      _recordingStopwatch = null;
-      if (mounted) {
-        setState(() {
-          _pendingRecordingPath = null;
-          _isUploadingVoiceNote = false;
-        });
-      } else {
-        _pendingRecordingPath = null;
-      }
+    if (audioFile == null) {
+      return;
     }
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Voice note sending in the background.'),
+          duration: Duration(seconds: 1),
+        ),
+      );
+    }
+
+    _sendAudioInBackground(recorder, audioFile);
+  }
+
+  Future<void> _handlePrimaryAction() async {
+    if (_pendingAttachments.isNotEmpty) {
+      final attachments =
+          List<_PendingAttachmentDraft>.from(_pendingAttachments);
+      final prompt = widget.controller.text.trim();
+
+      setState(() {
+        _uploadingAttachments
+          ..clear()
+          ..addAll(attachments);
+      });
+
+      try {
+        final didSend = await widget.onSendAttachments(
+          attachments,
+          prompt: prompt.isEmpty ? null : prompt,
+        );
+        if (didSend) {
+          widget.controller.clear();
+          if (mounted) {
+            setState(() {
+              _pendingAttachments.clear();
+            });
+          } else {
+            _pendingAttachments.clear();
+          }
+        }
+      } finally {
+        if (mounted) {
+          setState(() {
+            _uploadingAttachments.clear();
+          });
+        } else {
+          _uploadingAttachments.clear();
+        }
+      }
+      return;
+    }
+
+    await widget.onSend();
   }
 
   Future<void> _discardRecording() async {
@@ -1200,35 +2137,173 @@ class _ComposerState extends State<_Composer> {
       return;
     }
 
+    final recorder = _audioRecorder;
+    _audioRecorder = AudioNoteRecorder();
     _recordingTicker?.cancel();
     _recordingStopwatch?.stop();
-    final audioPath = await _audioRecorder.stop();
-    final pathToDelete = audioPath ?? _pendingRecordingPath;
-    if (pathToDelete != null) {
-      _deleteRecordedFile(pathToDelete);
-    }
+    await recorder.cancel();
+    await recorder.dispose();
 
     _recordingStopwatch = null;
     if (mounted) {
       setState(() {
         _isRecording = false;
-        _pendingRecordingPath = null;
       });
-    } else {
-      _pendingRecordingPath = null;
     }
   }
 
-  void _deleteRecordedFile(String path) {
-    final file = File(path);
-    if (file.existsSync()) {
-      file.deleteSync();
+  void _removePendingAttachment(_PendingAttachmentDraft attachment) {
+    setState(() {
+      _pendingAttachments.removeWhere(
+        (item) => item.identityKey == attachment.identityKey,
+      );
+    });
+  }
+
+  void _clearPendingAttachments() {
+    if (_pendingAttachments.isEmpty) {
+      return;
+    }
+    setState(() {
+      _pendingAttachments.clear();
+    });
+  }
+
+  void _appendPendingAttachments(List<_PendingAttachmentDraft> attachments) {
+    if (attachments.isEmpty || !mounted) {
+      return;
     }
 
-    final parent = file.parent;
-    if (parent.existsSync()) {
-      parent.deleteSync(recursive: true);
+    final existingPaths =
+        _pendingAttachments.map((item) => item.identityKey).toSet();
+    final uniqueAttachments = attachments
+        .where((attachment) => !existingPaths.contains(attachment.identityKey))
+        .toList();
+    if (uniqueAttachments.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Those attachments are already in the tray.'),
+          duration: Duration(seconds: 1),
+        ),
+      );
+      return;
     }
+
+    setState(() {
+      _pendingAttachments.addAll(uniqueAttachments);
+    });
+  }
+
+  bool _canAcceptPastedImages() {
+    return mounted &&
+        _composerFocusNode.hasFocus &&
+        !widget.isBusy &&
+        !_isRecording &&
+        _uploadingAttachments.isEmpty;
+  }
+
+  void _sendAudioInBackground(AudioNoteRecorder recorder, XFile audioFile) {
+    unawaited(() async {
+      try {
+        await widget.onSendAudio(audioFile);
+      } finally {
+        await recorder.cleanup(audioFile);
+        await recorder.dispose();
+      }
+    }());
+  }
+
+  void _resetRecorderForSessionChange() {
+    if (_isRecording) {
+      unawaited(_audioRecorder.cancel());
+    }
+    _recordingTicker?.cancel();
+    _recordingTicker = null;
+    _recordingStopwatch = null;
+    _audioRecorder.dispose();
+    _audioRecorder = AudioNoteRecorder();
+    if (mounted) {
+      setState(() {
+        _isRecording = false;
+      });
+    } else {
+      _isRecording = false;
+    }
+  }
+
+  Future<void> _handlePastedImages(
+    List<ClipboardImagePastePayload> images,
+  ) async {
+    if (images.isEmpty || !mounted) {
+      return;
+    }
+
+    final attachments = images
+        .map(
+          (image) => _PendingAttachmentDraft(
+            file: XFile.fromData(
+              image.bytes,
+              name: image.fileName,
+              mimeType: image.mimeType,
+            ),
+            name: image.fileName,
+            kind: _AttachmentDraftKind.image,
+            sizeBytes: image.bytes.length,
+            previewBytes: image.bytes,
+          ),
+        )
+        .toList();
+
+    if (attachments.isEmpty) {
+      return;
+    }
+
+    _appendPendingAttachments(attachments);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          attachments.length == 1
+              ? 'Image pasted into the attachment tray.'
+              : '${attachments.length} images pasted into the attachment tray.',
+        ),
+        duration: const Duration(seconds: 1),
+      ),
+    );
+  }
+
+  String _composerHintText() {
+    if (_pendingAttachments.isEmpty) {
+      return 'Send a command to your local Codex CLI';
+    }
+    if (_pendingAttachments.length == 1 && _pendingAttachments.first.isImage) {
+      return 'Add optional instructions for the image';
+    }
+    return 'Tell Codex what to do with these attachments';
+  }
+
+  _AttachmentDraftKind _resolveAttachmentKind({
+    required String fileName,
+    String? mimeType,
+  }) {
+    if (mimeType != null && mimeType.toLowerCase().startsWith('image/')) {
+      return _AttachmentDraftKind.image;
+    }
+    final normalizedName = fileName.toLowerCase();
+    if (_looksLikeImagePath(normalizedName)) {
+      return _AttachmentDraftKind.image;
+    }
+    return _AttachmentDraftKind.file;
+  }
+
+  bool _looksLikeImagePath(String value) {
+    return value.endsWith('.bmp') ||
+        value.endsWith('.gif') ||
+        value.endsWith('.jpeg') ||
+        value.endsWith('.jpg') ||
+        value.endsWith('.png') ||
+        value.endsWith('.tif') ||
+        value.endsWith('.tiff') ||
+        value.endsWith('.webp');
   }
 
   String _formatDuration() {
@@ -1245,6 +2320,32 @@ class _ComposerState extends State<_Composer> {
   }
 }
 
+enum _AttachmentDraftKind { image, file }
+
+enum _AttachmentSourceAction { image, file }
+
+class _PendingAttachmentDraft {
+  const _PendingAttachmentDraft({
+    required this.file,
+    required this.name,
+    required this.kind,
+    this.sizeBytes,
+    this.previewBytes,
+  });
+
+  final XFile file;
+  final String name;
+  final _AttachmentDraftKind kind;
+  final int? sizeBytes;
+  final Uint8List? previewBytes;
+
+  bool get isImage => kind == _AttachmentDraftKind.image;
+
+  String get badgeLabel => isImage ? 'Image' : 'File';
+
+  String get identityKey => '${kind.name}:$name:${sizeBytes ?? 0}';
+}
+
 class _VoiceStatusCard extends StatelessWidget {
   const _VoiceStatusCard({
     required this.icon,
@@ -1252,6 +2353,9 @@ class _VoiceStatusCard extends StatelessWidget {
     required this.subtitle,
     required this.color,
     this.showSpinner = false,
+    this.trailing,
+    this.titleMaxLines = 1,
+    this.subtitleMaxLines = 2,
   });
 
   final IconData icon;
@@ -1259,11 +2363,14 @@ class _VoiceStatusCard extends StatelessWidget {
   final String subtitle;
   final Color color;
   final bool showSpinner;
+  final Widget? trailing;
+  final int titleMaxLines;
+  final int subtitleMaxLines;
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       decoration: BoxDecoration(
         color: const Color(0xFF15203B),
         borderRadius: BorderRadius.circular(18),
@@ -1290,17 +2397,335 @@ class _VoiceStatusCard extends StatelessWidget {
               children: <Widget>[
                 Text(
                   title,
+                  maxLines: titleMaxLines,
+                  overflow: TextOverflow.ellipsis,
                   style: const TextStyle(fontWeight: FontWeight.w600),
                 ),
                 const SizedBox(height: 2),
                 Text(
                   subtitle,
+                  maxLines: subtitleMaxLines,
+                  overflow: TextOverflow.ellipsis,
                   style: const TextStyle(color: Color(0xFF8B97B5)),
                 ),
               ],
             ),
           ),
+          if (trailing != null) ...<Widget>[
+            const SizedBox(width: 12),
+            trailing!,
+          ],
         ],
+      ),
+    );
+  }
+}
+
+class _PendingAttachmentTray extends StatelessWidget {
+  const _PendingAttachmentTray({
+    required this.attachments,
+    required this.busy,
+    required this.onRemove,
+    required this.onClearAll,
+  });
+
+  final List<_PendingAttachmentDraft> attachments;
+  final bool busy;
+  final ValueChanged<_PendingAttachmentDraft> onRemove;
+  final VoidCallback onClearAll;
+
+  @override
+  Widget build(BuildContext context) {
+    final imageCount =
+        attachments.where((attachment) => attachment.isImage).length;
+    final fileCount = attachments.length - imageCount;
+
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: const Color(0xFF15203B),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFF2B395D)),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final useStackedHeader = constraints.maxWidth < 320;
+              final statusPill = _StatusPill(
+                label: '${attachments.length} selected',
+                backgroundColor: const Color(0xFF1E2944),
+                foregroundColor: const Color(0xFFB8C8EA),
+              );
+
+              if (useStackedHeader) {
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    Row(
+                      children: <Widget>[
+                        const Expanded(
+                          child: Text(
+                            'Attachments ready',
+                            style: TextStyle(fontWeight: FontWeight.w700),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        statusPill,
+                      ],
+                    ),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: TextButton(
+                        onPressed: busy ? null : onClearAll,
+                        child: const Text('Clear all'),
+                      ),
+                    ),
+                  ],
+                );
+              }
+
+              return Row(
+                children: <Widget>[
+                  const Expanded(
+                    child: Text(
+                      'Attachments ready',
+                      style: TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                  statusPill,
+                  const SizedBox(width: 8),
+                  TextButton(
+                    onPressed: busy ? null : onClearAll,
+                    child: const Text('Clear all'),
+                  ),
+                ],
+              );
+            },
+          ),
+          const SizedBox(height: 4),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Text(
+              _buildAttachmentTraySummary(
+                totalCount: attachments.length,
+                imageCount: imageCount,
+                fileCount: fileCount,
+              ),
+              style: const TextStyle(
+                color: Color(0xFF8B97B5),
+                height: 1.4,
+              ),
+            ),
+          ),
+          const SizedBox(height: 10),
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxHeight: 220),
+            child: ListView.separated(
+              shrinkWrap: true,
+              itemCount: attachments.length,
+              separatorBuilder: (context, index) => const SizedBox(height: 8),
+              itemBuilder: (context, index) {
+                final attachment = attachments[index];
+                return _PendingAttachmentRow(
+                  attachment: attachment,
+                  busy: busy,
+                  onRemove: () => onRemove(attachment),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PendingAttachmentRow extends StatelessWidget {
+  const _PendingAttachmentRow({
+    required this.attachment,
+    required this.busy,
+    required this.onRemove,
+  });
+
+  final _PendingAttachmentDraft attachment;
+  final bool busy;
+  final VoidCallback onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        _AttachmentPreview(attachment: attachment),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              Wrap(
+                spacing: 8,
+                runSpacing: 6,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: <Widget>[
+                  _StatusPill(
+                    label: attachment.badgeLabel,
+                    backgroundColor: attachment.isImage
+                        ? const Color(0xFF11352E)
+                        : const Color(0xFF1E2944),
+                    foregroundColor: attachment.isImage
+                        ? const Color(0xFF9FF0DC)
+                        : const Color(0xFFB8C8EA),
+                  ),
+                  if (attachment.sizeBytes != null) ...<Widget>[
+                    Text(
+                      _formatAttachmentSize(attachment.sizeBytes!),
+                      style: const TextStyle(
+                        color: Color(0xFF8B97B5),
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+              const SizedBox(height: 8),
+              Text(
+                attachment.name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
+        ),
+        IconButton(
+          onPressed: busy ? null : onRemove,
+          tooltip: 'Remove attachment',
+          icon: const Icon(Icons.close_rounded),
+        ),
+      ],
+    );
+  }
+}
+
+class _AttachmentPreview extends StatelessWidget {
+  const _AttachmentPreview({
+    required this.attachment,
+  });
+
+  final _PendingAttachmentDraft attachment;
+
+  @override
+  Widget build(BuildContext context) {
+    final previewBytes = attachment.previewBytes;
+    if (attachment.isImage && previewBytes != null) {
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(12),
+        child: Image.memory(
+          previewBytes,
+          width: 60,
+          height: 60,
+          fit: BoxFit.cover,
+          errorBuilder: (context, error, stackTrace) {
+            return const _AttachmentFallbackIcon(
+              icon: Icons.broken_image_outlined,
+            );
+          },
+        ),
+      );
+    }
+
+    return const _AttachmentFallbackIcon(
+      icon: Icons.insert_drive_file_outlined,
+    );
+  }
+}
+
+class _AttachmentFallbackIcon extends StatelessWidget {
+  const _AttachmentFallbackIcon({
+    required this.icon,
+  });
+
+  final IconData icon;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 60,
+      height: 60,
+      decoration: BoxDecoration(
+        color: const Color(0xFF31405F),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      alignment: Alignment.center,
+      child: Icon(icon, color: const Color(0xFFE8ECF8)),
+    );
+  }
+}
+
+String _formatAttachmentSize(int sizeBytes) {
+  if (sizeBytes < 1024) {
+    return '$sizeBytes B';
+  }
+  if (sizeBytes < 1024 * 1024) {
+    return '${(sizeBytes / 1024).toStringAsFixed(1)} KB';
+  }
+  return '${(sizeBytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+}
+
+String _buildAttachmentTraySummary({
+  required int totalCount,
+  required int imageCount,
+  required int fileCount,
+}) {
+  if (totalCount == 1 && imageCount == 1) {
+    return 'One image is ready. Add optional instructions or send it as-is.';
+  }
+  if (totalCount == 1 && fileCount == 1) {
+    return 'One file is ready. Tell Codex what you want from it.';
+  }
+
+  final parts = <String>[];
+  if (imageCount > 0) {
+    parts.add('$imageCount image${imageCount == 1 ? '' : 's'}');
+  }
+  if (fileCount > 0) {
+    parts.add('$fileCount file${fileCount == 1 ? '' : 's'}');
+  }
+  return '${parts.join(' and ')} queued. They will be sent together in one Codex turn.';
+}
+
+class _StatusPill extends StatelessWidget {
+  const _StatusPill({
+    required this.label,
+    required this.backgroundColor,
+    required this.foregroundColor,
+  });
+
+  final String label;
+  final Color backgroundColor;
+  final Color foregroundColor;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: backgroundColor,
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          color: foregroundColor,
+          fontSize: 12,
+          fontWeight: FontWeight.w700,
+        ),
       ),
     );
   }
