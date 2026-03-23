@@ -92,7 +92,7 @@ Important variables:
 - `TAILSCALE_SOCKET=/path/to/tailscaled.sock`
 - `AUDIO_TRANSCRIPTION_BACKEND=auto|disabled|command|openai|faster_whisper`
 - `AUDIO_TRANSCRIPTION_COMMAND=/absolute/path/to/your/transcriber-wrapper {file}`
-- `AUDIO_TRANSCRIPTION_MODEL=gpt-4o-mini-transcribe`
+- `AUDIO_TRANSCRIPTION_MODEL=whisper-1` for OpenAI-only transcription
 - `AUDIO_TRANSCRIPTION_LOCAL_MODEL=small`
 - `OPENAI_API_KEY=...`
 
@@ -113,11 +113,58 @@ Chat sessions, messages, and job history are stored in SQLite by default. Keep `
 
 Voice-note transcription options:
 
-- `AUDIO_TRANSCRIPTION_BACKEND=auto` is now the default. It prefers a configured command wrapper first, then OpenAI if `OPENAI_API_KEY` is present, and otherwise falls back to local `faster-whisper`.
+- `AUDIO_TRANSCRIPTION_BACKEND=faster_whisper` is the recommended local default for this repo. It keeps speech-to-text on your machine and avoids any OpenAI API usage.
+- `AUDIO_TRANSCRIPTION_BACKEND=auto` prefers a configured command wrapper first, then OpenAI if `OPENAI_API_KEY` is present, and otherwise falls back to local `faster-whisper`.
 - `AUDIO_TRANSCRIPTION_BACKEND=command` keeps execution local and lets you call a wrapper script around `whisper`, `faster-whisper`, or another speech-to-text tool. The command should print only the transcript to stdout.
 - `AUDIO_TRANSCRIPTION_BACKEND=openai` sends the recorded audio file to OpenAI speech-to-text, then submits the returned transcript to the local Codex CLI.
+- `AUDIO_TRANSCRIPTION_MODEL` only matters for `openai`. It does not affect local `faster-whisper`.
 - `AUDIO_TRANSCRIPTION_BACKEND=faster_whisper` forces the local model path and avoids any external API call.
 - `AUDIO_TRANSCRIPTION_BACKEND=disabled` turns the feature off explicitly.
+
+### Local Voice Transcription Setup
+
+This repository already installs `faster-whisper` as part of the Python dependencies. For most local setups, that is the transcription engine you want.
+
+Recommended `.env` values:
+
+```env
+AUDIO_TRANSCRIPTION_BACKEND=faster_whisper
+AUDIO_TRANSCRIPTION_LOCAL_MODEL=small
+AUDIO_TRANSCRIPTION_LOCAL_COMPUTE_TYPE=int8
+AUDIO_TRANSCRIPTION_LOCAL_DEVICE=auto
+OPENAI_API_KEY=
+```
+
+Install system dependencies:
+
+Ubuntu / Debian:
+
+```bash
+sudo apt update
+sudo apt install -y ffmpeg
+```
+
+macOS with Homebrew:
+
+```bash
+brew install ffmpeg
+```
+
+Then install the project dependencies:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+uv pip install -e '.[dev]'
+```
+
+Notes:
+
+- `faster-whisper` is a local Whisper-compatible implementation. It does not use the OpenAI API.
+- `AUDIO_TRANSCRIPTION_LOCAL_MODEL=small` is a reasonable CPU default.
+- `AUDIO_TRANSCRIPTION_LOCAL_COMPUTE_TYPE=int8` is a good CPU-friendly setting.
+- If you have a compatible GPU, you can later tune `AUDIO_TRANSCRIPTION_LOCAL_DEVICE` and compute type for faster inference.
+- If you want to use the original OpenAI-hosted Whisper API instead, set `AUDIO_TRANSCRIPTION_BACKEND=openai`, configure `OPENAI_API_KEY`, and choose an OpenAI model such as `whisper-1`.
 
 ## Run Locally
 
