@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from backend.app.domain.entities.job import JobStatus
@@ -55,6 +56,13 @@ class ExecutionProvider(ABC):
             phase=self.get_phase(job_id),
             latest_activity=self.get_latest_activity(job_id),
         )
+
+    def watch_job(
+        self,
+        job_id: str,
+        on_change: Callable[[ExecutionSnapshot], None],
+    ) -> Callable[[], None] | None:
+        return None
 
     @abstractmethod
     def get_provider_session_id(self, job_id: str) -> str | None:

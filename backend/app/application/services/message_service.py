@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -17,6 +18,7 @@ from backend.app.domain.entities.job import Job, JobStatus
 from backend.app.domain.entities.workspace import Workspace
 from backend.app.domain.repositories.chat_repository import ChatRepository
 from backend.app.infrastructure.execution.base import ExecutionProvider
+from backend.app.infrastructure.execution.base import ExecutionSnapshot
 from backend.app.infrastructure.transcription.base import AudioTranscriber, AudioTranscriptionError
 
 
@@ -459,6 +461,15 @@ class MessageService:
         self._repository.save_job(job)
         self._sync_job_side_effects(job)
         return job
+
+    def watch_job(
+        self,
+        job_id: str,
+        on_change: Callable[[ExecutionSnapshot], None],
+    ) -> Callable[[], None] | None:
+        if self._repository.get_job(job_id) is None:
+            return None
+        return self._execution_provider.watch_job(job_id, on_change)
 
     def _resolve_session(
         self,

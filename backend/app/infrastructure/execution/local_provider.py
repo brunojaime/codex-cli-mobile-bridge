@@ -6,13 +6,14 @@ import shlex
 import subprocess
 import tempfile
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import IO
 from uuid import uuid4
 
 from backend.app.domain.entities.job import JobStatus
-from backend.app.infrastructure.execution.base import ExecutionProvider
+from backend.app.infrastructure.execution.base import ExecutionProvider, ExecutionSnapshot
 
 
 @dataclass(slots=True)
@@ -43,6 +44,7 @@ class LocalExecutionProvider(ExecutionProvider):
         self._workdir = str(Path(workdir).resolve()) if workdir else None
         self._timeout_seconds = timeout_seconds
         self._states: dict[str, _ExecutionState] = {}
+        self._subscribers: dict[str, list[Callable[[ExecutionSnapshot], None]]] = {}
         self._lock = threading.RLock()
 
     def execute(
@@ -95,6 +97,32 @@ class LocalExecutionProvider(ExecutionProvider):
     def get_latest_activity(self, job_id: str) -> str | None:
         state = self._get_state(job_id)
         return state.latest_activity if state else None
+
+    def watch_job(
+        self,
+        job_id: str,
+        on_change: Callable[[ExecutionSnapshot], None],
+    ) -> Callable[[], None] | None:
+        with self._lock:
+            self._subscribers.setdefault(job_id, []).append(on_change)
+            snapshot = self._snapshot_from_state(job_id, self._states.get(job_id))
+
+        if snapshot is not None:
+            on_change(snapshot)
+
+        def unsubscribe() -> None:
+            with self._lock:
+                listeners = self._subscribers.get(job_id)
+                if listeners is None:
+                    return
+                try:
+                    listeners.remove(on_change)
+                except ValueError:
+                    return
+                if not listeners:
+                    self._subscribers.pop(job_id, None)
+
+        return unsubscribe
 
     def _run_job(
         self,
@@ -434,6 +462,8 @@ class LocalExecutionProvider(ExecutionProvider):
         phase: str | None = None,
         latest_activity: str | None = None,
     ) -> None:
+        listeners: list[Callable[[ExecutionSnapshot], None]]
+        snapshot: ExecutionSnapshot
         with self._lock:
             current = self._states.get(job_id)
             self._states[job_id] = _ExecutionState(
@@ -448,7 +478,32 @@ class LocalExecutionProvider(ExecutionProvider):
                 if latest_activity is not None
                 else (current.latest_activity if current else None),
             )
+            snapshot = self._snapshot_from_state(job_id, self._states[job_id])
+            listeners = list(self._subscribers.get(job_id, ()))
+
+        for listener in listeners:
+            try:
+                listener(snapshot)
+            except Exception:
+                continue
 
     def _get_state(self, job_id: str) -> _ExecutionState | None:
         with self._lock:
             return self._states.get(job_id)
+
+    def _snapshot_from_state(
+        self,
+        job_id: str,
+        state: _ExecutionState | None,
+    ) -> ExecutionSnapshot:
+        if state is None:
+            return ExecutionSnapshot(job_id=job_id, status=JobStatus.FAILED)
+        return ExecutionSnapshot(
+            job_id=job_id,
+            status=state.status,
+            response=state.response,
+            error=state.error,
+            provider_session_id=state.provider_session_id,
+            phase=state.phase,
+            latest_activity=state.latest_activity,
+        )
