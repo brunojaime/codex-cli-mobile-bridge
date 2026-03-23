@@ -8,6 +8,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../models/chat_session_summary.dart';
+import '../models/server_capabilities.dart';
 import '../models/server_health.dart';
 import '../models/server_profile.dart';
 import '../models/workspace.dart';
@@ -41,10 +42,12 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   Map<String, DateTime> _sessionReadMarkers = <String, DateTime>{};
   ServerProfile? _activeServer;
   ServerHealth? _activeServerHealth;
+  ServerCapabilities? _activeServerCapabilities;
   String? _serverErrorText;
   bool _sidebarExpanded = false;
   bool _stickToBottom = true;
   String? _lastObservedSessionId;
+  final Map<String, _ComposerDraft> _sessionDrafts = <String, _ComposerDraft>{};
 
   @override
   void initState() {
@@ -361,14 +364,18 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                 _Composer(
                   sessionId: _chatController.selectedSessionId,
                   controller: _textController,
+                  draft: _currentComposerDraft(),
+                  onDraftChanged: _updateCurrentComposerDraft,
                   onSend: _handleSend,
                   onSendAudio: _handleSendAudio,
                   onSendAttachments: _handleSendAttachments,
                   isBusy: _chatController.isLoading ||
                       _chatController.isSendingDocument ||
                       _chatController.isSendingImage,
-                  voiceEnabled:
-                      _activeServerHealth?.audioTranscriptionReady ?? true,
+                  voiceEnabled: _resolvedAudioInputEnabled(),
+                  imageAttachmentsEnabled:
+                      _activeServerCapabilities?.supportsImageInput ?? true,
+                  fileAttachmentsEnabled: _resolvedFileAttachmentsEnabled(),
                   voiceStatusText: _resolveVoiceStatusText(),
                 ),
               ],
@@ -629,6 +636,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       _chatController = nextController;
       _activeServer = profile;
       _activeServerHealth = null;
+      _activeServerCapabilities = null;
       _sidebarWorkspaces = sidebarWorkspaces;
       _sessionReadMarkers = sessionReadMarkers;
       _serverErrorText = null;
@@ -639,15 +647,18 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
 
     try {
       final health = await client.getHealth();
+      final capabilities = await client.getCapabilities();
       if (mounted) {
         setState(() {
           _activeServerHealth = health;
+          _activeServerCapabilities = capabilities;
         });
       }
       await _chatController.initialize();
     } catch (error) {
       setState(() {
         _activeServerHealth = null;
+        _activeServerCapabilities = null;
         _serverErrorText = 'Failed to connect to ${profile.name}.\n$error';
       });
     }
@@ -718,6 +729,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   }
 
   String _resolveVoiceStatusText() {
+    if (!(_activeServerCapabilities?.supportsAudioInput ?? true)) {
+      return 'This server does not currently accept audio input.';
+    }
+
     final health = _activeServerHealth;
     if (health == null) {
       return 'Audio status unavailable.';
@@ -729,6 +744,75 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
 
     return health.audioTranscriptionDetail ??
         'Audio transcription is not available on this server.';
+  }
+
+  bool _resolvedAudioInputEnabled() {
+    final capabilities = _activeServerCapabilities;
+    if (capabilities != null && !capabilities.supportsAudioInput) {
+      return false;
+    }
+    return _activeServerHealth?.audioTranscriptionReady ?? true;
+  }
+
+  bool _resolvedFileAttachmentsEnabled() {
+    final capabilities = _activeServerCapabilities;
+    if (capabilities == null) {
+      return true;
+    }
+    return capabilities.supportsAttachmentBatch ||
+        capabilities.supportsDocumentInput;
+  }
+
+  _ComposerDraft _currentComposerDraft() {
+    return _sessionDrafts[_draftKeyForSelectedSession()] ??
+        const _ComposerDraft();
+  }
+
+  void _updateCurrentComposerDraft(_ComposerDraft draft) {
+    final key = _draftKeyForSelectedSession();
+    final previous = _sessionDrafts[key];
+    final isUnchanged = previous?.text == draft.text &&
+        _sameDraftAttachments(
+            previous?.attachments ?? const <_PendingAttachmentDraft>[],
+            draft.attachments);
+    if (isUnchanged) {
+      return;
+    }
+    setState(() {
+      if (draft.isEmpty) {
+        _sessionDrafts.remove(key);
+      } else {
+        _sessionDrafts[key] = draft;
+      }
+    });
+  }
+
+  String _draftKeyForSelectedSession() {
+    final sessionId = _chatController.selectedSessionId;
+    if (sessionId != null && sessionId.isNotEmpty) {
+      return 'session::$sessionId';
+    }
+    final serverBaseUrl = _activeServer?.baseUrl ?? widget.initialApiBaseUrl;
+    final workspacePath = _chatController.currentSession?.workspacePath ?? '';
+    return 'draft::$serverBaseUrl::$workspacePath';
+  }
+
+  bool _sameDraftAttachments(
+    List<_PendingAttachmentDraft> left,
+    List<_PendingAttachmentDraft> right,
+  ) {
+    if (identical(left, right)) {
+      return true;
+    }
+    if (left.length != right.length) {
+      return false;
+    }
+    for (var index = 0; index < left.length; index += 1) {
+      if (left[index].identityKey != right[index].identityKey) {
+        return false;
+      }
+    }
+    return true;
   }
 
   List<Widget> _buildSessionGroups() {
@@ -1509,16 +1593,22 @@ class _Composer extends StatefulWidget {
   const _Composer({
     required this.sessionId,
     required this.controller,
+    required this.draft,
+    required this.onDraftChanged,
     required this.onSend,
     required this.onSendAudio,
     required this.onSendAttachments,
     required this.isBusy,
     required this.voiceEnabled,
+    required this.imageAttachmentsEnabled,
+    required this.fileAttachmentsEnabled,
     required this.voiceStatusText,
   });
 
   final String? sessionId;
   final TextEditingController controller;
+  final _ComposerDraft draft;
+  final ValueChanged<_ComposerDraft> onDraftChanged;
   final Future<bool> Function() onSend;
   final Future<bool> Function(XFile audioFile) onSendAudio;
   final Future<bool> Function(
@@ -1527,6 +1617,8 @@ class _Composer extends StatefulWidget {
   }) onSendAttachments;
   final bool isBusy;
   final bool voiceEnabled;
+  final bool imageAttachmentsEnabled;
+  final bool fileAttachmentsEnabled;
   final String voiceStatusText;
 
   @override
@@ -1551,6 +1643,7 @@ class _ComposerState extends State<_Composer> {
   void initState() {
     super.initState();
     _audioRecorder = AudioNoteRecorder();
+    _applyDraft(widget.draft, notifyParent: false);
     _hasText = widget.controller.text.trim().isNotEmpty;
     widget.controller.addListener(_handleTextChanged);
     _clipboardImagePasteListener = attachClipboardImagePasteListener(
@@ -1569,6 +1662,14 @@ class _ComposerState extends State<_Composer> {
     }
     if (oldWidget.sessionId != widget.sessionId) {
       _resetRecorderForSessionChange();
+    }
+    final draftChanged = oldWidget.draft.text != widget.draft.text ||
+        !_sameDraftAttachments(
+          oldWidget.draft.attachments,
+          widget.draft.attachments,
+        );
+    if (oldWidget.sessionId != widget.sessionId || draftChanged) {
+      _applyDraft(widget.draft, notifyParent: false);
     }
   }
 
@@ -1863,6 +1964,7 @@ class _ComposerState extends State<_Composer> {
         _hasText = hasText;
       });
     }
+    _emitDraftChanged();
   }
 
   Future<void> _toggleRecording() async {
@@ -1874,6 +1976,20 @@ class _ComposerState extends State<_Composer> {
   }
 
   Future<void> _openAttachmentPicker() async {
+    final supportsImages = widget.imageAttachmentsEnabled;
+    final supportsFiles = widget.fileAttachmentsEnabled;
+    if (!supportsImages && !supportsFiles) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('This server does not currently accept attachments.'),
+        ),
+      );
+      return;
+    }
+
     final choice = await showModalBottomSheet<_AttachmentSourceAction>(
       context: context,
       backgroundColor: const Color(0xFF101931),
@@ -1886,23 +2002,26 @@ class _ComposerState extends State<_Composer> {
                 title: Text('Add attachment'),
                 subtitle: Text('Stage it in the composer before sending'),
               ),
-              ListTile(
-                leading: const Icon(Icons.photo_library_outlined),
-                title: const Text('Photo library'),
-                subtitle: const Text('Preview an image and add instructions'),
-                onTap: () => Navigator.of(context).pop(
-                  _AttachmentSourceAction.image,
+              if (supportsImages)
+                ListTile(
+                  leading: const Icon(Icons.photo_library_outlined),
+                  title: const Text('Photo library'),
+                  subtitle: const Text('Preview an image and add instructions'),
+                  onTap: () => Navigator.of(context).pop(
+                    _AttachmentSourceAction.image,
+                  ),
                 ),
-              ),
-              ListTile(
-                leading: const Icon(Icons.insert_drive_file_outlined),
-                title: const Text('Browse files'),
-                subtitle:
-                    const Text('Attach documents, code, text files, or images'),
-                onTap: () => Navigator.of(context).pop(
-                  _AttachmentSourceAction.file,
+              if (supportsFiles)
+                ListTile(
+                  leading: const Icon(Icons.insert_drive_file_outlined),
+                  title: const Text('Browse files'),
+                  subtitle: const Text(
+                    'Attach documents, code, text files, or images',
+                  ),
+                  onTap: () => Navigator.of(context).pop(
+                    _AttachmentSourceAction.file,
+                  ),
                 ),
-              ),
             ],
           ),
         );
@@ -2116,6 +2235,7 @@ class _ComposerState extends State<_Composer> {
           } else {
             _pendingAttachments.clear();
           }
+          _emitDraftChanged();
         }
       } finally {
         if (mounted) {
@@ -2158,6 +2278,7 @@ class _ComposerState extends State<_Composer> {
         (item) => item.identityKey == attachment.identityKey,
       );
     });
+    _emitDraftChanged();
   }
 
   void _clearPendingAttachments() {
@@ -2167,6 +2288,7 @@ class _ComposerState extends State<_Composer> {
     setState(() {
       _pendingAttachments.clear();
     });
+    _emitDraftChanged();
   }
 
   void _appendPendingAttachments(List<_PendingAttachmentDraft> attachments) {
@@ -2192,6 +2314,7 @@ class _ComposerState extends State<_Composer> {
     setState(() {
       _pendingAttachments.addAll(uniqueAttachments);
     });
+    _emitDraftChanged();
   }
 
   bool _canAcceptPastedImages() {
@@ -2229,6 +2352,63 @@ class _ComposerState extends State<_Composer> {
     } else {
       _isRecording = false;
     }
+  }
+
+  void _applyDraft(_ComposerDraft draft, {required bool notifyParent}) {
+    final nextText = draft.text;
+    if (widget.controller.text != nextText) {
+      widget.controller.value = TextEditingValue(
+        text: nextText,
+        selection: TextSelection.collapsed(offset: nextText.length),
+      );
+    }
+
+    final nextAttachments =
+        List<_PendingAttachmentDraft>.from(draft.attachments);
+    if (mounted) {
+      setState(() {
+        _hasText = nextText.trim().isNotEmpty;
+        _pendingAttachments
+          ..clear()
+          ..addAll(nextAttachments);
+      });
+    } else {
+      _hasText = nextText.trim().isNotEmpty;
+      _pendingAttachments
+        ..clear()
+        ..addAll(nextAttachments);
+    }
+
+    if (notifyParent) {
+      _emitDraftChanged();
+    }
+  }
+
+  void _emitDraftChanged() {
+    widget.onDraftChanged(
+      _ComposerDraft(
+        text: widget.controller.text,
+        attachments: List<_PendingAttachmentDraft>.from(_pendingAttachments),
+      ),
+    );
+  }
+
+  bool _sameDraftAttachments(
+    List<_PendingAttachmentDraft> left,
+    List<_PendingAttachmentDraft> right,
+  ) {
+    if (identical(left, right)) {
+      return true;
+    }
+    if (left.length != right.length) {
+      return false;
+    }
+    for (var index = 0; index < left.length; index += 1) {
+      if (left[index].identityKey != right[index].identityKey) {
+        return false;
+      }
+    }
+    return true;
   }
 
   Future<void> _handlePastedImages(
@@ -2344,6 +2524,18 @@ class _PendingAttachmentDraft {
   String get badgeLabel => isImage ? 'Image' : 'File';
 
   String get identityKey => '${kind.name}:$name:${sizeBytes ?? 0}';
+}
+
+class _ComposerDraft {
+  const _ComposerDraft({
+    this.text = '',
+    this.attachments = const <_PendingAttachmentDraft>[],
+  });
+
+  final String text;
+  final List<_PendingAttachmentDraft> attachments;
+
+  bool get isEmpty => text.trim().isEmpty && attachments.isEmpty;
 }
 
 class _VoiceStatusCard extends StatelessWidget {

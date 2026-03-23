@@ -4,6 +4,7 @@ import 'package:cross_file/cross_file.dart';
 import 'package:http/http.dart' as http;
 
 import '../models/job_status_response.dart';
+import '../models/server_capabilities.dart';
 import '../models/session_detail.dart';
 import '../models/chat_session_summary.dart';
 import '../models/server_health.dart';
@@ -50,6 +51,18 @@ class ApiClient {
 
     return ServerHealth.fromJson(
         jsonDecode(response.body) as Map<String, dynamic>);
+  }
+
+  Future<ServerCapabilities> getCapabilities() async {
+    final response = await _client.get(Uri.parse('$baseUrl/capabilities'));
+
+    if (response.statusCode != 200) {
+      throw Exception('Failed to fetch capabilities: ${response.body}');
+    }
+
+    return ServerCapabilities.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
   }
 
   Future<List<Workspace>> listWorkspaces() async {

@@ -248,3 +248,17 @@ class HealthResponse(BaseModel):
     tailscale_magic_dns_name: str | None = None
     tailscale_ipv4: str | None = None
     tailscale_suggested_url: str | None = None
+
+
+class ServerCapabilitiesResponse(BaseModel):
+    supports_audio_input: bool
+    supports_image_input: bool
+    supports_document_input: bool
+    supports_attachment_batch: bool
+    supports_job_cancellation: bool
+    supports_job_retry: bool
+    supports_push_job_stream: bool
+    audio_max_upload_bytes: int
+    image_max_upload_bytes: int
+    document_max_upload_bytes: int
+    document_text_char_limit: int

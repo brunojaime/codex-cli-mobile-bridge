@@ -14,6 +14,7 @@ from backend.app.api.schemas import (
     JobResponse,
     MessageAcceptedResponse,
     MessageRequest,
+    ServerCapabilitiesResponse,
     SessionDetailResponse,
     SessionSummaryResponse,
     WorkspaceResponse,
@@ -64,6 +65,26 @@ async def healthcheck(
         tailscale_magic_dns_name=tailscale.magic_dns_name,
         tailscale_ipv4=tailscale.ipv4,
         tailscale_suggested_url=tailscale.suggested_url,
+    )
+
+
+@router.get("/capabilities", response_model=ServerCapabilitiesResponse)
+async def capabilities(
+    container: AppContainer = Depends(get_container),
+) -> ServerCapabilitiesResponse:
+    audio_status = container.audio_transcriber.status()
+    return ServerCapabilitiesResponse(
+        supports_audio_input=audio_status.ready,
+        supports_image_input=True,
+        supports_document_input=True,
+        supports_attachment_batch=True,
+        supports_job_cancellation=False,
+        supports_job_retry=False,
+        supports_push_job_stream=True,
+        audio_max_upload_bytes=container.settings.audio_max_upload_bytes,
+        image_max_upload_bytes=container.settings.image_max_upload_bytes,
+        document_max_upload_bytes=container.settings.document_max_upload_bytes,
+        document_text_char_limit=container.settings.document_text_char_limit,
     )
 
 
