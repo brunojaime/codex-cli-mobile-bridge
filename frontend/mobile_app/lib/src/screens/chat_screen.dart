@@ -369,9 +369,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                   onSend: _handleSend,
                   onSendAudio: _handleSendAudio,
                   onSendAttachments: _handleSendAttachments,
-                  isBusy: _chatController.isLoading ||
-                      _chatController.isSendingDocument ||
-                      _chatController.isSendingImage,
+                  isBusy: _chatController.isLoading,
                   voiceEnabled: _resolvedAudioInputEnabled(),
                   imageAttachmentsEnabled:
                       _activeServerCapabilities?.supportsImageInput ?? true,
@@ -841,6 +839,24 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                 _chatController.activeJobCountForSession(session.id) > 0,
           )
           .length;
+      final outgoingUploadCount = sessions.fold(
+        0,
+        (total, session) =>
+            total +
+            (_chatController
+                    .outgoingUploadSummaryForSession(session.id)
+                    ?.totalCount ??
+                0),
+      );
+      final outgoingChatCount = sessions
+          .where(
+            (session) =>
+                _chatController.outgoingUploadSummaryForSession(session.id) !=
+                null,
+          )
+          .length;
+      final hasBackgroundActivity =
+          activeJobCount > 0 || outgoingUploadCount > 0;
       final unreadChatsCount = sessions
           .where((session) => _unreadCountForSession(session) > 0)
           .length;
@@ -848,9 +864,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           hasSelected ? const Color(0xFF16213C) : const Color(0xFF121A31);
       final projectBorderColor = activeJobCount > 0
           ? const Color(0x44FFC857)
-          : unreadChatsCount > 0
-              ? const Color(0x3355D6BE)
-              : const Color(0xFF23304F);
+          : outgoingUploadCount > 0
+              ? const Color(0x333F5EF7)
+              : unreadChatsCount > 0
+                  ? const Color(0x3355D6BE)
+                  : const Color(0xFF23304F);
 
       return Container(
         margin: const EdgeInsets.fromLTRB(10, 6, 10, 6),
@@ -877,7 +895,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                   decoration: BoxDecoration(
                     color: activeJobCount > 0
                         ? const Color(0x33FFC857)
-                        : const Color(0xFF1B2745),
+                        : outgoingUploadCount > 0
+                            ? const Color(0x223F5EF7)
+                            : const Color(0xFF1B2745),
                     borderRadius: BorderRadius.circular(12),
                   ),
                   alignment: Alignment.center,
@@ -885,9 +905,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                     Icons.folder_rounded,
                     color: activeJobCount > 0
                         ? const Color(0xFFFFC857)
-                        : unreadChatsCount > 0
-                            ? const Color(0xFF55D6BE)
-                            : const Color(0xFF9AA8C8),
+                        : outgoingUploadCount > 0
+                            ? const Color(0xFF8CA8FF)
+                            : unreadChatsCount > 0
+                                ? const Color(0xFF55D6BE)
+                                : const Color(0xFF9AA8C8),
                   ),
                 ),
                 const SizedBox(width: 12),
@@ -902,9 +924,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                         style: TextStyle(
                           color: activeJobCount > 0
                               ? const Color(0xFFFFC857)
-                              : unreadChatsCount > 0
-                                  ? const Color(0xFF55D6BE)
-                                  : const Color(0xFFE7EEF9),
+                              : outgoingUploadCount > 0
+                                  ? const Color(0xFFDCE5FF)
+                                  : unreadChatsCount > 0
+                                      ? const Color(0xFF55D6BE)
+                                      : const Color(0xFFE7EEF9),
                           fontWeight: FontWeight.w700,
                         ),
                       ),
@@ -920,21 +944,26 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                       ),
                       const SizedBox(height: 6),
                       _ProjectStatusPill(
-                        active: activeJobCount > 0,
-                        label: activeJobCount > 0
-                            ? '$activeJobCount active job${activeJobCount == 1 ? '' : 's'} in $activeChatCount chat${activeChatCount == 1 ? '' : 's'}'
-                            : 'No active jobs',
+                        active: hasBackgroundActivity,
+                        label: _formatProjectActivityLabel(
+                          activeJobCount: activeJobCount,
+                          activeChatCount: activeChatCount,
+                          outgoingUploadCount: outgoingUploadCount,
+                          outgoingChatCount: outgoingChatCount,
+                        ),
                       ),
                     ],
                   ),
                 ),
-                if (activeJobCount > 0)
+                if (hasBackgroundActivity)
                   Padding(
                     padding: const EdgeInsets.only(right: 8),
                     child: Text(
-                      activeJobCount.toString(),
-                      style: const TextStyle(
-                        color: Color(0xFFFFC857),
+                      (activeJobCount + outgoingUploadCount).toString(),
+                      style: TextStyle(
+                        color: activeJobCount > 0
+                            ? const Color(0xFFFFC857)
+                            : const Color(0xFF8CA8FF),
                         fontWeight: FontWeight.w700,
                       ),
                     ),
@@ -990,10 +1019,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                               _chatController.activeJobSummaryForSession(
                             session.id,
                           ),
-                          outgoingAudioUploadCount: _chatController
-                              .outgoingAudioUploadCountForSession(
-                            session.id,
-                          ),
+                          outgoingUploadSummary: _chatController
+                              .outgoingUploadSummaryForSession(session.id),
                           session: session,
                           unreadCount: _unreadCountForSession(session),
                           selected:
@@ -1051,7 +1078,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
 
   int _totalActivePinnedProjectsCount() {
     return _sidebarWorkspaces
-        .where((workspace) => _activeJobCountForWorkspace(workspace.path) > 0)
+        .where((workspace) =>
+            _activeOperationCountForWorkspace(workspace.path) > 0)
         .length;
   }
 
@@ -1059,16 +1087,21 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     return _sidebarWorkspaces.fold(
         0,
         (total, workspace) =>
-            total + _activeJobCountForWorkspace(workspace.path));
+            total + _activeOperationCountForWorkspace(workspace.path));
   }
 
-  int _activeJobCountForWorkspace(String workspacePath) {
+  int _activeOperationCountForWorkspace(String workspacePath) {
     return _chatController.sessions
         .where((session) => session.workspacePath == workspacePath)
         .fold(
           0,
           (total, session) =>
-              total + _chatController.activeJobCountForSession(session.id),
+              total +
+              _chatController.activeJobCountForSession(session.id) +
+              (_chatController
+                      .outgoingUploadSummaryForSession(session.id)
+                      ?.totalCount ??
+                  0),
         );
   }
 
@@ -1147,7 +1180,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
 class _SessionTile extends StatelessWidget {
   const _SessionTile({
     required this.activeJobSummary,
-    required this.outgoingAudioUploadCount,
+    required this.outgoingUploadSummary,
     required this.session,
     required this.unreadCount,
     required this.selected,
@@ -1155,7 +1188,7 @@ class _SessionTile extends StatelessWidget {
   });
 
   final SessionActiveJobSummary? activeJobSummary;
-  final int outgoingAudioUploadCount;
+  final SessionOutgoingUploadSummary? outgoingUploadSummary;
   final ChatSessionSummary session;
   final int unreadCount;
   final bool selected;
@@ -1165,29 +1198,29 @@ class _SessionTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final activeRuntimeLabel = _formatSessionRuntime(activeJobSummary);
     final isActive = activeJobSummary != null;
-    final isUploadingAudio = outgoingAudioUploadCount > 0;
+    final isUploading = outgoingUploadSummary != null;
     final tileBackgroundColor = selected
         ? const Color(0xFF1C2745)
         : isActive
             ? const Color(0x1455D6BE)
-            : isUploadingAudio
+            : isUploading
                 ? const Color(0x123F5EF7)
                 : Colors.transparent;
     final tileBorderColor = selected
         ? const Color(0xFF2F3F68)
         : isActive
             ? const Color(0x2855D6BE)
-            : isUploadingAudio
+            : isUploading
                 ? const Color(0x283F5EF7)
                 : Colors.transparent;
     final titleColor = selected
         ? Colors.white
         : isActive
             ? const Color(0xFFE3FBF5)
-            : isUploadingAudio
+            : isUploading
                 ? const Color(0xFFEAF0FF)
                 : null;
-    final previewColor = isActive || isUploadingAudio
+    final previewColor = isActive || isUploading
         ? const Color(0xFFA8C7C0)
         : const Color(0xFF8B97B5);
 
@@ -1246,7 +1279,7 @@ class _SessionTile extends StatelessWidget {
                 ),
               ),
             ],
-            if (isUploadingAudio) ...<Widget>[
+            if (isUploading) ...<Widget>[
               const SizedBox(height: 6),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -1255,9 +1288,7 @@ class _SessionTile extends StatelessWidget {
                   borderRadius: BorderRadius.circular(999),
                 ),
                 child: Text(
-                  outgoingAudioUploadCount == 1
-                      ? 'Sending audio'
-                      : 'Sending $outgoingAudioUploadCount audios',
+                  _formatOutgoingUploadLabel(outgoingUploadSummary!),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
@@ -1276,9 +1307,9 @@ class _SessionTile extends StatelessWidget {
                 height: 18,
                 child: CircularProgressIndicator(strokeWidth: 2),
               )
-            : isUploadingAudio
-                ? const Icon(
-                    Icons.graphic_eq_rounded,
+            : isUploading
+                ? Icon(
+                    _outgoingUploadIcon(outgoingUploadSummary!),
                     color: Color(0xFF8CA8FF),
                   )
                 : unreadCount > 0
@@ -1291,6 +1322,65 @@ class _SessionTile extends StatelessWidget {
       ),
     );
   }
+}
+
+String _formatProjectActivityLabel({
+  required int activeJobCount,
+  required int activeChatCount,
+  required int outgoingUploadCount,
+  required int outgoingChatCount,
+}) {
+  final segments = <String>[];
+  if (activeJobCount > 0) {
+    segments.add(
+      '$activeJobCount active job${activeJobCount == 1 ? '' : 's'} in $activeChatCount chat${activeChatCount == 1 ? '' : 's'}',
+    );
+  }
+  if (outgoingUploadCount > 0) {
+    segments.add(
+      '$outgoingUploadCount upload${outgoingUploadCount == 1 ? '' : 's'} in $outgoingChatCount chat${outgoingChatCount == 1 ? '' : 's'}',
+    );
+  }
+  if (segments.isEmpty) {
+    return 'No active jobs';
+  }
+  return segments.join(' • ');
+}
+
+String _formatOutgoingUploadLabel(SessionOutgoingUploadSummary summary) {
+  if (summary.totalCount == 1) {
+    if (summary.audioCount == 1) {
+      return 'Sending audio';
+    }
+    if (summary.imageCount == 1) {
+      return 'Uploading image';
+    }
+    if (summary.fileCount == 1) {
+      return 'Uploading file';
+    }
+    return 'Uploading attachments';
+  }
+
+  if (summary.audioCount == summary.totalCount) {
+    return 'Sending ${summary.totalCount} audios';
+  }
+  if (summary.imageCount == summary.totalCount) {
+    return 'Uploading ${summary.totalCount} images';
+  }
+  if (summary.fileCount == summary.totalCount) {
+    return 'Uploading ${summary.totalCount} files';
+  }
+  return 'Uploading ${summary.totalCount} items';
+}
+
+IconData _outgoingUploadIcon(SessionOutgoingUploadSummary summary) {
+  if (summary.audioCount == summary.totalCount) {
+    return Icons.graphic_eq_rounded;
+  }
+  if (summary.imageCount == summary.totalCount) {
+    return Icons.image_rounded;
+  }
+  return Icons.cloud_upload_rounded;
 }
 
 String? _formatSessionRuntime(SessionActiveJobSummary? summary) {
@@ -1636,8 +1726,6 @@ class _ComposerState extends State<_Composer> {
   bool _isRecording = false;
   final List<_PendingAttachmentDraft> _pendingAttachments =
       <_PendingAttachmentDraft>[];
-  final List<_PendingAttachmentDraft> _uploadingAttachments =
-      <_PendingAttachmentDraft>[];
 
   @override
   void initState() {
@@ -1690,9 +1778,8 @@ class _ComposerState extends State<_Composer> {
   Widget build(BuildContext context) {
     final hasPendingAttachment = _pendingAttachments.isNotEmpty;
     final showMicAction = !_hasText && !_isRecording && !hasPendingAttachment;
-    final isDisabled = widget.isBusy || _uploadingAttachments.isNotEmpty;
-    final showAttachmentActions =
-        !_isRecording && _uploadingAttachments.isEmpty;
+    final isDisabled = widget.isBusy;
+    final showAttachmentActions = !_isRecording;
 
     return SafeArea(
       top: false,
@@ -1881,33 +1968,6 @@ class _ComposerState extends State<_Composer> {
         ),
         titleMaxLines: 1,
         subtitleMaxLines: 1,
-      );
-    }
-
-    if (_uploadingAttachments.isNotEmpty) {
-      final isSingleAttachment = _uploadingAttachments.length == 1;
-      final primaryAttachment = _uploadingAttachments.first;
-      return _VoiceStatusCard(
-        icon: primaryAttachment.isImage
-            ? Icons.image_rounded
-            : Icons.insert_drive_file_rounded,
-        title: isSingleAttachment
-            ? (primaryAttachment.isImage ? 'Sending image' : 'Sending file')
-            : 'Sending ${_uploadingAttachments.length} attachments',
-        subtitle: isSingleAttachment
-            ? (primaryAttachment.isImage
-                ? 'Uploading ${primaryAttachment.name} and forwarding it to Codex'
-                : 'Uploading ${primaryAttachment.name} and preparing it for Codex')
-            : 'Uploading ${_uploadingAttachments.length} attachments to one Codex turn',
-        color: const Color(0xFF55D6BE),
-        showSpinner: true,
-        trailing: _StatusPill(
-          label: isSingleAttachment
-              ? primaryAttachment.badgeLabel
-              : '${_uploadingAttachments.length} files',
-          backgroundColor: const Color(0xFF11352E),
-          foregroundColor: const Color(0xFF9FF0DC),
-        ),
       );
     }
 
@@ -2214,38 +2274,31 @@ class _ComposerState extends State<_Composer> {
       final attachments =
           List<_PendingAttachmentDraft>.from(_pendingAttachments);
       final prompt = widget.controller.text.trim();
-
-      setState(() {
-        _uploadingAttachments
-          ..clear()
-          ..addAll(attachments);
-      });
-
-      try {
-        final didSend = await widget.onSendAttachments(
-          attachments,
-          prompt: prompt.isEmpty ? null : prompt,
-        );
-        if (didSend) {
-          widget.controller.clear();
-          if (mounted) {
-            setState(() {
-              _pendingAttachments.clear();
-            });
-          } else {
-            _pendingAttachments.clear();
-          }
-          _emitDraftChanged();
-        }
-      } finally {
-        if (mounted) {
-          setState(() {
-            _uploadingAttachments.clear();
-          });
-        } else {
-          _uploadingAttachments.clear();
-        }
+      widget.controller.clear();
+      if (mounted) {
+        setState(() {
+          _pendingAttachments.clear();
+        });
+      } else {
+        _pendingAttachments.clear();
       }
+      _emitDraftChanged();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              attachments.length == 1
+                  ? 'Attachment sending in the background.'
+                  : '${attachments.length} attachments sending in the background.',
+            ),
+            duration: const Duration(seconds: 1),
+          ),
+        );
+      }
+      _sendAttachmentsInBackground(
+        attachments,
+        prompt: prompt.isEmpty ? null : prompt,
+      );
       return;
     }
 
@@ -2321,8 +2374,7 @@ class _ComposerState extends State<_Composer> {
     return mounted &&
         _composerFocusNode.hasFocus &&
         !widget.isBusy &&
-        !_isRecording &&
-        _uploadingAttachments.isEmpty;
+        !_isRecording;
   }
 
   void _sendAudioInBackground(AudioNoteRecorder recorder, XFile audioFile) {
@@ -2333,6 +2385,36 @@ class _ComposerState extends State<_Composer> {
         await recorder.cleanup(audioFile);
         await recorder.dispose();
       }
+    }());
+  }
+
+  void _sendAttachmentsInBackground(
+    List<_PendingAttachmentDraft> attachments, {
+    String? prompt,
+  }) {
+    unawaited(() async {
+      final didSend = await widget.onSendAttachments(
+        attachments,
+        prompt: prompt,
+      );
+      if (!mounted) {
+        return;
+      }
+      if (!didSend) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Background attachment send failed.'),
+            duration: Duration(seconds: 2),
+          ),
+        );
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Attachment job accepted.'),
+          duration: Duration(seconds: 1),
+        ),
+      );
     }());
   }
 
@@ -2544,7 +2626,6 @@ class _VoiceStatusCard extends StatelessWidget {
     required this.title,
     required this.subtitle,
     required this.color,
-    this.showSpinner = false,
     this.trailing,
     this.titleMaxLines = 1,
     this.subtitleMaxLines = 2,
@@ -2554,7 +2635,6 @@ class _VoiceStatusCard extends StatelessWidget {
   final String title;
   final String subtitle;
   final Color color;
-  final bool showSpinner;
   final Widget? trailing;
   final int titleMaxLines;
   final int subtitleMaxLines;
@@ -2570,17 +2650,7 @@ class _VoiceStatusCard extends StatelessWidget {
       ),
       child: Row(
         children: <Widget>[
-          if (showSpinner)
-            SizedBox(
-              width: 20,
-              height: 20,
-              child: CircularProgressIndicator(
-                strokeWidth: 2,
-                valueColor: AlwaysStoppedAnimation<Color>(color),
-              ),
-            )
-          else
-            Icon(icon, color: color),
+          Icon(icon, color: color),
           const SizedBox(width: 12),
           Expanded(
             child: Column(

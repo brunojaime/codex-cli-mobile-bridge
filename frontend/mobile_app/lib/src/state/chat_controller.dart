@@ -24,7 +24,8 @@ class ChatController extends ChangeNotifier {
       <String, JobStatusResponse>{};
   final Map<String, WebSocketChannel> _jobChannels =
       <String, WebSocketChannel>{};
-  final Map<String, int> _outgoingAudioUploads = <String, int>{};
+  final Map<int, _OutgoingUploadTicket> _outgoingUploads =
+      <int, _OutgoingUploadTicket>{};
 
   SessionDetail? _currentSession;
   String? _selectedSessionId;
@@ -33,6 +34,7 @@ class ChatController extends ChangeNotifier {
   int _sendingAudioCount = 0;
   int _sendingDocumentCount = 0;
   int _sendingImageCount = 0;
+  int _nextOutgoingUploadToken = 0;
   bool _pollInFlight = false;
   Timer? _pollTimer;
 
@@ -80,8 +82,45 @@ class ChatController extends ChangeNotifier {
     );
   }
 
-  int outgoingAudioUploadCountForSession(String sessionId) {
-    return _outgoingAudioUploads[sessionId] ?? 0;
+  SessionOutgoingUploadSummary? outgoingUploadSummaryForSession(
+    String sessionId,
+  ) {
+    var audioCount = 0;
+    var imageCount = 0;
+    var fileCount = 0;
+    var mixedCount = 0;
+
+    for (final upload in _outgoingUploads.values) {
+      if (upload.sessionId != sessionId) {
+        continue;
+      }
+      switch (upload.kind) {
+        case OutgoingUploadKind.audio:
+          audioCount += 1;
+          break;
+        case OutgoingUploadKind.image:
+          imageCount += 1;
+          break;
+        case OutgoingUploadKind.file:
+          fileCount += 1;
+          break;
+        case OutgoingUploadKind.mixed:
+          mixedCount += 1;
+          break;
+      }
+    }
+
+    final totalCount = audioCount + imageCount + fileCount + mixedCount;
+    if (totalCount == 0) {
+      return null;
+    }
+
+    return SessionOutgoingUploadSummary(
+      audioCount: audioCount,
+      imageCount: imageCount,
+      fileCount: fileCount,
+      mixedCount: mixedCount,
+    );
   }
 
   Future<void> initialize() async {
@@ -209,11 +248,11 @@ class ChatController extends ChangeNotifier {
   }) async {
     final originSessionId = _selectedSessionId;
     final originWorkspacePath = _currentSession?.workspacePath;
+    final outgoingUploadToken = _beginOutgoingUpload(
+      originSessionId,
+      OutgoingUploadKind.audio,
+    );
     _sendingAudioCount += 1;
-    if (originSessionId != null) {
-      _outgoingAudioUploads[originSessionId] =
-          (_outgoingAudioUploads[originSessionId] ?? 0) + 1;
-    }
     notifyListeners();
 
     try {
@@ -235,15 +274,7 @@ class ChatController extends ChangeNotifier {
       return false;
     } finally {
       _sendingAudioCount -= 1;
-      if (originSessionId != null) {
-        final remainingUploads =
-            (_outgoingAudioUploads[originSessionId] ?? 1) - 1;
-        if (remainingUploads > 0) {
-          _outgoingAudioUploads[originSessionId] = remainingUploads;
-        } else {
-          _outgoingAudioUploads.remove(originSessionId);
-        }
-      }
+      _finishOutgoingUpload(outgoingUploadToken);
       notifyListeners();
     }
   }
@@ -254,6 +285,10 @@ class ChatController extends ChangeNotifier {
   }) async {
     final originSessionId = _selectedSessionId;
     final originWorkspacePath = _currentSession?.workspacePath;
+    final outgoingUploadToken = _beginOutgoingUpload(
+      originSessionId,
+      OutgoingUploadKind.image,
+    );
     _sendingImageCount += 1;
     notifyListeners();
 
@@ -276,6 +311,7 @@ class ChatController extends ChangeNotifier {
       return false;
     } finally {
       _sendingImageCount -= 1;
+      _finishOutgoingUpload(outgoingUploadToken);
       notifyListeners();
     }
   }
@@ -287,6 +323,10 @@ class ChatController extends ChangeNotifier {
   }) async {
     final originSessionId = _selectedSessionId;
     final originWorkspacePath = _currentSession?.workspacePath;
+    final outgoingUploadToken = _beginOutgoingUpload(
+      originSessionId,
+      OutgoingUploadKind.file,
+    );
     _sendingDocumentCount += 1;
     notifyListeners();
 
@@ -310,6 +350,7 @@ class ChatController extends ChangeNotifier {
       return false;
     } finally {
       _sendingDocumentCount -= 1;
+      _finishOutgoingUpload(outgoingUploadToken);
       notifyListeners();
     }
   }
@@ -325,6 +366,10 @@ class ChatController extends ChangeNotifier {
 
     final originSessionId = _selectedSessionId;
     final originWorkspacePath = _currentSession?.workspacePath;
+    final outgoingUploadToken = _beginOutgoingUpload(
+      originSessionId,
+      _resolveAttachmentsUploadKind(attachments),
+    );
     _sendingDocumentCount += 1;
     _sendingImageCount += 1;
     notifyListeners();
@@ -350,6 +395,7 @@ class ChatController extends ChangeNotifier {
     } finally {
       _sendingDocumentCount -= 1;
       _sendingImageCount -= 1;
+      _finishOutgoingUpload(outgoingUploadToken);
       notifyListeners();
     }
   }
@@ -646,6 +692,61 @@ class ChatController extends ChangeNotifier {
     _isLoading = value;
     notifyListeners();
   }
+
+  int? _beginOutgoingUpload(String? sessionId, OutgoingUploadKind kind) {
+    if (sessionId == null) {
+      return null;
+    }
+
+    final token = _nextOutgoingUploadToken;
+    _nextOutgoingUploadToken += 1;
+    _outgoingUploads[token] = _OutgoingUploadTicket(
+      sessionId: sessionId,
+      kind: kind,
+    );
+    return token;
+  }
+
+  void _finishOutgoingUpload(int? token) {
+    if (token == null) {
+      return;
+    }
+    _outgoingUploads.remove(token);
+  }
+
+  OutgoingUploadKind _resolveAttachmentsUploadKind(List<XFile> attachments) {
+    var imageCount = 0;
+    for (final attachment in attachments) {
+      if (_looksLikeImageAttachment(attachment)) {
+        imageCount += 1;
+      }
+    }
+
+    if (imageCount == attachments.length) {
+      return OutgoingUploadKind.image;
+    }
+    if (imageCount == 0) {
+      return OutgoingUploadKind.file;
+    }
+    return OutgoingUploadKind.mixed;
+  }
+
+  bool _looksLikeImageAttachment(XFile attachment) {
+    final mimeType = attachment.mimeType;
+    if (mimeType != null && mimeType.toLowerCase().startsWith('image/')) {
+      return true;
+    }
+
+    final name = attachment.name.toLowerCase();
+    return name.endsWith('.bmp') ||
+        name.endsWith('.gif') ||
+        name.endsWith('.jpeg') ||
+        name.endsWith('.jpg') ||
+        name.endsWith('.png') ||
+        name.endsWith('.tif') ||
+        name.endsWith('.tiff') ||
+        name.endsWith('.webp');
+  }
 }
 
 ChatMessageStatus _statusFromJob(String status) {
@@ -667,4 +768,32 @@ class SessionActiveJobSummary {
 
   final int activeJobCount;
   final int maxElapsedSeconds;
+}
+
+enum OutgoingUploadKind { audio, image, file, mixed }
+
+class SessionOutgoingUploadSummary {
+  const SessionOutgoingUploadSummary({
+    required this.audioCount,
+    required this.imageCount,
+    required this.fileCount,
+    required this.mixedCount,
+  });
+
+  final int audioCount;
+  final int imageCount;
+  final int fileCount;
+  final int mixedCount;
+
+  int get totalCount => audioCount + imageCount + fileCount + mixedCount;
+}
+
+class _OutgoingUploadTicket {
+  const _OutgoingUploadTicket({
+    required this.sessionId,
+    required this.kind,
+  });
+
+  final String sessionId;
+  final OutgoingUploadKind kind;
 }
