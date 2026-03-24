@@ -73,13 +73,14 @@ async def capabilities(
     container: AppContainer = Depends(get_container),
 ) -> ServerCapabilitiesResponse:
     audio_status = container.audio_transcriber.status()
+    service = container.message_service
     return ServerCapabilitiesResponse(
         supports_audio_input=audio_status.ready,
         supports_image_input=True,
         supports_document_input=True,
         supports_attachment_batch=True,
-        supports_job_cancellation=False,
-        supports_job_retry=False,
+        supports_job_cancellation=service.supports_job_cancellation(),
+        supports_job_retry=service.supports_job_retry(),
         supports_push_job_stream=True,
         audio_max_upload_bytes=container.settings.audio_max_upload_bytes,
         image_max_upload_bytes=container.settings.image_max_upload_bytes,
@@ -383,6 +384,36 @@ async def get_response(
     job = service.get_job(job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found.")
+
+    return JobResponse.from_domain(job)
+
+
+@router.post("/jobs/{job_id}/cancel", response_model=JobResponse)
+async def cancel_job(
+    job_id: str,
+    service: MessageService = Depends(get_message_service),
+) -> JobResponse:
+    try:
+        job = service.cancel_job(job_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    return JobResponse.from_domain(job)
+
+
+@router.post("/jobs/{job_id}/retry", response_model=JobResponse, status_code=202)
+async def retry_job(
+    job_id: str,
+    service: MessageService = Depends(get_message_service),
+) -> JobResponse:
+    try:
+        job = service.retry_job(job_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     return JobResponse.from_domain(job)
 

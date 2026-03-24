@@ -400,6 +400,48 @@ class ChatController extends ChangeNotifier {
     }
   }
 
+  Future<bool> cancelJob(String jobId) async {
+    final sessionId = _sessionIdForJob(jobId);
+
+    try {
+      _errorText = null;
+      final snapshot = await _apiClient.cancelJob(jobId);
+      _applyJobSnapshot(snapshot);
+      if (snapshot.isTerminal) {
+        _finishTrackingJob(jobId);
+      }
+      await refreshSessions();
+      if (sessionId != null && sessionId == _selectedSessionId) {
+        await _reloadCurrentSession();
+      } else {
+        notifyListeners();
+      }
+      return true;
+    } catch (error) {
+      _errorText = 'Failed to cancel job.\n$error';
+      notifyListeners();
+      return false;
+    }
+  }
+
+  Future<bool> retryJob(String jobId) async {
+    final originSessionId = _sessionIdForJob(jobId);
+
+    try {
+      _errorText = null;
+      final accepted = await _apiClient.retryJob(jobId);
+      await _registerAcceptedJob(
+        accepted,
+        originSessionId: originSessionId ?? accepted.sessionId,
+      );
+      return true;
+    } catch (error) {
+      _errorText = 'Failed to retry job.\n$error';
+      notifyListeners();
+      return false;
+    }
+  }
+
   @override
   void dispose() {
     _pollTimer?.cancel();
@@ -652,7 +694,7 @@ class ChatController extends ChangeNotifier {
 
     return message.copyWith(
       text: snapshot.isTerminal
-          ? (snapshot.status == 'failed'
+          ? (snapshot.status == 'failed' || snapshot.status == 'cancelled'
               ? (snapshot.error ?? message.text)
               : (snapshot.response ?? message.text))
           : message.text,
@@ -747,10 +789,32 @@ class ChatController extends ChangeNotifier {
         name.endsWith('.tiff') ||
         name.endsWith('.webp');
   }
+
+  String? _sessionIdForJob(String jobId) {
+    final trackedSessionId =
+        _pendingJobs[jobId] ?? _jobSnapshots[jobId]?.sessionId;
+    if (trackedSessionId != null) {
+      return trackedSessionId;
+    }
+
+    final currentSession = _currentSession;
+    if (currentSession == null) {
+      return null;
+    }
+
+    for (final message in currentSession.messages) {
+      if (message.jobId == jobId) {
+        return currentSession.id;
+      }
+    }
+    return null;
+  }
 }
 
 ChatMessageStatus _statusFromJob(String status) {
   switch (status) {
+    case 'cancelled':
+      return ChatMessageStatus.cancelled;
     case 'failed':
       return ChatMessageStatus.failed;
     case 'completed':

@@ -64,6 +64,12 @@ class ExecutionProvider(ABC):
     ) -> Callable[[], None] | None:
         return None
 
+    def supports_job_cancellation(self) -> bool:
+        return False
+
+    def cancel_job(self, job_id: str) -> bool:
+        return False
+
     @abstractmethod
     def get_provider_session_id(self, job_id: str) -> str | None:
         raise NotImplementedError

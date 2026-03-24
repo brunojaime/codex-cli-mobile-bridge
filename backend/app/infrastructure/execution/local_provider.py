@@ -45,6 +45,7 @@ class LocalExecutionProvider(ExecutionProvider):
         self._timeout_seconds = timeout_seconds
         self._states: dict[str, _ExecutionState] = {}
         self._subscribers: dict[str, list[Callable[[ExecutionSnapshot], None]]] = {}
+        self._processes: dict[str, subprocess.Popen[str]] = {}
         self._lock = threading.RLock()
 
     def execute(
@@ -124,6 +125,33 @@ class LocalExecutionProvider(ExecutionProvider):
 
         return unsubscribe
 
+    def supports_job_cancellation(self) -> bool:
+        return True
+
+    def cancel_job(self, job_id: str) -> bool:
+        with self._lock:
+            current = self._states.get(job_id)
+            process = self._processes.get(job_id)
+
+        if current is None or current.status.is_terminal:
+            return False
+
+        self._set_state(
+            job_id,
+            status=JobStatus.CANCELLED,
+            error="Cancelled by user.",
+            phase="Cancelled",
+            latest_activity="Execution was cancelled by the user.",
+        )
+
+        if process is not None:
+            try:
+                process.terminate()
+            except OSError:
+                pass
+
+        return True
+
     def _run_job(
         self,
         job_id: str,
@@ -133,6 +161,8 @@ class LocalExecutionProvider(ExecutionProvider):
         provider_session_id: str | None = None,
         workdir: str | None = None,
     ) -> None:
+        if self._is_cancelled(job_id):
+            return
         self._set_state(
             job_id,
             status=JobStatus.RUNNING,
@@ -148,6 +178,9 @@ class LocalExecutionProvider(ExecutionProvider):
                 provider_session_id=provider_session_id,
             )
 
+            if self._is_cancelled(job_id):
+                return
+
             try:
                 process = subprocess.Popen(
                     command_parts,
@@ -157,7 +190,11 @@ class LocalExecutionProvider(ExecutionProvider):
                     text=True,
                     bufsize=1,
                 )
+                with self._lock:
+                    self._processes[job_id] = process
             except FileNotFoundError as exc:
+                if self._is_cancelled(job_id):
+                    return
                 self._set_state(
                     job_id,
                     status=JobStatus.FAILED,
@@ -167,6 +204,8 @@ class LocalExecutionProvider(ExecutionProvider):
                 )
                 return
             except Exception as exc:  # pragma: no cover - defensive path
+                if self._is_cancelled(job_id):
+                    return
                 self._set_state(
                     job_id,
                     status=JobStatus.FAILED,
@@ -200,6 +239,8 @@ class LocalExecutionProvider(ExecutionProvider):
                 process.kill()
                 stdout_thread.join(timeout=1)
                 stderr_thread.join(timeout=1)
+                if self._is_cancelled(job_id):
+                    return
                 self._set_state(
                     job_id,
                     status=JobStatus.FAILED,
@@ -211,6 +252,9 @@ class LocalExecutionProvider(ExecutionProvider):
 
             stdout_thread.join(timeout=1)
             stderr_thread.join(timeout=1)
+
+            if self._is_cancelled(job_id):
+                return
 
             stdout_text = "\n".join(stdout_lines).strip()
             stderr_text = "\n".join(stderr_lines).strip()
@@ -232,6 +276,8 @@ class LocalExecutionProvider(ExecutionProvider):
                 )
                 return
 
+            if self._is_cancelled(job_id):
+                return
             self._set_state(
                 job_id,
                 status=JobStatus.FAILED,
@@ -242,6 +288,8 @@ class LocalExecutionProvider(ExecutionProvider):
                 or "Codex exited with a non-zero status.",
             )
         finally:
+            with self._lock:
+                self._processes.pop(job_id, None)
             self._cleanup_output_file(output_path)
             self._cleanup_paths(cleanup_paths)
 
@@ -319,6 +367,8 @@ class LocalExecutionProvider(ExecutionProvider):
             stream.close()
 
     def _handle_stdout_line(self, job_id: str, line: str) -> None:
+        if self._is_cancelled(job_id):
+            return
         payload = self._parse_json_line(line)
         if payload is None:
             self._set_state(
@@ -466,20 +516,28 @@ class LocalExecutionProvider(ExecutionProvider):
         snapshot: ExecutionSnapshot
         with self._lock:
             current = self._states.get(job_id)
-            self._states[job_id] = _ExecutionState(
-                status=status,
-                response=response if response is not None else (current.response if current else None),
-                error=error if error is not None else (current.error if current else None),
-                provider_session_id=provider_session_id
-                if provider_session_id is not None
-                else (current.provider_session_id if current else None),
-                phase=phase if phase is not None else (current.phase if current else None),
-                latest_activity=latest_activity
-                if latest_activity is not None
-                else (current.latest_activity if current else None),
-            )
-            snapshot = self._snapshot_from_state(job_id, self._states[job_id])
-            listeners = list(self._subscribers.get(job_id, ()))
+            if (
+                current is not None
+                and current.status == JobStatus.CANCELLED
+                and status != JobStatus.CANCELLED
+            ):
+                snapshot = self._snapshot_from_state(job_id, current)
+                listeners = list(self._subscribers.get(job_id, ()))
+            else:
+                self._states[job_id] = _ExecutionState(
+                    status=status,
+                    response=response if response is not None else (current.response if current else None),
+                    error=error if error is not None else (current.error if current else None),
+                    provider_session_id=provider_session_id
+                    if provider_session_id is not None
+                    else (current.provider_session_id if current else None),
+                    phase=phase if phase is not None else (current.phase if current else None),
+                    latest_activity=latest_activity
+                    if latest_activity is not None
+                    else (current.latest_activity if current else None),
+                )
+                snapshot = self._snapshot_from_state(job_id, self._states[job_id])
+                listeners = list(self._subscribers.get(job_id, ()))
 
         for listener in listeners:
             try:
@@ -490,6 +548,10 @@ class LocalExecutionProvider(ExecutionProvider):
     def _get_state(self, job_id: str) -> _ExecutionState | None:
         with self._lock:
             return self._states.get(job_id)
+
+    def _is_cancelled(self, job_id: str) -> bool:
+        state = self._get_state(job_id)
+        return state is not None and state.status == JobStatus.CANCELLED
 
     def _snapshot_from_state(
         self,

@@ -2,6 +2,7 @@ import 'package:cross_file/cross_file.dart';
 import 'package:flutter/foundation.dart';
 import 'package:record/record.dart';
 
+import 'android_audio_focus_controller.dart';
 import 'recording_target_stub.dart'
     if (dart.library.io) 'recording_target_io.dart';
 
@@ -21,20 +22,31 @@ class AudioNoteRecorder {
     final fileName = kIsWeb ? 'voice-note.wav' : 'voice-note.m4a';
     final target = await createRecordingTarget(fileName);
     _activeTarget = target;
-    await _recorder.start(
-      RecordConfig(
-        encoder: kIsWeb ? AudioEncoder.wav : AudioEncoder.aacLc,
-        bitRate: kIsWeb ? 1411200 : 128000,
-        sampleRate: 44100,
-      ),
-      path: target.path,
-    );
+    await AndroidAudioFocusController.requestTransientRecordingFocus();
+
+    try {
+      await _recorder.start(
+        RecordConfig(
+          encoder: kIsWeb ? AudioEncoder.wav : AudioEncoder.aacLc,
+          bitRate: kIsWeb ? 1411200 : 128000,
+          sampleRate: 44100,
+          audioInterruption: defaultTargetPlatform == TargetPlatform.android
+              ? AudioInterruptionMode.none
+              : AudioInterruptionMode.pause,
+        ),
+        path: target.path,
+      );
+    } catch (_) {
+      await AndroidAudioFocusController.releaseRecordingFocus();
+      rethrow;
+    }
   }
 
   Future<XFile?> stop() async {
     final target = _activeTarget;
     _activeTarget = null;
     final path = await _recorder.stop();
+    await AndroidAudioFocusController.releaseRecordingFocus();
     if (path == null) {
       return null;
     }
@@ -49,6 +61,7 @@ class AudioNoteRecorder {
     final target = _activeTarget;
     _activeTarget = null;
     await _recorder.cancel();
+    await AndroidAudioFocusController.releaseRecordingFocus();
     if (target != null && !kIsWeb) {
       await cleanupRecordingTarget(target.path);
     }
@@ -63,6 +76,9 @@ class AudioNoteRecorder {
   }
 
   Future<void> dispose() {
-    return _recorder.dispose();
+    return Future.wait<void>([
+      AndroidAudioFocusController.releaseRecordingFocus(),
+      _recorder.dispose(),
+    ]);
   }
 }

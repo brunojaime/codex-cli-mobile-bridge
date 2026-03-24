@@ -295,6 +295,30 @@ class ApiClient {
     return JobStatusResponse.fromJson(payload);
   }
 
+  Future<JobStatusResponse> cancelJob(String jobId) async {
+    final response =
+        await _client.post(Uri.parse('$baseUrl/jobs/$jobId/cancel'));
+
+    if (response.statusCode != 200) {
+      throw Exception('Failed to cancel job: ${response.body}');
+    }
+
+    final payload = jsonDecode(response.body) as Map<String, dynamic>;
+    return JobStatusResponse.fromJson(payload);
+  }
+
+  Future<JobStatusResponse> retryJob(String jobId) async {
+    final response =
+        await _client.post(Uri.parse('$baseUrl/jobs/$jobId/retry'));
+
+    if (response.statusCode != 202) {
+      throw Exception('Failed to retry job: ${response.body}');
+    }
+
+    final payload = jsonDecode(response.body) as Map<String, dynamic>;
+    return JobStatusResponse.fromJson(payload);
+  }
+
   Future<http.MultipartFile> _multipartFileFromXFile(
     String field,
     XFile file,

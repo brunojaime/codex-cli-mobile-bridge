@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime
@@ -37,6 +38,8 @@ class SqliteChatRepository(ChatRepository):
                     user_message_id,
                     assistant_message_id,
                     provider_session_id,
+                    execution_message,
+                    image_paths_json,
                     status,
                     response,
                     error,
@@ -45,13 +48,15 @@ class SqliteChatRepository(ChatRepository):
                     created_at,
                     updated_at,
                     completed_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     session_id = excluded.session_id,
                     message = excluded.message,
                     user_message_id = excluded.user_message_id,
                     assistant_message_id = excluded.assistant_message_id,
                     provider_session_id = excluded.provider_session_id,
+                    execution_message = excluded.execution_message,
+                    image_paths_json = excluded.image_paths_json,
                     status = excluded.status,
                     response = excluded.response,
                     error = excluded.error,
@@ -68,6 +73,8 @@ class SqliteChatRepository(ChatRepository):
                     job.user_message_id,
                     job.assistant_message_id,
                     job.provider_session_id,
+                    job.execution_message,
+                    json.dumps(job.image_paths),
                     job.status.value,
                     job.response,
                     job.error,
@@ -238,6 +245,8 @@ class SqliteChatRepository(ChatRepository):
                     user_message_id TEXT,
                     assistant_message_id TEXT,
                     provider_session_id TEXT,
+                    execution_message TEXT,
+                    image_paths_json TEXT NOT NULL DEFAULT '[]',
                     status TEXT NOT NULL,
                     response TEXT,
                     error TEXT,
@@ -255,6 +264,13 @@ class SqliteChatRepository(ChatRepository):
                 CREATE INDEX IF NOT EXISTS idx_messages_session_created_at
                 ON messages(session_id, created_at ASC);
                 """
+            )
+            self._ensure_column(connection, "jobs", "execution_message", "TEXT")
+            self._ensure_column(
+                connection,
+                "jobs",
+                "image_paths_json",
+                "TEXT NOT NULL DEFAULT '[]'",
             )
             connection.commit()
 
@@ -299,6 +315,8 @@ class SqliteChatRepository(ChatRepository):
             user_message_id=row["user_message_id"],
             assistant_message_id=row["assistant_message_id"],
             provider_session_id=row["provider_session_id"],
+            execution_message=row["execution_message"],
+            image_paths=json.loads(row["image_paths_json"] or "[]"),
             status=JobStatus(row["status"]),
             response=row["response"],
             error=row["error"],
@@ -314,3 +332,20 @@ class SqliteChatRepository(ChatRepository):
 
     def _deserialize_datetime(self, value: str | None) -> datetime | None:
         return datetime.fromisoformat(value) if value is not None else None
+
+    def _ensure_column(
+        self,
+        connection: sqlite3.Connection,
+        table_name: str,
+        column_name: str,
+        definition: str,
+    ) -> None:
+        existing_columns = {
+            row["name"]
+            for row in connection.execute(f"PRAGMA table_info({table_name})").fetchall()
+        }
+        if column_name in existing_columns:
+            return
+        connection.execute(
+            f"ALTER TABLE {table_name} ADD COLUMN {column_name} {definition}"
+        )

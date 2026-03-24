@@ -3,6 +3,8 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+import shutil
+import tempfile
 from typing import Literal
 from uuid import uuid4
 import xml.etree.ElementTree as ET
@@ -132,6 +134,8 @@ class MessageService:
         self._default_workspace_path = str(Path(default_workspace_path).resolve())
         self._audio_transcriber = audio_transcriber
         self._document_text_char_limit = document_text_char_limit
+        self._retry_asset_root = Path(tempfile.gettempdir()) / "codex-remote-retry-assets"
+        self._retry_asset_root.mkdir(parents=True, exist_ok=True)
 
     def create_session(
         self,
@@ -194,21 +198,14 @@ class MessageService:
         self._repository.save_message(user_message)
         self._repository.save_message(assistant_message)
 
-        execution_payload = execution_message or message
-        job_id = self._execution_provider.execute(
-            execution_payload,
+        job = self._start_job(
+            session=session,
+            display_message=message,
+            execution_message=execution_message or message,
             image_paths=image_paths,
             cleanup_paths=cleanup_paths,
-            provider_session_id=session.provider_session_id,
-            workdir=session.workspace_path,
-        )
-        job = Job(
-            id=job_id,
-            session_id=session.id,
-            message=message,
             user_message_id=user_message.id,
             assistant_message_id=assistant_message.id,
-            provider_session_id=session.provider_session_id,
         )
         assistant_message.sync(job_id=job.id)
         session.touch()
@@ -430,6 +427,59 @@ class MessageService:
             execution_message=execution_message,
         )
 
+    def cancel_job(self, job_id: str) -> Job:
+        job = self.get_job(job_id)
+        if job is None:
+            raise ValueError(f"Job {job_id} was not found.")
+
+        if job.status.is_terminal:
+            return job
+
+        if not self._execution_provider.cancel_job(job_id):
+            raise RuntimeError("This backend cannot cancel the requested job.")
+
+        cancelled_job = self.get_job(job_id)
+        return cancelled_job or job
+
+    def retry_job(self, job_id: str) -> Job:
+        original_job = self.get_job(job_id)
+        if original_job is None:
+            raise ValueError(f"Job {job_id} was not found.")
+        if not original_job.status.is_terminal:
+            raise RuntimeError("Only terminal jobs can be retried.")
+
+        session = self._repository.get_session(original_job.session_id)
+        if session is None:
+            raise ValueError(f"Session {original_job.session_id} was not found.")
+        if original_job.assistant_message_id is None:
+            raise RuntimeError("This job cannot be retried because its assistant turn is missing.")
+
+        assistant_message = self._repository.get_message(original_job.assistant_message_id)
+        if assistant_message is None:
+            raise RuntimeError("This job cannot be retried because its assistant turn was not found.")
+
+        retried_job = self._start_job(
+            session=session,
+            display_message=original_job.message,
+            execution_message=original_job.execution_message or original_job.message,
+            image_paths=original_job.image_paths,
+            cleanup_paths=None,
+            user_message_id=original_job.user_message_id,
+            assistant_message_id=assistant_message.id,
+        )
+
+        assistant_message.sync(
+            content="",
+            status=ChatMessageStatus.PENDING,
+            job_id=retried_job.id,
+        )
+        session.touch()
+
+        self._repository.save_message(assistant_message)
+        self._repository.save_job(retried_job)
+        self._repository.save_session(session)
+        return retried_job
+
     def get_job(self, job_id: str) -> Job | None:
         job = self._repository.get_job(job_id)
         if job is None:
@@ -471,6 +521,58 @@ class MessageService:
             return None
         return self._execution_provider.watch_job(job_id, on_change)
 
+    def supports_job_cancellation(self) -> bool:
+        return self._execution_provider.supports_job_cancellation()
+
+    def supports_job_retry(self) -> bool:
+        return True
+
+    def _start_job(
+        self,
+        *,
+        session: ChatSession,
+        display_message: str,
+        execution_message: str,
+        image_paths: list[str] | None,
+        cleanup_paths: list[str] | None,
+        user_message_id: str | None,
+        assistant_message_id: str | None,
+    ) -> Job:
+        retryable_image_paths = self._persist_retryable_image_paths(image_paths)
+        job_id = self._execution_provider.execute(
+            execution_message,
+            image_paths=retryable_image_paths or None,
+            cleanup_paths=cleanup_paths,
+            provider_session_id=session.provider_session_id,
+            workdir=session.workspace_path,
+        )
+        return Job(
+            id=job_id,
+            session_id=session.id,
+            message=display_message,
+            user_message_id=user_message_id,
+            assistant_message_id=assistant_message_id,
+            provider_session_id=session.provider_session_id,
+            execution_message=execution_message,
+            image_paths=retryable_image_paths,
+        )
+
+    def _persist_retryable_image_paths(
+        self,
+        image_paths: list[str] | None,
+    ) -> list[str]:
+        if not image_paths:
+            return []
+
+        persisted_paths: list[str] = []
+        for image_path in image_paths:
+            source = Path(image_path)
+            extension = source.suffix or ".bin"
+            destination = self._retry_asset_root / f"{uuid4()}{extension}"
+            shutil.copy2(source, destination)
+            persisted_paths.append(str(destination))
+        return persisted_paths
+
     def _resolve_session(
         self,
         *,
@@ -511,6 +613,12 @@ class MessageService:
             assistant_message.sync(
                 content=job.response or "",
                 status=ChatMessageStatus.COMPLETED,
+                job_id=job.id,
+            )
+        elif job.status == JobStatus.CANCELLED:
+            assistant_message.sync(
+                content=job.error or "Execution cancelled.",
+                status=ChatMessageStatus.CANCELLED,
                 job_id=job.id,
             )
         elif job.status == JobStatus.FAILED:

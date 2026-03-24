@@ -14,10 +14,11 @@ class JobStatus(StrEnum):
     RUNNING = "running"
     COMPLETED = "completed"
     FAILED = "failed"
+    CANCELLED = "cancelled"
 
     @property
     def is_terminal(self) -> bool:
-        return self in {self.COMPLETED, self.FAILED}
+        return self in {self.COMPLETED, self.FAILED, self.CANCELLED}
 
 
 @dataclass(slots=True)
@@ -28,6 +29,8 @@ class Job:
     user_message_id: str | None = None
     assistant_message_id: str | None = None
     provider_session_id: str | None = None
+    execution_message: str | None = None
+    image_paths: list[str] = field(default_factory=list)
     status: JobStatus = JobStatus.PENDING
     response: str | None = None
     error: str | None = None

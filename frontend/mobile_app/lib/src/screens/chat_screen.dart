@@ -318,6 +318,22 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                             onOptionSelected:
                                                 _handleSuggestedReply,
                                             onLinkTap: _handleMessageLinkTap,
+                                            onCancelJob: (_activeServerCapabilities
+                                                            ?.supportsJobCancellation ??
+                                                        false) &&
+                                                    message.jobId != null
+                                                ? () => _handleCancelJob(
+                                                      message.jobId!,
+                                                    )
+                                                : null,
+                                            onRetryJob: (_activeServerCapabilities
+                                                            ?.supportsJobRetry ??
+                                                        false) &&
+                                                    message.jobId != null
+                                                ? () => _handleRetryJob(
+                                                      message.jobId!,
+                                                    )
+                                                : null,
                                           ),
                                         ),
                                       );
@@ -419,6 +435,36 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       _scrollToBottom();
     }
     return didSend;
+  }
+
+  Future<void> _handleCancelJob(String jobId) async {
+    final didCancel = await _chatController.cancelJob(jobId);
+    if (!mounted) {
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          didCancel ? 'Job cancelled.' : 'Could not cancel the job.',
+        ),
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
+
+  Future<void> _handleRetryJob(String jobId) async {
+    final didRetry = await _chatController.retryJob(jobId);
+    if (!mounted) {
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          didRetry ? 'Retry queued.' : 'Could not retry the job.',
+        ),
+        duration: const Duration(seconds: 2),
+      ),
+    );
   }
 
   void _handleSuggestedReply(String value) {

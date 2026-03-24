@@ -25,7 +25,8 @@ class JobStatusResponse {
   final DateTime? updatedAt;
   final DateTime? completedAt;
 
-  bool get isTerminal => status == 'completed' || status == 'failed';
+  bool get isTerminal =>
+      status == 'completed' || status == 'failed' || status == 'cancelled';
 
   factory JobStatusResponse.fromJson(Map<String, dynamic> json) {
     return JobStatusResponse(

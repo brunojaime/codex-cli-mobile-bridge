@@ -11,11 +11,15 @@ class ChatBubble extends StatelessWidget {
     required this.message,
     this.onOptionSelected,
     this.onLinkTap,
+    this.onCancelJob,
+    this.onRetryJob,
   });
 
   final ChatMessage message;
   final ValueChanged<String>? onOptionSelected;
   final Future<void> Function(String target)? onLinkTap;
+  final Future<void> Function()? onCancelJob;
+  final Future<void> Function()? onRetryJob;
 
   @override
   Widget build(BuildContext context) {
@@ -101,31 +105,56 @@ class ChatBubble extends StatelessWidget {
                     fontSize: 14,
                   ),
                 ),
-              if (!isUser && message.text.isNotEmpty) ...[
+              if (!isUser &&
+                  (message.text.isNotEmpty ||
+                      onCancelJob != null && _canCancel(message) ||
+                      onRetryJob != null && _canRetry(message))) ...[
                 const SizedBox(height: 12),
                 Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    _MessageAction(
-                      icon: Icons.copy_rounded,
-                      label: 'Copy',
-                      onTap: () async {
-                        await Clipboard.setData(
-                            ClipboardData(text: message.text));
-                      },
-                    ),
-                    if (message.providerSessionId != null &&
-                        message.providerSessionId!.isNotEmpty) ...[
-                      const SizedBox(width: 8),
-                      Flexible(
-                        child: Text(
-                          'Session ${_shortId(message.providerSessionId!)}',
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: textColor.withValues(alpha: 0.64),
-                            fontSize: 11,
+                    if (message.text.isNotEmpty) ...[
+                      _MessageAction(
+                        icon: Icons.copy_rounded,
+                        label: 'Copy',
+                        onTap: () async {
+                          await Clipboard.setData(
+                              ClipboardData(text: message.text));
+                        },
+                      ),
+                      if (message.providerSessionId != null &&
+                          message.providerSessionId!.isNotEmpty) ...[
+                        const SizedBox(width: 8),
+                        Flexible(
+                          child: Text(
+                            'Session ${_shortId(message.providerSessionId!)}',
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: textColor.withValues(alpha: 0.64),
+                              fontSize: 11,
+                            ),
                           ),
                         ),
+                      ],
+                    ],
+                    if (onCancelJob != null && _canCancel(message)) ...[
+                      const SizedBox(width: 8),
+                      _MessageAction(
+                        icon: Icons.stop_circle_outlined,
+                        label: 'Cancel',
+                        onTap: () async {
+                          await onCancelJob!();
+                        },
+                      ),
+                    ],
+                    if (onRetryJob != null && _canRetry(message)) ...[
+                      const SizedBox(width: 8),
+                      _MessageAction(
+                        icon: Icons.refresh_rounded,
+                        label: 'Retry',
+                        onTap: () async {
+                          await onRetryJob!();
+                        },
                       ),
                     ],
                   ],
@@ -240,6 +269,10 @@ class _MessageAction extends StatelessWidget {
 
 String _statusLabel(ChatMessage message) {
   final jobStatus = message.jobStatus ?? '';
+  if (message.status == ChatMessageStatus.cancelled ||
+      jobStatus == 'cancelled') {
+    return 'CANCELLED';
+  }
   if (jobStatus == 'running') {
     return 'RUNNING';
   }
@@ -254,6 +287,10 @@ String _statusLabel(ChatMessage message) {
 
 Color _statusColor(ChatMessage message) {
   final jobStatus = message.jobStatus ?? '';
+  if (message.status == ChatMessageStatus.cancelled ||
+      jobStatus == 'cancelled') {
+    return const Color(0xFFFFD6A5);
+  }
   if (message.status == ChatMessageStatus.failed || jobStatus == 'failed') {
     return const Color(0xFFFFA8A8);
   }
@@ -267,6 +304,10 @@ Color _statusColor(ChatMessage message) {
 
 String _fallbackPhase(ChatMessage message) {
   final jobStatus = message.jobStatus ?? '';
+  if (message.status == ChatMessageStatus.cancelled ||
+      jobStatus == 'cancelled') {
+    return 'Cancelled';
+  }
   if (jobStatus == 'running') {
     return 'Codex is working';
   }
@@ -296,4 +337,21 @@ String _shortId(String value) {
     return value;
   }
   return value.substring(0, 8);
+}
+
+bool _canCancel(ChatMessage message) {
+  final jobStatus = message.jobStatus ?? '';
+  return message.jobId != null &&
+      (message.isPendingLike ||
+          jobStatus == 'pending' ||
+          jobStatus == 'running');
+}
+
+bool _canRetry(ChatMessage message) {
+  final jobStatus = message.jobStatus ?? '';
+  return message.jobId != null &&
+      (message.status == ChatMessageStatus.failed ||
+          message.status == ChatMessageStatus.cancelled ||
+          jobStatus == 'failed' ||
+          jobStatus == 'cancelled');
 }

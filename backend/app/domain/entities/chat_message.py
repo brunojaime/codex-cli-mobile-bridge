@@ -16,6 +16,7 @@ class ChatMessageStatus(StrEnum):
     PENDING = "pending"
     COMPLETED = "completed"
     FAILED = "failed"
+    CANCELLED = "cancelled"
 
 
 @dataclass(slots=True)

@@ -1,4 +1,4 @@
-enum ChatMessageStatus { sending, pending, completed, failed }
+enum ChatMessageStatus { sending, pending, completed, failed, cancelled }
 
 class ChatMessage {
   const ChatMessage({
@@ -32,7 +32,8 @@ class ChatMessage {
   final DateTime? completedAt;
 
   bool get isPendingLike =>
-      status == ChatMessageStatus.pending || status == ChatMessageStatus.sending;
+      status == ChatMessageStatus.pending ||
+      status == ChatMessageStatus.sending;
 
   factory ChatMessage.fromJson(Map<String, dynamic> json) {
     final role = json['role'] as String;
@@ -94,6 +95,8 @@ ChatMessageStatus _statusFromJson(String status) {
       return ChatMessageStatus.pending;
     case 'failed':
       return ChatMessageStatus.failed;
+    case 'cancelled':
+      return ChatMessageStatus.cancelled;
     case 'sending':
       return ChatMessageStatus.sending;
     default:
