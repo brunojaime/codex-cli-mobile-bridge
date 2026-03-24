@@ -11,12 +11,13 @@ import xml.etree.ElementTree as ET
 import zipfile
 
 from backend.app.domain.entities.chat_message import (
+    ChatMessageAuthorType,
     ChatMessage,
     ChatMessageRole,
     ChatMessageStatus,
 )
 from backend.app.domain.entities.chat_session import ChatSession
-from backend.app.domain.entities.job import Job, JobStatus
+from backend.app.domain.entities.job import Job, JobConversationKind, JobStatus
 from backend.app.domain.entities.workspace import Workspace
 from backend.app.domain.repositories.chat_repository import ChatRepository
 from backend.app.infrastructure.execution.base import ExecutionProvider
@@ -87,6 +88,15 @@ _TEXT_SUFFIXES = {
     ".yaml",
     ".yml",
 }
+
+_DEFAULT_AUTO_REVIEWER_PROMPT = (
+    "You are the reviewer Codex for another Codex implementation session. "
+    "You receive the generator Codex's latest answer and must produce the next "
+    "prompt that should be sent back to that generator so the implementation improves. "
+    "Push for concrete work: missing code, edge cases, tests, validation, cleanup, "
+    "and stronger implementation details. Reply with only the next prompt to send. "
+    "Do not explain your role, do not add framing, and do not answer the task yourself."
+)
 
 
 class DocumentProcessingError(RuntimeError):
@@ -165,6 +175,26 @@ class MessageService:
     def list_messages(self, session_id: str) -> list[ChatMessage]:
         return self._repository.list_messages(session_id)
 
+    def update_auto_mode(
+        self,
+        *,
+        session_id: str,
+        enabled: bool,
+        max_turns: int,
+        reviewer_prompt: str | None,
+    ) -> ChatSession:
+        session = self._repository.get_session(session_id)
+        if session is None:
+            raise ValueError(f"Session {session_id} was not found.")
+
+        session.auto_mode_enabled = enabled
+        session.auto_max_turns = max(0, max_turns)
+        session.auto_reviewer_prompt = (reviewer_prompt or "").strip() or None
+        session.auto_turn_index = 0
+        session.touch()
+        self._repository.save_session(session)
+        return session
+
     def submit_message(
         self,
         message: str,
@@ -173,17 +203,23 @@ class MessageService:
         image_paths: list[str] | None = None,
         cleanup_paths: list[str] | None = None,
         execution_message: str | None = None,
+        *,
+        author_type: ChatMessageAuthorType = ChatMessageAuthorType.HUMAN,
+        conversation_kind: JobConversationKind = JobConversationKind.PRIMARY,
     ) -> Job:
         session = self._resolve_session(
             message=message,
             session_id=session_id,
             workspace_path=workspace_path,
         )
+        if conversation_kind == JobConversationKind.PRIMARY and author_type == ChatMessageAuthorType.HUMAN:
+            session.auto_turn_index = 0
 
         user_message = ChatMessage(
             id=str(uuid4()),
             session_id=session.id,
             role=ChatMessageRole.USER,
+            author_type=author_type,
             content=message,
             status=ChatMessageStatus.COMPLETED,
         )
@@ -191,6 +227,7 @@ class MessageService:
             id=str(uuid4()),
             session_id=session.id,
             role=ChatMessageRole.ASSISTANT,
+            author_type=ChatMessageAuthorType.ASSISTANT,
             content="",
             status=ChatMessageStatus.PENDING,
         )
@@ -206,6 +243,12 @@ class MessageService:
             cleanup_paths=cleanup_paths,
             user_message_id=user_message.id,
             assistant_message_id=assistant_message.id,
+            provider_session_id=self._provider_session_id_for_kind(
+                session,
+                conversation_kind,
+            ),
+            serial_key=self._serial_key_for_kind(session.id, conversation_kind),
+            conversation_kind=conversation_kind,
         )
         assistant_message.sync(job_id=job.id)
         session.touch()
@@ -466,6 +509,15 @@ class MessageService:
             cleanup_paths=None,
             user_message_id=original_job.user_message_id,
             assistant_message_id=assistant_message.id,
+            provider_session_id=self._provider_session_id_for_kind(
+                session,
+                original_job.conversation_kind,
+            ),
+            serial_key=self._serial_key_for_kind(
+                session.id,
+                original_job.conversation_kind,
+            ),
+            conversation_kind=original_job.conversation_kind,
         )
 
         assistant_message.sync(
@@ -486,6 +538,9 @@ class MessageService:
             return None
 
         if job.status.is_terminal:
+            if not job.auto_chain_processed:
+                self._sync_job_side_effects(job)
+                return self._repository.get_job(job_id) or job
             return job
 
         if not self._execution_provider.has_job(job_id):
@@ -537,13 +592,17 @@ class MessageService:
         cleanup_paths: list[str] | None,
         user_message_id: str | None,
         assistant_message_id: str | None,
+        provider_session_id: str | None,
+        serial_key: str,
+        conversation_kind: JobConversationKind,
     ) -> Job:
         retryable_image_paths = self._persist_retryable_image_paths(image_paths)
         job_id = self._execution_provider.execute(
             execution_message,
             image_paths=retryable_image_paths or None,
             cleanup_paths=cleanup_paths,
-            provider_session_id=session.provider_session_id,
+            provider_session_id=provider_session_id,
+            serial_key=serial_key,
             workdir=session.workspace_path,
         )
         return Job(
@@ -552,7 +611,8 @@ class MessageService:
             message=display_message,
             user_message_id=user_message_id,
             assistant_message_id=assistant_message_id,
-            provider_session_id=session.provider_session_id,
+            provider_session_id=provider_session_id,
+            conversation_kind=conversation_kind,
             execution_message=execution_message,
             image_paths=retryable_image_paths,
         )
@@ -597,10 +657,16 @@ class MessageService:
 
     def _sync_job_side_effects(self, job: Job) -> None:
         session = self._repository.get_session(job.session_id)
-        if session and job.provider_session_id and session.provider_session_id != job.provider_session_id:
-            session.provider_session_id = job.provider_session_id
-            session.touch()
-            self._repository.save_session(session)
+        if session and job.provider_session_id:
+            if job.conversation_kind == JobConversationKind.REVIEWER:
+                if session.reviewer_provider_session_id != job.provider_session_id:
+                    session.reviewer_provider_session_id = job.provider_session_id
+                    session.touch()
+                    self._repository.save_session(session)
+            elif session.provider_session_id != job.provider_session_id:
+                session.provider_session_id = job.provider_session_id
+                session.touch()
+                self._repository.save_session(session)
 
         if job.assistant_message_id is None:
             return
@@ -638,6 +704,151 @@ class MessageService:
         if session and job.status.is_terminal:
             session.touch()
             self._repository.save_session(session)
+
+        if session and job.status.is_terminal and not job.auto_chain_processed:
+            self._maybe_continue_auto_mode(session=session, job=job)
+            job.auto_chain_processed = True
+            self._repository.save_job(job)
+
+    def _maybe_continue_auto_mode(
+        self,
+        *,
+        session: ChatSession,
+        job: Job,
+    ) -> None:
+        if not session.auto_mode_enabled or session.auto_max_turns <= 0:
+            return
+        if job.status != JobStatus.COMPLETED:
+            return
+
+        if job.conversation_kind == JobConversationKind.PRIMARY:
+            if session.auto_turn_index >= session.auto_max_turns:
+                return
+            primary_response = (job.response or "").strip()
+            if not primary_response:
+                return
+            self._start_reviewer_turn(
+                session=session,
+                primary_response=primary_response,
+            )
+            return
+
+        if job.conversation_kind == JobConversationKind.REVIEWER:
+            if session.auto_turn_index >= session.auto_max_turns:
+                return
+            reviewer_prompt = (job.response or "").strip()
+            if not reviewer_prompt:
+                return
+            self._continue_primary_from_reviewer(
+                session=session,
+                reviewer_prompt=reviewer_prompt,
+                reviewer_message_id=job.assistant_message_id,
+            )
+
+    def _start_reviewer_turn(
+        self,
+        *,
+        session: ChatSession,
+        primary_response: str,
+    ) -> None:
+        reviewer_message = ChatMessage(
+            id=str(uuid4()),
+            session_id=session.id,
+            role=ChatMessageRole.USER,
+            author_type=ChatMessageAuthorType.REVIEWER_CODEX,
+            content="",
+            status=ChatMessageStatus.PENDING,
+        )
+        self._repository.save_message(reviewer_message)
+
+        reviewer_job = self._start_job(
+            session=session,
+            display_message="[Reviewer Codex auto turn]",
+            execution_message=self._build_auto_reviewer_execution_message(
+                session=session,
+                primary_response=primary_response,
+            ),
+            image_paths=None,
+            cleanup_paths=None,
+            user_message_id=None,
+            assistant_message_id=reviewer_message.id,
+            provider_session_id=session.reviewer_provider_session_id,
+            serial_key=self._serial_key_for_kind(session.id, JobConversationKind.REVIEWER),
+            conversation_kind=JobConversationKind.REVIEWER,
+        )
+        reviewer_message.sync(job_id=reviewer_job.id)
+        session.touch()
+        self._repository.save_message(reviewer_message)
+        self._repository.save_job(reviewer_job)
+        self._repository.save_session(session)
+
+    def _continue_primary_from_reviewer(
+        self,
+        *,
+        session: ChatSession,
+        reviewer_prompt: str,
+        reviewer_message_id: str | None,
+    ) -> None:
+        assistant_message = ChatMessage(
+            id=str(uuid4()),
+            session_id=session.id,
+            role=ChatMessageRole.ASSISTANT,
+            author_type=ChatMessageAuthorType.ASSISTANT,
+            content="",
+            status=ChatMessageStatus.PENDING,
+        )
+        self._repository.save_message(assistant_message)
+
+        primary_job = self._start_job(
+            session=session,
+            display_message=reviewer_prompt,
+            execution_message=reviewer_prompt,
+            image_paths=None,
+            cleanup_paths=None,
+            user_message_id=reviewer_message_id,
+            assistant_message_id=assistant_message.id,
+            provider_session_id=session.provider_session_id,
+            serial_key=self._serial_key_for_kind(session.id, JobConversationKind.PRIMARY),
+            conversation_kind=JobConversationKind.PRIMARY,
+        )
+        assistant_message.sync(job_id=primary_job.id)
+        session.auto_turn_index += 1
+        session.touch()
+        self._repository.save_message(assistant_message)
+        self._repository.save_job(primary_job)
+        self._repository.save_session(session)
+
+    def _provider_session_id_for_kind(
+        self,
+        session: ChatSession,
+        conversation_kind: JobConversationKind,
+    ) -> str | None:
+        if conversation_kind == JobConversationKind.REVIEWER:
+            return session.reviewer_provider_session_id
+        return session.provider_session_id
+
+    def _serial_key_for_kind(
+        self,
+        session_id: str,
+        conversation_kind: JobConversationKind,
+    ) -> str:
+        if conversation_kind == JobConversationKind.REVIEWER:
+            return f"{session_id}:reviewer"
+        return session_id
+
+    def _build_auto_reviewer_execution_message(
+        self,
+        *,
+        session: ChatSession,
+        primary_response: str,
+    ) -> str:
+        reviewer_prompt = (session.auto_reviewer_prompt or "").strip() or _DEFAULT_AUTO_REVIEWER_PROMPT
+        return (
+            f"{reviewer_prompt}\n\n"
+            "Generator Codex latest answer:\n"
+            f"{primary_response}\n\n"
+            "Return only the next prompt that should be sent back to the generator Codex."
+        )
 
     def _derive_title(self, message: str) -> str:
         normalized = " ".join(message.split())

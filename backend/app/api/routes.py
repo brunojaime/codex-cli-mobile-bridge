@@ -3,10 +3,12 @@ from __future__ import annotations
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 
+from fastapi.concurrency import run_in_threadpool
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, WebSocket
 
 from backend.app.api.schemas import (
     AudioMessageAcceptedResponse,
+    AutoModeConfigRequest,
     CreateSessionRequest,
     DocumentMessageAcceptedResponse,
     HealthResponse,
@@ -95,7 +97,8 @@ async def post_message(
     service: MessageService = Depends(get_message_service),
 ) -> MessageAcceptedResponse:
     try:
-        job = service.submit_message(
+        job = await run_in_threadpool(
+            service.submit_message,
             payload.message,
             session_id=payload.session_id,
             workspace_path=payload.workspace_path,
@@ -119,7 +122,8 @@ async def post_audio_message(
     )
 
     try:
-        submission = container.message_service.submit_audio_message(
+        submission = await run_in_threadpool(
+            container.message_service.submit_audio_message,
             str(temp_path),
             filename=audio.filename or temp_path.name,
             content_type=audio.content_type,
@@ -161,7 +165,8 @@ async def post_image_message(
 
     try:
         prompt = (message or "").strip() or "Please analyze the attached image."
-        job = container.message_service.submit_message(
+        job = await run_in_threadpool(
+            container.message_service.submit_message,
             prompt,
             session_id=session_id,
             workspace_path=workspace_path,
@@ -200,7 +205,8 @@ async def post_document_message(
     should_cleanup_immediately = True
 
     try:
-        submission = container.message_service.submit_document_message(
+        submission = await run_in_threadpool(
+            container.message_service.submit_document_message,
             str(temp_path),
             filename=document.filename or temp_path.name,
             content_type=document.content_type,
@@ -250,7 +256,8 @@ async def post_attachment_message(
     should_cleanup_immediately = True
 
     try:
-        job = container.message_service.submit_attachment_message(
+        job = await run_in_threadpool(
+            container.message_service.submit_attachment_message,
             [
                 AttachmentInput(
                     path=str(stored.path),
@@ -310,6 +317,11 @@ async def list_sessions(
                 workspace_path=session.workspace_path,
                 workspace_name=session.workspace_name,
                 provider_session_id=session.provider_session_id,
+                reviewer_provider_session_id=session.reviewer_provider_session_id,
+                auto_mode_enabled=session.auto_mode_enabled,
+                auto_max_turns=session.auto_max_turns,
+                auto_reviewer_prompt=session.auto_reviewer_prompt,
+                auto_turn_index=session.auto_turn_index,
                 created_at=session.created_at,
                 updated_at=session.updated_at,
                 last_message_preview=last_message.content[:120] if last_message else None,
@@ -344,17 +356,25 @@ async def get_session(
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found.")
 
+    initial_messages = service.list_messages(session_id)
+    for message in initial_messages:
+        if message.job_id:
+            service.get_job(message.job_id)
+
     messages = service.list_messages(session_id)
     jobs_by_id = {}
     for message in messages:
-        if message.job_id:
-            synced_job = service.get_job(message.job_id)
-            if synced_job is not None:
-                jobs_by_id[message.job_id] = synced_job
+        if not message.job_id:
+            continue
+        synced_job = service.get_job(message.job_id)
+        if synced_job is not None:
+            jobs_by_id[message.job_id] = synced_job
+
+    refreshed_session = service.get_session(session_id) or session
 
     return SessionDetailResponse.from_domain(
-        session,
-        messages=service.list_messages(session_id),
+        refreshed_session,
+        messages=messages,
         jobs_by_id=jobs_by_id,
     )
 
@@ -366,7 +386,8 @@ async def post_session_message(
     service: MessageService = Depends(get_message_service),
 ) -> MessageAcceptedResponse:
     try:
-        job = service.submit_message(
+        job = await run_in_threadpool(
+            service.submit_message,
             payload.message,
             session_id=session_id,
             workspace_path=payload.workspace_path,
@@ -374,6 +395,29 @@ async def post_session_message(
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return MessageAcceptedResponse.from_domain(job)
+
+
+@router.put("/sessions/{session_id}/auto-mode", response_model=SessionDetailResponse)
+async def update_auto_mode(
+    session_id: str,
+    payload: AutoModeConfigRequest,
+    service: MessageService = Depends(get_message_service),
+) -> SessionDetailResponse:
+    try:
+        session = await run_in_threadpool(
+            service.update_auto_mode,
+            session_id=session_id,
+            enabled=payload.enabled,
+            max_turns=payload.max_turns,
+            reviewer_prompt=payload.reviewer_prompt,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    return SessionDetailResponse.from_domain(
+        session,
+        messages=service.list_messages(session_id),
+    )
 
 
 @router.get("/response/{job_id}", response_model=JobResponse)

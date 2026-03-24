@@ -1,10 +1,13 @@
 enum ChatMessageStatus { sending, pending, completed, failed, cancelled }
 
+enum ChatMessageAuthorType { human, assistant, reviewerCodex }
+
 class ChatMessage {
   const ChatMessage({
     required this.id,
     required this.text,
     required this.isUser,
+    required this.authorType,
     required this.status,
     required this.createdAt,
     required this.updatedAt,
@@ -20,6 +23,7 @@ class ChatMessage {
   final String id;
   final String text;
   final bool isUser;
+  final ChatMessageAuthorType authorType;
   final ChatMessageStatus status;
   final DateTime createdAt;
   final DateTime updatedAt;
@@ -35,13 +39,20 @@ class ChatMessage {
       status == ChatMessageStatus.pending ||
       status == ChatMessageStatus.sending;
 
+  bool get isReviewerCodex => authorType == ChatMessageAuthorType.reviewerCodex;
+
   factory ChatMessage.fromJson(Map<String, dynamic> json) {
     final role = json['role'] as String;
     final status = json['status'] as String? ?? 'completed';
+    final authorType = _authorTypeFromJson(
+      json['author_type'] as String?,
+      role: role,
+    );
     return ChatMessage(
       id: json['id'] as String,
       text: json['content'] as String? ?? '',
       isUser: role == 'user',
+      authorType: authorType,
       status: _statusFromJson(status),
       createdAt: DateTime.parse(json['created_at'] as String),
       updatedAt: DateTime.parse(json['updated_at'] as String),
@@ -60,6 +71,7 @@ class ChatMessage {
   ChatMessage copyWith({
     String? text,
     bool? isUser,
+    ChatMessageAuthorType? authorType,
     ChatMessageStatus? status,
     String? jobId,
     String? jobStatus,
@@ -75,6 +87,7 @@ class ChatMessage {
       id: id,
       text: text ?? this.text,
       isUser: isUser ?? this.isUser,
+      authorType: authorType ?? this.authorType,
       status: status ?? this.status,
       jobId: jobId ?? this.jobId,
       jobStatus: jobStatus ?? this.jobStatus,
@@ -86,6 +99,24 @@ class ChatMessage {
       updatedAt: updatedAt ?? this.updatedAt,
       completedAt: completedAt ?? this.completedAt,
     );
+  }
+}
+
+ChatMessageAuthorType _authorTypeFromJson(
+  String? authorType, {
+  required String role,
+}) {
+  switch (authorType) {
+    case 'assistant':
+      return ChatMessageAuthorType.assistant;
+    case 'reviewer_codex':
+      return ChatMessageAuthorType.reviewerCodex;
+    case 'human':
+      return ChatMessageAuthorType.human;
+    default:
+      return role == 'assistant'
+          ? ChatMessageAuthorType.assistant
+          : ChatMessageAuthorType.human;
   }
 }
 

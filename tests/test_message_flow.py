@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 import time
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -52,6 +53,23 @@ def build_audio_client() -> TestClient:
     return TestClient(app)
 
 
+def build_slow_audio_clients() -> tuple[TestClient, TestClient]:
+    settings = Settings(
+        codex_command="python3 tests/fixtures/fake_codex.py",
+        codex_use_exec=False,
+        projects_root="..",
+        chat_store_backend="memory",
+        execution_timeout_seconds=10,
+        poll_interval_seconds=0,
+        audio_transcription_backend="command",
+        audio_transcription_command=(
+            "python3 tests/fixtures/fake_transcriber.py --sleep 0.4 {filename} {file}"
+        ),
+    )
+    app = create_app(settings)
+    return TestClient(app), TestClient(app)
+
+
 def build_image_client() -> TestClient:
     settings = Settings(
         codex_command="python3 tests/fixtures/fake_codex_session.py",
@@ -93,6 +111,27 @@ def wait_for_job(client: TestClient, job_id: str, *, timeout_seconds: float = 5.
         time.sleep(0.05)
 
     raise AssertionError(f"Job {job_id} did not finish in time: {payload}")
+
+
+def wait_for_session(
+    client: TestClient,
+    session_id: str,
+    *,
+    predicate,
+    timeout_seconds: float = 5.0,
+) -> dict:
+    deadline = time.monotonic() + timeout_seconds
+    payload: dict | None = None
+
+    while time.monotonic() < deadline:
+        response = client.get(f"/sessions/{session_id}")
+        assert response.status_code == 200
+        payload = response.json()
+        if predicate(payload):
+            return payload
+        time.sleep(0.05)
+
+    raise AssertionError(f"Session {session_id} did not reach expected state: {payload}")
 
 
 def build_docx_bytes(*paragraphs: str) -> bytes:
@@ -178,6 +217,87 @@ def test_session_message_flow_reuses_provider_session() -> None:
     sessions = sessions_response.json()
     assert len(sessions) == 1
     assert sessions[0]["id"] == session_id
+
+
+def test_session_message_flow_serializes_overlapping_turns() -> None:
+    client = build_session_client()
+
+    first_response = client.post("/message", json={"message": "sleep:0.3:first prompt"})
+    assert first_response.status_code == 202
+    session_id = first_response.json()["session_id"]
+
+    second_response = client.post(
+        f"/sessions/{session_id}/messages",
+        json={"message": "second prompt"},
+    )
+    assert second_response.status_code == 202
+
+    first_job = wait_for_job(client, first_response.json()["job_id"])
+    second_job = wait_for_job(client, second_response.json()["job_id"])
+
+    assert first_job["provider_session_id"] is not None
+    assert second_job["provider_session_id"] == first_job["provider_session_id"]
+
+    updated_session = client.get(f"/sessions/{session_id}")
+    payload = updated_session.json()
+    assert payload["provider_session_id"] == first_job["provider_session_id"]
+    assert len(payload["messages"]) == 4
+    assert payload["messages"][1]["content"] == f"new:{first_job['provider_session_id']}:first prompt"
+    assert payload["messages"][3]["content"] == f"resume:{first_job['provider_session_id']}:second prompt"
+
+
+def test_auto_mode_chains_primary_and_reviewer_codex_turns() -> None:
+    client = build_session_client()
+
+    session_response = client.post(
+        "/sessions",
+        json={"title": "Auto mode"},
+    )
+    assert session_response.status_code == 201
+    session_id = session_response.json()["id"]
+
+    auto_mode_response = client.put(
+        f"/sessions/{session_id}/auto-mode",
+        json={
+            "enabled": True,
+            "max_turns": 1,
+            "reviewer_prompt": "Write the next implementation prompt for the generator Codex.",
+        },
+    )
+    assert auto_mode_response.status_code == 200
+    assert auto_mode_response.json()["auto_mode_enabled"] is True
+    assert auto_mode_response.json()["auto_max_turns"] == 1
+
+    message_response = client.post(
+        f"/sessions/{session_id}/messages",
+        json={"message": "Build the first version"},
+    )
+    assert message_response.status_code == 202
+    primary_job = wait_for_job(client, message_response.json()["job_id"])
+    assert primary_job["conversation_kind"] == "primary"
+
+    session_payload = wait_for_session(
+        client,
+        session_id,
+        predicate=lambda payload: (
+            len(payload["messages"]) >= 4
+            and payload["auto_turn_index"] == 1
+            and payload["messages"][2]["author_type"] == "reviewer_codex"
+            and payload["messages"][2]["status"] == "completed"
+            and payload["messages"][3]["job_status"] == "completed"
+        ),
+    )
+
+    assert session_payload["provider_session_id"] is not None
+    assert session_payload["reviewer_provider_session_id"] is not None
+    assert (
+        session_payload["provider_session_id"]
+        != session_payload["reviewer_provider_session_id"]
+    )
+    assert session_payload["messages"][0]["author_type"] == "human"
+    assert session_payload["messages"][1]["author_type"] == "assistant"
+    assert session_payload["messages"][2]["role"] == "user"
+    assert session_payload["messages"][3]["role"] == "assistant"
 
 
 def test_workspaces_endpoint_and_session_workspace_binding() -> None:
@@ -312,6 +432,37 @@ def test_audio_message_flow_accepts_whatsapp_style_audio_uploads() -> None:
     assert payload["status"] == "completed"
     assert payload["message"] == "Transcribed audio from PTT-20260322-WA0001.ogg"
     assert payload["response"] == "Codex response: Transcribed audio from PTT-20260322-WA0001.ogg"
+
+
+def test_audio_transcription_does_not_block_other_requests() -> None:
+    upload_client, read_client = build_slow_audio_clients()
+    upload_started = threading.Event()
+    upload_finished = threading.Event()
+
+    def submit_audio() -> None:
+        upload_started.set()
+        response = upload_client.post(
+            "/message/audio",
+            files={"audio": ("voice-note.m4a", b"fake audio bytes", "audio/mp4")},
+        )
+        assert response.status_code == 202
+        upload_finished.set()
+
+    worker = threading.Thread(target=submit_audio, daemon=True)
+    worker.start()
+
+    assert upload_started.wait(timeout=1)
+    time.sleep(0.05)
+
+    started_at = time.monotonic()
+    sessions_response = read_client.get("/sessions")
+    elapsed = time.monotonic() - started_at
+
+    assert sessions_response.status_code == 200
+    assert elapsed < 0.25
+
+    worker.join(timeout=2)
+    assert upload_finished.is_set()
 
 
 def test_document_message_flow_transcribes_audio_documents() -> None:

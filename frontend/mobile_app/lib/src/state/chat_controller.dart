@@ -11,11 +11,18 @@ import '../models/job_status_response.dart';
 import '../models/session_detail.dart';
 import '../models/workspace.dart';
 import '../services/api_client.dart';
+import '../services/chat_notification_service.dart';
 
 class ChatController extends ChangeNotifier {
-  ChatController({required ApiClient apiClient}) : _apiClient = apiClient;
+  ChatController({
+    required ApiClient apiClient,
+    ChatNotificationService notificationService =
+        const NoopChatNotificationService(),
+  })  : _apiClient = apiClient,
+        _notificationService = notificationService;
 
   final ApiClient _apiClient;
+  final ChatNotificationService _notificationService;
   final List<ChatSessionSummary> _sessions = <ChatSessionSummary>[];
   final List<Workspace> _workspaces = <Workspace>[];
   final Map<String, String> _pendingJobs = <String, String>{};
@@ -26,6 +33,7 @@ class ChatController extends ChangeNotifier {
       <String, WebSocketChannel>{};
   final Map<int, _OutgoingUploadTicket> _outgoingUploads =
       <int, _OutgoingUploadTicket>{};
+  final Set<String> _notifiedTerminalJobs = <String>{};
 
   SessionDetail? _currentSession;
   String? _selectedSessionId;
@@ -198,6 +206,20 @@ class ChatController extends ChangeNotifier {
   }
 
   Future<void> selectSession(String sessionId) async {
+    ChatSessionSummary? sessionSummary;
+    for (final session in _sessions) {
+      if (session.id == sessionId) {
+        sessionSummary = session;
+        break;
+      }
+    }
+    if (sessionSummary != null) {
+      _selectedSessionId = sessionId;
+      _currentSession = _placeholderSessionDetail(sessionSummary);
+      _errorText = null;
+      notifyListeners();
+    }
+
     _setLoading(true);
     try {
       final session = await _apiClient.getSession(sessionId);
@@ -215,13 +237,49 @@ class ChatController extends ChangeNotifier {
     }
   }
 
-  Future<bool> sendMessage(String rawText) async {
+  Future<bool> updateAutoMode({
+    required bool enabled,
+    required int maxTurns,
+    String? reviewerPrompt,
+  }) async {
+    final sessionId = _selectedSessionId;
+    if (sessionId == null) {
+      return false;
+    }
+
+    try {
+      _errorText = null;
+      final session = await _apiClient.updateAutoMode(
+        sessionId,
+        enabled: enabled,
+        maxTurns: maxTurns,
+        reviewerPrompt: reviewerPrompt,
+      );
+      _currentSession = _overlaySessionWithJobSnapshots(session);
+      await refreshSessions();
+      _reconcilePendingJobsForSession(_currentSession);
+      _trackPendingJobsFromSession(_currentSession);
+      notifyListeners();
+      return true;
+    } catch (error) {
+      _errorText = 'Failed to update auto mode.\n$error';
+      notifyListeners();
+      return false;
+    }
+  }
+
+  Future<bool> sendMessage(
+    String rawText, {
+    String? sessionIdOverride,
+    String? workspacePathOverride,
+  }) async {
     final text = rawText.trim();
     if (text.isEmpty) {
       return false;
     }
-    final originSessionId = _selectedSessionId;
-    final originWorkspacePath = _currentSession?.workspacePath;
+    final originSessionId = sessionIdOverride ?? _selectedSessionId;
+    final originWorkspacePath =
+        workspacePathOverride ?? _currentSession?.workspacePath;
 
     try {
       _errorText = null;
@@ -245,9 +303,12 @@ class ChatController extends ChangeNotifier {
   Future<bool> sendAudioMessage(
     XFile audioFile, {
     String? language,
+    String? sessionIdOverride,
+    String? workspacePathOverride,
   }) async {
-    final originSessionId = _selectedSessionId;
-    final originWorkspacePath = _currentSession?.workspacePath;
+    final originSessionId = sessionIdOverride ?? _selectedSessionId;
+    final originWorkspacePath =
+        workspacePathOverride ?? _currentSession?.workspacePath;
     final outgoingUploadToken = _beginOutgoingUpload(
       originSessionId,
       OutgoingUploadKind.audio,
@@ -282,9 +343,12 @@ class ChatController extends ChangeNotifier {
   Future<bool> sendImageMessage(
     XFile imageFile, {
     String? message,
+    String? sessionIdOverride,
+    String? workspacePathOverride,
   }) async {
-    final originSessionId = _selectedSessionId;
-    final originWorkspacePath = _currentSession?.workspacePath;
+    final originSessionId = sessionIdOverride ?? _selectedSessionId;
+    final originWorkspacePath =
+        workspacePathOverride ?? _currentSession?.workspacePath;
     final outgoingUploadToken = _beginOutgoingUpload(
       originSessionId,
       OutgoingUploadKind.image,
@@ -320,9 +384,12 @@ class ChatController extends ChangeNotifier {
     XFile documentFile, {
     String? message,
     String? language,
+    String? sessionIdOverride,
+    String? workspacePathOverride,
   }) async {
-    final originSessionId = _selectedSessionId;
-    final originWorkspacePath = _currentSession?.workspacePath;
+    final originSessionId = sessionIdOverride ?? _selectedSessionId;
+    final originWorkspacePath =
+        workspacePathOverride ?? _currentSession?.workspacePath;
     final outgoingUploadToken = _beginOutgoingUpload(
       originSessionId,
       OutgoingUploadKind.file,
@@ -359,13 +426,16 @@ class ChatController extends ChangeNotifier {
     List<XFile> attachments, {
     String? message,
     String? language,
+    String? sessionIdOverride,
+    String? workspacePathOverride,
   }) async {
     if (attachments.isEmpty) {
       return false;
     }
 
-    final originSessionId = _selectedSessionId;
-    final originWorkspacePath = _currentSession?.workspacePath;
+    final originSessionId = sessionIdOverride ?? _selectedSessionId;
+    final originWorkspacePath =
+        workspacePathOverride ?? _currentSession?.workspacePath;
     final outgoingUploadToken = _beginOutgoingUpload(
       originSessionId,
       _resolveAttachmentsUploadKind(attachments),
@@ -445,7 +515,7 @@ class ChatController extends ChangeNotifier {
   @override
   void dispose() {
     _pollTimer?.cancel();
-    for (final channel in _jobChannels.values) {
+    for (final channel in _jobChannels.values.toList(growable: false)) {
       channel.sink.close();
     }
     _jobChannels.clear();
@@ -543,6 +613,7 @@ class ChatController extends ChangeNotifier {
 
     _pendingJobs[accepted.jobId] = accepted.sessionId;
     _jobSnapshots[accepted.jobId] = accepted;
+    _notifiedTerminalJobs.remove(accepted.jobId);
     _ensureJobStream(accepted.jobId);
     _ensurePolling();
 
@@ -672,6 +743,7 @@ class ChatController extends ChangeNotifier {
 
   void _applyJobSnapshot(JobStatusResponse snapshot) {
     _jobSnapshots[snapshot.jobId] = snapshot;
+    _maybeNotifyForTerminalJob(snapshot);
 
     if (_currentSession == null) {
       notifyListeners();
@@ -730,6 +802,105 @@ class ChatController extends ChangeNotifier {
     _jobChannels.remove(jobId)?.sink.close();
   }
 
+  void _maybeNotifyForTerminalJob(JobStatusResponse snapshot) {
+    if (!snapshot.isTerminal || snapshot.status == 'cancelled') {
+      return;
+    }
+    if (_notifiedTerminalJobs.contains(snapshot.jobId)) {
+      return;
+    }
+
+    final notification = _buildTerminalNotification(snapshot);
+    if (notification == null) {
+      return;
+    }
+
+    _notifiedTerminalJobs.add(snapshot.jobId);
+    unawaited(_notificationService.showChatCompleted(notification));
+  }
+
+  ChatCompletedNotification? _buildTerminalNotification(
+    JobStatusResponse snapshot,
+  ) {
+    final session = _sessionDetailForId(snapshot.sessionId);
+    final sessionTitle = _resolveSessionTitle(snapshot.sessionId, session);
+    final workspaceName = _resolveWorkspaceName(snapshot.sessionId, session);
+    final preview = _buildNotificationPreview(snapshot);
+    if (preview == null) {
+      return null;
+    }
+
+    final statusLine =
+        snapshot.status == 'failed' ? 'Chat failed' : 'Reply ready';
+    final body = StringBuffer(statusLine);
+    if (sessionTitle.isNotEmpty) {
+      body.write('\n$sessionTitle');
+    }
+    body.write('\n$preview');
+
+    return ChatCompletedNotification(
+      id: snapshot.jobId.hashCode,
+      title: workspaceName,
+      body: body.toString(),
+      summary: sessionTitle,
+    );
+  }
+
+  SessionDetail? _sessionDetailForId(String sessionId) {
+    final currentSession = _currentSession;
+    if (currentSession != null && currentSession.id == sessionId) {
+      return currentSession;
+    }
+    return null;
+  }
+
+  String _resolveSessionTitle(String sessionId, SessionDetail? session) {
+    if (session != null && session.title.trim().isNotEmpty) {
+      return session.title.trim();
+    }
+
+    for (final summary in _sessions) {
+      if (summary.id == sessionId && summary.title.trim().isNotEmpty) {
+        return summary.title.trim();
+      }
+    }
+
+    return 'Chat';
+  }
+
+  String _resolveWorkspaceName(String sessionId, SessionDetail? session) {
+    if (session != null && session.workspaceName.trim().isNotEmpty) {
+      return session.workspaceName.trim();
+    }
+
+    for (final summary in _sessions) {
+      if (summary.id == sessionId && summary.workspaceName.trim().isNotEmpty) {
+        return summary.workspaceName.trim();
+      }
+    }
+
+    return 'Codex Remote';
+  }
+
+  String? _buildNotificationPreview(JobStatusResponse snapshot) {
+    final rawPreview = switch (snapshot.status) {
+      'failed' => snapshot.error,
+      _ => snapshot.response ?? snapshot.latestActivity,
+    };
+    if (rawPreview == null) {
+      return null;
+    }
+
+    final normalized = rawPreview.replaceAll(RegExp(r'\s+'), ' ').trim();
+    if (normalized.isEmpty) {
+      return null;
+    }
+    if (normalized.length <= 220) {
+      return normalized;
+    }
+    return '${normalized.substring(0, 217)}...';
+  }
+
   void _setLoading(bool value) {
     _isLoading = value;
     notifyListeners();
@@ -771,6 +942,24 @@ class ChatController extends ChangeNotifier {
       return OutgoingUploadKind.file;
     }
     return OutgoingUploadKind.mixed;
+  }
+
+  SessionDetail _placeholderSessionDetail(ChatSessionSummary session) {
+    return SessionDetail(
+      id: session.id,
+      title: session.title,
+      workspacePath: session.workspacePath,
+      workspaceName: session.workspaceName,
+      providerSessionId: session.providerSessionId,
+      reviewerProviderSessionId: session.reviewerProviderSessionId,
+      autoModeEnabled: session.autoModeEnabled,
+      autoMaxTurns: session.autoMaxTurns,
+      autoReviewerPrompt: session.autoReviewerPrompt,
+      autoTurnIndex: session.autoTurnIndex,
+      createdAt: session.createdAt,
+      updatedAt: session.updatedAt,
+      messages: const <ChatMessage>[],
+    );
   }
 
   bool _looksLikeImageAttachment(XFile attachment) {

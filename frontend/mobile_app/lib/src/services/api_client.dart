@@ -111,6 +111,31 @@ class ApiClient {
         jsonDecode(response.body) as Map<String, dynamic>);
   }
 
+  Future<SessionDetail> updateAutoMode(
+    String sessionId, {
+    required bool enabled,
+    required int maxTurns,
+    String? reviewerPrompt,
+  }) async {
+    final response = await _client.put(
+      Uri.parse('$baseUrl/sessions/$sessionId/auto-mode'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        'enabled': enabled,
+        'max_turns': maxTurns,
+        'reviewer_prompt': reviewerPrompt,
+      }),
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception('Failed to update auto mode: ${response.body}');
+    }
+
+    return SessionDetail.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
   Future<JobStatusResponse> sendMessage(
     String message, {
     String? sessionId,

@@ -124,4 +124,21 @@ class ServerProfileStore {
   String _sessionReadMarkersKey(String serverBaseUrl) {
     return 'session_read_markers::$serverBaseUrl';
   }
+
+  Future<bool> loadAudioRepliesEnabled(String serverBaseUrl) async {
+    final preferences = await SharedPreferences.getInstance();
+    return preferences.getBool(_audioRepliesEnabledKey(serverBaseUrl)) ?? false;
+  }
+
+  Future<void> saveAudioRepliesEnabled(
+    String serverBaseUrl,
+    bool enabled,
+  ) async {
+    final preferences = await SharedPreferences.getInstance();
+    await preferences.setBool(_audioRepliesEnabledKey(serverBaseUrl), enabled);
+  }
+
+  String _audioRepliesEnabledKey(String serverBaseUrl) {
+    return 'audio_replies_enabled::$serverBaseUrl';
+  }
 }

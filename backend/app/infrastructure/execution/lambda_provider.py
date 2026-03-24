@@ -23,6 +23,17 @@ class _LambdaState:
     latest_activity: str | None = None
 
 
+@dataclass(slots=True)
+class _QueuedLambdaExecution:
+    job_id: str
+    message: str
+    image_paths: list[str] | None = None
+    cleanup_paths: list[str] | None = None
+    provider_session_id: str | None = None
+    workdir: str | None = None
+    serial_key: str | None = None
+
+
 class LambdaExecutionProvider(ExecutionProvider):
     def __init__(
         self,
@@ -38,6 +49,11 @@ class LambdaExecutionProvider(ExecutionProvider):
         )
         self._states: dict[str, _LambdaState] = {}
         self._subscribers: dict[str, list[Callable[[ExecutionSnapshot], None]]] = {}
+        self._queued_executions: dict[str, _QueuedLambdaExecution] = {}
+        self._serial_tails: dict[str, str] = {}
+        self._serial_successors: dict[str, str] = {}
+        self._serial_predecessors: dict[str, str] = {}
+        self._job_serial_keys: dict[str, str] = {}
         self._lock = threading.RLock()
 
     def execute(
@@ -47,39 +63,50 @@ class LambdaExecutionProvider(ExecutionProvider):
         image_paths: list[str] | None = None,
         cleanup_paths: list[str] | None = None,
         provider_session_id: str | None = None,
+        serial_key: str | None = None,
         workdir: str | None = None,
     ) -> str:
         job_id = str(uuid4())
-        self._set_state(job_id, status=JobStatus.PENDING)
+        execution = _QueuedLambdaExecution(
+            job_id=job_id,
+            message=message,
+            image_paths=image_paths,
+            cleanup_paths=cleanup_paths,
+            provider_session_id=provider_session_id,
+            workdir=workdir,
+            serial_key=serial_key,
+        )
+        should_queue = False
 
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            worker = threading.Thread(
-                target=lambda: asyncio.run(
-                    self._dispatch(
-                        job_id,
-                        message,
-                        image_paths,
-                        cleanup_paths,
-                        provider_session_id,
-                        workdir,
-                    ),
-                ),
-                daemon=True,
-            )
-            worker.start()
-        else:
-            loop.create_task(
-                self._dispatch(
-                    job_id,
-                    message,
-                    image_paths,
-                    cleanup_paths,
-                    provider_session_id,
-                    workdir,
-                ),
-            )
+        with self._lock:
+            self._queued_executions[job_id] = execution
+            predecessor_job_id: str | None = None
+            if serial_key:
+                self._job_serial_keys[job_id] = serial_key
+                predecessor_job_id = self._serial_tails.get(serial_key)
+                self._serial_tails[serial_key] = job_id
+                predecessor_state = (
+                    self._states.get(predecessor_job_id)
+                    if predecessor_job_id is not None
+                    else None
+                )
+                if predecessor_state is not None and not predecessor_state.status.is_terminal:
+                    should_queue = True
+                    self._serial_successors[predecessor_job_id] = job_id
+                    self._serial_predecessors[job_id] = predecessor_job_id
+
+        self._set_state(
+            job_id,
+            status=JobStatus.PENDING,
+            phase="Queued behind previous turn" if should_queue else "Queued",
+            latest_activity=(
+                "Waiting for the previous turn in this chat to finish."
+                if should_queue
+                else "Prompt accepted by the backend."
+            ),
+        )
+        if not should_queue:
+            self._start_execution(job_id)
 
         return job_id
 
@@ -227,6 +254,8 @@ class LambdaExecutionProvider(ExecutionProvider):
             )
         finally:
             self._cleanup_paths(cleanup_paths)
+            with self._lock:
+                self._queued_executions.pop(job_id, None)
 
     def _cleanup_paths(self, paths: list[str] | None) -> None:
         if not paths:
@@ -251,23 +280,42 @@ class LambdaExecutionProvider(ExecutionProvider):
     ) -> None:
         listeners: list[Callable[[ExecutionSnapshot], None]]
         snapshot: ExecutionSnapshot
+        should_start_successor = False
+        provider_session_id_to_pass: str | None = None
         with self._lock:
+            current = self._states.get(job_id)
             self._states[job_id] = _LambdaState(
                 status=status,
-                response=response,
-                error=error,
-                provider_session_id=provider_session_id,
-                phase=phase,
-                latest_activity=latest_activity,
+                response=response if response is not None else (current.response if current else None),
+                error=error if error is not None else (current.error if current else None),
+                provider_session_id=provider_session_id
+                if provider_session_id is not None
+                else (current.provider_session_id if current else None),
+                phase=phase if phase is not None else (current.phase if current else None),
+                latest_activity=latest_activity
+                if latest_activity is not None
+                else (current.latest_activity if current else None),
             )
             snapshot = self._snapshot_from_state(job_id, self._states[job_id])
             listeners = list(self._subscribers.get(job_id, ()))
+            should_start_successor = (
+                status.is_terminal
+                and not (current.status.is_terminal if current else False)
+                and job_id not in self._serial_predecessors
+            )
+            provider_session_id_to_pass = self._states[job_id].provider_session_id
 
         for listener in listeners:
             try:
                 listener(snapshot)
             except Exception:
                 continue
+
+        if should_start_successor:
+            self._start_serial_successor(
+                job_id,
+                provider_session_id=provider_session_id_to_pass,
+            )
 
     def _get_state(self, job_id: str) -> _LambdaState | None:
         with self._lock:
@@ -288,4 +336,76 @@ class LambdaExecutionProvider(ExecutionProvider):
             provider_session_id=state.provider_session_id,
             phase=state.phase,
             latest_activity=state.latest_activity,
+        )
+
+    def _start_execution(
+        self,
+        job_id: str,
+        *,
+        provider_session_id_override: str | None = None,
+    ) -> None:
+        with self._lock:
+            execution = self._queued_executions.get(job_id)
+
+        if execution is None:
+            return
+
+        resolved_provider_session_id = (
+            provider_session_id_override
+            if provider_session_id_override is not None
+            else execution.provider_session_id
+        )
+
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            worker = threading.Thread(
+                target=lambda: asyncio.run(
+                    self._dispatch(
+                        job_id,
+                        execution.message,
+                        execution.image_paths,
+                        execution.cleanup_paths,
+                        resolved_provider_session_id,
+                        execution.workdir,
+                    ),
+                ),
+                daemon=True,
+            )
+            worker.start()
+        else:
+            loop.create_task(
+                self._dispatch(
+                    job_id,
+                    execution.message,
+                    execution.image_paths,
+                    execution.cleanup_paths,
+                    resolved_provider_session_id,
+                    execution.workdir,
+                ),
+            )
+
+    def _start_serial_successor(
+        self,
+        completed_job_id: str,
+        *,
+        provider_session_id: str | None,
+    ) -> None:
+        with self._lock:
+            successor_job_id = self._serial_successors.pop(completed_job_id, None)
+            serial_key = self._job_serial_keys.get(completed_job_id)
+            if successor_job_id is None:
+                if serial_key is not None and self._serial_tails.get(serial_key) == completed_job_id:
+                    self._serial_tails.pop(serial_key, None)
+                self._job_serial_keys.pop(completed_job_id, None)
+                self._serial_predecessors.pop(completed_job_id, None)
+                return
+
+            self._serial_predecessors.pop(successor_job_id, None)
+            self._job_serial_keys.pop(completed_job_id, None)
+            self._serial_predecessors.pop(completed_job_id, None)
+
+        self._start_execution(
+            successor_job_id,
+            provider_session_id_override=provider_session_id,
         )

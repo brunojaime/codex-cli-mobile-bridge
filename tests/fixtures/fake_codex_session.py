@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import json
+import re
 import sys
 import time
 import uuid
 from pathlib import Path
+
+
+_SLEEP_PREFIX = re.compile(r"^sleep:(\d+(?:\.\d+)?):(.*)$", re.DOTALL)
 
 
 def main() -> int:
@@ -75,6 +79,11 @@ def main() -> int:
     if prompt.startswith("fail:"):
         print(prompt.split(":", maxsplit=1)[1], file=sys.stderr)
         return 1
+
+    sleep_match = _SLEEP_PREFIX.match(prompt)
+    if sleep_match is not None:
+        time.sleep(float(sleep_match.group(1)))
+        prompt = sleep_match.group(2)
 
     thread_id = provider_session_id or f"thread-{uuid.uuid4()}"
     response = f"{mode}:{thread_id}:{prompt}"

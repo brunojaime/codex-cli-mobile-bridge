@@ -8,25 +8,38 @@ import 'package:image_picker/image_picker.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../models/chat_session_summary.dart';
+import '../models/chat_message.dart';
 import '../models/server_capabilities.dart';
 import '../models/server_health.dart';
 import '../models/server_profile.dart';
+import '../models/session_detail.dart';
 import '../models/workspace.dart';
 import '../services/api_client.dart';
 import '../services/audio_note_recorder.dart';
+import '../services/chat_notification_service.dart';
 import '../services/clipboard_image_paste_listener_stub.dart'
     if (dart.library.js_interop) '../services/clipboard_image_paste_listener_web.dart';
 import '../services/server_profile_store.dart';
+import '../services/text_to_speech_player.dart';
 import '../state/chat_controller.dart';
 import '../widgets/chat_bubble.dart';
+
+const String _defaultAutoReviewerPrompt =
+    'You are receiving the latest answer from a generator Codex. '
+    'Write the next prompt that should be sent back to that generator so it '
+    'improves the implementation with more code, tighter validation, missing '
+    'tests, edge cases, cleanup, or follow-up work. Reply only with that next '
+    'prompt.';
 
 class ChatScreen extends StatefulWidget {
   const ChatScreen({
     super.key,
     required this.initialApiBaseUrl,
+    required this.notificationService,
   });
 
   final String initialApiBaseUrl;
+  final ChatNotificationService notificationService;
 
   @override
   State<ChatScreen> createState() => _ChatScreenState();
@@ -34,6 +47,7 @@ class ChatScreen extends StatefulWidget {
 
 class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   final ServerProfileStore _serverProfileStore = ServerProfileStore();
+  final TextToSpeechPlayer _textToSpeechPlayer = TextToSpeechPlayer();
   final TextEditingController _textController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
   late ChatController _chatController;
@@ -46,8 +60,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   String? _serverErrorText;
   bool _sidebarExpanded = false;
   bool _stickToBottom = true;
+  bool _audioRepliesEnabled = false;
   String? _lastObservedSessionId;
   final Map<String, _ComposerDraft> _sessionDrafts = <String, _ComposerDraft>{};
+  final Map<String, String> _spokenAssistantMessageIds = <String, String>{};
 
   @override
   void initState() {
@@ -63,6 +79,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _textToSpeechPlayer.dispose();
     _chatController
       ..removeListener(_handleChatControllerChanged)
       ..dispose();
@@ -167,6 +184,32 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
               ],
             ),
             actions: <Widget>[
+              IconButton(
+                onPressed: () async {
+                  await _openAutoModeEditor();
+                },
+                icon: Icon(
+                  _chatController.currentSession?.autoModeEnabled ?? false
+                      ? Icons.autorenew_rounded
+                      : Icons.hub_outlined,
+                ),
+                tooltip: _chatController.currentSession?.autoModeEnabled ?? false
+                    ? 'Auto mode enabled'
+                    : 'Configure auto mode',
+              ),
+              IconButton(
+                onPressed: () async {
+                  await _openReplyModePicker();
+                },
+                icon: Icon(
+                  _audioRepliesEnabled
+                      ? Icons.volume_up_rounded
+                      : Icons.volume_mute_rounded,
+                ),
+                tooltip: _audioRepliesEnabled
+                    ? 'Audio replies enabled'
+                    : 'Text replies enabled',
+              ),
               IconButton(
                 onPressed: () async {
                   await _openServerManager();
@@ -385,7 +428,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                   onSend: _handleSend,
                   onSendAudio: _handleSendAudio,
                   onSendAttachments: _handleSendAttachments,
-                  isBusy: _chatController.isLoading,
+                  onBeginRecording: _handleBeginRecording,
+                  isBusy:
+                      _chatController.isLoading &&
+                      _chatController.currentSession == null,
                   voiceEnabled: _resolvedAudioInputEnabled(),
                   imageAttachmentsEnabled:
                       _activeServerCapabilities?.supportsImageInput ?? true,
@@ -402,8 +448,15 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
 
   Future<bool> _handleSend() async {
     final sessionIdBeforeSend = _chatController.selectedSessionId;
-    final didSend = await _chatController.sendMessage(_textController.text);
-    if (didSend && _chatController.selectedSessionId == sessionIdBeforeSend) {
+    final workspacePathBeforeSend = _chatController.currentSession?.workspacePath;
+    final didSend = await _chatController.sendMessage(
+      _textController.text,
+      sessionIdOverride: sessionIdBeforeSend,
+      workspacePathOverride: workspacePathBeforeSend,
+    );
+    if (didSend &&
+        (sessionIdBeforeSend == null ||
+            _chatController.selectedSessionId == sessionIdBeforeSend)) {
       _textController.clear();
       _updateStickToBottom(true);
       _scrollToBottom();
@@ -413,8 +466,15 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
 
   Future<bool> _handleSendAudio(XFile audioFile) async {
     final sessionIdBeforeSend = _chatController.selectedSessionId;
-    final didSend = await _chatController.sendAudioMessage(audioFile);
-    if (didSend && _chatController.selectedSessionId == sessionIdBeforeSend) {
+    final workspacePathBeforeSend = _chatController.currentSession?.workspacePath;
+    final didSend = await _chatController.sendAudioMessage(
+      audioFile,
+      sessionIdOverride: sessionIdBeforeSend,
+      workspacePathOverride: workspacePathBeforeSend,
+    );
+    if (didSend &&
+        (sessionIdBeforeSend == null ||
+            _chatController.selectedSessionId == sessionIdBeforeSend)) {
       _updateStickToBottom(true);
       _scrollToBottom();
     }
@@ -426,11 +486,16 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     String? prompt,
   }) async {
     final sessionIdBeforeSend = _chatController.selectedSessionId;
+    final workspacePathBeforeSend = _chatController.currentSession?.workspacePath;
     final didSend = await _chatController.sendAttachmentsMessage(
       attachments.map((attachment) => attachment.file).toList(),
       message: prompt,
+      sessionIdOverride: sessionIdBeforeSend,
+      workspacePathOverride: workspacePathBeforeSend,
     );
-    if (didSend && _chatController.selectedSessionId == sessionIdBeforeSend) {
+    if (didSend &&
+        (sessionIdBeforeSend == null ||
+            _chatController.selectedSessionId == sessionIdBeforeSend)) {
       _updateStickToBottom(true);
       _scrollToBottom();
     }
@@ -646,6 +711,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     );
     final activeProfileId = await _serverProfileStore.loadActiveProfileId();
     final sidebarExpanded = await _serverProfileStore.loadSidebarExpanded();
+    final audioRepliesEnabled = await _serverProfileStore
+        .loadAudioRepliesEnabled(widget.initialApiBaseUrl);
     final resolvedActiveProfile = profiles.firstWhere(
       (profile) => profile.id == activeProfileId,
       orElse: () => profiles.first,
@@ -656,6 +723,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       _activeServer = resolvedActiveProfile;
       _activeServerHealth = null;
       _sidebarExpanded = sidebarExpanded;
+      _audioRepliesEnabled = audioRepliesEnabled;
     });
 
     await _switchToServer(resolvedActiveProfile, initialize: true);
@@ -666,16 +734,22 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     bool initialize = false,
   }) async {
     final client = ApiClient(baseUrl: profile.baseUrl);
-    final nextController = ChatController(apiClient: client);
+    final nextController = ChatController(
+      apiClient: client,
+      notificationService: widget.notificationService,
+    );
     final sidebarWorkspaces = await _serverProfileStore.loadSidebarWorkspaces(
       profile.baseUrl,
     );
     final sessionReadMarkers = await _serverProfileStore.loadSessionReadMarkers(
       profile.baseUrl,
     );
+    final audioRepliesEnabled = await _serverProfileStore
+        .loadAudioRepliesEnabled(profile.baseUrl);
     nextController.addListener(_handleChatControllerChanged);
 
     final previousController = _chatController;
+    await _textToSpeechPlayer.stop();
     setState(() {
       _chatController = nextController;
       _activeServer = profile;
@@ -684,6 +758,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       _sidebarWorkspaces = sidebarWorkspaces;
       _sessionReadMarkers = sessionReadMarkers;
       _serverErrorText = null;
+      _audioRepliesEnabled = audioRepliesEnabled;
     });
     _lastObservedSessionId = null;
     _updateStickToBottom(true);
@@ -712,6 +787,162 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         ..removeListener(_handleChatControllerChanged)
         ..dispose();
     }
+  }
+
+  Future<void> _openAutoModeEditor() async {
+    final currentSession = _chatController.currentSession;
+    if (currentSession == null) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Open or create a chat before configuring auto mode.'),
+        ),
+      );
+      return;
+    }
+
+    final draft = await showModalBottomSheet<_AutoModeDraft>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: const Color(0xFF101931),
+      builder: (context) {
+        return _AutoModeSheet(
+          session: currentSession,
+        );
+      },
+    );
+
+    if (draft == null) {
+      return;
+    }
+
+    final didUpdate = await _chatController.updateAutoMode(
+      enabled: draft.enabled,
+      maxTurns: draft.maxTurns,
+      reviewerPrompt: draft.reviewerPrompt,
+    );
+    if (!mounted || didUpdate) {
+      return;
+    }
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Failed to save auto mode settings.'),
+      ),
+    );
+  }
+
+  Future<void> _openReplyModePicker() async {
+    final nextValue = await showModalBottomSheet<bool>(
+      context: context,
+      backgroundColor: const Color(0xFF101931),
+      builder: (context) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              const ListTile(
+                title: Text('Reply mode'),
+                subtitle: Text(
+                  'Choose whether assistant replies stay as text or are spoken aloud',
+                ),
+              ),
+              ListTile(
+                leading: Icon(
+                  _audioRepliesEnabled
+                      ? Icons.radio_button_unchecked_rounded
+                      : Icons.radio_button_checked_rounded,
+                ),
+                title: const Text('Text replies'),
+                subtitle: const Text('Keep assistant responses silent'),
+                onTap: () => Navigator.of(context).pop(false),
+              ),
+              ListTile(
+                leading: Icon(
+                  _audioRepliesEnabled
+                      ? Icons.radio_button_checked_rounded
+                      : Icons.radio_button_unchecked_rounded,
+                ),
+                title: const Text('Audio replies'),
+                subtitle:
+                    const Text('Speak assistant responses automatically'),
+                onTap: () => Navigator.of(context).pop(true),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+
+    if (nextValue == null || nextValue == _audioRepliesEnabled) {
+      return;
+    }
+
+    final activeBaseUrl = _activeServer?.baseUrl ?? widget.initialApiBaseUrl;
+    await _serverProfileStore.saveAudioRepliesEnabled(activeBaseUrl, nextValue);
+    if (!mounted) {
+      return;
+    }
+
+    if (nextValue) {
+      final currentSession = _chatController.currentSession;
+      if (currentSession != null) {
+        _seedSpokenAssistantReply(currentSession);
+      }
+    } else {
+      await _textToSpeechPlayer.stop();
+    }
+
+    setState(() {
+      _audioRepliesEnabled = nextValue;
+    });
+  }
+
+  Future<void> _handleBeginRecording() async {
+    await _textToSpeechPlayer.stop();
+  }
+
+  void _seedSpokenAssistantReply(SessionDetail session) {
+    final latestReply = _latestCompletedAssistantReply(session);
+    if (latestReply == null) {
+      return;
+    }
+    _spokenAssistantMessageIds[session.id] = latestReply.id;
+  }
+
+  Future<void> _maybeSpeakLatestAssistantReply() async {
+    if (!_audioRepliesEnabled) {
+      return;
+    }
+
+    final currentSession = _chatController.currentSession;
+    if (currentSession == null) {
+      return;
+    }
+
+    final latestReply = _latestCompletedAssistantReply(currentSession);
+    if (latestReply == null) {
+      return;
+    }
+    if (_spokenAssistantMessageIds[currentSession.id] == latestReply.id) {
+      return;
+    }
+
+    _spokenAssistantMessageIds[currentSession.id] = latestReply.id;
+    await _textToSpeechPlayer.speak(latestReply.text);
+  }
+
+  ChatMessage? _latestCompletedAssistantReply(SessionDetail session) {
+    for (final message in session.messages.reversed) {
+      if (!message.isUser &&
+          message.status == ChatMessageStatus.completed &&
+          message.text.trim().isNotEmpty) {
+        return message;
+      }
+    }
+    return null;
   }
 
   Future<void> _openServerManager() async {
@@ -769,7 +1000,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   }
 
   ChatController _buildController(String baseUrl) {
-    return ChatController(apiClient: ApiClient(baseUrl: baseUrl));
+    return ChatController(
+      apiClient: ApiClient(baseUrl: baseUrl),
+      notificationService: widget.notificationService,
+    );
   }
 
   String _resolveVoiceStatusText() {
@@ -1091,12 +1325,18 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     final sessionChanged = currentSessionId != _lastObservedSessionId;
     if (sessionChanged) {
       _lastObservedSessionId = currentSessionId;
+      final currentSession = _chatController.currentSession;
+      if (currentSession != null) {
+        _seedSpokenAssistantReply(currentSession);
+      }
       _updateStickToBottom(true);
     }
 
     if (_stickToBottom) {
       _scrollToBottom(jumpToBottom: sessionChanged);
     }
+
+    _maybeSpeakLatestAssistantReply();
   }
 
   int _unreadCountForSession(ChatSessionSummary session) {
@@ -1734,6 +1974,7 @@ class _Composer extends StatefulWidget {
     required this.onSend,
     required this.onSendAudio,
     required this.onSendAttachments,
+    required this.onBeginRecording,
     required this.isBusy,
     required this.voiceEnabled,
     required this.imageAttachmentsEnabled,
@@ -1751,6 +1992,7 @@ class _Composer extends StatefulWidget {
     List<_PendingAttachmentDraft> attachments, {
     String? prompt,
   }) onSendAttachments;
+  final Future<void> Function() onBeginRecording;
   final bool isBusy;
   final bool voiceEnabled;
   final bool imageAttachmentsEnabled;
@@ -2262,6 +2504,7 @@ class _ComposerState extends State<_Composer> {
     }
 
     try {
+      await widget.onBeginRecording();
       await _audioRecorder.start();
       _recordingStopwatch = Stopwatch()..start();
       _recordingTicker?.cancel();
@@ -2652,6 +2895,205 @@ class _PendingAttachmentDraft {
   String get badgeLabel => isImage ? 'Image' : 'File';
 
   String get identityKey => '${kind.name}:$name:${sizeBytes ?? 0}';
+}
+
+class _AutoModeSheet extends StatefulWidget {
+  const _AutoModeSheet({
+    required this.session,
+  });
+
+  final SessionDetail session;
+
+  @override
+  State<_AutoModeSheet> createState() => _AutoModeSheetState();
+}
+
+class _AutoModeSheetState extends State<_AutoModeSheet> {
+  late final TextEditingController _promptController;
+  late final TextEditingController _turnsController;
+  late bool _enabled;
+
+  @override
+  void initState() {
+    super.initState();
+    _enabled = widget.session.autoModeEnabled;
+    _promptController = TextEditingController(
+      text: (widget.session.autoReviewerPrompt?.trim().isNotEmpty ?? false)
+          ? widget.session.autoReviewerPrompt!
+          : _defaultAutoReviewerPrompt,
+    );
+    _turnsController = TextEditingController(
+      text: (widget.session.autoMaxTurns > 0 ? widget.session.autoMaxTurns : 3)
+          .toString(),
+    );
+  }
+
+  @override
+  void dispose() {
+    _promptController.dispose();
+    _turnsController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: Padding(
+        padding: EdgeInsets.only(
+          left: 16,
+          right: 16,
+          top: 12,
+          bottom: MediaQuery.of(context).viewInsets.bottom + 16,
+        ),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              const ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: Text('Auto mode'),
+                subtitle: Text(
+                  'Use a second Codex to generate the next user-style prompt back into this same chat.',
+                ),
+              ),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                value: _enabled,
+                title: const Text('Enable auto mode'),
+                subtitle: Text(
+                  _enabled
+                      ? 'Reviewer Codex prompts will keep feeding the generator Codex.'
+                      : 'The chat behaves normally until you enable it.',
+                ),
+                onChanged: (value) {
+                  setState(() {
+                    _enabled = value;
+                  });
+                },
+              ),
+              Text(
+                'Max auto turns',
+                style: Theme.of(context).textTheme.titleSmall,
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: _turnsController,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  hintText: '3',
+                  helperText:
+                      'How many reviewer-to-generator cycles to run after your prompt. Range: 1-12.',
+                ),
+              ),
+              const SizedBox(height: 16),
+              Row(
+                children: <Widget>[
+                  Expanded(
+                    child: Text(
+                      'Reviewer Codex system prompt',
+                      style: Theme.of(context).textTheme.titleSmall,
+                    ),
+                  ),
+                  TextButton(
+                    onPressed: () {
+                      _promptController.text = _defaultAutoReviewerPrompt;
+                    },
+                    child: const Text('Use suggested prompt'),
+                  ),
+                ],
+              ),
+              Text(
+                'This prompt is prepended every time the reviewer Codex receives the generator output.',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: const Color(0xFF8B97B5),
+                    ),
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: _promptController,
+                minLines: 6,
+                maxLines: 10,
+                decoration: const InputDecoration(
+                  hintText: _defaultAutoReviewerPrompt,
+                  alignLabelWithHint: true,
+                ),
+              ),
+              const SizedBox(height: 12),
+              Text(
+                'Reviewer Codex turns appear as user-side chat bubbles with a distinct color and Codex label.',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: const Color(0xFF8B97B5),
+                    ),
+              ),
+              if (widget.session.autoModeEnabled ||
+                  widget.session.autoTurnIndex > 0) ...[
+                const SizedBox(height: 12),
+                Text(
+                  'Current run: ${widget.session.autoTurnIndex}/${widget.session.autoMaxTurns} turns completed',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: const Color(0xFF55D6BE),
+                      ),
+                ),
+              ],
+              const SizedBox(height: 20),
+              Row(
+                children: <Widget>[
+                  TextButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    child: const Text('Cancel'),
+                  ),
+                  const Spacer(),
+                  FilledButton(
+                    onPressed: () {
+                      Navigator.of(context).pop(
+                        _AutoModeDraft(
+                          enabled: _enabled,
+                          maxTurns: _normalizeAutoTurns(
+                            _turnsController.text,
+                            enabled: _enabled,
+                          ),
+                          reviewerPrompt: _promptController.text.trim(),
+                        ),
+                      );
+                    },
+                    child: const Text('Save'),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+int _normalizeAutoTurns(
+  String rawValue, {
+  required bool enabled,
+}) {
+  final parsed = int.tryParse(rawValue.trim());
+  if (enabled) {
+    final fallback = parsed ?? 3;
+    return fallback.clamp(1, 12);
+  }
+  if (parsed == null) {
+    return 0;
+  }
+  return parsed.clamp(0, 12);
+}
+
+class _AutoModeDraft {
+  const _AutoModeDraft({
+    required this.enabled,
+    required this.maxTurns,
+    required this.reviewerPrompt,
+  });
+
+  final bool enabled;
+  final int maxTurns;
+  final String reviewerPrompt;
 }
 
 class _ComposerDraft {

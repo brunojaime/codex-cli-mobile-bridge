@@ -5,12 +5,13 @@ from datetime import datetime
 from pydantic import BaseModel, Field
 
 from backend.app.domain.entities.chat_message import (
+    ChatMessageAuthorType,
     ChatMessage,
     ChatMessageRole,
     ChatMessageStatus,
 )
 from backend.app.domain.entities.chat_session import ChatSession
-from backend.app.domain.entities.job import Job, JobStatus
+from backend.app.domain.entities.job import Job, JobConversationKind, JobStatus
 
 
 class MessageRequest(BaseModel):
@@ -22,6 +23,12 @@ class MessageRequest(BaseModel):
 class CreateSessionRequest(BaseModel):
     title: str | None = Field(default=None, max_length=120)
     workspace_path: str | None = None
+
+
+class AutoModeConfigRequest(BaseModel):
+    enabled: bool = False
+    max_turns: int = Field(default=0, ge=0, le=12)
+    reviewer_prompt: str | None = Field(default=None, max_length=12000)
 
 
 class MessageAcceptedResponse(BaseModel):
@@ -109,6 +116,7 @@ class DocumentMessageAcceptedResponse(MessageAcceptedResponse):
 class ChatMessageResponse(BaseModel):
     id: str
     role: ChatMessageRole
+    author_type: ChatMessageAuthorType
     content: str
     status: ChatMessageStatus
     created_at: datetime
@@ -131,6 +139,7 @@ class ChatMessageResponse(BaseModel):
         return cls(
             id=message.id,
             role=message.role,
+            author_type=message.author_type,
             content=message.content,
             status=message.status,
             created_at=message.created_at,
@@ -151,6 +160,11 @@ class SessionSummaryResponse(BaseModel):
     workspace_path: str
     workspace_name: str
     provider_session_id: str | None = None
+    reviewer_provider_session_id: str | None = None
+    auto_mode_enabled: bool = False
+    auto_max_turns: int = 0
+    auto_reviewer_prompt: str | None = None
+    auto_turn_index: int = 0
     created_at: datetime
     updated_at: datetime
     last_message_preview: str | None = None
@@ -163,6 +177,11 @@ class SessionDetailResponse(BaseModel):
     workspace_path: str
     workspace_name: str
     provider_session_id: str | None = None
+    reviewer_provider_session_id: str | None = None
+    auto_mode_enabled: bool = False
+    auto_max_turns: int = 0
+    auto_reviewer_prompt: str | None = None
+    auto_turn_index: int = 0
     created_at: datetime
     updated_at: datetime
     messages: list[ChatMessageResponse]
@@ -181,6 +200,11 @@ class SessionDetailResponse(BaseModel):
             workspace_path=session.workspace_path,
             workspace_name=session.workspace_name,
             provider_session_id=session.provider_session_id,
+            reviewer_provider_session_id=session.reviewer_provider_session_id,
+            auto_mode_enabled=session.auto_mode_enabled,
+            auto_max_turns=session.auto_max_turns,
+            auto_reviewer_prompt=session.auto_reviewer_prompt,
+            auto_turn_index=session.auto_turn_index,
             created_at=session.created_at,
             updated_at=session.updated_at,
             messages=[
@@ -206,6 +230,7 @@ class JobResponse(BaseModel):
     response: str | None = None
     error: str | None = None
     provider_session_id: str | None = None
+    conversation_kind: JobConversationKind = JobConversationKind.PRIMARY
     phase: str | None = None
     latest_activity: str | None = None
     elapsed_seconds: int
@@ -223,6 +248,7 @@ class JobResponse(BaseModel):
             response=job.response,
             error=job.error,
             provider_session_id=job.provider_session_id,
+            conversation_kind=job.conversation_kind,
             phase=job.phase,
             latest_activity=job.latest_activity,
             elapsed_seconds=job.elapsed_seconds,

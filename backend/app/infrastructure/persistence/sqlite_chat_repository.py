@@ -9,12 +9,13 @@ from threading import RLock
 from typing import Iterator
 
 from backend.app.domain.entities.chat_message import (
+    ChatMessageAuthorType,
     ChatMessage,
     ChatMessageRole,
     ChatMessageStatus,
 )
 from backend.app.domain.entities.chat_session import ChatSession
-from backend.app.domain.entities.job import Job, JobStatus
+from backend.app.domain.entities.job import Job, JobConversationKind, JobStatus
 from backend.app.domain.entities.workspace import Workspace
 from backend.app.domain.repositories.chat_repository import ChatRepository
 
@@ -38,6 +39,8 @@ class SqliteChatRepository(ChatRepository):
                     user_message_id,
                     assistant_message_id,
                     provider_session_id,
+                    conversation_kind,
+                    auto_chain_processed,
                     execution_message,
                     image_paths_json,
                     status,
@@ -48,13 +51,15 @@ class SqliteChatRepository(ChatRepository):
                     created_at,
                     updated_at,
                     completed_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     session_id = excluded.session_id,
                     message = excluded.message,
                     user_message_id = excluded.user_message_id,
                     assistant_message_id = excluded.assistant_message_id,
                     provider_session_id = excluded.provider_session_id,
+                    conversation_kind = excluded.conversation_kind,
+                    auto_chain_processed = excluded.auto_chain_processed,
                     execution_message = excluded.execution_message,
                     image_paths_json = excluded.image_paths_json,
                     status = excluded.status,
@@ -73,6 +78,8 @@ class SqliteChatRepository(ChatRepository):
                     job.user_message_id,
                     job.assistant_message_id,
                     job.provider_session_id,
+                    job.conversation_kind.value,
+                    1 if job.auto_chain_processed else 0,
                     job.execution_message,
                     json.dumps(job.image_paths),
                     job.status.value,
@@ -105,14 +112,24 @@ class SqliteChatRepository(ChatRepository):
                     workspace_path,
                     workspace_name,
                     provider_session_id,
+                    reviewer_provider_session_id,
+                    auto_mode_enabled,
+                    auto_max_turns,
+                    auto_reviewer_prompt,
+                    auto_turn_index,
                     created_at,
                     updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     title = excluded.title,
                     workspace_path = excluded.workspace_path,
                     workspace_name = excluded.workspace_name,
                     provider_session_id = excluded.provider_session_id,
+                    reviewer_provider_session_id = excluded.reviewer_provider_session_id,
+                    auto_mode_enabled = excluded.auto_mode_enabled,
+                    auto_max_turns = excluded.auto_max_turns,
+                    auto_reviewer_prompt = excluded.auto_reviewer_prompt,
+                    auto_turn_index = excluded.auto_turn_index,
                     created_at = excluded.created_at,
                     updated_at = excluded.updated_at
                 """,
@@ -122,6 +139,11 @@ class SqliteChatRepository(ChatRepository):
                     session.workspace_path,
                     session.workspace_name,
                     session.provider_session_id,
+                    session.reviewer_provider_session_id,
+                    1 if session.auto_mode_enabled else 0,
+                    session.auto_max_turns,
+                    session.auto_reviewer_prompt,
+                    session.auto_turn_index,
                     self._serialize_datetime(session.created_at),
                     self._serialize_datetime(session.updated_at),
                 ),
@@ -151,15 +173,17 @@ class SqliteChatRepository(ChatRepository):
                     id,
                     session_id,
                     role,
+                    author_type,
                     content,
                     status,
                     created_at,
                     updated_at,
                     job_id
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     session_id = excluded.session_id,
                     role = excluded.role,
+                    author_type = excluded.author_type,
                     content = excluded.content,
                     status = excluded.status,
                     created_at = excluded.created_at,
@@ -170,6 +194,7 @@ class SqliteChatRepository(ChatRepository):
                     message.id,
                     message.session_id,
                     message.role.value,
+                    message.author_type.value,
                     message.content,
                     message.status.value,
                     self._serialize_datetime(message.created_at),
@@ -222,6 +247,11 @@ class SqliteChatRepository(ChatRepository):
                     workspace_path TEXT NOT NULL,
                     workspace_name TEXT NOT NULL,
                     provider_session_id TEXT,
+                    reviewer_provider_session_id TEXT,
+                    auto_mode_enabled INTEGER NOT NULL DEFAULT 0,
+                    auto_max_turns INTEGER NOT NULL DEFAULT 0,
+                    auto_reviewer_prompt TEXT,
+                    auto_turn_index INTEGER NOT NULL DEFAULT 0,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 );
@@ -230,6 +260,7 @@ class SqliteChatRepository(ChatRepository):
                     id TEXT PRIMARY KEY,
                     session_id TEXT NOT NULL,
                     role TEXT NOT NULL,
+                    author_type TEXT NOT NULL DEFAULT 'human',
                     content TEXT NOT NULL,
                     status TEXT NOT NULL,
                     created_at TEXT NOT NULL,
@@ -245,6 +276,8 @@ class SqliteChatRepository(ChatRepository):
                     user_message_id TEXT,
                     assistant_message_id TEXT,
                     provider_session_id TEXT,
+                    conversation_kind TEXT NOT NULL DEFAULT 'primary',
+                    auto_chain_processed INTEGER NOT NULL DEFAULT 0,
                     execution_message TEXT,
                     image_paths_json TEXT NOT NULL DEFAULT '[]',
                     status TEXT NOT NULL,
@@ -272,6 +305,39 @@ class SqliteChatRepository(ChatRepository):
                 "image_paths_json",
                 "TEXT NOT NULL DEFAULT '[]'",
             )
+            self._ensure_column(connection, "messages", "author_type", "TEXT NOT NULL DEFAULT 'human'")
+            self._ensure_column(connection, "sessions", "reviewer_provider_session_id", "TEXT")
+            self._ensure_column(
+                connection,
+                "sessions",
+                "auto_mode_enabled",
+                "INTEGER NOT NULL DEFAULT 0",
+            )
+            self._ensure_column(
+                connection,
+                "sessions",
+                "auto_max_turns",
+                "INTEGER NOT NULL DEFAULT 0",
+            )
+            self._ensure_column(connection, "sessions", "auto_reviewer_prompt", "TEXT")
+            self._ensure_column(
+                connection,
+                "sessions",
+                "auto_turn_index",
+                "INTEGER NOT NULL DEFAULT 0",
+            )
+            self._ensure_column(
+                connection,
+                "jobs",
+                "conversation_kind",
+                "TEXT NOT NULL DEFAULT 'primary'",
+            )
+            self._ensure_column(
+                connection,
+                "jobs",
+                "auto_chain_processed",
+                "INTEGER NOT NULL DEFAULT 0",
+            )
             connection.commit()
 
     @contextmanager
@@ -291,6 +357,11 @@ class SqliteChatRepository(ChatRepository):
             workspace_path=row["workspace_path"],
             workspace_name=row["workspace_name"],
             provider_session_id=row["provider_session_id"],
+            reviewer_provider_session_id=row["reviewer_provider_session_id"],
+            auto_mode_enabled=bool(row["auto_mode_enabled"]),
+            auto_max_turns=row["auto_max_turns"] or 0,
+            auto_reviewer_prompt=row["auto_reviewer_prompt"],
+            auto_turn_index=row["auto_turn_index"] or 0,
             created_at=self._deserialize_datetime(row["created_at"]),
             updated_at=self._deserialize_datetime(row["updated_at"]),
         )
@@ -300,6 +371,7 @@ class SqliteChatRepository(ChatRepository):
             id=row["id"],
             session_id=row["session_id"],
             role=ChatMessageRole(row["role"]),
+            author_type=ChatMessageAuthorType(row["author_type"] or "human"),
             content=row["content"],
             status=ChatMessageStatus(row["status"]),
             created_at=self._deserialize_datetime(row["created_at"]),
@@ -315,6 +387,8 @@ class SqliteChatRepository(ChatRepository):
             user_message_id=row["user_message_id"],
             assistant_message_id=row["assistant_message_id"],
             provider_session_id=row["provider_session_id"],
+            conversation_kind=JobConversationKind(row["conversation_kind"] or "primary"),
+            auto_chain_processed=bool(row["auto_chain_processed"]),
             execution_message=row["execution_message"],
             image_paths=json.loads(row["image_paths_json"] or "[]"),
             status=JobStatus(row["status"]),

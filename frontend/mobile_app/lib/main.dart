@@ -2,17 +2,26 @@ import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 
 import 'src/screens/chat_screen.dart';
+import 'src/services/chat_notification_service.dart';
 
 const _configuredApiBaseUrl = String.fromEnvironment(
   'API_BASE_URL',
   defaultValue: '',
 );
 
-void main() {
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
   final apiBaseUrl = _configuredApiBaseUrl.isNotEmpty
       ? _configuredApiBaseUrl
       : _defaultApiBaseUrl();
-  runApp(CodexMobileApp(initialApiBaseUrl: apiBaseUrl));
+  final notificationService = createChatNotificationService();
+  await notificationService.initialize();
+  runApp(
+    CodexMobileApp(
+      initialApiBaseUrl: apiBaseUrl,
+      notificationService: notificationService,
+    ),
+  );
 }
 
 String _defaultApiBaseUrl() {
@@ -35,9 +44,11 @@ class CodexMobileApp extends StatelessWidget {
   const CodexMobileApp({
     super.key,
     required this.initialApiBaseUrl,
+    this.notificationService = const NoopChatNotificationService(),
   });
 
   final String initialApiBaseUrl;
+  final ChatNotificationService notificationService;
 
   @override
   Widget build(BuildContext context) {
@@ -79,7 +90,10 @@ class CodexMobileApp extends StatelessWidget {
           elevation: 0,
         ),
       ),
-      home: ChatScreen(initialApiBaseUrl: initialApiBaseUrl),
+      home: ChatScreen(
+        initialApiBaseUrl: initialApiBaseUrl,
+        notificationService: notificationService,
+      ),
     );
   }
 }

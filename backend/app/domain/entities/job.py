@@ -21,6 +21,11 @@ class JobStatus(StrEnum):
         return self in {self.COMPLETED, self.FAILED, self.CANCELLED}
 
 
+class JobConversationKind(StrEnum):
+    PRIMARY = "primary"
+    REVIEWER = "reviewer"
+
+
 @dataclass(slots=True)
 class Job:
     id: str
@@ -29,6 +34,8 @@ class Job:
     user_message_id: str | None = None
     assistant_message_id: str | None = None
     provider_session_id: str | None = None
+    conversation_kind: JobConversationKind = JobConversationKind.PRIMARY
+    auto_chain_processed: bool = False
     execution_message: str | None = None
     image_paths: list[str] = field(default_factory=list)
     status: JobStatus = JobStatus.PENDING
@@ -54,12 +61,15 @@ class Job:
         provider_session_id: str | None = None,
         phase: str | None = None,
         latest_activity: str | None = None,
+        auto_chain_processed: bool | None = None,
     ) -> None:
         self.status = status
         self.response = response
         self.error = error
         if provider_session_id:
             self.provider_session_id = provider_session_id
+        if auto_chain_processed is not None:
+            self.auto_chain_processed = auto_chain_processed
         self.phase = phase
         self.latest_activity = latest_activity
         self.updated_at = utc_now()

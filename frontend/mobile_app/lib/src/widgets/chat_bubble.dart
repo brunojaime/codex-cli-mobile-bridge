@@ -24,6 +24,7 @@ class ChatBubble extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isUser = message.isUser;
+    final isReviewerCodex = message.isReviewerCodex;
     final screenWidth = MediaQuery.sizeOf(context).width;
     final useWideWebLayout = kIsWeb && screenWidth >= 900;
     final shouldPreferWideBubble =
@@ -40,8 +41,11 @@ class ChatBubble extends StatelessWidget {
     final preferredBubbleWidth = useWideWebLayout && shouldPreferWideBubble
         ? (isUser ? screenWidth * 0.52 : screenWidth * 0.78)
         : null;
-    final bubbleColor =
-        isUser ? const Color(0xFF55D6BE) : const Color(0xFF1A2440);
+    final bubbleColor = switch ((isUser, isReviewerCodex)) {
+      (true, true) => const Color(0xFFFFD79A),
+      (true, false) => const Color(0xFF55D6BE),
+      _ => const Color(0xFF1A2440),
+    };
     final textColor = isUser ? const Color(0xFF09111F) : Colors.white;
     final alignment =
         isUser ? CrossAxisAlignment.end : CrossAxisAlignment.start;
@@ -64,6 +68,9 @@ class ChatBubble extends StatelessWidget {
           decoration: BoxDecoration(
             color: bubbleColor,
             borderRadius: radius,
+            border: isReviewerCodex
+                ? Border.all(color: const Color(0xFFD98B1D), width: 1.2)
+                : null,
             boxShadow: const <BoxShadow>[
               BoxShadow(
                 color: Color(0x22000000),
@@ -75,9 +82,14 @@ class ChatBubble extends StatelessWidget {
           child: Column(
             crossAxisAlignment: alignment,
             children: <Widget>[
+              if (isReviewerCodex)
+                _ReviewerHeader(
+                  message: message,
+                  textColor: textColor,
+                ),
               if (!isUser)
                 _AssistantHeader(message: message, textColor: textColor),
-              if (!isUser) const SizedBox(height: 10),
+              if (isReviewerCodex || !isUser) const SizedBox(height: 10),
               if (message.jobLatestActivity != null &&
                   message.jobLatestActivity!.isNotEmpty) ...[
                 Text(
@@ -94,8 +106,17 @@ class ChatBubble extends StatelessWidget {
                 RichMessageContent(
                   text: message.text,
                   textColor: textColor,
-                  onOptionSelected: isUser ? null : onOptionSelected,
-                  onLinkTap: isUser ? null : onLinkTap,
+                  onOptionSelected:
+                      isUser || isReviewerCodex ? null : onOptionSelected,
+                  onLinkTap: isUser || isReviewerCodex ? null : onLinkTap,
+                )
+              else if (isReviewerCodex && message.isPendingLike)
+                Text(
+                  'Reviewer Codex is drafting the next prompt...',
+                  style: TextStyle(
+                    color: textColor.withValues(alpha: 0.78),
+                    fontSize: 14,
+                  ),
                 )
               else if (!isUser && message.isPendingLike)
                 Text(
@@ -164,6 +185,56 @@ class ChatBubble extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 8),
+      ],
+    );
+  }
+}
+
+class _ReviewerHeader extends StatelessWidget {
+  const _ReviewerHeader({
+    required this.message,
+    required this.textColor,
+  });
+
+  final ChatMessage message;
+  final Color textColor;
+
+  @override
+  Widget build(BuildContext context) {
+    final phase = message.jobPhase ??
+        (message.isPendingLike ? 'Preparing next prompt' : 'Prompt ready');
+
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          decoration: BoxDecoration(
+            color: const Color(0xFFFFE7BE),
+            borderRadius: BorderRadius.circular(999),
+          ),
+          child: const Text(
+            'CODEX REVIEWER',
+            style: TextStyle(
+              color: Color(0xFF7A3D00),
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ),
+        const SizedBox(width: 8),
+        Flexible(
+          child: Text(
+            phase,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: textColor.withValues(alpha: 0.84),
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
       ],
     );
   }
