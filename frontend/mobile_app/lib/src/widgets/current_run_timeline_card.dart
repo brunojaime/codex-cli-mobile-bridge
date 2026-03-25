@@ -92,9 +92,7 @@ class _RunHistoryEntry extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: <Widget>[
                   Text(
-                    run.isActive
-                        ? 'Active run ${_shortId(run.runId)}'
-                        : 'Run ${_shortId(run.runId)}',
+                    _runTitle(run),
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
@@ -112,6 +110,20 @@ class _RunHistoryEntry extends StatelessWidget {
                       fontSize: 12,
                     ),
                   ),
+                  if (_runContextLine(session, run) case final contextText?)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: Text(
+                        contextText,
+                        maxLines: 3,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Color(0xFFB8C8EA),
+                          fontSize: 12,
+                          height: 1.3,
+                        ),
+                      ),
+                    ),
                 ],
               );
 
@@ -145,6 +157,7 @@ class _RunHistoryEntry extends StatelessWidget {
           const SizedBox(height: 10),
           for (final stage in run.stages) ...<Widget>[
             _CurrentRunStageRow(
+              run: run,
               label: resolveAgentLabel(session, _agentIdForStage(stage.stage)),
               stage: stage,
             ),
@@ -158,10 +171,12 @@ class _RunHistoryEntry extends StatelessWidget {
 
 class _CurrentRunStageRow extends StatelessWidget {
   const _CurrentRunStageRow({
+    required this.run,
     required this.label,
     required this.stage,
   });
 
+  final CurrentRunExecution run;
   final String label;
   final CurrentRunStageExecution stage;
 
@@ -191,7 +206,7 @@ class _CurrentRunStageRow extends StatelessWidget {
                   builder: (context, constraints) {
                     final useStackedHeader = constraints.maxWidth < 250;
                     final title = Text(
-                      '$label ${_progressText(stage)}',
+                      label,
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
@@ -229,7 +244,11 @@ class _CurrentRunStageRow extends StatelessWidget {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  presentation.subtitle,
+                  _stageSubtitle(
+                    run: run,
+                    stage: stage,
+                    subtitle: presentation.subtitle,
+                  ),
                   style: const TextStyle(
                     color: Color(0xFFB8C8EA),
                     fontSize: 12,
@@ -305,14 +324,20 @@ String _headerText(SessionDetail session, List<CurrentRunExecution> runs) {
   if (runs.isEmpty) {
     return 'No active or recent runs yet. Start an agent request to populate this panel.';
   }
+  final activeRun = runs.firstWhere(
+    (run) => run.isActive,
+    orElse: () => runs.first,
+  );
   if (session.activeAgentRunId != null) {
+    if (activeRun.preset == AgentPreset.supervisor) {
+      return 'The active supervisor run updates live here with participant activity and recorded call counts. Completed runs stay below it.';
+    }
     return 'The active pipeline updates live here, and completed runs remain below it.';
   }
+  if (activeRun.preset == AgentPreset.supervisor) {
+    return 'Recent completed supervisor runs stay visible here with participant activity and recorded call counts.';
+  }
   return 'Recent completed runs stay visible here after the active pipeline closes.';
-}
-
-String _progressText(CurrentRunStageExecution stage) {
-  return '${stage.attemptCount}/${stage.maxTurns}';
 }
 
 String? _stageTimestampLine(CurrentRunStageExecution stage) {
@@ -349,6 +374,80 @@ String _runTimestampLine(CurrentRunExecution run) {
       : 'Timestamp unavailable.';
 }
 
+String _runTitle(CurrentRunExecution run) {
+  if (run.isActive) {
+    return 'Active run ${_shortId(run.runId)}';
+  }
+  return switch (run.state) {
+    CurrentRunStageState.completed => 'Completed run ${_shortId(run.runId)}',
+    CurrentRunStageState.failed => 'Failed run ${_shortId(run.runId)}',
+    CurrentRunStageState.cancelled => 'Cancelled run ${_shortId(run.runId)}',
+    _ => 'Previous run ${_shortId(run.runId)}',
+  };
+}
+
+String? _runContextLine(SessionDetail session, CurrentRunExecution run) {
+  if (run.preset != AgentPreset.supervisor) {
+    return null;
+  }
+  final participantLabels = run.participantAgentIds
+      .map((agentId) => resolveAgentLabel(session, agentId))
+      .toList(growable: false);
+  final summaryParts = <String>[
+    if (participantLabels.isNotEmpty)
+      'Participants: ${participantLabels.join(', ')}',
+    'Calls recorded: ${run.callCount}',
+    if (_supervisorBudgetSummary(run) case final budgetText?) budgetText,
+  ];
+  return summaryParts.join(' • ');
+}
+
+String? _supervisorBudgetSummary(CurrentRunExecution run) {
+  CurrentRunStageExecution? supervisorStage;
+  for (final stage in run.stages) {
+    if (stage.stage == CurrentRunStageId.supervisor) {
+      supervisorStage = stage;
+      break;
+    }
+  }
+  if (supervisorStage == null || !supervisorStage.hasTurnBudget) {
+    return null;
+  }
+  return 'Supervisor turn budget: ${supervisorStage.attemptCount} of ${supervisorStage.maxTurns} used';
+}
+
+String _stageSubtitle({
+  required CurrentRunExecution run,
+  required CurrentRunStageExecution stage,
+  required String subtitle,
+}) {
+  final parts = <String>[
+    if (_stageBudgetText(run: run, stage: stage) case final budgetText?)
+      budgetText,
+    subtitle,
+  ];
+  return parts.join(' • ');
+}
+
+String? _stageBudgetText({
+  required CurrentRunExecution run,
+  required CurrentRunStageExecution stage,
+}) {
+  if (stage.hasTurnBudget && stage.maxTurns > 0) {
+    return 'Turn budget: ${stage.attemptCount} of ${stage.maxTurns} calls used';
+  }
+  if (stage.attemptCount > 0) {
+    return 'Calls recorded: ${stage.attemptCount}';
+  }
+  if (run.preset == AgentPreset.supervisor &&
+      stage.stage != CurrentRunStageId.supervisor &&
+      stage.configured &&
+      !stage.hasTurnBudget) {
+    return 'Turn budget: managed by supervisor';
+  }
+  return null;
+}
+
 RunStagePresentation _runPresentation(CurrentRunStageState state) {
   return buildRunStagePresentation(
     CurrentRunStageExecution(
@@ -383,6 +482,8 @@ AgentId _agentIdForStage(CurrentRunStageId stage) {
       return AgentId.ux;
     case CurrentRunStageId.seniorEngineer:
       return AgentId.seniorEngineer;
+    case CurrentRunStageId.scraper:
+      return AgentId.scraper;
   }
 }
 

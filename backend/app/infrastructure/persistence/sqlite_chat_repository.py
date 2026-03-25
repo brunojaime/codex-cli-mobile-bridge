@@ -24,7 +24,9 @@ from backend.app.domain.entities.agent_configuration import (
     AgentType,
     AgentVisibilityMode,
     derive_legacy_auto_mode_fields,
+    normalize_agent_enum_value,
 )
+from backend.app.domain.entities.agent_run import AgentRun
 from backend.app.domain.entities.agent_profile import AgentProfile, builtin_agent_profiles_by_id
 from backend.app.domain.entities.chat_session import ChatSession
 from backend.app.domain.entities.job import Job, JobConversationKind, JobStatus
@@ -78,6 +80,27 @@ class SqliteChatRepository(ChatRepository):
         with self._lock, self._connect() as connection:
             self._write_job(connection, job)
             connection.commit()
+
+    def save_agent_run(self, agent_run: AgentRun) -> None:
+        with self._lock, self._connect() as connection:
+            self._write_agent_run(connection, agent_run)
+            connection.commit()
+
+    def get_agent_run(self, run_id: str) -> AgentRun | None:
+        with self._lock, self._connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM agent_runs WHERE run_id = ?",
+                (run_id,),
+            ).fetchone()
+        return self._agent_run_from_row(row) if row is not None else None
+
+    def list_agent_runs(self, session_id: str) -> list[AgentRun]:
+        with self._lock, self._connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM agent_runs WHERE session_id = ? ORDER BY updated_at DESC, run_id DESC",
+                (session_id,),
+            ).fetchall()
+        return [self._agent_run_from_row(row) for row in rows]
 
     def get_job(self, job_id: str) -> Job | None:
         with self._lock, self._connect() as connection:
@@ -217,10 +240,13 @@ class SqliteChatRepository(ChatRepository):
         *,
         messages: list[ChatMessage],
         job: Job | None = None,
+        agent_run: AgentRun | None = None,
     ) -> bool:
         with self._lock, self._connect() as connection:
             try:
                 self._write_session(connection, session)
+                if agent_run is not None:
+                    self._write_agent_run(connection, agent_run)
                 for message in messages:
                     self._write_message(connection, message)
                 if job is not None:
@@ -324,6 +350,15 @@ class SqliteChatRepository(ChatRepository):
                     updated_at TEXT NOT NULL
                 );
 
+                CREATE TABLE IF NOT EXISTS agent_runs (
+                    run_id TEXT PRIMARY KEY,
+                    session_id TEXT NOT NULL,
+                    configuration_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE
+                );
+
                 CREATE INDEX IF NOT EXISTS idx_sessions_updated_at
                 ON sessions(updated_at DESC);
 
@@ -404,6 +439,18 @@ class SqliteChatRepository(ChatRepository):
         self._ensure_column(connection, "messages", "recovery_action", "TEXT")
         self._ensure_column(connection, "messages", "recovered_from_message_id", "TEXT")
         self._ensure_column(connection, "messages", "superseded_by_message_id", "TEXT")
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS agent_runs (
+                run_id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                configuration_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE
+            )
+            """
+        )
         self._ensure_column(
             connection,
             "jobs",
@@ -954,7 +1001,12 @@ class SqliteChatRepository(ChatRepository):
         if not isinstance(value, str):
             return default
         try:
-            return enum_type(value)
+            normalized_value = (
+                normalize_agent_enum_value(value)
+                if enum_type in {AgentId, AgentType, AgentTriggerSource}
+                else value
+            )
+            return enum_type(normalized_value)
         except ValueError:
             return default
 
@@ -976,7 +1028,12 @@ class SqliteChatRepository(ChatRepository):
                 detail=f"Expected a non-empty {enum_type.__name__} value.",
             )
         try:
-            return enum_type(value)
+            normalized_value = (
+                normalize_agent_enum_value(value)
+                if enum_type in {AgentId, AgentType, AgentTriggerSource}
+                else value
+            )
+            return enum_type(normalized_value)
         except ValueError as exc:
             raise PersistenceDataError(
                 table=table,
@@ -994,7 +1051,12 @@ class SqliteChatRepository(ChatRepository):
         if not isinstance(value, str):
             return None
         try:
-            return enum_type(value)
+            normalized_value = (
+                normalize_agent_enum_value(value)
+                if enum_type in {AgentId, AgentType, AgentTriggerSource}
+                else value
+            )
+            return enum_type(normalized_value)
         except ValueError:
             return None
 
@@ -1030,6 +1092,52 @@ class SqliteChatRepository(ChatRepository):
             reviewer_prompt=row["auto_reviewer_prompt"],
             reviewer_provider_session_id=row["reviewer_provider_session_id"],
             generator_provider_session_id=row["provider_session_id"],
+        )
+
+    def _agent_run_from_row(self, row: sqlite3.Row) -> AgentRun:
+        run_id = self._read_required_text(
+            row["run_id"],
+            table="agent_runs",
+            row_id=None,
+            field="run_id",
+        )
+        configuration_json = self._read_required_text(
+            row["configuration_json"],
+            table="agent_runs",
+            row_id=run_id,
+            field="configuration_json",
+        )
+        try:
+            configuration = AgentConfiguration.from_dict(json.loads(configuration_json))
+        except (json.JSONDecodeError, ValueError) as exc:
+            raise PersistenceDataError(
+                table="agent_runs",
+                row_id=run_id,
+                field="configuration_json",
+                code="invalid_configuration_json",
+                detail=str(exc),
+            ) from exc
+        return AgentRun(
+            run_id=run_id,
+            session_id=self._read_required_text(
+                row["session_id"],
+                table="agent_runs",
+                row_id=run_id,
+                field="session_id",
+            ),
+            configuration=configuration,
+            created_at=self._deserialize_required_datetime(
+                row["created_at"],
+                table="agent_runs",
+                row_id=run_id,
+                field="created_at",
+            ),
+            updated_at=self._deserialize_required_datetime(
+                row["updated_at"],
+                table="agent_runs",
+                row_id=run_id,
+                field="updated_at",
+            ),
         )
 
     def _write_job(
@@ -1243,6 +1351,36 @@ class SqliteChatRepository(ChatRepository):
                 normalized.color_hex,
                 normalized.prompt,
                 json.dumps(normalized.resolved_configuration().to_dict()),
+                self._serialize_datetime(normalized.created_at),
+                self._serialize_datetime(normalized.updated_at),
+            ),
+        )
+
+    def _write_agent_run(
+        self,
+        connection: sqlite3.Connection,
+        agent_run: AgentRun,
+    ) -> None:
+        normalized = agent_run.normalized()
+        connection.execute(
+            """
+            INSERT INTO agent_runs (
+                run_id,
+                session_id,
+                configuration_json,
+                created_at,
+                updated_at
+            ) VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(run_id) DO UPDATE SET
+                session_id = excluded.session_id,
+                configuration_json = excluded.configuration_json,
+                created_at = excluded.created_at,
+                updated_at = excluded.updated_at
+            """,
+            (
+                normalized.run_id,
+                normalized.session_id,
+                json.dumps(normalized.configuration.to_dict()),
                 self._serialize_datetime(normalized.created_at),
                 self._serialize_datetime(normalized.updated_at),
             ),

@@ -22,8 +22,8 @@ import '../services/audio_note_recorder.dart';
 import '../services/chat_notification_service.dart';
 import '../services/clipboard_image_paste_listener_stub.dart'
     if (dart.library.js_interop) '../services/clipboard_image_paste_listener_web.dart';
+import '../services/reply_playback_service.dart';
 import '../services/server_profile_store.dart';
-import '../services/text_to_speech_player.dart';
 import '../state/chat_controller.dart';
 import '../utils/chat_message_visibility.dart';
 import '../widgets/agent_studio_status_button.dart';
@@ -41,6 +41,7 @@ const Key kChatScreenBodyScrollViewKey =
     ValueKey<String>('chat-screen-body-scroll-view');
 
 enum _AppBarOverflowAction {
+  conversationContext,
   saveCurrentAgent,
   replyMode,
   servers,
@@ -53,6 +54,7 @@ class ChatScreen extends StatefulWidget {
     required this.initialApiBaseUrl,
     required this.notificationService,
     this.controllerOverride,
+    this.replyPlaybackServiceOverride,
     this.enableServerBootstrap = true,
     this.initialSidebarWorkspaces = const <Workspace>[],
   });
@@ -60,6 +62,7 @@ class ChatScreen extends StatefulWidget {
   final String initialApiBaseUrl;
   final ChatNotificationService notificationService;
   final ChatController? controllerOverride;
+  final ReplyPlaybackService? replyPlaybackServiceOverride;
   final bool enableServerBootstrap;
   final List<Workspace> initialSidebarWorkspaces;
 
@@ -69,9 +72,9 @@ class ChatScreen extends StatefulWidget {
 
 class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   final ServerProfileStore _serverProfileStore = ServerProfileStore();
-  final TextToSpeechPlayer _textToSpeechPlayer = TextToSpeechPlayer();
   final TextEditingController _textController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
+  late final ReplyPlaybackService _replyPlaybackService;
   late ChatController _chatController;
   List<ServerProfile> _serverProfiles = <ServerProfile>[];
   List<Workspace> _sidebarWorkspaces = <Workspace>[];
@@ -87,7 +90,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   bool _isOpeningWorkspacePicker = false;
   String? _lastObservedSessionId;
   final Map<String, _ComposerDraft> _sessionDrafts = <String, _ComposerDraft>{};
-  final Map<String, String> _spokenAssistantMessageIds = <String, String>{};
   final Map<String, Set<String>> _collapsedMessageIdsBySession =
       <String, Set<String>>{};
   bool _isUpdatingFilteredMessagesView = false;
@@ -98,6 +100,13 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _replyPlaybackService =
+        widget.replyPlaybackServiceOverride ?? ReplyPlaybackService();
+    unawaited(
+      _replyPlaybackService.setServer(
+        ApiClient(baseUrl: widget.initialApiBaseUrl),
+      ),
+    );
     _chatController =
         widget.controllerOverride ?? _buildController(widget.initialApiBaseUrl);
     if (widget.initialSidebarWorkspaces.isNotEmpty) {
@@ -115,7 +124,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    _textToSpeechPlayer.dispose();
+    unawaited(_replyPlaybackService.dispose());
     _chatController.removeListener(_handleChatControllerChanged);
     if (widget.controllerOverride == null) {
       _chatController.dispose();
@@ -1154,7 +1163,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     nextController.addListener(_handleChatControllerChanged);
 
     final previousController = _chatController;
-    await _textToSpeechPlayer.stop();
+    await _replyPlaybackService.setServer(client);
     setState(() {
       _chatController = nextController;
       _activeServer = profile;
@@ -1183,8 +1192,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           _activeServerCapabilities = capabilities;
         });
       }
+      _replyPlaybackService.setCapabilities(capabilities);
       didConnect = true;
     } catch (error) {
+      _replyPlaybackService.setCapabilities(null);
       setState(() {
         _activeServerHealth = null;
         _activeServerCapabilities = null;
@@ -1247,9 +1258,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       return;
     }
 
+    final errorText =
+        _chatController.errorText ?? 'Failed to save agent settings.';
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Failed to save agent settings.'),
+      SnackBar(
+        content: Text(errorText),
       ),
     );
   }
@@ -1308,10 +1321,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     if (nextValue) {
       final currentSession = _chatController.currentSession;
       if (currentSession != null) {
-        _seedSpokenAssistantReply(currentSession);
+        _replyPlaybackService.seedSession(currentSession);
       }
     } else {
-      await _textToSpeechPlayer.stop();
+      await _replyPlaybackService.stop();
     }
 
     setState(() {
@@ -1320,48 +1333,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _handleBeginRecording() async {
-    await _textToSpeechPlayer.stop();
-  }
-
-  void _seedSpokenAssistantReply(SessionDetail session) {
-    final latestReply = _latestCompletedAssistantReply(session);
-    if (latestReply == null) {
-      return;
-    }
-    _spokenAssistantMessageIds[session.id] = latestReply.id;
-  }
-
-  Future<void> _maybeSpeakLatestAssistantReply() async {
-    if (!_audioRepliesEnabled) {
-      return;
-    }
-
-    final currentSession = _chatController.currentSession;
-    if (currentSession == null) {
-      return;
-    }
-
-    final latestReply = _latestCompletedAssistantReply(currentSession);
-    if (latestReply == null) {
-      return;
-    }
-    if (_spokenAssistantMessageIds[currentSession.id] == latestReply.id) {
-      return;
-    }
-
-    _spokenAssistantMessageIds[currentSession.id] = latestReply.id;
-    await _textToSpeechPlayer.speak(latestReply.text);
-  }
-
-  ChatMessage? _latestCompletedAssistantReply(SessionDetail session) {
-    for (final message in session.messages.reversed) {
-      if (!message.isUser &&
-          message.status == ChatMessageStatus.completed &&
-          message.text.trim().isNotEmpty) {
-        return message;
-      }
-    }
-    return null;
+    await _replyPlaybackService.handleBeginRecording();
   }
 
   Future<void> _openServerManager() async {
@@ -1456,6 +1428,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     final currentSession = _chatController.currentSession;
     if (currentSession != null) {
       segments.add(currentSession.workspaceName);
+      final statusLine = currentSession.conversationProduct?.statusLine.trim();
+      if (statusLine != null && statusLine.isNotEmpty) {
+        segments.add(statusLine);
+      }
     }
     if (!isCompactAppBar) {
       segments.add(_activeServer?.baseUrl ?? widget.initialApiBaseUrl);
@@ -1489,6 +1465,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           },
           itemBuilder: (context) => <PopupMenuEntry<_AppBarOverflowAction>>[
             _buildAppBarOverflowMenuItem(
+              action: _AppBarOverflowAction.conversationContext,
+              icon: Icons.topic_outlined,
+              label: 'What are we doing?',
+            ),
+            _buildAppBarOverflowMenuItem(
               action: _AppBarOverflowAction.saveCurrentAgent,
               icon: Icons.bookmark_add_outlined,
               label: 'Save current agent',
@@ -1519,6 +1500,15 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     }
     return <Widget>[
       ...primaryActions,
+      IconButton(
+        onPressed: _chatController.currentSession == null
+            ? null
+            : () async {
+                await _openConversationContextSheet();
+              },
+        icon: const Icon(Icons.topic_outlined),
+        tooltip: 'What are we doing?',
+      ),
       IconButton(
         onPressed: () async {
           await _openSaveCurrentAgentProfile();
@@ -1580,6 +1570,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
 
   Future<void> _handleAppBarOverflowAction(_AppBarOverflowAction action) async {
     switch (action) {
+      case _AppBarOverflowAction.conversationContext:
+        await _openConversationContextSheet();
+        return;
       case _AppBarOverflowAction.saveCurrentAgent:
         await _openSaveCurrentAgentProfile();
         return;
@@ -1593,6 +1586,80 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         await _openWorkspacePicker();
         return;
     }
+  }
+
+  Future<void> _openConversationContextSheet() async {
+    final session = _chatController.currentSession;
+    final product = session?.conversationProduct;
+    if (session == null || product == null) {
+      return;
+    }
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) {
+        Widget buildSection(String label, String? value) {
+          final trimmed = value?.trim();
+          if (trimmed == null || trimmed.isEmpty) {
+            return const SizedBox.shrink();
+          }
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 14),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Text(
+                  label,
+                  style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                        color: const Color(0xFF8B97B5),
+                        fontWeight: FontWeight.w700,
+                      ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  trimmed,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    height: 1.35,
+                  ),
+                ),
+              ],
+            ),
+          );
+        }
+
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 8, 20, 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Text(
+                  session.title,
+                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  product.statusLine,
+                  style: const TextStyle(
+                    color: Color(0xFF55D6BE),
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                buildSection('Summary', product.description),
+                buildSection('Latest update', product.latestUpdate),
+                buildSection('Current focus', product.currentFocus),
+                buildSection('Next step', product.nextStep),
+              ],
+            ),
+          ),
+        );
+      },
+    );
   }
 
   ChatController _buildController(String baseUrl) {
@@ -1945,7 +2012,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       _lastObservedSessionId = currentSessionId;
       final currentSession = _chatController.currentSession;
       if (currentSession != null) {
-        _seedSpokenAssistantReply(currentSession);
+        _replyPlaybackService.seedSession(currentSession);
       }
       if (_isUpdatingFilteredMessagesView ||
           _filteredMessagesViewErrorText != null) {
@@ -1961,7 +2028,12 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       _scrollToBottom(jumpToBottom: sessionChanged);
     }
 
-    _maybeSpeakLatestAssistantReply();
+    unawaited(
+      _replyPlaybackService.maybeSpeakLatestAssistantReply(
+        enabled: _audioRepliesEnabled,
+        session: _chatController.currentSession,
+      ),
+    );
   }
 
   int _unreadCountForSession(ChatSessionSummary session) {
@@ -2137,6 +2209,12 @@ class _SessionTile extends StatelessWidget {
     final previewColor = isActive || isUploading
         ? const Color(0xFFA8C7C0)
         : const Color(0xFF8B97B5);
+    final conversationProduct = session.conversationProduct;
+    final subtitleText = conversationProduct?.description?.trim().isNotEmpty == true
+        ? conversationProduct!.description
+        : session.lastMessagePreview?.isNotEmpty == true
+            ? session.lastMessagePreview!
+            : 'No messages yet';
 
     return AnimatedContainer(
       duration: const Duration(milliseconds: 180),
@@ -2165,10 +2243,23 @@ class _SessionTile extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
           children: <Widget>[
+            if (conversationProduct?.statusLine.trim().isNotEmpty == true) ...<Widget>[
+              Text(
+                conversationProduct!.statusLine,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: session.isArchived
+                      ? const Color(0xFF9FB3D6)
+                      : const Color(0xFF55D6BE),
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 4),
+            ],
             Text(
-              session.lastMessagePreview?.isNotEmpty == true
-                  ? session.lastMessagePreview!
-                  : 'No messages yet',
+              subtitleText,
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
@@ -3738,6 +3829,8 @@ Color _agentAccentColor(
       return const Color(0xFFFF9AC6);
     case AgentId.seniorEngineer:
       return const Color(0xFFFFA15C);
+    case AgentId.scraper:
+      return const Color(0xFF55C5B8);
     case AgentId.user:
       return _hashedAccentColor(seed);
   }
@@ -4073,6 +4166,7 @@ class _AgentStudioSheet extends StatefulWidget {
 class _AgentStudioSheetState extends State<_AgentStudioSheet> {
   late AgentPreset _preset;
   late AgentDisplayMode _displayMode;
+  late TurnBudgetMode _turnBudgetMode;
   late final Map<AgentId, TextEditingController> _labelControllers;
   late final Map<AgentId, TextEditingController> _promptControllers;
   late final Map<AgentId, TextEditingController> _turnsControllers;
@@ -4086,6 +4180,7 @@ class _AgentStudioSheetState extends State<_AgentStudioSheet> {
     final configuration = widget.session.agentConfiguration;
     _preset = configuration.preset;
     _displayMode = configuration.displayMode;
+    _turnBudgetMode = configuration.turnBudgetMode;
     _labelControllers = <AgentId, TextEditingController>{};
     _promptControllers = <AgentId, TextEditingController>{};
     _turnsControllers = <AgentId, TextEditingController>{};
@@ -4203,6 +4298,30 @@ class _AgentStudioSheetState extends State<_AgentStudioSheet> {
               ),
               if (_preset == AgentPreset.supervisor) ...<Widget>[
                 const SizedBox(height: 12),
+                DropdownButtonFormField<TurnBudgetMode>(
+                  initialValue: _turnBudgetMode,
+                  decoration:
+                      const InputDecoration(labelText: 'Turn budget mode'),
+                  items: const <DropdownMenuItem<TurnBudgetMode>>[
+                    DropdownMenuItem(
+                      value: TurnBudgetMode.eachAgent,
+                      child: Text('Each agent'),
+                    ),
+                    DropdownMenuItem(
+                      value: TurnBudgetMode.supervisorOnly,
+                      child: Text('Supervisor only'),
+                    ),
+                  ],
+                  onChanged: (value) {
+                    if (value == null) {
+                      return;
+                    }
+                    setState(() {
+                      _turnBudgetMode = value;
+                    });
+                  },
+                ),
+                const SizedBox(height: 12),
                 _buildSupervisorRegistryCard(),
               ],
               const SizedBox(height: 16),
@@ -4241,6 +4360,7 @@ class _AgentStudioSheetState extends State<_AgentStudioSheet> {
       AgentId.qa => 'QA',
       AgentId.ux => 'UX',
       AgentId.seniorEngineer => 'Senior Engineer',
+      AgentId.scraper => 'Scraper',
       AgentId.user => 'User',
     };
     final promptHint = switch (agentId) {
@@ -4256,6 +4376,8 @@ class _AgentStudioSheetState extends State<_AgentStudioSheet> {
         'Review usability, accessibility, flow, copy, and interaction quality.',
       AgentId.seniorEngineer =>
         'Review architecture, technical strategy, maintainability, and delivery risk.',
+      AgentId.scraper =>
+        'Inspect websites, choose extraction methods, and report scraping risks.',
       AgentId.user => '',
     };
     final enabledSubtitle = switch (agentId) {
@@ -4272,6 +4394,8 @@ class _AgentStudioSheetState extends State<_AgentStudioSheet> {
         'Reports UX, accessibility, and product quality feedback back to the supervisor.',
       AgentId.seniorEngineer =>
         'Reports senior technical guidance and implementation risk back to the supervisor.',
+      AgentId.scraper =>
+        'Reports extraction strategy, parser robustness, and source constraints back to the supervisor.',
       AgentId.user => '',
     };
     final visibilityHelperText = switch (agentId) {
@@ -4279,17 +4403,24 @@ class _AgentStudioSheetState extends State<_AgentStudioSheet> {
         'Collapsed reviewer replies stay out of the main list, but the reviewer status banner still updates.',
       AgentId.qa ||
       AgentId.ux ||
-      AgentId.seniorEngineer =>
+      AgentId.seniorEngineer ||
+      AgentId.scraper =>
         'Specialist replies usually stay collapsed so the supervisor can summarize the run.',
       _ => null,
     };
+    final usesRegistrySelection = _preset == AgentPreset.supervisor &&
+        kSupervisorMemberAgentIds.contains(agentId);
+    final showEnabledToggle = _preset != AgentPreset.supervisor
+        ? true
+        : agentId != AgentId.supervisor && !usesRegistrySelection;
     final canToggle = switch (agentId) {
       AgentId.generator => _preset != AgentPreset.supervisor,
-      AgentId.supervisor => _preset == AgentPreset.supervisor,
+      AgentId.supervisor => false,
       AgentId.qa ||
       AgentId.ux ||
-      AgentId.seniorEngineer =>
-        _preset == AgentPreset.supervisor,
+      AgentId.seniorEngineer ||
+      AgentId.scraper =>
+        false,
       _ => _preset != AgentPreset.supervisor,
     };
 
@@ -4303,26 +4434,37 @@ class _AgentStudioSheetState extends State<_AgentStudioSheet> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
-          SwitchListTile(
-            contentPadding: EdgeInsets.zero,
-            value: _enabled[agentId] ?? false,
-            title: Text(title),
-            subtitle: Text(enabledSubtitle),
-            onChanged: !canToggle
-                ? null
-                : (value) {
-                    setState(() {
-                      _enabled[agentId] = value;
-                      if (kSupervisorMemberAgentIds.contains(agentId)) {
-                        if (value) {
-                          _supervisorMemberIds.add(agentId);
-                        } else {
-                          _supervisorMemberIds.remove(agentId);
+          if (showEnabledToggle)
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              value: _enabled[agentId] ?? false,
+              title: Text(title),
+              subtitle: Text(enabledSubtitle),
+              onChanged: !canToggle
+                  ? null
+                  : (value) {
+                      setState(() {
+                        _enabled[agentId] = value;
+                        if (kSupervisorMemberAgentIds.contains(agentId)) {
+                          if (value) {
+                            _supervisorMemberIds.add(agentId);
+                          } else {
+                            _supervisorMemberIds.remove(agentId);
+                          }
                         }
-                      }
-                    });
-                  },
-          ),
+                      });
+                    },
+            )
+          else
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              title: Text(title),
+              subtitle: Text(
+                usesRegistrySelection
+                    ? '$enabledSubtitle Selection is controlled by the supervisor registry above.'
+                    : enabledSubtitle,
+              ),
+            ),
           TextField(
             controller: _labelControllers[agentId],
             decoration: const InputDecoration(labelText: 'Label'),
@@ -4358,15 +4500,19 @@ class _AgentStudioSheetState extends State<_AgentStudioSheet> {
             },
           ),
           const SizedBox(height: 8),
-          TextField(
-            controller: _turnsControllers[agentId],
-            keyboardType: TextInputType.number,
-            decoration: const InputDecoration(
-              labelText: 'Max turns',
-              helperText: 'Range: 0-6',
+          if (!_hideTurnBudgetField(agentId)) ...<Widget>[
+            TextField(
+              controller: _turnsControllers[agentId],
+              keyboardType: TextInputType.number,
+              decoration: InputDecoration(
+                labelText: 'Turn budget',
+                helperText: agentId == AgentId.supervisor
+                    ? 'Any integer. Supervisor runs use at least 1.'
+                    : 'Any non-negative integer.',
+              ),
             ),
-          ),
-          const SizedBox(height: 8),
+            const SizedBox(height: 8),
+          ],
           TextField(
             controller: _promptControllers[agentId],
             minLines: 3,
@@ -4409,12 +4555,24 @@ class _AgentStudioSheetState extends State<_AgentStudioSheet> {
               height: 1.3,
             ),
           ),
+          const SizedBox(height: 6),
+          Text(
+            _turnBudgetMode == TurnBudgetMode.supervisorOnly
+                ? 'Supervisor only means selected specialists can be called whenever the supervisor chooses within the supervisor turn budget. Specialist turn budgets are preserved and become active again if you switch back to Each agent.'
+                : 'Each agent means selected specialists keep their own turn budgets in addition to the supervisor budget.',
+            style: const TextStyle(
+              color: Color(0xFFB8C8EA),
+              fontSize: 12,
+              height: 1.3,
+            ),
+          ),
           const SizedBox(height: 12),
           ...kSupervisorMemberAgentIds.map((agentId) {
             final label = switch (agentId) {
               AgentId.qa => 'QA',
               AgentId.ux => 'UX',
               AgentId.seniorEngineer => 'Senior Engineer',
+              AgentId.scraper => 'Scraper',
               _ => agentIdToJson(agentId),
             };
             return CheckboxListTile(
@@ -4429,6 +4587,8 @@ class _AgentStudioSheetState extends State<_AgentStudioSheet> {
                     'Usability, accessibility, flow, and interface quality.',
                   AgentId.seniorEngineer =>
                     'Architecture, implementation strategy, and delivery risk.',
+                  AgentId.scraper =>
+                    'Web extraction, parsing strategy, and source constraints.',
                   _ => '',
                 },
               ),
@@ -4467,6 +4627,7 @@ class _AgentStudioSheetState extends State<_AgentStudioSheet> {
     final nextAgents = previousAgents.map((agent) {
       final maxTurns = _normalizeAgentTurns(
         _turnsControllers[agent.agentId]?.text ?? agent.maxTurns.toString(),
+        fallback: agent.maxTurns,
       );
       final trimmedLabel = _labelControllers[agent.agentId]?.text.trim() ?? '';
       final trimmedPrompt =
@@ -4482,18 +4643,32 @@ class _AgentStudioSheetState extends State<_AgentStudioSheet> {
     return widget.session.agentConfiguration.copyWith(
       preset: _preset,
       displayMode: _displayMode,
+      turnBudgetMode: _turnBudgetMode,
       agents: nextAgents,
       supervisorMemberIds: _supervisorMemberIds.toList(growable: false),
     );
   }
+
+  bool _hideTurnBudgetField(AgentId agentId) {
+    if (_preset != AgentPreset.supervisor) {
+      return false;
+    }
+    if (_turnBudgetMode != TurnBudgetMode.supervisorOnly) {
+      return false;
+    }
+    return kSupervisorMemberAgentIds.contains(agentId);
+  }
 }
 
-int _normalizeAgentTurns(String rawValue) {
+int _normalizeAgentTurns(
+  String rawValue, {
+  required int fallback,
+}) {
   final parsed = int.tryParse(rawValue.trim());
   if (parsed == null) {
-    return 1;
+    return fallback;
   }
-  return parsed.clamp(0, 6);
+  return parsed < 0 ? 0 : parsed;
 }
 
 class _ComposerDraft {

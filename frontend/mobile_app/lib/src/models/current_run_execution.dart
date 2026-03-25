@@ -1,3 +1,5 @@
+import 'agent_configuration.dart';
+
 enum CurrentRunStageId {
   generator,
   reviewer,
@@ -6,6 +8,7 @@ enum CurrentRunStageId {
   qa,
   ux,
   seniorEngineer,
+  scraper,
 }
 
 enum CurrentRunStageState {
@@ -35,6 +38,8 @@ CurrentRunStageId currentRunStageIdFromJson(String? value) {
       return CurrentRunStageId.ux;
     case 'senior_engineer':
       return CurrentRunStageId.seniorEngineer;
+    case 'scraper':
+      return CurrentRunStageId.scraper;
     default:
       return CurrentRunStageId.generator;
   }
@@ -74,6 +79,7 @@ class CurrentRunStageExecution {
     this.configured = false,
     this.attemptCount = 0,
     this.maxTurns = 0,
+    this.hasTurnBudget = false,
     this.messageId,
     this.jobId,
     this.jobStatus,
@@ -88,6 +94,7 @@ class CurrentRunStageExecution {
   final bool configured;
   final int attemptCount;
   final int maxTurns;
+  final bool hasTurnBudget;
   final String? messageId;
   final String? jobId;
   final String? jobStatus;
@@ -103,6 +110,7 @@ class CurrentRunStageExecution {
       configured: _readBool(json['configured']) ?? false,
       attemptCount: _readInt(json['attempt_count']) ?? 0,
       maxTurns: _readInt(json['max_turns']) ?? 0,
+      hasTurnBudget: _readBool(json['has_turn_budget']) ?? false,
       messageId: _readString(json['message_id']),
       jobId: _readString(json['job_id']),
       jobStatus: _readString(json['job_status']),
@@ -119,6 +127,7 @@ class CurrentRunStageExecution {
     bool? configured,
     int? attemptCount,
     int? maxTurns,
+    bool? hasTurnBudget,
     String? messageId,
     String? jobId,
     String? jobStatus,
@@ -133,6 +142,7 @@ class CurrentRunStageExecution {
       configured: configured ?? this.configured,
       attemptCount: attemptCount ?? this.attemptCount,
       maxTurns: maxTurns ?? this.maxTurns,
+      hasTurnBudget: hasTurnBudget ?? this.hasTurnBudget,
       messageId: messageId ?? this.messageId,
       jobId: jobId ?? this.jobId,
       jobStatus: jobStatus ?? this.jobStatus,
@@ -149,18 +159,26 @@ class CurrentRunExecution {
     required this.runId,
     required this.state,
     required this.isActive,
+    this.preset = AgentPreset.solo,
+    this.turnBudgetMode,
     required this.stages,
     this.startedAt,
     this.updatedAt,
     this.completedAt,
+    this.participantAgentIds = const <AgentId>[],
+    this.callCount = 0,
   });
 
   final String runId;
   final CurrentRunStageState state;
   final bool isActive;
+  final AgentPreset preset;
+  final TurnBudgetMode? turnBudgetMode;
   final DateTime? startedAt;
   final DateTime? updatedAt;
   final DateTime? completedAt;
+  final List<AgentId> participantAgentIds;
+  final int callCount;
   final List<CurrentRunStageExecution> stages;
 
   factory CurrentRunExecution.fromJson(Map<String, dynamic> json) {
@@ -169,9 +187,21 @@ class CurrentRunExecution {
       runId: _readString(json['run_id']) ?? '',
       state: currentRunStageStateFromJson(json['state'] as String?),
       isActive: _readBool(json['is_active']) ?? false,
+      preset: agentPresetFromJson(_readString(json['preset']) ?? 'solo'),
+      turnBudgetMode: _readString(json['turn_budget_mode']) == null
+          ? null
+          : turnBudgetModeFromJson(
+              _readString(json['turn_budget_mode']) ?? 'each_agent',
+            ),
       startedAt: _readDateTime(json['started_at']),
       updatedAt: _readDateTime(json['updated_at']),
       completedAt: _readDateTime(json['completed_at']),
+      participantAgentIds:
+          (json['participant_agent_ids'] as List<dynamic>? ?? const <dynamic>[])
+              .map((item) => tryAgentIdFromJson(_readString(item)))
+              .whereType<AgentId>()
+              .toList(growable: false),
+      callCount: _readInt(json['call_count']) ?? 0,
       stages: rawStages
           .whereType<Map<dynamic, dynamic>>()
           .map((item) => CurrentRunStageExecution.fromJson(
@@ -188,22 +218,34 @@ class CurrentRunExecution {
     String? runId,
     CurrentRunStageState? state,
     bool? isActive,
+    AgentPreset? preset,
+    Object? turnBudgetMode = _copyWithSentinel,
     DateTime? startedAt,
     DateTime? updatedAt,
     DateTime? completedAt,
+    List<AgentId>? participantAgentIds,
+    int? callCount,
     List<CurrentRunStageExecution>? stages,
   }) {
     return CurrentRunExecution(
       runId: runId ?? this.runId,
       state: state ?? this.state,
       isActive: isActive ?? this.isActive,
+      preset: preset ?? this.preset,
+      turnBudgetMode: identical(turnBudgetMode, _copyWithSentinel)
+          ? this.turnBudgetMode
+          : turnBudgetMode as TurnBudgetMode?,
       startedAt: startedAt ?? this.startedAt,
       updatedAt: updatedAt ?? this.updatedAt,
       completedAt: completedAt ?? this.completedAt,
+      participantAgentIds: participantAgentIds ?? this.participantAgentIds,
+      callCount: callCount ?? this.callCount,
       stages: stages ?? this.stages,
     );
   }
 }
+
+const Object _copyWithSentinel = Object();
 
 String? _readString(Object? value) {
   if (value == null) {

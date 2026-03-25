@@ -4,6 +4,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
 from backend.app.domain.entities.chat_message import ChatMessage
+from backend.app.domain.entities.agent_run import AgentRun
 from backend.app.domain.entities.agent_profile import AgentProfile
 from backend.app.domain.entities.chat_session import ChatSession
 from backend.app.domain.entities.job import Job
@@ -70,6 +71,18 @@ class ChatRepository(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def save_agent_run(self, agent_run: AgentRun) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_agent_run(self, run_id: str) -> AgentRun | None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def list_agent_runs(self, session_id: str) -> list[AgentRun]:
+        raise NotImplementedError
+
+    @abstractmethod
     def get_job(self, job_id: str) -> Job | None:
         raise NotImplementedError
 
@@ -124,5 +137,6 @@ class ChatRepository(ABC):
         *,
         messages: list[ChatMessage],
         job: Job | None = None,
+        agent_run: AgentRun | None = None,
     ) -> bool:
         raise NotImplementedError

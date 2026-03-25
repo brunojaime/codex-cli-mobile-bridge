@@ -53,6 +53,7 @@ String resolveAgentLabel(SessionDetail session, AgentId agentId) {
     AgentId.qa => 'QA',
     AgentId.ux => 'UX',
     AgentId.seniorEngineer => 'Senior Engineer',
+    AgentId.scraper => 'Scraper',
     AgentId.user => 'User',
   };
 }

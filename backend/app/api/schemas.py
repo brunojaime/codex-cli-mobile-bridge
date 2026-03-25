@@ -15,6 +15,8 @@ from backend.app.domain.entities.agent_configuration import (
     CONFIGURABLE_AGENT_IDS,
     LEGACY_AGENT_IDS,
     SUPERVISOR_MEMBER_AGENT_IDS,
+    TurnBudgetMode,
+    normalize_agent_enum_value,
 )
 from backend.app.domain.entities.agent_profile import AgentProfile
 from backend.app.domain.entities.chat_message import (
@@ -26,6 +28,10 @@ from backend.app.domain.entities.chat_message import (
     ChatMessageStatus,
 )
 from backend.app.domain.entities.chat_session import ChatSession
+from backend.app.domain.entities.conversation_product import (
+    ConversationProduct,
+    derive_conversation_product,
+)
 from backend.app.domain.entities.job import Job, JobConversationKind, JobStatus
 from backend.app.domain.entities.current_run import (
     CurrentRunExecution,
@@ -126,7 +132,7 @@ class AgentProfileResponse(BaseModel):
 
 class AutoModeConfigRequest(BaseModel):
     enabled: bool = False
-    max_turns: int = Field(default=0, ge=0, le=12)
+    max_turns: int = Field(default=0, ge=0)
     reviewer_prompt: str | None = Field(default=None, max_length=12000)
 
 
@@ -136,8 +142,24 @@ class AgentDefinitionPayload(BaseModel):
     enabled: bool
     label: str = Field(..., min_length=1, max_length=40)
     prompt: str = Field(default="", max_length=12000)
+    model: str | None = Field(default=None, max_length=120)
     visibility: AgentVisibilityMode
-    max_turns: int = Field(..., ge=0, le=6)
+    max_turns: int = Field(..., ge=0)
+
+    @model_validator(mode="before")
+    @classmethod
+    def canonicalize_aliases(
+        cls,
+        raw: object,
+    ) -> object:
+        if not isinstance(raw, dict):
+            return raw
+        payload = dict(raw)
+        for field_name in ("agent_id", "agent_type"):
+            value = payload.get(field_name)
+            if isinstance(value, str):
+                payload[field_name] = normalize_agent_enum_value(value)
+        return payload
 
     @model_validator(mode="after")
     def validate_prompt_requirements(self) -> "AgentDefinitionPayload":
@@ -149,6 +171,7 @@ class AgentDefinitionPayload(BaseModel):
             AgentId.QA: AgentType.QA,
             AgentId.UX: AgentType.UX,
             AgentId.SENIOR_ENGINEER: AgentType.SENIOR_ENGINEER,
+            AgentId.SCRAPER: AgentType.SCRAPER,
         }
         expected_type = expected_types.get(self.agent_id)
         if expected_type is not None and self.agent_type != expected_type:
@@ -164,8 +187,26 @@ class AgentDefinitionPayload(BaseModel):
 class AgentConfigurationRequest(BaseModel):
     preset: AgentPreset
     display_mode: AgentDisplayMode = AgentDisplayMode.SHOW_ALL
+    turn_budget_mode: TurnBudgetMode = TurnBudgetMode.EACH_AGENT
     agents: list[AgentDefinitionPayload]
     supervisor_member_ids: list[AgentId] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def canonicalize_aliases(
+        cls,
+        raw: object,
+    ) -> object:
+        if not isinstance(raw, dict):
+            return raw
+        payload = dict(raw)
+        supervisor_member_ids = payload.get("supervisor_member_ids")
+        if isinstance(supervisor_member_ids, list):
+            payload["supervisor_member_ids"] = [
+                normalize_agent_enum_value(item) if isinstance(item, str) else item
+                for item in supervisor_member_ids
+            ]
+        return payload
 
     @model_validator(mode="after")
     def validate_agent_set(self) -> "AgentConfigurationRequest":
@@ -183,7 +224,7 @@ class AgentConfigurationRequest(BaseModel):
         selected_supervisor_members = set(self.supervisor_member_ids)
         if selected_supervisor_members - set(SUPERVISOR_MEMBER_AGENT_IDS):
             raise ValueError(
-                "Supervisor member ids must reference qa, ux, or senior_engineer."
+                "Supervisor member ids must reference qa, ux, senior_engineer, or scraper."
             )
         if self.preset == AgentPreset.SUPERVISOR and AgentId.SUPERVISOR not in set(ids):
             raise ValueError("Supervisor preset requires the supervisor agent definition.")
@@ -194,6 +235,7 @@ class AgentConfigurationRequest(BaseModel):
             {
                 "preset": self.preset.value,
                 "display_mode": self.display_mode.value,
+                "turn_budget_mode": self.turn_budget_mode.value,
                 "supervisor_member_ids": [agent_id.value for agent_id in self.supervisor_member_ids],
                 "agents": {
                     agent.agent_id.value: {
@@ -202,6 +244,7 @@ class AgentConfigurationRequest(BaseModel):
                         "enabled": agent.enabled,
                         "label": agent.label,
                         "prompt": agent.prompt,
+                        "model": agent.model,
                         "visibility": agent.visibility.value,
                         "max_turns": agent.max_turns,
                     }
@@ -217,6 +260,7 @@ class AgentDefinitionResponse(BaseModel):
     enabled: bool
     label: str
     prompt: str
+    model: str | None = None
     visibility: AgentVisibilityMode
     max_turns: int
     provider_session_id: str | None = None
@@ -225,6 +269,7 @@ class AgentDefinitionResponse(BaseModel):
 class AgentConfigurationResponse(BaseModel):
     preset: AgentPreset
     display_mode: AgentDisplayMode
+    turn_budget_mode: TurnBudgetMode
     agents: list[AgentDefinitionResponse]
     supervisor_member_ids: list[AgentId] = Field(default_factory=list)
 
@@ -234,6 +279,7 @@ class AgentConfigurationResponse(BaseModel):
         return cls(
             preset=normalized.preset,
             display_mode=normalized.display_mode,
+            turn_budget_mode=normalized.turn_budget_mode,
             supervisor_member_ids=list(normalized.supervisor_member_ids),
             agents=[
                 AgentDefinitionResponse(
@@ -242,6 +288,7 @@ class AgentConfigurationResponse(BaseModel):
                     enabled=agent.enabled,
                     label=agent.label,
                     prompt=agent.prompt,
+                    model=agent.model,
                     visibility=agent.visibility,
                     max_turns=agent.max_turns,
                     provider_session_id=agent.provider_session_id,
@@ -406,6 +453,24 @@ class ChatMessageResponse(BaseModel):
         )
 
 
+class ConversationProductResponse(BaseModel):
+    status_line: str
+    description: str
+    latest_update: str | None = None
+    current_focus: str | None = None
+    next_step: str | None = None
+
+    @classmethod
+    def from_domain(cls, product: ConversationProduct) -> "ConversationProductResponse":
+        return cls(
+            status_line=product.status_line,
+            description=product.description,
+            latest_update=product.latest_update,
+            current_focus=product.current_focus,
+            next_step=product.next_step,
+        )
+
+
 class SessionSummaryResponse(BaseModel):
     id: str
     title: str
@@ -425,6 +490,7 @@ class SessionSummaryResponse(BaseModel):
     auto_reviewer_prompt: str | None = None
     auto_turn_index: int = 0
     reviewer_state: ReviewerLifecycleState = ReviewerLifecycleState.OFF
+    conversation_product: ConversationProductResponse
     created_at: datetime
     updated_at: datetime
     last_message_preview: str | None = None
@@ -446,6 +512,17 @@ class SessionSummaryResponse(BaseModel):
                 ChatMessageStatus.PENDING,
             }
             for message in messages
+        )
+        current_run = derive_current_run_execution(
+            session,
+            messages=messages,
+            jobs_by_id=jobs_by_id,
+        )
+        recent_runs = derive_recent_run_executions(
+            session,
+            messages=messages,
+            jobs_by_id=jobs_by_id,
+            limit=1,
         )
         return cls(
             id=session.id,
@@ -471,6 +548,14 @@ class SessionSummaryResponse(BaseModel):
                 session,
                 messages=messages,
                 jobs_by_id=jobs_by_id,
+            ),
+            conversation_product=ConversationProductResponse.from_domain(
+                derive_conversation_product(
+                    session,
+                    messages=messages,
+                    current_run=current_run,
+                    recent_runs=recent_runs,
+                )
             ),
             created_at=session.created_at,
             updated_at=session.updated_at,
@@ -498,6 +583,7 @@ class SessionDetailResponse(BaseModel):
     auto_reviewer_prompt: str | None = None
     auto_turn_index: int = 0
     reviewer_state: ReviewerLifecycleState = ReviewerLifecycleState.OFF
+    conversation_product: ConversationProductResponse
     current_run: "CurrentRunExecutionResponse | None" = None
     recent_runs: list["CurrentRunExecutionResponse"] = Field(default_factory=list)
     created_at: datetime
@@ -511,7 +597,20 @@ class SessionDetailResponse(BaseModel):
         *,
         messages: list[ChatMessage],
         jobs_by_id: dict[str, Job] | None = None,
+        run_configurations_by_id: dict[str, AgentConfiguration] | None = None,
     ) -> "SessionDetailResponse":
+        current_run = derive_current_run_execution(
+            session,
+            messages=messages,
+            jobs_by_id=jobs_by_id,
+            run_configurations_by_id=run_configurations_by_id,
+        )
+        recent_runs = derive_recent_run_executions(
+            session,
+            messages=messages,
+            jobs_by_id=jobs_by_id,
+            run_configurations_by_id=run_configurations_by_id,
+        )
         return cls(
             id=session.id,
             title=session.title,
@@ -535,23 +634,20 @@ class SessionDetailResponse(BaseModel):
                 messages=messages,
                 jobs_by_id=jobs_by_id,
             ),
-            current_run=CurrentRunExecutionResponse.from_domain(current_run)
-            if (
-                current_run := derive_current_run_execution(
+            conversation_product=ConversationProductResponse.from_domain(
+                derive_conversation_product(
                     session,
                     messages=messages,
-                    jobs_by_id=jobs_by_id,
+                    current_run=current_run,
+                    recent_runs=recent_runs,
                 )
-            )
-            is not None
+            ),
+            current_run=CurrentRunExecutionResponse.from_domain(current_run)
+            if current_run is not None
             else None,
             recent_runs=[
                 CurrentRunExecutionResponse.from_domain(run)
-                for run in derive_recent_run_executions(
-                    session,
-                    messages=messages,
-                    jobs_by_id=jobs_by_id,
-                )
+                for run in recent_runs
             ],
             created_at=session.created_at,
             updated_at=session.updated_at,
@@ -571,6 +667,7 @@ class RunStageExecutionResponse(BaseModel):
     configured: bool
     attempt_count: int = 0
     max_turns: int = 0
+    has_turn_budget: bool = False
     message_id: str | None = None
     job_id: str | None = None
     job_status: JobStatus | None = None
@@ -587,6 +684,7 @@ class RunStageExecutionResponse(BaseModel):
             configured=stage.configured,
             attempt_count=stage.attempt_count,
             max_turns=stage.max_turns,
+            has_turn_budget=stage.has_turn_budget,
             message_id=stage.message_id,
             job_id=stage.job_id,
             job_status=stage.job_status,
@@ -601,9 +699,13 @@ class CurrentRunExecutionResponse(BaseModel):
     run_id: str
     state: RunStageState
     is_active: bool
+    preset: AgentPreset
+    turn_budget_mode: TurnBudgetMode | None = None
     started_at: datetime | None = None
     updated_at: datetime | None = None
     completed_at: datetime | None = None
+    participant_agent_ids: list[AgentId] = Field(default_factory=list)
+    call_count: int = 0
     stages: list[RunStageExecutionResponse]
 
     @classmethod
@@ -612,9 +714,13 @@ class CurrentRunExecutionResponse(BaseModel):
             run_id=run.run_id,
             state=run.state,
             is_active=run.is_active,
+            preset=run.preset,
+            turn_budget_mode=run.turn_budget_mode,
             started_at=run.started_at,
             updated_at=run.updated_at,
             completed_at=run.completed_at,
+            participant_agent_ids=list(run.participant_agent_ids),
+            call_count=run.call_count,
             stages=[RunStageExecutionResponse.from_domain(stage) for stage in run.stages],
         )
 
@@ -682,6 +788,11 @@ class HealthResponse(BaseModel):
     audio_transcription_resolved_backend: str
     audio_transcription_ready: bool
     audio_transcription_detail: str | None = None
+    speech_synthesis_backend: str
+    speech_synthesis_ready: bool
+    speech_synthesis_detail: str | None = None
+    speech_synthesis_voice: str | None = None
+    speech_synthesis_response_format: str | None = None
     tailscale_installed: bool
     tailscale_online: bool
     tailscale_tailnet_name: str | None = None
@@ -720,13 +831,21 @@ class PersistenceIntegrityResponse(BaseModel):
 
 class ServerCapabilitiesResponse(BaseModel):
     supports_audio_input: bool
+    supports_speech_output: bool
     supports_image_input: bool
     supports_document_input: bool
     supports_attachment_batch: bool
     supports_job_cancellation: bool
     supports_job_retry: bool
     supports_push_job_stream: bool
+    speech_output_backend: str
+    speech_output_voice: str | None = None
+    speech_output_response_format: str | None = None
     audio_max_upload_bytes: int
     image_max_upload_bytes: int
     document_max_upload_bytes: int
     document_text_char_limit: int
+
+
+class SpeechRequest(BaseModel):
+    text: str

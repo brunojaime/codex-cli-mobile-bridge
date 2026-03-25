@@ -29,6 +29,7 @@ void main() {
                       configured: true,
                       attemptCount: 2,
                       maxTurns: 3,
+                      hasTurnBudget: true,
                       jobId: 'job-generator',
                       latestActivity: 'Streaming output',
                     ),
@@ -37,6 +38,7 @@ void main() {
                       state: CurrentRunStageState.notScheduled,
                       configured: true,
                       maxTurns: 6,
+                      hasTurnBudget: true,
                     ),
                     CurrentRunStageExecution(
                       stage: CurrentRunStageId.summary,
@@ -83,13 +85,17 @@ void main() {
 
     expect(find.text('Run history'), findsOneWidget);
     expect(find.textContaining('Active run run-1234'), findsOneWidget);
-    expect(find.textContaining('Run run-olde'), findsOneWidget);
-    expect(find.text('Generator 2/3'), findsOneWidget);
-    expect(find.text('Reviewer 0/6'), findsOneWidget);
-    expect(find.text('Summary 0/0'), findsNWidgets(2));
+    expect(find.textContaining('Completed run run-olde'), findsOneWidget);
+    expect(find.text('Generator'), findsNWidgets(2));
+    expect(find.text('Reviewer'), findsNWidgets(2));
+    expect(find.text('Summary'), findsNWidgets(2));
     expect(find.text('Running'), findsAtLeastNWidgets(1));
     expect(find.text('Not scheduled yet'), findsOneWidget);
     expect(find.text('Disabled'), findsOneWidget);
+    expect(
+        find.textContaining('Turn budget: 2 of 3 calls used'), findsOneWidget);
+    expect(
+        find.textContaining('Turn budget: 0 of 6 calls used'), findsOneWidget);
     expect(find.textContaining('Streaming output'), findsOneWidget);
     expect(find.text('Completed'), findsAtLeastNWidgets(1));
   });
@@ -154,6 +160,7 @@ void main() {
                           configured: true,
                           attemptCount: 12,
                           maxTurns: 12,
+                          hasTurnBudget: true,
                           latestActivity:
                               'Generator is still streaming a long update.',
                         ),
@@ -162,6 +169,7 @@ void main() {
                           state: CurrentRunStageState.notScheduled,
                           configured: true,
                           maxTurns: 12,
+                          hasTurnBudget: true,
                         ),
                       ],
                     ),
@@ -180,6 +188,70 @@ void main() {
     expect(find.textContaining('Primary Generator With'), findsOneWidget);
     expect(find.text('Running'), findsAtLeastNWidgets(1));
     expect(find.text('Not scheduled yet'), findsOneWidget);
+  });
+
+  testWidgets(
+      'supervisor history shows participants and supervisor-managed budgets',
+      (WidgetTester tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SingleChildScrollView(
+            padding: const EdgeInsets.all(16),
+            child: CurrentRunTimelineCard(
+              session: _buildSession(
+                preset: AgentPreset.supervisor,
+                currentRun: const CurrentRunExecution(
+                  runId: 'run-supervisor',
+                  state: CurrentRunStageState.running,
+                  isActive: true,
+                  preset: AgentPreset.supervisor,
+                  turnBudgetMode: TurnBudgetMode.supervisorOnly,
+                  participantAgentIds: <AgentId>[
+                    AgentId.supervisor,
+                    AgentId.qa,
+                  ],
+                  callCount: 3,
+                  stages: <CurrentRunStageExecution>[
+                    CurrentRunStageExecution(
+                      stage: CurrentRunStageId.supervisor,
+                      state: CurrentRunStageState.completed,
+                      configured: true,
+                      attemptCount: 2,
+                      maxTurns: 4,
+                      hasTurnBudget: true,
+                    ),
+                    CurrentRunStageExecution(
+                      stage: CurrentRunStageId.qa,
+                      state: CurrentRunStageState.running,
+                      configured: true,
+                      attemptCount: 1,
+                      maxTurns: 0,
+                      hasTurnBudget: false,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(
+      find.textContaining('participant activity and recorded call counts'),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining('Participants: Supervisor, QA'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('Calls recorded: 3'), findsOneWidget);
+    expect(
+      find.textContaining('Supervisor turn budget: 2 of 4 used'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('Calls recorded: 1'), findsOneWidget);
   });
 
   testWidgets('run history remains in a short viewport without render overflow',
@@ -215,12 +287,14 @@ void main() {
                                     configured: true,
                                     attemptCount: 2,
                                     maxTurns: 3,
+                                    hasTurnBudget: true,
                                   ),
                                   CurrentRunStageExecution(
                                     stage: CurrentRunStageId.reviewer,
                                     state: CurrentRunStageState.notScheduled,
                                     configured: true,
                                     maxTurns: 6,
+                                    hasTurnBudget: true,
                                   ),
                                   CurrentRunStageExecution(
                                     stage: CurrentRunStageId.summary,
@@ -294,6 +368,12 @@ SessionDetail _buildSession({
 }) {
   final configuration = kDefaultAgentConfiguration.copyWith(
     preset: preset,
+    turnBudgetMode: preset == AgentPreset.supervisor
+        ? TurnBudgetMode.supervisorOnly
+        : TurnBudgetMode.eachAgent,
+    supervisorMemberIds: preset == AgentPreset.supervisor
+        ? const <AgentId>[AgentId.qa]
+        : kSupervisorMemberAgentIds,
     agents: kDefaultAgentDefinitions.map((agent) {
       if (agent.agentId == AgentId.generator) {
         return agent.copyWith(label: generatorLabel);
@@ -309,6 +389,18 @@ SessionDetail _buildSession({
           label: summaryLabel,
           enabled: preset == AgentPreset.triad,
           maxTurns: preset == AgentPreset.triad ? 1 : 0,
+        );
+      }
+      if (agent.agentId == AgentId.supervisor) {
+        return agent.copyWith(
+          enabled: preset == AgentPreset.supervisor,
+          maxTurns: preset == AgentPreset.supervisor ? 4 : 0,
+        );
+      }
+      if (agent.agentId == AgentId.qa) {
+        return agent.copyWith(
+          enabled: preset == AgentPreset.supervisor,
+          maxTurns: 0,
         );
       }
       return agent;

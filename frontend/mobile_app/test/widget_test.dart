@@ -8,6 +8,7 @@ import 'package:codex_mobile_frontend/src/models/chat_message.dart';
 import 'package:codex_mobile_frontend/src/models/chat_session_summary.dart';
 import 'package:codex_mobile_frontend/src/models/job_status_response.dart';
 import 'package:codex_mobile_frontend/src/models/session_detail.dart';
+import 'package:codex_mobile_frontend/src/screens/chat_screen.dart';
 import 'package:codex_mobile_frontend/src/services/api_client.dart';
 import 'package:codex_mobile_frontend/src/services/chat_notification_service.dart';
 import 'package:codex_mobile_frontend/src/services/text_to_speech_player.dart';
@@ -81,6 +82,77 @@ void main() {
     expect(find.text('Quick options'), findsOneWidget);
     expect(find.text('Summarize the repo'), findsOneWidget);
     expect(find.text('Show changed files'), findsOneWidget);
+  });
+
+  testWidgets(
+      'supervisor-only agent studio uses registry selection and hides specialist turn budgets',
+      (tester) async {
+    tester.view.physicalSize = const Size(1280, 1600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final fakeApiClient = _FakeApiClient();
+    final controller = ChatController(
+      apiClient: fakeApiClient,
+      notificationService: const NoopChatNotificationService(),
+    );
+    fakeApiClient._sessionConfigurations['session-a'] =
+        kDefaultAgentConfiguration.copyWith(
+      preset: AgentPreset.supervisor,
+      displayMode: AgentDisplayMode.collapseSpecialists,
+      turnBudgetMode: TurnBudgetMode.supervisorOnly,
+      supervisorMemberIds: const <AgentId>[AgentId.qa, AgentId.seniorEngineer],
+      agents: kDefaultAgentDefinitions.map((agent) {
+        if (agent.agentId == AgentId.supervisor) {
+          return agent.copyWith(enabled: true, maxTurns: 4);
+        }
+        if (agent.agentId == AgentId.qa ||
+            agent.agentId == AgentId.seniorEngineer) {
+          return agent.copyWith(enabled: true, maxTurns: 2);
+        }
+        return agent.copyWith(
+          enabled: agent.agentId == AgentId.generator ? false : agent.enabled,
+          maxTurns: 0,
+        );
+      }).toList(growable: false),
+    );
+    await controller.selectSession('session-a');
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ChatScreen(
+          initialApiBaseUrl: 'http://localhost:8000',
+          notificationService: const NoopChatNotificationService(),
+          controllerOverride: controller,
+          enableServerBootstrap: false,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byIcon(Icons.account_tree_outlined));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Turn budget mode'), findsOneWidget);
+    expect(find.text('Supervisor only'), findsWidgets);
+    expect(
+      find.textContaining('selected specialists can be called whenever'),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining('Specialist turn budgets are preserved'),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining(
+          'Selection is controlled by the supervisor registry above.'),
+      findsNWidgets(4),
+    );
+    expect(find.text('Turn budget'), findsNWidgets(4));
+    expect(find.text('Scraper'), findsWidgets);
+
+    controller.dispose();
   });
 
   testWidgets('renders validation blocks and file reference chips',
@@ -330,6 +402,7 @@ void main() {
 
     expect(configuration.preset, AgentPreset.solo);
     expect(configuration.displayMode, AgentDisplayMode.summaryOnly);
+    expect(configuration.turnBudgetMode, TurnBudgetMode.eachAgent);
     expect(configuration.agents.length, kDefaultAgentDefinitions.length);
     expect(
       configuration.agents.map((agent) => agent.agentId).toList(),
@@ -373,6 +446,28 @@ void main() {
     expect(configuration.byId(AgentId.generator)?.enabled, isTrue);
     expect(configuration.byId(AgentId.reviewer)?.enabled, isFalse);
     expect(configuration.byId(AgentId.summary)?.enabled, isFalse);
+  });
+
+  test('supervisor turn budget mode parses and serializes cleanly', () {
+    final configuration = AgentConfiguration.fromJson(
+      <String, dynamic>{
+        'preset': 'supervisor',
+        'display_mode': 'collapse_specialists',
+        'turn_budget_mode': 'supervisor_only',
+        'supervisor_member_ids': const <String>['qa', 'senior_engineer'],
+        'agents': kDefaultAgentDefinitions
+            .map((agent) => agent.toJson())
+            .toList(growable: false),
+      },
+    );
+
+    expect(configuration.preset, AgentPreset.supervisor);
+    expect(configuration.turnBudgetMode, TurnBudgetMode.supervisorOnly);
+    expect(
+      configuration.supervisorMemberIds,
+      <AgentId>[AgentId.qa, AgentId.seniorEngineer],
+    );
+    expect(configuration.toJson()['turn_budget_mode'], 'supervisor_only');
   });
 
   test('legacy session summaries render with default solo agent config', () {
@@ -765,6 +860,60 @@ void main() {
     controller.dispose();
   });
 
+  test('chat controller auto-imports agent creator blueprints', () async {
+    final fakeApiClient = _FakeApiClient();
+    fakeApiClient.sessionOverrides['session-a'] = SessionDetail(
+      id: 'session-a',
+      title: 'Chat A',
+      workspacePath: '/workspace/a',
+      workspaceName: 'A',
+      agentProfileId: 'agent_creator',
+      agentProfileName: 'Agent Creator',
+      agentProfileColor: '#F28C28',
+      createdAt: _FakeApiClient._timestamp,
+      updatedAt: _FakeApiClient._timestamp,
+      messages: <ChatMessage>[
+        ChatMessage(
+          id: 'creator-message',
+          text: '''
+Built the draft.
+
+```agent-profile
+{
+  "id": "api_guardian",
+  "name": "API Guardian",
+  "description": "Reviews API changes for regressions.",
+  "color_hex": "#1188AA",
+  "prompt": "Review API changes for regressions, compatibility risks, and release blockers."
+}
+```
+''',
+          isUser: false,
+          authorType: ChatMessageAuthorType.assistant,
+          status: ChatMessageStatus.completed,
+          createdAt: _FakeApiClient._timestamp,
+          updatedAt: _FakeApiClient._timestamp,
+        ),
+      ],
+    );
+    final controller = ChatController(
+      apiClient: fakeApiClient,
+      notificationService: const NoopChatNotificationService(),
+    );
+
+    await controller.refreshAgentProfiles();
+    await controller.selectSession('session-a');
+
+    expect(fakeApiClient.importedProfiles, hasLength(1));
+    expect(fakeApiClient.importedProfiles.single.id, 'api_guardian');
+    expect(
+      controller.agentProfiles.any((profile) => profile.id == 'api_guardian'),
+      isTrue,
+    );
+
+    controller.dispose();
+  });
+
   test('chat controller applies full agent profile packs to the session',
       () async {
     final fakeApiClient = _FakeApiClient();
@@ -854,6 +1003,7 @@ void main() {
 
     expect(receivedBody?['preset'], 'review');
     expect(receivedBody?['display_mode'], 'collapse_specialists');
+    expect(receivedBody?['turn_budget_mode'], 'each_agent');
     expect(
       (receivedBody?['agents'] as List<dynamic>).length,
       kDefaultAgentDefinitions.length,
@@ -922,6 +1072,7 @@ void main() {
     expect(receivedBody?['configuration']['preset'], 'review');
     expect(
         receivedBody?['configuration']['display_mode'], 'collapse_specialists');
+    expect(receivedBody?['configuration']['turn_budget_mode'], 'each_agent');
     expect(profile.configuration.preset, AgentPreset.review);
     expect(
       profile.configuration.byId(AgentId.reviewer)?.label,
@@ -976,6 +1127,7 @@ class _FakeApiClient extends ApiClient {
   final List<_RecordedAudioSend> audioSends = <_RecordedAudioSend>[];
   final Map<String, AgentConfiguration> _sessionConfigurations =
       <String, AgentConfiguration>{};
+  final Map<String, SessionDetail> sessionOverrides = <String, SessionDetail>{};
   final List<AgentProfile> _agentProfiles = <AgentProfile>[
     AgentProfile(
       id: 'default',
@@ -1055,6 +1207,10 @@ class _FakeApiClient extends ApiClient {
 
   @override
   Future<SessionDetail> getSession(String sessionId) async {
+    final override = sessionOverrides[sessionId];
+    if (override != null) {
+      return override;
+    }
     return SessionDetail(
       id: sessionId,
       title: sessionId == 'session-a' ? 'Chat A' : 'Chat B',

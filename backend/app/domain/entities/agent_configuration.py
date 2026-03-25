@@ -6,7 +6,7 @@ from enum import StrEnum
 
 _MAX_AGENT_LABEL_LENGTH = 40
 _MAX_AGENT_PROMPT_LENGTH = 12_000
-_MAX_AGENT_TURNS = 6
+_MAX_AGENT_MODEL_LENGTH = 120
 
 _DEFAULT_GENERATOR_PROMPT = (
     "You are the primary implementation Codex. Continue the task directly, "
@@ -27,7 +27,7 @@ _DEFAULT_SUPERVISOR_PROMPT = (
     "explicit phased plan current at every turn. Specialists report back only "
     "to you. Reply with strict JSON using this schema only: "
     '{"status":"continue"|"complete","plan":["step 1","step 2"],'
-    '"next_agent_id":"qa"|"ux"|"senior_engineer"|null,'
+    '"next_agent_id":"qa"|"ux"|"senior_engineer"|"scraper"|null,'
     '"instruction":"what the next agent should do","user_response":"brief update for the user"}. '
     "Use status=complete only when the project is done or no further specialist "
     "work is needed."
@@ -48,6 +48,16 @@ _DEFAULT_SENIOR_ENGINEERING_PROMPT = (
     "delivery risk. Reply to the supervisor with concrete technical guidance, "
     "implementation notes, and critical tradeoffs."
 )
+_DEFAULT_SCRAPER_PROMPT = (
+    "You are the Scraper Codex working for the supervisor. Focus on public web "
+    "extraction, scraper strategy, parser robustness, structured data capture, "
+    "and source constraints. Prefer direct HTTP or JSON endpoints before browser "
+    "automation. Reply to the supervisor with concrete extraction findings, "
+    "implementation notes, and scraping risks."
+)
+_AGENT_ENUM_VALUE_ALIASES = {
+    "scrapper": "scraper",
+}
 
 
 class AgentId(StrEnum):
@@ -59,6 +69,7 @@ class AgentId(StrEnum):
     QA = "qa"
     UX = "ux"
     SENIOR_ENGINEER = "senior_engineer"
+    SCRAPER = "scraper"
 
 
 class AgentType(StrEnum):
@@ -70,6 +81,7 @@ class AgentType(StrEnum):
     QA = "qa"
     UX = "ux"
     SENIOR_ENGINEER = "senior_engineer"
+    SCRAPER = "scraper"
 
 
 class AgentVisibilityMode(StrEnum):
@@ -93,6 +105,7 @@ class AgentTriggerSource(StrEnum):
     QA = "qa"
     UX = "ux"
     SENIOR_ENGINEER = "senior_engineer"
+    SCRAPER = "scraper"
     SYSTEM = "system"
 
 
@@ -101,6 +114,11 @@ class AgentPreset(StrEnum):
     REVIEW = "review"
     TRIAD = "triad"
     SUPERVISOR = "supervisor"
+
+
+class TurnBudgetMode(StrEnum):
+    EACH_AGENT = "each_agent"
+    SUPERVISOR_ONLY = "supervisor_only"
 
 
 LEGACY_AGENT_IDS = (
@@ -112,6 +130,7 @@ SUPERVISOR_MEMBER_AGENT_IDS = (
     AgentId.QA,
     AgentId.UX,
     AgentId.SENIOR_ENGINEER,
+    AgentId.SCRAPER,
 )
 SUPERVISOR_AGENT_IDS = (
     AgentId.SUPERVISOR,
@@ -132,6 +151,7 @@ _DEFAULT_LABELS = {
     AgentId.QA: "QA",
     AgentId.UX: "UX",
     AgentId.SENIOR_ENGINEER: "Senior Engineer",
+    AgentId.SCRAPER: "Scraper",
 }
 _DEFAULT_PROMPTS = {
     AgentId.GENERATOR: _DEFAULT_GENERATOR_PROMPT,
@@ -141,6 +161,7 @@ _DEFAULT_PROMPTS = {
     AgentId.QA: _DEFAULT_QA_PROMPT,
     AgentId.UX: _DEFAULT_UX_PROMPT,
     AgentId.SENIOR_ENGINEER: _DEFAULT_SENIOR_ENGINEERING_PROMPT,
+    AgentId.SCRAPER: _DEFAULT_SCRAPER_PROMPT,
 }
 _DEFAULT_TYPES = {
     AgentId.GENERATOR: AgentType.GENERATOR,
@@ -150,6 +171,7 @@ _DEFAULT_TYPES = {
     AgentId.QA: AgentType.QA,
     AgentId.UX: AgentType.UX,
     AgentId.SENIOR_ENGINEER: AgentType.SENIOR_ENGINEER,
+    AgentId.SCRAPER: AgentType.SCRAPER,
 }
 _DEFAULT_VISIBILITY = {
     AgentId.GENERATOR: AgentVisibilityMode.VISIBLE,
@@ -159,15 +181,17 @@ _DEFAULT_VISIBILITY = {
     AgentId.QA: AgentVisibilityMode.COLLAPSED,
     AgentId.UX: AgentVisibilityMode.COLLAPSED,
     AgentId.SENIOR_ENGINEER: AgentVisibilityMode.COLLAPSED,
+    AgentId.SCRAPER: AgentVisibilityMode.COLLAPSED,
 }
 _DEFAULT_MAX_TURNS = {
     AgentId.GENERATOR: 2,
     AgentId.REVIEWER: 1,
     AgentId.SUMMARY: 1,
-    AgentId.SUPERVISOR: 4,
-    AgentId.QA: 2,
-    AgentId.UX: 2,
-    AgentId.SENIOR_ENGINEER: 2,
+    AgentId.SUPERVISOR: 10,
+    AgentId.QA: 8,
+    AgentId.UX: 8,
+    AgentId.SENIOR_ENGINEER: 8,
+    AgentId.SCRAPER: 8,
 }
 
 
@@ -251,7 +275,7 @@ def _read_supervisor_members(raw: object | None) -> tuple[AgentId, ...]:
         if not isinstance(item, str):
             raise ValueError("Supervisor member ids must be strings.")
         try:
-            agent_id = AgentId(item)
+            agent_id = AgentId(normalize_agent_enum_value(item))
         except ValueError as exc:
             raise ValueError("Supervisor member ids contain an unknown agent.") from exc
         if agent_id not in SUPERVISOR_MEMBER_AGENT_IDS:
@@ -261,6 +285,13 @@ def _read_supervisor_members(raw: object | None) -> tuple[AgentId, ...]:
         seen.add(agent_id)
         resolved.append(agent_id)
     return tuple(resolved)
+
+
+def normalize_agent_enum_value(value: str) -> str:
+    normalized = value.strip()
+    if not normalized:
+        return normalized
+    return _AGENT_ENUM_VALUE_ALIASES.get(normalized.lower(), normalized)
 
 
 def _preset_enabled(preset: AgentPreset, agent_id: AgentId) -> bool:
@@ -283,6 +314,7 @@ class AgentDefinition:
     visibility: AgentVisibilityMode
     max_turns: int
     provider_session_id: str | None = None
+    model: str | None = None
 
     def normalized(self) -> "AgentDefinition":
         label = " ".join(self.label.split()).strip()
@@ -300,11 +332,14 @@ class AgentDefinition:
             raise ValueError(
                 f"Agent {self.agent_id.value} prompt exceeds {_MAX_AGENT_PROMPT_LENGTH} characters."
             )
-
-        if not 0 <= self.max_turns <= _MAX_AGENT_TURNS:
+        model = (self.model or "").strip() or None
+        if model is not None and len(model) > _MAX_AGENT_MODEL_LENGTH:
             raise ValueError(
-                f"Agent {self.agent_id.value} max_turns must be between 0 and {_MAX_AGENT_TURNS}."
+                f"Agent {self.agent_id.value} model exceeds {_MAX_AGENT_MODEL_LENGTH} characters."
             )
+
+        if self.max_turns < 0:
+            raise ValueError(f"Agent {self.agent_id.value} max_turns must be non-negative.")
 
         expected_type = _default_type(self.agent_id)
         if self.agent_type != expected_type:
@@ -322,6 +357,7 @@ class AgentDefinition:
             visibility=self.visibility,
             max_turns=self.max_turns,
             provider_session_id=(self.provider_session_id or "").strip() or None,
+            model=model,
         )
 
     def to_dict(self) -> dict[str, object]:
@@ -334,6 +370,7 @@ class AgentDefinition:
             "visibility": self.visibility.value,
             "max_turns": self.max_turns,
             "provider_session_id": self.provider_session_id,
+            "model": self.model,
         }
 
 
@@ -357,6 +394,7 @@ def default_agent_definition(
 class AgentConfiguration:
     preset: AgentPreset = AgentPreset.SOLO
     display_mode: AgentDisplayMode = AgentDisplayMode.SHOW_ALL
+    turn_budget_mode: TurnBudgetMode = TurnBudgetMode.EACH_AGENT
     agents: dict[AgentId, AgentDefinition] = field(default_factory=dict)
     supervisor_member_ids: tuple[AgentId, ...] = field(default_factory=tuple)
 
@@ -384,11 +422,12 @@ class AgentConfiguration:
                     agent_type=_default_type(agent_id),
                     enabled=False,
                     label=normalized_agents[agent_id].label,
-                    prompt=normalized_agents[agent_id].prompt,
-                    visibility=normalized_agents[agent_id].visibility,
-                    max_turns=0,
-                    provider_session_id=normalized_agents[agent_id].provider_session_id,
-                ).normalized()
+                prompt=normalized_agents[agent_id].prompt,
+                visibility=normalized_agents[agent_id].visibility,
+                max_turns=0,
+                provider_session_id=normalized_agents[agent_id].provider_session_id,
+                model=normalized_agents[agent_id].model,
+            ).normalized()
 
             supervisor = normalized_agents[AgentId.SUPERVISOR]
             normalized_agents[AgentId.SUPERVISOR] = AgentDefinition(
@@ -400,6 +439,7 @@ class AgentConfiguration:
                 visibility=supervisor.visibility,
                 max_turns=max(1, supervisor.max_turns),
                 provider_session_id=supervisor.provider_session_id,
+                model=supervisor.model,
             ).normalized()
 
             for agent_id in SUPERVISOR_MEMBER_AGENT_IDS:
@@ -414,11 +454,13 @@ class AgentConfiguration:
                     visibility=specialist.visibility,
                     max_turns=max(1, specialist.max_turns) if selected else 0,
                     provider_session_id=specialist.provider_session_id,
+                    model=specialist.model,
                 ).normalized()
 
             return AgentConfiguration(
                 preset=AgentPreset.SUPERVISOR,
                 display_mode=self.display_mode,
+                turn_budget_mode=self.turn_budget_mode,
                 agents=normalized_agents,
                 supervisor_member_ids=supervisor_member_ids,
             )
@@ -432,6 +474,7 @@ class AgentConfiguration:
             visibility=AgentVisibilityMode.VISIBLE,
             max_turns=max(1, normalized_agents[AgentId.GENERATOR].max_turns),
             provider_session_id=normalized_agents[AgentId.GENERATOR].provider_session_id,
+            model=normalized_agents[AgentId.GENERATOR].model,
         ).normalized()
 
         if self.display_mode == AgentDisplayMode.SUMMARY_ONLY:
@@ -444,6 +487,7 @@ class AgentConfiguration:
                 visibility=normalized_agents[AgentId.SUMMARY].visibility,
                 max_turns=max(1, normalized_agents[AgentId.SUMMARY].max_turns),
                 provider_session_id=normalized_agents[AgentId.SUMMARY].provider_session_id,
+                model=normalized_agents[AgentId.SUMMARY].model,
             ).normalized()
 
         for agent_id in SUPERVISOR_AGENT_IDS:
@@ -457,6 +501,7 @@ class AgentConfiguration:
                 visibility=specialist.visibility,
                 max_turns=0,
                 provider_session_id=specialist.provider_session_id,
+                model=specialist.model,
             ).normalized()
 
         if not any(agent.enabled for agent in normalized_agents.values() if agent.agent_id != AgentId.GENERATOR):
@@ -469,6 +514,7 @@ class AgentConfiguration:
         return AgentConfiguration(
             preset=preset,
             display_mode=self.display_mode,
+            turn_budget_mode=self.turn_budget_mode,
             agents=normalized_agents,
             supervisor_member_ids=supervisor_member_ids,
         )
@@ -478,6 +524,7 @@ class AgentConfiguration:
         return {
             "preset": normalized.preset.value,
             "display_mode": normalized.display_mode.value,
+            "turn_budget_mode": normalized.turn_budget_mode.value,
             "supervisor_member_ids": [
                 agent_id.value for agent_id in normalized.supervisor_member_ids
             ],
@@ -492,6 +539,7 @@ class AgentConfiguration:
         return cls(
             preset=AgentPreset.SOLO,
             display_mode=AgentDisplayMode.SHOW_ALL,
+            turn_budget_mode=TurnBudgetMode.EACH_AGENT,
             agents={
                 agent_id: default_agent_definition(agent_id, preset=AgentPreset.SOLO)
                 for agent_id in CONFIGURABLE_AGENT_IDS
@@ -511,9 +559,10 @@ class AgentConfiguration:
     ) -> "AgentConfiguration":
         configuration = cls.default()
         configuration.preset = AgentPreset.REVIEW if enabled else AgentPreset.SOLO
+        configuration.turn_budget_mode = TurnBudgetMode.EACH_AGENT
         configuration.agents[AgentId.GENERATOR].provider_session_id = generator_provider_session_id
         configuration.agents[AgentId.REVIEWER].enabled = enabled
-        configuration.agents[AgentId.REVIEWER].max_turns = max(0, min(max_turns, _MAX_AGENT_TURNS))
+        configuration.agents[AgentId.REVIEWER].max_turns = max(0, max_turns)
         configuration.agents[AgentId.REVIEWER].prompt = (
             reviewer_prompt.strip() if reviewer_prompt and reviewer_prompt.strip() else _DEFAULT_REVIEWER_PROMPT
         )
@@ -537,6 +586,12 @@ class AgentConfiguration:
             )
         except ValueError as exc:
             raise ValueError("Invalid agent display mode.") from exc
+        try:
+            turn_budget_mode = TurnBudgetMode(
+                str(raw.get("turn_budget_mode") or TurnBudgetMode.EACH_AGENT.value)
+            )
+        except ValueError as exc:
+            raise ValueError("Invalid turn budget mode.") from exc
 
         raw_agents = raw.get("agents")
         if raw_agents is not None and not isinstance(raw_agents, dict):
@@ -558,9 +613,15 @@ class AgentConfiguration:
             if not isinstance(candidate_raw, dict):
                 raise ValueError(f"Agent {agent_id.value} config must be an object.")
             try:
-                candidate_id = AgentId(str(candidate_raw.get("agent_id") or agent_id.value))
+                candidate_id = AgentId(
+                    normalize_agent_enum_value(
+                        str(candidate_raw.get("agent_id") or agent_id.value)
+                    )
+                )
                 candidate_type = AgentType(
-                    str(candidate_raw.get("agent_type") or _default_type(agent_id).value)
+                    normalize_agent_enum_value(
+                        str(candidate_raw.get("agent_type") or _default_type(agent_id).value)
+                    )
                 )
                 visibility = AgentVisibilityMode(
                     str(candidate_raw.get("visibility") or default.visibility.value)
@@ -584,11 +645,17 @@ class AgentConfiguration:
                     "provider_session_id",
                     default.provider_session_id,
                 ),
+                model=_read_optional_str_field(
+                    candidate_raw,
+                    "model",
+                    default.model,
+                ),
             )
 
         return cls(
             preset=preset,
             display_mode=display_mode,
+            turn_budget_mode=turn_budget_mode,
             agents=agents,
             supervisor_member_ids=supervisor_member_ids,
         ).normalized()

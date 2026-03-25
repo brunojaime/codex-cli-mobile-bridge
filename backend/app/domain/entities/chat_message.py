@@ -57,6 +57,7 @@ FOLLOW_UP_AGENT_IDS = frozenset(
         AgentId.QA,
         AgentId.UX,
         AgentId.SENIOR_ENGINEER,
+        AgentId.SCRAPER,
     }
 )
 FOLLOW_UP_WAITING_STATUSES = frozenset(

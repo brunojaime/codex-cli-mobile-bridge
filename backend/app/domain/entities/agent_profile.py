@@ -9,6 +9,7 @@ from backend.app.domain.entities.agent_configuration import (
     AgentId,
     AgentPreset,
     SUPERVISOR_MEMBER_AGENT_IDS,
+    TurnBudgetMode,
 )
 from backend.app.domain.entities.job import utc_now
 
@@ -24,21 +25,36 @@ SUPERVISOR_AGENT_PROFILE_ID = "supervisor"
 QA_AGENT_PROFILE_ID = "qa"
 UX_AGENT_PROFILE_ID = "ux"
 SENIOR_ENGINEER_AGENT_PROFILE_ID = "senior_engineer"
+SCRAPER_AGENT_PROFILE_ID = "scraper"
 DEFAULT_AGENT_PROFILE_COLOR = "#55D6BE"
 AGENT_CREATOR_PROFILE_COLOR = "#F28C28"
 SUPERVISOR_AGENT_PROFILE_COLOR = "#43C6DB"
 QA_AGENT_PROFILE_COLOR = "#FFB347"
 UX_AGENT_PROFILE_COLOR = "#6FD6A8"
 SENIOR_ENGINEER_AGENT_PROFILE_COLOR = "#A78BFA"
+SCRAPER_AGENT_PROFILE_COLOR = "#0F766E"
 
 DEFAULT_AGENT_CREATOR_PROMPT = (
     "You are Agent Creator Codex. Help the user design a reusable Codex agent "
-    "for this app. Ask concise follow-up questions when important requirements "
-    "are missing. When the agent definition is clear, provide a concrete agent "
-    "spec with: name, short description, recommended color hex, and a final "
-    "system prompt that can be saved as the default prompt for a new chat. "
-    "Stay focused on shaping the agent's role, boundaries, inputs, outputs, "
-    "and operating instructions."
+    "for this app. Ask concise follow-up questions only when important "
+    "requirements are missing. When the agent definition is clear, return a "
+    "short human-readable summary followed by exactly one fenced code block "
+    "labeled agent-profile containing a JSON object that the app can import "
+    "directly as a persistent agent profile. The JSON must use this shape: "
+    '{"id":"stable_snake_case_id","name":"Agent Name","description":"short '
+    'description","color_hex":"#RRGGBB","prompt":"system prompt","configuration":'
+    '{"preset":"solo"|"review"|"triad"|"supervisor","display_mode":"show_all"|'
+    '"collapse_specialists"|"summary_only","turn_budget_mode":"each_agent"|'
+    '"supervisor_only","supervisor_member_ids":["qa","ux","senior_engineer",'
+    '"scraper"],"agents":[{"agent_id":"generator"|"reviewer"|"summary"|'
+    '"supervisor"|"qa"|"ux"|"senior_engineer"|"scraper","agent_type":"generator"|'
+    '"reviewer"|"summary"|"supervisor"|"qa"|"ux"|"senior_engineer"|"scraper",'
+    '"enabled":true,"label":"Label","prompt":"Prompt","visibility":"visible"|'
+    '"collapsed"|"hidden","max_turns":1}]}}. '
+    "Always use scraper, never scrapper. Include configuration only when the "
+    "agent needs non-default multi-agent behavior; otherwise omit configuration "
+    "and provide a strong solo-agent prompt. Keep the agent practical, with "
+    "clear boundaries, inputs, outputs, and operating rules."
 )
 
 
@@ -162,6 +178,7 @@ def _normalized_profile_configuration(
     return AgentConfiguration(
         preset=normalized.preset,
         display_mode=normalized.display_mode,
+        turn_budget_mode=normalized.turn_budget_mode,
         agents=sanitized_agents,
         supervisor_member_ids=normalized.supervisor_member_ids,
     ).normalized()
@@ -188,6 +205,7 @@ def _standalone_specialist_configuration(
 def _supervisor_configuration() -> AgentConfiguration:
     configuration = AgentConfiguration.default()
     configuration.preset = AgentPreset.SUPERVISOR
+    configuration.turn_budget_mode = TurnBudgetMode.EACH_AGENT
     configuration.supervisor_member_ids = tuple(SUPERVISOR_MEMBER_AGENT_IDS)
     return configuration.normalized()
 
@@ -209,6 +227,10 @@ def builtin_agent_profiles() -> list[AgentProfile]:
     senior_engineering_configuration = _standalone_specialist_configuration(
         specialist_id=AgentId.SENIOR_ENGINEER,
         label="Senior Engineer",
+    )
+    scraper_configuration = _standalone_specialist_configuration(
+        specialist_id=AgentId.SCRAPER,
+        label="Scraper",
     )
     return [
         AgentProfile(
@@ -271,6 +293,18 @@ def builtin_agent_profiles() -> list[AgentProfile]:
             color_hex=SENIOR_ENGINEER_AGENT_PROFILE_COLOR,
             prompt=senior_engineering_configuration.agents[AgentId.GENERATOR].prompt,
             configuration=senior_engineering_configuration,
+            is_builtin=True,
+        ).normalized(),
+        AgentProfile(
+            id=SCRAPER_AGENT_PROFILE_ID,
+            name="Scraper",
+            description=(
+                "Inspects public websites, chooses extraction methods, and builds "
+                "or repairs scrapers."
+            ),
+            color_hex=SCRAPER_AGENT_PROFILE_COLOR,
+            prompt=scraper_configuration.agents[AgentId.GENERATOR].prompt,
+            configuration=scraper_configuration,
             is_builtin=True,
         ).normalized(),
     ]

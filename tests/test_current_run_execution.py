@@ -7,8 +7,10 @@ from backend.app.api.schemas import SessionDetailResponse
 from backend.app.domain.entities.agent_configuration import (
     AgentConfiguration,
     AgentId,
+    AgentPreset,
     AgentTriggerSource,
     AgentType,
+    TurnBudgetMode,
 )
 from backend.app.domain.entities.chat_message import (
     ChatMessage,
@@ -82,6 +84,10 @@ def build_message(
             AgentId.GENERATOR: AgentType.GENERATOR,
             AgentId.REVIEWER: AgentType.REVIEWER,
             AgentId.SUMMARY: AgentType.SUMMARY,
+            AgentId.SUPERVISOR: AgentType.SUPERVISOR,
+            AgentId.QA: AgentType.QA,
+            AgentId.UX: AgentType.UX,
+            AgentId.SENIOR_ENGINEER: AgentType.SENIOR_ENGINEER,
             AgentId.USER: AgentType.HUMAN,
         }[agent_id],
         trigger_source=(
@@ -119,6 +125,10 @@ def build_job(
             AgentId.GENERATOR: AgentType.GENERATOR,
             AgentId.REVIEWER: AgentType.REVIEWER,
             AgentId.SUMMARY: AgentType.SUMMARY,
+            AgentId.SUPERVISOR: AgentType.SUPERVISOR,
+            AgentId.QA: AgentType.QA,
+            AgentId.UX: AgentType.UX,
+            AgentId.SENIOR_ENGINEER: AgentType.SENIOR_ENGINEER,
             AgentId.USER: AgentType.HUMAN,
         }[agent_id],
         created_at=created_at or _ts(),
@@ -399,7 +409,12 @@ def test_recent_runs_preserve_multi_turn_reviewer_loop_counters() -> None:
         ),
     ]
 
-    runs = derive_recent_run_executions(session, messages=messages, jobs_by_id={})
+    runs = derive_recent_run_executions(
+        session,
+        messages=messages,
+        jobs_by_id={},
+        run_configurations_by_id={"run-review": session.agent_configuration},
+    )
 
     assert len(runs) == 1
     generator_stage = runs[0].stages[0]
@@ -457,7 +472,16 @@ def test_recent_runs_derive_failed_cancelled_and_skipped_stage_states() -> None:
         ),
     ]
 
-    runs = derive_recent_run_executions(session, messages=messages, jobs_by_id={})
+    runs = derive_recent_run_executions(
+        session,
+        messages=messages,
+        jobs_by_id={},
+        run_configurations_by_id={
+            "run-skipped": session.agent_configuration,
+            "run-failed": session.agent_configuration,
+            "run-cancelled": session.agent_configuration,
+        },
+    )
     runs_by_id = {run.run_id: run for run in runs}
 
     assert runs_by_id["run-skipped"].state == RunStageState.COMPLETED
@@ -471,6 +495,101 @@ def test_recent_runs_derive_failed_cancelled_and_skipped_stage_states() -> None:
     assert runs_by_id["run-cancelled"].state == RunStageState.CANCELLED
     assert runs_by_id["run-cancelled"].stages[0].state == RunStageState.CANCELLED
     assert runs_by_id["run-cancelled"].stages[1].state == RunStageState.SKIPPED
+
+
+def test_supervisor_runs_report_participants_and_supervisor_only_budget_mode() -> None:
+    configuration = AgentConfiguration.default()
+    configuration.preset = AgentPreset.SUPERVISOR
+    configuration.turn_budget_mode = TurnBudgetMode.SUPERVISOR_ONLY
+    configuration.supervisor_member_ids = (AgentId.QA, AgentId.SENIOR_ENGINEER)
+    configuration.agents[AgentId.SUPERVISOR] = replace(
+        configuration.agents[AgentId.SUPERVISOR],
+        enabled=True,
+        max_turns=3,
+    )
+    configuration.agents[AgentId.QA] = replace(
+        configuration.agents[AgentId.QA],
+        enabled=True,
+        max_turns=0,
+    )
+    configuration.agents[AgentId.SENIOR_ENGINEER] = replace(
+        configuration.agents[AgentId.SENIOR_ENGINEER],
+        enabled=True,
+        max_turns=0,
+    )
+    configuration.agents[AgentId.UX] = replace(
+        configuration.agents[AgentId.UX],
+        enabled=False,
+        max_turns=0,
+    )
+    session = ChatSession(
+        id="session-supervisor",
+        title="Supervisor history",
+        workspace_path="/workspace",
+        workspace_name="Workspace",
+        agent_configuration=configuration.normalized(),
+        active_agent_run_id=None,
+    )
+
+    messages = [
+        build_message(
+            message_id="supervisor-1",
+            run_id="run-supervisor",
+            agent_id=AgentId.SUPERVISOR,
+            role=ChatMessageRole.ASSISTANT,
+            status=ChatMessageStatus.COMPLETED,
+        ),
+        build_message(
+            message_id="qa-1",
+            run_id="run-supervisor",
+            agent_id=AgentId.QA,
+            role=ChatMessageRole.ASSISTANT,
+            status=ChatMessageStatus.COMPLETED,
+        ),
+        build_message(
+            message_id="supervisor-2",
+            run_id="run-supervisor",
+            agent_id=AgentId.SUPERVISOR,
+            role=ChatMessageRole.ASSISTANT,
+            status=ChatMessageStatus.COMPLETED,
+        ),
+        build_message(
+            message_id="qa-2",
+            run_id="run-supervisor",
+            agent_id=AgentId.QA,
+            role=ChatMessageRole.ASSISTANT,
+            status=ChatMessageStatus.COMPLETED,
+        ),
+        build_message(
+            message_id="supervisor-3",
+            run_id="run-supervisor",
+            agent_id=AgentId.SUPERVISOR,
+            role=ChatMessageRole.ASSISTANT,
+            status=ChatMessageStatus.COMPLETED,
+        ),
+    ]
+
+    response = SessionDetailResponse.from_domain(
+        session,
+        messages=messages,
+        jobs_by_id={},
+        run_configurations_by_id={"run-supervisor": session.agent_configuration},
+    )
+
+    assert len(response.recent_runs) == 1
+    run = response.recent_runs[0]
+    assert run.preset == AgentPreset.SUPERVISOR
+    assert run.turn_budget_mode == TurnBudgetMode.SUPERVISOR_ONLY
+    assert run.participant_agent_ids == [
+        AgentId.SUPERVISOR,
+        AgentId.QA,
+    ]
+    assert run.call_count == 5
+
+    qa_stage = next(stage for stage in run.stages if stage.stage == "qa")
+    assert qa_stage.attempt_count == 2
+    assert qa_stage.max_turns == 0
+    assert qa_stage.has_turn_budget is False
 
 
 def _ts() -> datetime:

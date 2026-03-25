@@ -1,4 +1,5 @@
 import 'agent_configuration.dart';
+import 'conversation_product.dart';
 import 'reviewer_lifecycle_state.dart';
 
 class ChatSessionSummary {
@@ -23,6 +24,7 @@ class ChatSessionSummary {
     this.autoReviewerPrompt,
     this.autoTurnIndex = 0,
     this.reviewerState = ReviewerLifecycleState.off,
+    this.conversationProduct,
     this.lastMessagePreview,
     this.hasPendingMessages = false,
   });
@@ -45,6 +47,7 @@ class ChatSessionSummary {
   final String? autoReviewerPrompt;
   final int autoTurnIndex;
   final ReviewerLifecycleState reviewerState;
+  final ConversationProduct? conversationProduct;
   final DateTime createdAt;
   final DateTime updatedAt;
   final String? lastMessagePreview;
@@ -79,6 +82,11 @@ class ChatSessionSummary {
       reviewerState: reviewerLifecycleStateFromJson(
         json['reviewer_state'] as String?,
       ),
+      conversationProduct: json['conversation_product'] is Map<String, dynamic>
+          ? ConversationProduct.fromJson(
+              json['conversation_product'] as Map<String, dynamic>,
+            )
+          : null,
       createdAt: DateTime.parse(json['created_at'] as String),
       updatedAt: DateTime.parse(json['updated_at'] as String),
       lastMessagePreview: json['last_message_preview'] as String?,

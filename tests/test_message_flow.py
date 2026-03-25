@@ -20,6 +20,7 @@ from backend.app.domain.entities.agent_configuration import (
     AgentTriggerSource,
     AgentType,
     AgentVisibilityMode,
+    TurnBudgetMode,
 )
 from backend.app.domain.entities.agent_profile import AgentProfile
 from backend.app.domain.entities.chat_message import (
@@ -36,6 +37,12 @@ from backend.app.domain.entities.job import JobConversationKind, JobStatus
 from backend.app.infrastructure.execution.base import ExecutionProvider, ExecutionSnapshot
 from backend.app.infrastructure.persistence.in_memory_chat_repository import InMemoryChatRepository
 from backend.app.infrastructure.persistence.sqlite_chat_repository import SqliteChatRepository
+from backend.app.infrastructure.speech.base import (
+    SpeechSynthesizer,
+    SpeechSynthesizerStatus,
+    SpeechSynthesisUnavailableError,
+    SynthesizedSpeech,
+)
 from backend.app.infrastructure.transcription.disabled_transcriber import DisabledAudioTranscriber
 from backend.app.main import create_app
 from backend.app.infrastructure.config.settings import Settings
@@ -116,6 +123,7 @@ class _ControlledExecutionProvider(ExecutionProvider):
         image_paths: list[str] | None = None,
         cleanup_paths: list[str] | None = None,
         provider_session_id: str | None = None,
+        model: str | None = None,
         serial_key: str | None = None,
         submission_token: str | None = None,
         workdir: str | None = None,
@@ -249,6 +257,50 @@ class _WatchedControlledExecutionProvider(_ControlledExecutionProvider):
                     self._subscribers.pop(job_id, None)
 
         return unsubscribe
+
+
+class _FakeSpeechSynthesizer(SpeechSynthesizer):
+    def __init__(
+        self,
+        *,
+        ready: bool = True,
+        voice: str = "cedar",
+        response_format: str = "wav",
+        content_type: str = "audio/wav",
+        audio_bytes: bytes = b"RIFFfake",
+    ) -> None:
+        self.ready = ready
+        self.voice = voice
+        self.response_format = response_format
+        self.content_type = content_type
+        self.audio_bytes = audio_bytes
+        self.requests: list[str] = []
+
+    def status(self) -> SpeechSynthesizerStatus:
+        return SpeechSynthesizerStatus(
+            backend="openai" if self.ready else "disabled",
+            ready=self.ready,
+            detail="Fake speech synthesizer",
+            voice=self.voice,
+            response_format=self.response_format,
+        )
+
+    def synthesize(
+        self,
+        text: str,
+        *,
+        voice: str | None = None,
+        response_format: str | None = None,
+        instructions: str | None = None,
+    ) -> SynthesizedSpeech:
+        if not self.ready:
+            raise SpeechSynthesisUnavailableError("Speech synthesis is unavailable.")
+        self.requests.append(text)
+        return SynthesizedSpeech(
+            audio_bytes=self.audio_bytes,
+            content_type=self.content_type,
+            response_format=response_format or self.response_format,
+        )
 
     def complete_job_with_notification_gate(
         self,
@@ -483,6 +535,14 @@ def wait_for_repository_session(
     )
 
 
+def recent_run_by_id(payload: dict, run_id: str) -> dict:
+    return next(run for run in payload["recent_runs"] if run["run_id"] == run_id)
+
+
+def run_stage_by_id(run_payload: dict, stage_id: str) -> dict:
+    return next(stage for stage in run_payload["stages"] if stage["stage"] == stage_id)
+
+
 def run_concurrent_get_job(service: MessageService, job_id: str, *, workers: int = 2) -> None:
     errors: list[Exception] = []
     start_barrier = threading.Barrier(workers)
@@ -616,8 +676,9 @@ def build_agent_configuration_payload(
 def build_supervisor_configuration_payload(
     *,
     supervisor_member_ids: list[str] | None = None,
+    turn_budget_mode: str = "each_agent",
 ) -> dict:
-    selected_members = supervisor_member_ids or ["qa", "ux", "senior_engineer"]
+    selected_members = supervisor_member_ids or ["qa", "ux", "senior_engineer", "scraper"]
 
     def specialist_enabled(agent_id: str) -> bool:
         return agent_id in selected_members
@@ -625,6 +686,7 @@ def build_supervisor_configuration_payload(
     return {
         "preset": "supervisor",
         "display_mode": "collapse_specialists",
+        "turn_budget_mode": turn_budget_mode,
         "supervisor_member_ids": selected_members,
         "agents": [
             {
@@ -664,7 +726,7 @@ def build_supervisor_configuration_payload(
                     "which specialist should act next, and keep the work moving."
                 ),
                 "visibility": "visible",
-                "max_turns": 4,
+                "max_turns": 10,
             },
             {
                 "agent_id": "qa",
@@ -673,7 +735,7 @@ def build_supervisor_configuration_payload(
                 "label": "QA",
                 "prompt": "You are QA Codex. Validate correctness and risk.",
                 "visibility": "collapsed",
-                "max_turns": 2 if specialist_enabled("qa") else 0,
+                "max_turns": 8 if specialist_enabled("qa") else 0,
             },
             {
                 "agent_id": "ux",
@@ -682,7 +744,7 @@ def build_supervisor_configuration_payload(
                 "label": "UX",
                 "prompt": "You are UX Codex. Review flow and usability.",
                 "visibility": "collapsed",
-                "max_turns": 2 if specialist_enabled("ux") else 0,
+                "max_turns": 8 if specialist_enabled("ux") else 0,
             },
             {
                 "agent_id": "senior_engineer",
@@ -691,7 +753,16 @@ def build_supervisor_configuration_payload(
                 "label": "Senior Engineer",
                 "prompt": "You are Senior Engineer Codex. Review architecture and risk.",
                 "visibility": "collapsed",
-                "max_turns": 2 if specialist_enabled("senior_engineer") else 0,
+                "max_turns": 8 if specialist_enabled("senior_engineer") else 0,
+            },
+            {
+                "agent_id": "scraper",
+                "agent_type": "scraper",
+                "enabled": specialist_enabled("scraper"),
+                "label": "Scraper",
+                "prompt": "You are Scraper Codex. Review extraction strategy and source risk.",
+                "visibility": "collapsed",
+                "max_turns": 8 if specialist_enabled("scraper") else 0,
             },
         ],
     }
@@ -895,6 +966,228 @@ def test_supervisor_preset_routes_work_through_selected_specialists() -> None:
     assert all(message["agent_id"] != "ux" for message in messages[2:])
 
 
+def test_supervisor_only_turn_budget_preserves_specialist_budgets_for_later_restore() -> None:
+    configuration = AgentConfiguration.from_dict(
+        {
+            "preset": "supervisor",
+            "display_mode": "collapse_specialists",
+            "turn_budget_mode": "supervisor_only",
+            "supervisor_member_ids": ["qa", "senior_engineer"],
+            "agents": {
+                agent["agent_id"]: agent
+                for agent in build_supervisor_configuration_payload(
+                    supervisor_member_ids=["qa", "senior_engineer"],
+                    turn_budget_mode="supervisor_only",
+                )["agents"]
+            },
+        }
+    )
+
+    assert configuration.turn_budget_mode == TurnBudgetMode.SUPERVISOR_ONLY
+    assert configuration.to_dict()["turn_budget_mode"] == "supervisor_only"
+    assert configuration.agents[AgentId.SUPERVISOR].max_turns == 10
+    assert configuration.agents[AgentId.QA].enabled is True
+    assert configuration.agents[AgentId.QA].max_turns == 8
+    assert configuration.agents[AgentId.SENIOR_ENGINEER].enabled is True
+    assert configuration.agents[AgentId.SENIOR_ENGINEER].max_turns == 8
+    assert configuration.agents[AgentId.UX].enabled is False
+    assert configuration.agents[AgentId.UX].max_turns == 0
+
+
+def test_recent_runs_keep_review_snapshot_after_session_changes_to_solo() -> None:
+    client = build_session_client()
+
+    session_response = client.post("/sessions", json={"title": "Review snapshot"})
+    assert session_response.status_code == 201
+    session_id = session_response.json()["id"]
+
+    config_response = client.put(
+        f"/sessions/{session_id}/agents",
+        json=build_agent_configuration_payload(
+            preset="review",
+            reviewer_enabled=True,
+            summary_enabled=False,
+        ),
+    )
+    assert config_response.status_code == 200
+
+    message_response = client.post(
+        f"/sessions/{session_id}/messages",
+        json={"message": "Review this change set."},
+    )
+    assert message_response.status_code == 202
+
+    completed_payload = wait_for_session(
+        client,
+        session_id,
+        predicate=lambda payload: (
+            payload["active_agent_run_id"] is None
+            and len(payload["recent_runs"]) == 1
+            and any(message["agent_id"] == "reviewer" for message in payload["messages"])
+        ),
+    )
+    run_id = completed_payload["recent_runs"][0]["run_id"]
+
+    solo_response = client.put(
+        f"/sessions/{session_id}/agents",
+        json=build_agent_configuration_payload(
+            preset="solo",
+            reviewer_enabled=False,
+            summary_enabled=False,
+        ),
+    )
+    assert solo_response.status_code == 200
+
+    historical_run = recent_run_by_id(solo_response.json(), run_id)
+    reviewer_stage = run_stage_by_id(historical_run, "reviewer")
+    summary_stage = run_stage_by_id(historical_run, "summary")
+
+    assert solo_response.json()["agent_configuration"]["preset"] == "solo"
+    assert historical_run["preset"] == "review"
+    assert historical_run["turn_budget_mode"] == "each_agent"
+    assert reviewer_stage["configured"] is True
+    assert reviewer_stage["max_turns"] == 1
+    assert reviewer_stage["has_turn_budget"] is True
+    assert summary_stage["configured"] is False
+    assert summary_stage["max_turns"] == 0
+    assert summary_stage["has_turn_budget"] is False
+
+
+def test_recent_runs_keep_supervisor_each_agent_snapshot_after_switch_to_supervisor_only() -> None:
+    client = build_session_client()
+
+    session_response = client.post("/sessions", json={"title": "Supervisor snapshot"})
+    assert session_response.status_code == 201
+    session_id = session_response.json()["id"]
+
+    config_response = client.put(
+        f"/sessions/{session_id}/agents",
+        json=build_supervisor_configuration_payload(
+            supervisor_member_ids=["qa", "senior_engineer"],
+            turn_budget_mode="each_agent",
+        ),
+    )
+    assert config_response.status_code == 200
+
+    message_response = client.post(
+        f"/sessions/{session_id}/messages",
+        json={"message": "Run the supervisor workflow."},
+    )
+    assert message_response.status_code == 202
+
+    completed_payload = wait_for_session(
+        client,
+        session_id,
+        predicate=lambda payload: (
+            payload["active_agent_run_id"] is None
+            and len(payload["recent_runs"]) == 1
+            and any(message["agent_id"] == "qa" for message in payload["messages"])
+            and any(
+                message["agent_id"] == "senior_engineer"
+                for message in payload["messages"]
+            )
+        ),
+    )
+    run_id = completed_payload["recent_runs"][0]["run_id"]
+
+    supervisor_only_response = client.put(
+        f"/sessions/{session_id}/agents",
+        json=build_supervisor_configuration_payload(
+            supervisor_member_ids=["qa"],
+            turn_budget_mode="supervisor_only",
+        ),
+    )
+    assert supervisor_only_response.status_code == 200
+
+    historical_run = recent_run_by_id(supervisor_only_response.json(), run_id)
+    supervisor_stage = run_stage_by_id(historical_run, "supervisor")
+    qa_stage = run_stage_by_id(historical_run, "qa")
+    senior_engineer_stage = run_stage_by_id(historical_run, "senior_engineer")
+
+    assert supervisor_only_response.json()["agent_configuration"]["turn_budget_mode"] == (
+        "supervisor_only"
+    )
+    assert supervisor_only_response.json()["agent_configuration"]["supervisor_member_ids"] == ["qa"]
+    assert historical_run["preset"] == "supervisor"
+    assert historical_run["turn_budget_mode"] == "each_agent"
+    assert set(historical_run["participant_agent_ids"]) == {
+        "supervisor",
+        "qa",
+        "senior_engineer",
+    }
+    assert historical_run["call_count"] == 5
+    assert supervisor_stage["max_turns"] == 4
+    assert supervisor_stage["has_turn_budget"] is True
+    assert qa_stage["max_turns"] == 2
+    assert qa_stage["has_turn_budget"] is True
+    assert senior_engineer_stage["max_turns"] == 2
+    assert senior_engineer_stage["has_turn_budget"] is True
+
+
+def test_recent_runs_keep_supervisor_snapshot_after_switch_to_non_supervisor_mode() -> None:
+    client = build_session_client()
+
+    session_response = client.post("/sessions", json={"title": "Supervisor to solo"})
+    assert session_response.status_code == 201
+    session_id = session_response.json()["id"]
+
+    config_response = client.put(
+        f"/sessions/{session_id}/agents",
+        json=build_supervisor_configuration_payload(
+            supervisor_member_ids=["qa", "senior_engineer"],
+            turn_budget_mode="each_agent",
+        ),
+    )
+    assert config_response.status_code == 200
+
+    message_response = client.post(
+        f"/sessions/{session_id}/messages",
+        json={"message": "Run the supervisor workflow."},
+    )
+    assert message_response.status_code == 202
+
+    completed_payload = wait_for_session(
+        client,
+        session_id,
+        predicate=lambda payload: (
+            payload["active_agent_run_id"] is None
+            and len(payload["recent_runs"]) == 1
+            and any(message["agent_id"] == "qa" for message in payload["messages"])
+            and any(
+                message["agent_id"] == "senior_engineer"
+                for message in payload["messages"]
+            )
+        ),
+    )
+    run_id = completed_payload["recent_runs"][0]["run_id"]
+
+    solo_response = client.put(
+        f"/sessions/{session_id}/agents",
+        json=build_agent_configuration_payload(
+            preset="solo",
+            reviewer_enabled=False,
+            summary_enabled=False,
+        ),
+    )
+    assert solo_response.status_code == 200
+
+    historical_run = recent_run_by_id(solo_response.json(), run_id)
+    stage_ids = {stage["stage"] for stage in historical_run["stages"] if stage["configured"]}
+
+    assert solo_response.json()["agent_configuration"]["preset"] == "solo"
+    assert historical_run["preset"] == "supervisor"
+    assert historical_run["turn_budget_mode"] == "each_agent"
+    assert set(historical_run["participant_agent_ids"]) == {
+        "supervisor",
+        "qa",
+        "senior_engineer",
+    }
+    assert {"supervisor", "qa", "senior_engineer"}.issubset(stage_ids)
+    assert "generator" not in stage_ids
+    assert "reviewer" not in stage_ids
+    assert "summary" not in stage_ids
+
+
 def test_auto_mode_chains_primary_and_reviewer_codex_turns() -> None:
     client = build_session_client()
 
@@ -1047,6 +1340,29 @@ def test_agent_configuration_route_rejects_invalid_payload() -> None:
     assert response.status_code == 422
 
 
+def test_agent_configuration_route_accepts_legacy_scrapper_alias() -> None:
+    client = build_session_client()
+    session_response = client.post("/sessions", json={"title": "Agents"})
+    assert session_response.status_code == 201
+    session_id = session_response.json()["id"]
+
+    payload = build_supervisor_configuration_payload(
+        supervisor_member_ids=["qa", "scrapper"],
+    )
+    payload["agents"][7]["agent_id"] = "scrapper"
+    payload["agents"][7]["agent_type"] = "scrapper"
+
+    response = client.put(f"/sessions/{session_id}/agents", json=payload)
+
+    assert response.status_code == 200
+    normalized_payload = response.json()["agent_configuration"]
+    assert normalized_payload["supervisor_member_ids"] == ["qa", "scraper"]
+    scraper_agent = next(
+        agent for agent in normalized_payload["agents"] if agent["agent_id"] == "scraper"
+    )
+    assert scraper_agent["agent_type"] == "scraper"
+
+
 def test_agent_configuration_from_dict_rejects_malformed_payloads() -> None:
     with pytest.raises(ValueError):
         AgentConfiguration.from_dict(
@@ -1066,6 +1382,30 @@ def test_agent_configuration_from_dict_rejects_malformed_payloads() -> None:
                 },
             }
         )
+
+    configuration = AgentConfiguration.from_dict(
+        {
+            "preset": "supervisor",
+            "display_mode": "show_all",
+            "turn_budget_mode": "each_agent",
+            "supervisor_member_ids": ["qa", "scrapper"],
+            "agents": {
+                "scraper": {
+                    "agent_id": "scrapper",
+                    "agent_type": "scrapper",
+                    "enabled": True,
+                    "label": "Scraper",
+                    "prompt": "Extract structured data carefully.",
+                    "visibility": "collapsed",
+                    "max_turns": 2,
+                }
+            },
+        }
+    )
+
+    assert configuration.supervisor_member_ids == (AgentId.QA, AgentId.SCRAPER)
+    assert configuration.agents[AgentId.SCRAPER].agent_id == AgentId.SCRAPER
+    assert configuration.agents[AgentId.SCRAPER].agent_type == AgentType.SCRAPER
 
     with pytest.raises(ValueError):
         AgentConfiguration.from_dict(
@@ -2077,6 +2417,148 @@ def test_failed_supervisor_specialist_follow_up_converges_in_background() -> Non
         )
         assert service._job_monitor_unsubscribes == {}
         assert service._terminal_job_locks == {}
+
+
+def test_supervisor_only_budget_allows_reusing_the_same_specialist() -> None:
+    with TemporaryDirectory() as temp_dir:
+        workspace = Path(temp_dir) / "repo"
+        workspace.mkdir()
+        service, provider, repository = _build_watched_controlled_message_service(
+            temp_dir,
+            barrier_agent_id=AgentId.QA,
+        )
+
+        session = service.create_session(workspace_path=str(workspace))
+        configuration = AgentConfiguration.default().normalized()
+        configuration.preset = AgentPreset.SUPERVISOR
+        configuration.turn_budget_mode = TurnBudgetMode.SUPERVISOR_ONLY
+        configuration.supervisor_member_ids = (AgentId.QA,)
+        configuration.agents[AgentId.SUPERVISOR].enabled = True
+        configuration.agents[AgentId.SUPERVISOR].max_turns = 2
+        configuration.agents[AgentId.QA].enabled = True
+        configuration.agents[AgentId.QA].max_turns = 0
+        configuration.agents[AgentId.UX].enabled = False
+        configuration.agents[AgentId.UX].max_turns = 0
+        configuration.agents[AgentId.SENIOR_ENGINEER].enabled = False
+        configuration.agents[AgentId.SENIOR_ENGINEER].max_turns = 0
+        service.update_agent_configuration(session_id=session.id, configuration=configuration)
+
+        initial_job = service.submit_message(
+            "Plan the rollout and keep QA involved.",
+            session_id=session.id,
+        )
+        provider.complete_job(
+            initial_job.id,
+            response=json.dumps(
+                {
+                    "status": "continue",
+                    "plan": ["Review implementation", "Run QA twice if needed"],
+                    "next_agent_id": "qa",
+                    "instruction": "Run the first QA pass.",
+                    "user_response": "QA is starting.",
+                }
+            ),
+        )
+
+        _, messages, _ = wait_for_repository_session(
+            repository,
+            session.id,
+            predicate=lambda current_session, current_messages, current_jobs: (
+                current_session is not None
+                and any(
+                    message.run_id == initial_job.run_id
+                    and message.agent_id == AgentId.QA
+                    and message.job_id is not None
+                    for message in current_messages
+                )
+            ),
+        )
+        first_qa = next(
+            message
+            for message in messages
+            if message.run_id == initial_job.run_id and message.agent_id == AgentId.QA
+        )
+        assert first_qa.job_id is not None
+
+        provider.complete_job(first_qa.job_id, response="First QA pass is complete.")
+        _, messages, _ = wait_for_repository_session(
+            repository,
+            session.id,
+            predicate=lambda current_session, current_messages, current_jobs: (
+                current_session is not None
+                and len(
+                    [
+                        message
+                        for message in current_messages
+                        if message.run_id == initial_job.run_id
+                        and message.agent_id == AgentId.SUPERVISOR
+                    ]
+                )
+                >= 2
+            ),
+        )
+        second_supervisor = [
+            message
+            for message in messages
+            if message.run_id == initial_job.run_id and message.agent_id == AgentId.SUPERVISOR
+        ][-1]
+        assert second_supervisor.job_id is not None
+
+        provider.complete_job(
+            second_supervisor.job_id,
+            response=json.dumps(
+                {
+                    "status": "continue",
+                    "plan": ["Review implementation", "Run QA twice if needed"],
+                    "next_agent_id": "qa",
+                    "instruction": "Run a second QA pass.",
+                    "user_response": "QA is running again.",
+                }
+            ),
+        )
+
+        _, messages, _ = wait_for_repository_session(
+            repository,
+            session.id,
+            predicate=lambda current_session, current_messages, current_jobs: (
+                current_session is not None
+                and len(
+                    [
+                        message
+                        for message in current_messages
+                        if message.run_id == initial_job.run_id
+                        and message.agent_id == AgentId.QA
+                    ]
+                )
+                >= 2
+            ),
+        )
+        qa_messages = [
+            message
+            for message in messages
+            if message.run_id == initial_job.run_id and message.agent_id == AgentId.QA
+        ]
+        assert len(qa_messages) == 2
+        assert qa_messages[-1].job_id is not None
+
+        provider.complete_job(qa_messages[-1].job_id, response="Second QA pass is complete.")
+        session, messages, qa_job = wait_for_background_terminal_convergence(
+            service,
+            repository,
+            session_id=session.id,
+            job_id=qa_messages[-1].job_id,
+            expected_status=JobStatus.COMPLETED,
+        )
+
+        assert session.active_agent_run_id is None
+        assert qa_job.status == JobStatus.COMPLETED
+        assert len(
+            [
+                message
+                for message in messages
+                if message.run_id == initial_job.run_id and message.agent_id == AgentId.QA
+            ]
+        ) == 2
 
 
 def test_sqlite_legacy_auto_mode_rows_migrate_into_agent_configuration() -> None:
@@ -3965,6 +4447,38 @@ def test_health_endpoint_exposes_audio_transcription_status() -> None:
     assert payload["audio_transcription_resolved_backend"] == "faster_whisper"
     assert payload["audio_transcription_ready"] is True
     assert payload["audio_transcription_detail"] == "Local faster-whisper model: small"
+    assert payload["speech_synthesis_backend"] == "disabled"
+    assert payload["speech_synthesis_ready"] is False
+
+
+def test_capabilities_endpoint_exposes_speech_output_status() -> None:
+    client = build_test_client()
+    container = client.app.dependency_overrides[get_container]()
+    container.speech_synthesizer = _FakeSpeechSynthesizer()
+
+    response = client.get("/capabilities")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["supports_speech_output"] is True
+    assert payload["speech_output_backend"] == "openai"
+    assert payload["speech_output_voice"] == "cedar"
+    assert payload["speech_output_response_format"] == "wav"
+
+
+def test_audio_speech_endpoint_returns_provider_audio() -> None:
+    client = build_test_client()
+    container = client.app.dependency_overrides[get_container]()
+    synthesizer = _FakeSpeechSynthesizer(audio_bytes=b"synthetic speech bytes")
+    container.speech_synthesizer = synthesizer
+
+    response = client.post("/audio/speech", json={"text": "Read this reply aloud."})
+
+    assert response.status_code == 200
+    assert response.content == b"synthetic speech bytes"
+    assert response.headers["content-type"].startswith("audio/wav")
+    assert response.headers["x-response-format"] == "wav"
+    assert synthesizer.requests == ["Read this reply aloud."]
 
 
 def test_audio_message_flow_transcribes_then_submits_prompt() -> None:
@@ -4328,16 +4842,20 @@ def test_builtin_registry_includes_supervisor_and_specialist_profiles() -> None:
         "qa",
         "ux",
         "senior_engineer",
+        "scraper",
     }.issubset(by_id)
     assert by_id["supervisor"]["configuration"]["preset"] == "supervisor"
     assert by_id["supervisor"]["configuration"]["supervisor_member_ids"] == [
         "qa",
         "ux",
         "senior_engineer",
+        "scraper",
     ]
     assert "Supervisor Codex" in by_id["supervisor"]["prompt"]
     assert by_id["qa"]["configuration"]["preset"] == "solo"
     assert "QA Codex" in by_id["qa"]["prompt"]
+    assert by_id["scraper"]["configuration"]["preset"] == "solo"
+    assert "Scraper Codex" in by_id["scraper"]["prompt"]
 
 
 def test_corrupt_reserved_builtin_profile_id_is_hidden_from_listing_and_export() -> None:

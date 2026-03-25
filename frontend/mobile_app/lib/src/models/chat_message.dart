@@ -169,8 +169,10 @@ class ChatMessage {
       status: status ?? this.status,
       reasonCode: reasonCode ?? this.reasonCode,
       recoveryAction: recoveryAction ?? this.recoveryAction,
-      recoveredFromMessageId: recoveredFromMessageId ?? this.recoveredFromMessageId,
-      supersededByMessageId: supersededByMessageId ?? this.supersededByMessageId,
+      recoveredFromMessageId:
+          recoveredFromMessageId ?? this.recoveredFromMessageId,
+      supersededByMessageId:
+          supersededByMessageId ?? this.supersededByMessageId,
       jobId: jobId ?? this.jobId,
       jobStatus: jobStatus ?? this.jobStatus,
       jobPhase: jobPhase ?? this.jobPhase,

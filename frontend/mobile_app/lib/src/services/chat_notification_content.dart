@@ -52,6 +52,7 @@ String resolveNotificationAgentLabel(
     AgentId.qa => 'QA',
     AgentId.ux => 'UX',
     AgentId.seniorEngineer => 'Senior Engineer',
+    AgentId.scraper => 'Scraper',
   };
 }
 

@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     codex_use_exec: bool = True
     codex_exec_args: str = "--skip-git-repo-check --color never"
     codex_resume_args: str = "--skip-git-repo-check"
+    codex_title_generation_model: str | None = None
     codex_workdir: str = str(Path.cwd())
     projects_root: str = str(Path.cwd().parent)
     chat_store_backend: Literal["sqlite", "memory"] = "sqlite"
@@ -53,6 +54,14 @@ class Settings(BaseSettings):
     audio_transcription_local_model: str = "small"
     audio_transcription_local_compute_type: str = "int8"
     audio_transcription_local_device: str = "auto"
+    speech_synthesis_backend: Literal["disabled", "openai"] = "disabled"
+    speech_synthesis_model: str = "gpt-4o-mini-tts"
+    speech_synthesis_voice: str = "cedar"
+    speech_synthesis_response_format: str = "mp3"
+    speech_synthesis_instructions: str = (
+        "Speak naturally with clear pacing, grounded tone, and concise phrasing."
+    )
+    speech_synthesis_timeout_seconds: int = 120
     openai_api_key: str | None = None
     openai_base_url: str = "https://api.openai.com/v1"
 

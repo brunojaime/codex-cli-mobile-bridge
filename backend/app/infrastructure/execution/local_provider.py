@@ -33,6 +33,7 @@ class _QueuedExecution:
     image_paths: list[str] | None = None
     cleanup_paths: list[str] | None = None
     provider_session_id: str | None = None
+    model: str | None = None
     workdir: str | None = None
     serial_key: str | None = None
 
@@ -72,6 +73,7 @@ class LocalExecutionProvider(ExecutionProvider):
         image_paths: list[str] | None = None,
         cleanup_paths: list[str] | None = None,
         provider_session_id: str | None = None,
+        model: str | None = None,
         serial_key: str | None = None,
         submission_token: str | None = None,
         workdir: str | None = None,
@@ -83,6 +85,7 @@ class LocalExecutionProvider(ExecutionProvider):
             image_paths=image_paths,
             cleanup_paths=cleanup_paths,
             provider_session_id=provider_session_id,
+            model=model,
             workdir=workdir,
             serial_key=serial_key,
         )
@@ -235,6 +238,7 @@ class LocalExecutionProvider(ExecutionProvider):
                 execution.image_paths,
                 execution.cleanup_paths,
                 resolved_provider_session_id,
+                execution.model,
                 execution.workdir,
             ),
             daemon=True,
@@ -248,6 +252,7 @@ class LocalExecutionProvider(ExecutionProvider):
         image_paths: list[str] | None = None,
         cleanup_paths: list[str] | None = None,
         provider_session_id: str | None = None,
+        model: str | None = None,
         workdir: str | None = None,
     ) -> None:
         if self._is_cancelled(job_id):
@@ -265,6 +270,7 @@ class LocalExecutionProvider(ExecutionProvider):
                 message,
                 image_paths=image_paths,
                 provider_session_id=provider_session_id,
+                model=model,
             )
 
             if self._is_cancelled(job_id):
@@ -388,12 +394,14 @@ class LocalExecutionProvider(ExecutionProvider):
         *,
         image_paths: list[str] | None = None,
         provider_session_id: str | None = None,
+        model: str | None = None,
     ) -> tuple[list[str], str | None]:
         base_parts = shlex.split(self._command)
         image_args = self._build_image_args(image_paths)
+        model_args = ["--model", model] if model else []
 
         if not self._use_exec_mode:
-            return [*base_parts, message, *image_args], None
+            return [*base_parts, *model_args, message, *image_args], None
 
         file_descriptor, output_path = tempfile.mkstemp(
             prefix="codex-last-message-",
@@ -408,6 +416,7 @@ class LocalExecutionProvider(ExecutionProvider):
                 "exec",
                 "resume",
                 *resume_options,
+                *model_args,
                 provider_session_id,
                 message,
                 *image_args,
@@ -418,6 +427,7 @@ class LocalExecutionProvider(ExecutionProvider):
                 *base_parts,
                 "exec",
                 *exec_options,
+                *model_args,
                 message,
                 *image_args,
             ]

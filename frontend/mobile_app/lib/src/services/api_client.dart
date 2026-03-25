@@ -13,6 +13,18 @@ import '../models/chat_session_summary.dart';
 import '../models/server_health.dart';
 import '../models/workspace.dart';
 
+class SynthesizedSpeechClip {
+  const SynthesizedSpeechClip({
+    required this.audioBytes,
+    required this.contentType,
+    required this.responseFormat,
+  });
+
+  final List<int> audioBytes;
+  final String contentType;
+  final String responseFormat;
+}
+
 class ApiClient {
   ApiClient({
     required this.baseUrl,
@@ -54,6 +66,26 @@ class ApiClient {
 
     return ServerHealth.fromJson(
         jsonDecode(response.body) as Map<String, dynamic>);
+  }
+
+  Future<SynthesizedSpeechClip> synthesizeSpeech(String text) async {
+    final response = await _client.post(
+      Uri.parse('$baseUrl/audio/speech'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode(<String, dynamic>{
+        'text': text,
+      }),
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception('Failed to synthesize speech: ${response.body}');
+    }
+
+    return SynthesizedSpeechClip(
+      audioBytes: response.bodyBytes,
+      contentType: response.headers['content-type'] ?? 'audio/mpeg',
+      responseFormat: response.headers['x-response-format'] ?? 'mp3',
+    );
   }
 
   Future<ServerCapabilities> getCapabilities() async {

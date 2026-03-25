@@ -18,6 +18,13 @@ from backend.app.infrastructure.persistence.unavailable_chat_repository import (
     UnavailableChatRepository,
 )
 from backend.app.infrastructure.realtime.job_stream_hub import JobStreamHub
+from backend.app.infrastructure.speech.base import SpeechSynthesizer
+from backend.app.infrastructure.speech.disabled_synthesizer import (
+    DisabledSpeechSynthesizer,
+)
+from backend.app.infrastructure.speech.openai_synthesizer import (
+    OpenAISpeechSynthesizer,
+)
 from backend.app.infrastructure.transcription.base import AudioTranscriber
 from backend.app.infrastructure.transcription.command_transcriber import CommandAudioTranscriber
 from backend.app.infrastructure.transcription.disabled_transcriber import DisabledAudioTranscriber
@@ -33,6 +40,7 @@ class AppContainer:
     message_service: MessageService
     job_stream_hub: JobStreamHub
     audio_transcriber: AudioTranscriber
+    speech_synthesizer: SpeechSynthesizer
     persistence_startup_issue: PersistenceDiagnosticIssue | None = None
 
 
@@ -46,12 +54,14 @@ def build_container(settings: Settings | None = None) -> AppContainer:
         repository = UnavailableChatRepository(persistence_startup_issue)
     provider = _build_execution_provider(resolved_settings)
     audio_transcriber = _build_audio_transcriber(resolved_settings)
+    speech_synthesizer = _build_speech_synthesizer(resolved_settings)
     message_service = MessageService(
         repository=repository,
         execution_provider=provider,
         default_workspace_path=resolved_settings.codex_workdir,
         audio_transcriber=audio_transcriber,
         document_text_char_limit=resolved_settings.document_text_char_limit,
+        title_generation_model=resolved_settings.codex_title_generation_model,
     )
     job_stream_hub = JobStreamHub(
         poll_interval_seconds=resolved_settings.poll_interval_seconds,
@@ -61,6 +71,7 @@ def build_container(settings: Settings | None = None) -> AppContainer:
         message_service=message_service,
         job_stream_hub=job_stream_hub,
         audio_transcriber=audio_transcriber,
+        speech_synthesizer=speech_synthesizer,
         persistence_startup_issue=persistence_startup_issue,
     )
 
@@ -158,3 +169,18 @@ def _build_audio_transcriber(settings: Settings) -> AudioTranscriber:
         )
 
     return DisabledAudioTranscriber()
+
+
+def _build_speech_synthesizer(settings: Settings) -> SpeechSynthesizer:
+    if settings.speech_synthesis_backend == "openai":
+        return OpenAISpeechSynthesizer(
+            api_key=settings.openai_api_key,
+            model=settings.speech_synthesis_model,
+            voice=settings.speech_synthesis_voice,
+            response_format=settings.speech_synthesis_response_format,
+            instructions=settings.speech_synthesis_instructions,
+            base_url=settings.openai_base_url,
+            timeout_seconds=settings.speech_synthesis_timeout_seconds,
+        )
+
+    return DisabledSpeechSynthesizer()

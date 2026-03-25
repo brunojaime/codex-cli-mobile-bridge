@@ -7,6 +7,7 @@ enum AgentId {
   qa,
   ux,
   seniorEngineer,
+  scraper,
 }
 
 enum AgentType {
@@ -18,6 +19,7 @@ enum AgentType {
   qa,
   ux,
   seniorEngineer,
+  scraper,
 }
 
 enum AgentTriggerSource {
@@ -29,6 +31,7 @@ enum AgentTriggerSource {
   qa,
   ux,
   seniorEngineer,
+  scraper,
   system,
 }
 
@@ -37,6 +40,8 @@ enum AgentVisibilityMode { visible, collapsed, hidden }
 enum AgentDisplayMode { showAll, collapseSpecialists, summaryOnly }
 
 enum AgentPreset { solo, review, triad, supervisor }
+
+enum TurnBudgetMode { eachAgent, supervisorOnly }
 
 const List<AgentId> kLegacyAgentIds = <AgentId>[
   AgentId.generator,
@@ -48,6 +53,7 @@ const List<AgentId> kSupervisorMemberAgentIds = <AgentId>[
   AgentId.qa,
   AgentId.ux,
   AgentId.seniorEngineer,
+  AgentId.scraper,
 ];
 
 const List<AgentId> kConfigurableAgentIds = <AgentId>[
@@ -58,6 +64,7 @@ const List<AgentId> kConfigurableAgentIds = <AgentId>[
   AgentId.qa,
   AgentId.ux,
   AgentId.seniorEngineer,
+  AgentId.scraper,
 ];
 
 bool agentEnabledForPreset(AgentId agentId, AgentPreset preset) {
@@ -66,9 +73,8 @@ bool agentEnabledForPreset(AgentId agentId, AgentPreset preset) {
     AgentPreset.review =>
       agentId == AgentId.generator || agentId == AgentId.reviewer,
     AgentPreset.triad => kLegacyAgentIds.contains(agentId),
-    AgentPreset.supervisor =>
-      agentId == AgentId.supervisor ||
-      kSupervisorMemberAgentIds.contains(agentId),
+    AgentPreset.supervisor => agentId == AgentId.supervisor ||
+        kSupervisorMemberAgentIds.contains(agentId),
   };
 }
 
@@ -109,9 +115,9 @@ const List<AgentDefinition> kDefaultAgentDefinitions = <AgentDefinition>[
     enabled: false,
     label: 'Supervisor',
     prompt:
-        'You are the Supervisor Codex. Own the project plan, decide which specialist should act next, and make sure the work is completed correctly. Keep an explicit phased plan current at every turn. Specialists report back only to you. Reply with strict JSON using this schema only: {"status":"continue"|"complete","plan":["step 1","step 2"],"next_agent_id":"qa"|"ux"|"senior_engineer"|null,"instruction":"what the next agent should do","user_response":"brief update for the user"}. Use status=complete only when the project is done or no further specialist work is needed.',
+        'You are the Supervisor Codex. Own the project plan, decide which specialist should act next, and make sure the work is completed correctly. Keep an explicit phased plan current at every turn. Specialists report back only to you. Reply with strict JSON using this schema only: {"status":"continue"|"complete","plan":["step 1","step 2"],"next_agent_id":"qa"|"ux"|"senior_engineer"|"scraper"|null,"instruction":"what the next agent should do","user_response":"brief update for the user"}. Use status=complete only when the project is done or no further specialist work is needed.',
     visibility: AgentVisibilityMode.visible,
-    maxTurns: 4,
+    maxTurns: 10,
   ),
   AgentDefinition(
     agentId: AgentId.qa,
@@ -121,7 +127,7 @@ const List<AgentDefinition> kDefaultAgentDefinitions = <AgentDefinition>[
     prompt:
         'You are the QA Codex working for the supervisor. Focus on validation, test coverage, regressions, edge cases, and release risk. Reply to the supervisor with concrete findings, test recommendations, and blockers.',
     visibility: AgentVisibilityMode.collapsed,
-    maxTurns: 2,
+    maxTurns: 8,
   ),
   AgentDefinition(
     agentId: AgentId.ux,
@@ -131,7 +137,7 @@ const List<AgentDefinition> kDefaultAgentDefinitions = <AgentDefinition>[
     prompt:
         'You are the UX Codex working for the supervisor. Focus on user flow, clarity, copy, accessibility, interaction quality, layout consistency, and product usability. Reply to the supervisor with concrete UX feedback and recommendations.',
     visibility: AgentVisibilityMode.collapsed,
-    maxTurns: 2,
+    maxTurns: 8,
   ),
   AgentDefinition(
     agentId: AgentId.seniorEngineer,
@@ -141,13 +147,24 @@ const List<AgentDefinition> kDefaultAgentDefinitions = <AgentDefinition>[
     prompt:
         'You are the Senior Engineering Codex working for the supervisor. Focus on architecture, correctness, implementation strategy, maintainability, and delivery risk. Reply to the supervisor with concrete technical guidance, implementation notes, and critical tradeoffs.',
     visibility: AgentVisibilityMode.collapsed,
-    maxTurns: 2,
+    maxTurns: 8,
+  ),
+  AgentDefinition(
+    agentId: AgentId.scraper,
+    agentType: AgentType.scraper,
+    enabled: false,
+    label: 'Scraper',
+    prompt:
+        'You are the Scraper Codex working for the supervisor. Focus on public web extraction, scraper strategy, parser robustness, structured data capture, and source constraints. Prefer direct HTTP or JSON endpoints before browser automation. Reply to the supervisor with concrete extraction findings, implementation notes, and scraping risks.',
+    visibility: AgentVisibilityMode.collapsed,
+    maxTurns: 8,
   ),
 ];
 
 const AgentConfiguration kDefaultAgentConfiguration = AgentConfiguration(
   preset: AgentPreset.solo,
   displayMode: AgentDisplayMode.showAll,
+  turnBudgetMode: TurnBudgetMode.eachAgent,
   agents: kDefaultAgentDefinitions,
   supervisorMemberIds: kSupervisorMemberAgentIds,
 );
@@ -161,6 +178,7 @@ class AgentDefinition {
     required this.prompt,
     required this.visibility,
     required this.maxTurns,
+    this.model,
     this.providerSessionId,
   });
 
@@ -171,6 +189,7 @@ class AgentDefinition {
   final String prompt;
   final AgentVisibilityMode visibility;
   final int maxTurns;
+  final String? model;
   final String? providerSessionId;
 
   factory AgentDefinition.fromJson(Map<String, dynamic> json) {
@@ -183,6 +202,7 @@ class AgentDefinition {
       enabled: _readBool(json['enabled']) ?? false,
       label: _readString(json['label']) ?? '',
       prompt: _readString(json['prompt']) ?? '',
+      model: _readString(json['model']),
       visibility: agentVisibilityFromJson(
         _readString(json['visibility']) ?? 'visible',
       ),
@@ -198,6 +218,7 @@ class AgentDefinition {
       'enabled': enabled,
       'label': label,
       'prompt': prompt,
+      if (model != null) 'model': model,
       'visibility': agentVisibilityToJson(visibility),
       'max_turns': maxTurns,
     };
@@ -207,6 +228,7 @@ class AgentDefinition {
     bool? enabled,
     String? label,
     String? prompt,
+    String? model,
     AgentVisibilityMode? visibility,
     int? maxTurns,
     String? providerSessionId,
@@ -217,6 +239,7 @@ class AgentDefinition {
       enabled: enabled ?? this.enabled,
       label: label ?? this.label,
       prompt: prompt ?? this.prompt,
+      model: model ?? this.model,
       visibility: visibility ?? this.visibility,
       maxTurns: maxTurns ?? this.maxTurns,
       providerSessionId: providerSessionId ?? this.providerSessionId,
@@ -228,12 +251,14 @@ class AgentConfiguration {
   const AgentConfiguration({
     required this.preset,
     required this.displayMode,
+    required this.turnBudgetMode,
     required this.agents,
     this.supervisorMemberIds = const <AgentId>[],
   });
 
   final AgentPreset preset;
   final AgentDisplayMode displayMode;
+  final TurnBudgetMode turnBudgetMode;
   final List<AgentDefinition> agents;
   final List<AgentId> supervisorMemberIds;
 
@@ -273,6 +298,7 @@ class AgentConfiguration {
         enabled: _readBool(normalizedMap['enabled']) ?? fallback.enabled,
         label: _readString(normalizedMap['label']) ?? fallback.label,
         prompt: _readString(normalizedMap['prompt']) ?? fallback.prompt,
+        model: _readString(normalizedMap['model']) ?? fallback.model,
         visibility: parsedVisibility ?? fallback.visibility,
         maxTurns: _readInt(normalizedMap['max_turns']) ?? fallback.maxTurns,
         providerSessionId: _readString(normalizedMap['provider_session_id']) ??
@@ -290,6 +316,9 @@ class AgentConfiguration {
       preset: agentPresetFromJson(_readString(json['preset']) ?? 'solo'),
       displayMode: agentDisplayModeFromJson(
           _readString(json['display_mode']) ?? 'show_all'),
+      turnBudgetMode: turnBudgetModeFromJson(
+        _readString(json['turn_budget_mode']) ?? 'each_agent',
+      ),
       supervisorMemberIds: parsedSupervisorMembers.isEmpty
           ? kSupervisorMemberAgentIds
           : parsedSupervisorMembers,
@@ -303,6 +332,7 @@ class AgentConfiguration {
     return <String, dynamic>{
       'preset': agentPresetToJson(preset),
       'display_mode': agentDisplayModeToJson(displayMode),
+      'turn_budget_mode': turnBudgetModeToJson(turnBudgetMode),
       'supervisor_member_ids':
           supervisorMemberIds.map(agentIdToJson).toList(growable: false),
       'agents': agents.map((agent) => agent.toJson()).toList(),
@@ -312,12 +342,14 @@ class AgentConfiguration {
   AgentConfiguration copyWith({
     AgentPreset? preset,
     AgentDisplayMode? displayMode,
+    TurnBudgetMode? turnBudgetMode,
     List<AgentDefinition>? agents,
     List<AgentId>? supervisorMemberIds,
   }) {
     return AgentConfiguration(
       preset: preset ?? this.preset,
       displayMode: displayMode ?? this.displayMode,
+      turnBudgetMode: turnBudgetMode ?? this.turnBudgetMode,
       agents: agents ?? this.agents,
       supervisorMemberIds: supervisorMemberIds ?? this.supervisorMemberIds,
     );
@@ -351,6 +383,9 @@ AgentId? tryAgentIdFromJson(String? value) {
       return AgentId.ux;
     case 'senior_engineer':
       return AgentId.seniorEngineer;
+    case 'scraper':
+    case 'scrapper':
+      return AgentId.scraper;
     default:
       return null;
   }
@@ -370,6 +405,7 @@ String agentIdToJson(AgentId value) {
     AgentId.qa => 'qa',
     AgentId.ux => 'ux',
     AgentId.seniorEngineer => 'senior_engineer',
+    AgentId.scraper => 'scraper',
   };
 }
 
@@ -391,6 +427,9 @@ AgentType? tryAgentTypeFromJson(String? value) {
       return AgentType.ux;
     case 'senior_engineer':
       return AgentType.seniorEngineer;
+    case 'scraper':
+    case 'scrapper':
+      return AgentType.scraper;
     default:
       return null;
   }
@@ -410,6 +449,7 @@ String agentTypeToJson(AgentType value) {
     AgentType.qa => 'qa',
     AgentType.ux => 'ux',
     AgentType.seniorEngineer => 'senior_engineer',
+    AgentType.scraper => 'scraper',
   };
 }
 
@@ -422,6 +462,8 @@ AgentTriggerSource agentTriggerSourceFromJson(String value) {
     'qa' => AgentTriggerSource.qa,
     'ux' => AgentTriggerSource.ux,
     'senior_engineer' => AgentTriggerSource.seniorEngineer,
+    'scraper' => AgentTriggerSource.scraper,
+    'scrapper' => AgentTriggerSource.scraper,
     'system' => AgentTriggerSource.system,
     _ => AgentTriggerSource.user,
   };
@@ -437,6 +479,7 @@ String agentTriggerSourceToJson(AgentTriggerSource value) {
     AgentTriggerSource.qa => 'qa',
     AgentTriggerSource.ux => 'ux',
     AgentTriggerSource.seniorEngineer => 'senior_engineer',
+    AgentTriggerSource.scraper => 'scraper',
     AgentTriggerSource.system => 'system',
   };
 }
@@ -497,6 +540,20 @@ String agentPresetToJson(AgentPreset value) {
     AgentPreset.review => 'review',
     AgentPreset.triad => 'triad',
     AgentPreset.supervisor => 'supervisor',
+  };
+}
+
+TurnBudgetMode turnBudgetModeFromJson(String value) {
+  return switch (value) {
+    'supervisor_only' => TurnBudgetMode.supervisorOnly,
+    _ => TurnBudgetMode.eachAgent,
+  };
+}
+
+String turnBudgetModeToJson(TurnBudgetMode value) {
+  return switch (value) {
+    TurnBudgetMode.eachAgent => 'each_agent',
+    TurnBudgetMode.supervisorOnly => 'supervisor_only',
   };
 }
 

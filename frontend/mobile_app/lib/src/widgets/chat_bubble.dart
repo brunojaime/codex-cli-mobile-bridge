@@ -485,6 +485,7 @@ Color _agentHeaderColor(AgentId agentId) {
     AgentId.qa => const Color(0xFFFFB870),
     AgentId.ux => const Color(0xFFA8F0C8),
     AgentId.seniorEngineer => const Color(0xFFC7B5FF),
+    AgentId.scraper => const Color(0xFF7FD5C7),
     _ => const Color(0xFF7CF2D4),
   };
 }
@@ -498,6 +499,7 @@ String _defaultAgentLabel(AgentId agentId) {
     AgentId.qa => 'QA',
     AgentId.ux => 'UX',
     AgentId.seniorEngineer => 'Senior Engineer',
+    AgentId.scraper => 'Scraper',
     AgentId.user => 'User',
   };
 }

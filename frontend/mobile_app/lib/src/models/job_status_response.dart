@@ -192,6 +192,7 @@ AgentId _resolveAgentId(String? rawAgentId, String? rawAgentType) {
     AgentType.qa => AgentId.qa,
     AgentType.ux => AgentId.ux,
     AgentType.seniorEngineer => AgentId.seniorEngineer,
+    AgentType.scraper => AgentId.scraper,
     _ => AgentId.generator,
   };
 }
@@ -210,6 +211,7 @@ AgentType _resolveAgentType(AgentId resolvedAgentId, String? rawAgentType) {
     AgentId.qa => AgentType.qa,
     AgentId.ux => AgentType.ux,
     AgentId.seniorEngineer => AgentType.seniorEngineer,
+    AgentId.scraper => AgentType.scraper,
     AgentId.generator => AgentType.generator,
   };
 }
@@ -222,6 +224,7 @@ ChatNotificationChannel _defaultNotificationChannelForAgent(AgentId agentId) {
     AgentId.qa => ChatNotificationChannel.generator,
     AgentId.ux => ChatNotificationChannel.generator,
     AgentId.seniorEngineer => ChatNotificationChannel.generator,
+    AgentId.scraper => ChatNotificationChannel.generator,
     AgentId.user => ChatNotificationChannel.generic,
     AgentId.generator => ChatNotificationChannel.generator,
   };
@@ -243,6 +246,7 @@ ChatNotificationChannel _resolveNotificationChannel(
     AgentType.qa => ChatNotificationChannel.generator,
     AgentType.ux => ChatNotificationChannel.generator,
     AgentType.seniorEngineer => ChatNotificationChannel.generator,
+    AgentType.scraper => ChatNotificationChannel.generator,
     AgentType.generator => ChatNotificationChannel.generator,
     _ => ChatNotificationChannel.generic,
   };

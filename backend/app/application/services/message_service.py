@@ -35,12 +35,15 @@ from backend.app.domain.entities.agent_configuration import (
     AgentType,
     AgentVisibilityMode,
     SUPERVISOR_MEMBER_AGENT_IDS,
+    TurnBudgetMode,
+    normalize_agent_enum_value,
 )
 from backend.app.domain.entities.agent_profile import (
     AgentProfile,
     builtin_agent_profiles,
     builtin_agent_profiles_by_id,
 )
+from backend.app.domain.entities.agent_run import AgentRun
 from backend.app.domain.entities.chat_session import ChatSession
 from backend.app.domain.entities.job import Job, JobConversationKind, JobStatus
 from backend.app.domain.entities.workspace import Workspace
@@ -201,12 +204,14 @@ class MessageService:
         default_workspace_path: str,
         audio_transcriber: AudioTranscriber,
         document_text_char_limit: int = 20_000,
+        title_generation_model: str | None = None,
     ) -> None:
         self._repository = repository
         self._execution_provider = execution_provider
         self._default_workspace_path = str(Path(default_workspace_path).resolve())
         self._audio_transcriber = audio_transcriber
         self._document_text_char_limit = document_text_char_limit
+        self._title_generation_model = (title_generation_model or "").strip() or None
         self._retry_asset_root = Path(tempfile.gettempdir()) / "codex-remote-retry-assets"
         self._retry_asset_root.mkdir(parents=True, exist_ok=True)
         self._job_monitor_lock = threading.RLock()
@@ -409,9 +414,16 @@ class MessageService:
         return AgentConfiguration(
             preset=normalized.preset,
             display_mode=normalized.display_mode,
+            turn_budget_mode=normalized.turn_budget_mode,
             agents=sanitized_agents,
             supervisor_member_ids=normalized.supervisor_member_ids,
         ).normalized()
+
+    def _run_configuration_snapshot(
+        self,
+        configuration: AgentConfiguration,
+    ) -> AgentConfiguration:
+        return self._profile_configuration_for_storage(configuration)
 
     def _profile_configuration_for_session(
         self,
@@ -494,6 +506,7 @@ class MessageService:
             workspace_path=workspace_path,
         )
         current_configuration = session.agent_configuration.normalized()
+        agent_run: AgentRun | None = None
         self._cancel_reserved_follow_ups_for_inactive_runs(session)
         if conversation_kind == JobConversationKind.PRIMARY and author_type == ChatMessageAuthorType.HUMAN:
             if session.active_agent_run_id:
@@ -506,6 +519,11 @@ class MessageService:
             session.active_agent_run_id = run_id
             session.active_agent_turn_index = 0
             session.auto_turn_index = 0
+            agent_run = AgentRun(
+                run_id=run_id,
+                session_id=session.id,
+                configuration=self._run_configuration_snapshot(current_configuration),
+            )
 
         resolved_run_id = run_id or session.active_agent_run_id or str(uuid4())
         entry_agent_id = self._entry_agent_for_configuration(current_configuration)
@@ -566,6 +584,7 @@ class MessageService:
                 session,
                 entry_agent_id,
             ),
+            model=self._model_for_agent(session, entry_agent_id),
             serial_key=self._serial_key_for_agent(session.id, entry_agent_id),
             conversation_kind=conversation_kind,
             agent_id=entry_agent_id,
@@ -580,10 +599,14 @@ class MessageService:
             session,
             messages=[user_message, assistant_message],
             job=job,
+            agent_run=agent_run,
         )
         self._register_background_job_watch(job.id)
         self._maybe_finalize_session_title(session.id)
         return job
+
+    def list_agent_runs(self, session_id: str) -> list[AgentRun]:
+        return self._repository.list_agent_runs(session_id)
 
     def submit_audio_message(
         self,
@@ -840,6 +863,7 @@ class MessageService:
                 session,
                 original_job.agent_id,
             ),
+            model=self._model_for_agent(session, original_job.agent_id),
             serial_key=self._serial_key_for_agent(
                 session.id,
                 original_job.agent_id,
@@ -1023,6 +1047,7 @@ class MessageService:
         user_message_id: str | None,
         assistant_message_id: str | None,
         provider_session_id: str | None,
+        model: str | None,
         serial_key: str,
         conversation_kind: JobConversationKind,
         agent_id: AgentId,
@@ -1037,6 +1062,7 @@ class MessageService:
             image_paths=retryable_image_paths or None,
             cleanup_paths=cleanup_paths,
             provider_session_id=provider_session_id,
+            model=model,
             serial_key=serial_key,
             submission_token=submission_token,
             workdir=session.workspace_path,
@@ -1415,7 +1441,11 @@ class MessageService:
                 run_id=job.run_id or "",
                 agent_id=specialist_id,
             )
-            if not specialist.enabled or specialist.max_turns <= specialist_turns:
+            specialist_budget_exhausted = (
+                configuration.turn_budget_mode == TurnBudgetMode.EACH_AGENT
+                and specialist.max_turns <= specialist_turns
+            )
+            if not specialist.enabled or specialist_budget_exhausted:
                 self._complete_agent_run(
                     session=session,
                     run_id=job.run_id or "",
@@ -1759,6 +1789,17 @@ class MessageService:
         definition = configuration.agents.get(agent_id)
         if definition is not None:
             return definition.provider_session_id
+        return None
+
+    def _model_for_agent(
+        self,
+        session: ChatSession,
+        agent_id: AgentId,
+    ) -> str | None:
+        configuration = session.agent_configuration.normalized()
+        definition = configuration.agents.get(agent_id)
+        if definition is not None:
+            return definition.model
         return None
 
     def _serial_key_for_agent(
@@ -2338,6 +2379,7 @@ class MessageService:
                 session,
                 agent_id,
             ),
+            model=self._model_for_agent(session, agent_id),
             serial_key=self._serial_key_for_agent(session.id, agent_id),
             conversation_kind=conversation_kind,
             agent_id=agent_id,
@@ -2480,6 +2522,7 @@ class MessageService:
             AgentTriggerSource.QA: AgentId.QA,
             AgentTriggerSource.UX: AgentId.UX,
             AgentTriggerSource.SENIOR_ENGINEER: AgentId.SENIOR_ENGINEER,
+            AgentTriggerSource.SCRAPER: AgentId.SCRAPER,
         }
         return mapping.get(trigger_source)
 
@@ -2495,6 +2538,7 @@ class MessageService:
             AgentId.QA: AgentTriggerSource.QA,
             AgentId.UX: AgentTriggerSource.UX,
             AgentId.SENIOR_ENGINEER: AgentTriggerSource.SENIOR_ENGINEER,
+            AgentId.SCRAPER: AgentTriggerSource.SCRAPER,
         }.get(agent_id, AgentTriggerSource.SYSTEM)
 
     def _build_generator_execution_message(
@@ -2642,7 +2686,9 @@ class MessageService:
         next_agent_id: AgentId | None = None
         if raw_next_agent_id not in {None, ""}:
             try:
-                candidate = AgentId(str(raw_next_agent_id).strip())
+                candidate = AgentId(
+                    normalize_agent_enum_value(str(raw_next_agent_id).strip())
+                )
             except ValueError:
                 return None
             if candidate not in SUPERVISOR_MEMBER_AGENT_IDS:
@@ -2733,6 +2779,7 @@ class MessageService:
                 prompt,
                 serial_key=f"{session.id}:title",
                 workdir=session.workspace_path,
+                model=self._title_generation_model,
             )
         except Exception:
             return None

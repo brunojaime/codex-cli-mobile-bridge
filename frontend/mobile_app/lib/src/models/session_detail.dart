@@ -1,5 +1,6 @@
 import 'agent_configuration.dart';
 import 'chat_message.dart';
+import 'conversation_product.dart';
 import 'current_run_execution.dart';
 import 'reviewer_lifecycle_state.dart';
 
@@ -26,6 +27,7 @@ class SessionDetail {
     this.autoReviewerPrompt,
     this.autoTurnIndex = 0,
     this.reviewerState = ReviewerLifecycleState.off,
+    this.conversationProduct,
     this.currentRun,
     this.recentRuns = const <CurrentRunExecution>[],
   });
@@ -48,6 +50,7 @@ class SessionDetail {
   final String? autoReviewerPrompt;
   final int autoTurnIndex;
   final ReviewerLifecycleState reviewerState;
+  final ConversationProduct? conversationProduct;
   final CurrentRunExecution? currentRun;
   final List<CurrentRunExecution> recentRuns;
   final DateTime createdAt;
@@ -73,6 +76,7 @@ class SessionDetail {
     String? autoReviewerPrompt,
     int? autoTurnIndex,
     ReviewerLifecycleState? reviewerState,
+    ConversationProduct? conversationProduct,
     CurrentRunExecution? currentRun,
     List<CurrentRunExecution>? recentRuns,
     DateTime? createdAt,
@@ -102,6 +106,7 @@ class SessionDetail {
       autoReviewerPrompt: autoReviewerPrompt ?? this.autoReviewerPrompt,
       autoTurnIndex: autoTurnIndex ?? this.autoTurnIndex,
       reviewerState: reviewerState ?? this.reviewerState,
+      conversationProduct: conversationProduct ?? this.conversationProduct,
       currentRun: currentRun ?? this.currentRun,
       recentRuns: recentRuns ?? this.recentRuns,
     );
@@ -137,6 +142,11 @@ class SessionDetail {
       reviewerState: reviewerLifecycleStateFromJson(
         json['reviewer_state'] as String?,
       ),
+      conversationProduct: json['conversation_product'] is Map<String, dynamic>
+          ? ConversationProduct.fromJson(
+              json['conversation_product'] as Map<String, dynamic>,
+            )
+          : null,
       currentRun: json['current_run'] is Map<String, dynamic>
           ? CurrentRunExecution.fromJson(
               json['current_run'] as Map<String, dynamic>,

@@ -27,6 +27,7 @@ class ExecutionProvider(ABC):
         image_paths: list[str] | None = None,
         cleanup_paths: list[str] | None = None,
         provider_session_id: str | None = None,
+        model: str | None = None,
         serial_key: str | None = None,
         submission_token: str | None = None,
         workdir: str | None = None,

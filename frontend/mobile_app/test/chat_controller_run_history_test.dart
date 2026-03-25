@@ -9,7 +9,8 @@ import 'package:codex_mobile_frontend/src/state/chat_controller.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  test('job snapshots update the active recent run and keep completed rows stable',
+  test(
+      'job snapshots update the active recent run and keep completed rows stable',
       () async {
     final controller = ChatController(
       apiClient: _RunHistoryApiClient(),

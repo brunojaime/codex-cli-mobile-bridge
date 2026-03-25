@@ -7,6 +7,7 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 
 import '../models/agent_configuration.dart';
 import '../models/agent_profile.dart';
+import '../models/agent_profile_blueprint.dart';
 import '../models/chat_message.dart';
 import '../models/chat_session_summary.dart';
 import '../models/current_run_execution.dart';
@@ -39,6 +40,7 @@ class ChatController extends ChangeNotifier {
   final Map<int, _OutgoingUploadTicket> _outgoingUploads =
       <int, _OutgoingUploadTicket>{};
   final Set<String> _handledTerminalJobs = <String>{};
+  final Set<String> _autoImportedAgentProfileIds = <String>{};
 
   SessionDetail? _currentSession;
   String? _selectedSessionId;
@@ -413,6 +415,7 @@ class ChatController extends ChangeNotifier {
       _selectedSessionId = sessionId;
       _reconcilePendingJobsForSession(_currentSession);
       _trackPendingJobsFromSession(_currentSession);
+      await _maybeImportGeneratedAgentProfiles(_currentSession);
       _errorText = null;
       notifyListeners();
     } catch (error) {
@@ -865,6 +868,7 @@ class ChatController extends ChangeNotifier {
     _currentSession = _overlaySessionWithJobSnapshots(session);
     _reconcilePendingJobsForSession(_currentSession);
     _trackPendingJobsFromSession(_currentSession);
+    await _maybeImportGeneratedAgentProfiles(_currentSession);
     _errorText = null;
     notifyListeners();
   }
@@ -1091,6 +1095,47 @@ class ChatController extends ChangeNotifier {
       currentRun: currentRun,
       recentRuns: recentRuns,
     );
+  }
+
+  Future<void> _maybeImportGeneratedAgentProfiles(
+      SessionDetail? session) async {
+    if (session == null || session.agentProfileId != 'agent_creator') {
+      return;
+    }
+
+    final knownProfileIds = <String>{
+      ..._autoImportedAgentProfileIds,
+      ..._agentProfiles.map((profile) => profile.id),
+    };
+    final profilesToImport = <AgentProfile>[];
+
+    for (final message in session.messages.reversed) {
+      if (message.isUser || message.status != ChatMessageStatus.completed) {
+        continue;
+      }
+      final generatedProfiles = extractAgentProfilesFromMessage(message.text);
+      for (final profile in generatedProfiles) {
+        if (knownProfileIds.add(profile.id)) {
+          profilesToImport.add(profile);
+        }
+      }
+    }
+
+    if (profilesToImport.isEmpty) {
+      return;
+    }
+
+    try {
+      final importedProfiles = await _apiClient.importAgentProfiles(
+        profilesToImport,
+      );
+      _autoImportedAgentProfileIds.addAll(
+        importedProfiles.map((profile) => profile.id),
+      );
+      await refreshAgentProfiles();
+    } catch (_) {
+      // Ignore malformed generated blueprints so the chat stays usable.
+    }
   }
 
   void _finishTrackingJob(String jobId) {
@@ -1366,6 +1411,7 @@ class ChatController extends ChangeNotifier {
       AgentId.qa => 'QA',
       AgentId.ux => 'UX',
       AgentId.seniorEngineer => 'Senior Engineer',
+      AgentId.scraper => 'Scraper',
       AgentId.user => 'User',
     };
   }

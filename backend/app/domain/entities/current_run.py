@@ -5,9 +5,12 @@ from datetime import datetime, timezone
 from enum import StrEnum
 
 from backend.app.domain.entities.agent_configuration import (
+    AgentConfiguration,
     AgentId,
     AgentPreset,
+    SUPERVISOR_AGENT_IDS,
     SUPERVISOR_MEMBER_AGENT_IDS,
+    TurnBudgetMode,
 )
 from backend.app.domain.entities.chat_message import (
     ChatMessage,
@@ -26,6 +29,7 @@ class RunStageId(StrEnum):
     QA = "qa"
     UX = "ux"
     SENIOR_ENGINEER = "senior_engineer"
+    SCRAPER = "scraper"
 
 
 class RunStageState(StrEnum):
@@ -48,6 +52,7 @@ class RunStageExecution:
     configured: bool
     attempt_count: int = 0
     max_turns: int = 0
+    has_turn_budget: bool = False
     message_id: str | None = None
     job_id: str | None = None
     job_status: JobStatus | None = None
@@ -62,9 +67,13 @@ class CurrentRunExecution:
     run_id: str
     state: RunStageState
     is_active: bool
+    preset: AgentPreset
+    turn_budget_mode: TurnBudgetMode | None
     started_at: datetime | None
     updated_at: datetime | None
     completed_at: datetime | None
+    participant_agent_ids: tuple[AgentId, ...]
+    call_count: int
     stages: list[RunStageExecution]
 
 
@@ -73,6 +82,7 @@ def derive_current_run_execution(
     *,
     messages: list[ChatMessage],
     jobs_by_id: dict[str, Job] | None = None,
+    run_configurations_by_id: dict[str, AgentConfiguration] | None = None,
 ) -> CurrentRunExecution | None:
     run_id = session.active_agent_run_id
     if not run_id:
@@ -82,6 +92,7 @@ def derive_current_run_execution(
         run_id=run_id,
         messages=messages,
         jobs_by_id=jobs_by_id,
+        run_configurations_by_id=run_configurations_by_id,
         is_active=True,
     )
 
@@ -91,6 +102,7 @@ def derive_recent_run_executions(
     *,
     messages: list[ChatMessage],
     jobs_by_id: dict[str, Job] | None = None,
+    run_configurations_by_id: dict[str, AgentConfiguration] | None = None,
     limit: int = 5,
 ) -> list[CurrentRunExecution]:
     if limit <= 0:
@@ -102,6 +114,7 @@ def derive_recent_run_executions(
         session,
         messages=messages,
         jobs_by_id=jobs_by_id,
+        run_configurations_by_id=run_configurations_by_id,
     )
     if active_run is not None:
         runs.append(active_run)
@@ -118,6 +131,7 @@ def derive_recent_run_executions(
             run_id=run_id,
             messages=messages,
             jobs_by_id=jobs_by_id,
+            run_configurations_by_id=run_configurations_by_id,
             is_active=False,
         )
         for run_id in historical_run_ids
@@ -141,12 +155,24 @@ def _derive_run_execution(
     run_id: str,
     messages: list[ChatMessage],
     jobs_by_id: dict[str, Job] | None,
+    run_configurations_by_id: dict[str, AgentConfiguration] | None,
     is_active: bool,
 ) -> CurrentRunExecution:
-    configuration = session.agent_configuration.normalized()
     run_messages = [message for message in messages if message.run_id == run_id]
+    configuration = _configuration_for_run(
+        session=session,
+        run_id=run_id,
+        run_messages=run_messages,
+        run_configurations_by_id=run_configurations_by_id,
+        is_active=is_active,
+    )
+    run_preset = _run_preset_for_messages(configuration=configuration, run_messages=run_messages)
+    turn_budget_mode = _turn_budget_mode_for_run(
+        configuration=configuration,
+        run_preset=run_preset,
+    )
 
-    if configuration.preset == AgentPreset.SUPERVISOR:
+    if run_preset == AgentPreset.SUPERVISOR:
         stages = _derive_supervisor_stages(
             configuration=configuration,
             run_messages=run_messages,
@@ -177,88 +203,105 @@ def _derive_run_execution(
         for stage in stages
         if stage.state in _TERMINAL_STAGE_STATES and (stage.completed_at or stage.updated_at)
     ]
+    participant_agent_ids = _participant_agent_ids_for_run(
+        run_messages=run_messages,
+        stages=stages,
+        preset=run_preset,
+    )
     return CurrentRunExecution(
         run_id=run_id,
         state=state,
         is_active=is_active,
+        preset=run_preset,
+        turn_budget_mode=turn_budget_mode,
         started_at=min(started_candidates) if started_candidates else None,
         updated_at=max(updated_candidates) if updated_candidates else None,
         completed_at=max(completed_candidates) if completed_candidates and state in _TERMINAL_STAGE_STATES else None,
+        participant_agent_ids=participant_agent_ids,
+        call_count=sum(stage.attempt_count for stage in stages if stage.attempt_count > 0),
         stages=stages,
     )
 
 
 def _derive_legacy_stages(
     *,
-    configuration,
+    configuration: AgentConfiguration | None,
     run_messages: list[ChatMessage],
     jobs_by_id: dict[str, Job] | None,
     is_active: bool,
 ) -> list[RunStageExecution]:
-    generator_config = configuration.agents[AgentId.GENERATOR]
+    generator_config = configuration.agents[AgentId.GENERATOR] if configuration else None
+    generator_message = _latest_stage_message(
+        run_messages,
+        agent_id=AgentId.GENERATOR,
+        role=ChatMessageRole.ASSISTANT,
+    )
     generator_stage = _derive_stage_from_message(
         stage=RunStageId.GENERATOR,
-        message=_latest_stage_message(
-            run_messages,
-            agent_id=AgentId.GENERATOR,
-            role=ChatMessageRole.ASSISTANT,
-        ),
+        message=generator_message,
         attempt_count=_count_stage_messages(
             run_messages,
             agent_id=AgentId.GENERATOR,
             role=ChatMessageRole.ASSISTANT,
         ),
         configured=True,
-        max_turns=max(1, generator_config.max_turns),
+        max_turns=max(1, generator_config.max_turns) if generator_config else 0,
+        has_turn_budget=generator_config is not None and generator_config.max_turns > 0,
         jobs_by_id=jobs_by_id,
         fallback_state=RunStageState.WAITING if is_active else RunStageState.SKIPPED,
     )
 
-    reviewer_config = configuration.agents[AgentId.REVIEWER]
+    reviewer_config = configuration.agents[AgentId.REVIEWER] if configuration else None
+    reviewer_message = _latest_stage_message(
+        run_messages,
+        agent_id=AgentId.REVIEWER,
+        role=ChatMessageRole.USER,
+    )
+    reviewer_configured = (reviewer_config.enabled if reviewer_config else False) or reviewer_message is not None
     reviewer_stage = _derive_stage_from_message(
         stage=RunStageId.REVIEWER,
-        message=_latest_stage_message(
-            run_messages,
-            agent_id=AgentId.REVIEWER,
-            role=ChatMessageRole.USER,
-        ),
+        message=reviewer_message,
         attempt_count=_count_stage_messages(
             run_messages,
             agent_id=AgentId.REVIEWER,
             role=ChatMessageRole.USER,
         ),
-        configured=reviewer_config.enabled,
-        max_turns=reviewer_config.max_turns if reviewer_config.enabled else 0,
+        configured=reviewer_configured,
+        max_turns=reviewer_config.max_turns if reviewer_config and reviewer_config.enabled else 0,
+        has_turn_budget=reviewer_config is not None and reviewer_config.enabled and reviewer_config.max_turns > 0,
         jobs_by_id=jobs_by_id,
         fallback_state=_missing_follow_up_stage_state(
             previous_state=generator_stage.state,
-            configured=reviewer_config.enabled,
+            configured=reviewer_configured,
             is_active=is_active,
         ),
     )
 
-    summary_config = configuration.agents[AgentId.SUMMARY]
+    summary_config = configuration.agents[AgentId.SUMMARY] if configuration else None
     summary_prerequisite = (
-        reviewer_stage.state if reviewer_config.enabled else generator_stage.state
+        reviewer_stage.state if reviewer_config and reviewer_config.enabled else generator_stage.state
     )
+    summary_message = _latest_stage_message(
+        run_messages,
+        agent_id=AgentId.SUMMARY,
+        role=ChatMessageRole.ASSISTANT,
+    )
+    summary_configured = (summary_config.enabled if summary_config else False) or summary_message is not None
     summary_stage = _derive_stage_from_message(
         stage=RunStageId.SUMMARY,
-        message=_latest_stage_message(
-            run_messages,
-            agent_id=AgentId.SUMMARY,
-            role=ChatMessageRole.ASSISTANT,
-        ),
+        message=summary_message,
         attempt_count=_count_stage_messages(
             run_messages,
             agent_id=AgentId.SUMMARY,
             role=ChatMessageRole.ASSISTANT,
         ),
-        configured=summary_config.enabled,
-        max_turns=summary_config.max_turns if summary_config.enabled else 0,
+        configured=summary_configured,
+        max_turns=summary_config.max_turns if summary_config and summary_config.enabled else 0,
+        has_turn_budget=summary_config is not None and summary_config.enabled and summary_config.max_turns > 0,
         jobs_by_id=jobs_by_id,
         fallback_state=_missing_follow_up_stage_state(
             previous_state=summary_prerequisite,
-            configured=summary_config.enabled,
+            configured=summary_configured,
             is_active=is_active,
         ),
     )
@@ -268,37 +311,49 @@ def _derive_legacy_stages(
 
 def _derive_supervisor_stages(
     *,
-    configuration,
+    configuration: AgentConfiguration | None,
     run_messages: list[ChatMessage],
     jobs_by_id: dict[str, Job] | None,
     is_active: bool,
 ) -> list[RunStageExecution]:
-    ordered_agent_ids = (AgentId.SUPERVISOR, *configuration.supervisor_member_ids)
+    ordered_agent_ids = _supervisor_stage_agent_ids(
+        configuration=configuration,
+        run_messages=run_messages,
+    )
     stages: list[RunStageExecution] = []
     previous_state = RunStageState.WAITING if is_active else RunStageState.SKIPPED
     for agent_id in ordered_agent_ids:
-        definition = configuration.agents[agent_id]
+        definition = configuration.agents[agent_id] if configuration else None
+        stage_message = _latest_stage_message(
+            run_messages,
+            agent_id=agent_id,
+            role=ChatMessageRole.ASSISTANT,
+        )
+        attempt_count = _count_stage_messages(
+            run_messages,
+            agent_id=agent_id,
+            role=ChatMessageRole.ASSISTANT,
+        )
+        configured_for_run = (definition.enabled if definition else False) or stage_message is not None
+        effective_max_turns = _effective_supervisor_stage_budget(
+            agent_id=agent_id,
+            configuration=configuration,
+            definition=definition,
+        )
         stage = _derive_stage_from_message(
             stage=_stage_id_for_agent(agent_id),
-            message=_latest_stage_message(
-                run_messages,
-                agent_id=agent_id,
-                role=ChatMessageRole.ASSISTANT,
-            ),
-            attempt_count=_count_stage_messages(
-                run_messages,
-                agent_id=agent_id,
-                role=ChatMessageRole.ASSISTANT,
-            ),
-            configured=definition.enabled,
-            max_turns=definition.max_turns if definition.enabled else 0,
+            message=stage_message,
+            attempt_count=attempt_count,
+            configured=configured_for_run,
+            max_turns=effective_max_turns,
+            has_turn_budget=effective_max_turns > 0,
             jobs_by_id=jobs_by_id,
             fallback_state=(
                 RunStageState.WAITING
                 if agent_id == AgentId.SUPERVISOR and is_active
                 else _missing_follow_up_stage_state(
                     previous_state=previous_state,
-                    configured=definition.enabled,
+                    configured=configured_for_run,
                     is_active=is_active,
                 )
             ),
@@ -317,7 +372,21 @@ def _stage_id_for_agent(agent_id: AgentId) -> RunStageId:
         AgentId.QA: RunStageId.QA,
         AgentId.UX: RunStageId.UX,
         AgentId.SENIOR_ENGINEER: RunStageId.SENIOR_ENGINEER,
+        AgentId.SCRAPER: RunStageId.SCRAPER,
     }[agent_id]
+
+
+def _agent_id_for_stage(stage: RunStageId) -> AgentId:
+    return {
+        RunStageId.GENERATOR: AgentId.GENERATOR,
+        RunStageId.REVIEWER: AgentId.REVIEWER,
+        RunStageId.SUMMARY: AgentId.SUMMARY,
+        RunStageId.SUPERVISOR: AgentId.SUPERVISOR,
+        RunStageId.QA: AgentId.QA,
+        RunStageId.UX: AgentId.UX,
+        RunStageId.SENIOR_ENGINEER: AgentId.SENIOR_ENGINEER,
+        RunStageId.SCRAPER: AgentId.SCRAPER,
+    }[stage]
 
 
 def _derive_stage_from_message(
@@ -327,6 +396,7 @@ def _derive_stage_from_message(
     attempt_count: int,
     configured: bool,
     max_turns: int,
+    has_turn_budget: bool,
     jobs_by_id: dict[str, Job] | None,
     fallback_state: RunStageState,
 ) -> RunStageExecution:
@@ -337,6 +407,7 @@ def _derive_stage_from_message(
             configured=configured,
             attempt_count=attempt_count,
             max_turns=max_turns,
+            has_turn_budget=has_turn_budget,
         )
 
     job = _job_for_message(message, jobs_by_id=jobs_by_id)
@@ -354,6 +425,7 @@ def _derive_stage_from_message(
         configured=configured,
         attempt_count=max(1, attempt_count),
         max_turns=max_turns,
+        has_turn_budget=has_turn_budget,
         message_id=message.id,
         job_id=message.job_id,
         job_status=job.status if job is not None else None,
@@ -421,6 +493,118 @@ def _latest_stage_message(
         if message.agent_id == agent_id and message.role == role:
             return message
     return None
+
+
+def _configuration_for_run(
+    *,
+    session: ChatSession,
+    run_id: str,
+    run_messages: list[ChatMessage],
+    run_configurations_by_id: dict[str, AgentConfiguration] | None,
+    is_active: bool,
+) -> AgentConfiguration | None:
+    if run_configurations_by_id and run_id in run_configurations_by_id:
+        return run_configurations_by_id[run_id].normalized()
+    if is_active:
+        return session.agent_configuration.normalized()
+    if not run_messages:
+        return None
+    return None
+
+
+def _run_preset_for_messages(
+    *,
+    configuration: AgentConfiguration | None,
+    run_messages: list[ChatMessage],
+) -> AgentPreset:
+    if configuration is not None and configuration.preset == AgentPreset.SUPERVISOR:
+        return AgentPreset.SUPERVISOR
+    if any(message.agent_id in SUPERVISOR_AGENT_IDS for message in run_messages):
+        return AgentPreset.SUPERVISOR
+    if any(message.agent_id == AgentId.SUMMARY for message in run_messages):
+        return AgentPreset.TRIAD
+    if any(message.agent_id == AgentId.REVIEWER for message in run_messages):
+        return AgentPreset.REVIEW
+    if configuration is not None:
+        return configuration.preset
+    return AgentPreset.SOLO
+
+
+def _turn_budget_mode_for_run(
+    *,
+    configuration: AgentConfiguration | None,
+    run_preset: AgentPreset,
+) -> TurnBudgetMode | None:
+    if run_preset != AgentPreset.SUPERVISOR:
+        return TurnBudgetMode.EACH_AGENT
+    if configuration is None:
+        return None
+    return configuration.turn_budget_mode
+
+
+def _supervisor_stage_agent_ids(
+    *,
+    configuration: AgentConfiguration | None,
+    run_messages: list[ChatMessage],
+) -> tuple[AgentId, ...]:
+    configured_members = set(configuration.supervisor_member_ids) if configuration else set()
+    observed_members = {
+        message.agent_id
+        for message in run_messages
+        if message.agent_id in SUPERVISOR_MEMBER_AGENT_IDS
+    }
+    return (
+        AgentId.SUPERVISOR,
+        *(
+            agent_id
+            for agent_id in SUPERVISOR_MEMBER_AGENT_IDS
+            if agent_id in configured_members or agent_id in observed_members
+        ),
+    )
+
+
+def _participant_agent_ids_for_run(
+    *,
+    run_messages: list[ChatMessage],
+    stages: list[RunStageExecution],
+    preset: AgentPreset,
+) -> tuple[AgentId, ...]:
+    observed_agent_ids = tuple(
+        agent_id
+        for agent_id in (
+            AgentId.SUPERVISOR,
+            *SUPERVISOR_MEMBER_AGENT_IDS,
+        )
+        if any(message.agent_id == agent_id for message in run_messages)
+    )
+    if observed_agent_ids:
+        return observed_agent_ids
+    if preset == AgentPreset.SUPERVISOR:
+        return tuple(
+            _agent_id_for_stage(stage.stage)
+            for stage in stages
+            if stage.configured and _agent_id_for_stage(stage.stage) in SUPERVISOR_AGENT_IDS
+        )
+    return tuple(
+        _agent_id_for_stage(stage.stage)
+        for stage in stages
+        if stage.configured and stage.attempt_count > 0
+    )
+
+
+def _effective_supervisor_stage_budget(
+    *,
+    agent_id: AgentId,
+    configuration: AgentConfiguration | None,
+    definition,
+) -> int:
+    if definition is None or not definition.enabled:
+        return 0
+    if agent_id == AgentId.SUPERVISOR:
+        return definition.max_turns
+    if configuration is None or configuration.turn_budget_mode != TurnBudgetMode.EACH_AGENT:
+        return 0
+    return definition.max_turns
 
 
 def _count_stage_messages(

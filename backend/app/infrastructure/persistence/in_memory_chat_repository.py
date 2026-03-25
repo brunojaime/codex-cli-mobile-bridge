@@ -4,6 +4,7 @@ from threading import RLock
 from pathlib import Path
 
 from backend.app.domain.entities.agent_configuration import AgentId, derive_legacy_auto_mode_fields
+from backend.app.domain.entities.agent_run import AgentRun
 from backend.app.domain.entities.agent_profile import AgentProfile, builtin_agent_profiles_by_id
 from backend.app.domain.entities.chat_message import ChatMessage
 from backend.app.domain.entities.chat_session import ChatSession
@@ -19,6 +20,7 @@ class InMemoryChatRepository(ChatRepository):
     def __init__(self, *, projects_root: str) -> None:
         self._jobs: dict[str, Job] = {}
         self._sessions: dict[str, ChatSession] = {}
+        self._agent_runs: dict[str, AgentRun] = {}
         self._agent_profiles: dict[str, AgentProfile] = {}
         self._messages: dict[str, ChatMessage] = {}
         self._message_dedupe_keys: dict[str, str] = {}
@@ -39,6 +41,26 @@ class InMemoryChatRepository(ChatRepository):
     def save_job(self, job: Job) -> None:
         with self._lock:
             self._jobs[job.id] = job
+
+    def save_agent_run(self, agent_run: AgentRun) -> None:
+        with self._lock:
+            self._agent_runs[agent_run.run_id] = agent_run.normalized()
+
+    def get_agent_run(self, run_id: str) -> AgentRun | None:
+        with self._lock:
+            return self._agent_runs.get(run_id)
+
+    def list_agent_runs(self, session_id: str) -> list[AgentRun]:
+        with self._lock:
+            return sorted(
+                (
+                    agent_run
+                    for agent_run in self._agent_runs.values()
+                    if agent_run.session_id == session_id
+                ),
+                key=lambda agent_run: (agent_run.updated_at, agent_run.run_id),
+                reverse=True,
+            )
 
     def get_job(self, job_id: str) -> Job | None:
         with self._lock:
@@ -148,9 +170,12 @@ class InMemoryChatRepository(ChatRepository):
         *,
         messages: list[ChatMessage],
         job: Job | None = None,
+        agent_run: AgentRun | None = None,
     ) -> bool:
         try:
             self.save_session(session)
+            if agent_run is not None:
+                self.save_agent_run(agent_run)
             for message in messages:
                 self.save_message(message)
             if job is not None:

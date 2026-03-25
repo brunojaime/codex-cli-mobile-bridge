@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from backend.app.domain.entities.agent_run import AgentRun
 from backend.app.domain.entities.agent_profile import AgentProfile
 from backend.app.domain.entities.chat_message import ChatMessage
 from backend.app.domain.entities.chat_session import ChatSession
@@ -26,6 +27,15 @@ class UnavailableChatRepository(ChatRepository):
         raise PersistenceUnavailableError(self._issue)
 
     def save_job(self, job: Job) -> None:
+        raise PersistenceUnavailableError(self._issue)
+
+    def save_agent_run(self, agent_run: AgentRun) -> None:
+        raise PersistenceUnavailableError(self._issue)
+
+    def get_agent_run(self, run_id: str) -> AgentRun | None:
+        raise PersistenceUnavailableError(self._issue)
+
+    def list_agent_runs(self, session_id: str) -> list[AgentRun]:
         raise PersistenceUnavailableError(self._issue)
 
     def get_job(self, job_id: str) -> Job | None:
@@ -70,5 +80,6 @@ class UnavailableChatRepository(ChatRepository):
         *,
         messages: list[ChatMessage],
         job: Job | None = None,
+        agent_run: AgentRun | None = None,
     ) -> bool:
         raise PersistenceUnavailableError(self._issue)

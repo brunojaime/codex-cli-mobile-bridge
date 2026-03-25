@@ -1,39 +1,36 @@
 import 'package:flutter/services.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 
+import 'reply_speech_player.dart' as reply_speech;
+
 String sanitizeTextForSpeech(String text) {
-  return text
-      .replaceAllMapped(
-        RegExp(r'\[([^\]]+)\]\([^)]+\)'),
-        (match) => match.group(1) ?? '',
-      )
-      .replaceAll(RegExp(r'```[\s\S]*?```'), ' ')
-      .replaceAll('`', '')
-      .replaceAll(RegExp(r'\s+'), ' ')
-      .trim();
+  return reply_speech.sanitizeTextForSpeech(text);
 }
 
-class TextToSpeechPlayer {
+class TextToSpeechPlayer implements reply_speech.ReplySpeechPlayer {
   final FlutterTts _tts = FlutterTts();
   bool _configured = false;
 
-  Future<void> speak(String rawText) async {
+  @override
+  Future<bool> speak(String rawText) async {
     final text = sanitizeTextForSpeech(rawText);
     if (text.isEmpty) {
-      return;
+      return true;
     }
 
     try {
       await _configureIfNeeded();
       await _tts.stop();
       await _tts.speak(text);
+      return true;
     } on MissingPluginException {
-      return;
+      return false;
     } catch (_) {
-      return;
+      return false;
     }
   }
 
+  @override
   Future<void> stop() async {
     try {
       await _tts.stop();
@@ -44,6 +41,7 @@ class TextToSpeechPlayer {
     }
   }
 
+  @override
   Future<void> dispose() async {
     await stop();
   }

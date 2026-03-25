@@ -3,8 +3,9 @@ from __future__ import annotations
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 
-from fastapi.concurrency import run_in_threadpool
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, WebSocket
+from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import Response
 
 from backend.app.api.schemas import (
     AgentConfigurationRequest,
@@ -28,6 +29,7 @@ from backend.app.api.schemas import (
     ServerCapabilitiesResponse,
     SessionDetailResponse,
     SessionSummaryResponse,
+    SpeechRequest,
     WorkspaceResponse,
 )
 from backend.app.application.services.message_service import (
@@ -40,6 +42,10 @@ from backend.app.domain.entities.chat_message import ChatMessage, ChatMessageSta
 from backend.app.domain.entities.job import Job
 from backend.app.container import AppContainer
 from backend.app.infrastructure.network.tailscale import detect_tailscale_info
+from backend.app.infrastructure.speech.base import (
+    SpeechSynthesisError,
+    SpeechSynthesisUnavailableError,
+)
 from backend.app.infrastructure.transcription.base import (
     AudioTranscriptionError,
     AudioTranscriptionUnavailableError,
@@ -63,6 +69,7 @@ async def healthcheck(
 ) -> HealthResponse:
     tailscale = detect_tailscale_info(container.settings.tailscale_socket)
     audio_status = container.audio_transcriber.status()
+    speech_status = container.speech_synthesizer.status()
     persistence_issue = container.persistence_startup_issue
     return HealthResponse(
         server_name=container.settings.server_name,
@@ -75,6 +82,11 @@ async def healthcheck(
         audio_transcription_resolved_backend=audio_status.backend,
         audio_transcription_ready=audio_status.ready,
         audio_transcription_detail=audio_status.detail,
+        speech_synthesis_backend=speech_status.backend,
+        speech_synthesis_ready=speech_status.ready,
+        speech_synthesis_detail=speech_status.detail,
+        speech_synthesis_voice=speech_status.voice,
+        speech_synthesis_response_format=speech_status.response_format,
         tailscale_installed=tailscale.installed,
         tailscale_online=tailscale.online,
         tailscale_tailnet_name=tailscale.tailnet_name,
@@ -90,19 +102,46 @@ async def capabilities(
     container: AppContainer = Depends(get_container),
 ) -> ServerCapabilitiesResponse:
     audio_status = container.audio_transcriber.status()
+    speech_status = container.speech_synthesizer.status()
     service = container.message_service
     return ServerCapabilitiesResponse(
         supports_audio_input=audio_status.ready,
+        supports_speech_output=speech_status.ready,
         supports_image_input=True,
         supports_document_input=True,
         supports_attachment_batch=True,
         supports_job_cancellation=service.supports_job_cancellation(),
         supports_job_retry=service.supports_job_retry(),
         supports_push_job_stream=True,
+        speech_output_backend=speech_status.backend,
+        speech_output_voice=speech_status.voice,
+        speech_output_response_format=speech_status.response_format,
         audio_max_upload_bytes=container.settings.audio_max_upload_bytes,
         image_max_upload_bytes=container.settings.image_max_upload_bytes,
         document_max_upload_bytes=container.settings.document_max_upload_bytes,
         document_text_char_limit=container.settings.document_text_char_limit,
+    )
+
+
+@router.post("/audio/speech")
+async def synthesize_speech(
+    payload: SpeechRequest,
+    container: AppContainer = Depends(get_container),
+) -> Response:
+    try:
+        result = await run_in_threadpool(
+            container.speech_synthesizer.synthesize,
+            payload.text,
+        )
+    except SpeechSynthesisUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except SpeechSynthesisError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    return Response(
+        content=result.audio_bytes,
+        media_type=result.content_type,
+        headers={"X-Response-Format": result.response_format},
     )
 
 
@@ -401,6 +440,16 @@ def _jobs_by_id_for_messages(
     return jobs_by_id
 
 
+def _run_configurations_by_id_for_session(
+    service: MessageService,
+    session_id: str,
+) -> dict[str, object]:
+    return {
+        agent_run.run_id: agent_run.configuration
+        for agent_run in service.list_agent_runs(session_id)
+    }
+
+
 @router.get("/sessions", response_model=list[SessionSummaryResponse])
 async def list_sessions(
     service: MessageService = Depends(get_message_service),
@@ -461,6 +510,7 @@ async def get_session(
         refreshed_session,
         messages=messages,
         jobs_by_id=jobs_by_id,
+        run_configurations_by_id=_run_configurations_by_id_for_session(service, session_id),
     )
 
 
@@ -484,6 +534,7 @@ async def update_session_archive_state(
         session,
         messages=messages,
         jobs_by_id=_jobs_by_id_for_messages(service, messages),
+        run_configurations_by_id=_run_configurations_by_id_for_session(service, session_id),
     )
 
 
@@ -529,6 +580,7 @@ async def update_auto_mode(
         session,
         messages=messages,
         jobs_by_id=_jobs_by_id_for_messages(service, messages),
+        run_configurations_by_id=_run_configurations_by_id_for_session(service, session_id),
     )
 
 
@@ -554,6 +606,7 @@ async def update_agent_configuration(
         session,
         messages=messages,
         jobs_by_id=_jobs_by_id_for_messages(service, messages),
+        run_configurations_by_id=_run_configurations_by_id_for_session(service, session_id),
     )
 
 
@@ -579,6 +632,7 @@ async def apply_agent_profile_to_session(
         session,
         messages=messages,
         jobs_by_id=_jobs_by_id_for_messages(service, messages),
+        run_configurations_by_id=_run_configurations_by_id_for_session(service, session_id),
     )
 
 
@@ -609,6 +663,7 @@ async def recover_message(
         session,
         messages=messages,
         jobs_by_id=_jobs_by_id_for_messages(service, messages),
+        run_configurations_by_id=_run_configurations_by_id_for_session(service, session_id),
     )
 
 

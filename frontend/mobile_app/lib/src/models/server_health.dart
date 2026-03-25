@@ -6,9 +6,14 @@ class ServerHealth {
     required this.audioTranscriptionBackend,
     required this.audioTranscriptionResolvedBackend,
     required this.audioTranscriptionReady,
+    required this.speechSynthesisBackend,
+    required this.speechSynthesisReady,
     required this.tailscaleInstalled,
     required this.tailscaleOnline,
     this.audioTranscriptionDetail,
+    this.speechSynthesisDetail,
+    this.speechSynthesisVoice,
+    this.speechSynthesisResponseFormat,
     this.tailscaleTailnetName,
     this.tailscaleDeviceName,
     this.tailscaleMagicDnsName,
@@ -23,6 +28,11 @@ class ServerHealth {
   final String audioTranscriptionResolvedBackend;
   final bool audioTranscriptionReady;
   final String? audioTranscriptionDetail;
+  final String speechSynthesisBackend;
+  final bool speechSynthesisReady;
+  final String? speechSynthesisDetail;
+  final String? speechSynthesisVoice;
+  final String? speechSynthesisResponseFormat;
   final bool tailscaleInstalled;
   final bool tailscaleOnline;
   final String? tailscaleTailnetName;
@@ -36,11 +46,20 @@ class ServerHealth {
       serverName: json['server_name'] as String,
       backendMode: json['backend_mode'] as String,
       projectsRoot: json['projects_root'] as String,
-      audioTranscriptionBackend: json['audio_transcription_backend'] as String? ?? 'auto',
+      audioTranscriptionBackend:
+          json['audio_transcription_backend'] as String? ?? 'auto',
       audioTranscriptionResolvedBackend:
           json['audio_transcription_resolved_backend'] as String? ?? 'unknown',
-      audioTranscriptionReady: json['audio_transcription_ready'] as bool? ?? false,
+      audioTranscriptionReady:
+          json['audio_transcription_ready'] as bool? ?? false,
       audioTranscriptionDetail: json['audio_transcription_detail'] as String?,
+      speechSynthesisBackend:
+          json['speech_synthesis_backend'] as String? ?? 'disabled',
+      speechSynthesisReady: json['speech_synthesis_ready'] as bool? ?? false,
+      speechSynthesisDetail: json['speech_synthesis_detail'] as String?,
+      speechSynthesisVoice: json['speech_synthesis_voice'] as String?,
+      speechSynthesisResponseFormat:
+          json['speech_synthesis_response_format'] as String?,
       tailscaleInstalled: json['tailscale_installed'] as bool? ?? false,
       tailscaleOnline: json['tailscale_online'] as bool? ?? false,
       tailscaleTailnetName: json['tailscale_tailnet_name'] as String?,

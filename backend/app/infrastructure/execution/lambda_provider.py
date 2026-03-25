@@ -30,6 +30,7 @@ class _QueuedLambdaExecution:
     image_paths: list[str] | None = None
     cleanup_paths: list[str] | None = None
     provider_session_id: str | None = None
+    model: str | None = None
     workdir: str | None = None
     serial_key: str | None = None
 
@@ -64,6 +65,7 @@ class LambdaExecutionProvider(ExecutionProvider):
         image_paths: list[str] | None = None,
         cleanup_paths: list[str] | None = None,
         provider_session_id: str | None = None,
+        model: str | None = None,
         serial_key: str | None = None,
         submission_token: str | None = None,
         workdir: str | None = None,
@@ -75,6 +77,7 @@ class LambdaExecutionProvider(ExecutionProvider):
             image_paths=image_paths,
             cleanup_paths=cleanup_paths,
             provider_session_id=provider_session_id,
+            model=model,
             workdir=workdir,
             serial_key=serial_key,
         )
@@ -181,6 +184,7 @@ class LambdaExecutionProvider(ExecutionProvider):
         image_paths: list[str] | None = None,
         cleanup_paths: list[str] | None = None,
         provider_session_id: str | None = None,
+        model: str | None = None,
         workdir: str | None = None,
     ) -> None:
         self._set_state(
@@ -199,6 +203,7 @@ class LambdaExecutionProvider(ExecutionProvider):
                         "image_paths": image_paths or [],
                         "client_job_id": job_id,
                         "provider_session_id": provider_session_id,
+                        "model": model,
                         "workdir": workdir,
                     },
                 )
@@ -378,6 +383,7 @@ class LambdaExecutionProvider(ExecutionProvider):
                         execution.image_paths,
                         execution.cleanup_paths,
                         resolved_provider_session_id,
+                        execution.model,
                         execution.workdir,
                     ),
                 ),
@@ -392,6 +398,7 @@ class LambdaExecutionProvider(ExecutionProvider):
                     execution.image_paths,
                     execution.cleanup_paths,
                     resolved_provider_session_id,
+                    execution.model,
                     execution.workdir,
                 ),
             )
