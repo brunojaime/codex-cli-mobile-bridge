@@ -62,6 +62,7 @@ class LocalExecutionProvider(ExecutionProvider):
         self._serial_successors: dict[str, str] = {}
         self._serial_predecessors: dict[str, str] = {}
         self._job_serial_keys: dict[str, str] = {}
+        self._submission_tokens: dict[str, str] = {}
         self._lock = threading.RLock()
 
     def execute(
@@ -72,6 +73,7 @@ class LocalExecutionProvider(ExecutionProvider):
         cleanup_paths: list[str] | None = None,
         provider_session_id: str | None = None,
         serial_key: str | None = None,
+        submission_token: str | None = None,
         workdir: str | None = None,
     ) -> str:
         job_id = str(uuid4())
@@ -88,6 +90,8 @@ class LocalExecutionProvider(ExecutionProvider):
 
         with self._lock:
             self._queued_executions[job_id] = execution
+            if submission_token:
+                self._submission_tokens[submission_token] = job_id
             predecessor_job_id: str | None = None
             if serial_key:
                 self._job_serial_keys[job_id] = serial_key
@@ -198,6 +202,13 @@ class LocalExecutionProvider(ExecutionProvider):
             self._remove_queued_job(job_id)
 
         return True
+
+    def supports_submission_lookup(self) -> bool:
+        return True
+
+    def get_job_id_by_submission_token(self, submission_token: str) -> str | None:
+        with self._lock:
+            return self._submission_tokens.get(submission_token)
 
     def _start_execution(
         self,

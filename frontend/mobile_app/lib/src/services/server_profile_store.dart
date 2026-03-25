@@ -15,20 +15,39 @@ class ServerProfileStore {
   }) async {
     final preferences = await SharedPreferences.getInstance();
     final rawProfiles = preferences.getStringList(_profilesKey) ?? <String>[];
-    final profiles = rawProfiles
+    final storedProfiles = rawProfiles
         .map((item) =>
             ServerProfile.fromJson(jsonDecode(item) as Map<String, dynamic>))
         .toList();
+    ServerProfile? storedDefaultProfile;
+    for (final profile in storedProfiles) {
+      if (profile.id == 'default-server') {
+        storedDefaultProfile = profile;
+        break;
+      }
+    }
+    final defaultProfile = ServerProfile(
+      id: 'default-server',
+      name: storedDefaultProfile?.name ?? 'Local',
+      baseUrl: defaultBaseUrl,
+    );
 
-    if (profiles.isEmpty) {
-      final defaultProfile = ServerProfile(
-        id: 'default-server',
-        name: 'Local',
-        baseUrl: defaultBaseUrl,
-      );
-      await saveProfiles(<ServerProfile>[defaultProfile]);
+    final profiles = <ServerProfile>[
+      defaultProfile,
+      ...storedProfiles.where((profile) => profile.id != defaultProfile.id),
+    ];
+
+    final shouldPersistProfiles = storedProfiles.length != profiles.length ||
+        storedProfiles.isEmpty ||
+        storedProfiles.first.id != defaultProfile.id ||
+        storedDefaultProfile?.baseUrl != defaultBaseUrl;
+    if (shouldPersistProfiles) {
+      await saveProfiles(profiles);
+    }
+
+    final activeProfileId = preferences.getString(_activeProfileIdKey);
+    if (activeProfileId == null || activeProfileId.isEmpty) {
       await saveActiveProfileId(defaultProfile.id);
-      return <ServerProfile>[defaultProfile];
     }
 
     return profiles;

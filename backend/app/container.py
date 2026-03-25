@@ -1,15 +1,22 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import sqlite3
 
 from backend.app.application.services.message_service import MessageService
-from backend.app.domain.repositories.chat_repository import ChatRepository
+from backend.app.domain.repositories.chat_repository import (
+    ChatRepository,
+    PersistenceDiagnosticIssue,
+)
 from backend.app.infrastructure.config.settings import Settings
 from backend.app.infrastructure.execution.base import ExecutionProvider
 from backend.app.infrastructure.execution.lambda_provider import LambdaExecutionProvider
 from backend.app.infrastructure.execution.local_provider import LocalExecutionProvider
 from backend.app.infrastructure.persistence.in_memory_chat_repository import InMemoryChatRepository
 from backend.app.infrastructure.persistence.sqlite_chat_repository import SqliteChatRepository
+from backend.app.infrastructure.persistence.unavailable_chat_repository import (
+    UnavailableChatRepository,
+)
 from backend.app.infrastructure.realtime.job_stream_hub import JobStreamHub
 from backend.app.infrastructure.transcription.base import AudioTranscriber
 from backend.app.infrastructure.transcription.command_transcriber import CommandAudioTranscriber
@@ -26,11 +33,17 @@ class AppContainer:
     message_service: MessageService
     job_stream_hub: JobStreamHub
     audio_transcriber: AudioTranscriber
+    persistence_startup_issue: PersistenceDiagnosticIssue | None = None
 
 
 def build_container(settings: Settings | None = None) -> AppContainer:
     resolved_settings = settings or Settings()
-    repository = _build_repository(resolved_settings)
+    persistence_startup_issue: PersistenceDiagnosticIssue | None = None
+    try:
+        repository = _build_repository(resolved_settings)
+    except Exception as exc:
+        persistence_startup_issue = _persistence_startup_issue_from_exception(exc)
+        repository = UnavailableChatRepository(persistence_startup_issue)
     provider = _build_execution_provider(resolved_settings)
     audio_transcriber = _build_audio_transcriber(resolved_settings)
     message_service = MessageService(
@@ -48,6 +61,7 @@ def build_container(settings: Settings | None = None) -> AppContainer:
         message_service=message_service,
         job_stream_hub=job_stream_hub,
         audio_transcriber=audio_transcriber,
+        persistence_startup_issue=persistence_startup_issue,
     )
 
 
@@ -58,6 +72,26 @@ def _build_repository(settings: Settings) -> ChatRepository:
     return SqliteChatRepository(
         database_path=settings.chat_store_path,
         projects_root=settings.projects_root,
+    )
+
+
+def _persistence_startup_issue_from_exception(
+    exc: Exception,
+) -> PersistenceDiagnosticIssue:
+    if isinstance(exc, sqlite3.DatabaseError):
+        return PersistenceDiagnosticIssue(
+            table="database",
+            row_id=None,
+            field=None,
+            code="sqlite_database_error",
+            detail=str(exc),
+        )
+    return PersistenceDiagnosticIssue(
+        table="database",
+        row_id=None,
+        field=None,
+        code="persistence_startup_failure",
+        detail=str(exc),
     )
 
 

@@ -4,6 +4,9 @@ import 'package:cross_file/cross_file.dart';
 import 'package:http/http.dart' as http;
 
 import '../models/job_status_response.dart';
+import '../models/agent_configuration.dart';
+import '../models/agent_profile.dart';
+import '../models/chat_message.dart';
 import '../models/server_capabilities.dart';
 import '../models/session_detail.dart';
 import '../models/chat_session_summary.dart';
@@ -78,9 +81,38 @@ class ApiClient {
         .toList();
   }
 
+  Future<List<AgentProfile>> listAgentProfiles() async {
+    final response = await _client.get(Uri.parse('$baseUrl/agent-profiles'));
+
+    if (response.statusCode != 200) {
+      throw Exception('Failed to list agent profiles: ${response.body}');
+    }
+
+    final payload = jsonDecode(response.body) as List<dynamic>;
+    return payload
+        .map((item) => AgentProfile.fromJson(item as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<List<AgentProfile>> exportAgentProfiles() async {
+    final response = await _client.get(
+      Uri.parse('$baseUrl/agent-profiles/export'),
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception('Failed to export agent profiles: ${response.body}');
+    }
+
+    final payload = jsonDecode(response.body) as List<dynamic>;
+    return payload
+        .map((item) => AgentProfile.fromJson(item as Map<String, dynamic>))
+        .toList();
+  }
+
   Future<SessionDetail> createSession({
     String? title,
     String? workspacePath,
+    String? agentProfileId,
   }) async {
     final response = await _client.post(
       Uri.parse('$baseUrl/sessions'),
@@ -88,6 +120,7 @@ class ApiClient {
       body: jsonEncode({
         'title': title,
         if (workspacePath != null) 'workspace_path': workspacePath,
+        if (agentProfileId != null) 'agent_profile_id': agentProfileId,
       }),
     );
 
@@ -97,6 +130,53 @@ class ApiClient {
 
     return SessionDetail.fromJson(
         jsonDecode(response.body) as Map<String, dynamic>);
+  }
+
+  Future<AgentProfile> createAgentProfile({
+    required String name,
+    required String description,
+    required String colorHex,
+    required AgentConfiguration configuration,
+  }) async {
+    final response = await _client.post(
+      Uri.parse('$baseUrl/agent-profiles'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode(<String, dynamic>{
+        'name': name,
+        'description': description,
+        'color_hex': colorHex,
+        'configuration': configuration.toJson(),
+      }),
+    );
+
+    if (response.statusCode != 201) {
+      throw Exception('Failed to create agent profile: ${response.body}');
+    }
+
+    return AgentProfile.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<List<AgentProfile>> importAgentProfiles(
+    List<AgentProfile> profiles,
+  ) async {
+    final response = await _client.post(
+      Uri.parse('$baseUrl/agent-profiles/import'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode(<String, dynamic>{
+        'profiles': profiles.map((profile) => profile.toJson()).toList(),
+      }),
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception('Failed to import agent profiles: ${response.body}');
+    }
+
+    final payload = jsonDecode(response.body) as List<dynamic>;
+    return payload
+        .map((item) => AgentProfile.fromJson(item as Map<String, dynamic>))
+        .toList();
   }
 
   Future<SessionDetail> getSession(String sessionId) async {
@@ -129,6 +209,69 @@ class ApiClient {
 
     if (response.statusCode != 200) {
       throw Exception('Failed to update auto mode: ${response.body}');
+    }
+
+    return SessionDetail.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<SessionDetail> updateAgentConfiguration(
+    String sessionId, {
+    required AgentConfiguration configuration,
+  }) async {
+    final response = await _client.put(
+      Uri.parse('$baseUrl/sessions/$sessionId/agents'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode(configuration.toJson()),
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception(
+        'Failed to update agent configuration: ${response.body}',
+      );
+    }
+
+    return SessionDetail.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<SessionDetail> setSessionArchived(
+    String sessionId, {
+    required bool archived,
+  }) async {
+    final response = await _client.put(
+      Uri.parse('$baseUrl/sessions/$sessionId/archive'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode(<String, dynamic>{
+        'archived': archived,
+      }),
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception('Failed to update archive state: ${response.body}');
+    }
+
+    return SessionDetail.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<SessionDetail> applyAgentProfile(
+    String sessionId, {
+    required String profileId,
+  }) async {
+    final response = await _client.put(
+      Uri.parse('$baseUrl/sessions/$sessionId/agent-profile'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode(<String, dynamic>{
+        'profile_id': profileId,
+      }),
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception('Failed to apply agent profile: ${response.body}');
     }
 
     return SessionDetail.fromJson(
@@ -342,6 +485,28 @@ class ApiClient {
 
     final payload = jsonDecode(response.body) as Map<String, dynamic>;
     return JobStatusResponse.fromJson(payload);
+  }
+
+  Future<SessionDetail> recoverMessage(
+    String sessionId,
+    String messageId, {
+    required MessageRecoveryAction action,
+  }) async {
+    final response = await _client.post(
+      Uri.parse('$baseUrl/sessions/$sessionId/messages/$messageId/recovery'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode(<String, dynamic>{
+        'action': action == MessageRecoveryAction.cancel ? 'cancel' : 'retry',
+      }),
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception('Failed to recover message: ${response.body}');
+    }
+
+    return SessionDetail.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
   }
 
   Future<http.MultipartFile> _multipartFileFromXFile(

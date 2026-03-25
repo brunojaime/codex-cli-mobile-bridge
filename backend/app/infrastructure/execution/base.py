@@ -28,6 +28,7 @@ class ExecutionProvider(ABC):
         cleanup_paths: list[str] | None = None,
         provider_session_id: str | None = None,
         serial_key: str | None = None,
+        submission_token: str | None = None,
         workdir: str | None = None,
     ) -> str:
         raise NotImplementedError
@@ -70,6 +71,12 @@ class ExecutionProvider(ABC):
 
     def cancel_job(self, job_id: str) -> bool:
         return False
+
+    def supports_submission_lookup(self) -> bool:
+        return False
+
+    def get_job_id_by_submission_token(self, submission_token: str) -> str | None:
+        return None
 
     @abstractmethod
     def get_provider_session_id(self, job_id: str) -> str | None:

@@ -1,6 +1,8 @@
 import 'chat_notification_service_stub.dart'
     if (dart.library.io) 'chat_notification_service_io.dart' as impl;
 
+enum ChatNotificationChannel { generic, generator, reviewer, summary }
+
 abstract class ChatNotificationService {
   const ChatNotificationService();
 
@@ -14,12 +16,14 @@ class ChatCompletedNotification {
     required this.id,
     required this.title,
     required this.body,
+    required this.channel,
     this.summary,
   });
 
   final int id;
   final String title;
   final String body;
+  final ChatNotificationChannel channel;
   final String? summary;
 }
 

@@ -7,6 +7,12 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, WebSocket
 
 from backend.app.api.schemas import (
+    AgentConfigurationRequest,
+    AgentProfileCreateRequest,
+    AgentProfileImportRequest,
+    AgentProfileResponse,
+    AgentProfileSelectionRequest,
+    ArchiveSessionRequest,
     AudioMessageAcceptedResponse,
     AutoModeConfigRequest,
     CreateSessionRequest,
@@ -15,7 +21,10 @@ from backend.app.api.schemas import (
     ImageMessageAcceptedResponse,
     JobResponse,
     MessageAcceptedResponse,
+    MessageRecoveryRequest,
     MessageRequest,
+    PersistenceIntegrityIssueResponse,
+    PersistenceIntegrityResponse,
     ServerCapabilitiesResponse,
     SessionDetailResponse,
     SessionSummaryResponse,
@@ -27,6 +36,8 @@ from backend.app.application.services.message_service import (
     MessageService,
     UnsupportedDocumentError,
 )
+from backend.app.domain.entities.chat_message import ChatMessage, ChatMessageStatus
+from backend.app.domain.entities.job import Job
 from backend.app.container import AppContainer
 from backend.app.infrastructure.network.tailscale import detect_tailscale_info
 from backend.app.infrastructure.transcription.base import (
@@ -52,10 +63,14 @@ async def healthcheck(
 ) -> HealthResponse:
     tailscale = detect_tailscale_info(container.settings.tailscale_socket)
     audio_status = container.audio_transcriber.status()
+    persistence_issue = container.persistence_startup_issue
     return HealthResponse(
         server_name=container.settings.server_name,
         backend_mode=container.settings.effective_backend_mode,
         projects_root=container.settings.projects_root,
+        persistence_available=container.message_service.is_persistence_available(),
+        persistence_error_code=persistence_issue.code if persistence_issue else None,
+        persistence_error_detail=persistence_issue.detail if persistence_issue else None,
         audio_transcription_backend=container.settings.audio_transcription_backend,
         audio_transcription_resolved_backend=audio_status.backend,
         audio_transcription_ready=audio_status.ready,
@@ -88,6 +103,23 @@ async def capabilities(
         image_max_upload_bytes=container.settings.image_max_upload_bytes,
         document_max_upload_bytes=container.settings.document_max_upload_bytes,
         document_text_char_limit=container.settings.document_text_char_limit,
+    )
+
+
+@router.get("/debug/persistence/integrity", response_model=PersistenceIntegrityResponse)
+async def persistence_integrity(
+    container: AppContainer = Depends(get_container),
+) -> PersistenceIntegrityResponse:
+    issues = await run_in_threadpool(
+        container.message_service.validate_persistence_integrity,
+    )
+    return PersistenceIntegrityResponse(
+        backend=container.settings.chat_store_backend,
+        is_healthy=not issues,
+        issues=[
+            PersistenceIntegrityIssueResponse.from_domain(issue)
+            for issue in issues
+        ],
     )
 
 
@@ -299,6 +331,76 @@ async def list_workspaces(
     ]
 
 
+@router.get("/agent-profiles", response_model=list[AgentProfileResponse])
+async def list_agent_profiles(
+    service: MessageService = Depends(get_message_service),
+) -> list[AgentProfileResponse]:
+    return [
+        AgentProfileResponse.from_domain(profile)
+        for profile in service.list_agent_profiles()
+    ]
+
+
+@router.post("/agent-profiles", response_model=AgentProfileResponse, status_code=201)
+async def create_agent_profile(
+    payload: AgentProfileCreateRequest,
+    service: MessageService = Depends(get_message_service),
+) -> AgentProfileResponse:
+    try:
+        profile = await run_in_threadpool(
+            service.create_agent_profile,
+            name=payload.name,
+            description=payload.description,
+            color_hex=payload.color_hex,
+            configuration=payload.configuration.to_domain(),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return AgentProfileResponse.from_domain(profile)
+
+
+@router.get("/agent-profiles/export", response_model=list[AgentProfileResponse])
+async def export_agent_profiles(
+    service: MessageService = Depends(get_message_service),
+) -> list[AgentProfileResponse]:
+    return [
+        AgentProfileResponse.from_domain(profile)
+        for profile in service.export_agent_profiles()
+    ]
+
+
+@router.post("/agent-profiles/import", response_model=list[AgentProfileResponse])
+async def import_agent_profiles(
+    payload: AgentProfileImportRequest,
+    service: MessageService = Depends(get_message_service),
+) -> list[AgentProfileResponse]:
+    try:
+        profiles = await run_in_threadpool(
+            service.import_agent_profiles,
+            profiles=[item.to_domain() for item in payload.profiles],
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return [
+        AgentProfileResponse.from_domain(profile)
+        for profile in profiles
+    ]
+
+
+def _jobs_by_id_for_messages(
+    service: MessageService,
+    messages: list[ChatMessage],
+) -> dict[str, Job]:
+    jobs_by_id: dict[str, Job] = {}
+    for message in messages:
+        if not message.job_id:
+            continue
+        synced_job = service.get_job(message.job_id)
+        if synced_job is not None:
+            jobs_by_id[message.job_id] = synced_job
+    return jobs_by_id
+
+
 @router.get("/sessions", response_model=list[SessionSummaryResponse])
 async def list_sessions(
     service: MessageService = Depends(get_message_service),
@@ -308,24 +410,12 @@ async def list_sessions(
 
     for session in sessions:
         messages = service.list_messages(session.id)
-        last_message = messages[-1] if messages else None
-        has_pending = any(message.status == "pending" for message in messages)
+        jobs_by_id = _jobs_by_id_for_messages(service, messages)
         responses.append(
-            SessionSummaryResponse(
-                id=session.id,
-                title=session.title,
-                workspace_path=session.workspace_path,
-                workspace_name=session.workspace_name,
-                provider_session_id=session.provider_session_id,
-                reviewer_provider_session_id=session.reviewer_provider_session_id,
-                auto_mode_enabled=session.auto_mode_enabled,
-                auto_max_turns=session.auto_max_turns,
-                auto_reviewer_prompt=session.auto_reviewer_prompt,
-                auto_turn_index=session.auto_turn_index,
-                created_at=session.created_at,
-                updated_at=session.updated_at,
-                last_message_preview=last_message.content[:120] if last_message else None,
-                has_pending_messages=has_pending,
+            SessionSummaryResponse.from_domain(
+                session,
+                messages=messages,
+                jobs_by_id=jobs_by_id,
             )
         )
 
@@ -341,6 +431,7 @@ async def create_session(
         session = service.create_session(
             title=payload.title,
             workspace_path=payload.workspace_path,
+            agent_profile_id=payload.agent_profile_id,
         )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -362,13 +453,7 @@ async def get_session(
             service.get_job(message.job_id)
 
     messages = service.list_messages(session_id)
-    jobs_by_id = {}
-    for message in messages:
-        if not message.job_id:
-            continue
-        synced_job = service.get_job(message.job_id)
-        if synced_job is not None:
-            jobs_by_id[message.job_id] = synced_job
+    jobs_by_id = _jobs_by_id_for_messages(service, messages)
 
     refreshed_session = service.get_session(session_id) or session
 
@@ -376,6 +461,29 @@ async def get_session(
         refreshed_session,
         messages=messages,
         jobs_by_id=jobs_by_id,
+    )
+
+
+@router.put("/sessions/{session_id}/archive", response_model=SessionDetailResponse)
+async def update_session_archive_state(
+    session_id: str,
+    payload: ArchiveSessionRequest,
+    service: MessageService = Depends(get_message_service),
+) -> SessionDetailResponse:
+    try:
+        session = await run_in_threadpool(
+            service.set_session_archived,
+            session_id=session_id,
+            archived=payload.archived,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    messages = service.list_messages(session_id)
+    return SessionDetailResponse.from_domain(
+        session,
+        messages=messages,
+        jobs_by_id=_jobs_by_id_for_messages(service, messages),
     )
 
 
@@ -413,10 +521,94 @@ async def update_auto_mode(
         )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
+    messages = service.list_messages(session_id)
     return SessionDetailResponse.from_domain(
         session,
-        messages=service.list_messages(session_id),
+        messages=messages,
+        jobs_by_id=_jobs_by_id_for_messages(service, messages),
+    )
+
+
+@router.put("/sessions/{session_id}/agents", response_model=SessionDetailResponse)
+async def update_agent_configuration(
+    session_id: str,
+    payload: AgentConfigurationRequest,
+    service: MessageService = Depends(get_message_service),
+) -> SessionDetailResponse:
+    try:
+        session = await run_in_threadpool(
+            service.update_agent_configuration,
+            session_id=session_id,
+            configuration=payload.to_domain(),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    messages = service.list_messages(session_id)
+    return SessionDetailResponse.from_domain(
+        session,
+        messages=messages,
+        jobs_by_id=_jobs_by_id_for_messages(service, messages),
+    )
+
+
+@router.put("/sessions/{session_id}/agent-profile", response_model=SessionDetailResponse)
+async def apply_agent_profile_to_session(
+    session_id: str,
+    payload: AgentProfileSelectionRequest,
+    service: MessageService = Depends(get_message_service),
+) -> SessionDetailResponse:
+    try:
+        session = await run_in_threadpool(
+            service.apply_agent_profile_to_session,
+            session_id=session_id,
+            profile_id=payload.profile_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    messages = service.list_messages(session_id)
+    return SessionDetailResponse.from_domain(
+        session,
+        messages=messages,
+        jobs_by_id=_jobs_by_id_for_messages(service, messages),
+    )
+
+
+@router.post(
+    "/sessions/{session_id}/messages/{message_id}/recovery",
+    response_model=SessionDetailResponse,
+)
+async def recover_message(
+    session_id: str,
+    message_id: str,
+    payload: MessageRecoveryRequest,
+    service: MessageService = Depends(get_message_service),
+) -> SessionDetailResponse:
+    try:
+        session = await run_in_threadpool(
+            service.recover_submission_unknown_message,
+            session_id=session_id,
+            message_id=message_id,
+            action=payload.action,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    messages = service.list_messages(session_id)
+    return SessionDetailResponse.from_domain(
+        session,
+        messages=messages,
+        jobs_by_id=_jobs_by_id_for_messages(service, messages),
     )
 
 

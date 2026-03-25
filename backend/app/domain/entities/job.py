@@ -4,6 +4,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import StrEnum
 
+from backend.app.domain.entities.agent_configuration import AgentId, AgentTriggerSource, AgentType
+
 
 def utc_now() -> datetime:
     return datetime.now(timezone.utc)
@@ -24,6 +26,9 @@ class JobStatus(StrEnum):
 class JobConversationKind(StrEnum):
     PRIMARY = "primary"
     REVIEWER = "reviewer"
+    SUMMARY = "summary"
+    SUPERVISOR = "supervisor"
+    SPECIALIST = "specialist"
 
 
 @dataclass(slots=True)
@@ -35,6 +40,11 @@ class Job:
     assistant_message_id: str | None = None
     provider_session_id: str | None = None
     conversation_kind: JobConversationKind = JobConversationKind.PRIMARY
+    agent_id: AgentId = AgentId.GENERATOR
+    agent_type: AgentType = AgentType.GENERATOR
+    trigger_source: AgentTriggerSource = AgentTriggerSource.USER
+    run_id: str | None = None
+    submission_token: str | None = None
     auto_chain_processed: bool = False
     execution_message: str | None = None
     image_paths: list[str] = field(default_factory=list)

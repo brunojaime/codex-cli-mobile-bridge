@@ -74,6 +74,16 @@ Copy the template first:
 cp .env.example .env
 ```
 
+This repository is not tied to `/home/brunojaime` or a specific `Projects` folder. The project picker is already driven by `.env`, specifically `PROJECTS_ROOT`.
+
+The only machine-specific values you normally need to change are:
+
+- `SERVER_NAME`
+- `PROJECTS_ROOT`
+- `CHAT_STORE_PATH` if you want the database somewhere else
+- `TAILSCALE_SOCKET` only if you use a userspace Tailscale daemon
+- `OPENAI_API_KEY` only if you choose OpenAI-based transcription
+
 Important variables:
 
 - `BACKEND_MODE=local|lambda`
@@ -96,6 +106,11 @@ Important variables:
 - `AUDIO_TRANSCRIPTION_LOCAL_MODEL=small`
 - `OPENAI_API_KEY=...`
 
+Two values matter most for a fresh machine:
+
+- `PROJECTS_ROOT` must point to the parent folder that contains your repositories. The "Choose Project" sheet lists the direct child directories under that folder.
+- `SERVER_NAME` is what the mobile app shows in the server picker.
+
 Recommended defaults:
 
 - `BACKEND_MODE=local`
@@ -104,6 +119,31 @@ Recommended defaults:
 - `CODEX_RESUME_ARGS=--skip-git-repo-check --dangerously-bypass-approvals-and-sandbox`
 - `EXECUTION_TIMEOUT_SECONDS=0`
 - `CHAT_STORE_BACKEND=sqlite`
+
+Example `.env` for another computer:
+
+```env
+BACKEND_MODE=local
+SERVER_NAME=work-laptop
+CODEX_COMMAND=codex
+CODEX_USE_EXEC=true
+CODEX_EXEC_ARGS=--skip-git-repo-check --color never --dangerously-bypass-approvals-and-sandbox
+CODEX_RESUME_ARGS=--skip-git-repo-check --dangerously-bypass-approvals-and-sandbox
+CODEX_WORKDIR=.
+PROJECTS_ROOT=/home/alice/Documents/Projects
+CHAT_STORE_BACKEND=sqlite
+CHAT_STORE_PATH=.data/chat_store.sqlite3
+TAILSCALE_SOCKET=
+API_HOST=0.0.0.0
+API_PORT=8000
+API_BASE_URL=http://localhost:8000
+EXECUTION_TIMEOUT_SECONDS=0
+AUDIO_TRANSCRIPTION_BACKEND=faster_whisper
+AUDIO_TRANSCRIPTION_LOCAL_MODEL=small
+AUDIO_TRANSCRIPTION_LOCAL_COMPUTE_TYPE=int8
+AUDIO_TRANSCRIPTION_LOCAL_DEVICE=auto
+OPENAI_API_KEY=
+```
 
 The backend uses `codex exec` for new messages and `codex exec resume` for follow-up messages inside the same chat session.
 
@@ -165,6 +205,96 @@ Notes:
 - `AUDIO_TRANSCRIPTION_LOCAL_COMPUTE_TYPE=int8` is a good CPU-friendly setting.
 - If you have a compatible GPU, you can later tune `AUDIO_TRANSCRIPTION_LOCAL_DEVICE` and compute type for faster inference.
 - If you want to use the original OpenAI-hosted Whisper API instead, set `AUDIO_TRANSCRIPTION_BACKEND=openai`, configure `OPENAI_API_KEY`, and choose an OpenAI model such as `whisper-1`.
+
+## Install On Another Computer
+
+Use this flow when you want the same behavior on a second machine.
+
+### 1. Install Prerequisites On The Backend Machine
+
+- Python 3.12+
+- `uv`
+- `ffmpeg`
+- a working `codex` CLI installation authenticated on that machine
+- Tailscale if you want remote access from your phone outside USB or LAN
+
+Ubuntu / Debian example:
+
+```bash
+sudo apt update
+sudo apt install -y python3 python3-venv ffmpeg curl
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+### 2. Clone The Repo And Configure `.env`
+
+```bash
+git clone <your-repo-url>
+cd cli-codex-project
+cp .env.example .env
+```
+
+Then edit `.env` and set at least:
+
+- `SERVER_NAME` to something meaningful such as `home-desktop` or `work-laptop`
+- `PROJECTS_ROOT` to the parent folder that contains the repos you want in the project picker
+- `TAILSCALE_SOCKET` only if you run userspace Tailscale
+
+Important:
+
+- Do not copy `/home/brunojaime/Documents/Projects` to another machine unless that path is actually correct there.
+- The app does not scan recursively. It only lists direct child folders inside `PROJECTS_ROOT`.
+- If you want `project-a` and `project-b` to appear in "Choose Project", they must exist as sibling directories under the configured `PROJECTS_ROOT`.
+
+### 3. Install Python Dependencies
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+uv pip install -e '.[dev]'
+```
+
+If `.venv` already exists, do not recreate it unless you want a fresh environment. Just run:
+
+```bash
+source .venv/bin/activate
+uv pip install -e '.[dev]'
+```
+
+### 4. Start The Backend
+
+```bash
+source .venv/bin/activate
+python main.py
+```
+
+At this point the backend should be serving on:
+
+```text
+http://localhost:8000
+```
+
+Quick checks:
+
+```bash
+curl http://127.0.0.1:8000/health
+curl http://127.0.0.1:8000/workspaces
+```
+
+`/health` should show the configured `server_name` and `projects_root`. `/workspaces` should return the folders under `PROJECTS_ROOT`.
+
+If you want the backend to survive closing that shell:
+
+```bash
+chmod +x scripts/run_backend_detached.sh scripts/stop_backend.sh
+./scripts/run_backend_detached.sh
+```
+
+Stop it with:
+
+```bash
+./scripts/stop_backend.sh
+```
 
 ## Run Locally
 
@@ -294,25 +424,85 @@ flutter run --dart-define=API_BASE_URL=http://127.0.0.1:8000
 
 Recommended when only your own devices should access the backend over the internet.
 
-High-level flow:
+You have two valid Tailscale setups in this repo: normal system Tailscale and userspace Tailscale.
 
-1. Install Tailscale on the backend machine and phone.
-2. Sign both devices into the same tailnet.
-3. Start the backend locally.
-4. Expose the backend through Tailscale Serve if you are using userspace Tailscale.
-5. Add the resulting Tailscale URL in the app.
+#### Standard Tailscale Service
+
+This is the simplest option on a normal Linux laptop or desktop.
+
+1. Install Tailscale on the backend machine.
+2. Install Tailscale on the phone or tablet.
+3. Log both devices into the same tailnet.
+4. Start the backend with `python main.py`.
+5. Use the machine's Tailscale IP or MagicDNS name in the mobile app.
+
+Typical Linux flow:
+
+```bash
+curl -fsSL https://tailscale.com/install.sh | sh
+sudo systemctl enable --now tailscaled
+sudo tailscale up
+tailscale ip -4
+```
+
+With the normal system daemon:
+
+- leave `TAILSCALE_SOCKET=` empty in `.env`
+- the backend healthcheck can still detect Tailscale through the default CLI
+- the mobile app can connect to `http://<tailscale-ip>:8000` or `http://<magic-dns-name>:8000`
 
 Example:
 
-```bash
-tailscale serve --http=80 --bg http://127.0.0.1:8000
-```
-
-Then use:
-
 ```text
-http://your-machine.your-tailnet.ts.net
+http://home-desktop.tailnet-name.ts.net:8000
 ```
+
+#### Userspace Tailscale
+
+Use this only if you intentionally run `tailscaled` in userspace mode.
+
+Start the daemon:
+
+```bash
+./scripts/run_tailscaled_userspace.sh
+```
+
+Then authenticate or reconnect using the userspace socket:
+
+```bash
+tailscale --socket="$HOME/.local/share/tailscale-userspace/tailscaled.sock" up
+```
+
+In `.env`, set:
+
+```env
+TAILSCALE_SOCKET=/home/your-user/.local/share/tailscale-userspace/tailscaled.sock
+```
+
+If you use userspace Tailscale, expose the backend through Tailscale Serve:
+
+```bash
+tailscale --socket="$HOME/.local/share/tailscale-userspace/tailscaled.sock" serve --http=80 http://127.0.0.1:8000
+```
+
+Then use the served MagicDNS URL in the app.
+
+#### What To Install On The Phone
+
+- install the Tailscale mobile app
+- sign into the same tailnet
+- confirm the backend machine appears as online
+- use the backend machine's Tailscale URL in the app server picker
+
+#### What Must Match This Current Setup
+
+For another machine to behave like this one, the backend machine must have:
+
+- a working local `codex` CLI session
+- a valid `.env`
+- `PROJECTS_ROOT` pointing at the real parent folder for that machine's repos
+- the backend running on port `8000`
+- Tailscale connected if you want remote access over the tailnet
 
 ### Other Tunnels
 

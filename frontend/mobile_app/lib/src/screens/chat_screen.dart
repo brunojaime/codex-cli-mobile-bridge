@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
@@ -9,6 +10,8 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../models/chat_session_summary.dart';
 import '../models/chat_message.dart';
+import '../models/agent_configuration.dart';
+import '../models/agent_profile.dart';
 import '../models/server_capabilities.dart';
 import '../models/server_health.dart';
 import '../models/server_profile.dart';
@@ -22,7 +25,11 @@ import '../services/clipboard_image_paste_listener_stub.dart'
 import '../services/server_profile_store.dart';
 import '../services/text_to_speech_player.dart';
 import '../state/chat_controller.dart';
+import '../utils/chat_message_visibility.dart';
+import '../widgets/agent_studio_status_button.dart';
 import '../widgets/chat_bubble.dart';
+import '../widgets/current_run_timeline_card.dart';
+import '../widgets/reviewer_status_banner.dart';
 
 const String _defaultAutoReviewerPrompt =
     'You are receiving the latest answer from a generator Codex. '
@@ -30,16 +37,31 @@ const String _defaultAutoReviewerPrompt =
     'improves the implementation with more code, tighter validation, missing '
     'tests, edge cases, cleanup, or follow-up work. Reply only with that next '
     'prompt.';
+const Key kChatScreenBodyScrollViewKey =
+    ValueKey<String>('chat-screen-body-scroll-view');
+
+enum _AppBarOverflowAction {
+  saveCurrentAgent,
+  replyMode,
+  servers,
+  newChat,
+}
 
 class ChatScreen extends StatefulWidget {
   const ChatScreen({
     super.key,
     required this.initialApiBaseUrl,
     required this.notificationService,
+    this.controllerOverride,
+    this.enableServerBootstrap = true,
+    this.initialSidebarWorkspaces = const <Workspace>[],
   });
 
   final String initialApiBaseUrl;
   final ChatNotificationService notificationService;
+  final ChatController? controllerOverride;
+  final bool enableServerBootstrap;
+  final List<Workspace> initialSidebarWorkspaces;
 
   @override
   State<ChatScreen> createState() => _ChatScreenState();
@@ -59,30 +81,45 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   ServerCapabilities? _activeServerCapabilities;
   String? _serverErrorText;
   bool _sidebarExpanded = false;
+  bool _showArchivedChatsInSidebar = false;
   bool _stickToBottom = true;
   bool _audioRepliesEnabled = false;
+  bool _isOpeningWorkspacePicker = false;
   String? _lastObservedSessionId;
   final Map<String, _ComposerDraft> _sessionDrafts = <String, _ComposerDraft>{};
   final Map<String, String> _spokenAssistantMessageIds = <String, String>{};
+  final Map<String, Set<String>> _collapsedMessageIdsBySession =
+      <String, Set<String>>{};
+  bool _isUpdatingFilteredMessagesView = false;
+  String? _filteredMessagesViewErrorText;
+  static const double _compactAppBarBreakpoint = 640;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _chatController = _buildController(widget.initialApiBaseUrl);
+    _chatController =
+        widget.controllerOverride ?? _buildController(widget.initialApiBaseUrl);
+    if (widget.initialSidebarWorkspaces.isNotEmpty) {
+      _sidebarWorkspaces =
+          List<Workspace>.from(widget.initialSidebarWorkspaces);
+    }
     _chatController.addListener(_handleChatControllerChanged);
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _initializeServerProfiles();
-    });
+    if (widget.enableServerBootstrap && widget.controllerOverride == null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _initializeServerProfiles();
+      });
+    }
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _textToSpeechPlayer.dispose();
-    _chatController
-      ..removeListener(_handleChatControllerChanged)
-      ..dispose();
+    _chatController.removeListener(_handleChatControllerChanged);
+    if (widget.controllerOverride == null) {
+      _chatController.dispose();
+    }
     _textController.dispose();
     _scrollController.dispose();
     super.dispose();
@@ -100,11 +137,19 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     return AnimatedBuilder(
       animation: _chatController,
       builder: (context, _) {
-        final messages = _chatController.messages;
+        final currentSession = _chatController.currentSession;
+        final messages = _visibleMessagesForCurrentSession();
+        final showFilteredMessagesPlaceholder = currentSession != null &&
+            currentSession.messages.isNotEmpty &&
+            messages.isEmpty;
         final screenWidth = MediaQuery.sizeOf(context).width;
+        final isCompactAppBar = screenWidth < _compactAppBarBreakpoint;
         final drawerWidth = math.min(
           screenWidth - 24,
           _sidebarExpanded ? 440.0 : 340.0,
+        );
+        final sessionGroups = _buildSessionGroups(
+          archivedOnly: _showArchivedChatsInSidebar,
         );
         final totalUnreadChatsCount = _totalUnreadChatsCount();
         final totalActivePinnedProjectsCount =
@@ -112,6 +157,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         final totalActivePinnedJobsCount = _totalActivePinnedJobsCount();
         return Scaffold(
           appBar: AppBar(
+            titleSpacing: isCompactAppBar ? 4 : null,
             leading: Builder(
               builder: (context) {
                 return IconButton(
@@ -151,80 +197,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                 );
               },
             ),
-            title: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: <Widget>[
-                Text(_chatController.currentSession?.title ?? 'Codex Remote'),
-                const SizedBox(height: 2),
-                Text.rich(
-                  TextSpan(
-                    text: _activeServer != null
-                        ? 'Server: ${_activeServer!.name}'
-                        : 'Commands execute on your local machine',
-                    children: <InlineSpan>[
-                      if (_chatController.currentSession != null)
-                        TextSpan(
-                          text:
-                              '  •  ${_chatController.currentSession!.workspaceName}',
-                        ),
-                      TextSpan(
-                        text:
-                            '  •  ${_activeServer?.baseUrl ?? widget.initialApiBaseUrl}',
-                      ),
-                      if (_activeServerHealth != null)
-                        TextSpan(
-                          text:
-                              '  •  ${_activeServerHealth!.audioTranscriptionReady ? 'Audio ready' : 'Audio unavailable'}',
-                        ),
-                    ],
-                  ),
-                  style:
-                      const TextStyle(fontSize: 12, color: Color(0xFF8B97B5)),
-                ),
-              ],
-            ),
-            actions: <Widget>[
-              IconButton(
-                onPressed: () async {
-                  await _openAutoModeEditor();
-                },
-                icon: Icon(
-                  _chatController.currentSession?.autoModeEnabled ?? false
-                      ? Icons.autorenew_rounded
-                      : Icons.hub_outlined,
-                ),
-                tooltip: _chatController.currentSession?.autoModeEnabled ?? false
-                    ? 'Auto mode enabled'
-                    : 'Configure auto mode',
-              ),
-              IconButton(
-                onPressed: () async {
-                  await _openReplyModePicker();
-                },
-                icon: Icon(
-                  _audioRepliesEnabled
-                      ? Icons.volume_up_rounded
-                      : Icons.volume_mute_rounded,
-                ),
-                tooltip: _audioRepliesEnabled
-                    ? 'Audio replies enabled'
-                    : 'Text replies enabled',
-              ),
-              IconButton(
-                onPressed: () async {
-                  await _openServerManager();
-                },
-                icon: const Icon(Icons.computer),
-                tooltip: 'Servers',
-              ),
-              IconButton(
-                onPressed: () async {
-                  await _openWorkspacePicker();
-                },
-                icon: const Icon(Icons.add),
-                tooltip: 'Choose project for new chat',
-              ),
-            ],
+            title: _buildAppBarTitle(isCompactAppBar: isCompactAppBar),
+            actions: _buildAppBarActions(isCompactAppBar: isCompactAppBar),
           ),
           drawer: Drawer(
             width: drawerWidth,
@@ -235,9 +209,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                   ListTile(
                     title: const Text('Projects'),
                     subtitle: Text(
-                      _sidebarExpanded
-                          ? 'Expanded sidebar: more room for projects and chats'
-                          : 'Choose a project or open a chat',
+                      _showArchivedChatsInSidebar
+                          ? 'Archived chats across your pinned projects'
+                          : _sidebarExpanded
+                              ? 'Expanded sidebar: more room for projects and chats'
+                              : 'Choose a project or open a chat',
                     ),
                     trailing: Wrap(
                       spacing: 4,
@@ -269,6 +245,60 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                     ),
                   ),
                   const Divider(height: 1),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+                    child: Row(
+                      children: <Widget>[
+                        Expanded(
+                          child: ChoiceChip(
+                            label: const Text('Active'),
+                            selected: !_showArchivedChatsInSidebar,
+                            onSelected: (selected) {
+                              if (!selected || !_showArchivedChatsInSidebar) {
+                                return;
+                              }
+                              setState(() {
+                                _showArchivedChatsInSidebar = false;
+                              });
+                            },
+                            selectedColor: const Color(0xFF55D6BE),
+                            backgroundColor: const Color(0xFF16213C),
+                            labelStyle: TextStyle(
+                              color: !_showArchivedChatsInSidebar
+                                  ? const Color(0xFF07131D)
+                                  : const Color(0xFFDCE5FF),
+                              fontWeight: FontWeight.w700,
+                            ),
+                            side: const BorderSide(color: Color(0xFF23304F)),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: ChoiceChip(
+                            label: const Text('Archived'),
+                            selected: _showArchivedChatsInSidebar,
+                            onSelected: (selected) {
+                              if (!selected || _showArchivedChatsInSidebar) {
+                                return;
+                              }
+                              setState(() {
+                                _showArchivedChatsInSidebar = true;
+                              });
+                            },
+                            selectedColor: const Color(0xFF8CA8FF),
+                            backgroundColor: const Color(0xFF16213C),
+                            labelStyle: TextStyle(
+                              color: _showArchivedChatsInSidebar
+                                  ? const Color(0xFF07131D)
+                                  : const Color(0xFFDCE5FF),
+                              fontWeight: FontWeight.w700,
+                            ),
+                            side: const BorderSide(color: Color(0xFF23304F)),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                   Expanded(
                     child: _sidebarWorkspaces.isEmpty
                         ? const Center(
@@ -277,9 +307,18 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                               style: TextStyle(color: Color(0xFF8B97B5)),
                             ),
                           )
-                        : ListView(
-                            children: _buildSessionGroups(),
-                          ),
+                        : sessionGroups.isEmpty
+                            ? Center(
+                                child: Text(
+                                  _showArchivedChatsInSidebar
+                                      ? 'No archived chats yet'
+                                      : 'No chats yet',
+                                  style: const TextStyle(
+                                    color: Color(0xFF8B97B5),
+                                  ),
+                                ),
+                              )
+                            : ListView(children: sessionGroups),
                   ),
                 ],
               ),
@@ -289,136 +328,245 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             bottom: false,
             child: Column(
               children: <Widget>[
-                if (_chatController.errorText != null)
-                  Container(
-                    width: double.infinity,
-                    margin: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF3B1521),
-                      borderRadius: BorderRadius.circular(14),
-                    ),
-                    child: Text(
-                      _chatController.errorText!,
-                      style: const TextStyle(color: Colors.white),
-                    ),
-                  ),
-                if (_serverErrorText != null)
-                  Container(
-                    width: double.infinity,
-                    margin: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF362411),
-                      borderRadius: BorderRadius.circular(14),
-                    ),
-                    child: Text(
-                      _serverErrorText!,
-                      style: const TextStyle(color: Colors.white),
-                    ),
-                  ),
                 Expanded(
                   child: _chatController.isLoading &&
                           _chatController.currentSession == null
                       ? const Center(child: CircularProgressIndicator())
-                      : messages.isEmpty
-                          ? _EmptyState(onCreateChat: _openWorkspacePicker)
-                          : Stack(
-                              children: <Widget>[
-                                NotificationListener<ScrollNotification>(
-                                  onNotification: _handleScrollNotification,
-                                  child: ListView.builder(
-                                    controller: _scrollController,
-                                    padding: const EdgeInsets.fromLTRB(
-                                      16,
-                                      12,
-                                      16,
-                                      16,
-                                    ),
-                                    itemCount: messages.length,
-                                    itemBuilder: (context, index) {
-                                      final message = messages[index];
-                                      final nextMessage =
-                                          index + 1 < messages.length
-                                              ? messages[index + 1]
-                                              : null;
-                                      final extraBottomSpacing =
-                                          nextMessage != null &&
-                                                  nextMessage.isUser !=
-                                                      message.isUser
-                                              ? 10.0
-                                              : 0.0;
-                                      return Align(
-                                        alignment: message.isUser
-                                            ? Alignment.centerRight
-                                            : Alignment.centerLeft,
-                                        child: Padding(
-                                          padding: EdgeInsets.only(
-                                            bottom: extraBottomSpacing,
-                                          ),
-                                          child: ChatBubble(
-                                            message: message,
-                                            onOptionSelected:
-                                                _handleSuggestedReply,
-                                            onLinkTap: _handleMessageLinkTap,
-                                            onCancelJob: (_activeServerCapabilities
-                                                            ?.supportsJobCancellation ??
-                                                        false) &&
-                                                    message.jobId != null
-                                                ? () => _handleCancelJob(
-                                                      message.jobId!,
-                                                    )
-                                                : null,
-                                            onRetryJob: (_activeServerCapabilities
-                                                            ?.supportsJobRetry ??
-                                                        false) &&
-                                                    message.jobId != null
-                                                ? () => _handleRetryJob(
-                                                      message.jobId!,
-                                                    )
-                                                : null,
-                                          ),
+                      : Stack(
+                          children: <Widget>[
+                            NotificationListener<ScrollNotification>(
+                              onNotification: _handleScrollNotification,
+                              child: CustomScrollView(
+                                key: kChatScreenBodyScrollViewKey,
+                                controller: _scrollController,
+                                slivers: <Widget>[
+                                  if (_chatController.errorText != null)
+                                    SliverToBoxAdapter(
+                                      child: Container(
+                                        width: double.infinity,
+                                        margin: const EdgeInsets.fromLTRB(
+                                          16,
+                                          8,
+                                          16,
+                                          0,
                                         ),
-                                      );
-                                    },
-                                  ),
-                                ),
-                                Positioned(
-                                  right: 16,
-                                  bottom: 12,
-                                  child: IgnorePointer(
-                                    ignoring: _stickToBottom,
-                                    child: AnimatedSlide(
-                                      duration:
-                                          const Duration(milliseconds: 180),
-                                      curve: Curves.easeOut,
-                                      offset: _stickToBottom
-                                          ? const Offset(0, 0.35)
-                                          : Offset.zero,
-                                      child: AnimatedOpacity(
-                                        duration:
-                                            const Duration(milliseconds: 180),
-                                        opacity: _stickToBottom ? 0 : 1,
-                                        child: FloatingActionButton.small(
-                                          heroTag: 'scroll-to-latest',
-                                          onPressed: () {
-                                            _updateStickToBottom(true);
-                                            _scrollToBottom();
-                                          },
-                                          backgroundColor:
-                                              const Color(0xFF1C2745),
-                                          foregroundColor:
-                                              const Color(0xFF55D6BE),
-                                          child: const Icon(
-                                            Icons.south_rounded,
+                                        padding: const EdgeInsets.all(12),
+                                        decoration: BoxDecoration(
+                                          color: const Color(0xFF3B1521),
+                                          borderRadius:
+                                              BorderRadius.circular(14),
+                                        ),
+                                        child: Text(
+                                          _chatController.errorText!,
+                                          style: const TextStyle(
+                                            color: Colors.white,
                                           ),
                                         ),
                                       ),
                                     ),
+                                  if (_serverErrorText != null)
+                                    SliverToBoxAdapter(
+                                      child: Container(
+                                        width: double.infinity,
+                                        margin: const EdgeInsets.fromLTRB(
+                                          16,
+                                          8,
+                                          16,
+                                          0,
+                                        ),
+                                        padding: const EdgeInsets.all(12),
+                                        decoration: BoxDecoration(
+                                          color: const Color(0xFF362411),
+                                          borderRadius:
+                                              BorderRadius.circular(14),
+                                        ),
+                                        child: Text(
+                                          _serverErrorText!,
+                                          style: const TextStyle(
+                                            color: Colors.white,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  if (currentSession != null)
+                                    SliverToBoxAdapter(
+                                      child: ReviewerStatusBanner(
+                                        session: currentSession,
+                                      ),
+                                    ),
+                                  if (currentSession != null)
+                                    SliverPadding(
+                                      padding: const EdgeInsets.fromLTRB(
+                                        16,
+                                        8,
+                                        16,
+                                        0,
+                                      ),
+                                      sliver: SliverToBoxAdapter(
+                                        child: CurrentRunTimelineCard(
+                                          session: currentSession,
+                                        ),
+                                      ),
+                                    ),
+                                  if (messages.isEmpty)
+                                    SliverFillRemaining(
+                                      hasScrollBody: false,
+                                      child: showFilteredMessagesPlaceholder
+                                          ? _FilteredMessagesPlaceholder(
+                                              displayMode: currentSession
+                                                  .agentConfiguration
+                                                  .displayMode,
+                                              isUpdating:
+                                                  _isUpdatingFilteredMessagesView,
+                                              errorText:
+                                                  _filteredMessagesViewErrorText,
+                                              onShowAllMessages:
+                                                  _handleShowAllMessages,
+                                            )
+                                          : _EmptyState(
+                                              onCreateChat:
+                                                  _openWorkspacePicker,
+                                            ),
+                                    )
+                                  else
+                                    SliverPadding(
+                                      padding: const EdgeInsets.fromLTRB(
+                                        16,
+                                        12,
+                                        16,
+                                        16,
+                                      ),
+                                      sliver: SliverList(
+                                        delegate: SliverChildBuilderDelegate(
+                                          (context, index) {
+                                            final message = messages[index];
+                                            final nextMessage =
+                                                index + 1 < messages.length
+                                                    ? messages[index + 1]
+                                                    : null;
+                                            final extraBottomSpacing =
+                                                nextMessage != null &&
+                                                        nextMessage.isUser !=
+                                                            message.isUser
+                                                    ? 10.0
+                                                    : 0.0;
+                                            return Align(
+                                              alignment: message.isUser
+                                                  ? Alignment.centerRight
+                                                  : Alignment.centerLeft,
+                                              child: Padding(
+                                                padding: EdgeInsets.only(
+                                                  bottom: extraBottomSpacing,
+                                                ),
+                                                child: ChatBubble(
+                                                  key: ValueKey<String>(
+                                                    'chat-bubble-${message.id}',
+                                                  ),
+                                                  message: message,
+                                                  isCollapsed:
+                                                      _isMessageCollapsed(
+                                                    message,
+                                                  ),
+                                                  onToggleCollapsed: () =>
+                                                      _toggleMessageCollapsed(
+                                                    message,
+                                                  ),
+                                                  generatorColor: _chatController
+                                                              .currentSession !=
+                                                          null
+                                                      ? _colorFromHex(
+                                                          _chatController
+                                                              .currentSession!
+                                                              .agentProfileColor,
+                                                        )
+                                                      : null,
+                                                  onOptionSelected:
+                                                      _handleSuggestedReply,
+                                                  onLinkTap:
+                                                      _handleMessageLinkTap,
+                                                  onCancelJob:
+                                                      (_activeServerCapabilities
+                                                                      ?.supportsJobCancellation ??
+                                                                  false) &&
+                                                              message.jobId !=
+                                                                  null
+                                                          ? () =>
+                                                              _handleCancelJob(
+                                                                message.jobId!,
+                                                              )
+                                                          : null,
+                                                  onRetryJob:
+                                                      (_activeServerCapabilities
+                                                                      ?.supportsJobRetry ??
+                                                                  false) &&
+                                                              message.jobId !=
+                                                                  null
+                                                          ? () =>
+                                                              _handleRetryJob(
+                                                                message.jobId!,
+                                                              )
+                                                          : null,
+                                                  onRecoverUnknownSubmission: message
+                                                              .status ==
+                                                          ChatMessageStatus
+                                                              .submissionUnknown
+                                                      ? () =>
+                                                          _handleRecoverUnknownSubmission(
+                                                            message.id,
+                                                          )
+                                                      : null,
+                                                  onCancelUnknownSubmission: message
+                                                              .status ==
+                                                          ChatMessageStatus
+                                                              .submissionUnknown
+                                                      ? () =>
+                                                          _handleCancelUnknownSubmission(
+                                                            message.id,
+                                                          )
+                                                      : null,
+                                                ),
+                                              ),
+                                            );
+                                          },
+                                          childCount: messages.length,
+                                        ),
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            ),
+                            Positioned(
+                              right: 16,
+                              bottom: 12,
+                              child: IgnorePointer(
+                                ignoring: _stickToBottom,
+                                child: AnimatedSlide(
+                                  duration: const Duration(milliseconds: 180),
+                                  curve: Curves.easeOut,
+                                  offset: _stickToBottom
+                                      ? const Offset(0, 0.35)
+                                      : Offset.zero,
+                                  child: AnimatedOpacity(
+                                    duration: const Duration(milliseconds: 180),
+                                    opacity: _stickToBottom ? 0 : 1,
+                                    child: FloatingActionButton.small(
+                                      heroTag: 'scroll-to-latest',
+                                      onPressed: () {
+                                        _updateStickToBottom(true);
+                                        _scrollToBottom();
+                                      },
+                                      backgroundColor: const Color(0xFF1C2745),
+                                      foregroundColor: const Color(0xFF55D6BE),
+                                      child: const Icon(
+                                        Icons.south_rounded,
+                                      ),
+                                    ),
                                   ),
                                 ),
-                              ],
+                              ),
                             ),
+                          ],
+                        ),
                 ),
                 _Composer(
                   sessionId: _chatController.selectedSessionId,
@@ -429,8 +577,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                   onSendAudio: _handleSendAudio,
                   onSendAttachments: _handleSendAttachments,
                   onBeginRecording: _handleBeginRecording,
-                  isBusy:
-                      _chatController.isLoading &&
+                  isBusy: _chatController.isLoading &&
                       _chatController.currentSession == null,
                   voiceEnabled: _resolvedAudioInputEnabled(),
                   imageAttachmentsEnabled:
@@ -448,7 +595,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
 
   Future<bool> _handleSend() async {
     final sessionIdBeforeSend = _chatController.selectedSessionId;
-    final workspacePathBeforeSend = _chatController.currentSession?.workspacePath;
+    final workspacePathBeforeSend =
+        _chatController.currentSession?.workspacePath;
     final didSend = await _chatController.sendMessage(
       _textController.text,
       sessionIdOverride: sessionIdBeforeSend,
@@ -466,7 +614,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
 
   Future<bool> _handleSendAudio(XFile audioFile) async {
     final sessionIdBeforeSend = _chatController.selectedSessionId;
-    final workspacePathBeforeSend = _chatController.currentSession?.workspacePath;
+    final workspacePathBeforeSend =
+        _chatController.currentSession?.workspacePath;
     final didSend = await _chatController.sendAudioMessage(
       audioFile,
       sessionIdOverride: sessionIdBeforeSend,
@@ -486,7 +635,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     String? prompt,
   }) async {
     final sessionIdBeforeSend = _chatController.selectedSessionId;
-    final workspacePathBeforeSend = _chatController.currentSession?.workspacePath;
+    final workspacePathBeforeSend =
+        _chatController.currentSession?.workspacePath;
     final didSend = await _chatController.sendAttachmentsMessage(
       attachments.map((attachment) => attachment.file).toList(),
       message: prompt,
@@ -526,6 +676,46 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       SnackBar(
         content: Text(
           didRetry ? 'Retry queued.' : 'Could not retry the job.',
+        ),
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
+
+  Future<void> _handleRecoverUnknownSubmission(String messageId) async {
+    final didRecover = await _chatController.recoverMessage(
+      messageId,
+      action: MessageRecoveryAction.retry,
+    );
+    if (!mounted) {
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          didRecover
+              ? 'Follow-up retry queued.'
+              : 'Could not retry the uncertain follow-up.',
+        ),
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
+
+  Future<void> _handleCancelUnknownSubmission(String messageId) async {
+    final didCancel = await _chatController.recoverMessage(
+      messageId,
+      action: MessageRecoveryAction.cancel,
+    );
+    if (!mounted) {
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          didCancel
+              ? 'Uncertain follow-up dismissed.'
+              : 'Could not dismiss the uncertain follow-up.',
         ),
         duration: const Duration(seconds: 2),
       ),
@@ -618,68 +808,265 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     );
   }
 
+  List<ChatMessage> _visibleMessagesForCurrentSession() {
+    final currentSession = _chatController.currentSession;
+    if (currentSession == null) {
+      return const <ChatMessage>[];
+    }
+    return filterVisibleMessages(
+      currentSession.messages,
+      displayMode: currentSession.agentConfiguration.displayMode,
+    );
+  }
+
+  bool _isMessageCollapsed(ChatMessage message) {
+    final sessionId = _chatController.currentSession?.id;
+    if (sessionId == null) {
+      return false;
+    }
+    return _collapsedMessageIdsBySession[sessionId]?.contains(message.id) ??
+        false;
+  }
+
+  void _toggleMessageCollapsed(ChatMessage message) {
+    final sessionId = _chatController.currentSession?.id;
+    if (sessionId == null) {
+      return;
+    }
+    setState(() {
+      final collapsedIds = _collapsedMessageIdsBySession.putIfAbsent(
+        sessionId,
+        () => <String>{},
+      );
+      if (!collapsedIds.remove(message.id)) {
+        collapsedIds.add(message.id);
+      }
+      if (collapsedIds.isEmpty) {
+        _collapsedMessageIdsBySession.remove(sessionId);
+      }
+    });
+  }
+
+  Future<void> _handleShowAllMessages() async {
+    final currentSession = _chatController.currentSession;
+    if (currentSession == null || _isUpdatingFilteredMessagesView) {
+      return;
+    }
+
+    setState(() {
+      _isUpdatingFilteredMessagesView = true;
+      _filteredMessagesViewErrorText = null;
+    });
+
+    final didUpdate = await _chatController.updateAgentConfiguration(
+      currentSession.agentConfiguration.copyWith(
+        displayMode: AgentDisplayMode.showAll,
+      ),
+    );
+
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      _isUpdatingFilteredMessagesView = false;
+      _filteredMessagesViewErrorText = didUpdate
+          ? null
+          : _chatController.errorText ?? 'Could not show all messages.';
+    });
+  }
+
   Future<void> _openWorkspacePicker() async {
-    if (_chatController.workspaces.isEmpty) {
-      await _chatController.refreshWorkspaces();
+    if (_isOpeningWorkspacePicker) {
+      return;
+    }
+
+    setState(() {
+      _isOpeningWorkspacePicker = true;
+    });
+
+    Object? agentProfilesError;
+    try {
+      if (_chatController.workspaces.isEmpty) {
+        await _chatController.refreshWorkspaces();
+      }
+      if (_chatController.agentProfiles.isEmpty) {
+        try {
+          await _chatController.refreshAgentProfiles();
+        } catch (error) {
+          agentProfilesError = error;
+        }
+      }
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Could not load projects for a new chat.\n$error'),
+        ),
+      );
+      return;
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isOpeningWorkspacePicker = false;
+        });
+      }
     }
     if (!mounted) {
       return;
     }
 
-    final selectedWorkspace = await showModalBottomSheet<Workspace>(
-      context: context,
-      backgroundColor: const Color(0xFF101931),
-      builder: (context) {
-        final workspaces = _chatController.workspaces;
-        return SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: <Widget>[
-              const ListTile(
-                title: Text('Choose Project'),
-                subtitle: Text('Add it to the sidebar and start a new chat'),
-              ),
-              Flexible(
-                child: ListView(
-                  shrinkWrap: true,
-                  children: workspaces.map(
-                    (workspace) {
-                      final isPinned = _sidebarWorkspaces.any(
-                        (item) => item.path == workspace.path,
-                      );
-                      return ListTile(
-                        title: Text(workspace.name),
-                        subtitle: Text(
-                          workspace.path,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        trailing: isPinned
-                            ? const Icon(
-                                Icons.bookmark_added_rounded,
-                                color: Color(0xFF55D6BE),
-                              )
-                            : null,
-                        onTap: () => Navigator.of(context).pop(workspace),
-                      );
-                    },
-                  ).toList(),
-                ),
-              ),
-            ],
+    if (_chatController.workspaces.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'No projects were found on this server. Add folders under PROJECTS_ROOT first.',
           ),
-        );
-      },
-    );
+        ),
+      );
+      return;
+    }
 
-    if (selectedWorkspace != null) {
-      await _pinWorkspaceToSidebar(selectedWorkspace);
-      await _createNewChatForWorkspace(selectedWorkspace);
+    if (agentProfilesError != null && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Agent profiles are unavailable. Using the built-in Generator profile for this new chat.\n$agentProfilesError',
+          ),
+        ),
+      );
+    }
+
+    final draft = await _showNewChatPicker();
+
+    if (draft != null) {
+      await _pinWorkspaceToSidebar(draft.workspace);
+      await _createNewChatForWorkspace(
+        draft.workspace,
+        agentProfileId: draft.agentProfile.id,
+      );
     }
   }
 
-  Future<void> _createNewChatForWorkspace(Workspace workspace) async {
-    await _chatController.createNewSession(workspacePath: workspace.path);
+  Future<_NewChatDraft?> _showNewChatPicker() {
+    final availableProfiles = _chatController.agentProfiles.isNotEmpty
+        ? _chatController.agentProfiles
+        : <AgentProfile>[_fallbackAgentProfile()];
+    final sheet = _NewChatSheet(
+      workspaces: _chatController.workspaces,
+      agentProfiles: availableProfiles,
+      pinnedWorkspacePaths:
+          _sidebarWorkspaces.map((workspace) => workspace.path).toSet(),
+    );
+
+    final prefersDialog = kIsWeb || MediaQuery.sizeOf(context).width >= 900;
+    if (prefersDialog) {
+      return showDialog<_NewChatDraft>(
+        context: context,
+        builder: (context) {
+          return Dialog(
+            backgroundColor: const Color(0xFF101931),
+            insetPadding: const EdgeInsets.symmetric(
+              horizontal: 24,
+              vertical: 24,
+            ),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(
+                maxWidth: 720,
+                maxHeight: 760,
+              ),
+              child: sheet,
+            ),
+          );
+        },
+      );
+    }
+
+    return showModalBottomSheet<_NewChatDraft>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      backgroundColor: const Color(0xFF101931),
+      constraints: BoxConstraints(
+        maxWidth: 720,
+        maxHeight: MediaQuery.sizeOf(context).height * 0.82,
+      ),
+      builder: (context) => sheet,
+    );
+  }
+
+  Future<void> _createNewChatForWorkspace(
+    Workspace workspace, {
+    String? agentProfileId,
+  }) async {
+    await _chatController.createNewSessionWithProfile(
+      workspacePath: workspace.path,
+      agentProfileId: agentProfileId,
+    );
+    if (!mounted) {
+      return;
+    }
+
+    final errorText = _chatController.errorText;
+    if (errorText != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Could not start a chat for ${workspace.name}.\n$errorText',
+          ),
+          duration: const Duration(seconds: 4),
+        ),
+      );
+    }
+  }
+
+  Future<void> _openSaveCurrentAgentProfile() async {
+    final currentSession = _chatController.currentSession;
+    if (currentSession == null) {
+      return;
+    }
+
+    final generator = currentSession.agentConfiguration.byId(AgentId.generator);
+    if (generator == null) {
+      return;
+    }
+
+    final draft = await showModalBottomSheet<_SaveAgentProfileDraft>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: const Color(0xFF101931),
+      builder: (context) => _SaveAgentProfileSheet(
+        initialName: generator.label,
+        initialColorHex: currentSession.agentProfileColor,
+      ),
+    );
+
+    if (draft == null) {
+      return;
+    }
+
+    final profile = await _chatController.createAgentProfile(
+      name: draft.name,
+      description: draft.description,
+      colorHex: draft.colorHex,
+      configuration: currentSession.agentConfiguration,
+    );
+    if (!mounted || profile == null) {
+      return;
+    }
+
+    await _chatController.applyAgentProfile(profile.id);
+    if (!mounted) {
+      return;
+    }
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Saved ${profile.name} for future chats.'),
+      ),
+    );
   }
 
   Future<void> _pinWorkspaceToSidebar(Workspace workspace) async {
@@ -726,10 +1113,28 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       _audioRepliesEnabled = audioRepliesEnabled;
     });
 
-    await _switchToServer(resolvedActiveProfile, initialize: true);
+    final didConnect =
+        await _switchToServer(resolvedActiveProfile, initialize: true);
+    if (didConnect) {
+      return;
+    }
+
+    final localProfile = profiles.firstWhere(
+      (profile) => profile.id == 'default-server',
+      orElse: () => ServerProfile(
+        id: 'default-server',
+        name: 'Local',
+        baseUrl: widget.initialApiBaseUrl,
+      ),
+    );
+    if (localProfile.baseUrl == resolvedActiveProfile.baseUrl) {
+      return;
+    }
+
+    await _switchToServer(localProfile, initialize: true);
   }
 
-  Future<void> _switchToServer(
+  Future<bool> _switchToServer(
     ServerProfile profile, {
     bool initialize = false,
   }) async {
@@ -744,8 +1149,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     final sessionReadMarkers = await _serverProfileStore.loadSessionReadMarkers(
       profile.baseUrl,
     );
-    final audioRepliesEnabled = await _serverProfileStore
-        .loadAudioRepliesEnabled(profile.baseUrl);
+    final audioRepliesEnabled =
+        await _serverProfileStore.loadAudioRepliesEnabled(profile.baseUrl);
     nextController.addListener(_handleChatControllerChanged);
 
     final previousController = _chatController;
@@ -764,16 +1169,21 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     _updateStickToBottom(true);
     await _serverProfileStore.saveActiveProfileId(profile.id);
 
+    var didConnect = false;
     try {
-      final health = await client.getHealth();
-      final capabilities = await client.getCapabilities();
+      final healthFuture = client.getHealth();
+      final capabilitiesFuture = client.getCapabilities();
+      final initializeFuture = _chatController.initialize();
+      final health = await healthFuture;
+      final capabilities = await capabilitiesFuture;
+      await initializeFuture;
       if (mounted) {
         setState(() {
           _activeServerHealth = health;
           _activeServerCapabilities = capabilities;
         });
       }
-      await _chatController.initialize();
+      didConnect = true;
     } catch (error) {
       setState(() {
         _activeServerHealth = null;
@@ -787,9 +1197,23 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         ..removeListener(_handleChatControllerChanged)
         ..dispose();
     }
+    return didConnect;
   }
 
-  Future<void> _openAutoModeEditor() async {
+  AgentProfile _fallbackAgentProfile() {
+    return const AgentProfile(
+      id: 'default',
+      name: 'Generator',
+      description: 'Default implementation agent for general coding work.',
+      colorHex: '#55D6BE',
+      prompt:
+          'You are the primary implementation Codex. Continue the task directly, produce concrete progress, and keep the output practical.',
+      configuration: kDefaultAgentConfiguration,
+      isBuiltin: true,
+    );
+  }
+
+  Future<void> _openAgentStudio() async {
     final currentSession = _chatController.currentSession;
     if (currentSession == null) {
       if (!mounted) {
@@ -797,18 +1221,18 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       }
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Open or create a chat before configuring auto mode.'),
+          content: Text('Open or create a chat before configuring agents.'),
         ),
       );
       return;
     }
 
-    final draft = await showModalBottomSheet<_AutoModeDraft>(
+    final draft = await showModalBottomSheet<AgentConfiguration>(
       context: context,
       isScrollControlled: true,
       backgroundColor: const Color(0xFF101931),
       builder: (context) {
-        return _AutoModeSheet(
+        return _AgentStudioSheet(
           session: currentSession,
         );
       },
@@ -818,18 +1242,14 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       return;
     }
 
-    final didUpdate = await _chatController.updateAutoMode(
-      enabled: draft.enabled,
-      maxTurns: draft.maxTurns,
-      reviewerPrompt: draft.reviewerPrompt,
-    );
+    final didUpdate = await _chatController.updateAgentConfiguration(draft);
     if (!mounted || didUpdate) {
       return;
     }
 
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
-        content: Text('Failed to save auto mode settings.'),
+        content: Text('Failed to save agent settings.'),
       ),
     );
   }
@@ -866,8 +1286,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                       : Icons.radio_button_unchecked_rounded,
                 ),
                 title: const Text('Audio replies'),
-                subtitle:
-                    const Text('Speak assistant responses automatically'),
+                subtitle: const Text('Speak assistant responses automatically'),
                 onTap: () => Navigator.of(context).pop(true),
               ),
             ],
@@ -999,6 +1418,183 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     return profile;
   }
 
+  Widget _buildAppBarTitle({required bool isCompactAppBar}) {
+    final currentSession = _chatController.currentSession;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Text(
+          currentSession?.title ?? 'Codex Remote',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+        const SizedBox(height: 2),
+        Text(
+          _buildAppBarSubtitle(isCompactAppBar: isCompactAppBar),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(fontSize: 12, color: Color(0xFF8B97B5)),
+        ),
+        if (!isCompactAppBar && currentSession != null) ...[
+          const SizedBox(height: 6),
+          _AgentProfilePill(
+            label: currentSession.agentProfileName,
+            color: _colorFromHex(currentSession.agentProfileColor),
+          ),
+        ],
+      ],
+    );
+  }
+
+  String _buildAppBarSubtitle({required bool isCompactAppBar}) {
+    final segments = <String>[
+      _activeServer != null
+          ? 'Server: ${_activeServer!.name}'
+          : 'Commands execute on your local machine',
+    ];
+    final currentSession = _chatController.currentSession;
+    if (currentSession != null) {
+      segments.add(currentSession.workspaceName);
+    }
+    if (!isCompactAppBar) {
+      segments.add(_activeServer?.baseUrl ?? widget.initialApiBaseUrl);
+      if (_activeServerHealth != null) {
+        segments.add(
+          _activeServerHealth!.audioTranscriptionReady
+              ? 'Audio ready'
+              : 'Audio unavailable',
+        );
+      }
+    }
+    return segments.join('  •  ');
+  }
+
+  List<Widget> _buildAppBarActions({required bool isCompactAppBar}) {
+    final primaryActions = <Widget>[
+      AgentStudioStatusButton(
+        session: _chatController.currentSession,
+        onPressed: () async {
+          await _openAgentStudio();
+        },
+      ),
+    ];
+    if (isCompactAppBar) {
+      primaryActions.add(
+        PopupMenuButton<_AppBarOverflowAction>(
+          tooltip: 'More actions',
+          icon: const Icon(Icons.more_vert),
+          onSelected: (action) {
+            unawaited(_handleAppBarOverflowAction(action));
+          },
+          itemBuilder: (context) => <PopupMenuEntry<_AppBarOverflowAction>>[
+            _buildAppBarOverflowMenuItem(
+              action: _AppBarOverflowAction.saveCurrentAgent,
+              icon: Icons.bookmark_add_outlined,
+              label: 'Save current agent',
+            ),
+            _buildAppBarOverflowMenuItem(
+              action: _AppBarOverflowAction.replyMode,
+              icon: _audioRepliesEnabled
+                  ? Icons.volume_up_rounded
+                  : Icons.volume_mute_rounded,
+              label: _audioRepliesEnabled
+                  ? 'Audio replies enabled'
+                  : 'Text replies enabled',
+            ),
+            _buildAppBarOverflowMenuItem(
+              action: _AppBarOverflowAction.servers,
+              icon: Icons.computer,
+              label: 'Servers',
+            ),
+            _buildAppBarOverflowMenuItem(
+              action: _AppBarOverflowAction.newChat,
+              icon: Icons.add,
+              label: 'Choose project for new chat',
+            ),
+          ],
+        ),
+      );
+      return primaryActions;
+    }
+    return <Widget>[
+      ...primaryActions,
+      IconButton(
+        onPressed: () async {
+          await _openSaveCurrentAgentProfile();
+        },
+        icon: const Icon(Icons.bookmark_add_outlined),
+        tooltip: 'Save current agent',
+      ),
+      IconButton(
+        onPressed: () async {
+          await _openReplyModePicker();
+        },
+        icon: Icon(
+          _audioRepliesEnabled
+              ? Icons.volume_up_rounded
+              : Icons.volume_mute_rounded,
+        ),
+        tooltip: _audioRepliesEnabled
+            ? 'Audio replies enabled'
+            : 'Text replies enabled',
+      ),
+      IconButton(
+        onPressed: () async {
+          await _openServerManager();
+        },
+        icon: const Icon(Icons.computer),
+        tooltip: 'Servers',
+      ),
+      IconButton(
+        onPressed: () async {
+          await _openWorkspacePicker();
+        },
+        icon: const Icon(Icons.add),
+        tooltip: 'Choose project for new chat',
+      ),
+    ];
+  }
+
+  PopupMenuItem<_AppBarOverflowAction> _buildAppBarOverflowMenuItem({
+    required _AppBarOverflowAction action,
+    required IconData icon,
+    required String label,
+  }) {
+    return PopupMenuItem<_AppBarOverflowAction>(
+      value: action,
+      child: Row(
+        children: <Widget>[
+          Icon(icon, size: 18),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              label,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _handleAppBarOverflowAction(_AppBarOverflowAction action) async {
+    switch (action) {
+      case _AppBarOverflowAction.saveCurrentAgent:
+        await _openSaveCurrentAgentProfile();
+        return;
+      case _AppBarOverflowAction.replyMode:
+        await _openReplyModePicker();
+        return;
+      case _AppBarOverflowAction.servers:
+        await _openServerManager();
+        return;
+      case _AppBarOverflowAction.newChat:
+        await _openWorkspacePicker();
+        return;
+    }
+  }
+
   ChatController _buildController(String baseUrl) {
     return ChatController(
       apiClient: ApiClient(baseUrl: baseUrl),
@@ -1093,8 +1689,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     return true;
   }
 
-  List<Widget> _buildSessionGroups() {
+  List<Widget> _buildSessionGroups({required bool archivedOnly}) {
     final groupedSessions = <String, List<ChatSessionSummary>>{};
+    final sessionGroups = <Widget>[];
 
     for (final session in _chatController.sessions) {
       groupedSessions
@@ -1102,24 +1699,33 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           .add(session);
     }
 
-    return _sidebarWorkspaces.map((workspace) {
+    for (final workspace in _sidebarWorkspaces) {
       final sessions =
           groupedSessions[workspace.path] ?? <ChatSessionSummary>[];
-      final hasSelected = sessions.any(
+      final visibleSessions = sessions
+          .where(
+            (session) =>
+                archivedOnly ? session.isArchived : !session.isArchived,
+          )
+          .toList(growable: false);
+      if (archivedOnly && visibleSessions.isEmpty) {
+        continue;
+      }
+      final hasSelected = visibleSessions.any(
         (session) => session.id == _chatController.selectedSessionId,
       );
-      final activeJobCount = sessions.fold(
+      final activeJobCount = visibleSessions.fold(
         0,
         (total, session) =>
             total + _chatController.activeJobCountForSession(session.id),
       );
-      final activeChatCount = sessions
+      final activeChatCount = visibleSessions
           .where(
             (session) =>
                 _chatController.activeJobCountForSession(session.id) > 0,
           )
           .length;
-      final outgoingUploadCount = sessions.fold(
+      final outgoingUploadCount = visibleSessions.fold(
         0,
         (total, session) =>
             total +
@@ -1128,7 +1734,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                     ?.totalCount ??
                 0),
       );
-      final outgoingChatCount = sessions
+      final outgoingChatCount = visibleSessions
           .where(
             (session) =>
                 _chatController.outgoingUploadSummaryForSession(session.id) !=
@@ -1137,7 +1743,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           .length;
       final hasBackgroundActivity =
           activeJobCount > 0 || outgoingUploadCount > 0;
-      final unreadChatsCount = sessions
+      final unreadChatsCount = visibleSessions
           .where((session) => _unreadCountForSession(session) > 0)
           .length;
       final projectCardColor =
@@ -1150,7 +1756,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                   ? const Color(0x3355D6BE)
                   : const Color(0xFF23304F);
 
-      return Container(
+      sessionGroups.add(Container(
         margin: const EdgeInsets.fromLTRB(10, 6, 10, 6),
         decoration: BoxDecoration(
           color: projectCardColor,
@@ -1214,7 +1820,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                       ),
                       const SizedBox(height: 2),
                       Text(
-                        '${workspace.path} • ${sessions.length} chat${sessions.length == 1 ? '' : 's'}',
+                        archivedOnly
+                            ? '${workspace.path} • ${visibleSessions.length} archived chat${visibleSessions.length == 1 ? '' : 's'}'
+                            : '${workspace.path} • ${visibleSessions.length} chat${visibleSessions.length == 1 ? '' : 's'}',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
@@ -1277,21 +1885,23 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                 ),
               ],
             ),
-            children: sessions.isEmpty
+            children: visibleSessions.isEmpty
                 ? <Widget>[
-                    const Padding(
+                    Padding(
                       padding: EdgeInsets.fromLTRB(24, 0, 24, 16),
                       child: Align(
                         alignment: Alignment.centerLeft,
                         child: Text(
-                          'No chats yet for this project',
-                          style: TextStyle(color: Color(0xFF8B97B5)),
+                          archivedOnly
+                              ? 'No archived chats in this project'
+                              : 'No active chats in this project',
+                          style: const TextStyle(color: Color(0xFF8B97B5)),
                         ),
                       ),
                     ),
                   ]
-                : sessions
-                    .map(
+                : <Widget>[
+                    ...visibleSessions.map(
                       (session) => Padding(
                         padding: const EdgeInsets.only(left: 10, right: 10),
                         child: _SessionTile(
@@ -1309,14 +1919,22 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                             Navigator.of(context).pop();
                             await _chatController.selectSession(session.id);
                           },
+                          onArchiveToggle: () async {
+                            await _chatController.setSessionArchived(
+                              session.id,
+                              archived: !archivedOnly,
+                            );
+                          },
                         ),
                       ),
-                    )
-                    .toList(),
+                    ),
+                  ],
           ),
         ),
-      );
-    }).toList();
+      ));
+    }
+
+    return sessionGroups;
   }
 
   void _handleChatControllerChanged() {
@@ -1328,6 +1946,13 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       final currentSession = _chatController.currentSession;
       if (currentSession != null) {
         _seedSpokenAssistantReply(currentSession);
+      }
+      if (_isUpdatingFilteredMessagesView ||
+          _filteredMessagesViewErrorText != null) {
+        setState(() {
+          _isUpdatingFilteredMessagesView = false;
+          _filteredMessagesViewErrorText = null;
+        });
       }
       _updateStickToBottom(true);
     }
@@ -1471,6 +2096,7 @@ class _SessionTile extends StatelessWidget {
     required this.unreadCount,
     required this.selected,
     required this.onTap,
+    required this.onArchiveToggle,
   });
 
   final SessionActiveJobSummary? activeJobSummary;
@@ -1479,10 +2105,12 @@ class _SessionTile extends StatelessWidget {
   final int unreadCount;
   final bool selected;
   final VoidCallback onTap;
+  final VoidCallback onArchiveToggle;
 
   @override
   Widget build(BuildContext context) {
-    final activeRuntimeLabel = _formatSessionRuntime(activeJobSummary);
+    final activeJobPresentation =
+        _buildSessionActiveJobPresentation(activeJobSummary);
     final isActive = activeJobSummary != null;
     final isUploading = outgoingUploadSummary != null;
     final tileBackgroundColor = selected
@@ -1529,7 +2157,7 @@ class _SessionTile extends StatelessWidget {
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
           style: TextStyle(
-            color: titleColor,
+            color: session.isArchived ? const Color(0xFFB8C8EA) : titleColor,
             fontWeight: isActive ? FontWeight.w600 : null,
           ),
         ),
@@ -1543,25 +2171,62 @@ class _SessionTile extends StatelessWidget {
                   : 'No messages yet',
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
-              style: TextStyle(color: previewColor),
+              style: TextStyle(
+                color:
+                    session.isArchived ? const Color(0xFF7F8EAF) : previewColor,
+              ),
             ),
-            if (activeRuntimeLabel != null) ...<Widget>[
+            if (session.isArchived) ...<Widget>[
               const SizedBox(height: 6),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                 decoration: BoxDecoration(
-                  color: const Color(0xFF3D2D08),
+                  color: const Color(0xFF1B2745),
                   borderRadius: BorderRadius.circular(999),
                 ),
-                child: Text(
-                  activeRuntimeLabel,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Color(0xFFFFC857),
+                child: const Text(
+                  'Archived',
+                  style: TextStyle(
+                    color: Color(0xFF9FB3D6),
                     fontSize: 11,
                     fontWeight: FontWeight.w700,
                   ),
+                ),
+              ),
+            ],
+            if (activeJobPresentation != null) ...<Widget>[
+              const SizedBox(height: 6),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: activeJobPresentation.backgroundColor,
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: <Widget>[
+                    Container(
+                      width: 8,
+                      height: 8,
+                      decoration: BoxDecoration(
+                        color: activeJobPresentation.foregroundColor,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Flexible(
+                      child: Text(
+                        activeJobPresentation.label,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: activeJobPresentation.foregroundColor,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ],
@@ -1587,23 +2252,55 @@ class _SessionTile extends StatelessWidget {
             ],
           ],
         ),
-        trailing: session.hasPendingMessages
-            ? const SizedBox(
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            if (session.hasPendingMessages)
+              const SizedBox(
                 width: 18,
                 height: 18,
                 child: CircularProgressIndicator(strokeWidth: 2),
               )
-            : isUploading
-                ? Icon(
-                    _outgoingUploadIcon(outgoingUploadSummary!),
-                    color: Color(0xFF8CA8FF),
-                  )
-                : unreadCount > 0
-                    ? const Icon(
-                        Icons.mark_chat_unread_rounded,
-                        color: Color(0xFF55D6BE),
-                      )
-                    : null,
+            else if (isUploading)
+              Icon(
+                _outgoingUploadIcon(outgoingUploadSummary!),
+                color: const Color(0xFF8CA8FF),
+              )
+            else if (unreadCount > 0)
+              const Icon(
+                Icons.mark_chat_unread_rounded,
+                color: Color(0xFF55D6BE),
+              ),
+            PopupMenuButton<String>(
+              padding: EdgeInsets.zero,
+              tooltip: session.isArchived ? 'Unarchive chat' : 'Archive chat',
+              onSelected: (value) {
+                if (value == 'toggle-archive') {
+                  onArchiveToggle();
+                }
+              },
+              itemBuilder: (context) => <PopupMenuEntry<String>>[
+                PopupMenuItem<String>(
+                  value: 'toggle-archive',
+                  child: Row(
+                    children: <Widget>[
+                      Icon(
+                        session.isArchived
+                            ? Icons.unarchive_outlined
+                            : Icons.archive_outlined,
+                        size: 18,
+                      ),
+                      const SizedBox(width: 12),
+                      Text(session.isArchived
+                          ? 'Unarchive chat'
+                          : 'Archive chat'),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
         onTap: onTap,
       ),
     );
@@ -1669,7 +2366,21 @@ IconData _outgoingUploadIcon(SessionOutgoingUploadSummary summary) {
   return Icons.cloud_upload_rounded;
 }
 
-String? _formatSessionRuntime(SessionActiveJobSummary? summary) {
+class _SessionActiveJobPresentation {
+  const _SessionActiveJobPresentation({
+    required this.label,
+    required this.backgroundColor,
+    required this.foregroundColor,
+  });
+
+  final String label;
+  final Color backgroundColor;
+  final Color foregroundColor;
+}
+
+_SessionActiveJobPresentation? _buildSessionActiveJobPresentation(
+  SessionActiveJobSummary? summary,
+) {
   if (summary == null) {
     return null;
   }
@@ -1679,11 +2390,20 @@ String? _formatSessionRuntime(SessionActiveJobSummary? summary) {
     return null;
   }
 
-  if (summary.activeJobCount == 1) {
-    return 'Running for $elapsedLabel';
-  }
+  final accentColor = _agentAccentColor(
+    summary.primaryAgentId,
+    seed: summary.primaryAgentSeed,
+  );
+  final agentLabel = summary.primaryAgentLabel.trim();
+  final label = summary.activeJobCount == 1
+      ? '$agentLabel running • $elapsedLabel'
+      : '$agentLabel +${summary.activeJobCount - 1} running • $elapsedLabel';
 
-  return '${summary.activeJobCount} jobs running • $elapsedLabel';
+  return _SessionActiveJobPresentation(
+    label: label,
+    backgroundColor: accentColor.withValues(alpha: 0.18),
+    foregroundColor: accentColor,
+  );
 }
 
 String? _formatElapsed(int? seconds) {
@@ -1926,43 +2646,133 @@ class _EmptyState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        return SingleChildScrollView(
-          padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 24),
-          child: ConstrainedBox(
-            constraints: BoxConstraints(minHeight: constraints.maxHeight),
-            child: Center(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: <Widget>[
-                  const Text(
-                    'Start a new Codex session',
-                    style: TextStyle(fontSize: 24, fontWeight: FontWeight.w600),
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: 12),
-                  const Text(
-                    'Each chat maps to a real Codex CLI session and follow-up messages continue that session.',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(color: Color(0xFF8B97B5), height: 1.5),
-                  ),
-                  const SizedBox(height: 20),
-                  FilledButton.icon(
-                    onPressed: () async {
-                      await onCreateChat();
-                    },
-                    icon: const Icon(Icons.add_comment_outlined),
-                    label: const Text('New Chat'),
-                  ),
-                ],
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 24),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 420),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              const Text(
+                'Start a new Codex session',
+                style: TextStyle(fontSize: 24, fontWeight: FontWeight.w600),
+                textAlign: TextAlign.center,
               ),
-            ),
+              const SizedBox(height: 12),
+              const Text(
+                'Each chat maps to a real Codex CLI session and follow-up messages continue that session.',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: Color(0xFF8B97B5), height: 1.5),
+              ),
+              const SizedBox(height: 20),
+              FilledButton.icon(
+                onPressed: () async {
+                  await onCreateChat();
+                },
+                icon: const Icon(Icons.add_comment_outlined),
+                label: const Text('New Chat'),
+              ),
+            ],
           ),
-        );
-      },
+        ),
+      ),
     );
   }
+}
+
+class _FilteredMessagesPlaceholder extends StatelessWidget {
+  const _FilteredMessagesPlaceholder({
+    required this.displayMode,
+    required this.isUpdating,
+    required this.errorText,
+    required this.onShowAllMessages,
+  });
+
+  final AgentDisplayMode displayMode;
+  final bool isUpdating;
+  final String? errorText;
+  final Future<void> Function() onShowAllMessages;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 24),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 460),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              const Text(
+                'Messages hidden in this view',
+                style: TextStyle(fontSize: 24, fontWeight: FontWeight.w600),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 12),
+              Text(
+                _filteredMessagesPlaceholderText(displayMode),
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  color: Color(0xFF8B97B5),
+                  height: 1.5,
+                ),
+              ),
+              const SizedBox(height: 20),
+              FilledButton.icon(
+                onPressed: isUpdating
+                    ? null
+                    : () async {
+                        await onShowAllMessages();
+                      },
+                icon: isUpdating
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.visibility_rounded),
+                label: Text(
+                  isUpdating ? 'Updating view...' : 'Show all messages',
+                ),
+              ),
+              const SizedBox(height: 12),
+              const Text(
+                'Run history above still updates live, and you can keep chatting below.',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: Color(0xFFB8C8EA),
+                  height: 1.5,
+                ),
+              ),
+              if (errorText != null) ...<Widget>[
+                const SizedBox(height: 12),
+                Text(
+                  errorText!,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    color: Color(0xFFFFB4B4),
+                    height: 1.4,
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+String _filteredMessagesPlaceholderText(AgentDisplayMode displayMode) {
+  return switch (displayMode) {
+    AgentDisplayMode.showAll =>
+      'This chat has messages, but none are visible right now.',
+    AgentDisplayMode.collapseSpecialists =>
+      'This chat already has messages, but the current "Collapse specialists" view is hiding them. Switch chat rendering to "Show all" to inspect the full conversation.',
+    AgentDisplayMode.summaryOnly =>
+      'This chat already has generator or reviewer messages, but "Summary only" hides them until a summary message exists. Switch chat rendering to "Show all" to inspect the full conversation.',
+  };
 }
 
 class _Composer extends StatefulWidget {
@@ -2897,41 +3707,286 @@ class _PendingAttachmentDraft {
   String get identityKey => '${kind.name}:$name:${sizeBytes ?? 0}';
 }
 
-class _AutoModeSheet extends StatefulWidget {
-  const _AutoModeSheet({
-    required this.session,
-  });
-
-  final SessionDetail session;
-
-  @override
-  State<_AutoModeSheet> createState() => _AutoModeSheetState();
+Color _colorFromHex(String value) {
+  final normalized = value.trim().replaceFirst('#', '');
+  if (normalized.length != 6) {
+    return const Color(0xFF55D6BE);
+  }
+  final parsed = int.tryParse(normalized, radix: 16);
+  if (parsed == null) {
+    return const Color(0xFF55D6BE);
+  }
+  return Color(0xFF000000 | parsed);
 }
 
-class _AutoModeSheetState extends State<_AutoModeSheet> {
-  late final TextEditingController _promptController;
-  late final TextEditingController _turnsController;
-  late bool _enabled;
+Color _agentAccentColor(
+  AgentId agentId, {
+  required String seed,
+}) {
+  switch (agentId) {
+    case AgentId.generator:
+      return const Color(0xFF55D6BE);
+    case AgentId.reviewer:
+      return const Color(0xFFFFC857);
+    case AgentId.summary:
+      return const Color(0xFFAED3FF);
+    case AgentId.supervisor:
+      return const Color(0xFF8FEAFF);
+    case AgentId.qa:
+      return const Color(0xFF7EE081);
+    case AgentId.ux:
+      return const Color(0xFFFF9AC6);
+    case AgentId.seniorEngineer:
+      return const Color(0xFFFFA15C);
+    case AgentId.user:
+      return _hashedAccentColor(seed);
+  }
+}
+
+Color _hashedAccentColor(String seed) {
+  var hash = 0;
+  for (final codeUnit in seed.codeUnits) {
+    hash = (hash * 31 + codeUnit) & 0x7fffffff;
+  }
+  final hue = (hash % 360).toDouble();
+  return HSLColor.fromAHSL(1, hue, 0.68, 0.66).toColor();
+}
+
+String _presetLabel(AgentPreset preset) {
+  return switch (preset) {
+    AgentPreset.solo => 'Solo',
+    AgentPreset.review => 'Review',
+    AgentPreset.triad => 'Triad',
+    AgentPreset.supervisor => 'Supervisor',
+  };
+}
+
+class _AgentProfilePill extends StatelessWidget {
+  const _AgentProfilePill({
+    required this.label,
+    required this.color,
+  });
+
+  final String label;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: Color.alphaBlend(
+          color.withValues(alpha: 0.2),
+          const Color(0xFF121A31),
+        ),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: color.withValues(alpha: 0.45)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          Container(
+            width: 8,
+            height: 8,
+            decoration: BoxDecoration(
+              color: color,
+              shape: BoxShape.circle,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            label,
+            style: const TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: Colors.white,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _NewChatDraft {
+  const _NewChatDraft({
+    required this.workspace,
+    required this.agentProfile,
+  });
+
+  final Workspace workspace;
+  final AgentProfile agentProfile;
+}
+
+class _NewChatSheet extends StatefulWidget {
+  const _NewChatSheet({
+    required this.workspaces,
+    required this.agentProfiles,
+    required this.pinnedWorkspacePaths,
+  });
+
+  final List<Workspace> workspaces;
+  final List<AgentProfile> agentProfiles;
+  final Set<String> pinnedWorkspacePaths;
+
+  @override
+  State<_NewChatSheet> createState() => _NewChatSheetState();
+}
+
+class _NewChatSheetState extends State<_NewChatSheet> {
+  late AgentProfile _selectedProfile;
 
   @override
   void initState() {
     super.initState();
-    _enabled = widget.session.autoModeEnabled;
-    _promptController = TextEditingController(
-      text: (widget.session.autoReviewerPrompt?.trim().isNotEmpty ?? false)
-          ? widget.session.autoReviewerPrompt!
-          : _defaultAutoReviewerPrompt,
+    _selectedProfile = widget.agentProfiles.first;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          return ConstrainedBox(
+            constraints: BoxConstraints(maxHeight: constraints.maxHeight),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                const ListTile(
+                  title: Text('Choose Existing Project'),
+                  subtitle: Text(
+                    'Select a folder already visible under PROJECTS_ROOT to start a new chat.',
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                  child: DropdownButtonFormField<AgentProfile>(
+                    initialValue: _selectedProfile,
+                    decoration: const InputDecoration(
+                      labelText: 'Agent profile',
+                    ),
+                    items: widget.agentProfiles
+                        .map(
+                          (profile) => DropdownMenuItem<AgentProfile>(
+                            value: profile,
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: <Widget>[
+                                Container(
+                                  width: 10,
+                                  height: 10,
+                                  decoration: BoxDecoration(
+                                    color: _colorFromHex(profile.colorHex),
+                                    shape: BoxShape.circle,
+                                  ),
+                                ),
+                                const SizedBox(width: 10),
+                                Flexible(
+                                  fit: FlexFit.loose,
+                                  child: Text(
+                                    '${profile.name} · ${_presetLabel(profile.configuration.preset)}',
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        )
+                        .toList(),
+                    onChanged: (value) {
+                      if (value == null) {
+                        return;
+                      }
+                      setState(() {
+                        _selectedProfile = value;
+                      });
+                    },
+                  ),
+                ),
+                Flexible(
+                  child: ListView(
+                    shrinkWrap: true,
+                    children: widget.workspaces.map(
+                      (workspace) {
+                        final isPinned = widget.pinnedWorkspacePaths.contains(
+                          workspace.path,
+                        );
+                        return ListTile(
+                          title: Text(workspace.name),
+                          subtitle: Text(
+                            workspace.path,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          trailing: isPinned
+                              ? const Icon(
+                                  Icons.bookmark_added_rounded,
+                                  color: Color(0xFF55D6BE),
+                                )
+                              : null,
+                          onTap: () => Navigator.of(context).pop(
+                            _NewChatDraft(
+                              workspace: workspace,
+                              agentProfile: _selectedProfile,
+                            ),
+                          ),
+                        );
+                      },
+                    ).toList(),
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
+      ),
     );
-    _turnsController = TextEditingController(
-      text: (widget.session.autoMaxTurns > 0 ? widget.session.autoMaxTurns : 3)
-          .toString(),
-    );
+  }
+}
+
+class _SaveAgentProfileDraft {
+  const _SaveAgentProfileDraft({
+    required this.name,
+    required this.description,
+    required this.colorHex,
+  });
+
+  final String name;
+  final String description;
+  final String colorHex;
+}
+
+class _SaveAgentProfileSheet extends StatefulWidget {
+  const _SaveAgentProfileSheet({
+    required this.initialName,
+    required this.initialColorHex,
+  });
+
+  final String initialName;
+  final String initialColorHex;
+
+  @override
+  State<_SaveAgentProfileSheet> createState() => _SaveAgentProfileSheetState();
+}
+
+class _SaveAgentProfileSheetState extends State<_SaveAgentProfileSheet> {
+  late final TextEditingController _nameController;
+  late final TextEditingController _descriptionController;
+  late final TextEditingController _colorController;
+
+  @override
+  void initState() {
+    super.initState();
+    _nameController = TextEditingController(text: widget.initialName);
+    _descriptionController = TextEditingController();
+    _colorController = TextEditingController(text: widget.initialColorHex);
   }
 
   @override
   void dispose() {
-    _promptController.dispose();
-    _turnsController.dispose();
+    _nameController.dispose();
+    _descriptionController.dispose();
+    _colorController.dispose();
     super.dispose();
   }
 
@@ -2952,90 +4007,28 @@ class _AutoModeSheetState extends State<_AutoModeSheet> {
             children: <Widget>[
               const ListTile(
                 contentPadding: EdgeInsets.zero,
-                title: Text('Auto mode'),
+                title: Text('Save Agent'),
                 subtitle: Text(
-                  'Use a second Codex to generate the next user-style prompt back into this same chat.',
+                  'Save the current generator as a reusable agent for future chats.',
                 ),
               ),
-              SwitchListTile(
-                contentPadding: EdgeInsets.zero,
-                value: _enabled,
-                title: const Text('Enable auto mode'),
-                subtitle: Text(
-                  _enabled
-                      ? 'Reviewer Codex prompts will keep feeding the generator Codex.'
-                      : 'The chat behaves normally until you enable it.',
-                ),
-                onChanged: (value) {
-                  setState(() {
-                    _enabled = value;
-                  });
-                },
-              ),
-              Text(
-                'Max auto turns',
-                style: Theme.of(context).textTheme.titleSmall,
+              TextField(
+                controller: _nameController,
+                decoration: const InputDecoration(labelText: 'Name'),
               ),
               const SizedBox(height: 8),
               TextField(
-                controller: _turnsController,
-                keyboardType: TextInputType.number,
-                decoration: const InputDecoration(
-                  hintText: '3',
-                  helperText:
-                      'How many reviewer-to-generator cycles to run after your prompt. Range: 1-12.',
-                ),
-              ),
-              const SizedBox(height: 16),
-              Row(
-                children: <Widget>[
-                  Expanded(
-                    child: Text(
-                      'Reviewer Codex system prompt',
-                      style: Theme.of(context).textTheme.titleSmall,
-                    ),
-                  ),
-                  TextButton(
-                    onPressed: () {
-                      _promptController.text = _defaultAutoReviewerPrompt;
-                    },
-                    child: const Text('Use suggested prompt'),
-                  ),
-                ],
-              ),
-              Text(
-                'This prompt is prepended every time the reviewer Codex receives the generator output.',
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: const Color(0xFF8B97B5),
-                    ),
+                controller: _descriptionController,
+                decoration: const InputDecoration(labelText: 'Description'),
               ),
               const SizedBox(height: 8),
               TextField(
-                controller: _promptController,
-                minLines: 6,
-                maxLines: 10,
+                controller: _colorController,
                 decoration: const InputDecoration(
-                  hintText: _defaultAutoReviewerPrompt,
-                  alignLabelWithHint: true,
+                  labelText: 'Color',
+                  helperText: 'Use a hex color like #F28C28',
                 ),
               ),
-              const SizedBox(height: 12),
-              Text(
-                'Reviewer Codex turns appear as user-side chat bubbles with a distinct color and Codex label.',
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: const Color(0xFF8B97B5),
-                    ),
-              ),
-              if (widget.session.autoModeEnabled ||
-                  widget.session.autoTurnIndex > 0) ...[
-                const SizedBox(height: 12),
-                Text(
-                  'Current run: ${widget.session.autoTurnIndex}/${widget.session.autoMaxTurns} turns completed',
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: const Color(0xFF55D6BE),
-                      ),
-                ),
-              ],
               const SizedBox(height: 20),
               Row(
                 children: <Widget>[
@@ -3047,13 +4040,10 @@ class _AutoModeSheetState extends State<_AutoModeSheet> {
                   FilledButton(
                     onPressed: () {
                       Navigator.of(context).pop(
-                        _AutoModeDraft(
-                          enabled: _enabled,
-                          maxTurns: _normalizeAutoTurns(
-                            _turnsController.text,
-                            enabled: _enabled,
-                          ),
-                          reviewerPrompt: _promptController.text.trim(),
+                        _SaveAgentProfileDraft(
+                          name: _nameController.text.trim(),
+                          description: _descriptionController.text.trim(),
+                          colorHex: _colorController.text.trim(),
                         ),
                       );
                     },
@@ -3069,31 +4059,441 @@ class _AutoModeSheetState extends State<_AutoModeSheet> {
   }
 }
 
-int _normalizeAutoTurns(
-  String rawValue, {
-  required bool enabled,
-}) {
-  final parsed = int.tryParse(rawValue.trim());
-  if (enabled) {
-    final fallback = parsed ?? 3;
-    return fallback.clamp(1, 12);
-  }
-  if (parsed == null) {
-    return 0;
-  }
-  return parsed.clamp(0, 12);
-}
-
-class _AutoModeDraft {
-  const _AutoModeDraft({
-    required this.enabled,
-    required this.maxTurns,
-    required this.reviewerPrompt,
+class _AgentStudioSheet extends StatefulWidget {
+  const _AgentStudioSheet({
+    required this.session,
   });
 
-  final bool enabled;
-  final int maxTurns;
-  final String reviewerPrompt;
+  final SessionDetail session;
+
+  @override
+  State<_AgentStudioSheet> createState() => _AgentStudioSheetState();
+}
+
+class _AgentStudioSheetState extends State<_AgentStudioSheet> {
+  late AgentPreset _preset;
+  late AgentDisplayMode _displayMode;
+  late final Map<AgentId, TextEditingController> _labelControllers;
+  late final Map<AgentId, TextEditingController> _promptControllers;
+  late final Map<AgentId, TextEditingController> _turnsControllers;
+  late final Map<AgentId, bool> _enabled;
+  late final Map<AgentId, AgentVisibilityMode> _visibility;
+  late final Set<AgentId> _supervisorMemberIds;
+
+  @override
+  void initState() {
+    super.initState();
+    final configuration = widget.session.agentConfiguration;
+    _preset = configuration.preset;
+    _displayMode = configuration.displayMode;
+    _labelControllers = <AgentId, TextEditingController>{};
+    _promptControllers = <AgentId, TextEditingController>{};
+    _turnsControllers = <AgentId, TextEditingController>{};
+    _enabled = <AgentId, bool>{};
+    _visibility = <AgentId, AgentVisibilityMode>{};
+    _supervisorMemberIds = configuration.supervisorMemberIds.toSet();
+
+    for (final agent in configuration.agents) {
+      _labelControllers[agent.agentId] =
+          TextEditingController(text: agent.label);
+      _promptControllers[agent.agentId] =
+          TextEditingController(text: agent.prompt);
+      _turnsControllers[agent.agentId] =
+          TextEditingController(text: agent.maxTurns.toString());
+      _enabled[agent.agentId] = agent.enabled;
+      _visibility[agent.agentId] = agent.visibility;
+    }
+  }
+
+  @override
+  void dispose() {
+    for (final controller in _labelControllers.values) {
+      controller.dispose();
+    }
+    for (final controller in _promptControllers.values) {
+      controller.dispose();
+    }
+    for (final controller in _turnsControllers.values) {
+      controller.dispose();
+    }
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: Padding(
+        padding: EdgeInsets.only(
+          left: 16,
+          right: 16,
+          top: 12,
+          bottom: MediaQuery.of(context).viewInsets.bottom + 16,
+        ),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              const ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: Text('Agents'),
+                subtitle: Text(
+                  'Configure the preset, the available agents, and how runs are delegated for this chat.',
+                ),
+              ),
+              DropdownButtonFormField<AgentPreset>(
+                initialValue: _preset,
+                decoration: const InputDecoration(labelText: 'Preset'),
+                items: const <DropdownMenuItem<AgentPreset>>[
+                  DropdownMenuItem(
+                    value: AgentPreset.solo,
+                    child: Text('Solo'),
+                  ),
+                  DropdownMenuItem(
+                    value: AgentPreset.review,
+                    child: Text('Generator + Reviewer'),
+                  ),
+                  DropdownMenuItem(
+                    value: AgentPreset.triad,
+                    child: Text('Generator + Reviewer + Summary'),
+                  ),
+                  DropdownMenuItem(
+                    value: AgentPreset.supervisor,
+                    child: Text('Supervisor + Specialists'),
+                  ),
+                ],
+                onChanged: (value) {
+                  if (value == null) {
+                    return;
+                  }
+                  setState(() {
+                    _preset = value;
+                    _applyPreset(value);
+                  });
+                },
+              ),
+              const SizedBox(height: 8),
+              CurrentRunTimelineCard(session: widget.session),
+              const SizedBox(height: 4),
+              DropdownButtonFormField<AgentDisplayMode>(
+                initialValue: _displayMode,
+                decoration: const InputDecoration(labelText: 'Chat rendering'),
+                items: const <DropdownMenuItem<AgentDisplayMode>>[
+                  DropdownMenuItem(
+                    value: AgentDisplayMode.showAll,
+                    child: Text('Show all'),
+                  ),
+                  DropdownMenuItem(
+                    value: AgentDisplayMode.collapseSpecialists,
+                    child: Text('Collapse specialists'),
+                  ),
+                  DropdownMenuItem(
+                    value: AgentDisplayMode.summaryOnly,
+                    child: Text('Summary only'),
+                  ),
+                ],
+                onChanged: (value) {
+                  if (value == null) {
+                    return;
+                  }
+                  setState(() {
+                    _displayMode = value;
+                  });
+                },
+              ),
+              if (_preset == AgentPreset.supervisor) ...<Widget>[
+                const SizedBox(height: 12),
+                _buildSupervisorRegistryCard(),
+              ],
+              const SizedBox(height: 16),
+              ...widget.session.agentConfiguration.agents
+                  .where((agent) => agent.agentId != AgentId.user)
+                  .map((agent) => _buildAgentCard(context, agent.agentId)),
+              const SizedBox(height: 20),
+              Row(
+                children: <Widget>[
+                  TextButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    child: const Text('Cancel'),
+                  ),
+                  const Spacer(),
+                  FilledButton(
+                    onPressed: () {
+                      Navigator.of(context).pop(_buildConfiguration());
+                    },
+                    child: const Text('Save'),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAgentCard(BuildContext context, AgentId agentId) {
+    final title = switch (agentId) {
+      AgentId.generator => 'Generator',
+      AgentId.reviewer => 'Reviewer',
+      AgentId.summary => 'Summary',
+      AgentId.supervisor => 'Supervisor',
+      AgentId.qa => 'QA',
+      AgentId.ux => 'UX',
+      AgentId.seniorEngineer => 'Senior Engineer',
+      AgentId.user => 'User',
+    };
+    final promptHint = switch (agentId) {
+      AgentId.generator => 'Primary builder prompt',
+      AgentId.reviewer => _defaultAutoReviewerPrompt,
+      AgentId.summary =>
+        'Summarize generator progress and reviewer feedback for the user.',
+      AgentId.supervisor =>
+        'Own the plan, decide who acts next, and return strict JSON.',
+      AgentId.qa =>
+        'Validate correctness, test coverage, regressions, and release risk.',
+      AgentId.ux =>
+        'Review usability, accessibility, flow, copy, and interaction quality.',
+      AgentId.seniorEngineer =>
+        'Review architecture, technical strategy, maintainability, and delivery risk.',
+      AgentId.user => '',
+    };
+    final enabledSubtitle = switch (agentId) {
+      AgentId.generator => 'The main implementation agent for this chat.',
+      AgentId.reviewer =>
+        'When enabled, new runs wait for the generator and then hand off to the reviewer.',
+      AgentId.summary =>
+        'Adds a final user-facing summary after the reviewer or generator finishes.',
+      AgentId.supervisor =>
+        'Owns planning, delegation, and specialist routing for supervisor mode.',
+      AgentId.qa =>
+        'Reports validation risk, testing gaps, and regressions back to the supervisor.',
+      AgentId.ux =>
+        'Reports UX, accessibility, and product quality feedback back to the supervisor.',
+      AgentId.seniorEngineer =>
+        'Reports senior technical guidance and implementation risk back to the supervisor.',
+      AgentId.user => '',
+    };
+    final visibilityHelperText = switch (agentId) {
+      AgentId.reviewer =>
+        'Collapsed reviewer replies stay out of the main list, but the reviewer status banner still updates.',
+      AgentId.qa ||
+      AgentId.ux ||
+      AgentId.seniorEngineer =>
+        'Specialist replies usually stay collapsed so the supervisor can summarize the run.',
+      _ => null,
+    };
+    final canToggle = switch (agentId) {
+      AgentId.generator => _preset != AgentPreset.supervisor,
+      AgentId.supervisor => _preset == AgentPreset.supervisor,
+      AgentId.qa ||
+      AgentId.ux ||
+      AgentId.seniorEngineer =>
+        _preset == AgentPreset.supervisor,
+      _ => _preset != AgentPreset.supervisor,
+    };
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFF15203B),
+        borderRadius: BorderRadius.circular(18),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            value: _enabled[agentId] ?? false,
+            title: Text(title),
+            subtitle: Text(enabledSubtitle),
+            onChanged: !canToggle
+                ? null
+                : (value) {
+                    setState(() {
+                      _enabled[agentId] = value;
+                      if (kSupervisorMemberAgentIds.contains(agentId)) {
+                        if (value) {
+                          _supervisorMemberIds.add(agentId);
+                        } else {
+                          _supervisorMemberIds.remove(agentId);
+                        }
+                      }
+                    });
+                  },
+          ),
+          TextField(
+            controller: _labelControllers[agentId],
+            decoration: const InputDecoration(labelText: 'Label'),
+          ),
+          const SizedBox(height: 8),
+          DropdownButtonFormField<AgentVisibilityMode>(
+            initialValue: _visibility[agentId],
+            decoration: InputDecoration(
+              labelText: 'Visibility',
+              helperText: visibilityHelperText,
+            ),
+            items: const <DropdownMenuItem<AgentVisibilityMode>>[
+              DropdownMenuItem(
+                value: AgentVisibilityMode.visible,
+                child: Text('Visible'),
+              ),
+              DropdownMenuItem(
+                value: AgentVisibilityMode.collapsed,
+                child: Text('Collapsed'),
+              ),
+              DropdownMenuItem(
+                value: AgentVisibilityMode.hidden,
+                child: Text('Hidden'),
+              ),
+            ],
+            onChanged: (value) {
+              if (value == null) {
+                return;
+              }
+              setState(() {
+                _visibility[agentId] = value;
+              });
+            },
+          ),
+          const SizedBox(height: 8),
+          TextField(
+            controller: _turnsControllers[agentId],
+            keyboardType: TextInputType.number,
+            decoration: const InputDecoration(
+              labelText: 'Max turns',
+              helperText: 'Range: 0-6',
+            ),
+          ),
+          const SizedBox(height: 8),
+          TextField(
+            controller: _promptControllers[agentId],
+            minLines: 3,
+            maxLines: 6,
+            decoration: InputDecoration(
+              labelText: 'Prompt',
+              hintText: promptHint,
+              alignLabelWithHint: true,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSupervisorRegistryCard() {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFF15203B),
+        borderRadius: BorderRadius.circular(18),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          const Text(
+            'Supervisor Registry',
+            style: TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 6),
+          const Text(
+            'Choose which specialist agents the supervisor can call during the run.',
+            style: TextStyle(
+              color: Color(0xFFB8C8EA),
+              fontSize: 12,
+              height: 1.3,
+            ),
+          ),
+          const SizedBox(height: 12),
+          ...kSupervisorMemberAgentIds.map((agentId) {
+            final label = switch (agentId) {
+              AgentId.qa => 'QA',
+              AgentId.ux => 'UX',
+              AgentId.seniorEngineer => 'Senior Engineer',
+              _ => agentIdToJson(agentId),
+            };
+            return CheckboxListTile(
+              contentPadding: EdgeInsets.zero,
+              value: _supervisorMemberIds.contains(agentId),
+              title: Text(label),
+              subtitle: Text(
+                switch (agentId) {
+                  AgentId.qa =>
+                    'Validation, tests, regressions, and release risk.',
+                  AgentId.ux =>
+                    'Usability, accessibility, flow, and interface quality.',
+                  AgentId.seniorEngineer =>
+                    'Architecture, implementation strategy, and delivery risk.',
+                  _ => '',
+                },
+              ),
+              onChanged: (value) {
+                setState(() {
+                  if (value ?? false) {
+                    _supervisorMemberIds.add(agentId);
+                    _enabled[agentId] = true;
+                  } else {
+                    _supervisorMemberIds.remove(agentId);
+                    _enabled[agentId] = false;
+                  }
+                });
+              },
+            );
+          }),
+        ],
+      ),
+    );
+  }
+
+  void _applyPreset(AgentPreset preset) {
+    for (final agentId in kConfigurableAgentIds) {
+      _enabled[agentId] = agentEnabledForPreset(agentId, preset);
+    }
+    if (preset == AgentPreset.supervisor) {
+      _enabled[AgentId.supervisor] = true;
+      for (final agentId in kSupervisorMemberAgentIds) {
+        _enabled[agentId] = _supervisorMemberIds.contains(agentId);
+      }
+    }
+  }
+
+  AgentConfiguration _buildConfiguration() {
+    final previousAgents = widget.session.agentConfiguration.agents;
+    final nextAgents = previousAgents.map((agent) {
+      final maxTurns = _normalizeAgentTurns(
+        _turnsControllers[agent.agentId]?.text ?? agent.maxTurns.toString(),
+      );
+      final trimmedLabel = _labelControllers[agent.agentId]?.text.trim() ?? '';
+      final trimmedPrompt =
+          _promptControllers[agent.agentId]?.text.trim() ?? '';
+      return agent.copyWith(
+        enabled: _enabled[agent.agentId] ?? agent.enabled,
+        label: trimmedLabel.isNotEmpty ? trimmedLabel : agent.label,
+        prompt: trimmedPrompt,
+        visibility: _visibility[agent.agentId] ?? agent.visibility,
+        maxTurns: maxTurns,
+      );
+    }).toList(growable: false);
+    return widget.session.agentConfiguration.copyWith(
+      preset: _preset,
+      displayMode: _displayMode,
+      agents: nextAgents,
+      supervisorMemberIds: _supervisorMemberIds.toList(growable: false),
+    );
+  }
+}
+
+int _normalizeAgentTurns(String rawValue) {
+  final parsed = int.tryParse(rawValue.trim());
+  if (parsed == null) {
+    return 1;
+  }
+  return parsed.clamp(0, 6);
 }
 
 class _ComposerDraft {

@@ -5,12 +5,16 @@ import 'package:cross_file/cross_file.dart';
 import 'package:flutter/foundation.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
+import '../models/agent_configuration.dart';
+import '../models/agent_profile.dart';
 import '../models/chat_message.dart';
 import '../models/chat_session_summary.dart';
+import '../models/current_run_execution.dart';
 import '../models/job_status_response.dart';
 import '../models/session_detail.dart';
 import '../models/workspace.dart';
 import '../services/api_client.dart';
+import '../services/chat_notification_content.dart';
 import '../services/chat_notification_service.dart';
 
 class ChatController extends ChangeNotifier {
@@ -23,6 +27,7 @@ class ChatController extends ChangeNotifier {
 
   final ApiClient _apiClient;
   final ChatNotificationService _notificationService;
+  final List<AgentProfile> _agentProfiles = <AgentProfile>[];
   final List<ChatSessionSummary> _sessions = <ChatSessionSummary>[];
   final List<Workspace> _workspaces = <Workspace>[];
   final Map<String, String> _pendingJobs = <String, String>{};
@@ -33,7 +38,7 @@ class ChatController extends ChangeNotifier {
       <String, WebSocketChannel>{};
   final Map<int, _OutgoingUploadTicket> _outgoingUploads =
       <int, _OutgoingUploadTicket>{};
-  final Set<String> _notifiedTerminalJobs = <String>{};
+  final Set<String> _handledTerminalJobs = <String>{};
 
   SessionDetail? _currentSession;
   String? _selectedSessionId;
@@ -48,6 +53,8 @@ class ChatController extends ChangeNotifier {
 
   List<ChatSessionSummary> get sessions =>
       List<ChatSessionSummary>.unmodifiable(_sessions);
+  List<AgentProfile> get agentProfiles =>
+      List<AgentProfile>.unmodifiable(_agentProfiles);
   List<Workspace> get workspaces => List<Workspace>.unmodifiable(_workspaces);
   SessionDetail? get currentSession => _currentSession;
   String? get selectedSessionId => _selectedSessionId;
@@ -77,16 +84,49 @@ class ChatController extends ChangeNotifier {
     }
 
     var maxElapsedSeconds = 0;
+    JobStatusResponse? primarySnapshot;
+    final activeSession =
+        _currentSession != null && _currentSession!.id == sessionId
+            ? _currentSession
+            : null;
+    ChatSessionSummary? sessionSummary;
+    for (final session in _sessions) {
+      if (session.id == sessionId) {
+        sessionSummary = session;
+        break;
+      }
+    }
+
     for (final jobId in jobIds) {
-      final elapsedSeconds = _jobSnapshots[jobId]?.elapsedSeconds ?? 0;
+      final snapshot = _jobSnapshots[jobId];
+      final elapsedSeconds = snapshot?.elapsedSeconds ?? 0;
       if (elapsedSeconds > maxElapsedSeconds) {
         maxElapsedSeconds = elapsedSeconds;
+      }
+      if (snapshot == null) {
+        continue;
+      }
+      if (_isBetterActiveJobSnapshot(snapshot, primarySnapshot)) {
+        primarySnapshot = snapshot;
       }
     }
 
     return SessionActiveJobSummary(
       activeJobCount: jobIds.length,
       maxElapsedSeconds: maxElapsedSeconds,
+      primaryAgentId: primarySnapshot?.agentId ?? AgentId.generator,
+      primaryAgentLabel: primarySnapshot != null
+          ? (_resolveConfiguredAgentLabel(
+                primarySnapshot,
+                activeSession,
+                sessionSummary,
+              ) ??
+              primarySnapshot.agentLabel ??
+              _defaultAgentLabel(primarySnapshot.agentId))
+          : _defaultAgentLabel(AgentId.generator),
+      primaryAgentSeed: primarySnapshot != null
+          ? agentIdToJson(primarySnapshot.agentId)
+          : agentIdToJson(AgentId.generator),
     );
   }
 
@@ -132,18 +172,31 @@ class ChatController extends ChangeNotifier {
   }
 
   Future<void> initialize() async {
+    _setLoading(true);
     try {
-      await refreshSessions();
-      await refreshWorkspaces();
+      await Future.wait<void>(<Future<void>>[
+        refreshSessions(),
+        refreshWorkspaces(),
+      ]);
       if (_sessions.isNotEmpty) {
         await selectSession(_sessions.first.id);
       } else {
         _errorText = null;
         notifyListeners();
       }
+      try {
+        await refreshAgentProfiles();
+      } catch (error) {
+        if (_errorText == null) {
+          _errorText = 'Agent profiles are unavailable.\n$error';
+          notifyListeners();
+        }
+      }
     } catch (error) {
       _errorText = '$error';
       notifyListeners();
+    } finally {
+      _setLoading(false);
     }
   }
 
@@ -161,6 +214,15 @@ class ChatController extends ChangeNotifier {
     _workspaces
       ..clear()
       ..addAll(workspaces);
+    _errorText = null;
+    notifyListeners();
+  }
+
+  Future<void> refreshAgentProfiles() async {
+    final profiles = await _apiClient.listAgentProfiles();
+    _agentProfiles
+      ..clear()
+      ..addAll(profiles);
     _errorText = null;
     notifyListeners();
   }
@@ -187,10 +249,19 @@ class ChatController extends ChangeNotifier {
   }
 
   Future<void> createNewSession({String? workspacePath}) async {
+    await createNewSessionWithProfile(workspacePath: workspacePath);
+  }
+
+  Future<void> createNewSessionWithProfile({
+    String? workspacePath,
+    String? agentProfileId,
+  }) async {
     _setLoading(true);
     try {
-      final session =
-          await _apiClient.createSession(workspacePath: workspacePath);
+      final session = await _apiClient.createSession(
+        workspacePath: workspacePath,
+        agentProfileId: agentProfileId,
+      );
       _errorText = null;
       await refreshSessions();
       _selectedSessionId = session.id;
@@ -202,6 +273,121 @@ class ChatController extends ChangeNotifier {
       notifyListeners();
     } finally {
       _setLoading(false);
+    }
+  }
+
+  Future<AgentProfile?> createAgentProfile({
+    required String name,
+    required String description,
+    required String colorHex,
+    required AgentConfiguration configuration,
+  }) async {
+    try {
+      _errorText = null;
+      final profile = await _apiClient.createAgentProfile(
+        name: name,
+        description: description,
+        colorHex: colorHex,
+        configuration: configuration,
+      );
+      await refreshAgentProfiles();
+      notifyListeners();
+      return profile;
+    } catch (error) {
+      _errorText = 'Failed to create agent profile.\n$error';
+      notifyListeners();
+      return null;
+    }
+  }
+
+  Future<String?> exportAgentProfilesAsJson() async {
+    try {
+      _errorText = null;
+      final profiles = await _apiClient.exportAgentProfiles();
+      return jsonEncode(
+        <String, dynamic>{
+          'profiles': profiles.map((profile) => profile.toJson()).toList(),
+        },
+      );
+    } catch (error) {
+      _errorText = 'Failed to export agent profiles.\n$error';
+      notifyListeners();
+      return null;
+    }
+  }
+
+  Future<bool> importAgentProfilesFromJson(String rawJson) async {
+    try {
+      final decoded = jsonDecode(rawJson);
+      final rawProfiles = switch (decoded) {
+        {'profiles': final List<dynamic> profiles} => profiles,
+        final List<dynamic> profiles => profiles,
+        _ => throw const FormatException(
+            'Expected either a JSON array or an object with a profiles array.',
+          ),
+      };
+      final profiles = rawProfiles
+          .map((item) => AgentProfile.fromJson(item as Map<String, dynamic>))
+          .toList();
+      _errorText = null;
+      await _apiClient.importAgentProfiles(profiles);
+      await refreshAgentProfiles();
+      notifyListeners();
+      return true;
+    } catch (error) {
+      _errorText = 'Failed to import agent profiles.\n$error';
+      notifyListeners();
+      return false;
+    }
+  }
+
+  Future<bool> applyAgentProfile(String profileId) async {
+    final sessionId = _selectedSessionId;
+    if (sessionId == null) {
+      return false;
+    }
+
+    try {
+      _errorText = null;
+      final session = await _apiClient.applyAgentProfile(
+        sessionId,
+        profileId: profileId,
+      );
+      _currentSession = _overlaySessionWithJobSnapshots(session);
+      await refreshSessions();
+      _reconcilePendingJobsForSession(_currentSession);
+      _trackPendingJobsFromSession(_currentSession);
+      notifyListeners();
+      return true;
+    } catch (error) {
+      _errorText = 'Failed to apply agent profile.\n$error';
+      notifyListeners();
+      return false;
+    }
+  }
+
+  Future<bool> setSessionArchived(
+    String sessionId, {
+    required bool archived,
+  }) async {
+    try {
+      _errorText = null;
+      final session = await _apiClient.setSessionArchived(
+        sessionId,
+        archived: archived,
+      );
+      await refreshSessions();
+      if (_selectedSessionId == sessionId) {
+        _currentSession = _overlaySessionWithJobSnapshots(session);
+        _reconcilePendingJobsForSession(_currentSession);
+        _trackPendingJobsFromSession(_currentSession);
+      }
+      notifyListeners();
+      return true;
+    } catch (error) {
+      _errorText = 'Failed to update archive state.\n$error';
+      notifyListeners();
+      return false;
     }
   }
 
@@ -249,11 +435,34 @@ class ChatController extends ChangeNotifier {
 
     try {
       _errorText = null;
-      final session = await _apiClient.updateAutoMode(
+      final currentSession = _currentSession;
+      if (currentSession == null) {
+        return false;
+      }
+      final currentConfiguration = currentSession.agentConfiguration;
+      final updatedAgents = currentConfiguration.agents.map((agent) {
+        switch (agent.agentId) {
+          case AgentId.reviewer:
+            return agent.copyWith(
+              enabled: enabled,
+              maxTurns: maxTurns,
+              prompt: reviewerPrompt ?? agent.prompt,
+            );
+          case AgentId.summary:
+            return agent.copyWith(
+              enabled: false,
+              maxTurns: 0,
+            );
+          default:
+            return agent;
+        }
+      }).toList(growable: false);
+      final session = await _apiClient.updateAgentConfiguration(
         sessionId,
-        enabled: enabled,
-        maxTurns: maxTurns,
-        reviewerPrompt: reviewerPrompt,
+        configuration: currentConfiguration.copyWith(
+          preset: enabled ? AgentPreset.review : AgentPreset.solo,
+          agents: updatedAgents,
+        ),
       );
       _currentSession = _overlaySessionWithJobSnapshots(session);
       await refreshSessions();
@@ -263,6 +472,33 @@ class ChatController extends ChangeNotifier {
       return true;
     } catch (error) {
       _errorText = 'Failed to update auto mode.\n$error';
+      notifyListeners();
+      return false;
+    }
+  }
+
+  Future<bool> updateAgentConfiguration(
+    AgentConfiguration configuration,
+  ) async {
+    final sessionId = _selectedSessionId;
+    if (sessionId == null) {
+      return false;
+    }
+
+    try {
+      _errorText = null;
+      final session = await _apiClient.updateAgentConfiguration(
+        sessionId,
+        configuration: configuration,
+      );
+      _currentSession = _overlaySessionWithJobSnapshots(session);
+      await refreshSessions();
+      _reconcilePendingJobsForSession(_currentSession);
+      _trackPendingJobsFromSession(_currentSession);
+      notifyListeners();
+      return true;
+    } catch (error) {
+      _errorText = 'Failed to update agent configuration.\n$error';
       notifyListeners();
       return false;
     }
@@ -512,6 +748,35 @@ class ChatController extends ChangeNotifier {
     }
   }
 
+  Future<bool> recoverMessage(
+    String messageId, {
+    required MessageRecoveryAction action,
+  }) async {
+    final sessionId = _selectedSessionId;
+    if (sessionId == null) {
+      return false;
+    }
+
+    try {
+      _errorText = null;
+      final session = await _apiClient.recoverMessage(
+        sessionId,
+        messageId,
+        action: action,
+      );
+      _currentSession = _overlaySessionWithJobSnapshots(session);
+      _reconcilePendingJobsForSession(_currentSession);
+      _trackPendingJobsFromSession(_currentSession);
+      await refreshSessions();
+      notifyListeners();
+      return true;
+    } catch (error) {
+      _errorText = 'Failed to recover message.\n$error';
+      notifyListeners();
+      return false;
+    }
+  }
+
   @override
   void dispose() {
     _pollTimer?.cancel();
@@ -608,20 +873,26 @@ class ChatController extends ChangeNotifier {
     JobStatusResponse accepted, {
     required String? originSessionId,
   }) async {
+    final resolvedSessionId = accepted.sessionId.isNotEmpty
+        ? accepted.sessionId
+        : (originSessionId ?? _selectedSessionId ?? '');
+    final acceptedSnapshot = accepted.sessionId == resolvedSessionId
+        ? accepted
+        : accepted.copyWith(sessionId: resolvedSessionId);
     final shouldKeepOriginSessionSelected =
         _selectedSessionId == null || _selectedSessionId == originSessionId;
 
-    _pendingJobs[accepted.jobId] = accepted.sessionId;
-    _jobSnapshots[accepted.jobId] = accepted;
-    _notifiedTerminalJobs.remove(accepted.jobId);
-    _ensureJobStream(accepted.jobId);
+    _pendingJobs[acceptedSnapshot.jobId] = resolvedSessionId;
+    _jobSnapshots[acceptedSnapshot.jobId] = acceptedSnapshot;
+    _handledTerminalJobs.remove(acceptedSnapshot.jobId);
+    _ensureJobStream(acceptedSnapshot.jobId);
     _ensurePolling();
 
     await refreshSessions();
 
     if (shouldKeepOriginSessionSelected ||
-        _selectedSessionId == accepted.sessionId) {
-      _selectedSessionId = accepted.sessionId;
+        _selectedSessionId == resolvedSessionId) {
+      _selectedSessionId = resolvedSessionId;
       await _reloadCurrentSession();
     }
   }
@@ -676,6 +947,9 @@ class ChatController extends ChangeNotifier {
         sessionId: session.id,
         status: jobStatus.isNotEmpty ? jobStatus : 'pending',
         elapsedSeconds: message.jobElapsedSeconds ?? 0,
+        agentId: message.agentId,
+        agentType: message.agentType,
+        agentLabel: message.agentLabel,
         providerSessionId: message.providerSessionId,
         phase: message.jobPhase,
         latestActivity: message.jobLatestActivity,
@@ -753,8 +1027,18 @@ class ChatController extends ChangeNotifier {
     final updatedMessages = _currentSession!.messages
         .map((message) => _applySnapshotToMessage(message, snapshot))
         .toList(growable: false);
+    final updatedCurrentRun =
+        _applySnapshotToRun(_currentSession!.currentRun, snapshot);
+    final updatedRecentRuns = _applySnapshotToRuns(
+      _currentSession!.recentRuns,
+      snapshot,
+    );
 
-    _currentSession = _currentSession!.copyWith(messages: updatedMessages);
+    _currentSession = _currentSession!.copyWith(
+      messages: updatedMessages,
+      currentRun: updatedCurrentRun,
+      recentRuns: updatedRecentRuns,
+    );
     notifyListeners();
   }
 
@@ -792,8 +1076,21 @@ class ChatController extends ChangeNotifier {
       }
       return _applySnapshotToMessage(message, snapshot);
     }).toList(growable: false);
+    var currentRun = session.currentRun;
+    var recentRuns = session.recentRuns;
+    for (final snapshot in _jobSnapshots.values) {
+      if (snapshot.sessionId != session.id) {
+        continue;
+      }
+      currentRun = _applySnapshotToRun(currentRun, snapshot);
+      recentRuns = _applySnapshotToRuns(recentRuns, snapshot);
+    }
 
-    return session.copyWith(messages: messages);
+    return session.copyWith(
+      messages: messages,
+      currentRun: currentRun,
+      recentRuns: recentRuns,
+    );
   }
 
   void _finishTrackingJob(String jobId) {
@@ -803,46 +1100,38 @@ class ChatController extends ChangeNotifier {
   }
 
   void _maybeNotifyForTerminalJob(JobStatusResponse snapshot) {
-    if (!snapshot.isTerminal || snapshot.status == 'cancelled') {
+    if (!snapshot.isTerminal) {
       return;
     }
-    if (_notifiedTerminalJobs.contains(snapshot.jobId)) {
+    if (_handledTerminalJobs.contains(snapshot.jobId)) {
+      return;
+    }
+    _handledTerminalJobs.add(snapshot.jobId);
+
+    if (snapshot.status == 'cancelled') {
       return;
     }
 
     final notification = _buildTerminalNotification(snapshot);
-    if (notification == null) {
-      return;
-    }
-
-    _notifiedTerminalJobs.add(snapshot.jobId);
     unawaited(_notificationService.showChatCompleted(notification));
   }
 
-  ChatCompletedNotification? _buildTerminalNotification(
+  ChatCompletedNotification _buildTerminalNotification(
     JobStatusResponse snapshot,
   ) {
     final session = _sessionDetailForId(snapshot.sessionId);
+    final sessionSummary = _sessionSummaryForId(snapshot.sessionId);
     final sessionTitle = _resolveSessionTitle(snapshot.sessionId, session);
     final workspaceName = _resolveWorkspaceName(snapshot.sessionId, session);
-    final preview = _buildNotificationPreview(snapshot);
-    if (preview == null) {
-      return null;
-    }
-
-    final statusLine =
-        snapshot.status == 'failed' ? 'Chat failed' : 'Reply ready';
-    final body = StringBuffer(statusLine);
-    if (sessionTitle.isNotEmpty) {
-      body.write('\n$sessionTitle');
-    }
-    body.write('\n$preview');
-
-    return ChatCompletedNotification(
-      id: snapshot.jobId.hashCode,
-      title: workspaceName,
-      body: body.toString(),
-      summary: sessionTitle,
+    return buildChatCompletedNotification(
+      snapshot: snapshot,
+      workspaceName: workspaceName,
+      sessionTitle: sessionTitle,
+      configuredAgentLabel: _resolveConfiguredAgentLabel(
+        snapshot,
+        session,
+        sessionSummary,
+      ),
     );
   }
 
@@ -850,6 +1139,15 @@ class ChatController extends ChangeNotifier {
     final currentSession = _currentSession;
     if (currentSession != null && currentSession.id == sessionId) {
       return currentSession;
+    }
+    return null;
+  }
+
+  ChatSessionSummary? _sessionSummaryForId(String sessionId) {
+    for (final summary in _sessions) {
+      if (summary.id == sessionId) {
+        return summary;
+      }
     }
     return null;
   }
@@ -882,23 +1180,38 @@ class ChatController extends ChangeNotifier {
     return 'Codex Remote';
   }
 
-  String? _buildNotificationPreview(JobStatusResponse snapshot) {
-    final rawPreview = switch (snapshot.status) {
-      'failed' => snapshot.error,
-      _ => snapshot.response ?? snapshot.latestActivity,
-    };
-    if (rawPreview == null) {
-      return null;
+  String? _resolveConfiguredAgentLabel(
+    JobStatusResponse snapshot,
+    SessionDetail? session,
+    ChatSessionSummary? sessionSummary,
+  ) {
+    final sessionConfiguration =
+        session?.agentConfiguration.byId(snapshot.agentId);
+    if (sessionConfiguration != null &&
+        sessionConfiguration.label.trim().isNotEmpty) {
+      return sessionConfiguration.label.trim();
     }
 
-    final normalized = rawPreview.replaceAll(RegExp(r'\s+'), ' ').trim();
-    if (normalized.isEmpty) {
-      return null;
+    final summaryConfiguration =
+        sessionSummary?.agentConfiguration.byId(snapshot.agentId);
+    if (summaryConfiguration != null &&
+        summaryConfiguration.label.trim().isNotEmpty) {
+      return summaryConfiguration.label.trim();
     }
-    if (normalized.length <= 220) {
-      return normalized;
-    }
-    return '${normalized.substring(0, 217)}...';
+
+    return null;
+  }
+
+  @visibleForTesting
+  ChatCompletedNotification buildTerminalNotificationForTesting(
+    JobStatusResponse snapshot,
+  ) {
+    return _buildTerminalNotification(snapshot);
+  }
+
+  @visibleForTesting
+  void applyJobSnapshotForTesting(JobStatusResponse snapshot) {
+    _applyJobSnapshot(snapshot);
   }
 
   void _setLoading(bool value) {
@@ -948,14 +1261,22 @@ class ChatController extends ChangeNotifier {
     return SessionDetail(
       id: session.id,
       title: session.title,
+      archivedAt: session.archivedAt,
       workspacePath: session.workspacePath,
       workspaceName: session.workspaceName,
+      agentProfileId: session.agentProfileId,
+      agentProfileName: session.agentProfileName,
+      agentProfileColor: session.agentProfileColor,
       providerSessionId: session.providerSessionId,
       reviewerProviderSessionId: session.reviewerProviderSessionId,
+      activeAgentRunId: session.activeAgentRunId,
+      activeAgentTurnIndex: session.activeAgentTurnIndex,
+      agentConfiguration: session.agentConfiguration,
       autoModeEnabled: session.autoModeEnabled,
       autoMaxTurns: session.autoMaxTurns,
       autoReviewerPrompt: session.autoReviewerPrompt,
       autoTurnIndex: session.autoTurnIndex,
+      reviewerState: session.reviewerState,
       createdAt: session.createdAt,
       updatedAt: session.updatedAt,
       messages: const <ChatMessage>[],
@@ -998,6 +1319,111 @@ class ChatController extends ChangeNotifier {
     }
     return null;
   }
+
+  bool _isBetterActiveJobSnapshot(
+    JobStatusResponse candidate,
+    JobStatusResponse? current,
+  ) {
+    if (current == null) {
+      return true;
+    }
+
+    final candidatePriority = _activeJobStatusPriority(candidate.status);
+    final currentPriority = _activeJobStatusPriority(current.status);
+    if (candidatePriority != currentPriority) {
+      return candidatePriority > currentPriority;
+    }
+
+    if (candidate.elapsedSeconds != current.elapsedSeconds) {
+      return candidate.elapsedSeconds > current.elapsedSeconds;
+    }
+
+    final candidateTimestamp = candidate.updatedAt ?? candidate.completedAt;
+    final currentTimestamp = current.updatedAt ?? current.completedAt;
+    if (candidateTimestamp == null) {
+      return false;
+    }
+    if (currentTimestamp == null) {
+      return true;
+    }
+    return candidateTimestamp.isAfter(currentTimestamp);
+  }
+
+  int _activeJobStatusPriority(String status) {
+    return switch (status) {
+      'running' => 2,
+      'pending' => 1,
+      _ => 0,
+    };
+  }
+
+  String _defaultAgentLabel(AgentId agentId) {
+    return switch (agentId) {
+      AgentId.generator => 'Generator',
+      AgentId.reviewer => 'Reviewer',
+      AgentId.summary => 'Summary',
+      AgentId.supervisor => 'Supervisor',
+      AgentId.qa => 'QA',
+      AgentId.ux => 'UX',
+      AgentId.seniorEngineer => 'Senior Engineer',
+      AgentId.user => 'User',
+    };
+  }
+}
+
+CurrentRunExecution? _applySnapshotToRun(
+  CurrentRunExecution? currentRun,
+  JobStatusResponse snapshot,
+) {
+  if (currentRun == null) {
+    return null;
+  }
+
+  var didUpdate = false;
+  final stages = currentRun.stages.map((stage) {
+    if (stage.jobId != snapshot.jobId) {
+      return stage;
+    }
+    didUpdate = true;
+    return stage.copyWith(
+      state: _stageStateFromJobStatus(snapshot.status),
+      jobStatus: snapshot.status,
+      latestActivity: snapshot.latestActivity,
+      updatedAt: snapshot.updatedAt ?? stage.updatedAt,
+      completedAt: snapshot.completedAt ?? stage.completedAt,
+    );
+  }).toList(growable: false);
+
+  if (!didUpdate) {
+    return currentRun;
+  }
+
+  final latestTimestamp = snapshot.completedAt ?? snapshot.updatedAt;
+  return currentRun.copyWith(
+    state: _deriveRunStateFromStages(stages, currentRun.isActive),
+    updatedAt: latestTimestamp ?? currentRun.updatedAt,
+    completedAt: snapshot.completedAt ?? currentRun.completedAt,
+    stages: stages,
+  );
+}
+
+List<CurrentRunExecution> _applySnapshotToRuns(
+  List<CurrentRunExecution> runs,
+  JobStatusResponse snapshot,
+) {
+  if (runs.isEmpty) {
+    return runs;
+  }
+
+  var didUpdate = false;
+  final updatedRuns = runs.map((run) {
+    final updatedRun = _applySnapshotToRun(run, snapshot);
+    if (!identical(updatedRun, run)) {
+      didUpdate = true;
+    }
+    return updatedRun!;
+  }).toList(growable: false);
+  return didUpdate ? updatedRuns : runs;
 }
 
 ChatMessageStatus _statusFromJob(String status) {
@@ -1013,14 +1439,69 @@ ChatMessageStatus _statusFromJob(String status) {
   }
 }
 
+CurrentRunStageState _stageStateFromJobStatus(String status) {
+  switch (status) {
+    case 'running':
+      return CurrentRunStageState.running;
+    case 'completed':
+      return CurrentRunStageState.completed;
+    case 'failed':
+      return CurrentRunStageState.failed;
+    case 'cancelled':
+      return CurrentRunStageState.cancelled;
+    default:
+      return CurrentRunStageState.queued;
+  }
+}
+
+CurrentRunStageState _deriveRunStateFromStages(
+  List<CurrentRunStageExecution> stages,
+  bool isActive,
+) {
+  final states = stages.map((stage) => stage.state).toSet();
+  if (states.contains(CurrentRunStageState.running)) {
+    return CurrentRunStageState.running;
+  }
+  if (states.contains(CurrentRunStageState.queued)) {
+    return CurrentRunStageState.queued;
+  }
+  if (states.contains(CurrentRunStageState.failed)) {
+    return CurrentRunStageState.failed;
+  }
+  if (states.contains(CurrentRunStageState.cancelled)) {
+    return CurrentRunStageState.cancelled;
+  }
+  if (states.contains(CurrentRunStageState.stale)) {
+    return CurrentRunStageState.stale;
+  }
+  if (isActive) {
+    if (states.contains(CurrentRunStageState.notScheduled)) {
+      return CurrentRunStageState.notScheduled;
+    }
+    if (states.contains(CurrentRunStageState.waiting)) {
+      return CurrentRunStageState.waiting;
+    }
+  }
+  if (states.contains(CurrentRunStageState.completed)) {
+    return CurrentRunStageState.completed;
+  }
+  return CurrentRunStageState.skipped;
+}
+
 class SessionActiveJobSummary {
   const SessionActiveJobSummary({
     required this.activeJobCount,
     required this.maxElapsedSeconds,
+    required this.primaryAgentId,
+    required this.primaryAgentLabel,
+    required this.primaryAgentSeed,
   });
 
   final int activeJobCount;
   final int maxElapsedSeconds;
+  final AgentId primaryAgentId;
+  final String primaryAgentLabel;
+  final String primaryAgentSeed;
 }
 
 enum OutgoingUploadKind { audio, image, file, mixed }

@@ -1,12 +1,24 @@
 import 'package:flutter/services.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 
+String sanitizeTextForSpeech(String text) {
+  return text
+      .replaceAllMapped(
+        RegExp(r'\[([^\]]+)\]\([^)]+\)'),
+        (match) => match.group(1) ?? '',
+      )
+      .replaceAll(RegExp(r'```[\s\S]*?```'), ' ')
+      .replaceAll('`', '')
+      .replaceAll(RegExp(r'\s+'), ' ')
+      .trim();
+}
+
 class TextToSpeechPlayer {
   final FlutterTts _tts = FlutterTts();
   bool _configured = false;
 
   Future<void> speak(String rawText) async {
-    final text = _sanitize(rawText);
+    final text = sanitizeTextForSpeech(rawText);
     if (text.isEmpty) {
       return;
     }
@@ -45,17 +57,5 @@ class TextToSpeechPlayer {
     await _tts.setPitch(1.0);
     await _tts.setVolume(1.0);
     _configured = true;
-  }
-
-  String _sanitize(String text) {
-    return text
-        .replaceAllMapped(
-          RegExp(r'\[([^\]]+)\]\([^)]+\)'),
-          (match) => match.group(1) ?? '',
-        )
-        .replaceAll(RegExp(r'```[\s\S]*?```'), ' ')
-        .replaceAll('`', '')
-        .replaceAll(RegExp(r'\s+'), ' ')
-        .trim();
   }
 }
