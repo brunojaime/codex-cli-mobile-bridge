@@ -18,6 +18,9 @@ frontend/mobile_app/.flutter-plugins-dependencies
 frontend/mobile_app/.packages
 frontend/mobile_app/build/
 frontend/mobile_app/android/local.properties
+frontend/mobile_app/android/key.properties
+frontend/mobile_app/android/*.jks
+frontend/mobile_app/android/*.keystore
 frontend/mobile_app/.idea/
 
 # Local IDE files

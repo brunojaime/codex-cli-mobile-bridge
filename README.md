@@ -161,6 +161,40 @@ Voice-note transcription options:
 - `AUDIO_TRANSCRIPTION_BACKEND=faster_whisper` forces the local model path and avoids any external API call.
 - `AUDIO_TRANSCRIPTION_BACKEND=disabled` turns the feature off explicitly.
 
+## Android APK Releases On GitHub
+
+This repository can publish the Android APK to GitHub Releases so you can install updates from your phone without a USB cable.
+
+What is included:
+
+- A GitHub Actions workflow at `.github/workflows/android-release.yml`
+- A local helper command at `scripts/publish_android_release.sh`
+- A stable release asset name: `codex-mobile.apk`
+
+Recommended flow:
+
+1. Update `frontend/mobile_app/pubspec.yaml` and bump the Flutter version.
+2. Commit and push your code changes.
+3. Run `./scripts/publish_android_release.sh --push`.
+4. GitHub Actions builds the APK and publishes a release for that tag.
+5. Download it from:
+   `https://github.com/<owner>/<repo>/releases/latest/download/codex-mobile.apk`
+
+Important details:
+
+- If `frontend/mobile_app/android/key.properties` is present, the Android release build uses that keystore.
+- If no release keystore is configured, the build falls back to the debug key so the workflow still works for internal testing.
+- For stable over-the-air updates, keep the same release keystore forever and always increase the app version in `frontend/mobile_app/pubspec.yaml`.
+
+Optional GitHub repository secrets for proper release signing:
+
+- `ANDROID_KEYSTORE_BASE64`
+- `ANDROID_KEY_ALIAS`
+- `ANDROID_KEY_PASSWORD`
+- `ANDROID_STORE_PASSWORD`
+
+The workflow decodes the keystore into `frontend/mobile_app/android/upload-keystore.jks` during the build and writes `frontend/mobile_app/android/key.properties` on the runner.
+
 ### Local Voice Transcription Setup
 
 This repository already installs `faster-whisper` as part of the Python dependencies. For most local setups, that is the transcription engine you want.

@@ -1,0 +1,84 @@
+name: Android Release
+
+on:
+  push:
+    tags:
+      - "android-v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Configure Android release signing
+        if: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' && secrets.ANDROID_KEY_ALIAS != '' && secrets.ANDROID_KEY_PASSWORD != '' && secrets.ANDROID_STORE_PASSWORD != '' }}
+        shell: bash
+        run: |
+          printf '%s' '${{ secrets.ANDROID_KEYSTORE_BASE64 }}' | base64 --decode > frontend/mobile_app/android/upload-keystore.jks
+          cat > frontend/mobile_app/android/key.properties <<EOF
+          storeFile=upload-keystore.jks
+          storePassword=${{ secrets.ANDROID_STORE_PASSWORD }}
+          keyAlias=${{ secrets.ANDROID_KEY_ALIAS }}
+          keyPassword=${{ secrets.ANDROID_KEY_PASSWORD }}
+          EOF
+
+      - name: Read Flutter app version
+        id: app_version
+        shell: bash
+        run: |
+          version=$(awk '/^version:/ { print $2; exit }' frontend/mobile_app/pubspec.yaml)
+          safe_version=${version//+/-build.}
+          echo "value=$version" >> "$GITHUB_OUTPUT"
+          echo "safe=$safe_version" >> "$GITHUB_OUTPUT"
+
+      - name: Install Flutter dependencies
+        working-directory: frontend/mobile_app
+        run: flutter pub get
+
+      - name: Build Android APK
+        working-directory: frontend/mobile_app
+        run: flutter build apk --release
+
+      - name: Prepare release artifacts
+        shell: bash
+        run: |
+          mkdir -p release-artifacts
+          cp frontend/mobile_app/build/app/outputs/flutter-apk/app-release.apk release-artifacts/codex-mobile.apk
+          cp frontend/mobile_app/build/app/outputs/flutter-apk/app-release.apk "release-artifacts/codex-mobile-${{ steps.app_version.outputs.safe }}.apk"
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: codex-mobile-${{ steps.app_version.outputs.safe }}
+          path: release-artifacts/*
+          if-no-files-found: error
+
+      - name: Publish GitHub release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Android ${{ steps.app_version.outputs.value }}
+          files: |
+            release-artifacts/codex-mobile.apk
+            release-artifacts/codex-mobile-${{ steps.app_version.outputs.safe }}.apk
+          generate_release_notes: true
+          fail_on_unmatched_files: true
