@@ -169,6 +169,8 @@ const AgentConfiguration kDefaultAgentConfiguration = AgentConfiguration(
   supervisorMemberIds: kSupervisorMemberAgentIds,
 );
 
+const Object _noAgentDefinitionModelChange = Object();
+
 class AgentDefinition {
   const AgentDefinition({
     required this.agentId,
@@ -228,7 +230,7 @@ class AgentDefinition {
     bool? enabled,
     String? label,
     String? prompt,
-    String? model,
+    Object? model = _noAgentDefinitionModelChange,
     AgentVisibilityMode? visibility,
     int? maxTurns,
     String? providerSessionId,
@@ -239,7 +241,9 @@ class AgentDefinition {
       enabled: enabled ?? this.enabled,
       label: label ?? this.label,
       prompt: prompt ?? this.prompt,
-      model: model ?? this.model,
+      model: identical(model, _noAgentDefinitionModelChange)
+          ? this.model
+          : model as String?,
       visibility: visibility ?? this.visibility,
       maxTurns: maxTurns ?? this.maxTurns,
       providerSessionId: providerSessionId ?? this.providerSessionId,

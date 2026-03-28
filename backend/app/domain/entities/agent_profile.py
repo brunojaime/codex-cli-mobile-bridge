@@ -26,6 +26,8 @@ QA_AGENT_PROFILE_ID = "qa"
 UX_AGENT_PROFILE_ID = "ux"
 SENIOR_ENGINEER_AGENT_PROFILE_ID = "senior_engineer"
 SCRAPER_AGENT_PROFILE_ID = "scraper"
+PROVIDER_AGENT_PROFILE_ID = "provider"
+ADMIN_AGENT_PROFILE_ID = "admin"
 DEFAULT_AGENT_PROFILE_COLOR = "#55D6BE"
 AGENT_CREATOR_PROFILE_COLOR = "#F28C28"
 SUPERVISOR_AGENT_PROFILE_COLOR = "#43C6DB"
@@ -33,6 +35,8 @@ QA_AGENT_PROFILE_COLOR = "#FFB347"
 UX_AGENT_PROFILE_COLOR = "#6FD6A8"
 SENIOR_ENGINEER_AGENT_PROFILE_COLOR = "#A78BFA"
 SCRAPER_AGENT_PROFILE_COLOR = "#0F766E"
+PROVIDER_AGENT_PROFILE_COLOR = "#1D4ED8"
+ADMIN_AGENT_PROFILE_COLOR = "#B91C1C"
 
 DEFAULT_AGENT_CREATOR_PROMPT = (
     "You are Agent Creator Codex. Help the user design a reusable Codex agent "
@@ -55,6 +59,26 @@ DEFAULT_AGENT_CREATOR_PROMPT = (
     "agent needs non-default multi-agent behavior; otherwise omit configuration "
     "and provide a strong solo-agent prompt. Keep the agent practical, with "
     "clear boundaries, inputs, outputs, and operating rules."
+)
+
+DEFAULT_PROVIDER_PROMPT = (
+    "You are Provider Codex. Act as the operational lead for a provider "
+    "organization using this platform. Help with onboarding, scheduling, "
+    "capacity, service delivery, billing handoff, escalations, incidents, "
+    "partner coordination, and operational reporting. Be concrete and "
+    "execution-focused. When information is missing, ask only for the details "
+    "that materially block progress. Prefer checklists, tradeoffs, ownership, "
+    "risks, and the next operational action."
+)
+
+DEFAULT_ADMIN_PROMPT = (
+    "You are Admin Codex. Act as the platform administrator. Help with "
+    "workspace setup, access control, policy decisions, environment "
+    "configuration, release coordination, auditability, support triage, "
+    "tenant-level settings, and operational governance. Be explicit about "
+    "permissions, blast radius, rollback plans, and safe defaults. When "
+    "recommending changes, separate what is safe now from what requires human "
+    "approval."
 )
 
 
@@ -216,6 +240,12 @@ def builtin_agent_profiles() -> list[AgentProfile]:
     agent_creator_configuration.agents[AgentId.GENERATOR].label = "Agent Creator"
     agent_creator_configuration.agents[AgentId.GENERATOR].prompt = DEFAULT_AGENT_CREATOR_PROMPT
     supervisor_configuration = _supervisor_configuration()
+    provider_configuration = AgentConfiguration.default()
+    provider_configuration.agents[AgentId.GENERATOR].label = "Provider"
+    provider_configuration.agents[AgentId.GENERATOR].prompt = DEFAULT_PROVIDER_PROMPT
+    admin_configuration = AgentConfiguration.default()
+    admin_configuration.agents[AgentId.GENERATOR].label = "Admin"
+    admin_configuration.agents[AgentId.GENERATOR].prompt = DEFAULT_ADMIN_PROMPT
     qa_configuration = _standalone_specialist_configuration(
         specialist_id=AgentId.QA,
         label="QA",
@@ -263,6 +293,30 @@ def builtin_agent_profiles() -> list[AgentProfile]:
             color_hex=SUPERVISOR_AGENT_PROFILE_COLOR,
             prompt=supervisor_configuration.agents[AgentId.SUPERVISOR].prompt,
             configuration=supervisor_configuration,
+            is_builtin=True,
+        ).normalized(),
+        AgentProfile(
+            id=PROVIDER_AGENT_PROFILE_ID,
+            name="Provider",
+            description=(
+                "Runs provider-side operations, delivery workflows, escalations, and "
+                "service coordination."
+            ),
+            color_hex=PROVIDER_AGENT_PROFILE_COLOR,
+            prompt=DEFAULT_PROVIDER_PROMPT,
+            configuration=provider_configuration,
+            is_builtin=True,
+        ).normalized(),
+        AgentProfile(
+            id=ADMIN_AGENT_PROFILE_ID,
+            name="Admin",
+            description=(
+                "Owns platform administration, access control, governance, and safe "
+                "operational changes."
+            ),
+            color_hex=ADMIN_AGENT_PROFILE_COLOR,
+            prompt=DEFAULT_ADMIN_PROMPT,
+            configuration=admin_configuration,
             is_builtin=True,
         ).normalized(),
         AgentProfile(

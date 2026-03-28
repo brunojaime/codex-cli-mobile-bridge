@@ -1,6 +1,7 @@
 import 'package:codex_mobile_frontend/src/models/agent_configuration.dart';
 import 'package:codex_mobile_frontend/src/models/chat_message.dart';
 import 'package:codex_mobile_frontend/src/models/chat_session_summary.dart';
+import 'package:codex_mobile_frontend/src/models/conversation_product.dart';
 import 'package:codex_mobile_frontend/src/models/current_run_execution.dart';
 import 'package:codex_mobile_frontend/src/models/reviewer_lifecycle_state.dart';
 import 'package:codex_mobile_frontend/src/models/session_detail.dart';
@@ -8,12 +9,218 @@ import 'package:codex_mobile_frontend/src/models/workspace.dart';
 import 'package:codex_mobile_frontend/src/screens/chat_screen.dart';
 import 'package:codex_mobile_frontend/src/services/api_client.dart';
 import 'package:codex_mobile_frontend/src/services/chat_notification_service.dart';
+import 'package:codex_mobile_frontend/src/services/server_profile_store.dart';
 import 'package:codex_mobile_frontend/src/state/chat_controller.dart';
+import 'package:codex_mobile_frontend/src/widgets/agent_studio_status_button.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:async';
 
 void main() {
+  testWidgets('conversation context sheet scrolls safely for long content',
+      (WidgetTester tester) async {
+    final longText = List<String>.filled(
+      24,
+      'This is a deliberately long conversation-product section used to verify the bottom sheet can scroll without overflowing on short viewports.',
+    ).join(' ');
+    await _pumpChatScreen(
+      tester,
+      width: 800,
+      height: 420,
+      session: _buildSession(
+        messages: <ChatMessage>[
+          _message(
+            id: 'assistant-1',
+            text: 'Assistant update',
+          ),
+        ],
+        conversationProduct: ConversationProduct(
+          statusLine: 'Generator running',
+          description: longText,
+          latestUpdate: longText,
+          currentFocus: longText,
+          nextStep: longText,
+        ),
+      ),
+    );
+
+    await tester.tap(find.byTooltip('What are we doing?'));
+    await tester.pumpAndSettle();
+
+    final bottomSheet = find.byType(BottomSheet);
+    expect(
+      find.descendant(
+        of: bottomSheet,
+        matching: find.text('Summary'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey<String>('conversation-context-scroll-view')),
+      findsOneWidget,
+    );
+    final bottomSheetScrollable = find.descendant(
+      of: bottomSheet,
+      matching: find.byType(Scrollable),
+    );
+    expect(bottomSheetScrollable, findsOneWidget);
+
+    await tester.scrollUntilVisible(
+      find.descendant(
+        of: bottomSheet,
+        matching: find.text('Next step'),
+      ),
+      120,
+      scrollable: bottomSheetScrollable,
+    );
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('agent studio model override can be set and cleared',
+      (WidgetTester tester) async {
+    final apiClient = _ChatScreenOverflowApiClient(
+      _buildSession(
+        messages: const <ChatMessage>[],
+      ),
+    );
+
+    await _pumpChatScreen(
+      tester,
+      width: 800,
+      session: apiClient.session,
+      apiClient: apiClient,
+    );
+
+    await tester.tap(find.byType(AgentStudioStatusButton));
+    await tester.pumpAndSettle();
+
+    final agentStudioSheet = find.byType(BottomSheet);
+    final agentStudioScrollable = find
+        .descendant(
+          of: agentStudioSheet,
+          matching: find.byType(Scrollable),
+        )
+        .last;
+    final saveButton = find.descendant(
+      of: agentStudioSheet,
+      matching: find.widgetWithText(FilledButton, 'Save'),
+    );
+
+    await tester.enterText(
+      find.byKey(const ValueKey<String>('agent-model-generator')),
+      'gpt-5.4-mini',
+    );
+    await tester.scrollUntilVisible(saveButton, 120,
+        scrollable: agentStudioScrollable);
+    await tester.tap(saveButton);
+    await tester.pumpAndSettle();
+
+    expect(
+      apiClient.session.agentConfiguration.byId(AgentId.generator)?.model,
+      'gpt-5.4-mini',
+    );
+
+    await tester.tap(find.byType(AgentStudioStatusButton));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(
+      find.byKey(const ValueKey<String>('agent-model-generator')),
+      '',
+    );
+    await tester.scrollUntilVisible(saveButton, 120,
+        scrollable: agentStudioScrollable);
+    await tester.tap(saveButton);
+    await tester.pumpAndSettle();
+
+    expect(
+      apiClient.session.agentConfiguration.byId(AgentId.generator)?.model,
+      isNull,
+    );
+    final generatorPayload = (apiClient.session.agentConfiguration
+            .toJson()['agents'] as List<dynamic>)
+        .cast<Map<String, dynamic>>()
+        .firstWhere((agent) => agent['agent_id'] == 'generator');
+    expect(generatorPayload.containsKey('model'), isFalse);
+  });
+
+  testWidgets(
+      'sidebar session tile shows conversation product status and sanitized description',
+      (WidgetTester tester) async {
+    final session = _buildSession(
+      title: 'Sanitized Chat',
+      messages: const <ChatMessage>[],
+      conversationProduct: const ConversationProduct(
+        statusLine: 'Supervisor ready',
+        description: 'Sanitized product update for the user.',
+      ),
+    );
+    const rawPreview =
+        'QA found a flaky snapshot and reviewer asked for more tests.';
+
+    await _pumpChatScreen(
+      tester,
+      session: session,
+      apiClient: _ChatScreenOverflowApiClient(
+        session,
+        lastMessagePreviewBySession: const <String, String?>{
+          'session-a': rawPreview,
+        },
+      ),
+      sidebarWorkspaces: const <Workspace>[
+        Workspace(name: 'Workspace A', path: '/workspace/a'),
+      ],
+    );
+
+    tester.state<ScaffoldState>(find.byType(Scaffold)).openDrawer();
+    await tester.pumpAndSettle();
+
+    final drawer = find.byType(Drawer);
+    expect(
+      find.descendant(
+        of: drawer,
+        matching: find.text('Supervisor ready', skipOffstage: false),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: drawer,
+        matching: find.text(
+          'Sanitized product update for the user.',
+          skipOffstage: false,
+        ),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: drawer,
+        matching: find.text(rawPreview, skipOffstage: false),
+      ),
+      findsNothing,
+    );
+  });
+
+  testWidgets('app bar subtitle includes conversation product status line',
+      (WidgetTester tester) async {
+    await _pumpChatScreen(
+      tester,
+      width: 800,
+      session: _buildSession(
+        messages: const <ChatMessage>[],
+        conversationProduct: const ConversationProduct(
+          statusLine: 'Supervisor queued next',
+          description: 'Sanitized summary',
+        ),
+      ),
+    );
+
+    expect(find.textContaining('Supervisor queued next'), findsOneWidget);
+  });
+
   testWidgets(
       'short viewport keeps reviewer banner, run history, empty state, and composer scrollable',
       (WidgetTester tester) async {
@@ -477,7 +684,7 @@ void main() {
     expect(tester.takeException(), isNull);
 
     await tester.scrollUntilVisible(
-      find.textContaining('Run run-0004', skipOffstage: false),
+      find.textContaining('Completed run run-0004', skipOffstage: false),
       180,
       scrollable: _chatBodyScrollable(),
     );
@@ -592,6 +799,93 @@ void main() {
       findsNothing,
     );
   });
+
+  testWidgets('sidebar project can be removed and stays removed after rebuild',
+      (WidgetTester tester) async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+
+    final session = _buildSession(
+      title: 'Pinned Chat',
+      messages: const <ChatMessage>[],
+    );
+
+    await _pumpChatScreen(
+      tester,
+      session: session,
+      sidebarWorkspaces: const <Workspace>[
+        Workspace(name: 'Workspace A', path: '/workspace/a'),
+      ],
+    );
+
+    tester.state<ScaffoldState>(find.byType(Scaffold)).openDrawer();
+    await tester.pumpAndSettle();
+
+    final drawer = find.byType(Drawer);
+    expect(
+      find.descendant(
+        of: drawer,
+        matching: find.text('Workspace A', skipOffstage: false),
+      ),
+      findsOneWidget,
+    );
+
+    await tester.tap(
+      find.byTooltip('Project actions for Workspace A'),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Remove project'));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.descendant(
+        of: drawer,
+        matching: find.text('Workspace A', skipOffstage: false),
+      ),
+      findsNothing,
+    );
+    expect(
+      find.descendant(
+        of: drawer,
+        matching: find.text('No projects pinned yet', skipOffstage: false),
+      ),
+      findsOneWidget,
+    );
+
+    final preferences = await SharedPreferences.getInstance();
+    expect(
+      preferences.getStringList('sidebar_workspaces::http://localhost:8000'),
+      isEmpty,
+    );
+
+    final persistedWorkspaces = await ServerProfileStore()
+        .loadSidebarWorkspaces('http://localhost:8000');
+    expect(persistedWorkspaces, isEmpty);
+
+    await _pumpChatScreen(
+      tester,
+      session: session,
+      sidebarWorkspaces: persistedWorkspaces,
+    );
+
+    tester.state<ScaffoldState>(find.byType(Scaffold)).openDrawer();
+    await tester.pumpAndSettle();
+
+    final rebuiltDrawer = find.byType(Drawer);
+    expect(
+      find.descendant(
+        of: rebuiltDrawer,
+        matching: find.text('Workspace A', skipOffstage: false),
+      ),
+      findsNothing,
+    );
+    expect(
+      find.descendant(
+        of: rebuiltDrawer,
+        matching: find.text('No projects pinned yet', skipOffstage: false),
+      ),
+      findsOneWidget,
+    );
+  });
 }
 
 Finder _chatBodyScrollable() {
@@ -654,6 +948,7 @@ class _ChatScreenOverflowApiClient extends ApiClient {
     SessionDetail session, {
     List<SessionDetail> additionalSessions = const <SessionDetail>[],
     this.onUpdateAgentConfiguration,
+    this.lastMessagePreviewBySession = const <String, String?>{},
   })  : _session = session,
         _sessions = <SessionDetail>[session, ...additionalSessions],
         super(baseUrl: 'http://localhost:8000');
@@ -664,6 +959,7 @@ class _ChatScreenOverflowApiClient extends ApiClient {
     String sessionId,
     AgentConfiguration configuration,
   )? onUpdateAgentConfiguration;
+  final Map<String, String?> lastMessagePreviewBySession;
 
   SessionDetail get session => _session;
 
@@ -681,6 +977,11 @@ class _ChatScreenOverflowApiClient extends ApiClient {
             agentProfileName: session.agentProfileName,
             agentProfileColor: session.agentProfileColor,
             agentConfiguration: session.agentConfiguration,
+            conversationProduct: session.conversationProduct,
+            lastMessagePreview:
+                lastMessagePreviewBySession.containsKey(session.id)
+                    ? lastMessagePreviewBySession[session.id]
+                    : _defaultLastMessagePreview(session),
             createdAt: session.createdAt,
             updatedAt: session.updatedAt,
             activeAgentRunId: session.activeAgentRunId,
@@ -727,6 +1028,16 @@ class _ChatScreenOverflowApiClient extends ApiClient {
     }
     return updatedSession;
   }
+
+  String? _defaultLastMessagePreview(SessionDetail session) {
+    for (final message in session.messages.reversed) {
+      final trimmed = message.text.trim();
+      if (trimmed.isNotEmpty) {
+        return trimmed;
+      }
+    }
+    return null;
+  }
 }
 
 SessionDetail _buildSession({
@@ -737,6 +1048,7 @@ SessionDetail _buildSession({
   String workspaceName = 'Workspace A',
   required List<ChatMessage> messages,
   AgentDisplayMode displayMode = AgentDisplayMode.showAll,
+  ConversationProduct? conversationProduct,
 }) {
   final configuration = kDefaultAgentConfiguration.copyWith(
     preset: AgentPreset.review,
@@ -771,6 +1083,7 @@ SessionDetail _buildSession({
     updatedAt: now,
     messages: messages,
     agentConfiguration: configuration,
+    conversationProduct: conversationProduct,
     autoModeEnabled: true,
     autoMaxTurns: 1,
     activeAgentRunId: 'run-12345678',

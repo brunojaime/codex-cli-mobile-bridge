@@ -175,6 +175,15 @@ def test_session_detail_response_exposes_current_run_stages() -> None:
     assert response.current_run.stages[1].state == RunStageState.WAITING
     assert response.current_run.stages[2].state == RunStageState.DISABLED
     assert response.recent_runs[0].run_id == "run-current"
+    assert response.conversation_product.status_line == "Generator running"
+    assert (
+        response.conversation_product.current_focus
+        == "Generator is active: Streaming output"
+    )
+    assert (
+        response.conversation_product.next_step
+        == "Next expected: Reviewer once the current stage completes."
+    )
 
 
 def test_current_run_marks_missing_reviewer_after_completed_generator_as_not_scheduled() -> None:

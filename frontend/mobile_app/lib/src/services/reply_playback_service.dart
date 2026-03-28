@@ -25,6 +25,9 @@ class ReplyPlaybackService {
     final existingProviderPlayer = _providerPlayer;
     _providerPlayer = _providerPlayerFactory(apiClient);
     _supportsProviderSpeech = false;
+    // Session and message ids are scoped to a server; avoid carrying
+    // duplicate-suppression state across server switches.
+    _spokenAssistantMessageIds.clear();
     await existingProviderPlayer?.dispose();
   }
 

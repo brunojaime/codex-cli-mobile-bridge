@@ -723,7 +723,7 @@ void main() {
         displayMode: AgentDisplayMode.summaryOnly,
         agents: kDefaultAgentDefinitions.map((agent) {
           if (agent.agentId == AgentId.reviewer) {
-            return agent.copyWith(enabled: true);
+            return agent.copyWith(enabled: true, model: 'gpt-5.4-mini');
           }
           return agent;
         }).toList(),
@@ -994,7 +994,7 @@ Built the draft.
         displayMode: AgentDisplayMode.collapseSpecialists,
         agents: kDefaultAgentDefinitions.map((agent) {
           if (agent.agentId == AgentId.reviewer) {
-            return agent.copyWith(enabled: true);
+            return agent.copyWith(enabled: true, model: 'gpt-5.4-mini');
           }
           return agent;
         }).toList(),
@@ -1008,6 +1008,10 @@ Built the draft.
       (receivedBody?['agents'] as List<dynamic>).length,
       kDefaultAgentDefinitions.length,
     );
+    final reviewerPayload = (receivedBody?['agents'] as List<dynamic>)
+        .cast<Map<String, dynamic>>()
+        .firstWhere((agent) => agent['agent_id'] == 'reviewer');
+    expect(reviewerPayload['model'], 'gpt-5.4-mini');
     expect(session.agentConfiguration.preset, AgentPreset.review);
     expect(
       session.agentConfiguration.displayMode,
@@ -1019,9 +1023,75 @@ Built the draft.
     );
     expect(session.agentConfiguration.byId(AgentId.reviewer)?.enabled, isTrue);
     expect(
+      session.agentConfiguration.byId(AgentId.reviewer)?.model,
+      'gpt-5.4-mini',
+    );
+    expect(
       session.agentConfiguration.byId(AgentId.supervisor)?.label,
       kDefaultAgentConfiguration.byId(AgentId.supervisor)?.label,
     );
+  });
+
+  test('agent definition copyWith can clear a model override', () {
+    final original = kDefaultAgentDefinitions
+        .firstWhere((agent) => agent.agentId == AgentId.generator)
+        .copyWith(model: 'gpt-5.4-mini');
+
+    final cleared = original.copyWith(model: null);
+
+    expect(original.model, 'gpt-5.4-mini');
+    expect(cleared.model, isNull);
+  });
+
+  test('api client omits cleared model overrides from agent configuration',
+      () async {
+    Map<String, dynamic>? receivedBody;
+    final client = ApiClient(
+      baseUrl: 'http://localhost:8000',
+      client: MockClient((request) async {
+        receivedBody = jsonDecode(request.body) as Map<String, dynamic>;
+        return http.Response(
+          jsonEncode(<String, dynamic>{
+            'id': 'session-a',
+            'title': 'Chat A',
+            'workspace_path': '/workspace/a',
+            'workspace_name': 'A',
+            'created_at': DateTime.utc(2026, 1, 1).toIso8601String(),
+            'updated_at': DateTime.utc(2026, 1, 1).toIso8601String(),
+            'messages': const <dynamic>[],
+            'agent_configuration': receivedBody,
+          }),
+          200,
+          headers: <String, String>{'content-type': 'application/json'},
+        );
+      }),
+    );
+
+    final generatorWithModel = kDefaultAgentDefinitions
+        .firstWhere((agent) => agent.agentId == AgentId.generator)
+        .copyWith(model: 'gpt-5.4-mini');
+    final generatorWithoutModel = generatorWithModel.copyWith(model: null);
+
+    final configuration = kDefaultAgentConfiguration.copyWith(
+      agents: kDefaultAgentDefinitions.map((agent) {
+        if (agent.agentId == AgentId.generator) {
+          return generatorWithoutModel;
+        }
+        return agent;
+      }).toList(),
+    );
+
+    final session = await client.updateAgentConfiguration(
+      'session-a',
+      configuration: configuration,
+    );
+
+    final generatorPayload = (receivedBody?['agents'] as List<dynamic>)
+        .cast<Map<String, dynamic>>()
+        .firstWhere((agent) => agent['agent_id'] == 'generator');
+
+    expect(generatorPayload.containsKey('model'), isFalse);
+    expect(session.agentConfiguration.byId(AgentId.generator)?.model, isNull);
   });
 
   test('api client serializes and deserializes agent profile packs', () async {

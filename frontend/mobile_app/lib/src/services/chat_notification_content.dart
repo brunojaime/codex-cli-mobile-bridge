@@ -42,6 +42,9 @@ String resolveNotificationAgentLabel(
   if (explicitLabel != null) {
     return explicitLabel;
   }
+  if (snapshot.resolvedNotificationChannel == ChatNotificationChannel.generic) {
+    return 'Codex';
+  }
 
   return switch (snapshot.agentId) {
     AgentId.user => 'User',

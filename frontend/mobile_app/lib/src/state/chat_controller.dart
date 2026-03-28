@@ -176,16 +176,21 @@ class ChatController extends ChangeNotifier {
   Future<void> initialize() async {
     _setLoading(true);
     try {
+      await refreshAppState();
+    } finally {
+      _setLoading(false);
+    }
+  }
+
+  Future<void> refreshAppState({
+    String? failurePrefix,
+  }) async {
+    try {
       await Future.wait<void>(<Future<void>>[
         refreshSessions(),
         refreshWorkspaces(),
       ]);
-      if (_sessions.isNotEmpty) {
-        await selectSession(_sessions.first.id);
-      } else {
-        _errorText = null;
-        notifyListeners();
-      }
+      await _restoreCurrentSelectionAfterRefresh();
       try {
         await refreshAgentProfiles();
       } catch (error) {
@@ -194,11 +199,16 @@ class ChatController extends ChangeNotifier {
           notifyListeners();
         }
       }
+
+      for (final jobId in _pendingJobs.keys.toList()) {
+        _ensureJobStream(jobId);
+      }
+      if (_pendingJobs.isNotEmpty) {
+        _ensurePolling();
+      }
     } catch (error) {
-      _errorText = '$error';
+      _errorText = failurePrefix == null ? '$error' : '$failurePrefix\n$error';
       notifyListeners();
-    } finally {
-      _setLoading(false);
     }
   }
 
@@ -230,24 +240,9 @@ class ChatController extends ChangeNotifier {
   }
 
   Future<void> handleAppResumed() async {
-    try {
-      await refreshSessions();
-      if (_selectedSessionId != null) {
-        await _reloadCurrentSession();
-      } else if (_sessions.isNotEmpty) {
-        await selectSession(_sessions.first.id);
-      }
-
-      for (final jobId in _pendingJobs.keys.toList()) {
-        _ensureJobStream(jobId);
-      }
-      if (_pendingJobs.isNotEmpty) {
-        _ensurePolling();
-      }
-    } catch (error) {
-      _errorText = 'Failed to reconnect to the backend.\n$error';
-      notifyListeners();
-    }
+    await refreshAppState(
+      failurePrefix: 'Failed to reconnect to the backend.',
+    );
   }
 
   Future<void> createNewSession({String? workspacePath}) async {
@@ -869,6 +864,25 @@ class ChatController extends ChangeNotifier {
     _reconcilePendingJobsForSession(_currentSession);
     _trackPendingJobsFromSession(_currentSession);
     await _maybeImportGeneratedAgentProfiles(_currentSession);
+    _errorText = null;
+    notifyListeners();
+  }
+
+  Future<void> _restoreCurrentSelectionAfterRefresh() async {
+    final selectedSessionId = _selectedSessionId;
+    if (selectedSessionId != null &&
+        _sessions.any((session) => session.id == selectedSessionId)) {
+      await _reloadCurrentSession();
+      return;
+    }
+
+    if (_sessions.isNotEmpty) {
+      await selectSession(_sessions.first.id);
+      return;
+    }
+
+    _selectedSessionId = null;
+    _currentSession = null;
     _errorText = null;
     notifyListeners();
   }

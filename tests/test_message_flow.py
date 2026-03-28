@@ -40,6 +40,7 @@ from backend.app.infrastructure.persistence.sqlite_chat_repository import Sqlite
 from backend.app.infrastructure.speech.base import (
     SpeechSynthesizer,
     SpeechSynthesizerStatus,
+    SpeechSynthesisError,
     SpeechSynthesisUnavailableError,
     SynthesizedSpeech,
 )
@@ -258,50 +259,6 @@ class _WatchedControlledExecutionProvider(_ControlledExecutionProvider):
 
         return unsubscribe
 
-
-class _FakeSpeechSynthesizer(SpeechSynthesizer):
-    def __init__(
-        self,
-        *,
-        ready: bool = True,
-        voice: str = "cedar",
-        response_format: str = "wav",
-        content_type: str = "audio/wav",
-        audio_bytes: bytes = b"RIFFfake",
-    ) -> None:
-        self.ready = ready
-        self.voice = voice
-        self.response_format = response_format
-        self.content_type = content_type
-        self.audio_bytes = audio_bytes
-        self.requests: list[str] = []
-
-    def status(self) -> SpeechSynthesizerStatus:
-        return SpeechSynthesizerStatus(
-            backend="openai" if self.ready else "disabled",
-            ready=self.ready,
-            detail="Fake speech synthesizer",
-            voice=self.voice,
-            response_format=self.response_format,
-        )
-
-    def synthesize(
-        self,
-        text: str,
-        *,
-        voice: str | None = None,
-        response_format: str | None = None,
-        instructions: str | None = None,
-    ) -> SynthesizedSpeech:
-        if not self.ready:
-            raise SpeechSynthesisUnavailableError("Speech synthesis is unavailable.")
-        self.requests.append(text)
-        return SynthesizedSpeech(
-            audio_bytes=self.audio_bytes,
-            content_type=self.content_type,
-            response_format=response_format or self.response_format,
-        )
-
     def complete_job_with_notification_gate(
         self,
         job_id: str,
@@ -328,6 +285,54 @@ class _FakeSpeechSynthesizer(SpeechSynthesizer):
         if cancelled:
             self._notify(job_id)
         return cancelled
+
+
+class _FakeSpeechSynthesizer(SpeechSynthesizer):
+    def __init__(
+        self,
+        *,
+        ready: bool = True,
+        failure_message: str | None = None,
+        voice: str = "cedar",
+        response_format: str = "wav",
+        content_type: str = "audio/wav",
+        audio_bytes: bytes = b"RIFFfake",
+    ) -> None:
+        self.ready = ready
+        self.failure_message = failure_message
+        self.voice = voice
+        self.response_format = response_format
+        self.content_type = content_type
+        self.audio_bytes = audio_bytes
+        self.requests: list[str] = []
+
+    def status(self) -> SpeechSynthesizerStatus:
+        return SpeechSynthesizerStatus(
+            backend="openai" if self.ready else "disabled",
+            ready=self.ready,
+            detail="Fake speech synthesizer",
+            voice=self.voice,
+            response_format=self.response_format,
+        )
+
+    def synthesize(
+        self,
+        text: str,
+        *,
+        voice: str | None = None,
+        response_format: str | None = None,
+        instructions: str | None = None,
+    ) -> SynthesizedSpeech:
+        if not self.ready:
+            raise SpeechSynthesisUnavailableError("Speech synthesis is unavailable.")
+        if self.failure_message is not None:
+            raise SpeechSynthesisError(self.failure_message)
+        self.requests.append(text)
+        return SynthesizedSpeech(
+            audio_bytes=self.audio_bytes,
+            content_type=self.content_type,
+            response_format=response_format or self.response_format,
+        )
 
 
 class _BarrierLaunchMessageService(MessageService):
@@ -1116,11 +1121,11 @@ def test_recent_runs_keep_supervisor_each_agent_snapshot_after_switch_to_supervi
         "senior_engineer",
     }
     assert historical_run["call_count"] == 5
-    assert supervisor_stage["max_turns"] == 4
+    assert supervisor_stage["max_turns"] == 10
     assert supervisor_stage["has_turn_budget"] is True
-    assert qa_stage["max_turns"] == 2
+    assert qa_stage["max_turns"] == 8
     assert qa_stage["has_turn_budget"] is True
-    assert senior_engineer_stage["max_turns"] == 2
+    assert senior_engineer_stage["max_turns"] == 8
     assert senior_engineer_stage["has_turn_budget"] is True
 
 
@@ -1677,6 +1682,141 @@ def test_agent_endpoint_round_trip_drives_full_triad_chain_and_persists_final_st
     )
     assert session_payload["messages"][-1]["agent_id"] == "summary"
     assert session_payload["messages"][-1]["job_status"] == "completed"
+
+
+def test_sessions_endpoints_include_conversation_product_fields() -> None:
+    client = build_session_client()
+    session_response = client.post("/sessions", json={"title": "Context Chat"})
+    assert session_response.status_code == 201
+    session_id = session_response.json()["id"]
+
+    sessions_response = client.get("/sessions")
+    assert sessions_response.status_code == 200
+    summary_entry = next(
+        session for session in sessions_response.json() if session["id"] == session_id
+    )
+    assert summary_entry["conversation_product"] == {
+        "status_line": "Ready for the next turn",
+        "description": "No messages yet.",
+        "latest_update": None,
+        "current_focus": None,
+        "next_step": "Waiting for your next message.",
+    }
+
+    detail_response = client.get(f"/sessions/{session_id}")
+    assert detail_response.status_code == 200
+    assert detail_response.json()["conversation_product"] == summary_entry["conversation_product"]
+
+
+def test_session_detail_sanitizes_conversation_product_when_hidden_specialist_replies_exist() -> None:
+    client, container = build_session_client_with_container()
+    repository = container.message_service._repository
+
+    session_response = client.post("/sessions", json={"title": "Supervisor Context"})
+    assert session_response.status_code == 201
+    session_id = session_response.json()["id"]
+
+    config_response = client.put(
+        f"/sessions/{session_id}/agents",
+        json=build_supervisor_configuration_payload(supervisor_member_ids=["qa"]),
+    )
+    assert config_response.status_code == 200
+
+    repository.save_message(
+        ChatMessage(
+            id="user-context-1",
+            session_id=session_id,
+            role=ChatMessageRole.USER,
+            author_type=ChatMessageAuthorType.HUMAN,
+            content="Ship the dashboard safely.",
+            status=ChatMessageStatus.COMPLETED,
+            agent_id=AgentId.USER,
+            agent_type=AgentType.HUMAN,
+            trigger_source=AgentTriggerSource.USER,
+        )
+    )
+    repository.save_message(
+        ChatMessage(
+            id="qa-context-1",
+            session_id=session_id,
+            role=ChatMessageRole.ASSISTANT,
+            author_type=ChatMessageAuthorType.ASSISTANT,
+            content="QA found a flaky snapshot and wants more validation.",
+            status=ChatMessageStatus.COMPLETED,
+            agent_id=AgentId.QA,
+            agent_type=AgentType.QA,
+            visibility=AgentVisibilityMode.COLLAPSED,
+            trigger_source=AgentTriggerSource.SUPERVISOR,
+        )
+    )
+
+    sessions_response = client.get("/sessions")
+    assert sessions_response.status_code == 200
+    summary_entry = next(
+        session for session in sessions_response.json() if session["id"] == session_id
+    )
+    assert summary_entry["conversation_product"] == {
+        "status_line": "Ready for the next turn",
+        "description": "Ship the dashboard safely.",
+        "latest_update": None,
+        "current_focus": None,
+        "next_step": "Waiting for your next message.",
+    }
+
+    detail_response = client.get(f"/sessions/{session_id}")
+    assert detail_response.status_code == 200
+    assert detail_response.json()["conversation_product"] == {
+        "status_line": "Ready for the next turn",
+        "description": "Ship the dashboard safely.",
+        "latest_update": None,
+        "current_focus": None,
+        "next_step": "Waiting for your next message.",
+    }
+
+
+def test_agent_model_override_round_trips_through_agents_endpoint() -> None:
+    client = build_session_client()
+    session_response = client.post("/sessions", json={"title": "Model Chat"})
+    assert session_response.status_code == 201
+    session_id = session_response.json()["id"]
+
+    payload = build_agent_configuration_payload(
+        preset="review",
+        display_mode="show_all",
+        summary_enabled=False,
+    )
+    generator = next(agent for agent in payload["agents"] if agent["agent_id"] == "generator")
+    reviewer = next(agent for agent in payload["agents"] if agent["agent_id"] == "reviewer")
+    generator["model"] = "gpt-5.4"
+    reviewer["model"] = "gpt-5.4-mini"
+
+    config_response = client.put(
+        f"/sessions/{session_id}/agents",
+        json=payload,
+    )
+    assert config_response.status_code == 200
+
+    config_payload = config_response.json()["agent_configuration"]
+    generator_response = next(
+        agent for agent in config_payload["agents"] if agent["agent_id"] == "generator"
+    )
+    reviewer_response = next(
+        agent for agent in config_payload["agents"] if agent["agent_id"] == "reviewer"
+    )
+    assert generator_response["model"] == "gpt-5.4"
+    assert reviewer_response["model"] == "gpt-5.4-mini"
+
+    detail_response = client.get(f"/sessions/{session_id}")
+    assert detail_response.status_code == 200
+    detail_payload = detail_response.json()["agent_configuration"]
+    generator_detail = next(
+        agent for agent in detail_payload["agents"] if agent["agent_id"] == "generator"
+    )
+    reviewer_detail = next(
+        agent for agent in detail_payload["agents"] if agent["agent_id"] == "reviewer"
+    )
+    assert generator_detail["model"] == "gpt-5.4"
+    assert reviewer_detail["model"] == "gpt-5.4-mini"
 
 
 def test_full_triad_chain_completes_without_client_polling() -> None:
@@ -2618,6 +2758,64 @@ def test_sqlite_legacy_auto_mode_rows_migrate_into_agent_configuration() -> None
             assert reviewer["enabled"] is True
             assert reviewer["prompt"] == "Legacy reviewer prompt"
             assert summary["enabled"] is False
+        finally:
+            restarted_client.close()
+
+
+def test_sqlite_agent_model_override_persists_across_reload() -> None:
+    with TemporaryDirectory() as temp_dir:
+        database_path = Path(temp_dir) / "chat-store.sqlite3"
+        settings = Settings(
+            codex_command="python3 tests/fixtures/fake_codex_session.py",
+            codex_use_exec=True,
+            projects_root="..",
+            chat_store_backend="sqlite",
+            chat_store_path=str(database_path),
+            execution_timeout_seconds=10,
+            poll_interval_seconds=0,
+            audio_transcription_backend="auto",
+        )
+
+        first_client = TestClient(create_app(settings))
+        try:
+            session_response = first_client.post("/sessions", json={"title": "Persisted model"})
+            assert session_response.status_code == 201
+            session_id = session_response.json()["id"]
+
+            payload = build_agent_configuration_payload(
+                preset="review",
+                display_mode="show_all",
+                summary_enabled=False,
+            )
+            generator = next(
+                agent for agent in payload["agents"] if agent["agent_id"] == "generator"
+            )
+            generator["model"] = "gpt-5.4-mini"
+
+            config_response = first_client.put(
+                f"/sessions/{session_id}/agents",
+                json=payload,
+            )
+            assert config_response.status_code == 200
+            generator_response = next(
+                agent
+                for agent in config_response.json()["agent_configuration"]["agents"]
+                if agent["agent_id"] == "generator"
+            )
+            assert generator_response["model"] == "gpt-5.4-mini"
+        finally:
+            first_client.close()
+
+        restarted_client = TestClient(create_app(settings))
+        try:
+            session_detail = restarted_client.get(f"/sessions/{session_id}")
+            assert session_detail.status_code == 200
+            generator = next(
+                agent
+                for agent in session_detail.json()["agent_configuration"]["agents"]
+                if agent["agent_id"] == "generator"
+            )
+            assert generator["model"] == "gpt-5.4-mini"
         finally:
             restarted_client.close()
 
@@ -4466,6 +4664,33 @@ def test_capabilities_endpoint_exposes_speech_output_status() -> None:
     assert payload["speech_output_response_format"] == "wav"
 
 
+def test_health_and_capabilities_report_openai_speech_not_ready_without_api_key() -> None:
+    settings = Settings(
+        codex_command="python3 tests/fixtures/fake_codex.py",
+        codex_use_exec=False,
+        projects_root="..",
+        chat_store_backend="memory",
+        execution_timeout_seconds=10,
+        poll_interval_seconds=0,
+        audio_transcription_backend="disabled",
+        speech_synthesis_backend="openai",
+    )
+    app = create_app(settings)
+    client = TestClient(app)
+
+    health_response = client.get("/health")
+    capabilities_response = client.get("/capabilities")
+
+    assert health_response.status_code == 200
+    assert capabilities_response.status_code == 200
+    assert health_response.json()["speech_synthesis_backend"] == "openai"
+    assert health_response.json()["speech_synthesis_ready"] is False
+    assert capabilities_response.json()["supports_speech_output"] is False
+    assert capabilities_response.json()["speech_output_backend"] == "openai"
+    assert capabilities_response.json()["speech_output_voice"] == "cedar"
+    assert capabilities_response.json()["speech_output_response_format"] == "mp3"
+
+
 def test_audio_speech_endpoint_returns_provider_audio() -> None:
     client = build_test_client()
     container = client.app.dependency_overrides[get_container]()
@@ -4479,6 +4704,30 @@ def test_audio_speech_endpoint_returns_provider_audio() -> None:
     assert response.headers["content-type"].startswith("audio/wav")
     assert response.headers["x-response-format"] == "wav"
     assert synthesizer.requests == ["Read this reply aloud."]
+
+
+def test_audio_speech_endpoint_returns_503_when_speech_is_unavailable() -> None:
+    client = build_test_client()
+    container = client.app.dependency_overrides[get_container]()
+    container.speech_synthesizer = _FakeSpeechSynthesizer(ready=False)
+
+    response = client.post("/audio/speech", json={"text": "Read this reply aloud."})
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": "Speech synthesis is unavailable."}
+
+
+def test_audio_speech_endpoint_returns_422_when_provider_synthesis_fails() -> None:
+    client = build_test_client()
+    container = client.app.dependency_overrides[get_container]()
+    container.speech_synthesizer = _FakeSpeechSynthesizer(
+        failure_message="Provider synthesis failed."
+    )
+
+    response = client.post("/audio/speech", json={"text": "Read this reply aloud."})
+
+    assert response.status_code == 422
+    assert response.json() == {"detail": "Provider synthesis failed."}
 
 
 def test_audio_message_flow_transcribes_then_submits_prompt() -> None:
@@ -4839,6 +5088,8 @@ def test_builtin_registry_includes_supervisor_and_specialist_profiles() -> None:
         "default",
         "agent_creator",
         "supervisor",
+        "provider",
+        "admin",
         "qa",
         "ux",
         "senior_engineer",
@@ -4852,10 +5103,43 @@ def test_builtin_registry_includes_supervisor_and_specialist_profiles() -> None:
         "scraper",
     ]
     assert "Supervisor Codex" in by_id["supervisor"]["prompt"]
+    assert by_id["provider"]["configuration"]["preset"] == "solo"
+    assert "Provider Codex" in by_id["provider"]["prompt"]
+    assert by_id["admin"]["configuration"]["preset"] == "solo"
+    assert "Admin Codex" in by_id["admin"]["prompt"]
     assert by_id["qa"]["configuration"]["preset"] == "solo"
     assert "QA Codex" in by_id["qa"]["prompt"]
     assert by_id["scraper"]["configuration"]["preset"] == "solo"
     assert "Scraper Codex" in by_id["scraper"]["prompt"]
+
+
+def test_provider_and_admin_profiles_can_seed_new_chats() -> None:
+    client = build_session_client()
+
+    profiles = {profile["id"]: profile for profile in list_agent_profiles(client)}
+
+    for profile_id, expected_name in (
+        ("provider", "Provider"),
+        ("admin", "Admin"),
+    ):
+        session_response = client.post(
+            "/sessions",
+            json={"agent_profile_id": profile_id},
+        )
+        assert session_response.status_code == 201
+        session_payload = session_response.json()
+
+        assert session_payload["agent_profile_id"] == profile_id
+        assert session_payload["agent_profile_name"] == expected_name
+        assert session_payload["agent_profile_color"] == profiles[profile_id]["color_hex"]
+        assert (
+            session_payload["agent_configuration"]["agents"][0]["label"]
+            == expected_name
+        )
+        assert (
+            session_payload["agent_configuration"]["agents"][0]["prompt"]
+            == profiles[profile_id]["prompt"]
+        )
 
 
 def test_corrupt_reserved_builtin_profile_id_is_hidden_from_listing_and_export() -> None:

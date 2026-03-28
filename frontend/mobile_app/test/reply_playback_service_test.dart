@@ -129,6 +129,106 @@ void main() {
 
     expect(providerPlayer.spokenTexts, isEmpty);
   });
+
+  test('does not replay the same assistant reply twice', () async {
+    final providerPlayer = _FakeReplySpeechPlayer();
+    final service = ReplyPlaybackService(
+      fallbackPlayer: _FakeReplySpeechPlayer(),
+      providerPlayerFactory: (_) => providerPlayer,
+    );
+    final session = _buildSession(
+      messages: <ChatMessage>[
+        _assistantMessage(id: 'assistant-1', text: 'Only once'),
+      ],
+    );
+
+    await service.setServer(ApiClient(baseUrl: 'http://localhost:8000'));
+    service.setCapabilities(_speechEnabledCapabilities());
+
+    await service.maybeSpeakLatestAssistantReply(
+      enabled: true,
+      session: session,
+    );
+    await service.maybeSpeakLatestAssistantReply(
+      enabled: true,
+      session: session,
+    );
+
+    expect(providerPlayer.spokenTexts, <String>['Only once']);
+  });
+
+  test('stops provider and fallback playback when recording begins', () async {
+    final fallbackPlayer = _FakeReplySpeechPlayer();
+    final providerPlayer = _FakeReplySpeechPlayer();
+    final service = ReplyPlaybackService(
+      fallbackPlayer: fallbackPlayer,
+      providerPlayerFactory: (_) => providerPlayer,
+    );
+
+    await service.setServer(ApiClient(baseUrl: 'http://localhost:8000'));
+    final providerStopsBeforeRecording = providerPlayer.stopCount;
+    final fallbackStopsBeforeRecording = fallbackPlayer.stopCount;
+
+    await service.handleBeginRecording();
+
+    expect(providerPlayer.stopCount, providerStopsBeforeRecording + 1);
+    expect(fallbackPlayer.stopCount, fallbackStopsBeforeRecording + 1);
+  });
+
+  test('clears spoken reply history when switching servers', () async {
+    final providerPlayerA = _FakeReplySpeechPlayer();
+    final providerPlayerB = _FakeReplySpeechPlayer();
+    var factoryCalls = 0;
+    final service = ReplyPlaybackService(
+      fallbackPlayer: _FakeReplySpeechPlayer(),
+      providerPlayerFactory: (_) {
+        factoryCalls += 1;
+        return factoryCalls == 1 ? providerPlayerA : providerPlayerB;
+      },
+    );
+    final session = _buildSession(
+      messages: <ChatMessage>[
+        _assistantMessage(id: 'assistant-1', text: 'Server-specific reply'),
+      ],
+    );
+
+    await service.setServer(ApiClient(baseUrl: 'http://localhost:8000'));
+    service.setCapabilities(_speechEnabledCapabilities());
+    await service.maybeSpeakLatestAssistantReply(
+      enabled: true,
+      session: session,
+    );
+
+    await service.setServer(ApiClient(baseUrl: 'http://localhost:9000'));
+    service.setCapabilities(_speechEnabledCapabilities());
+    await service.maybeSpeakLatestAssistantReply(
+      enabled: true,
+      session: session,
+    );
+
+    expect(providerPlayerA.spokenTexts, <String>['Server-specific reply']);
+    expect(providerPlayerB.spokenTexts, <String>['Server-specific reply']);
+  });
+}
+
+ServerCapabilities _speechEnabledCapabilities() {
+  return const ServerCapabilities(
+    supportsAudioInput: true,
+    supportsSpeechOutput: true,
+    supportsImageInput: true,
+    supportsDocumentInput: true,
+    supportsAttachmentBatch: true,
+    supportsJobCancellation: true,
+    supportsJobRetry: true,
+    supportsPushJobStream: true,
+    speechOutputBackend: 'openai',
+    speechOutputVoice: 'cedar',
+    speechOutputResponseFormat: 'wav',
+    audioMaxUploadBytes: 1,
+    imageMaxUploadBytes: 1,
+    documentMaxUploadBytes: 1,
+    documentTextCharLimit: 1,
+  );
 }
 
 class _FakeReplySpeechPlayer implements ReplySpeechPlayer {
@@ -137,9 +237,12 @@ class _FakeReplySpeechPlayer implements ReplySpeechPlayer {
   final bool speakResult;
   final List<String> spokenTexts = <String>[];
   int stopCount = 0;
+  int disposeCount = 0;
 
   @override
-  Future<void> dispose() async {}
+  Future<void> dispose() async {
+    disposeCount += 1;
+  }
 
   @override
   Future<bool> speak(String rawText) async {

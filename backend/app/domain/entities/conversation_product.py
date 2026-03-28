@@ -2,7 +2,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from backend.app.domain.entities.agent_configuration import AgentId
+from backend.app.domain.entities.agent_configuration import (
+    AgentConfiguration,
+    AgentDisplayMode,
+    AgentId,
+    AgentVisibilityMode,
+)
 from backend.app.domain.entities.chat_message import (
     ChatMessage,
     ChatMessageAuthorType,
@@ -32,6 +37,11 @@ _USER_FACING_AGENT_IDS = (
     AgentId.SUPERVISOR,
     AgentId.GENERATOR,
 )
+_COLLAPSE_SPECIALISTS_VISIBLE_AGENT_IDS = _USER_FACING_AGENT_IDS
+_SUMMARY_ONLY_VISIBLE_AGENT_IDS = (
+    AgentId.SUMMARY,
+    AgentId.SUPERVISOR,
+)
 _CURRENT_FOCUS_STATE_PRIORITY = (
     RunStageState.RUNNING,
     RunStageState.FAILED,
@@ -54,12 +64,14 @@ def derive_conversation_product(
     current_run: CurrentRunExecution | None,
     recent_runs: list[CurrentRunExecution],
 ) -> ConversationProduct:
-    latest_update = _latest_user_facing_update(messages)
+    configuration = session.agent_configuration.normalized()
+    visible_messages = _visible_messages(configuration, messages)
+    latest_update = _latest_user_facing_update(visible_messages)
     current_focus = _current_focus(session, current_run)
     next_step = _next_step(session, current_run)
     status_line = _status_line(session, current_run, recent_runs)
     description = _description(
-        messages,
+        visible_messages,
         latest_update=latest_update,
         current_focus=current_focus,
     )
@@ -130,29 +142,47 @@ def _description(
     )
     if latest_user_message is not None:
         return latest_user_message
-
-    latest_assistant_message = next(
-        (
-            _compact_text(message.content, limit=220)
-            for message in reversed(messages)
-            if message.role == ChatMessageRole.ASSISTANT
-            and message.content.strip()
-        ),
-        None,
-    )
-    if latest_assistant_message is not None:
-        return latest_assistant_message
     return "No messages yet."
 
 
 def _latest_user_facing_update(messages: list[ChatMessage]) -> str | None:
-    prioritized = _latest_assistant_message(
+    return _latest_assistant_message(
         messages,
         preferred_agents=_USER_FACING_AGENT_IDS,
     )
-    if prioritized is not None:
-        return prioritized
-    return _latest_assistant_message(messages, preferred_agents=())
+
+
+def _visible_messages(
+    configuration: AgentConfiguration,
+    messages: list[ChatMessage],
+) -> list[ChatMessage]:
+    return [
+        message
+        for message in messages
+        if _is_message_visible_in_product(
+            display_mode=configuration.display_mode,
+            message=message,
+        )
+    ]
+
+
+def _is_message_visible_in_product(
+    *,
+    display_mode: AgentDisplayMode,
+    message: ChatMessage,
+) -> bool:
+    if message.visibility == AgentVisibilityMode.HIDDEN:
+        return False
+    if (
+        message.role == ChatMessageRole.USER
+        and message.author_type == ChatMessageAuthorType.HUMAN
+    ):
+        return True
+    if display_mode == AgentDisplayMode.SHOW_ALL:
+        return True
+    if display_mode == AgentDisplayMode.COLLAPSE_SPECIALISTS:
+        return message.agent_id in _COLLAPSE_SPECIALISTS_VISIBLE_AGENT_IDS
+    return message.agent_id in _SUMMARY_ONLY_VISIBLE_AGENT_IDS
 
 
 def _latest_assistant_message(
