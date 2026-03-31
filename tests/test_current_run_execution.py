@@ -9,6 +9,8 @@ from backend.app.domain.entities.agent_configuration import (
     AgentId,
     AgentPreset,
     AgentTriggerSource,
+    SummaryStrategy,
+    SummaryStrategyMode,
     AgentType,
     TurnBudgetMode,
 )
@@ -599,6 +601,85 @@ def test_supervisor_runs_report_participants_and_supervisor_only_budget_mode() -
     assert qa_stage.attempt_count == 2
     assert qa_stage.max_turns == 0
     assert qa_stage.has_turn_budget is False
+
+
+def test_supervisor_runs_include_summary_stage_when_enabled() -> None:
+    configuration = AgentConfiguration.default()
+    configuration.preset = AgentPreset.SUPERVISOR
+    configuration.supervisor_member_ids = (AgentId.QA,)
+    configuration.summary_strategy = SummaryStrategy(
+        mode=SummaryStrategyMode.SUPERVISOR_WINDOW,
+        supervisor_window_start=3,
+        supervisor_window_end=6,
+    )
+    configuration.agents[AgentId.SUPERVISOR] = replace(
+        configuration.agents[AgentId.SUPERVISOR],
+        enabled=True,
+        max_turns=3,
+    )
+    configuration.agents[AgentId.QA] = replace(
+        configuration.agents[AgentId.QA],
+        enabled=True,
+        max_turns=2,
+    )
+    configuration.agents[AgentId.SUMMARY] = replace(
+        configuration.agents[AgentId.SUMMARY],
+        enabled=True,
+        max_turns=2,
+        trigger_interval=2,
+    )
+    session = ChatSession(
+        id="session-supervisor-summary",
+        title="Supervisor summary history",
+        workspace_path="/workspace",
+        workspace_name="Workspace",
+        agent_configuration=configuration.normalized(),
+        active_agent_run_id=None,
+    )
+
+    messages = [
+        build_message(
+            message_id="supervisor-1",
+            run_id="run-supervisor-summary",
+            agent_id=AgentId.SUPERVISOR,
+            role=ChatMessageRole.ASSISTANT,
+            status=ChatMessageStatus.COMPLETED,
+        ),
+        build_message(
+            message_id="qa-1",
+            run_id="run-supervisor-summary",
+            agent_id=AgentId.QA,
+            role=ChatMessageRole.ASSISTANT,
+            status=ChatMessageStatus.COMPLETED,
+        ),
+        build_message(
+            message_id="summary-1",
+            run_id="run-supervisor-summary",
+            agent_id=AgentId.SUMMARY,
+            role=ChatMessageRole.ASSISTANT,
+            status=ChatMessageStatus.COMPLETED,
+        ),
+    ]
+
+    response = SessionDetailResponse.from_domain(
+        session,
+        messages=messages,
+        jobs_by_id={},
+        run_configurations_by_id={
+            "run-supervisor-summary": session.agent_configuration,
+        },
+    )
+
+    run = response.recent_runs[0]
+    assert run.participant_agent_ids == [
+        AgentId.SUPERVISOR,
+        AgentId.QA,
+        AgentId.SUMMARY,
+    ]
+    summary_stage = next(stage for stage in run.stages if stage.stage == "summary")
+    assert summary_stage.attempt_count == 1
+    assert summary_stage.max_turns == 2
+    assert summary_stage.has_turn_budget is True
 
 
 def _ts() -> datetime:

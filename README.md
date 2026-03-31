@@ -161,6 +161,185 @@ Voice-note transcription options:
 - `AUDIO_TRANSCRIPTION_BACKEND=faster_whisper` forces the local model path and avoids any external API call.
 - `AUDIO_TRANSCRIPTION_BACKEND=disabled` turns the feature off explicitly.
 
+## Git HTTPS Snap Fix
+
+If this environment is using the Codex snap-packaged `git`, HTTPS remotes can fail because `git` does not find its remote helpers at the right exec path. This repo includes:
+
+- `scripts/setup_git_https_snap.sh`
+- `scripts/rollback_git_https_snap.sh`
+- `scripts/test_git_https_snap_setup.sh`
+
+Use the setup script first in preview mode:
+
+```bash
+scripts/setup_git_https_snap.sh --dry-run
+```
+
+Audit the current environment without changing anything:
+
+```bash
+scripts/setup_git_https_snap.sh --check
+```
+
+Machine-readable audit output:
+
+```bash
+scripts/setup_git_https_snap.sh --check --json
+```
+
+The JSON includes:
+
+- `status`
+- ordered `checks`
+- per-check `result`
+- per-check `message`
+
+Formal schema:
+
+- `docs/setup_git_https_snap_check.schema.json`
+
+Apply it for real:
+
+```bash
+scripts/setup_git_https_snap.sh
+```
+
+Machine-readable setup output:
+
+```bash
+scripts/setup_git_https_snap.sh --json
+scripts/setup_git_https_snap.sh --dry-run --json
+```
+
+Rollback:
+
+```bash
+scripts/rollback_git_https_snap.sh
+```
+
+Machine-readable rollback output:
+
+```bash
+scripts/rollback_git_https_snap.sh --json
+scripts/rollback_git_https_snap.sh --dry-run --json
+```
+
+For isolated testing without touching your real config, override:
+
+- `BASHRC=/tmp/some-bashrc`
+- `GIT_CONFIG_GLOBAL=/tmp/some-gitconfig`
+
+There is also a repeatable non-destructive harness:
+
+```bash
+scripts/test_git_https_snap_setup.sh
+```
+
+Shell validation for these scripts:
+
+```bash
+scripts/lint_git_https_snap_shell.sh
+```
+
+That lint step validates shell syntax for the repo-level wrapper plus the script suite, and it also enforces the executable bit on the main command entrypoints:
+
+- `./check_git_https_snap.sh`
+- `scripts/setup_git_https_snap.sh`
+- `scripts/rollback_git_https_snap.sh`
+- `scripts/check_git_https_snap.sh`
+- `scripts/validate_check_git_https_snap_json.sh`
+
+Simplest repo-level command for validating everything in order:
+
+```bash
+./check_git_https_snap.sh
+```
+
+Less noisy success output for humans:
+
+```bash
+./check_git_https_snap.sh --quiet
+```
+
+Equivalent script path if you want the underlying entrypoint directly:
+
+```bash
+scripts/check_git_https_snap.sh
+```
+
+That entrypoint runs:
+
+- shell lint/syntax checks for `check_git_https_snap_lib.sh`, `check_git_https_snap.sh`, `setup_git_https_snap.sh`, `rollback_git_https_snap.sh`, `test_git_https_snap_setup.sh`, and `validate_check_git_https_snap_json.sh`
+- the non-destructive setup/rollback harness
+
+Machine-readable summary of that entrypoint:
+
+```bash
+scripts/check_git_https_snap.sh --json
+./check_git_https_snap.sh --json
+```
+
+`--quiet` only affects the human-readable mode. It keeps the final success line and any failure output, but suppresses the detailed harness logs when everything passes.
+On failure, it keeps a short stage-specific error message instead of dumping the full harness output.
+
+The JSON payload includes:
+
+- `schema_version`
+- `status`
+- ordered `stages`
+- per-stage `result`
+- per-stage `message`
+
+The repo-level wrapper `./check_git_https_snap.sh` and all main scripts also support `-h` / `--help` for flags, purpose, and relevant environment variables where applicable.
+
+Exit code semantics:
+
+- `scripts/setup_git_https_snap.sh`
+  - exit `0`: setup completed, or `--check` confirmed the environment is fully configured
+  - exit non-`0`: preflight failed, setup could not complete, or `--check` found a missing/broken requirement
+- `scripts/rollback_git_https_snap.sh`
+  - exit `0`: rollback completed, or there was nothing left to remove
+  - exit non-`0`: invalid usage or an unexpected rollback failure
+- `scripts/check_git_https_snap.sh`
+  - exit `0`: lint plus harness passed
+  - exit non-`0`: either lint or harness failed; `--json` still reports the failing stage
+- `scripts/validate_check_git_https_snap_json.sh`
+  - exit `0`: both the success payload and the controlled failure payload validated against the JSON contract
+  - exit non-`0`: JSON parse/schema/semantic validation failed in either scenario
+
+Formal schema:
+
+- `docs/check_git_https_snap.schema.json`
+
+The repo-level wrapper keeps the exact same JSON contract and schema as `scripts/check_git_https_snap.sh --json`.
+
+Non-destructive contract validation:
+
+```bash
+scripts/validate_check_git_https_snap_json.sh
+```
+
+Controlled failure check for the quiet human mode:
+
+```bash
+scripts/validate_check_git_https_snap_quiet.sh
+```
+
+Schemas:
+
+- audit JSON: `docs/setup_git_https_snap_check.schema.json`
+- setup/rollback JSON: `docs/git_https_snap_operation.schema.json`
+
+The setup/rollback JSON includes:
+
+- `status`
+- `operation`
+- `dry_run`
+- `targets`
+- `changes`
+
+Each change reports whether it was only detected/planned or actually applied via the `applied` flag.
+
 ## Android APK Releases On GitHub
 
 This repository can publish the Android APK to GitHub Releases so you can install updates from your phone without a USB cable.

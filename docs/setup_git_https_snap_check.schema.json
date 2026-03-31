@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.codex-cli-mobile-bridge/docs/setup_git_https_snap_check.schema.json",
+  "title": "setup_git_https_snap.sh --check --json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["status", "checks"],
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["passed", "failed"]
+    },
+    "checks": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "result", "message"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "enum": [
+              "git_exec_path",
+              "gh_bin",
+              "gh_auth",
+              "bashrc_export",
+              "credential_helper",
+              "git_ls_remote",
+              "git_push_dry_run"
+            ]
+          },
+          "result": {
+            "type": "string",
+            "enum": ["passed", "failed", "skipped"]
+          },
+          "message": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    }
+  }
+}

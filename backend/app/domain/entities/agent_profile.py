@@ -205,6 +205,7 @@ def _normalized_profile_configuration(
         turn_budget_mode=normalized.turn_budget_mode,
         agents=sanitized_agents,
         supervisor_member_ids=normalized.supervisor_member_ids,
+        summary_strategy=normalized.summary_strategy,
     ).normalized()
 
 

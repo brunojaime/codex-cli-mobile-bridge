@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 
 import '../models/agent_configuration.dart';
 import '../models/chat_message.dart';
+import '../utils/chat_timestamp_formatter.dart';
 import 'rich_message_content.dart';
 
 class ChatBubble extends StatelessWidget {
@@ -77,6 +78,7 @@ class ChatBubble extends StatelessWidget {
       bottomLeft: Radius.circular(isUser ? 18 : 6),
       bottomRight: Radius.circular(isUser ? 6 : 18),
     );
+    final timestampLabel = formatChatMessageTime(context, message.createdAt);
 
     return Column(
       crossAxisAlignment: alignment,
@@ -122,6 +124,18 @@ class ChatBubble extends StatelessWidget {
               if (!isUser)
                 _AssistantHeader(message: message, textColor: textColor),
               if (isReviewerCodex || !isUser) const SizedBox(height: 10),
+              if (_summaryTurnRangeText(message) case final turnRangeText?) ...[
+                Text(
+                  turnRangeText,
+                  style: TextStyle(
+                    color: textColor.withValues(alpha: 0.76),
+                    fontSize: 12,
+                    height: 1.35,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 10),
+              ],
               if (_recoveryLineageText(message) case final lineageText?) ...[
                 Text(
                   lineageText,
@@ -269,6 +283,18 @@ class ChatBubble extends StatelessWidget {
                   ),
                 ],
               ],
+              const SizedBox(height: 10),
+              Align(
+                alignment: Alignment.centerRight,
+                child: Text(
+                  timestampLabel,
+                  style: TextStyle(
+                    color: textColor.withValues(alpha: 0.62),
+                    fontSize: 11,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ),
             ],
           ),
         ),
@@ -654,6 +680,21 @@ String? _recoveryLineageText(ChatMessage message) {
     return null;
   }
   return parts.join(' ');
+}
+
+String? _summaryTurnRangeText(ChatMessage message) {
+  if (message.agentId != AgentId.summary) {
+    return null;
+  }
+  final start = message.summaryTurnStart;
+  final end = message.summaryTurnEnd;
+  if (start == null || end == null) {
+    return null;
+  }
+  if (start == end) {
+    return 'Covers turn $start';
+  }
+  return 'Covers turns $start to $end';
 }
 
 String? _diagnosticReasonText(ChatMessageReasonCode? reasonCode) {

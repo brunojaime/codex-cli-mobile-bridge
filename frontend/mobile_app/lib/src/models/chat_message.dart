@@ -50,6 +50,8 @@ class ChatMessage {
     this.jobElapsedSeconds,
     this.providerSessionId,
     this.completedAt,
+    this.summaryTurnStart,
+    this.summaryTurnEnd,
   });
 
   final String id;
@@ -76,6 +78,8 @@ class ChatMessage {
   final int? jobElapsedSeconds;
   final String? providerSessionId;
   final DateTime? completedAt;
+  final int? summaryTurnStart;
+  final int? summaryTurnEnd;
 
   bool get isPendingLike =>
       status == ChatMessageStatus.reserved ||
@@ -127,6 +131,8 @@ class ChatMessage {
       completedAt: json['completed_at'] != null
           ? DateTime.parse(json['completed_at'] as String)
           : null,
+      summaryTurnStart: json['summary_turn_start'] as int?,
+      summaryTurnEnd: json['summary_turn_end'] as int?,
     );
   }
 
@@ -154,6 +160,8 @@ class ChatMessage {
     DateTime? createdAt,
     DateTime? updatedAt,
     DateTime? completedAt,
+    int? summaryTurnStart,
+    int? summaryTurnEnd,
   }) {
     return ChatMessage(
       id: id,
@@ -182,6 +190,8 @@ class ChatMessage {
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
       completedAt: completedAt ?? this.completedAt,
+      summaryTurnStart: summaryTurnStart ?? this.summaryTurnStart,
+      summaryTurnEnd: summaryTurnEnd ?? this.summaryTurnEnd,
     );
   }
 }

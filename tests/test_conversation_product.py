@@ -18,6 +18,12 @@ from backend.app.domain.entities.chat_message import (
     ChatMessageStatus,
 )
 from backend.app.domain.entities.chat_session import ChatSession
+from backend.app.domain.entities.current_run import (
+    CurrentRunExecution,
+    RunStageExecution,
+    RunStageId,
+    RunStageState,
+)
 from backend.app.domain.entities.conversation_product import derive_conversation_product
 
 
@@ -258,7 +264,46 @@ def test_plain_chat_uses_generator_output_as_user_facing_update() -> None:
     )
 
     assert product.latest_update == "Generator drafted the first implementation."
-    assert product.description == "Generator drafted the first implementation."
+
+
+def test_product_sanitizes_image_attachment_failures() -> None:
+    session = _build_session()
+
+    current_run = CurrentRunExecution(
+        run_id="run-1",
+        state=RunStageState.FAILED,
+        is_active=True,
+        preset=AgentPreset.SOLO,
+        turn_budget_mode=None,
+        started_at=None,
+        updated_at=None,
+        completed_at=None,
+        participant_agent_ids=(AgentId.GENERATOR,),
+        call_count=1,
+        stages=[
+            RunStageExecution(
+                stage=RunStageId.GENERATOR,
+                state=RunStageState.FAILED,
+                configured=True,
+                latest_activity=(
+                    "Codex could not read the local image at "
+                    "/tmp/codex-remote-retry-assets/example.jpg"
+                ),
+            ),
+        ],
+    )
+    product = derive_conversation_product(
+        session,
+        messages=[],
+        current_run=current_run,
+        recent_runs=[],
+    )
+
+    assert product.latest_update is None
+    assert product.current_focus == (
+        "Generator failed: Image attachments are disabled on this server."
+    )
+    assert product.description == product.current_focus
 
 
 def test_empty_session_uses_no_messages_fallback() -> None:

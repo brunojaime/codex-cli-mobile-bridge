@@ -25,6 +25,7 @@ import '../services/clipboard_image_paste_listener_stub.dart'
 import '../services/reply_playback_service.dart';
 import '../services/server_profile_store.dart';
 import '../state/chat_controller.dart';
+import '../utils/chat_timestamp_formatter.dart';
 import '../utils/chat_message_visibility.dart';
 import '../widgets/agent_studio_status_button.dart';
 import '../widgets/chat_bubble.dart';
@@ -42,6 +43,7 @@ const Key kChatScreenBodyScrollViewKey =
 
 enum _AppBarOverflowAction {
   conversationContext,
+  summaryView,
   saveCurrentAgent,
   replyMode,
   servers,
@@ -99,6 +101,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       <String, Set<String>>{};
   bool _isUpdatingFilteredMessagesView = false;
   String? _filteredMessagesViewErrorText;
+  bool _showSummaryMessagesOnly = false;
   static const double _compactAppBarBreakpoint = 640;
 
   @override
@@ -142,7 +145,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
-      unawaited(_handleRefresh());
+      _chatController.handleAppResumed();
     }
   }
 
@@ -153,6 +156,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       builder: (context, _) {
         final currentSession = _chatController.currentSession;
         final messages = _visibleMessagesForCurrentSession();
+        final timelineEntries = _buildTimelineEntries(messages);
+        final summaryMessageCount = _summaryMessageCountForCurrentSession();
         final showFilteredMessagesPlaceholder = currentSession != null &&
             currentSession.messages.isNotEmpty &&
             messages.isEmpty;
@@ -348,212 +353,322 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                       ? const Center(child: CircularProgressIndicator())
                       : Stack(
                           children: <Widget>[
-                            RefreshIndicator(
-                              onRefresh: _handleRefresh,
-                              child: NotificationListener<ScrollNotification>(
-                                onNotification: _handleScrollNotification,
-                                child: CustomScrollView(
-                                  key: kChatScreenBodyScrollViewKey,
-                                  controller: _scrollController,
-                                  physics:
-                                      const AlwaysScrollableScrollPhysics(),
-                                  slivers: <Widget>[
-                                    if (_chatController.errorText != null)
-                                      SliverToBoxAdapter(
-                                        child: Container(
-                                          width: double.infinity,
-                                          margin: const EdgeInsets.fromLTRB(
-                                            16,
-                                            8,
-                                            16,
-                                            0,
-                                          ),
-                                          padding: const EdgeInsets.all(12),
-                                          decoration: BoxDecoration(
-                                            color: const Color(0xFF3B1521),
-                                            borderRadius:
-                                                BorderRadius.circular(14),
-                                          ),
-                                          child: Text(
-                                            _chatController.errorText!,
-                                            style: const TextStyle(
-                                              color: Colors.white,
-                                            ),
-                                          ),
-                                        ),
-                                      ),
-                                    if (_serverErrorText != null)
-                                      SliverToBoxAdapter(
-                                        child: Container(
-                                          width: double.infinity,
-                                          margin: const EdgeInsets.fromLTRB(
-                                            16,
-                                            8,
-                                            16,
-                                            0,
-                                          ),
-                                          padding: const EdgeInsets.all(12),
-                                          decoration: BoxDecoration(
-                                            color: const Color(0xFF362411),
-                                            borderRadius:
-                                                BorderRadius.circular(14),
-                                          ),
-                                          child: Text(
-                                            _serverErrorText!,
-                                            style: const TextStyle(
-                                              color: Colors.white,
-                                            ),
-                                          ),
-                                        ),
-                                      ),
-                                    if (currentSession != null)
-                                      SliverToBoxAdapter(
-                                        child: ReviewerStatusBanner(
-                                          session: currentSession,
-                                        ),
-                                      ),
-                                    if (currentSession != null)
-                                      SliverPadding(
-                                        padding: const EdgeInsets.fromLTRB(
+                            NotificationListener<ScrollNotification>(
+                              onNotification: _handleScrollNotification,
+                              child: CustomScrollView(
+                                key: kChatScreenBodyScrollViewKey,
+                                controller: _scrollController,
+                                slivers: <Widget>[
+                                  if (_chatController.errorText != null)
+                                    SliverToBoxAdapter(
+                                      child: Container(
+                                        width: double.infinity,
+                                        margin: const EdgeInsets.fromLTRB(
                                           16,
                                           8,
                                           16,
                                           0,
                                         ),
-                                        sliver: SliverToBoxAdapter(
-                                          child: CurrentRunTimelineCard(
-                                            session: currentSession,
+                                        padding: const EdgeInsets.all(12),
+                                        decoration: BoxDecoration(
+                                          color: const Color(0xFF3B1521),
+                                          borderRadius:
+                                              BorderRadius.circular(14),
+                                        ),
+                                        child: Text(
+                                          _chatController.errorText!,
+                                          style: const TextStyle(
+                                            color: Colors.white,
                                           ),
                                         ),
                                       ),
-                                    if (messages.isEmpty)
-                                      SliverFillRemaining(
-                                        hasScrollBody: false,
-                                        child: showFilteredMessagesPlaceholder
-                                            ? _FilteredMessagesPlaceholder(
-                                                displayMode: currentSession
-                                                    .agentConfiguration
-                                                    .displayMode,
-                                                isUpdating:
-                                                    _isUpdatingFilteredMessagesView,
-                                                errorText:
-                                                    _filteredMessagesViewErrorText,
-                                                onShowAllMessages:
-                                                    _handleShowAllMessages,
-                                              )
-                                            : _EmptyState(
-                                                onCreateChat:
-                                                    _openWorkspacePicker,
-                                              ),
-                                      )
-                                    else
-                                      SliverPadding(
+                                    ),
+                                  if (_serverErrorText != null)
+                                    SliverToBoxAdapter(
+                                      child: Container(
+                                        width: double.infinity,
+                                        margin: const EdgeInsets.fromLTRB(
+                                          16,
+                                          8,
+                                          16,
+                                          0,
+                                        ),
+                                        padding: const EdgeInsets.all(12),
+                                        decoration: BoxDecoration(
+                                          color: const Color(0xFF362411),
+                                          borderRadius:
+                                              BorderRadius.circular(14),
+                                        ),
+                                        child: Text(
+                                          _serverErrorText!,
+                                          style: const TextStyle(
+                                            color: Colors.white,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  if (currentSession != null)
+                                    SliverToBoxAdapter(
+                                      child: ReviewerStatusBanner(
+                                        session: currentSession,
+                                      ),
+                                    ),
+                                  if (currentSession != null)
+                                    SliverPadding(
+                                      padding: const EdgeInsets.fromLTRB(
+                                        16,
+                                        8,
+                                        16,
+                                        0,
+                                      ),
+                                      sliver: SliverToBoxAdapter(
+                                        child: CurrentRunTimelineCard(
+                                          session: currentSession,
+                                        ),
+                                      ),
+                                    ),
+                                  if (currentSession != null &&
+                                      (summaryMessageCount > 0 ||
+                                          _showSummaryMessagesOnly))
+                                    SliverToBoxAdapter(
+                                      child: Padding(
                                         padding: const EdgeInsets.fromLTRB(
                                           16,
-                                          12,
+                                          10,
                                           16,
-                                          16,
+                                          0,
                                         ),
-                                        sliver: SliverList(
-                                          delegate: SliverChildBuilderDelegate(
-                                            (context, index) {
-                                              final message = messages[index];
-                                              final nextMessage =
-                                                  index + 1 < messages.length
-                                                      ? messages[index + 1]
-                                                      : null;
-                                              final extraBottomSpacing =
-                                                  nextMessage != null &&
-                                                          nextMessage.isUser !=
-                                                              message.isUser
-                                                      ? 10.0
-                                                      : 0.0;
-                                              return Align(
-                                                alignment: message.isUser
-                                                    ? Alignment.centerRight
-                                                    : Alignment.centerLeft,
-                                                child: Padding(
-                                                  padding: EdgeInsets.only(
-                                                    bottom: extraBottomSpacing,
-                                                  ),
-                                                  child: ChatBubble(
-                                                    key: ValueKey<String>(
-                                                      'chat-bubble-${message.id}',
-                                                    ),
-                                                    message: message,
-                                                    isCollapsed:
-                                                        _isMessageCollapsed(
-                                                      message,
-                                                    ),
-                                                    onToggleCollapsed: () =>
-                                                        _toggleMessageCollapsed(
-                                                      message,
-                                                    ),
-                                                    generatorColor: _chatController
-                                                                .currentSession !=
-                                                            null
-                                                        ? _colorFromHex(
-                                                            _chatController
-                                                                .currentSession!
-                                                                .agentProfileColor,
-                                                          )
-                                                        : null,
-                                                    onOptionSelected:
-                                                        _handleSuggestedReply,
-                                                    onLinkTap:
-                                                        _handleMessageLinkTap,
-                                                    onCancelJob:
-                                                        (_activeServerCapabilities
-                                                                        ?.supportsJobCancellation ??
-                                                                    false) &&
-                                                                message.jobId !=
-                                                                    null
-                                                            ? () =>
-                                                                _handleCancelJob(
-                                                                  message
-                                                                      .jobId!,
-                                                                )
-                                                            : null,
-                                                    onRetryJob:
-                                                        (_activeServerCapabilities
-                                                                        ?.supportsJobRetry ??
-                                                                    false) &&
-                                                                message.jobId !=
-                                                                    null
-                                                            ? () =>
-                                                                _handleRetryJob(
-                                                                  message
-                                                                      .jobId!,
-                                                                )
-                                                            : null,
-                                                    onRecoverUnknownSubmission: message
-                                                                .status ==
-                                                            ChatMessageStatus
-                                                                .submissionUnknown
-                                                        ? () =>
-                                                            _handleRecoverUnknownSubmission(
-                                                              message.id,
-                                                            )
-                                                        : null,
-                                                    onCancelUnknownSubmission: message
-                                                                .status ==
-                                                            ChatMessageStatus
-                                                                .submissionUnknown
-                                                        ? () =>
-                                                            _handleCancelUnknownSubmission(
-                                                              message.id,
-                                                            )
-                                                        : null,
-                                                  ),
-                                                ),
-                                              );
-                                            },
-                                            childCount: messages.length,
-                                          ),
+                                        child: Wrap(
+                                          spacing: 10,
+                                          children: <Widget>[
+                                            ChoiceChip(
+                                              label:
+                                                  const Text('Conversation'),
+                                              selected:
+                                                  !_showSummaryMessagesOnly,
+                                              onSelected: (selected) {
+                                                if (!selected) {
+                                                  return;
+                                                }
+                                                _exitSummaryMessagesView();
+                                              },
+                                              selectedColor:
+                                                  const Color(0xFF55D6BE),
+                                              backgroundColor:
+                                                  const Color(0xFF16213C),
+                                              labelStyle: TextStyle(
+                                                color: !_showSummaryMessagesOnly
+                                                    ? const Color(0xFF07131D)
+                                                    : const Color(0xFFDCE5FF),
+                                                fontWeight: FontWeight.w700,
+                                              ),
+                                              side: const BorderSide(
+                                                color: Color(0xFF23304F),
+                                              ),
+                                            ),
+                                            ChoiceChip(
+                                              label: Text(
+                                                summaryMessageCount == 1
+                                                    ? 'Summary'
+                                                    : 'Summaries ($summaryMessageCount)',
+                                              ),
+                                              selected:
+                                                  _showSummaryMessagesOnly,
+                                              onSelected: summaryMessageCount <=
+                                                      0
+                                                  ? null
+                                                  : (selected) {
+                                                      if (!selected) {
+                                                        return;
+                                                      }
+                                                      setState(() {
+                                                        _showSummaryMessagesOnly =
+                                                            true;
+                                                      });
+                                                    },
+                                              selectedColor:
+                                                  const Color(0xFF8CA8FF),
+                                              backgroundColor:
+                                                  const Color(0xFF16213C),
+                                              labelStyle: TextStyle(
+                                                color: _showSummaryMessagesOnly
+                                                    ? const Color(0xFF07131D)
+                                                    : const Color(0xFFDCE5FF),
+                                                fontWeight: FontWeight.w700,
+                                              ),
+                                              side: const BorderSide(
+                                                color: Color(0xFF23304F),
+                                              ),
+                                            ),
+                                          ],
                                         ),
                                       ),
-                                  ],
-                                ),
+                                    ),
+                                  if (_showSummaryMessagesOnly &&
+                                      currentSession != null)
+                                    SliverToBoxAdapter(
+                                      child: Padding(
+                                        padding: const EdgeInsets.fromLTRB(
+                                          16,
+                                          10,
+                                          16,
+                                          0,
+                                        ),
+                                        child: _SummaryViewBanner(
+                                          summaryCount: summaryMessageCount,
+                                          onShowFullChat:
+                                              _exitSummaryMessagesView,
+                                        ),
+                                      ),
+                                    ),
+                                  if (messages.isEmpty)
+                                    SliverFillRemaining(
+                                      hasScrollBody: false,
+                                      child: _showSummaryMessagesOnly &&
+                                              currentSession != null
+                                          ? _SummaryMessagesPlaceholder(
+                                              onShowFullChat:
+                                                  _exitSummaryMessagesView,
+                                            )
+                                          : showFilteredMessagesPlaceholder
+                                              ? _FilteredMessagesPlaceholder(
+                                                  displayMode: currentSession
+                                                      .agentConfiguration
+                                                      .displayMode,
+                                                  isUpdating:
+                                                      _isUpdatingFilteredMessagesView,
+                                                  errorText:
+                                                      _filteredMessagesViewErrorText,
+                                                  onShowAllMessages:
+                                                      _handleShowAllMessages,
+                                                )
+                                              : _EmptyState(
+                                                  onCreateChat:
+                                                      _openWorkspacePicker,
+                                                ),
+                                    )
+                                  else
+                                    SliverPadding(
+                                      padding: const EdgeInsets.fromLTRB(
+                                        16,
+                                        12,
+                                        16,
+                                        16,
+                                      ),
+                                      sliver: SliverList(
+                                        delegate: SliverChildBuilderDelegate(
+                                          (context, index) {
+                                            final entry =
+                                                timelineEntries[index];
+                                            if (entry.separatorDate != null) {
+                                              final separatorDate =
+                                                  entry.separatorDate!;
+                                              return _ChatDaySeparator(
+                                                key: ValueKey<String>(
+                                                  'chat-day-separator-${separatorDate.year}-${separatorDate.month}-${separatorDate.day}',
+                                                ),
+                                                label: formatChatDaySeparatorLabel(
+                                                  context,
+                                                  separatorDate,
+                                                ),
+                                              );
+                                            }
+                                            final message = entry.message!;
+                                            final nextEntry =
+                                                index + 1 < timelineEntries.length
+                                                    ? timelineEntries[index + 1]
+                                                    : null;
+                                            final nextMessage =
+                                                nextEntry?.message;
+                                            final extraBottomSpacing =
+                                                nextMessage != null &&
+                                                        nextMessage.isUser !=
+                                                            message.isUser
+                                                    ? 10.0
+                                                    : 0.0;
+                                            return Align(
+                                              alignment: message.isUser
+                                                  ? Alignment.centerRight
+                                                  : Alignment.centerLeft,
+                                              child: Padding(
+                                                padding: EdgeInsets.only(
+                                                  bottom: extraBottomSpacing,
+                                                ),
+                                                child: ChatBubble(
+                                                  key: ValueKey<String>(
+                                                    'chat-bubble-${message.id}',
+                                                  ),
+                                                  message: message,
+                                                  isCollapsed:
+                                                      _isMessageCollapsed(
+                                                    message,
+                                                  ),
+                                                  onToggleCollapsed: () =>
+                                                      _toggleMessageCollapsed(
+                                                    message,
+                                                  ),
+                                                  generatorColor: _chatController
+                                                              .currentSession !=
+                                                          null
+                                                      ? _colorFromHex(
+                                                          _chatController
+                                                              .currentSession!
+                                                              .agentProfileColor,
+                                                        )
+                                                      : null,
+                                                  onOptionSelected:
+                                                      _handleSuggestedReply,
+                                                  onLinkTap:
+                                                      _handleMessageLinkTap,
+                                                  onCancelJob:
+                                                      (_activeServerCapabilities
+                                                                      ?.supportsJobCancellation ??
+                                                                  false) &&
+                                                              message.jobId !=
+                                                                  null
+                                                          ? () =>
+                                                              _handleCancelJob(
+                                                                message.jobId!,
+                                                              )
+                                                          : null,
+                                                  onRetryJob:
+                                                      (_activeServerCapabilities
+                                                                      ?.supportsJobRetry ??
+                                                                  false) &&
+                                                              message.jobId !=
+                                                                  null
+                                                          ? () =>
+                                                              _handleRetryJob(
+                                                                message.jobId!,
+                                                              )
+                                                          : null,
+                                                  onRecoverUnknownSubmission: message
+                                                              .status ==
+                                                          ChatMessageStatus
+                                                              .submissionUnknown
+                                                      ? () =>
+                                                          _handleRecoverUnknownSubmission(
+                                                            message.id,
+                                                          )
+                                                      : null,
+                                                  onCancelUnknownSubmission: message
+                                                              .status ==
+                                                          ChatMessageStatus
+                                                              .submissionUnknown
+                                                      ? () =>
+                                                          _handleCancelUnknownSubmission(
+                                                            message.id,
+                                                          )
+                                                      : null,
+                                                ),
+                                              ),
+                                            );
+                                          },
+                                          childCount: timelineEntries.length,
+                                        ),
+                                      ),
+                                    ),
+                                ],
                               ),
                             ),
                             Positioned(
@@ -703,12 +818,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     );
   }
 
-  Future<void> _handleRefresh() async {
-    await _chatController.refreshAppState(
-      failurePrefix: 'Failed to refresh the app.',
-    );
-  }
-
   Future<void> _handleRecoverUnknownSubmission(String messageId) async {
     final didRecover = await _chatController.recoverMessage(
       messageId,
@@ -840,10 +949,51 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     if (currentSession == null) {
       return const <ChatMessage>[];
     }
+    if (_showSummaryMessagesOnly) {
+      return currentSession.messages
+          .where((message) => message.agentId == AgentId.summary)
+          .toList(growable: false);
+    }
     return filterVisibleMessages(
       currentSession.messages,
       displayMode: currentSession.agentConfiguration.displayMode,
     );
+  }
+
+  List<_ChatTimelineEntry> _buildTimelineEntries(List<ChatMessage> messages) {
+    final entries = <_ChatTimelineEntry>[];
+    DateTime? previousMessageDate;
+
+    for (final message in messages) {
+      final messageDate = message.createdAt.toLocal();
+      if (previousMessageDate == null ||
+          !isSameChatCalendarDay(previousMessageDate, messageDate)) {
+        entries.add(_ChatTimelineEntry.separator(messageDate));
+      }
+      entries.add(_ChatTimelineEntry.message(message));
+      previousMessageDate = messageDate;
+    }
+
+    return entries;
+  }
+
+  int _summaryMessageCountForCurrentSession() {
+    final currentSession = _chatController.currentSession;
+    if (currentSession == null) {
+      return 0;
+    }
+    return currentSession.messages
+        .where((message) => message.agentId == AgentId.summary)
+        .length;
+  }
+
+  void _exitSummaryMessagesView() {
+    if (!_showSummaryMessagesOnly) {
+      return;
+    }
+    setState(() {
+      _showSummaryMessagesOnly = false;
+    });
   }
 
   bool _isMessageCollapsed(ChatMessage message) {
@@ -1484,12 +1634,30 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   }
 
   List<Widget> _buildAppBarActions({required bool isCompactAppBar}) {
+    final hasSummaryMessages = _summaryMessageCountForCurrentSession() > 0;
     final primaryActions = <Widget>[
       AgentStudioStatusButton(
         session: _chatController.currentSession,
         onPressed: () async {
           await _openAgentStudio();
         },
+      ),
+      IconButton(
+        onPressed: !_showSummaryMessagesOnly && !hasSummaryMessages
+            ? null
+            : () {
+                setState(() {
+                  _showSummaryMessagesOnly = !_showSummaryMessagesOnly;
+                });
+              },
+        icon: Icon(
+          _showSummaryMessagesOnly
+              ? Icons.chat_bubble_outline_rounded
+              : Icons.summarize_outlined,
+        ),
+        tooltip: _showSummaryMessagesOnly
+            ? 'Show full chat'
+            : 'Show summaries',
       ),
     ];
     if (isCompactAppBar) {
@@ -1505,6 +1673,17 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
               action: _AppBarOverflowAction.conversationContext,
               icon: Icons.topic_outlined,
               label: 'What are we doing?',
+            ),
+            _buildAppBarOverflowMenuItem(
+              action: _AppBarOverflowAction.summaryView,
+              icon: _showSummaryMessagesOnly
+                  ? Icons.chat_bubble_outline_rounded
+                  : Icons.summarize_outlined,
+              label: _showSummaryMessagesOnly
+                  ? 'Show full chat'
+                  : 'Show summaries',
+              enabled: _showSummaryMessagesOnly ||
+                  (_chatController.currentSession != null && hasSummaryMessages),
             ),
             _buildAppBarOverflowMenuItem(
               action: _AppBarOverflowAction.saveCurrentAgent,
@@ -1587,9 +1766,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     required _AppBarOverflowAction action,
     required IconData icon,
     required String label,
+    bool enabled = true,
   }) {
     return PopupMenuItem<_AppBarOverflowAction>(
       value: action,
+      enabled: enabled,
       child: Row(
         children: <Widget>[
           Icon(icon, size: 18),
@@ -1609,6 +1790,18 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     switch (action) {
       case _AppBarOverflowAction.conversationContext:
         await _openConversationContextSheet();
+        return;
+      case _AppBarOverflowAction.summaryView:
+        if (_showSummaryMessagesOnly) {
+          _exitSummaryMessagesView();
+          return;
+        }
+        if (_summaryMessageCountForCurrentSession() <= 0) {
+          return;
+        }
+        setState(() {
+          _showSummaryMessagesOnly = true;
+        });
         return;
       case _AppBarOverflowAction.saveCurrentAgent:
         await _openSaveCurrentAgentProfile();
@@ -1633,9 +1826,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     }
     await showModalBottomSheet<void>(
       context: context,
-      isScrollControlled: true,
       showDragHandle: true,
       builder: (context) {
+        final maxSheetHeight = MediaQuery.sizeOf(context).height * 0.72;
+
         Widget buildSection(String label, String? value) {
           final trimmed = value?.trim();
           if (trimmed == null || trimmed.isEmpty) {
@@ -1667,11 +1861,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         }
 
         return SafeArea(
-          child: FractionallySizedBox(
-            heightFactor: 0.9,
-            child: SingleChildScrollView(
-              key: const ValueKey<String>('conversation-context-scroll-view'),
-              padding: const EdgeInsets.fromLTRB(20, 8, 20, 20),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 8, 20, 20),
+            child: ConstrainedBox(
+              constraints: BoxConstraints(maxHeight: maxSheetHeight),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -1691,15 +1884,22 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                     ),
                   ),
                   const SizedBox(height: 16),
-                  buildSection('Summary', product.description),
-                  buildSection(
-                    'Latest update',
-                    product.latestUpdate == product.description
-                        ? null
-                        : product.latestUpdate,
+                  Flexible(
+                    child: SingleChildScrollView(
+                      key: const ValueKey<String>(
+                        'conversation-context-scroll-view',
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: <Widget>[
+                          buildSection('Summary', product.description),
+                          buildSection('Latest update', product.latestUpdate),
+                          buildSection('Current focus', product.currentFocus),
+                          buildSection('Next step', product.nextStep),
+                        ],
+                      ),
+                    ),
                   ),
-                  buildSection('Current focus', product.currentFocus),
-                  buildSection('Next step', product.nextStep),
                 ],
               ),
             ),
@@ -2084,6 +2284,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         setState(() {
           _isUpdatingFilteredMessagesView = false;
           _filteredMessagesViewErrorText = null;
+          _showSummaryMessagesOnly = false;
+        });
+      } else if (_showSummaryMessagesOnly) {
+        setState(() {
+          _showSummaryMessagesOnly = false;
         });
       }
       _updateStickToBottom(true);
@@ -2275,13 +2480,11 @@ class _SessionTile extends StatelessWidget {
         ? const Color(0xFFA8C7C0)
         : const Color(0xFF8B97B5);
     final conversationProduct = session.conversationProduct;
-    final conversationDescription = conversationProduct?.description.trim();
-    final subtitleText =
-        conversationDescription != null && conversationDescription.isNotEmpty
-            ? conversationProduct!.description
-            : session.lastMessagePreview?.isNotEmpty == true
-                ? session.lastMessagePreview!
-                : 'No messages yet';
+    final subtitleText = conversationProduct?.description?.trim().isNotEmpty == true
+        ? conversationProduct!.description
+        : session.lastMessagePreview?.isNotEmpty == true
+            ? session.lastMessagePreview!
+            : 'No messages yet';
 
     return AnimatedContainer(
       duration: const Duration(milliseconds: 180),
@@ -2310,8 +2513,7 @@ class _SessionTile extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
           children: <Widget>[
-            if (conversationProduct?.statusLine.trim().isNotEmpty ==
-                true) ...<Widget>[
+            if (conversationProduct?.statusLine.trim().isNotEmpty == true) ...<Widget>[
               Text(
                 conversationProduct!.statusLine,
                 maxLines: 1,
@@ -2806,35 +3008,33 @@ class _EmptyState extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Center(
-      child: SingleChildScrollView(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 24),
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 420),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: <Widget>[
-                const Text(
-                  'Start a new Codex session',
-                  style: TextStyle(fontSize: 24, fontWeight: FontWeight.w600),
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 12),
-                const Text(
-                  'Each chat maps to a real Codex CLI session and follow-up messages continue that session.',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(color: Color(0xFF8B97B5), height: 1.5),
-                ),
-                const SizedBox(height: 20),
-                FilledButton.icon(
-                  onPressed: () async {
-                    await onCreateChat();
-                  },
-                  icon: const Icon(Icons.add_comment_outlined),
-                  label: const Text('New Chat'),
-                ),
-              ],
-            ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 24),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 420),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              const Text(
+                'Start a new Codex session',
+                style: TextStyle(fontSize: 24, fontWeight: FontWeight.w600),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 12),
+              const Text(
+                'Each chat maps to a real Codex CLI session and follow-up messages continue that session.',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: Color(0xFF8B97B5), height: 1.5),
+              ),
+              const SizedBox(height: 20),
+              FilledButton.icon(
+                onPressed: () async {
+                  await onCreateChat();
+                },
+                icon: const Icon(Icons.add_comment_outlined),
+                label: const Text('New Chat'),
+              ),
+            ],
           ),
         ),
       ),
@@ -2917,6 +3117,100 @@ class _FilteredMessagesPlaceholder extends StatelessWidget {
                   ),
                 ),
               ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SummaryViewBanner extends StatelessWidget {
+  const _SummaryViewBanner({
+    required this.summaryCount,
+    required this.onShowFullChat,
+  });
+
+  final int summaryCount;
+  final VoidCallback onShowFullChat;
+
+  @override
+  Widget build(BuildContext context) {
+    final label = summaryCount == 1
+        ? 'Showing 1 summary update'
+        : 'Showing $summaryCount summary updates';
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFF173255),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFF66A8FF), width: 1.2),
+      ),
+      child: Row(
+        children: <Widget>[
+          const Icon(
+            Icons.summarize_outlined,
+            color: Color(0xFFAED3FF),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              '$label. Tap a summary to inspect what was completed at that point in the run.',
+              style: const TextStyle(
+                color: Colors.white,
+                height: 1.35,
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          TextButton(
+            onPressed: onShowFullChat,
+            child: const Text('Show full chat'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SummaryMessagesPlaceholder extends StatelessWidget {
+  const _SummaryMessagesPlaceholder({
+    required this.onShowFullChat,
+  });
+
+  final VoidCallback onShowFullChat;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 24),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 460),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              const Text(
+                'No summaries yet',
+                style: TextStyle(fontSize: 24, fontWeight: FontWeight.w600),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 12),
+              const Text(
+                'Summary view is enabled for this chat, but the summarizer has not produced an update yet.',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: Color(0xFF8B97B5),
+                  height: 1.5,
+                ),
+              ),
+              const SizedBox(height: 20),
+              FilledButton.icon(
+                onPressed: onShowFullChat,
+                icon: const Icon(Icons.chat_bubble_outline_rounded),
+                label: const Text('Show full chat'),
+              ),
             ],
           ),
         ),
@@ -3362,6 +3656,10 @@ class _ComposerState extends State<_Composer> {
   }
 
   Future<void> _pickImage() async {
+    if (!widget.imageAttachmentsEnabled) {
+      _showImageAttachmentsDisabledSnackBar();
+      return;
+    }
     try {
       final pickedImages = await _imagePicker.pickMultiImage(
         imageQuality: 90,
@@ -3404,12 +3702,17 @@ class _ComposerState extends State<_Composer> {
         return;
       }
       final attachments = <_PendingAttachmentDraft>[];
+      var skippedImageCount = 0;
       for (final file in result.files) {
         final xFile = file.xFile;
         final kind = _resolveAttachmentKind(
           fileName: file.name,
           mimeType: xFile.mimeType,
         );
+        if (kind == _AttachmentDraftKind.image && !widget.imageAttachmentsEnabled) {
+          skippedImageCount += 1;
+          continue;
+        }
         attachments.add(
           _PendingAttachmentDraft(
             file: xFile,
@@ -3423,10 +3726,16 @@ class _ComposerState extends State<_Composer> {
         );
       }
       if (attachments.isEmpty) {
-        throw Exception(
-            'The selected files are not accessible on this device.');
+        if (skippedImageCount > 0) {
+          _showImageAttachmentsDisabledSnackBar();
+          return;
+        }
+        throw Exception('The selected files are not accessible on this device.');
       }
       _appendPendingAttachments(attachments);
+      if (skippedImageCount > 0) {
+        _showImageAttachmentsDisabledSnackBar();
+      }
     } catch (error) {
       if (!mounted) {
         return;
@@ -3633,6 +3942,7 @@ class _ComposerState extends State<_Composer> {
   bool _canAcceptPastedImages() {
     return mounted &&
         _composerFocusNode.hasFocus &&
+        widget.imageAttachmentsEnabled &&
         !widget.isBusy &&
         !_isRecording;
   }
@@ -3653,8 +3963,15 @@ class _ComposerState extends State<_Composer> {
     String? prompt,
   }) {
     unawaited(() async {
+      final sanitizedAttachments = _filterDisallowedImageAttachments(attachments);
+      if (sanitizedAttachments.isEmpty) {
+        if (mounted) {
+          _showImageAttachmentsDisabledSnackBar();
+        }
+        return;
+      }
       final didSend = await widget.onSendAttachments(
-        attachments,
+        sanitizedAttachments,
         prompt: prompt,
       );
       if (!mounted) {
@@ -3705,8 +4022,7 @@ class _ComposerState extends State<_Composer> {
       );
     }
 
-    final nextAttachments =
-        List<_PendingAttachmentDraft>.from(draft.attachments);
+    final nextAttachments = _filterDisallowedImageAttachments(draft.attachments);
     if (mounted) {
       setState(() {
         _hasText = nextText.trim().isNotEmpty;
@@ -3759,6 +4075,10 @@ class _ComposerState extends State<_Composer> {
     if (images.isEmpty || !mounted) {
       return;
     }
+    if (!widget.imageAttachmentsEnabled) {
+      _showImageAttachmentsDisabledSnackBar();
+      return;
+    }
 
     final attachments = images
         .map(
@@ -3789,6 +4109,27 @@ class _ComposerState extends State<_Composer> {
               : '${attachments.length} images pasted into the attachment tray.',
         ),
         duration: const Duration(seconds: 1),
+      ),
+    );
+  }
+
+  List<_PendingAttachmentDraft> _filterDisallowedImageAttachments(
+    List<_PendingAttachmentDraft> attachments,
+  ) {
+    if (widget.imageAttachmentsEnabled) {
+      return List<_PendingAttachmentDraft>.from(attachments);
+    }
+    return attachments.where((attachment) => !attachment.isImage).toList();
+  }
+
+  void _showImageAttachmentsDisabledSnackBar() {
+    if (!mounted) {
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Image attachments are disabled on this server.'),
+        duration: Duration(seconds: 2),
       ),
     );
   }
@@ -4237,10 +4578,14 @@ class _AgentStudioSheetState extends State<_AgentStudioSheet> {
   late AgentPreset _preset;
   late AgentDisplayMode _displayMode;
   late TurnBudgetMode _turnBudgetMode;
+  late SummaryStrategy _summaryStrategy;
   late final Map<AgentId, TextEditingController> _labelControllers;
   late final Map<AgentId, TextEditingController> _modelControllers;
   late final Map<AgentId, TextEditingController> _promptControllers;
   late final Map<AgentId, TextEditingController> _turnsControllers;
+  late final TextEditingController _summaryDeterministicController;
+  late final TextEditingController _summaryWindowStartController;
+  late final TextEditingController _summaryWindowEndController;
   late final Map<AgentId, bool> _enabled;
   late final Map<AgentId, AgentVisibilityMode> _visibility;
   late final Set<AgentId> _supervisorMemberIds;
@@ -4252,10 +4597,20 @@ class _AgentStudioSheetState extends State<_AgentStudioSheet> {
     _preset = configuration.preset;
     _displayMode = configuration.displayMode;
     _turnBudgetMode = configuration.turnBudgetMode;
+    _summaryStrategy = configuration.summaryStrategy;
     _labelControllers = <AgentId, TextEditingController>{};
     _modelControllers = <AgentId, TextEditingController>{};
     _promptControllers = <AgentId, TextEditingController>{};
     _turnsControllers = <AgentId, TextEditingController>{};
+    _summaryDeterministicController = TextEditingController(
+      text: configuration.summaryStrategy.deterministicInterval.toString(),
+    );
+    _summaryWindowStartController = TextEditingController(
+      text: configuration.summaryStrategy.supervisorWindowStart.toString(),
+    );
+    _summaryWindowEndController = TextEditingController(
+      text: configuration.summaryStrategy.supervisorWindowEnd.toString(),
+    );
     _enabled = <AgentId, bool>{};
     _visibility = <AgentId, AgentVisibilityMode>{};
     _supervisorMemberIds = configuration.supervisorMemberIds.toSet();
@@ -4289,6 +4644,9 @@ class _AgentStudioSheetState extends State<_AgentStudioSheet> {
     for (final controller in _turnsControllers.values) {
       controller.dispose();
     }
+    _summaryDeterministicController.dispose();
+    _summaryWindowStartController.dispose();
+    _summaryWindowEndController.dispose();
     super.dispose();
   }
 
@@ -4463,7 +4821,7 @@ class _AgentStudioSheetState extends State<_AgentStudioSheet> {
       AgentId.reviewer =>
         'When enabled, new runs wait for the generator and then hand off to the reviewer.',
       AgentId.summary =>
-        'Adds a final user-facing summary after the reviewer or generator finishes.',
+        'Adds a user-facing summary after the configured number of completed agent turns.',
       AgentId.supervisor =>
         'Owns planning, delegation, and specialist routing for supervisor mode.',
       AgentId.qa =>
@@ -4494,6 +4852,7 @@ class _AgentStudioSheetState extends State<_AgentStudioSheet> {
     final canToggle = switch (agentId) {
       AgentId.generator => _preset != AgentPreset.supervisor,
       AgentId.supervisor => false,
+      AgentId.summary => true,
       AgentId.qa ||
       AgentId.ux ||
       AgentId.seniorEngineer ||
@@ -4548,6 +4907,16 @@ class _AgentStudioSheetState extends State<_AgentStudioSheet> {
             decoration: const InputDecoration(labelText: 'Label'),
           ),
           const SizedBox(height: 8),
+          TextField(
+            key: ValueKey<String>('agent-model-${agentIdToJson(agentId)}'),
+            controller: _modelControllers[agentId],
+            decoration: const InputDecoration(
+              labelText: 'Model override',
+              helperText:
+                  'Optional. Leave blank to use the backend default Codex model.',
+            ),
+          ),
+          const SizedBox(height: 8),
           DropdownButtonFormField<AgentVisibilityMode>(
             initialValue: _visibility[agentId],
             decoration: InputDecoration(
@@ -4586,21 +4955,45 @@ class _AgentStudioSheetState extends State<_AgentStudioSheet> {
                 labelText: 'Turn budget',
                 helperText: agentId == AgentId.supervisor
                     ? 'Any integer. Supervisor runs use at least 1.'
+                    : agentId == AgentId.summary
+                        ? 'Maximum number of summary calls for each run.'
                     : 'Any non-negative integer.',
               ),
             ),
             const SizedBox(height: 8),
           ],
-          TextField(
-            key: ValueKey<String>('agent-model-${agentIdToJson(agentId)}'),
-            controller: _modelControllers[agentId],
-            decoration: const InputDecoration(
-              labelText: 'Model override',
-              helperText:
-                  'Optional. Leave blank to use the backend default Codex model.',
-            ),
-          ),
-          const SizedBox(height: 8),
+          if (agentId == AgentId.summary) ...<Widget>[
+            if (_preset == AgentPreset.supervisor) ...<Widget>[
+              TextField(
+                controller: _summaryWindowStartController,
+                keyboardType: TextInputType.number,
+                decoration: InputDecoration(
+                  labelText: 'Summary window start',
+                  helperText: _summaryWindowHelperText(),
+                ),
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: _summaryWindowEndController,
+                keyboardType: TextInputType.number,
+                decoration: InputDecoration(
+                  labelText: 'Summary window end',
+                  helperText: _summaryWindowHelperText(),
+                ),
+              ),
+              const SizedBox(height: 8),
+            ] else ...<Widget>[
+              TextField(
+                controller: _summaryDeterministicController,
+                keyboardType: TextInputType.number,
+                decoration: InputDecoration(
+                  labelText: 'Summary cadence',
+                  helperText: _summaryCadenceHelperText(),
+                ),
+              ),
+              const SizedBox(height: 8),
+            ],
+          ],
           TextField(
             controller: _promptControllers[agentId],
             minLines: 3,
@@ -4702,6 +5095,11 @@ class _AgentStudioSheetState extends State<_AgentStudioSheet> {
     for (final agentId in kConfigurableAgentIds) {
       _enabled[agentId] = agentEnabledForPreset(agentId, preset);
     }
+    _summaryStrategy = _summaryStrategy.copyWith(
+      mode: preset == AgentPreset.supervisor
+          ? SummaryStrategyMode.supervisorWindow
+          : SummaryStrategyMode.deterministic,
+    );
     if (preset == AgentPreset.supervisor) {
       _enabled[AgentId.supervisor] = true;
       for (final agentId in kSupervisorMemberAgentIds) {
@@ -4730,10 +5128,30 @@ class _AgentStudioSheetState extends State<_AgentStudioSheet> {
         maxTurns: maxTurns,
       );
     }).toList(growable: false);
+    final summaryStrategy = _preset == AgentPreset.supervisor
+        ? _summaryStrategy.copyWith(
+            mode: SummaryStrategyMode.supervisorWindow,
+            supervisorWindowStart: _normalizeAgentTurns(
+              _summaryWindowStartController.text,
+              fallback: _summaryStrategy.supervisorWindowStart,
+            ),
+            supervisorWindowEnd: _normalizeAgentTurns(
+              _summaryWindowEndController.text,
+              fallback: _summaryStrategy.supervisorWindowEnd,
+            ),
+          )
+        : _summaryStrategy.copyWith(
+            mode: SummaryStrategyMode.deterministic,
+            deterministicInterval: _normalizeAgentTurns(
+              _summaryDeterministicController.text,
+              fallback: _summaryStrategy.deterministicInterval,
+            ),
+          );
     return widget.session.agentConfiguration.copyWith(
       preset: _preset,
       displayMode: _displayMode,
       turnBudgetMode: _turnBudgetMode,
+      summaryStrategy: summaryStrategy,
       agents: nextAgents,
       supervisorMemberIds: _supervisorMemberIds.toList(growable: false),
     );
@@ -4747,6 +5165,14 @@ class _AgentStudioSheetState extends State<_AgentStudioSheet> {
       return false;
     }
     return kSupervisorMemberAgentIds.contains(agentId);
+  }
+
+  String _summaryCadenceHelperText() {
+    return 'Run the summary after this many completed generator or reviewer turns.';
+  }
+
+  String _summaryWindowHelperText() {
+    return 'The supervisor can request a summary after completed agent turns inside this window. Default: turns 3 to 6.';
   }
 }
 
@@ -5140,6 +5566,49 @@ class _StatusPill extends StatelessWidget {
           color: foregroundColor,
           fontSize: 12,
           fontWeight: FontWeight.w700,
+        ),
+      ),
+    );
+  }
+}
+
+class _ChatTimelineEntry {
+  const _ChatTimelineEntry.separator(this.separatorDate) : message = null;
+
+  const _ChatTimelineEntry.message(this.message) : separatorDate = null;
+
+  final DateTime? separatorDate;
+  final ChatMessage? message;
+}
+
+class _ChatDaySeparator extends StatelessWidget {
+  const _ChatDaySeparator({
+    super.key,
+    required this.label,
+  });
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(0, 8, 0, 14),
+      child: Center(
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          decoration: BoxDecoration(
+            color: const Color(0xFF16213C),
+            borderRadius: BorderRadius.circular(999),
+            border: Border.all(color: const Color(0xFF23304F)),
+          ),
+          child: Text(
+            label,
+            style: const TextStyle(
+              color: Color(0xFFDCE5FF),
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
         ),
       ),
     );

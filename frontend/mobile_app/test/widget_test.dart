@@ -13,6 +13,7 @@ import 'package:codex_mobile_frontend/src/services/api_client.dart';
 import 'package:codex_mobile_frontend/src/services/chat_notification_service.dart';
 import 'package:codex_mobile_frontend/src/services/text_to_speech_player.dart';
 import 'package:codex_mobile_frontend/src/state/chat_controller.dart';
+import 'package:codex_mobile_frontend/src/utils/chat_timestamp_formatter.dart';
 import 'package:codex_mobile_frontend/src/utils/chat_message_visibility.dart';
 import 'package:codex_mobile_frontend/src/widgets/chat_bubble.dart';
 import 'package:cross_file/cross_file.dart';
@@ -82,6 +83,66 @@ void main() {
     expect(find.text('Quick options'), findsOneWidget);
     expect(find.text('Summarize the repo'), findsOneWidget);
     expect(find.text('Show changed files'), findsOneWidget);
+  });
+
+  testWidgets('renders a readable local timestamp inside the bubble', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MediaQuery(
+        data: const MediaQueryData(alwaysUse24HourFormat: true),
+        child: MaterialApp(
+          home: Scaffold(
+            body: ChatBubble(
+              message: ChatMessage(
+                id: 'assistant-timestamp',
+                text: 'Reply with a visible timestamp.',
+                isUser: false,
+                authorType: ChatMessageAuthorType.assistant,
+                status: ChatMessageStatus.completed,
+                createdAt: DateTime(2026, 1, 1, 15, 42),
+                updatedAt: DateTime(2026, 1, 1, 15, 42),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('15:42'), findsOneWidget);
+  });
+
+  testWidgets('day separator formatter supports today and yesterday in Spanish', (
+    tester,
+  ) async {
+    late String todayLabel;
+    late String yesterdayLabel;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (context) {
+            final now = DateTime(2026, 3, 28, 12);
+            todayLabel = formatChatDaySeparatorLabel(
+              context,
+              DateTime(2026, 3, 28, 9, 30),
+              now: now,
+              locale: const Locale('es'),
+            );
+            yesterdayLabel = formatChatDaySeparatorLabel(
+              context,
+              DateTime(2026, 3, 27, 21),
+              now: now,
+              locale: const Locale('es'),
+            );
+            return const SizedBox.shrink();
+          },
+        ),
+      ),
+    );
+
+    expect(todayLabel, 'Hoy');
+    expect(yesterdayLabel, 'Ayer');
   });
 
   testWidgets(
@@ -279,6 +340,119 @@ void main() {
     expect(find.text('Summary response for the user.'), findsOneWidget);
   });
 
+  testWidgets('chat screen can focus on summary updates only', (tester) async {
+    tester.view.physicalSize = const Size(1280, 1600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final fakeApiClient = _FakeApiClient();
+    final controller = ChatController(
+      apiClient: fakeApiClient,
+      notificationService: const NoopChatNotificationService(),
+    );
+    final timestamp = DateTime.utc(2026, 1, 1, 12);
+    fakeApiClient.sessionOverrides['session-a'] = SessionDetail(
+      id: 'session-a',
+      title: 'Chat A',
+      workspacePath: '/workspace/a',
+      workspaceName: 'A',
+      agentConfiguration: kDefaultAgentConfiguration.copyWith(
+        preset: AgentPreset.triad,
+        agents: kDefaultAgentDefinitions.map((agent) {
+          if (agent.agentId == AgentId.summary) {
+            return agent.copyWith(enabled: true);
+          }
+          return agent;
+        }).toList(growable: false),
+      ),
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      messages: <ChatMessage>[
+        ChatMessage(
+          id: 'user-1',
+          text: 'Do the work',
+          isUser: true,
+          authorType: ChatMessageAuthorType.human,
+          agentId: AgentId.user,
+          agentType: AgentType.human,
+          status: ChatMessageStatus.completed,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        ),
+        ChatMessage(
+          id: 'generator-1',
+          text: 'Generator update',
+          isUser: false,
+          authorType: ChatMessageAuthorType.assistant,
+          agentId: AgentId.generator,
+          agentType: AgentType.generator,
+          status: ChatMessageStatus.completed,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        ),
+        ChatMessage(
+          id: 'summary-1',
+          text: 'Summary update one',
+          isUser: false,
+          authorType: ChatMessageAuthorType.assistant,
+          agentId: AgentId.summary,
+          agentType: AgentType.summary,
+          status: ChatMessageStatus.completed,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+          summaryTurnStart: 1,
+          summaryTurnEnd: 3,
+        ),
+        ChatMessage(
+          id: 'summary-2',
+          text: 'Summary update two',
+          isUser: false,
+          authorType: ChatMessageAuthorType.assistant,
+          agentId: AgentId.summary,
+          agentType: AgentType.summary,
+          status: ChatMessageStatus.completed,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        ),
+      ],
+    );
+    await controller.selectSession('session-a');
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ChatScreen(
+          initialApiBaseUrl: 'http://localhost:8000',
+          notificationService: const NoopChatNotificationService(),
+          controllerOverride: controller,
+          enableServerBootstrap: false,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.scrollUntilVisible(
+      find.text('Summary update one'),
+      120,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Generator update'), findsOneWidget);
+    expect(find.text('Summary update one'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('Show summaries'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('Showing 2 summary updates'), findsOneWidget);
+    expect(find.text('Summary update one'), findsOneWidget);
+    expect(find.text('Summary update two'), findsOneWidget);
+    expect(find.text('Covers turns 1 to 3'), findsOneWidget);
+    expect(find.text('Generator update'), findsNothing);
+
+    controller.dispose();
+  });
+
   testWidgets('renders submission unknown bubble with recovery actions', (
     tester,
   ) async {
@@ -468,6 +642,27 @@ void main() {
       <AgentId>[AgentId.qa, AgentId.seniorEngineer],
     );
     expect(configuration.toJson()['turn_budget_mode'], 'supervisor_only');
+  });
+
+  test('supervisor configs default summary strategy to the summary window', () {
+    final configuration = AgentConfiguration.fromJson(
+      <String, dynamic>{
+        'preset': 'supervisor',
+        'display_mode': 'collapse_specialists',
+        'turn_budget_mode': 'supervisor_only',
+        'supervisor_member_ids': const <String>['qa'],
+        'agents': kDefaultAgentDefinitions
+            .map((agent) => agent.toJson())
+            .toList(growable: false),
+      },
+    );
+
+    expect(
+      configuration.summaryStrategy.mode,
+      SummaryStrategyMode.supervisorWindow,
+    );
+    expect(configuration.summaryStrategy.supervisorWindowStart, 3);
+    expect(configuration.summaryStrategy.supervisorWindowEnd, 6);
   });
 
   test('legacy session summaries render with default solo agent config', () {

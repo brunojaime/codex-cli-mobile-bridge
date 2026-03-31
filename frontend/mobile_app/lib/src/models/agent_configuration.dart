@@ -41,6 +41,8 @@ enum AgentDisplayMode { showAll, collapseSpecialists, summaryOnly }
 
 enum AgentPreset { solo, review, triad, supervisor }
 
+enum SummaryStrategyMode { deterministic, supervisorWindow }
+
 enum TurnBudgetMode { eachAgent, supervisorOnly }
 
 const List<AgentId> kLegacyAgentIds = <AgentId>[
@@ -108,6 +110,7 @@ const List<AgentDefinition> kDefaultAgentDefinitions = <AgentDefinition>[
         'You are the summary Codex. Summarize the latest generator progress and any reviewer feedback into a concise user-facing update with next steps.',
     visibility: AgentVisibilityMode.visible,
     maxTurns: 1,
+    triggerInterval: 0,
   ),
   AgentDefinition(
     agentId: AgentId.supervisor,
@@ -165,6 +168,12 @@ const AgentConfiguration kDefaultAgentConfiguration = AgentConfiguration(
   preset: AgentPreset.solo,
   displayMode: AgentDisplayMode.showAll,
   turnBudgetMode: TurnBudgetMode.eachAgent,
+  summaryStrategy: SummaryStrategy(
+    mode: SummaryStrategyMode.deterministic,
+    deterministicInterval: 4,
+    supervisorWindowStart: 3,
+    supervisorWindowEnd: 6,
+  ),
   agents: kDefaultAgentDefinitions,
   supervisorMemberIds: kSupervisorMemberAgentIds,
 );
@@ -180,6 +189,7 @@ class AgentDefinition {
     required this.prompt,
     required this.visibility,
     required this.maxTurns,
+    this.triggerInterval = 0,
     this.model,
     this.providerSessionId,
   });
@@ -191,6 +201,7 @@ class AgentDefinition {
   final String prompt;
   final AgentVisibilityMode visibility;
   final int maxTurns;
+  final int triggerInterval;
   final String? model;
   final String? providerSessionId;
 
@@ -209,6 +220,7 @@ class AgentDefinition {
         _readString(json['visibility']) ?? 'visible',
       ),
       maxTurns: _readInt(json['max_turns']) ?? 0,
+      triggerInterval: _readInt(json['trigger_interval']) ?? 0,
       providerSessionId: _readString(json['provider_session_id']),
     );
   }
@@ -223,6 +235,7 @@ class AgentDefinition {
       if (model != null) 'model': model,
       'visibility': agentVisibilityToJson(visibility),
       'max_turns': maxTurns,
+      'trigger_interval': triggerInterval,
     };
   }
 
@@ -233,6 +246,7 @@ class AgentDefinition {
     Object? model = _noAgentDefinitionModelChange,
     AgentVisibilityMode? visibility,
     int? maxTurns,
+    int? triggerInterval,
     String? providerSessionId,
   }) {
     return AgentDefinition(
@@ -246,6 +260,7 @@ class AgentDefinition {
           : model as String?,
       visibility: visibility ?? this.visibility,
       maxTurns: maxTurns ?? this.maxTurns,
+      triggerInterval: triggerInterval ?? this.triggerInterval,
       providerSessionId: providerSessionId ?? this.providerSessionId,
     );
   }
@@ -256,6 +271,7 @@ class AgentConfiguration {
     required this.preset,
     required this.displayMode,
     required this.turnBudgetMode,
+    required this.summaryStrategy,
     required this.agents,
     this.supervisorMemberIds = const <AgentId>[],
   });
@@ -263,6 +279,7 @@ class AgentConfiguration {
   final AgentPreset preset;
   final AgentDisplayMode displayMode;
   final TurnBudgetMode turnBudgetMode;
+  final SummaryStrategy summaryStrategy;
   final List<AgentDefinition> agents;
   final List<AgentId> supervisorMemberIds;
 
@@ -273,6 +290,9 @@ class AgentConfiguration {
     final rawSupervisorMembers = json['supervisor_member_ids'] is List<dynamic>
         ? json['supervisor_member_ids'] as List<dynamic>
         : const <dynamic>[];
+    final rawSummaryStrategy = json['summary_strategy'];
+    final parsedPreset =
+        agentPresetFromJson(_readString(json['preset']) ?? 'solo');
     final defaults = <AgentId, AgentDefinition>{
       for (final agent in kDefaultAgentDefinitions) agent.agentId: agent,
     };
@@ -305,6 +325,9 @@ class AgentConfiguration {
         model: _readString(normalizedMap['model']) ?? fallback.model,
         visibility: parsedVisibility ?? fallback.visibility,
         maxTurns: _readInt(normalizedMap['max_turns']) ?? fallback.maxTurns,
+        triggerInterval:
+            _readInt(normalizedMap['trigger_interval']) ??
+            fallback.triggerInterval,
         providerSessionId: _readString(normalizedMap['provider_session_id']) ??
             fallback.providerSessionId,
       );
@@ -316,13 +339,27 @@ class AgentConfiguration {
         .where((agentId) => kSupervisorMemberAgentIds.contains(agentId))
         .toSet()
         .toList(growable: false);
+    final fallbackSummaryStrategy = SummaryStrategy(
+      mode: parsedPreset == AgentPreset.supervisor
+          ? SummaryStrategyMode.supervisorWindow
+          : SummaryStrategyMode.deterministic,
+      deterministicInterval: 4,
+      supervisorWindowStart: 3,
+      supervisorWindowEnd: 6,
+    );
     return AgentConfiguration(
-      preset: agentPresetFromJson(_readString(json['preset']) ?? 'solo'),
+      preset: parsedPreset,
       displayMode: agentDisplayModeFromJson(
           _readString(json['display_mode']) ?? 'show_all'),
       turnBudgetMode: turnBudgetModeFromJson(
         _readString(json['turn_budget_mode']) ?? 'each_agent',
       ),
+      summaryStrategy: rawSummaryStrategy is Map
+          ? SummaryStrategy.fromJson(<String, dynamic>{
+              for (final entry in rawSummaryStrategy.entries)
+                if (entry.key is String) entry.key as String: entry.value,
+            })
+          : fallbackSummaryStrategy,
       supervisorMemberIds: parsedSupervisorMembers.isEmpty
           ? kSupervisorMemberAgentIds
           : parsedSupervisorMembers,
@@ -337,6 +374,7 @@ class AgentConfiguration {
       'preset': agentPresetToJson(preset),
       'display_mode': agentDisplayModeToJson(displayMode),
       'turn_budget_mode': turnBudgetModeToJson(turnBudgetMode),
+      'summary_strategy': summaryStrategy.toJson(),
       'supervisor_member_ids':
           supervisorMemberIds.map(agentIdToJson).toList(growable: false),
       'agents': agents.map((agent) => agent.toJson()).toList(),
@@ -347,6 +385,7 @@ class AgentConfiguration {
     AgentPreset? preset,
     AgentDisplayMode? displayMode,
     TurnBudgetMode? turnBudgetMode,
+    SummaryStrategy? summaryStrategy,
     List<AgentDefinition>? agents,
     List<AgentId>? supervisorMemberIds,
   }) {
@@ -354,6 +393,7 @@ class AgentConfiguration {
       preset: preset ?? this.preset,
       displayMode: displayMode ?? this.displayMode,
       turnBudgetMode: turnBudgetMode ?? this.turnBudgetMode,
+      summaryStrategy: summaryStrategy ?? this.summaryStrategy,
       agents: agents ?? this.agents,
       supervisorMemberIds: supervisorMemberIds ?? this.supervisorMemberIds,
     );
@@ -366,6 +406,54 @@ class AgentConfiguration {
       }
     }
     return null;
+  }
+}
+
+class SummaryStrategy {
+  const SummaryStrategy({
+    required this.mode,
+    required this.deterministicInterval,
+    required this.supervisorWindowStart,
+    required this.supervisorWindowEnd,
+  });
+
+  final SummaryStrategyMode mode;
+  final int deterministicInterval;
+  final int supervisorWindowStart;
+  final int supervisorWindowEnd;
+
+  factory SummaryStrategy.fromJson(Map<String, dynamic> json) {
+    return SummaryStrategy(
+      mode: summaryStrategyModeFromJson(
+        _readString(json['mode']) ?? 'deterministic',
+      ),
+      deterministicInterval: _readInt(json['deterministic_interval']) ?? 4,
+      supervisorWindowStart: _readInt(json['supervisor_window_start']) ?? 3,
+      supervisorWindowEnd: _readInt(json['supervisor_window_end']) ?? 6,
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return <String, dynamic>{
+      'mode': summaryStrategyModeToJson(mode),
+      'deterministic_interval': deterministicInterval,
+      'supervisor_window_start': supervisorWindowStart,
+      'supervisor_window_end': supervisorWindowEnd,
+    };
+  }
+
+  SummaryStrategy copyWith({
+    SummaryStrategyMode? mode,
+    int? deterministicInterval,
+    int? supervisorWindowStart,
+    int? supervisorWindowEnd,
+  }) {
+    return SummaryStrategy(
+      mode: mode ?? this.mode,
+      deterministicInterval: deterministicInterval ?? this.deterministicInterval,
+      supervisorWindowStart: supervisorWindowStart ?? this.supervisorWindowStart,
+      supervisorWindowEnd: supervisorWindowEnd ?? this.supervisorWindowEnd,
+    );
   }
 }
 
@@ -544,6 +632,20 @@ String agentPresetToJson(AgentPreset value) {
     AgentPreset.review => 'review',
     AgentPreset.triad => 'triad',
     AgentPreset.supervisor => 'supervisor',
+  };
+}
+
+SummaryStrategyMode summaryStrategyModeFromJson(String value) {
+  return switch (value) {
+    'supervisor_window' => SummaryStrategyMode.supervisorWindow,
+    _ => SummaryStrategyMode.deterministic,
+  };
+}
+
+String summaryStrategyModeToJson(SummaryStrategyMode value) {
+  return switch (value) {
+    SummaryStrategyMode.deterministic => 'deterministic',
+    SummaryStrategyMode.supervisorWindow => 'supervisor_window',
   };
 }
 

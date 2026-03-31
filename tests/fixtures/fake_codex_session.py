@@ -41,6 +41,7 @@ def _maybe_supervisor_response(prompt: str) -> str | None:
                 "next_agent_id": "qa",
                 "instruction": "Validate the implementation and report regressions or missing tests.",
                 "user_response": "Senior engineering review is complete. QA is next.",
+                "request_summary": True,
             }
         )
     return json.dumps(

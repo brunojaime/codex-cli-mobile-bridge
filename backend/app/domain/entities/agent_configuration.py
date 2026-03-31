@@ -28,7 +28,8 @@ _DEFAULT_SUPERVISOR_PROMPT = (
     "to you. Reply with strict JSON using this schema only: "
     '{"status":"continue"|"complete","plan":["step 1","step 2"],'
     '"next_agent_id":"qa"|"ux"|"senior_engineer"|"scraper"|null,'
-    '"instruction":"what the next agent should do","user_response":"brief update for the user"}. '
+    '"instruction":"what the next agent should do","user_response":"brief update for the user",'
+    '"request_summary":true|false}. '
     "Use status=complete only when the project is done or no further specialist "
     "work is needed."
 )
@@ -116,6 +117,11 @@ class AgentPreset(StrEnum):
     SUPERVISOR = "supervisor"
 
 
+class SummaryStrategyMode(StrEnum):
+    DETERMINISTIC = "deterministic"
+    SUPERVISOR_WINDOW = "supervisor_window"
+
+
 class TurnBudgetMode(StrEnum):
     EACH_AGENT = "each_agent"
     SUPERVISOR_ONLY = "supervisor_only"
@@ -193,6 +199,19 @@ _DEFAULT_MAX_TURNS = {
     AgentId.SENIOR_ENGINEER: 8,
     AgentId.SCRAPER: 8,
 }
+_DEFAULT_TRIGGER_INTERVALS = {
+    AgentId.GENERATOR: 0,
+    AgentId.REVIEWER: 0,
+    AgentId.SUMMARY: 0,
+    AgentId.SUPERVISOR: 0,
+    AgentId.QA: 0,
+    AgentId.UX: 0,
+    AgentId.SENIOR_ENGINEER: 0,
+    AgentId.SCRAPER: 0,
+}
+_DEFAULT_DETERMINISTIC_SUMMARY_INTERVAL = 4
+_DEFAULT_SUPERVISOR_SUMMARY_WINDOW_START = 3
+_DEFAULT_SUPERVISOR_SUMMARY_WINDOW_END = 6
 
 
 def _default_label(agent_id: AgentId) -> str:
@@ -213,6 +232,10 @@ def _default_visibility(agent_id: AgentId) -> AgentVisibilityMode:
 
 def _default_max_turns(agent_id: AgentId) -> int:
     return _DEFAULT_MAX_TURNS[agent_id]
+
+
+def _default_trigger_interval(agent_id: AgentId) -> int:
+    return _DEFAULT_TRIGGER_INTERVALS[agent_id]
 
 
 def _read_str_field(
@@ -313,6 +336,7 @@ class AgentDefinition:
     prompt: str
     visibility: AgentVisibilityMode
     max_turns: int
+    trigger_interval: int = 0
     provider_session_id: str | None = None
     model: str | None = None
 
@@ -340,6 +364,10 @@ class AgentDefinition:
 
         if self.max_turns < 0:
             raise ValueError(f"Agent {self.agent_id.value} max_turns must be non-negative.")
+        if self.trigger_interval < 0:
+            raise ValueError(
+                f"Agent {self.agent_id.value} trigger_interval must be non-negative."
+            )
 
         expected_type = _default_type(self.agent_id)
         if self.agent_type != expected_type:
@@ -356,6 +384,9 @@ class AgentDefinition:
             prompt=prompt,
             visibility=self.visibility,
             max_turns=self.max_turns,
+            trigger_interval=(
+                self.trigger_interval if self.agent_id == AgentId.SUMMARY else 0
+            ),
             provider_session_id=(self.provider_session_id or "").strip() or None,
             model=model,
         )
@@ -369,8 +400,41 @@ class AgentDefinition:
             "prompt": self.prompt,
             "visibility": self.visibility.value,
             "max_turns": self.max_turns,
+            "trigger_interval": self.trigger_interval,
             "provider_session_id": self.provider_session_id,
             "model": self.model,
+        }
+
+
+@dataclass(slots=True)
+class SummaryStrategy:
+    mode: SummaryStrategyMode = SummaryStrategyMode.DETERMINISTIC
+    deterministic_interval: int = _DEFAULT_DETERMINISTIC_SUMMARY_INTERVAL
+    supervisor_window_start: int = _DEFAULT_SUPERVISOR_SUMMARY_WINDOW_START
+    supervisor_window_end: int = _DEFAULT_SUPERVISOR_SUMMARY_WINDOW_END
+
+    def normalized(self, *, preset: AgentPreset) -> "SummaryStrategy":
+        mode = (
+            SummaryStrategyMode.SUPERVISOR_WINDOW
+            if preset == AgentPreset.SUPERVISOR
+            else SummaryStrategyMode.DETERMINISTIC
+        )
+        deterministic_interval = max(1, self.deterministic_interval)
+        supervisor_window_start = max(1, self.supervisor_window_start)
+        supervisor_window_end = max(supervisor_window_start, self.supervisor_window_end)
+        return SummaryStrategy(
+            mode=mode,
+            deterministic_interval=deterministic_interval,
+            supervisor_window_start=supervisor_window_start,
+            supervisor_window_end=supervisor_window_end,
+        )
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "mode": self.mode.value,
+            "deterministic_interval": self.deterministic_interval,
+            "supervisor_window_start": self.supervisor_window_start,
+            "supervisor_window_end": self.supervisor_window_end,
         }
 
 
@@ -387,6 +451,7 @@ def default_agent_definition(
         prompt=_default_prompt(agent_id),
         visibility=_default_visibility(agent_id),
         max_turns=_default_max_turns(agent_id),
+        trigger_interval=_default_trigger_interval(agent_id),
     )
 
 
@@ -397,6 +462,7 @@ class AgentConfiguration:
     turn_budget_mode: TurnBudgetMode = TurnBudgetMode.EACH_AGENT
     agents: dict[AgentId, AgentDefinition] = field(default_factory=dict)
     supervisor_member_ids: tuple[AgentId, ...] = field(default_factory=tuple)
+    summary_strategy: SummaryStrategy = field(default_factory=SummaryStrategy)
 
     def normalized(self) -> "AgentConfiguration":
         normalized_agents: dict[AgentId, AgentDefinition] = {}
@@ -406,6 +472,12 @@ class AgentConfiguration:
                 preset=self.preset,
             )
             normalized_agents[agent_id] = candidate.normalized()
+        summary_strategy = self.summary_strategy.normalized(preset=self.preset)
+        summary_trigger_interval = (
+            summary_strategy.deterministic_interval
+            if summary_strategy.mode == SummaryStrategyMode.DETERMINISTIC
+            else 0
+        )
 
         supervisor_member_ids = tuple(
             agent_id
@@ -416,17 +488,32 @@ class AgentConfiguration:
             supervisor_member_ids = tuple(SUPERVISOR_MEMBER_AGENT_IDS)
 
         if self.preset == AgentPreset.SUPERVISOR:
-            for agent_id in LEGACY_AGENT_IDS:
+            for agent_id in (AgentId.GENERATOR, AgentId.REVIEWER):
                 normalized_agents[agent_id] = AgentDefinition(
                     agent_id=agent_id,
                     agent_type=_default_type(agent_id),
                     enabled=False,
                     label=normalized_agents[agent_id].label,
-                prompt=normalized_agents[agent_id].prompt,
-                visibility=normalized_agents[agent_id].visibility,
-                max_turns=0,
-                provider_session_id=normalized_agents[agent_id].provider_session_id,
-                model=normalized_agents[agent_id].model,
+                    prompt=normalized_agents[agent_id].prompt,
+                    visibility=normalized_agents[agent_id].visibility,
+                    max_turns=0,
+                    trigger_interval=0,
+                    provider_session_id=normalized_agents[agent_id].provider_session_id,
+                    model=normalized_agents[agent_id].model,
+                ).normalized()
+
+            summary = normalized_agents[AgentId.SUMMARY]
+            normalized_agents[AgentId.SUMMARY] = AgentDefinition(
+                agent_id=AgentId.SUMMARY,
+                agent_type=AgentType.SUMMARY,
+                enabled=summary.enabled,
+                label=summary.label,
+                prompt=summary.prompt or _DEFAULT_SUMMARY_PROMPT,
+                visibility=summary.visibility,
+                max_turns=max(1, summary.max_turns) if summary.enabled else 0,
+                trigger_interval=summary_trigger_interval if summary.enabled else 0,
+                provider_session_id=summary.provider_session_id,
+                model=summary.model,
             ).normalized()
 
             supervisor = normalized_agents[AgentId.SUPERVISOR]
@@ -438,6 +525,7 @@ class AgentConfiguration:
                 prompt=supervisor.prompt or _DEFAULT_SUPERVISOR_PROMPT,
                 visibility=supervisor.visibility,
                 max_turns=max(1, supervisor.max_turns),
+                trigger_interval=0,
                 provider_session_id=supervisor.provider_session_id,
                 model=supervisor.model,
             ).normalized()
@@ -453,6 +541,7 @@ class AgentConfiguration:
                     prompt=specialist.prompt or _default_prompt(agent_id),
                     visibility=specialist.visibility,
                     max_turns=max(1, specialist.max_turns) if selected else 0,
+                    trigger_interval=0,
                     provider_session_id=specialist.provider_session_id,
                     model=specialist.model,
                 ).normalized()
@@ -463,6 +552,7 @@ class AgentConfiguration:
                 turn_budget_mode=self.turn_budget_mode,
                 agents=normalized_agents,
                 supervisor_member_ids=supervisor_member_ids,
+                summary_strategy=summary_strategy,
             )
 
         normalized_agents[AgentId.GENERATOR] = AgentDefinition(
@@ -473,6 +563,7 @@ class AgentConfiguration:
             prompt=normalized_agents[AgentId.GENERATOR].prompt or _DEFAULT_GENERATOR_PROMPT,
             visibility=AgentVisibilityMode.VISIBLE,
             max_turns=max(1, normalized_agents[AgentId.GENERATOR].max_turns),
+            trigger_interval=0,
             provider_session_id=normalized_agents[AgentId.GENERATOR].provider_session_id,
             model=normalized_agents[AgentId.GENERATOR].model,
         ).normalized()
@@ -486,6 +577,7 @@ class AgentConfiguration:
                 prompt=normalized_agents[AgentId.SUMMARY].prompt or _DEFAULT_SUMMARY_PROMPT,
                 visibility=normalized_agents[AgentId.SUMMARY].visibility,
                 max_turns=max(1, normalized_agents[AgentId.SUMMARY].max_turns),
+                trigger_interval=summary_trigger_interval,
                 provider_session_id=normalized_agents[AgentId.SUMMARY].provider_session_id,
                 model=normalized_agents[AgentId.SUMMARY].model,
             ).normalized()
@@ -500,6 +592,7 @@ class AgentConfiguration:
                 prompt=specialist.prompt or _default_prompt(agent_id),
                 visibility=specialist.visibility,
                 max_turns=0,
+                trigger_interval=0,
                 provider_session_id=specialist.provider_session_id,
                 model=specialist.model,
             ).normalized()
@@ -517,6 +610,7 @@ class AgentConfiguration:
             turn_budget_mode=self.turn_budget_mode,
             agents=normalized_agents,
             supervisor_member_ids=supervisor_member_ids,
+            summary_strategy=summary_strategy,
         )
 
     def to_dict(self) -> dict[str, object]:
@@ -528,6 +622,7 @@ class AgentConfiguration:
             "supervisor_member_ids": [
                 agent_id.value for agent_id in normalized.supervisor_member_ids
             ],
+            "summary_strategy": normalized.summary_strategy.to_dict(),
             "agents": {
                 agent_id.value: definition.to_dict()
                 for agent_id, definition in normalized.agents.items()
@@ -545,6 +640,7 @@ class AgentConfiguration:
                 for agent_id in CONFIGURABLE_AGENT_IDS
             },
             supervisor_member_ids=tuple(SUPERVISOR_MEMBER_AGENT_IDS),
+            summary_strategy=SummaryStrategy().normalized(preset=AgentPreset.SOLO),
         ).normalized()
 
     @classmethod
@@ -602,6 +698,62 @@ class AgentConfiguration:
                 raise ValueError("Agent configuration contains unknown agent ids.")
 
         supervisor_member_ids = _read_supervisor_members(raw.get("supervisor_member_ids"))
+        raw_summary_strategy = raw.get("summary_strategy")
+        if raw_summary_strategy is None:
+            trigger_interval_fallback = _DEFAULT_DETERMINISTIC_SUMMARY_INTERVAL
+            if isinstance(raw_agents, dict):
+                summary_raw = raw_agents.get(AgentId.SUMMARY.value)
+                if isinstance(summary_raw, dict):
+                    trigger_interval_fallback = _read_int_field(
+                        summary_raw,
+                        "trigger_interval",
+                        _DEFAULT_DETERMINISTIC_SUMMARY_INTERVAL,
+                    )
+            summary_strategy = SummaryStrategy(
+                mode=(
+                    SummaryStrategyMode.SUPERVISOR_WINDOW
+                    if preset == AgentPreset.SUPERVISOR
+                    else SummaryStrategyMode.DETERMINISTIC
+                ),
+                deterministic_interval=max(1, trigger_interval_fallback),
+                supervisor_window_start=_DEFAULT_SUPERVISOR_SUMMARY_WINDOW_START,
+                supervisor_window_end=_DEFAULT_SUPERVISOR_SUMMARY_WINDOW_END,
+            )
+        else:
+            if not isinstance(raw_summary_strategy, dict):
+                raise ValueError("Summary strategy must be an object.")
+            try:
+                raw_mode = raw_summary_strategy.get("mode")
+                mode = SummaryStrategyMode(
+                    str(
+                        raw_mode
+                        or (
+                            SummaryStrategyMode.SUPERVISOR_WINDOW.value
+                            if preset == AgentPreset.SUPERVISOR
+                            else SummaryStrategyMode.DETERMINISTIC.value
+                        )
+                    )
+                )
+            except ValueError as exc:
+                raise ValueError("Summary strategy contains an invalid mode.") from exc
+            summary_strategy = SummaryStrategy(
+                mode=mode,
+                deterministic_interval=_read_int_field(
+                    raw_summary_strategy,
+                    "deterministic_interval",
+                    _DEFAULT_DETERMINISTIC_SUMMARY_INTERVAL,
+                ),
+                supervisor_window_start=_read_int_field(
+                    raw_summary_strategy,
+                    "supervisor_window_start",
+                    _DEFAULT_SUPERVISOR_SUMMARY_WINDOW_START,
+                ),
+                supervisor_window_end=_read_int_field(
+                    raw_summary_strategy,
+                    "supervisor_window_end",
+                    _DEFAULT_SUPERVISOR_SUMMARY_WINDOW_END,
+                ),
+            )
 
         agents: dict[AgentId, AgentDefinition] = {}
         for agent_id in CONFIGURABLE_AGENT_IDS:
@@ -640,6 +792,11 @@ class AgentConfiguration:
                 prompt=_read_str_field(candidate_raw, "prompt", default.prompt),
                 visibility=visibility,
                 max_turns=_read_int_field(candidate_raw, "max_turns", default.max_turns),
+                trigger_interval=_read_int_field(
+                    candidate_raw,
+                    "trigger_interval",
+                    default.trigger_interval,
+                ),
                 provider_session_id=_read_optional_str_field(
                     candidate_raw,
                     "provider_session_id",
@@ -658,6 +815,7 @@ class AgentConfiguration:
             turn_budget_mode=turn_budget_mode,
             agents=agents,
             supervisor_member_ids=supervisor_member_ids,
+            summary_strategy=summary_strategy,
         ).normalized()
 
 

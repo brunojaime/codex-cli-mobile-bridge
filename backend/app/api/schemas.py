@@ -14,6 +14,8 @@ from backend.app.domain.entities.agent_configuration import (
     AgentVisibilityMode,
     CONFIGURABLE_AGENT_IDS,
     LEGACY_AGENT_IDS,
+    SummaryStrategy,
+    SummaryStrategyMode,
     SUPERVISOR_MEMBER_AGENT_IDS,
     TurnBudgetMode,
     normalize_agent_enum_value,
@@ -145,6 +147,7 @@ class AgentDefinitionPayload(BaseModel):
     model: str | None = Field(default=None, max_length=120)
     visibility: AgentVisibilityMode
     max_turns: int = Field(..., ge=0)
+    trigger_interval: int = Field(default=0, ge=0)
 
     @model_validator(mode="before")
     @classmethod
@@ -188,6 +191,7 @@ class AgentConfigurationRequest(BaseModel):
     preset: AgentPreset
     display_mode: AgentDisplayMode = AgentDisplayMode.SHOW_ALL
     turn_budget_mode: TurnBudgetMode = TurnBudgetMode.EACH_AGENT
+    summary_strategy: "SummaryStrategyPayload | None" = None
     agents: list[AgentDefinitionPayload]
     supervisor_member_ids: list[AgentId] = Field(default_factory=list)
 
@@ -237,6 +241,11 @@ class AgentConfigurationRequest(BaseModel):
                 "display_mode": self.display_mode.value,
                 "turn_budget_mode": self.turn_budget_mode.value,
                 "supervisor_member_ids": [agent_id.value for agent_id in self.supervisor_member_ids],
+                "summary_strategy": (
+                    self.summary_strategy.to_domain().to_dict()
+                    if self.summary_strategy is not None
+                    else None
+                ),
                 "agents": {
                     agent.agent_id.value: {
                         "agent_id": agent.agent_id.value,
@@ -247,6 +256,7 @@ class AgentConfigurationRequest(BaseModel):
                         "model": agent.model,
                         "visibility": agent.visibility.value,
                         "max_turns": agent.max_turns,
+                        "trigger_interval": agent.trigger_interval,
                     }
                     for agent in self.agents
                 },
@@ -263,13 +273,45 @@ class AgentDefinitionResponse(BaseModel):
     model: str | None = None
     visibility: AgentVisibilityMode
     max_turns: int
+    trigger_interval: int = 0
     provider_session_id: str | None = None
+
+
+class SummaryStrategyPayload(BaseModel):
+    mode: SummaryStrategyMode
+    deterministic_interval: int = Field(default=4, ge=1)
+    supervisor_window_start: int = Field(default=3, ge=1)
+    supervisor_window_end: int = Field(default=6, ge=1)
+
+    @model_validator(mode="after")
+    def validate_window(self) -> "SummaryStrategyPayload":
+        if self.supervisor_window_end < self.supervisor_window_start:
+            raise ValueError("Summary strategy window end must be >= window start.")
+        return self
+
+    def to_domain(self) -> SummaryStrategy:
+        return SummaryStrategy(
+            mode=self.mode,
+            deterministic_interval=self.deterministic_interval,
+            supervisor_window_start=self.supervisor_window_start,
+            supervisor_window_end=self.supervisor_window_end,
+        )
+
+    @classmethod
+    def from_domain(cls, strategy: SummaryStrategy) -> "SummaryStrategyPayload":
+        return cls(
+            mode=strategy.mode,
+            deterministic_interval=strategy.deterministic_interval,
+            supervisor_window_start=strategy.supervisor_window_start,
+            supervisor_window_end=strategy.supervisor_window_end,
+        )
 
 
 class AgentConfigurationResponse(BaseModel):
     preset: AgentPreset
     display_mode: AgentDisplayMode
     turn_budget_mode: TurnBudgetMode
+    summary_strategy: SummaryStrategyPayload
     agents: list[AgentDefinitionResponse]
     supervisor_member_ids: list[AgentId] = Field(default_factory=list)
 
@@ -280,6 +322,7 @@ class AgentConfigurationResponse(BaseModel):
             preset=normalized.preset,
             display_mode=normalized.display_mode,
             turn_budget_mode=normalized.turn_budget_mode,
+            summary_strategy=SummaryStrategyPayload.from_domain(normalized.summary_strategy),
             supervisor_member_ids=list(normalized.supervisor_member_ids),
             agents=[
                 AgentDefinitionResponse(
@@ -291,6 +334,7 @@ class AgentConfigurationResponse(BaseModel):
                     model=agent.model,
                     visibility=agent.visibility,
                     max_turns=agent.max_turns,
+                    trigger_interval=agent.trigger_interval,
                     provider_session_id=agent.provider_session_id,
                 )
                 for agent in normalized.agents.values()
@@ -390,6 +434,34 @@ class DocumentMessageAcceptedResponse(MessageAcceptedResponse):
         )
 
 
+def _summary_turn_range_payload(message: ChatMessage) -> dict[str, int | None]:
+    dedupe_key = (message.dedupe_key or "").strip()
+    if ":summary:" not in dedupe_key:
+        return {
+            "summary_turn_start": None,
+            "summary_turn_end": None,
+        }
+    raw_suffix = dedupe_key.rsplit(":summary:", maxsplit=1)[-1].strip()
+    parts = raw_suffix.split(":")
+    if len(parts) == 2 and all(part.isdigit() for part in parts):
+        start_turn = max(1, int(parts[0]))
+        end_turn = max(start_turn, int(parts[1]))
+        return {
+            "summary_turn_start": start_turn,
+            "summary_turn_end": end_turn,
+        }
+    if len(parts) == 1 and parts[0].isdigit():
+        end_turn = max(1, int(parts[0]))
+        return {
+            "summary_turn_start": 1,
+            "summary_turn_end": end_turn,
+        }
+    return {
+        "summary_turn_start": None,
+        "summary_turn_end": None,
+    }
+
+
 class ChatMessageResponse(BaseModel):
     id: str
     role: ChatMessageRole
@@ -416,6 +488,8 @@ class ChatMessageResponse(BaseModel):
     job_elapsed_seconds: int | None = None
     provider_session_id: str | None = None
     completed_at: datetime | None = None
+    summary_turn_start: int | None = None
+    summary_turn_end: int | None = None
 
     @classmethod
     def from_domain(
@@ -425,6 +499,7 @@ class ChatMessageResponse(BaseModel):
         job: Job | None = None,
     ) -> "ChatMessageResponse":
         return cls(
+            **_summary_turn_range_payload(message),
             id=message.id,
             role=message.role,
             author_type=message.author_type,

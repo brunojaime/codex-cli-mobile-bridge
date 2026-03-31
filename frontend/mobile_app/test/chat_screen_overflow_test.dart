@@ -83,13 +83,19 @@ void main() {
       (WidgetTester tester) async {
     final apiClient = _ChatScreenOverflowApiClient(
       _buildSession(
-        messages: const <ChatMessage>[],
+        messages: <ChatMessage>[
+          _message(
+            id: 'assistant-1',
+            text: 'Assistant update',
+          ),
+        ],
       ),
     );
 
     await _pumpChatScreen(
       tester,
       width: 800,
+      height: 760,
       session: apiClient.session,
       apiClient: apiClient,
     );
@@ -253,6 +259,7 @@ void main() {
       (WidgetTester tester) async {
     await _pumpChatScreen(
       tester,
+      locale: const Locale('en', 'US'),
       session: _buildSession(
         messages: <ChatMessage>[
           _message(
@@ -286,6 +293,57 @@ void main() {
       find.text('Safety Reviewer running', skipOffstage: false),
     );
     await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('chat screen inserts date separators when messages span days',
+      (WidgetTester tester) async {
+    await _pumpChatScreen(
+      tester,
+      locale: const Locale('en', 'US'),
+      height: 760,
+      session: _buildSession(
+        messages: <ChatMessage>[
+          _message(
+            id: 'user-day-1',
+            text: 'First day prompt',
+            isUser: true,
+            authorType: ChatMessageAuthorType.human,
+            agentId: AgentId.user,
+            agentType: AgentType.human,
+            createdAt: DateTime(2026, 1, 1, 10),
+          ),
+          _message(
+            id: 'assistant-day-1',
+            text: 'First day reply',
+            createdAt: DateTime(2026, 1, 1, 11),
+          ),
+          _message(
+            id: 'assistant-day-2',
+            text: 'Second day reply',
+            createdAt: DateTime(2026, 1, 2, 9),
+          ),
+        ],
+      ),
+    );
+
+    await tester.scrollUntilVisible(
+      find.text('First day reply'),
+      120,
+      scrollable: _chatBodyScrollable(),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('First day reply'), findsOneWidget);
+
+    await tester.scrollUntilVisible(
+      find.text('Second day reply'),
+      120,
+      scrollable: _chatBodyScrollable(),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Second day reply'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -902,6 +960,7 @@ Future<void> _pumpChatScreen(
   required SessionDetail session,
   ApiClient? apiClient,
   List<Workspace> sidebarWorkspaces = const <Workspace>[],
+  Locale? locale,
   double width = 320,
   double height = 520,
   double keyboardInsetBottom = 0,
@@ -918,6 +977,11 @@ Future<void> _pumpChatScreen(
 
   await tester.pumpWidget(
     MaterialApp(
+      locale: locale,
+      supportedLocales: const <Locale>[
+        Locale('en', 'US'),
+        Locale('es'),
+      ],
       home: ChatScreen(
         initialApiBaseUrl: 'http://localhost:8000',
         notificationService: const NoopChatNotificationService(),
@@ -1322,6 +1386,8 @@ ChatMessage _message({
   AgentId agentId = AgentId.generator,
   AgentType agentType = AgentType.generator,
   AgentVisibilityMode visibility = AgentVisibilityMode.visible,
+  DateTime? createdAt,
+  DateTime? updatedAt,
 }) {
   final now = DateTime.utc(2026, 1, 1, 12);
   return ChatMessage(
@@ -1333,8 +1399,8 @@ ChatMessage _message({
     agentType: agentType,
     visibility: visibility,
     status: ChatMessageStatus.completed,
-    createdAt: now,
-    updatedAt: now,
+    createdAt: createdAt ?? now,
+    updatedAt: updatedAt ?? createdAt ?? now,
     runId: 'run-12345678',
   );
 }

@@ -504,6 +504,10 @@ class LocalExecutionProvider(ExecutionProvider):
         if last_message:
             return last_message
 
+        streamed_message = self._extract_agent_message(stdout_text)
+        if streamed_message:
+            return streamed_message
+
         return self._build_output(stdout_text, stderr_text)
 
     def _build_output(self, stdout_text: str, stderr_text: str) -> str:
@@ -520,6 +524,24 @@ class LocalExecutionProvider(ExecutionProvider):
             if payload and payload.get("type") == "thread.started":
                 return payload.get("thread_id")
         return None
+
+    def _extract_agent_message(self, stdout_text: str) -> str | None:
+        latest_message: str | None = None
+
+        for line in stdout_text.splitlines():
+            payload = self._parse_json_line(line)
+            if payload is None or payload.get("type") != "item.completed":
+                continue
+
+            item = payload.get("item")
+            if not isinstance(item, dict) or item.get("type") != "agent_message":
+                continue
+
+            text = item.get("text")
+            if isinstance(text, str) and text.strip():
+                latest_message = text.strip()
+
+        return latest_message
 
     def _read_last_message(self, output_path: str | None) -> str | None:
         if output_path is None:
