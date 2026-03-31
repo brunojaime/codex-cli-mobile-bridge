@@ -107,7 +107,7 @@ async def capabilities(
     return ServerCapabilitiesResponse(
         supports_audio_input=audio_status.ready,
         supports_speech_output=speech_status.ready,
-        supports_image_input=True,
+        supports_image_input=service.supports_image_input(),
         supports_document_input=True,
         supports_attachment_batch=True,
         supports_job_cancellation=service.supports_job_cancellation(),
@@ -226,35 +226,10 @@ async def post_image_message(
     workspace_path: str | None = Form(default=None),
     container: AppContainer = Depends(get_container),
 ) -> ImageMessageAcceptedResponse:
-    temp_path = await _store_uploaded_file(
-        image,
-        max_bytes=container.settings.image_max_upload_bytes,
-        default_filename="image-upload.bin",
-        size_limit_label="Image",
-    )
-    should_cleanup_immediately = True
-
-    try:
-        prompt = (message or "").strip() or "Please analyze the attached image."
-        job = await run_in_threadpool(
-            container.message_service.submit_message,
-            prompt,
-            session_id=session_id,
-            workspace_path=workspace_path,
-            image_paths=[str(temp_path)],
-            cleanup_paths=[str(temp_path)],
-        )
-        should_cleanup_immediately = False
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    finally:
-        if should_cleanup_immediately:
-            temp_path.unlink(missing_ok=True)
-        await image.close()
-
-    return ImageMessageAcceptedResponse.from_domain(
-        job,
-        attached_image_name=image.filename or temp_path.name,
+    await image.close()
+    raise HTTPException(
+        status_code=415,
+        detail="Image attachments are disabled on this server.",
     )
 
 
@@ -701,6 +676,8 @@ async def retry_job(
 ) -> JobResponse:
     try:
         job = service.retry_job(job_id)
+    except UnsupportedDocumentError as exc:
+        raise HTTPException(status_code=415, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except RuntimeError as exc:

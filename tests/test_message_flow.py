@@ -17,6 +17,7 @@ from backend.app.domain.entities.agent_configuration import (
     AgentDisplayMode,
     AgentId,
     AgentPreset,
+    SummaryStrategyMode,
     AgentTriggerSource,
     AgentType,
     AgentVisibilityMode,
@@ -78,6 +79,20 @@ def build_session_client() -> TestClient:
     return TestClient(app)
 
 
+def build_json_only_client() -> TestClient:
+    settings = Settings(
+        codex_command="python3 tests/fixtures/fake_codex_json_only.py",
+        codex_use_exec=True,
+        projects_root="..",
+        chat_store_backend="memory",
+        execution_timeout_seconds=10,
+        poll_interval_seconds=0,
+        audio_transcription_backend="auto",
+    )
+    app = create_app(settings)
+    return TestClient(app)
+
+
 def build_session_client_with_container():
     settings = Settings(
         codex_command="python3 tests/fixtures/fake_codex_session.py",
@@ -115,6 +130,7 @@ class _ControlledExecutionProvider(ExecutionProvider):
     def __init__(self) -> None:
         self._snapshots: dict[str, ExecutionSnapshot] = {}
         self._job_counter = 0
+        self.requests: list[dict[str, object]] = []
         self._lock = threading.RLock()
 
     def execute(
@@ -132,6 +148,19 @@ class _ControlledExecutionProvider(ExecutionProvider):
         with self._lock:
             self._job_counter += 1
             job_id = f"job-{self._job_counter}"
+            self.requests.append(
+                {
+                    "job_id": job_id,
+                    "message": message,
+                    "image_paths": image_paths,
+                    "cleanup_paths": cleanup_paths,
+                    "provider_session_id": provider_session_id,
+                    "model": model,
+                    "serial_key": serial_key,
+                    "submission_token": submission_token,
+                    "workdir": workdir,
+                }
+            )
             self._snapshots[job_id] = ExecutionSnapshot(
                 job_id=job_id,
                 status=JobStatus.PENDING,
@@ -641,11 +670,26 @@ def build_agent_configuration_payload(
     display_mode: str = "show_all",
     reviewer_enabled: bool = True,
     summary_enabled: bool = True,
+    summary_max_turns: int = 1,
+    summary_trigger_interval: int = 0,
+    summary_window_start: int = 3,
+    summary_window_end: int = 6,
     reviewer_visibility: str = "collapsed",
 ) -> dict:
+    normalized_interval = max(1, summary_trigger_interval or 4)
     return {
         "preset": preset,
         "display_mode": display_mode,
+        "summary_strategy": {
+            "mode": (
+                SummaryStrategyMode.SUPERVISOR_WINDOW.value
+                if preset == AgentPreset.SUPERVISOR.value
+                else SummaryStrategyMode.DETERMINISTIC.value
+            ),
+            "deterministic_interval": normalized_interval,
+            "supervisor_window_start": summary_window_start,
+            "supervisor_window_end": summary_window_end,
+        },
         "agents": [
             {
                 "agent_id": "generator",
@@ -672,7 +716,8 @@ def build_agent_configuration_payload(
                 "label": "Summary",
                 "prompt": "Summarize the run for the user.",
                 "visibility": "visible",
-                "max_turns": 1,
+                "max_turns": summary_max_turns,
+                "trigger_interval": summary_trigger_interval,
             },
         ],
     }
@@ -682,6 +727,11 @@ def build_supervisor_configuration_payload(
     *,
     supervisor_member_ids: list[str] | None = None,
     turn_budget_mode: str = "each_agent",
+    summary_enabled: bool = False,
+    summary_max_turns: int = 1,
+    summary_trigger_interval: int = 0,
+    summary_window_start: int = 3,
+    summary_window_end: int = 6,
 ) -> dict:
     selected_members = supervisor_member_ids or ["qa", "ux", "senior_engineer", "scraper"]
 
@@ -692,6 +742,12 @@ def build_supervisor_configuration_payload(
         "preset": "supervisor",
         "display_mode": "collapse_specialists",
         "turn_budget_mode": turn_budget_mode,
+        "summary_strategy": {
+            "mode": SummaryStrategyMode.SUPERVISOR_WINDOW.value,
+            "deterministic_interval": max(1, summary_trigger_interval or 4),
+            "supervisor_window_start": summary_window_start,
+            "supervisor_window_end": summary_window_end,
+        },
         "supervisor_member_ids": selected_members,
         "agents": [
             {
@@ -715,11 +771,12 @@ def build_supervisor_configuration_payload(
             {
                 "agent_id": "summary",
                 "agent_type": "summary",
-                "enabled": False,
+                "enabled": summary_enabled,
                 "label": "Summary",
                 "prompt": "Summarize the run for the user.",
                 "visibility": "visible",
-                "max_turns": 0,
+                "max_turns": summary_max_turns if summary_enabled else 0,
+                "trigger_interval": summary_trigger_interval,
             },
             {
                 "agent_id": "supervisor",
@@ -779,6 +836,10 @@ def build_agent_configuration_domain(
     display_mode: str = "show_all",
     reviewer_enabled: bool = True,
     summary_enabled: bool = True,
+    summary_max_turns: int = 1,
+    summary_trigger_interval: int = 0,
+    summary_window_start: int = 3,
+    summary_window_end: int = 6,
     reviewer_visibility: str = "collapsed",
 ) -> AgentConfiguration:
     payload = build_agent_configuration_payload(
@@ -786,18 +847,25 @@ def build_agent_configuration_domain(
         display_mode=display_mode,
         reviewer_enabled=reviewer_enabled,
         summary_enabled=summary_enabled,
+        summary_max_turns=summary_max_turns,
+        summary_trigger_interval=summary_trigger_interval,
+        summary_window_start=summary_window_start,
+        summary_window_end=summary_window_end,
         reviewer_visibility=reviewer_visibility,
     )
     return AgentConfiguration.from_dict(
         {
             "preset": payload["preset"],
             "display_mode": payload["display_mode"],
+            "summary_strategy": payload["summary_strategy"],
             "agents": {
                 agent["agent_id"]: agent
                 for agent in payload["agents"]
             },
         }
     )
+
+
 def test_message_flow_returns_completed_response() -> None:
     client = build_test_client()
 
@@ -1628,6 +1696,133 @@ def test_summary_runs_directly_when_reviewer_is_disabled() -> None:
     assert all(message["agent_id"] != "reviewer" for message in session_payload["messages"])
 
 
+def test_summary_interval_can_run_before_reviewer_continues() -> None:
+    client = build_session_client()
+    session_response = client.post("/sessions", json={"title": "Summary cadence"})
+    assert session_response.status_code == 201
+    session_id = session_response.json()["id"]
+
+    configuration = build_agent_configuration_payload(
+        preset="triad",
+        reviewer_enabled=True,
+        summary_enabled=True,
+        summary_max_turns=1,
+        summary_trigger_interval=1,
+    )
+    generator = next(
+        agent for agent in configuration["agents"] if agent["agent_id"] == "generator"
+    )
+    generator["max_turns"] = 1
+
+    config_response = client.put(
+        f"/sessions/{session_id}/agents",
+        json=configuration,
+    )
+    assert config_response.status_code == 200
+    assert (
+        config_response.json()["agent_configuration"]["summary_strategy"]["mode"]
+        == "deterministic"
+    )
+    assert (
+        config_response.json()["agent_configuration"]["summary_strategy"][
+            "deterministic_interval"
+        ]
+        == 1
+    )
+
+    message_response = client.post(
+        f"/sessions/{session_id}/messages",
+        json={"message": "Run the summary before the reviewer."},
+    )
+    assert message_response.status_code == 202
+
+    session_payload = wait_for_session(
+        client,
+        session_id,
+        predicate=lambda payload: (
+            payload["active_agent_run_id"] is None
+            and any(message["agent_id"] == "summary" for message in payload["messages"])
+            and any(message["agent_id"] == "reviewer" for message in payload["messages"])
+        ),
+    )
+
+    agent_order = [
+        message["agent_id"]
+        for message in session_payload["messages"]
+        if message["agent_id"] != "user"
+    ]
+    summary_message = next(
+        message for message in session_payload["messages"] if message["agent_id"] == "summary"
+    )
+    assert agent_order.index("summary") < agent_order.index("reviewer")
+    assert summary_message["summary_turn_start"] == 1
+    assert summary_message["summary_turn_end"] == 1
+
+
+def test_supervisor_summary_interval_can_publish_mid_run() -> None:
+    client = build_session_client()
+    session_response = client.post("/sessions", json={"title": "Supervisor summary cadence"})
+    assert session_response.status_code == 201
+    session_id = session_response.json()["id"]
+
+    config_response = client.put(
+        f"/sessions/{session_id}/agents",
+        json=build_supervisor_configuration_payload(
+            supervisor_member_ids=["qa"],
+            summary_enabled=True,
+            summary_max_turns=2,
+            summary_window_start=3,
+            summary_window_end=6,
+        ),
+    )
+    assert config_response.status_code == 200
+    assert (
+        config_response.json()["agent_configuration"]["summary_strategy"]["mode"]
+        == "supervisor_window"
+    )
+    assert (
+        config_response.json()["agent_configuration"]["summary_strategy"][
+            "supervisor_window_start"
+        ]
+        == 3
+    )
+    assert (
+        config_response.json()["agent_configuration"]["summary_strategy"][
+            "supervisor_window_end"
+        ]
+        == 6
+    )
+
+    create_response = client.post(
+        f"/sessions/{session_id}/messages",
+        json={"message": "Run the supervisor workflow with summaries."},
+    )
+    assert create_response.status_code == 202
+
+    session_payload = wait_for_session(
+        client,
+        session_id,
+        predicate=lambda payload: (
+            payload["active_agent_run_id"] is None
+            and any(message["agent_id"] == "summary" for message in payload["messages"])
+            and sum(1 for message in payload["messages"] if message["agent_id"] == "supervisor") >= 2
+        ),
+    )
+
+    agent_order = [
+        message["agent_id"]
+        for message in session_payload["messages"]
+        if message["agent_id"] != "user"
+    ]
+    summary_message = next(
+        message for message in session_payload["messages"] if message["agent_id"] == "summary"
+    )
+    assert agent_order.index("summary") < len(agent_order) - 1
+    assert "qa" in agent_order
+    assert summary_message["summary_turn_start"] == 1
+    assert summary_message["summary_turn_end"] == 3
+
+
 def test_agent_endpoint_round_trip_drives_full_triad_chain_and_persists_final_state() -> None:
     client = build_session_client()
     session_response = client.post("/sessions", json={"title": "Full triad"})
@@ -2008,6 +2203,337 @@ def test_concurrent_terminal_processing_does_not_duplicate_summary_follow_up() -
         assert len(summary_messages) == 1
         assert summary_messages[0].job_id is not None
         assert len(repository._jobs) == 2
+
+
+def _save_summary_transcript_message(
+    repository: InMemoryChatRepository,
+    *,
+    session_id: str,
+    run_id: str,
+    message_id: str,
+    created_at: datetime,
+    role: ChatMessageRole,
+    author_type: ChatMessageAuthorType,
+    agent_id: AgentId,
+    agent_type: AgentType,
+    content: str,
+) -> None:
+    repository.save_message(
+        ChatMessage(
+            id=message_id,
+            session_id=session_id,
+            role=role,
+            author_type=author_type,
+            content=content,
+            status=ChatMessageStatus.COMPLETED,
+            agent_id=agent_id,
+            agent_type=agent_type,
+            trigger_source=AgentTriggerSource.USER,
+            run_id=run_id,
+            created_at=created_at,
+            updated_at=created_at,
+        )
+    )
+
+
+def _seed_summary_transcript_run(
+    repository: InMemoryChatRepository,
+    *,
+    session_id: str,
+    run_id: str,
+    base_time: datetime,
+) -> None:
+    _save_summary_transcript_message(
+        repository,
+        session_id=session_id,
+        run_id=run_id,
+        message_id="user-initial",
+        created_at=base_time,
+        role=ChatMessageRole.USER,
+        author_type=ChatMessageAuthorType.HUMAN,
+        agent_id=AgentId.USER,
+        agent_type=AgentType.HUMAN,
+        content="Build the feature with regression coverage.",
+    )
+    _save_summary_transcript_message(
+        repository,
+        session_id=session_id,
+        run_id=run_id,
+        message_id="generator-1",
+        created_at=base_time + timedelta(seconds=1),
+        role=ChatMessageRole.ASSISTANT,
+        author_type=ChatMessageAuthorType.ASSISTANT,
+        agent_id=AgentId.GENERATOR,
+        agent_type=AgentType.GENERATOR,
+        content="Generator draft one.",
+    )
+    _save_summary_transcript_message(
+        repository,
+        session_id=session_id,
+        run_id=run_id,
+        message_id="human-follow-up",
+        created_at=base_time + timedelta(seconds=2),
+        role=ChatMessageRole.USER,
+        author_type=ChatMessageAuthorType.HUMAN,
+        agent_id=AgentId.USER,
+        agent_type=AgentType.HUMAN,
+        content="Please verify the edge cases too.",
+    )
+    _save_summary_transcript_message(
+        repository,
+        session_id=session_id,
+        run_id=run_id,
+        message_id="reviewer-1",
+        created_at=base_time + timedelta(seconds=3),
+        role=ChatMessageRole.USER,
+        author_type=ChatMessageAuthorType.REVIEWER_CODEX,
+        agent_id=AgentId.REVIEWER,
+        agent_type=AgentType.REVIEWER,
+        content="Ask the generator to add integration coverage.",
+    )
+    _save_summary_transcript_message(
+        repository,
+        session_id=session_id,
+        run_id=run_id,
+        message_id="summary-old",
+        created_at=base_time + timedelta(seconds=4),
+        role=ChatMessageRole.ASSISTANT,
+        author_type=ChatMessageAuthorType.ASSISTANT,
+        agent_id=AgentId.SUMMARY,
+        agent_type=AgentType.SUMMARY,
+        content="Old summary that should stay out of the next transcript.",
+    )
+    _save_summary_transcript_message(
+        repository,
+        session_id=session_id,
+        run_id=run_id,
+        message_id="generator-2",
+        created_at=base_time + timedelta(seconds=5),
+        role=ChatMessageRole.ASSISTANT,
+        author_type=ChatMessageAuthorType.ASSISTANT,
+        agent_id=AgentId.GENERATOR,
+        agent_type=AgentType.GENERATOR,
+        content="Generator draft two with more tests.",
+    )
+
+
+def test_summary_execution_message_scopes_first_turn_and_excludes_prior_summaries() -> None:
+    with TemporaryDirectory() as temp_dir:
+        workspace = Path(temp_dir) / "repo"
+        workspace.mkdir()
+        service, _, repository = _build_controlled_message_service(
+            temp_dir,
+            barrier_agent_id=AgentId.SUMMARY,
+        )
+
+        session = service.create_session(workspace_path=str(workspace))
+        configuration = build_agent_configuration_domain(
+            preset="triad",
+            reviewer_enabled=True,
+            summary_enabled=True,
+        )
+        service.update_agent_configuration(session_id=session.id, configuration=configuration)
+        session = repository.get_session(session.id)
+        assert session is not None
+
+        run_id = "run-summary-transcript"
+        base_time = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        _seed_summary_transcript_run(
+            repository,
+            session_id=session.id,
+            run_id=run_id,
+            base_time=base_time,
+        )
+
+        execution_message = service._build_summary_execution_message(
+            session_id=session.id,
+            run_id=run_id,
+            summary_prompt=session.agent_configuration.agents[AgentId.SUMMARY].prompt,
+            summary_turn_start=1,
+            summary_turn_end=1,
+        )
+
+        assert "Summarize completed agent turns 1 through 1." in execution_message
+        assert (
+            "Turn 1 - User [user/user]: Build the feature with regression coverage."
+            in execution_message
+        )
+        assert "Turn 1 - Generator [generator/assistant]: Generator draft one." in execution_message
+        assert "Please verify the edge cases too." not in execution_message
+        assert "Ask the generator to add integration coverage." not in execution_message
+        assert "Generator draft two with more tests." not in execution_message
+        assert "Old summary that should stay out of the next transcript." not in execution_message
+
+
+def test_summary_execution_message_assigns_between_turn_context_to_next_completed_turn() -> None:
+    with TemporaryDirectory() as temp_dir:
+        workspace = Path(temp_dir) / "repo"
+        workspace.mkdir()
+        service, _, repository = _build_controlled_message_service(
+            temp_dir,
+            barrier_agent_id=AgentId.SUMMARY,
+        )
+
+        session = service.create_session(workspace_path=str(workspace))
+        configuration = build_agent_configuration_domain(
+            preset="triad",
+            reviewer_enabled=True,
+            summary_enabled=True,
+        )
+        service.update_agent_configuration(session_id=session.id, configuration=configuration)
+        session = repository.get_session(session.id)
+        assert session is not None
+
+        run_id = "run-summary-transcript"
+        base_time = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        _seed_summary_transcript_run(
+            repository,
+            session_id=session.id,
+            run_id=run_id,
+            base_time=base_time,
+        )
+
+        execution_message = service._build_summary_execution_message(
+            session_id=session.id,
+            run_id=run_id,
+            summary_prompt=session.agent_configuration.agents[AgentId.SUMMARY].prompt,
+            summary_turn_start=2,
+            summary_turn_end=2,
+        )
+
+        assert "Summarize completed agent turns 2 through 2." in execution_message
+        assert "Turn 1 - Generator [generator/assistant]: Generator draft one." not in execution_message
+        assert "Turn 3 - Generator [generator/assistant]: Generator draft two with more tests." not in execution_message
+        assert (
+            "Turn 2 - User [user/user]: Please verify the edge cases too."
+            in execution_message
+        )
+        assert (
+            "Turn 2 - Reviewer [reviewer/user]: Ask the generator to add integration coverage."
+            in execution_message
+        )
+        assert "Old summary that should stay out of the next transcript." not in execution_message
+
+
+def test_mid_run_summary_launch_uses_scoped_transcript_window() -> None:
+    with TemporaryDirectory() as temp_dir:
+        workspace = Path(temp_dir) / "repo"
+        workspace.mkdir()
+        service, provider, repository = _build_controlled_message_service(
+            temp_dir,
+            barrier_agent_id=AgentId.SUMMARY,
+        )
+
+        session = service.create_session(workspace_path=str(workspace))
+        configuration = session.agent_configuration.normalized()
+        configuration.preset = AgentPreset.TRIAD
+        configuration.agents[AgentId.GENERATOR].max_turns = 2
+        configuration.agents[AgentId.REVIEWER].enabled = True
+        configuration.agents[AgentId.REVIEWER].max_turns = 1
+        configuration.agents[AgentId.SUMMARY].enabled = True
+        configuration.agents[AgentId.SUMMARY].max_turns = 2
+        configuration.summary_strategy.deterministic_interval = 2
+        service.update_agent_configuration(session_id=session.id, configuration=configuration)
+
+        initial_job = service.submit_message(
+            "Build the feature with regression coverage.",
+            session_id=session.id,
+        )
+        run_id = initial_job.run_id
+        assert run_id is not None
+
+        provider.complete_job(initial_job.id, response="Generator draft one.")
+        generator_message = next(
+            message
+            for message in repository.list_messages(session.id)
+            if message.run_id == run_id and message.agent_id == AgentId.GENERATOR
+        )
+        between_turn_created_at = generator_message.created_at + timedelta(microseconds=1)
+        old_summary_created_at = generator_message.created_at + timedelta(microseconds=2)
+        repository.save_message(
+            ChatMessage(
+                id="human-between-turns",
+                session_id=session.id,
+                role=ChatMessageRole.USER,
+                author_type=ChatMessageAuthorType.HUMAN,
+                content="Please verify the edge cases too.",
+                status=ChatMessageStatus.COMPLETED,
+                agent_id=AgentId.USER,
+                agent_type=AgentType.HUMAN,
+                trigger_source=AgentTriggerSource.USER,
+                run_id=run_id,
+                created_at=between_turn_created_at,
+                updated_at=between_turn_created_at,
+            )
+        )
+        repository.save_message(
+            ChatMessage(
+                id="prior-summary",
+                session_id=session.id,
+                role=ChatMessageRole.ASSISTANT,
+                author_type=ChatMessageAuthorType.ASSISTANT,
+                content="Old summary that should not be replayed.",
+                status=ChatMessageStatus.COMPLETED,
+                agent_id=AgentId.SUMMARY,
+                agent_type=AgentType.SUMMARY,
+                trigger_source=AgentTriggerSource.GENERATOR,
+                run_id=run_id,
+                created_at=old_summary_created_at,
+                updated_at=old_summary_created_at,
+            )
+        )
+
+        service.get_job(initial_job.id)
+
+        reviewer_message = next(
+            message
+            for message in repository.list_messages(session.id)
+            if message.run_id == run_id
+            and message.agent_id == AgentId.REVIEWER
+            and message.job_id is not None
+        )
+        provider.complete_job(
+            reviewer_message.job_id,
+            response="Ask the generator to add integration coverage.",
+        )
+        service.get_job(reviewer_message.job_id)
+
+        summary_message = next(
+            message
+            for message in repository.list_messages(session.id)
+            if message.run_id == run_id
+            and message.agent_id == AgentId.SUMMARY
+            and message.job_id is not None
+        )
+        summary_job = repository.get_job(summary_message.job_id)
+        assert summary_job is not None
+        launched_summary_request = next(
+            request
+            for request in provider.requests
+            if request["job_id"] == summary_message.job_id
+        )
+        launched_summary_prompt = str(launched_summary_request["message"])
+
+        assert summary_message.dedupe_key == f"run:{run_id}:summary:1:2"
+        assert summary_job.execution_message == launched_summary_prompt
+        assert "Summarize completed agent turns 1 through 2." in launched_summary_prompt
+        assert (
+            "Turn 1 - User [user/user]: Build the feature with regression coverage."
+            in launched_summary_prompt
+        )
+        assert (
+            "Turn 2 - User [user/user]: Please verify the edge cases too."
+            in launched_summary_prompt
+        )
+        assert (
+            "Turn 1 - User [user/user]: Please verify the edge cases too."
+            not in launched_summary_prompt
+        )
+        assert (
+            "Turn 2 - Reviewer [reviewer/user]: Ask the generator to add integration coverage."
+            in launched_summary_prompt
+        )
+        assert "Old summary that should not be replayed." not in launched_summary_prompt
 
 
 def test_terminal_job_lock_bookkeeping_is_cleaned_up_after_processing() -> None:
@@ -4592,6 +5118,17 @@ def test_job_response_exposes_phase_metadata() -> None:
     assert assistant_message["job_elapsed_seconds"] >= 0
 
 
+def test_exec_mode_falls_back_to_streamed_agent_message_when_output_file_is_empty() -> None:
+    client = build_json_only_client()
+
+    create_response = client.post("/message", json={"message": "hello from streamed json"})
+    assert create_response.status_code == 202
+
+    payload = wait_for_job(client, create_response.json()["job_id"])
+    assert payload["status"] == "completed"
+    assert payload["response"] == "json-only:hello from streamed json"
+
+
 def test_sqlite_chat_store_persists_sessions_across_app_restarts() -> None:
     with TemporaryDirectory() as temp_dir:
         database_path = Path(temp_dir) / "chat-store.sqlite3"
@@ -4658,6 +5195,7 @@ def test_capabilities_endpoint_exposes_speech_output_status() -> None:
 
     assert response.status_code == 200
     payload = response.json()
+    assert payload["supports_image_input"] is False
     assert payload["supports_speech_output"] is True
     assert payload["speech_output_backend"] == "openai"
     assert payload["speech_output_voice"] == "cedar"
@@ -4966,7 +5504,7 @@ def test_document_message_flow_rejects_unsupported_documents() -> None:
     assert "Unsupported document type" in create_response.json()["detail"]
 
 
-def test_image_message_flow_attaches_image_to_codex_cli() -> None:
+def test_image_message_flow_rejects_image_uploads() -> None:
     client = build_image_client()
 
     create_response = client.post(
@@ -4975,37 +5513,23 @@ def test_image_message_flow_attaches_image_to_codex_cli() -> None:
         files={"image": ("diagram.png", b"fake image bytes", "image/png")},
     )
 
-    assert create_response.status_code == 202
-    assert create_response.json()["attached_image_name"] == "diagram.png"
-
-    payload = wait_for_job(client, create_response.json()["job_id"])
-
-    assert payload["status"] == "completed"
-    assert payload["message"] == "What does this show?"
-    assert "[images: " in payload["response"]
-    assert ".png]" in payload["response"]
+    assert create_response.status_code == 415
+    assert create_response.json()["detail"] == "Image attachments are disabled on this server."
 
 
-def test_image_message_flow_uses_default_prompt_when_message_is_blank() -> None:
-    client = build_image_client()
+def test_document_message_flow_rejects_image_uploads() -> None:
+    client = build_test_client()
 
     create_response = client.post(
-        "/message/image",
-        data={"message": "   "},
-        files={"image": ("diagram.png", b"fake image bytes", "image/png")},
+        "/message/document",
+        files={"document": ("diagram.png", b"fake image bytes", "image/png")},
     )
 
-    assert create_response.status_code == 202
-
-    payload = wait_for_job(client, create_response.json()["job_id"])
-
-    assert payload["status"] == "completed"
-    assert payload["message"] == "Please analyze the attached image."
-    assert "[images: " in payload["response"]
-    assert ".png]" in payload["response"]
+    assert create_response.status_code == 415
+    assert create_response.json()["detail"] == "Image attachments are disabled on this server."
 
 
-def test_attachment_batch_flow_combines_image_text_and_audio_inputs() -> None:
+def test_attachment_batch_flow_rejects_images() -> None:
     client = build_multi_attachment_client()
 
     create_response = client.post(
@@ -5018,23 +5542,35 @@ def test_attachment_batch_flow_combines_image_text_and_audio_inputs() -> None:
         ],
     )
 
-    assert create_response.status_code == 202
-    payload = wait_for_job(client, create_response.json()["job_id"])
+    assert create_response.status_code == 415
+    assert create_response.json()["detail"] == "Image attachments are disabled on this server."
 
-    assert payload["status"] == "completed"
-    assert payload["message"] == (
-        "Compare everything in this batch\n\n"
-        "[Attached files]\n"
-        "- image: diagram.png\n"
-        "- text: notes.txt\n"
-        "- audio: voice.ogg"
-    )
-    assert "[images: " in payload["response"]
-    assert ".png]" in payload["response"]
-    assert "Document name: notes.txt" in payload["response"]
-    assert "Extracted document text:\nAlpha line\nBeta line" in payload["response"]
-    assert "Document name: voice.ogg" in payload["response"]
-    assert "Transcript:\nTranscribed audio from voice.ogg" in payload["response"]
+
+def test_retry_job_rejects_unsupported_image_inputs() -> None:
+    with TemporaryDirectory() as tmpdir:
+        client, container = build_session_client_with_container()
+        service = container.message_service
+        repository = service._repository
+
+        image_path = Path(tmpdir) / "diagram.png"
+        image_path.write_bytes(b"fake image bytes")
+
+        create_response = client.post(
+            "/message",
+            json={"message": "Describe this image."},
+        )
+        assert create_response.status_code == 202
+        payload = wait_for_job(client, create_response.json()["job_id"])
+
+        stored_job = repository.get_job(payload["job_id"])
+        assert stored_job is not None
+        stored_job.image_paths = [str(image_path)]
+        repository.save_job(stored_job)
+
+        retry_response = client.post(f"/jobs/{stored_job.id}/retry")
+
+        assert retry_response.status_code == 415
+        assert retry_response.json()["detail"] == "Image attachments are disabled on this server."
 
 
 def test_agent_creator_profile_can_seed_a_new_chat_for_agent_design() -> None:
