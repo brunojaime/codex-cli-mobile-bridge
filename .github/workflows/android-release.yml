@@ -39,12 +39,12 @@ jobs:
         run: |
           if [[ -n "$ANDROID_KEYSTORE_BASE64" && -n "$ANDROID_KEY_ALIAS" && -n "$ANDROID_KEY_PASSWORD" && -n "$ANDROID_STORE_PASSWORD" ]]; then
             printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > frontend/mobile_app/android/upload-keystore.jks
-            cat > frontend/mobile_app/android/key.properties <<EOF
-            storeFile=upload-keystore.jks
-            storePassword=$ANDROID_STORE_PASSWORD
-            keyAlias=$ANDROID_KEY_ALIAS
-            keyPassword=$ANDROID_KEY_PASSWORD
-            EOF
+            {
+              printf 'storeFile=upload-keystore.jks\n'
+              printf 'storePassword=%s\n' "$ANDROID_STORE_PASSWORD"
+              printf 'keyAlias=%s\n' "$ANDROID_KEY_ALIAS"
+              printf 'keyPassword=%s\n' "$ANDROID_KEY_PASSWORD"
+            } > frontend/mobile_app/android/key.properties
           else
             echo "No Android release keystore secrets configured; using debug signing fallback."
           fi
