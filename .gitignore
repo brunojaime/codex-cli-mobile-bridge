@@ -21,7 +21,9 @@ frontend/mobile_app/android/local.properties
 frontend/mobile_app/android/key.properties
 frontend/mobile_app/android/*.jks
 frontend/mobile_app/android/*.keystore
+frontend/mobile_app/android/*.p12
 frontend/mobile_app/.idea/
+.release-signing/
 
 # Local IDE files
 .idea/
