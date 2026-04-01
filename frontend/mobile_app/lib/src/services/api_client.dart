@@ -284,12 +284,41 @@ class ApiClient {
     );
 
     if (response.statusCode != 200) {
-      throw Exception('Failed to update turn summaries: ${response.body}');
+      throw Exception(
+        'Failed to update turn summaries: ${_turnSummaryErrorDetail(response)}',
+      );
     }
 
     return SessionDetail.fromJson(
       jsonDecode(response.body) as Map<String, dynamic>,
     );
+  }
+
+  String _turnSummaryErrorDetail(http.Response response) {
+    final detail = _responseErrorDetail(response);
+    if (response.statusCode == 404 && detail.toLowerCase() == 'not found') {
+      return 'Turn summaries are not available on the connected backend. Pull the latest backend changes and restart it.';
+    }
+    return detail;
+  }
+
+  String _responseErrorDetail(http.Response response) {
+    final body = response.body.trim();
+    if (body.isEmpty) {
+      return 'HTTP ${response.statusCode}';
+    }
+    try {
+      final decoded = jsonDecode(body);
+      if (decoded is Map<String, dynamic>) {
+        final detail = decoded['detail'];
+        if (detail is String && detail.trim().isNotEmpty) {
+          return detail.trim();
+        }
+      }
+    } catch (_) {
+      // Fall back to the raw body for non-JSON responses.
+    }
+    return body;
   }
 
   Future<SessionDetail> setSessionArchived(

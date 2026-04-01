@@ -523,7 +523,10 @@ class ChatController extends ChangeNotifier {
       notifyListeners();
       return true;
     } catch (error) {
-      _errorText = 'Failed to update turn summaries.\n$error';
+      _errorText = _formatActionError(
+        'Failed to update turn summaries.',
+        error,
+      );
       notifyListeners();
       return false;
     }
@@ -1484,6 +1487,21 @@ class ChatController extends ChangeNotifier {
       AgentId.scraper => 'Scraper',
       AgentId.user => 'User',
     };
+  }
+
+  String _formatActionError(String prefix, Object error) {
+    final detail = '$error'.trim().replaceFirst(RegExp(r'^Exception:\s*'), '');
+    final normalizedPrefix = prefix.trim().replaceFirst(RegExp(r'[.:!?]+$'), '');
+    if (detail.isEmpty) {
+      return prefix;
+    }
+    if (detail.startsWith(prefix)) {
+      return detail;
+    }
+    if (detail.startsWith('$normalizedPrefix: ')) {
+      return '$prefix\n${detail.substring(normalizedPrefix.length + 2)}';
+    }
+    return '$prefix\n$detail';
   }
 }
 
