@@ -64,6 +64,7 @@ from backend.app.infrastructure.transcription.base import AudioTranscriber, Audi
 
 DocumentKind = Literal["audio", "docx", "image", "text"]
 _TURN_SUMMARY_TRIGGER_MESSAGE_COUNT = 4
+_TURN_SUMMARY_COMPLETION_TIMEOUT_SECONDS = 15.0
 
 _AUDIO_SUFFIXES = {
     ".aac",
@@ -3217,7 +3218,7 @@ class MessageService:
         except Exception:
             return None
 
-        deadline = time.monotonic() + 4.0
+        deadline = time.monotonic() + _TURN_SUMMARY_COMPLETION_TIMEOUT_SECONDS
         snapshot = self._execution_provider.get_snapshot(job_id)
         while not snapshot.status.is_terminal and time.monotonic() < deadline:
             time.sleep(0.05)

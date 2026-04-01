@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import replace
 from datetime import timedelta
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
 from uuid import uuid4
 
 from backend.app.application.services.message_service import MessageService
@@ -152,6 +154,76 @@ class _FailingVisibleExecutionProvider(ExecutionProvider):
 
     def get_latest_activity(self, job_id: str) -> str | None:
         return self._snapshots[job_id].latest_activity
+
+
+class _DelayedTurnSummaryExecutionProvider(ExecutionProvider):
+    def __init__(
+        self,
+        *,
+        now: Callable[[], float],
+        complete_after_seconds: float,
+    ) -> None:
+        self._now = now
+        self._complete_after_seconds = complete_after_seconds
+        self._job_starts: dict[str, float] = {}
+        self._job_counter = 0
+
+    def execute(
+        self,
+        message: str,
+        *,
+        image_paths: list[str] | None = None,
+        cleanup_paths: list[str] | None = None,
+        provider_session_id: str | None = None,
+        model: str | None = None,
+        serial_key: str | None = None,
+        submission_token: str | None = None,
+        workdir: str | None = None,
+    ) -> str:
+        self._job_counter += 1
+        job_id = f"delayed-summary-{self._job_counter}"
+        self._job_starts[job_id] = self._now()
+        return job_id
+
+    def get_status(self, job_id: str) -> JobStatus:
+        return self.get_snapshot(job_id).status
+
+    def get_result(self, job_id: str) -> str | None:
+        return self.get_snapshot(job_id).response
+
+    def get_error(self, job_id: str) -> str | None:
+        return self.get_snapshot(job_id).error
+
+    def has_job(self, job_id: str) -> bool:
+        return job_id in self._job_starts
+
+    def get_snapshot(self, job_id: str) -> ExecutionSnapshot:
+        elapsed = self._now() - self._job_starts[job_id]
+        if elapsed >= self._complete_after_seconds:
+            return ExecutionSnapshot(
+                job_id=job_id,
+                status=JobStatus.COMPLETED,
+                response="Delayed hidden summary completed.",
+                provider_session_id=f"thread-{job_id}",
+                phase="Completed",
+                latest_activity="Delayed hidden summary completed.",
+            )
+        return ExecutionSnapshot(
+            job_id=job_id,
+            status=JobStatus.PENDING,
+            provider_session_id=f"thread-{job_id}",
+            phase="Pending",
+            latest_activity="Waiting for delayed hidden summary completion.",
+        )
+
+    def get_provider_session_id(self, job_id: str) -> str | None:
+        return f"thread-{job_id}"
+
+    def get_phase(self, job_id: str) -> str | None:
+        return self.get_snapshot(job_id).phase
+
+    def get_latest_activity(self, job_id: str) -> str | None:
+        return self.get_snapshot(job_id).latest_activity
 
 def _build_service(
     projects_root: str,
@@ -421,6 +493,52 @@ def test_turn_summary_prompt_sanitizes_stale_image_attachment_errors() -> None:
             "The original image attachment is no longer available on this server. "
             "Reattach it to continue."
         ) in prompt
+
+
+def test_turn_summary_waits_longer_than_four_seconds_for_hidden_summary_completion() -> None:
+    with TemporaryDirectory() as temp_dir:
+        workspace = Path(temp_dir) / "repo"
+        workspace.mkdir()
+        clock = {"now": 0.0}
+        provider = _DelayedTurnSummaryExecutionProvider(
+            now=lambda: clock["now"],
+            complete_after_seconds=5.0,
+        )
+        service = _build_service(
+            temp_dir,
+            execution_provider=provider,
+        )
+        session = service.create_session(workspace_path=str(workspace))
+        source_message = ChatMessage(
+            id="message-1",
+            session_id=session.id,
+            role=ChatMessageRole.USER,
+            author_type=ChatMessageAuthorType.HUMAN,
+            content="Document the delayed hidden summary behavior.",
+            status=ChatMessageStatus.COMPLETED,
+            agent_id=AgentId.USER,
+            agent_type=AgentType.HUMAN,
+        )
+
+        with (
+            patch(
+                "backend.app.application.services.message_service.time.monotonic",
+                side_effect=lambda: clock["now"],
+            ),
+            patch(
+                "backend.app.application.services.message_service.time.sleep",
+                side_effect=lambda seconds: clock.__setitem__(
+                    "now",
+                    clock["now"] + seconds,
+                ),
+            ),
+        ):
+            content = service._generate_turn_summary_with_codex(
+                session,
+                [source_message],
+            )
+
+        assert content == "Delayed hidden summary completed."
 
 
 def test_placeholder_session_title_is_generated_after_four_user_turns() -> None:
