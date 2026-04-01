@@ -10,6 +10,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../models/chat_session_summary.dart';
 import '../models/chat_message.dart';
+import '../models/chat_turn_summary.dart';
 import '../models/agent_configuration.dart';
 import '../models/agent_profile.dart';
 import '../models/server_capabilities.dart';
@@ -53,6 +54,12 @@ enum _AppBarOverflowAction {
 enum _PinnedWorkspaceAction {
   newChat,
   remove,
+}
+
+enum _ChatBodyView {
+  conversation,
+  agentSummaries,
+  turnSummaries,
 }
 
 class ChatScreen extends StatefulWidget {
@@ -101,7 +108,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       <String, Set<String>>{};
   bool _isUpdatingFilteredMessagesView = false;
   String? _filteredMessagesViewErrorText;
-  bool _showSummaryMessagesOnly = false;
+  _ChatBodyView _chatBodyView = _ChatBodyView.conversation;
   static const double _compactAppBarBreakpoint = 640;
 
   @override
@@ -158,6 +165,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         final messages = _visibleMessagesForCurrentSession();
         final timelineEntries = _buildTimelineEntries(messages);
         final summaryMessageCount = _summaryMessageCountForCurrentSession();
+        final turnSummaryCount = _turnSummaryCountForCurrentSession();
+        final isShowingAgentSummaries =
+            _chatBodyView == _ChatBodyView.agentSummaries;
+        final isShowingTurnSummaries =
+            _chatBodyView == _ChatBodyView.turnSummaries;
         final showFilteredMessagesPlaceholder = currentSession != null &&
             currentSession.messages.isNotEmpty &&
             messages.isEmpty;
@@ -429,7 +441,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                     ),
                                   if (currentSession != null &&
                                       (summaryMessageCount > 0 ||
-                                          _showSummaryMessagesOnly))
+                                          turnSummaryCount > 0 ||
+                                          currentSession.turnSummariesEnabled ||
+                                          _chatBodyView !=
+                                              _ChatBodyView.conversation))
                                     SliverToBoxAdapter(
                                       child: Padding(
                                         padding: const EdgeInsets.fromLTRB(
@@ -444,20 +459,24 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                             ChoiceChip(
                                               label:
                                                   const Text('Conversation'),
-                                              selected:
-                                                  !_showSummaryMessagesOnly,
+                                              selected: _chatBodyView ==
+                                                  _ChatBodyView.conversation,
                                               onSelected: (selected) {
                                                 if (!selected) {
                                                   return;
                                                 }
-                                                _exitSummaryMessagesView();
+                                                _setChatBodyView(
+                                                  _ChatBodyView.conversation,
+                                                );
                                               },
                                               selectedColor:
                                                   const Color(0xFF55D6BE),
                                               backgroundColor:
                                                   const Color(0xFF16213C),
                                               labelStyle: TextStyle(
-                                                color: !_showSummaryMessagesOnly
+                                                color: _chatBodyView ==
+                                                        _ChatBodyView
+                                                            .conversation
                                                     ? const Color(0xFF07131D)
                                                     : const Color(0xFFDCE5FF),
                                                 fontWeight: FontWeight.w700,
@@ -469,11 +488,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                             ChoiceChip(
                                               label: Text(
                                                 summaryMessageCount == 1
-                                                    ? 'Summary'
-                                                    : 'Summaries ($summaryMessageCount)',
+                                                    ? 'Agent summary'
+                                                    : 'Agent summaries ($summaryMessageCount)',
                                               ),
-                                              selected:
-                                                  _showSummaryMessagesOnly,
+                                              selected: isShowingAgentSummaries,
                                               onSelected: summaryMessageCount <=
                                                       0
                                                   ? null
@@ -481,18 +499,52 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                                       if (!selected) {
                                                         return;
                                                       }
-                                                      setState(() {
-                                                        _showSummaryMessagesOnly =
-                                                            true;
-                                                      });
+                                                      _setChatBodyView(
+                                                        _ChatBodyView
+                                                            .agentSummaries,
+                                                      );
                                                     },
                                               selectedColor:
                                                   const Color(0xFF8CA8FF),
                                               backgroundColor:
                                                   const Color(0xFF16213C),
                                               labelStyle: TextStyle(
-                                                color: _showSummaryMessagesOnly
+                                                color: isShowingAgentSummaries
                                                     ? const Color(0xFF07131D)
+                                                    : const Color(0xFFDCE5FF),
+                                                fontWeight: FontWeight.w700,
+                                              ),
+                                              side: const BorderSide(
+                                                color: Color(0xFF23304F),
+                                              ),
+                                            ),
+                                            ChoiceChip(
+                                              label: Text(
+                                                turnSummaryCount == 1
+                                                    ? 'Turn summary'
+                                                    : 'Turn summaries ($turnSummaryCount)',
+                                              ),
+                                              selected: isShowingTurnSummaries,
+                                              onSelected: (turnSummaryCount <= 0 &&
+                                                      !currentSession
+                                                          .turnSummariesEnabled)
+                                                  ? null
+                                                  : (selected) {
+                                                      if (!selected) {
+                                                        return;
+                                                      }
+                                                      _setChatBodyView(
+                                                        _ChatBodyView
+                                                            .turnSummaries,
+                                                      );
+                                                    },
+                                              selectedColor:
+                                                  const Color(0xFFFFC857),
+                                              backgroundColor:
+                                                  const Color(0xFF16213C),
+                                              labelStyle: TextStyle(
+                                                color: isShowingTurnSummaries
+                                                    ? const Color(0xFF2A1600)
                                                     : const Color(0xFFDCE5FF),
                                                 fontWeight: FontWeight.w700,
                                               ),
@@ -504,7 +556,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                         ),
                                       ),
                                     ),
-                                  if (_showSummaryMessagesOnly &&
+                                  if (isShowingAgentSummaries &&
                                       currentSession != null)
                                     SliverToBoxAdapter(
                                       child: Padding(
@@ -516,20 +568,95 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                         ),
                                         child: _SummaryViewBanner(
                                           summaryCount: summaryMessageCount,
-                                          onShowFullChat:
-                                              _exitSummaryMessagesView,
+                                          onShowFullChat: () {
+                                            _setChatBodyView(
+                                              _ChatBodyView.conversation,
+                                            );
+                                          },
                                         ),
                                       ),
                                     ),
-                                  if (messages.isEmpty)
+                                  if (isShowingTurnSummaries &&
+                                      currentSession != null)
+                                    SliverToBoxAdapter(
+                                      child: Padding(
+                                        padding: const EdgeInsets.fromLTRB(
+                                          16,
+                                          10,
+                                          16,
+                                          0,
+                                        ),
+                                        child: _TurnSummaryBanner(
+                                          summaryCount: turnSummaryCount,
+                                          enabled:
+                                              currentSession.turnSummariesEnabled,
+                                          onShowFullChat: () {
+                                            _setChatBodyView(
+                                              _ChatBodyView.conversation,
+                                            );
+                                          },
+                                        ),
+                                      ),
+                                    ),
+                                  if (isShowingTurnSummaries &&
+                                      currentSession != null &&
+                                      turnSummaryCount > 0)
+                                    SliverPadding(
+                                      padding: const EdgeInsets.fromLTRB(
+                                        16,
+                                        12,
+                                        16,
+                                        16,
+                                      ),
+                                      sliver: SliverList(
+                                        delegate: SliverChildBuilderDelegate(
+                                          (context, index) {
+                                            final summary = currentSession
+                                                .turnSummaries[index];
+                                            return Padding(
+                                              padding: EdgeInsets.only(
+                                                bottom: index ==
+                                                        currentSession
+                                                                .turnSummaries
+                                                                .length -
+                                                            1
+                                                    ? 0
+                                                    : 12,
+                                              ),
+                                              child: _TurnSummaryCard(
+                                                summary: summary,
+                                              ),
+                                            );
+                                          },
+                                          childCount:
+                                              currentSession.turnSummaries.length,
+                                        ),
+                                      ),
+                                    )
+                                  else if (messages.isEmpty)
                                     SliverFillRemaining(
                                       hasScrollBody: false,
-                                      child: _showSummaryMessagesOnly &&
+                                      child: isShowingAgentSummaries &&
                                               currentSession != null
                                           ? _SummaryMessagesPlaceholder(
-                                              onShowFullChat:
-                                                  _exitSummaryMessagesView,
+                                              onShowFullChat: () {
+                                                _setChatBodyView(
+                                                  _ChatBodyView.conversation,
+                                                );
+                                              },
                                             )
+                                          : isShowingTurnSummaries &&
+                                                  currentSession != null
+                                              ? _TurnSummariesPlaceholder(
+                                                  enabled: currentSession
+                                                      .turnSummariesEnabled,
+                                                  onShowFullChat: () {
+                                                    _setChatBodyView(
+                                                      _ChatBodyView
+                                                          .conversation,
+                                                    );
+                                                  },
+                                                )
                                           : showFilteredMessagesPlaceholder
                                               ? _FilteredMessagesPlaceholder(
                                                   displayMode: currentSession
@@ -949,7 +1076,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     if (currentSession == null) {
       return const <ChatMessage>[];
     }
-    if (_showSummaryMessagesOnly) {
+    if (_chatBodyView == _ChatBodyView.agentSummaries) {
       return currentSession.messages
           .where((message) => message.agentId == AgentId.summary)
           .toList(growable: false);
@@ -987,12 +1114,35 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         .length;
   }
 
-  void _exitSummaryMessagesView() {
-    if (!_showSummaryMessagesOnly) {
+  int _turnSummaryCountForCurrentSession() {
+    final currentSession = _chatController.currentSession;
+    if (currentSession == null) {
+      return 0;
+    }
+    return currentSession.turnSummaries.length;
+  }
+
+  _ChatBodyView _preferredSummaryView() {
+    final currentSession = _chatController.currentSession;
+    if (currentSession == null) {
+      return _ChatBodyView.conversation;
+    }
+    if (currentSession.turnSummariesEnabled ||
+        currentSession.turnSummaries.isNotEmpty) {
+      return _ChatBodyView.turnSummaries;
+    }
+    if (_summaryMessageCountForCurrentSession() > 0) {
+      return _ChatBodyView.agentSummaries;
+    }
+    return _ChatBodyView.conversation;
+  }
+
+  void _setChatBodyView(_ChatBodyView nextView) {
+    if (_chatBodyView == nextView) {
       return;
     }
     setState(() {
-      _showSummaryMessagesOnly = false;
+      _chatBodyView = nextView;
     });
   }
 
@@ -1123,6 +1273,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       await _createNewChatForWorkspace(
         draft.workspace,
         agentProfileId: draft.agentProfile.id,
+        turnSummariesEnabled: draft.turnSummariesEnabled,
       );
     }
   }
@@ -1177,10 +1328,12 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   Future<void> _createNewChatForWorkspace(
     Workspace workspace, {
     String? agentProfileId,
+    bool turnSummariesEnabled = false,
   }) async {
     await _chatController.createNewSessionWithProfile(
       workspacePath: workspace.path,
       agentProfileId: agentProfileId,
+      turnSummariesEnabled: turnSummariesEnabled,
     );
     if (!mounted) {
       return;
@@ -1425,7 +1578,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       return;
     }
 
-    final draft = await showModalBottomSheet<AgentConfiguration>(
+    final draft = await showModalBottomSheet<_AgentStudioDraft>(
       context: context,
       isScrollControlled: true,
       backgroundColor: const Color(0xFF101931),
@@ -1440,7 +1593,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       return;
     }
 
-    final didUpdate = await _chatController.updateAgentConfiguration(draft);
+    final didUpdate = await _chatController.updateAgentStudioSettings(
+      configuration: draft.configuration,
+      turnSummariesEnabled: draft.turnSummariesEnabled,
+    );
     if (!mounted || didUpdate) {
       return;
     }
@@ -1635,6 +1791,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
 
   List<Widget> _buildAppBarActions({required bool isCompactAppBar}) {
     final hasSummaryMessages = _summaryMessageCountForCurrentSession() > 0;
+    final hasTurnSummaries = _turnSummaryCountForCurrentSession() > 0;
+    final canShowAnySummary = hasSummaryMessages ||
+        hasTurnSummaries ||
+        (_chatController.currentSession?.turnSummariesEnabled ?? false);
+    final showingSummaryView = _chatBodyView != _ChatBodyView.conversation;
     final primaryActions = <Widget>[
       AgentStudioStatusButton(
         session: _chatController.currentSession,
@@ -1643,21 +1804,23 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         },
       ),
       IconButton(
-        onPressed: !_showSummaryMessagesOnly && !hasSummaryMessages
+        onPressed: !showingSummaryView && !canShowAnySummary
             ? null
             : () {
-                setState(() {
-                  _showSummaryMessagesOnly = !_showSummaryMessagesOnly;
-                });
+                if (showingSummaryView) {
+                  _setChatBodyView(_ChatBodyView.conversation);
+                  return;
+                }
+                _setChatBodyView(_preferredSummaryView());
               },
         icon: Icon(
-          _showSummaryMessagesOnly
+          showingSummaryView
               ? Icons.chat_bubble_outline_rounded
               : Icons.summarize_outlined,
         ),
-        tooltip: _showSummaryMessagesOnly
+        tooltip: showingSummaryView
             ? 'Show full chat'
-            : 'Show summaries',
+            : 'Show summary tabs',
       ),
     ];
     if (isCompactAppBar) {
@@ -1676,14 +1839,14 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             ),
             _buildAppBarOverflowMenuItem(
               action: _AppBarOverflowAction.summaryView,
-              icon: _showSummaryMessagesOnly
+              icon: showingSummaryView
                   ? Icons.chat_bubble_outline_rounded
                   : Icons.summarize_outlined,
-              label: _showSummaryMessagesOnly
+              label: showingSummaryView
                   ? 'Show full chat'
-                  : 'Show summaries',
-              enabled: _showSummaryMessagesOnly ||
-                  (_chatController.currentSession != null && hasSummaryMessages),
+                  : 'Show summary tabs',
+              enabled: showingSummaryView ||
+                  (_chatController.currentSession != null && canShowAnySummary),
             ),
             _buildAppBarOverflowMenuItem(
               action: _AppBarOverflowAction.saveCurrentAgent,
@@ -1792,16 +1955,22 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         await _openConversationContextSheet();
         return;
       case _AppBarOverflowAction.summaryView:
-        if (_showSummaryMessagesOnly) {
-          _exitSummaryMessagesView();
+        if (_chatBodyView != _ChatBodyView.conversation) {
+          _setChatBodyView(_ChatBodyView.conversation);
           return;
         }
-        if (_summaryMessageCountForCurrentSession() <= 0) {
+        final currentSession = _chatController.currentSession;
+        if (currentSession == null) {
           return;
         }
-        setState(() {
-          _showSummaryMessagesOnly = true;
-        });
+        final hasSummaryMessages = _summaryMessageCountForCurrentSession() > 0;
+        final hasTurnSummaries = _turnSummaryCountForCurrentSession() > 0;
+        if (!hasSummaryMessages &&
+            !hasTurnSummaries &&
+            !currentSession.turnSummariesEnabled) {
+          return;
+        }
+        _setChatBodyView(_preferredSummaryView());
         return;
       case _AppBarOverflowAction.saveCurrentAgent:
         await _openSaveCurrentAgentProfile();
@@ -2284,11 +2453,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         setState(() {
           _isUpdatingFilteredMessagesView = false;
           _filteredMessagesViewErrorText = null;
-          _showSummaryMessagesOnly = false;
+          _chatBodyView = _ChatBodyView.conversation;
         });
-      } else if (_showSummaryMessagesOnly) {
+      } else if (_chatBodyView != _ChatBodyView.conversation) {
         setState(() {
-          _showSummaryMessagesOnly = false;
+          _chatBodyView = _ChatBodyView.conversation;
         });
       }
       _updateStickToBottom(true);
@@ -2480,8 +2649,9 @@ class _SessionTile extends StatelessWidget {
         ? const Color(0xFFA8C7C0)
         : const Color(0xFF8B97B5);
     final conversationProduct = session.conversationProduct;
-    final subtitleText = conversationProduct?.description?.trim().isNotEmpty == true
-        ? conversationProduct!.description
+    final subtitleText = conversationProduct != null &&
+            conversationProduct.description.trim().isNotEmpty
+        ? conversationProduct.description
         : session.lastMessagePreview?.isNotEmpty == true
             ? session.lastMessagePreview!
             : 'No messages yet';
@@ -3010,31 +3180,33 @@ class _EmptyState extends StatelessWidget {
     return Center(
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 24),
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 420),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: <Widget>[
-              const Text(
-                'Start a new Codex session',
-                style: TextStyle(fontSize: 24, fontWeight: FontWeight.w600),
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 12),
-              const Text(
-                'Each chat maps to a real Codex CLI session and follow-up messages continue that session.',
-                textAlign: TextAlign.center,
-                style: TextStyle(color: Color(0xFF8B97B5), height: 1.5),
-              ),
-              const SizedBox(height: 20),
-              FilledButton.icon(
-                onPressed: () async {
-                  await onCreateChat();
-                },
-                icon: const Icon(Icons.add_comment_outlined),
-                label: const Text('New Chat'),
-              ),
-            ],
+        child: SingleChildScrollView(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 420),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                const Text(
+                  'Start a new Codex session',
+                  style: TextStyle(fontSize: 24, fontWeight: FontWeight.w600),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 12),
+                const Text(
+                  'Each chat maps to a real Codex CLI session and follow-up messages continue that session.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: Color(0xFF8B97B5), height: 1.5),
+                ),
+                const SizedBox(height: 20),
+                FilledButton.icon(
+                  onPressed: () async {
+                    await onCreateChat();
+                  },
+                  icon: const Icon(Icons.add_comment_outlined),
+                  label: const Text('New Chat'),
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -3214,6 +3386,236 @@ class _SummaryMessagesPlaceholder extends StatelessWidget {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _TurnSummaryBanner extends StatelessWidget {
+  const _TurnSummaryBanner({
+    required this.summaryCount,
+    required this.enabled,
+    required this.onShowFullChat,
+  });
+
+  final int summaryCount;
+  final bool enabled;
+  final VoidCallback onShowFullChat;
+
+  @override
+  Widget build(BuildContext context) {
+    final label = summaryCount == 1
+        ? 'Showing 1 turn summary'
+        : 'Showing $summaryCount turn summaries';
+    final suffix = enabled
+        ? 'New summaries are generated automatically for this chat.'
+        : 'Automatic generation is off for this chat.';
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFF3B2A10),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFFFFC857), width: 1.2),
+      ),
+      child: Row(
+        children: <Widget>[
+          const Icon(
+            Icons.history_edu_outlined,
+            color: Color(0xFFFFE08A),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              '$label. $suffix Each entry includes the source messages it was built from.',
+              style: const TextStyle(
+                color: Colors.white,
+                height: 1.35,
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          TextButton(
+            onPressed: onShowFullChat,
+            child: const Text('Show full chat'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TurnSummariesPlaceholder extends StatelessWidget {
+  const _TurnSummariesPlaceholder({
+    required this.enabled,
+    required this.onShowFullChat,
+  });
+
+  final bool enabled;
+  final VoidCallback onShowFullChat;
+
+  @override
+  Widget build(BuildContext context) {
+    final message = enabled
+        ? 'The summarizer is enabled, but it has not created a turn summary yet.'
+        : 'The summarizer is disabled for this chat. Enable it from Agents to start collecting turn summaries.';
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 24),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 460),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              const Text(
+                'No turn summaries yet',
+                style: TextStyle(fontSize: 24, fontWeight: FontWeight.w600),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 12),
+              Text(
+                message,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  color: Color(0xFF8B97B5),
+                  height: 1.5,
+                ),
+              ),
+              const SizedBox(height: 20),
+              FilledButton.icon(
+                onPressed: onShowFullChat,
+                icon: const Icon(Icons.chat_bubble_outline_rounded),
+                label: const Text('Show full chat'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _TurnSummaryCard extends StatelessWidget {
+  const _TurnSummaryCard({
+    required this.summary,
+  });
+
+  final ChatTurnSummary summary;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFF181F33),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFF33405D)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Row(
+            children: <Widget>[
+              const Icon(
+                Icons.article_outlined,
+                color: Color(0xFFFFC857),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  formatChatMessageTime(context, summary.createdAt),
+                  style: const TextStyle(
+                    color: Color(0xFFFFE08A),
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              Text(
+                summary.sourceMessages.length == 1
+                    ? '1 source'
+                    : '${summary.sourceMessages.length} sources',
+                style: const TextStyle(
+                  color: Color(0xFF9FB0D4),
+                  fontSize: 12,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Text(
+            summary.content,
+            style: const TextStyle(
+              color: Colors.white,
+              height: 1.45,
+            ),
+          ),
+          const SizedBox(height: 14),
+          const Text(
+            'Provenance',
+            style: TextStyle(
+              color: Color(0xFF9FB0D4),
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 8),
+          if (summary.sourceMessages.isEmpty)
+            const Text(
+              'Source message metadata is unavailable for this summary.',
+              style: TextStyle(
+                color: Color(0xFFB8C8EA),
+                height: 1.4,
+              ),
+            )
+          else
+            Column(
+              children: summary.sourceMessages.map((message) {
+                final agentLabel = (message.agentLabel ?? '').trim();
+                final label = agentLabel.isNotEmpty
+                    ? agentLabel
+                    : message.isUser
+                        ? 'User'
+                        : message.agentId.name;
+                final excerpt = (message.content ?? '').trim();
+                final excerptText = excerpt.isNotEmpty
+                    ? excerpt.length <= 140
+                        ? excerpt
+                        : '${excerpt.substring(0, 137)}...'
+                    : 'Message text unavailable for this older summary.';
+                return Container(
+                  width: double.infinity,
+                  margin: const EdgeInsets.only(bottom: 8),
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF121A2C),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: const Color(0xFF27324F)),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      Text(
+                        '$label • ${formatChatMessageTime(context, message.createdAt)}',
+                        style: const TextStyle(
+                          color: Color(0xFFDCE5FF),
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        excerptText,
+                        style: const TextStyle(
+                          color: Color(0xFFB8C8EA),
+                          height: 1.35,
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              }).toList(growable: false),
+            ),
+        ],
       ),
     );
   }
@@ -4316,10 +4718,12 @@ class _NewChatDraft {
   const _NewChatDraft({
     required this.workspace,
     required this.agentProfile,
+    required this.turnSummariesEnabled,
   });
 
   final Workspace workspace;
   final AgentProfile agentProfile;
+  final bool turnSummariesEnabled;
 }
 
 class _NewChatSheet extends StatefulWidget {
@@ -4339,6 +4743,7 @@ class _NewChatSheet extends StatefulWidget {
 
 class _NewChatSheetState extends State<_NewChatSheet> {
   late AgentProfile _selectedProfile;
+  bool _turnSummariesEnabled = true;
 
   @override
   void initState() {
@@ -4407,6 +4812,18 @@ class _NewChatSheetState extends State<_NewChatSheet> {
                     },
                   ),
                 ),
+                SwitchListTile(
+                  value: _turnSummariesEnabled,
+                  title: const Text('Enable summarizer'),
+                  subtitle: const Text(
+                    'Create turn summaries with provenance for this chat.',
+                  ),
+                  onChanged: (value) {
+                    setState(() {
+                      _turnSummariesEnabled = value;
+                    });
+                  },
+                ),
                 Flexible(
                   child: ListView(
                     shrinkWrap: true,
@@ -4432,6 +4849,7 @@ class _NewChatSheetState extends State<_NewChatSheet> {
                             _NewChatDraft(
                               workspace: workspace,
                               agentProfile: _selectedProfile,
+                              turnSummariesEnabled: _turnSummariesEnabled,
                             ),
                           ),
                         );
@@ -4563,6 +4981,16 @@ class _SaveAgentProfileSheetState extends State<_SaveAgentProfileSheet> {
   }
 }
 
+class _AgentStudioDraft {
+  const _AgentStudioDraft({
+    required this.configuration,
+    required this.turnSummariesEnabled,
+  });
+
+  final AgentConfiguration configuration;
+  final bool turnSummariesEnabled;
+}
+
 class _AgentStudioSheet extends StatefulWidget {
   const _AgentStudioSheet({
     required this.session,
@@ -4589,6 +5017,7 @@ class _AgentStudioSheetState extends State<_AgentStudioSheet> {
   late final Map<AgentId, bool> _enabled;
   late final Map<AgentId, AgentVisibilityMode> _visibility;
   late final Set<AgentId> _supervisorMemberIds;
+  late bool _turnSummariesEnabled;
 
   @override
   void initState() {
@@ -4614,6 +5043,7 @@ class _AgentStudioSheetState extends State<_AgentStudioSheet> {
     _enabled = <AgentId, bool>{};
     _visibility = <AgentId, AgentVisibilityMode>{};
     _supervisorMemberIds = configuration.supervisorMemberIds.toSet();
+    _turnSummariesEnabled = widget.session.turnSummariesEnabled;
 
     for (final agent in configuration.agents) {
       _labelControllers[agent.agentId] =
@@ -4672,6 +5102,20 @@ class _AgentStudioSheetState extends State<_AgentStudioSheet> {
                   'Configure the preset, the available agents, and how runs are delegated for this chat.',
                 ),
               ),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                value: _turnSummariesEnabled,
+                title: const Text('Chat summarizer'),
+                subtitle: const Text(
+                  'Generate hidden turn summaries with provenance for this session.',
+                ),
+                onChanged: (value) {
+                  setState(() {
+                    _turnSummariesEnabled = value;
+                  });
+                },
+              ),
+              const SizedBox(height: 8),
               DropdownButtonFormField<AgentPreset>(
                 initialValue: _preset,
                 decoration: const InputDecoration(labelText: 'Preset'),
@@ -4774,7 +5218,12 @@ class _AgentStudioSheetState extends State<_AgentStudioSheet> {
                   const Spacer(),
                   FilledButton(
                     onPressed: () {
-                      Navigator.of(context).pop(_buildConfiguration());
+                      Navigator.of(context).pop(
+                        _AgentStudioDraft(
+                          configuration: _buildConfiguration(),
+                          turnSummariesEnabled: _turnSummariesEnabled,
+                        ),
+                      );
                     },
                     child: const Text('Save'),
                   ),

@@ -145,6 +145,7 @@ class ApiClient {
     String? title,
     String? workspacePath,
     String? agentProfileId,
+    bool turnSummariesEnabled = false,
   }) async {
     final response = await _client.post(
       Uri.parse('$baseUrl/sessions'),
@@ -153,6 +154,7 @@ class ApiClient {
         'title': title,
         if (workspacePath != null) 'workspace_path': workspacePath,
         if (agentProfileId != null) 'agent_profile_id': agentProfileId,
+        'turn_summaries_enabled': turnSummariesEnabled,
       }),
     );
 
@@ -262,6 +264,27 @@ class ApiClient {
       throw Exception(
         'Failed to update agent configuration: ${response.body}',
       );
+    }
+
+    return SessionDetail.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<SessionDetail> updateTurnSummaries(
+    String sessionId, {
+    required bool enabled,
+  }) async {
+    final response = await _client.put(
+      Uri.parse('$baseUrl/sessions/$sessionId/turn-summaries'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode(<String, dynamic>{
+        'enabled': enabled,
+      }),
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception('Failed to update turn summaries: ${response.body}');
     }
 
     return SessionDetail.fromJson(

@@ -252,12 +252,14 @@ class ChatController extends ChangeNotifier {
   Future<void> createNewSessionWithProfile({
     String? workspacePath,
     String? agentProfileId,
+    bool turnSummariesEnabled = false,
   }) async {
     _setLoading(true);
     try {
       final session = await _apiClient.createSession(
         workspacePath: workspacePath,
         agentProfileId: agentProfileId,
+        turnSummariesEnabled: turnSummariesEnabled,
       );
       _errorText = null;
       await refreshSessions();
@@ -500,6 +502,60 @@ class ChatController extends ChangeNotifier {
       notifyListeners();
       return false;
     }
+  }
+
+  Future<bool> updateTurnSummariesEnabled(bool enabled) async {
+    final sessionId = _selectedSessionId;
+    if (sessionId == null) {
+      return false;
+    }
+
+    try {
+      _errorText = null;
+      final session = await _apiClient.updateTurnSummaries(
+        sessionId,
+        enabled: enabled,
+      );
+      _currentSession = _overlaySessionWithJobSnapshots(session);
+      await refreshSessions();
+      _reconcilePendingJobsForSession(_currentSession);
+      _trackPendingJobsFromSession(_currentSession);
+      notifyListeners();
+      return true;
+    } catch (error) {
+      _errorText = 'Failed to update turn summaries.\n$error';
+      notifyListeners();
+      return false;
+    }
+  }
+
+  Future<bool> updateAgentStudioSettings({
+    required AgentConfiguration configuration,
+    required bool turnSummariesEnabled,
+  }) async {
+    final currentSession = _currentSession;
+    if (currentSession == null) {
+      return false;
+    }
+
+    final configChanged =
+        currentSession.agentConfiguration.toJson().toString() !=
+            configuration.toJson().toString();
+    final turnSummariesChanged =
+        currentSession.turnSummariesEnabled != turnSummariesEnabled;
+
+    if (!configChanged && !turnSummariesChanged) {
+      return true;
+    }
+
+    if (configChanged && !await updateAgentConfiguration(configuration)) {
+      return false;
+    }
+    if (turnSummariesChanged &&
+        !await updateTurnSummariesEnabled(turnSummariesEnabled)) {
+      return false;
+    }
+    return true;
   }
 
   Future<bool> sendMessage(

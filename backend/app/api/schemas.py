@@ -30,6 +30,7 @@ from backend.app.domain.entities.chat_message import (
     ChatMessageStatus,
 )
 from backend.app.domain.entities.chat_session import ChatSession
+from backend.app.domain.entities.chat_turn_summary import ChatTurnSummary
 from backend.app.domain.entities.conversation_product import (
     ConversationProduct,
     derive_conversation_product,
@@ -68,6 +69,7 @@ class CreateSessionRequest(BaseModel):
     title: str | None = Field(default=None, max_length=120)
     workspace_path: str | None = None
     agent_profile_id: str | None = Field(default=None, max_length=120)
+    turn_summaries_enabled: bool = False
 
 
 class AgentProfileCreateRequest(BaseModel):
@@ -136,6 +138,10 @@ class AutoModeConfigRequest(BaseModel):
     enabled: bool = False
     max_turns: int = Field(default=0, ge=0)
     reviewer_prompt: str | None = Field(default=None, max_length=12000)
+
+
+class TurnSummaryConfigRequest(BaseModel):
+    enabled: bool = False
 
 
 class AgentDefinitionPayload(BaseModel):
@@ -528,6 +534,82 @@ class ChatMessageResponse(BaseModel):
         )
 
 
+class TurnSummarySourceMessageResponse(BaseModel):
+    message_id: str
+    role: ChatMessageRole
+    author_type: ChatMessageAuthorType
+    agent_id: AgentId
+    agent_type: AgentType
+    agent_label: str | None = None
+    content: str | None = None
+    status: ChatMessageStatus
+    created_at: datetime
+
+    @classmethod
+    def from_domain(
+        cls,
+        message: ChatMessage,
+    ) -> "TurnSummarySourceMessageResponse":
+        return cls(
+            message_id=message.id,
+            role=message.role,
+            author_type=message.author_type,
+            agent_id=message.agent_id,
+            agent_type=message.agent_type,
+            agent_label=message.agent_label,
+            content=message.content,
+            status=message.status,
+            created_at=message.created_at,
+        )
+
+
+class TurnSummaryResponse(BaseModel):
+    id: str
+    content: str
+    source_message_ids: list[str] = Field(default_factory=list)
+    source_messages: list[TurnSummarySourceMessageResponse] = Field(default_factory=list)
+    created_at: datetime
+    updated_at: datetime
+
+    @classmethod
+    def from_domain(
+        cls,
+        summary: ChatTurnSummary,
+        *,
+        messages_by_id: dict[str, ChatMessage],
+    ) -> "TurnSummaryResponse":
+        source_messages = (
+            [
+                TurnSummarySourceMessageResponse(
+                    message_id=message.message_id,
+                    role=message.role,
+                    author_type=message.author_type,
+                    agent_id=message.agent_id,
+                    agent_type=message.agent_type,
+                    agent_label=message.agent_label,
+                    content=message.content,
+                    status=message.status,
+                    created_at=message.created_at,
+                )
+                for message in summary.source_messages
+            ]
+            if summary.source_messages
+            else [
+                TurnSummarySourceMessageResponse.from_domain(message)
+                for message_id in summary.source_message_ids
+                if (message := messages_by_id.get(message_id)) is not None
+            ]
+        )
+        return cls(
+            id=summary.id,
+            content=summary.content,
+            source_message_ids=list(summary.source_message_ids),
+            source_messages=source_messages,
+            created_at=summary.created_at,
+            updated_at=summary.updated_at,
+        )
+
+
 class ConversationProductResponse(BaseModel):
     status_line: str
     description: str
@@ -552,6 +634,8 @@ class SessionSummaryResponse(BaseModel):
     archived_at: datetime | None = None
     workspace_path: str
     workspace_name: str
+    turn_summaries_enabled: bool = False
+    turn_summary_count: int = 0
     agent_profile_id: str
     agent_profile_name: str
     agent_profile_color: str
@@ -577,6 +661,7 @@ class SessionSummaryResponse(BaseModel):
         session: ChatSession,
         *,
         messages: list[ChatMessage],
+        turn_summaries: list[ChatTurnSummary] | None = None,
         jobs_by_id: dict[str, Job] | None = None,
     ) -> "SessionSummaryResponse":
         last_message = messages[-1] if messages else None
@@ -605,6 +690,8 @@ class SessionSummaryResponse(BaseModel):
             archived_at=session.archived_at,
             workspace_path=session.workspace_path,
             workspace_name=session.workspace_name,
+            turn_summaries_enabled=session.turn_summaries_enabled,
+            turn_summary_count=len(turn_summaries or []),
             agent_profile_id=session.agent_profile_id,
             agent_profile_name=session.agent_profile_name,
             agent_profile_color=session.agent_profile_color,
@@ -645,6 +732,7 @@ class SessionDetailResponse(BaseModel):
     archived_at: datetime | None = None
     workspace_path: str
     workspace_name: str
+    turn_summaries_enabled: bool = False
     agent_profile_id: str
     agent_profile_name: str
     agent_profile_color: str
@@ -664,6 +752,7 @@ class SessionDetailResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     messages: list[ChatMessageResponse]
+    turn_summaries: list[TurnSummaryResponse] = Field(default_factory=list)
 
     @classmethod
     def from_domain(
@@ -671,6 +760,7 @@ class SessionDetailResponse(BaseModel):
         session: ChatSession,
         *,
         messages: list[ChatMessage],
+        turn_summaries: list[ChatTurnSummary] | None = None,
         jobs_by_id: dict[str, Job] | None = None,
         run_configurations_by_id: dict[str, AgentConfiguration] | None = None,
     ) -> "SessionDetailResponse":
@@ -686,12 +776,14 @@ class SessionDetailResponse(BaseModel):
             jobs_by_id=jobs_by_id,
             run_configurations_by_id=run_configurations_by_id,
         )
+        messages_by_id = {message.id: message for message in messages}
         return cls(
             id=session.id,
             title=session.title,
             archived_at=session.archived_at,
             workspace_path=session.workspace_path,
             workspace_name=session.workspace_name,
+            turn_summaries_enabled=session.turn_summaries_enabled,
             agent_profile_id=session.agent_profile_id,
             agent_profile_name=session.agent_profile_name,
             agent_profile_color=session.agent_profile_color,
@@ -732,6 +824,13 @@ class SessionDetailResponse(BaseModel):
                     job=jobs_by_id.get(message.job_id) if jobs_by_id and message.job_id else None,
                 )
                 for message in messages
+            ],
+            turn_summaries=[
+                TurnSummaryResponse.from_domain(
+                    summary,
+                    messages_by_id=messages_by_id,
+                )
+                for summary in (turn_summaries or [])
             ],
         )
 

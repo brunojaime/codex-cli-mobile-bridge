@@ -3,6 +3,7 @@ import 'package:codex_mobile_frontend/src/models/chat_message.dart';
 import 'package:codex_mobile_frontend/src/models/chat_session_summary.dart';
 import 'package:codex_mobile_frontend/src/models/conversation_product.dart';
 import 'package:codex_mobile_frontend/src/models/current_run_execution.dart';
+import 'package:codex_mobile_frontend/src/models/chat_turn_summary.dart';
 import 'package:codex_mobile_frontend/src/models/reviewer_lifecycle_state.dart';
 import 'package:codex_mobile_frontend/src/models/session_detail.dart';
 import 'package:codex_mobile_frontend/src/models/workspace.dart';
@@ -225,6 +226,77 @@ void main() {
     );
 
     expect(find.textContaining('Supervisor queued next'), findsOneWidget);
+  });
+
+  testWidgets('turn summaries tab shows summary content and provenance',
+      (WidgetTester tester) async {
+    await _pumpChatScreen(
+      tester,
+      width: 800,
+      session: _buildSession(
+        messages: const <ChatMessage>[],
+        turnSummariesEnabled: true,
+        turnSummaries: <ChatTurnSummary>[
+          ChatTurnSummary(
+            id: 'turn-summary-1',
+            content: 'The team enabled the summarizer and added provenance UI.',
+            sourceMessageIds: <String>['user-1', 'assistant-1'],
+            sourceMessages: <ChatTurnSummarySourceMessage>[
+              ChatTurnSummarySourceMessage(
+                messageId: 'user-1',
+                isUser: true,
+                authorType: ChatMessageAuthorType.human,
+                agentId: AgentId.user,
+                agentType: AgentType.human,
+                agentLabel: 'User',
+                content: 'Please add a summarizer tab with provenance details.',
+                status: ChatMessageStatus.completed,
+                createdAt: DateTime.utc(2026, 1, 1, 12, 1),
+              ),
+              ChatTurnSummarySourceMessage(
+                messageId: 'assistant-1',
+                isUser: false,
+                authorType: ChatMessageAuthorType.assistant,
+                agentId: AgentId.generator,
+                agentType: AgentType.generator,
+                agentLabel: 'Generator',
+                content:
+                    'Implemented the turn summary view and stored immutable provenance snapshots.',
+                status: ChatMessageStatus.completed,
+                createdAt: DateTime.utc(2026, 1, 1, 12, 2),
+              ),
+            ],
+            createdAt: DateTime.utc(2026, 1, 1, 12, 3),
+            updatedAt: DateTime.utc(2026, 1, 1, 12, 3),
+          ),
+        ],
+      ),
+    );
+
+    await tester.tap(find.byTooltip('Show summary tabs'));
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+      find.text('The team enabled the summarizer and added provenance UI.'),
+      120,
+      scrollable: _chatBodyScrollable(),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text('The team enabled the summarizer and added provenance UI.'),
+      findsOneWidget,
+    );
+    expect(find.text('Provenance'), findsOneWidget);
+    expect(find.textContaining('User'), findsWidgets);
+    expect(find.textContaining('Generator'), findsWidgets);
+    expect(
+      find.text('Please add a summarizer tab with provenance details.'),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining('Implemented the turn summary view'),
+      findsOneWidget,
+    );
   });
 
   testWidgets(
@@ -1113,6 +1185,8 @@ SessionDetail _buildSession({
   required List<ChatMessage> messages,
   AgentDisplayMode displayMode = AgentDisplayMode.showAll,
   ConversationProduct? conversationProduct,
+  bool turnSummariesEnabled = false,
+  List<ChatTurnSummary> turnSummaries = const <ChatTurnSummary>[],
 }) {
   final configuration = kDefaultAgentConfiguration.copyWith(
     preset: AgentPreset.review,
@@ -1140,12 +1214,14 @@ SessionDetail _buildSession({
     archivedAt: archivedAt,
     workspacePath: workspacePath,
     workspaceName: workspaceName,
+    turnSummariesEnabled: turnSummariesEnabled,
     agentProfileId: 'default',
     agentProfileName: 'Generator',
     agentProfileColor: '#55D6BE',
     createdAt: now,
     updatedAt: now,
     messages: messages,
+    turnSummaries: turnSummaries,
     agentConfiguration: configuration,
     conversationProduct: conversationProduct,
     autoModeEnabled: true,

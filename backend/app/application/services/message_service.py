@@ -46,6 +46,8 @@ from backend.app.domain.entities.agent_profile import (
 )
 from backend.app.domain.entities.agent_run import AgentRun
 from backend.app.domain.entities.chat_session import ChatSession
+from backend.app.domain.entities.chat_turn_summary import ChatTurnSummary
+from backend.app.domain.entities.chat_turn_summary import ChatTurnSummarySourceMessage
 from backend.app.domain.entities.job import Job, JobConversationKind, JobStatus
 from backend.app.domain.entities.workspace import Workspace
 from backend.app.domain.repositories.chat_repository import (
@@ -58,6 +60,7 @@ from backend.app.infrastructure.transcription.base import AudioTranscriber, Audi
 
 
 DocumentKind = Literal["audio", "docx", "image", "text"]
+_TURN_SUMMARY_TRIGGER_MESSAGE_COUNT = 4
 
 _AUDIO_SUFFIXES = {
     ".aac",
@@ -227,6 +230,7 @@ class MessageService:
         title: str | None = None,
         workspace_path: str | None = None,
         agent_profile_id: str | None = None,
+        turn_summaries_enabled: bool = False,
         title_is_placeholder: bool | None = None,
     ) -> ChatSession:
         workspace = self._resolve_workspace(workspace_path)
@@ -238,6 +242,8 @@ class MessageService:
             title=resolved_title,
             workspace_path=workspace.path,
             workspace_name=workspace.name,
+            turn_summaries_enabled=turn_summaries_enabled,
+            turn_summary_checkpoint_initialized=turn_summaries_enabled,
             title_is_placeholder=(
                 title_is_placeholder if title_is_placeholder is not None else title is None
             ),
@@ -251,6 +257,9 @@ class MessageService:
 
     def list_sessions(self) -> list[ChatSession]:
         return self._repository.list_sessions()
+
+    def list_turn_summaries(self, session_id: str) -> list[ChatTurnSummary]:
+        return self._repository.list_turn_summaries(session_id)
 
     def list_agent_profiles(self) -> list[AgentProfile]:
         builtins = builtin_agent_profiles_by_id()
@@ -398,6 +407,27 @@ class MessageService:
         session.auto_turn_index = 0
         session.active_agent_turn_index = 0
         session.active_agent_run_id = None
+        session.touch()
+        self._repository.save_session(session)
+        return session
+
+    def update_turn_summaries(
+        self,
+        *,
+        session_id: str,
+        enabled: bool,
+    ) -> ChatSession:
+        session = self.get_session(session_id)
+        if session is None:
+            raise ValueError(f"Session {session_id} was not found.")
+        self._ensure_session_can_be_reconfigured(session)
+
+        if enabled and not session.turn_summaries_enabled:
+            session.turn_summary_checkpoint_message_id = (
+                self._latest_eligible_turn_summary_message_id(session.id)
+            )
+            session.turn_summary_checkpoint_initialized = True
+        session.turn_summaries_enabled = enabled
         session.touch()
         self._repository.save_session(session)
         return session
@@ -1195,6 +1225,7 @@ class MessageService:
                                     run_id=job.run_id,
                                 ),
                             )
+                        self._maybe_generate_turn_summary(session=session, job=job)
                     job.auto_chain_processed = True
                     self._repository.save_job(job)
                 return self._repository.get_job(job_id) or job
@@ -3073,6 +3104,156 @@ class MessageService:
             lines.append("")
             lines.append("Summary requested for the current turn window.")
         return "\n".join(lines).strip() or "Supervisor completed the turn."
+
+    def _maybe_generate_turn_summary(
+        self,
+        *,
+        session: ChatSession,
+        job: Job,
+    ) -> None:
+        if not session.turn_summaries_enabled or not job.status.is_terminal:
+            return
+
+        source_messages = self._pending_turn_summary_messages(session.id)
+        if len(source_messages) < _TURN_SUMMARY_TRIGGER_MESSAGE_COUNT:
+            return
+
+        content = self._generate_turn_summary_with_codex(session, source_messages)
+        if content is None:
+            return
+
+        summary = ChatTurnSummary(
+            id=str(uuid4()),
+            session_id=session.id,
+            content=content,
+            source_message_ids=tuple(message.id for message in source_messages),
+            source_messages=tuple(
+                ChatTurnSummarySourceMessage.from_message(message)
+                for message in source_messages
+            ),
+        )
+        self._repository.save_turn_summary(summary)
+        session.turn_summary_checkpoint_message_id = source_messages[-1].id
+        session.turn_summary_checkpoint_initialized = True
+        session.touch()
+        self._repository.save_session(session)
+
+    def _pending_turn_summary_messages(
+        self,
+        session_id: str,
+    ) -> list[ChatMessage]:
+        session = self._repository.get_session(session_id)
+        messages = self._eligible_messages_for_turn_summary(session_id)
+        checkpoint_message_id = (
+            session.turn_summary_checkpoint_message_id if session is not None else None
+        ) or self._latest_turn_summary_source_message_id(session_id)
+        if checkpoint_message_id is None:
+            return messages
+
+        start_index = next(
+            (
+                index + 1
+                for index, message in enumerate(messages)
+                if message.id == checkpoint_message_id
+            ),
+            0,
+        )
+        return messages[start_index:]
+
+    def _latest_turn_summary_source_message_id(
+        self,
+        session_id: str,
+    ) -> str | None:
+        summaries = self._repository.list_turn_summaries(session_id)
+        if not summaries:
+            return None
+        source_message_ids = summaries[-1].source_message_ids
+        if not source_message_ids:
+            return None
+        return source_message_ids[-1]
+
+    def _eligible_messages_for_turn_summary(
+        self,
+        session_id: str,
+    ) -> list[ChatMessage]:
+        return [
+            message
+            for message in self._repository.list_messages(session_id)
+            if message.content.strip()
+            and message.status in {
+                ChatMessageStatus.COMPLETED,
+                ChatMessageStatus.FAILED,
+                ChatMessageStatus.CANCELLED,
+            }
+        ]
+
+    def _latest_eligible_turn_summary_message_id(
+        self,
+        session_id: str,
+    ) -> str | None:
+        eligible_messages = self._eligible_messages_for_turn_summary(session_id)
+        if not eligible_messages:
+            return None
+        return eligible_messages[-1].id
+
+    def _generate_turn_summary_with_codex(
+        self,
+        session: ChatSession,
+        source_messages: list[ChatMessage],
+    ) -> str | None:
+        prompt = self._build_turn_summary_prompt(source_messages)
+        if not prompt:
+            return None
+
+        try:
+            job_id = self._execution_provider.execute(
+                prompt,
+                serial_key=f"{session.id}:turn-summary",
+                workdir=session.workspace_path,
+            )
+        except Exception:
+            return None
+
+        deadline = time.monotonic() + 4.0
+        snapshot = self._execution_provider.get_snapshot(job_id)
+        while not snapshot.status.is_terminal and time.monotonic() < deadline:
+            time.sleep(0.05)
+            snapshot = self._execution_provider.get_snapshot(job_id)
+
+        if snapshot.status != JobStatus.COMPLETED:
+            return None
+
+        normalized = (snapshot.response or "").strip()
+        return normalized or None
+
+    def _build_turn_summary_prompt(
+        self,
+        messages: list[ChatMessage],
+    ) -> str:
+        transcript_lines: list[str] = []
+        for message in messages:
+            agent_label = (
+                message.agent_label.strip()
+                if message.agent_label and message.agent_label.strip()
+                else "User"
+                if message.role == ChatMessageRole.USER
+                else message.agent_id.value.replace("_", " ").title()
+            )
+            transcript_lines.append(
+                f"{agent_label} [{message.agent_id.value}/{message.role.value}/{message.status.value}]: "
+                f"{' '.join(message.content.split()).strip()}"
+            )
+
+        if not transcript_lines:
+            return ""
+
+        return (
+            "Summarize these recent chat updates for future context. "
+            "Explain what happened, what changed, current state, open risks, and the next likely step. "
+            "Use plain text and keep it concise but specific.\n\n"
+            "Updates:\n"
+            + "\n\n".join(transcript_lines)
+        )
 
     def _derive_title(self, message: str) -> str:
         normalized = " ".join(message.split())

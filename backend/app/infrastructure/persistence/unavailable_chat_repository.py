@@ -4,6 +4,7 @@ from backend.app.domain.entities.agent_run import AgentRun
 from backend.app.domain.entities.agent_profile import AgentProfile
 from backend.app.domain.entities.chat_message import ChatMessage
 from backend.app.domain.entities.chat_session import ChatSession
+from backend.app.domain.entities.chat_turn_summary import ChatTurnSummary
 from backend.app.domain.entities.job import Job
 from backend.app.domain.entities.workspace import Workspace
 from backend.app.domain.repositories.chat_repository import (
@@ -48,6 +49,12 @@ class UnavailableChatRepository(ChatRepository):
         raise PersistenceUnavailableError(self._issue)
 
     def list_sessions(self) -> list[ChatSession]:
+        raise PersistenceUnavailableError(self._issue)
+
+    def save_turn_summary(self, summary: ChatTurnSummary) -> None:
+        raise PersistenceUnavailableError(self._issue)
+
+    def list_turn_summaries(self, session_id: str) -> list[ChatTurnSummary]:
         raise PersistenceUnavailableError(self._issue)
 
     def save_agent_profile(self, profile: AgentProfile) -> None:

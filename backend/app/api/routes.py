@@ -30,6 +30,7 @@ from backend.app.api.schemas import (
     SessionDetailResponse,
     SessionSummaryResponse,
     SpeechRequest,
+    TurnSummaryConfigRequest,
     WorkspaceResponse,
 )
 from backend.app.application.services.message_service import (
@@ -439,6 +440,7 @@ async def list_sessions(
             SessionSummaryResponse.from_domain(
                 session,
                 messages=messages,
+                turn_summaries=service.list_turn_summaries(session.id),
                 jobs_by_id=jobs_by_id,
             )
         )
@@ -456,10 +458,15 @@ async def create_session(
             title=payload.title,
             workspace_path=payload.workspace_path,
             agent_profile_id=payload.agent_profile_id,
+            turn_summaries_enabled=payload.turn_summaries_enabled,
         )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    return SessionDetailResponse.from_domain(session, messages=[])
+    return SessionDetailResponse.from_domain(
+        session,
+        messages=[],
+        turn_summaries=[],
+    )
 
 
 @router.get("/sessions/{session_id}", response_model=SessionDetailResponse)
@@ -484,6 +491,7 @@ async def get_session(
     return SessionDetailResponse.from_domain(
         refreshed_session,
         messages=messages,
+        turn_summaries=service.list_turn_summaries(session_id),
         jobs_by_id=jobs_by_id,
         run_configurations_by_id=_run_configurations_by_id_for_session(service, session_id),
     )
@@ -508,6 +516,7 @@ async def update_session_archive_state(
     return SessionDetailResponse.from_domain(
         session,
         messages=messages,
+        turn_summaries=service.list_turn_summaries(session_id),
         jobs_by_id=_jobs_by_id_for_messages(service, messages),
         run_configurations_by_id=_run_configurations_by_id_for_session(service, session_id),
     )
@@ -554,6 +563,7 @@ async def update_auto_mode(
     return SessionDetailResponse.from_domain(
         session,
         messages=messages,
+        turn_summaries=service.list_turn_summaries(session_id),
         jobs_by_id=_jobs_by_id_for_messages(service, messages),
         run_configurations_by_id=_run_configurations_by_id_for_session(service, session_id),
     )
@@ -580,6 +590,7 @@ async def update_agent_configuration(
     return SessionDetailResponse.from_domain(
         session,
         messages=messages,
+        turn_summaries=service.list_turn_summaries(session_id),
         jobs_by_id=_jobs_by_id_for_messages(service, messages),
         run_configurations_by_id=_run_configurations_by_id_for_session(service, session_id),
     )
@@ -606,6 +617,34 @@ async def apply_agent_profile_to_session(
     return SessionDetailResponse.from_domain(
         session,
         messages=messages,
+        turn_summaries=service.list_turn_summaries(session_id),
+        jobs_by_id=_jobs_by_id_for_messages(service, messages),
+        run_configurations_by_id=_run_configurations_by_id_for_session(service, session_id),
+    )
+
+
+@router.put("/sessions/{session_id}/turn-summaries", response_model=SessionDetailResponse)
+async def update_turn_summaries(
+    session_id: str,
+    payload: TurnSummaryConfigRequest,
+    service: MessageService = Depends(get_message_service),
+) -> SessionDetailResponse:
+    try:
+        session = await run_in_threadpool(
+            service.update_turn_summaries,
+            session_id=session_id,
+            enabled=payload.enabled,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    messages = service.list_messages(session_id)
+    return SessionDetailResponse.from_domain(
+        session,
+        messages=messages,
+        turn_summaries=service.list_turn_summaries(session_id),
         jobs_by_id=_jobs_by_id_for_messages(service, messages),
         run_configurations_by_id=_run_configurations_by_id_for_session(service, session_id),
     )
@@ -637,6 +676,7 @@ async def recover_message(
     return SessionDetailResponse.from_domain(
         session,
         messages=messages,
+        turn_summaries=service.list_turn_summaries(session_id),
         jobs_by_id=_jobs_by_id_for_messages(service, messages),
         run_configurations_by_id=_run_configurations_by_id_for_session(service, session_id),
     )

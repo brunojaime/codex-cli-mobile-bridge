@@ -1,5 +1,6 @@
 import 'agent_configuration.dart';
 import 'chat_message.dart';
+import 'chat_turn_summary.dart';
 import 'conversation_product.dart';
 import 'current_run_execution.dart';
 import 'reviewer_lifecycle_state.dart';
@@ -11,12 +12,14 @@ class SessionDetail {
     this.archivedAt,
     required this.workspacePath,
     required this.workspaceName,
+    this.turnSummariesEnabled = false,
     this.agentProfileId = 'default',
     this.agentProfileName = 'Generator',
     this.agentProfileColor = '#55D6BE',
     required this.createdAt,
     required this.updatedAt,
     required this.messages,
+    this.turnSummaries = const <ChatTurnSummary>[],
     this.agentConfiguration = kDefaultAgentConfiguration,
     this.providerSessionId,
     this.reviewerProviderSessionId,
@@ -37,6 +40,7 @@ class SessionDetail {
   final DateTime? archivedAt;
   final String workspacePath;
   final String workspaceName;
+  final bool turnSummariesEnabled;
   final String agentProfileId;
   final String agentProfileName;
   final String agentProfileColor;
@@ -56,6 +60,7 @@ class SessionDetail {
   final DateTime createdAt;
   final DateTime updatedAt;
   final List<ChatMessage> messages;
+  final List<ChatTurnSummary> turnSummaries;
   bool get isArchived => archivedAt != null;
 
   SessionDetail copyWith({
@@ -63,6 +68,7 @@ class SessionDetail {
     DateTime? archivedAt,
     String? workspacePath,
     String? workspaceName,
+    bool? turnSummariesEnabled,
     String? agentProfileId,
     String? agentProfileName,
     String? agentProfileColor,
@@ -82,6 +88,7 @@ class SessionDetail {
     DateTime? createdAt,
     DateTime? updatedAt,
     List<ChatMessage>? messages,
+    List<ChatTurnSummary>? turnSummaries,
   }) {
     return SessionDetail(
       id: id,
@@ -89,12 +96,14 @@ class SessionDetail {
       archivedAt: archivedAt ?? this.archivedAt,
       workspacePath: workspacePath ?? this.workspacePath,
       workspaceName: workspaceName ?? this.workspaceName,
+      turnSummariesEnabled: turnSummariesEnabled ?? this.turnSummariesEnabled,
       agentProfileId: agentProfileId ?? this.agentProfileId,
       agentProfileName: agentProfileName ?? this.agentProfileName,
       agentProfileColor: agentProfileColor ?? this.agentProfileColor,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
       messages: messages ?? this.messages,
+      turnSummaries: turnSummaries ?? this.turnSummaries,
       providerSessionId: providerSessionId ?? this.providerSessionId,
       reviewerProviderSessionId:
           reviewerProviderSessionId ?? this.reviewerProviderSessionId,
@@ -114,6 +123,8 @@ class SessionDetail {
 
   factory SessionDetail.fromJson(Map<String, dynamic> json) {
     final rawMessages = json['messages'] as List<dynamic>? ?? <dynamic>[];
+    final rawTurnSummaries =
+        json['turn_summaries'] as List<dynamic>? ?? <dynamic>[];
     final rawRecentRuns = json['recent_runs'] as List<dynamic>? ?? <dynamic>[];
     final rawAgentConfiguration = json['agent_configuration'];
     return SessionDetail(
@@ -124,6 +135,7 @@ class SessionDetail {
           : null,
       workspacePath: json['workspace_path'] as String,
       workspaceName: json['workspace_name'] as String,
+      turnSummariesEnabled: json['turn_summaries_enabled'] as bool? ?? false,
       agentProfileId: json['agent_profile_id'] as String? ?? 'default',
       agentProfileName: json['agent_profile_name'] as String? ?? 'Generator',
       agentProfileColor: json['agent_profile_color'] as String? ?? '#55D6BE',
@@ -166,6 +178,10 @@ class SessionDetail {
       messages: rawMessages
           .map((item) => ChatMessage.fromJson(item as Map<String, dynamic>))
           .toList(),
+      turnSummaries: rawTurnSummaries
+          .whereType<Map<String, dynamic>>()
+          .map(ChatTurnSummary.fromJson)
+          .toList(growable: false),
     );
   }
 }

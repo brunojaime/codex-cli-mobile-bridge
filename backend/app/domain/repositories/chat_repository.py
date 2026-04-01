@@ -4,6 +4,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
 from backend.app.domain.entities.chat_message import ChatMessage
+from backend.app.domain.entities.chat_turn_summary import ChatTurnSummary
 from backend.app.domain.entities.agent_run import AgentRun
 from backend.app.domain.entities.agent_profile import AgentProfile
 from backend.app.domain.entities.chat_session import ChatSession
@@ -96,6 +97,14 @@ class ChatRepository(ABC):
 
     @abstractmethod
     def list_sessions(self) -> list[ChatSession]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def save_turn_summary(self, summary: ChatTurnSummary) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def list_turn_summaries(self, session_id: str) -> list[ChatTurnSummary]:
         raise NotImplementedError
 
     @abstractmethod
