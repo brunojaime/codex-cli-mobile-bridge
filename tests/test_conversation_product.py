@@ -301,7 +301,7 @@ def test_product_sanitizes_image_attachment_failures() -> None:
 
     assert product.latest_update is None
     assert product.current_focus == (
-        "Generator failed: Image attachments are disabled on this server."
+        "Generator failed: The original image attachment is no longer available on this server. Reattach it to continue."
     )
     assert product.description == product.current_focus
 

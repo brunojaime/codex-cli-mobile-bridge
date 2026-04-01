@@ -10,8 +10,10 @@ from backend.app.domain.entities.chat_message import (
     ChatMessageRole,
     ChatMessageStatus,
 )
-
 from backend.app.domain.entities.job import utc_now
+from backend.app.domain.entities.text_sanitization import (
+    sanitize_image_attachment_error_text,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,7 +37,7 @@ class ChatTurnSummarySourceMessage:
             agent_id=message.agent_id,
             agent_type=message.agent_type,
             agent_label=message.agent_label,
-            content=message.content,
+            content=sanitize_image_attachment_error_text(message.content),
             status=message.status,
             created_at=message.created_at,
         )

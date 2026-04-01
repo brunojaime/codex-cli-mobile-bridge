@@ -21,6 +21,9 @@ from backend.app.domain.entities.current_run import (
     RunStageId,
     RunStageState,
 )
+from backend.app.domain.entities.text_sanitization import (
+    sanitize_image_attachment_error_text,
+)
 
 
 @dataclass(slots=True, frozen=True)
@@ -55,14 +58,6 @@ _NEXT_STEP_STATES = (
     RunStageState.NOT_SCHEDULED,
     RunStageState.WAITING,
 )
-_IMAGE_ERROR_MARKERS = (
-    "attached image",
-    "could not read the local image",
-    "failed to read image at",
-    "codex-remote-retry-assets",
-)
-
-
 def derive_conversation_product(
     session: ChatSession,
     *,
@@ -314,9 +309,4 @@ def _compact_text(value: str | None, *, limit: int) -> str | None:
 
 
 def _sanitize_product_text(value: str | None) -> str | None:
-    if value is None:
-        return None
-    lowered = value.lower()
-    if any(marker in lowered for marker in _IMAGE_ERROR_MARKERS):
-        return "Image attachments are disabled on this server."
-    return value
+    return sanitize_image_attachment_error_text(value)

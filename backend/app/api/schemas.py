@@ -48,6 +48,9 @@ from backend.app.domain.entities.reviewer_status import (
     ReviewerLifecycleState,
     derive_reviewer_lifecycle_state,
 )
+from backend.app.domain.entities.text_sanitization import (
+    sanitize_image_attachment_error_text,
+)
 from backend.app.domain.repositories.chat_repository import PersistenceDiagnosticIssue
 
 
@@ -557,7 +560,7 @@ class TurnSummarySourceMessageResponse(BaseModel):
             agent_id=message.agent_id,
             agent_type=message.agent_type,
             agent_label=message.agent_label,
-            content=message.content,
+            content=sanitize_image_attachment_error_text(message.content),
             status=message.status,
             created_at=message.created_at,
         )
@@ -587,7 +590,7 @@ class TurnSummaryResponse(BaseModel):
                     agent_id=message.agent_id,
                     agent_type=message.agent_type,
                     agent_label=message.agent_label,
-                    content=message.content,
+                    content=sanitize_image_attachment_error_text(message.content),
                     status=message.status,
                     created_at=message.created_at,
                 )
@@ -602,7 +605,7 @@ class TurnSummaryResponse(BaseModel):
         )
         return cls(
             id=summary.id,
-            content=summary.content,
+            content=sanitize_image_attachment_error_text(summary.content) or "",
             source_message_ids=list(summary.source_message_ids),
             source_messages=source_messages,
             created_at=summary.created_at,

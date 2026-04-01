@@ -10,6 +10,7 @@ from backend.app.application.services.message_service import MessageService
 from backend.app.api.schemas import TurnSummaryResponse
 from backend.app.domain.entities.agent_configuration import AgentId, AgentType
 from backend.app.domain.entities.chat_message import (
+    ChatMessage,
     ChatMessageRole,
     ChatMessageAuthorType,
     ChatMessageStatus,
@@ -352,6 +353,74 @@ def test_turn_summary_response_falls_back_to_live_message_content_for_legacy_sum
     )
 
     assert response.source_messages[0].content == "Fallback live content."
+
+
+def test_turn_summary_response_sanitizes_stale_image_attachment_errors() -> None:
+    timestamp = utc_now()
+    raw_error = (
+        "Codex could not read the local image at "
+        "/tmp/codex-remote-retry-assets/example.jpg: "
+        "failed to read image at /tmp/codex-remote-retry-assets/example.jpg: "
+        "No such file or directory (os error 2)"
+    )
+    summary = ChatTurnSummary(
+        id="summary-with-image-error",
+        session_id="session-1",
+        content=raw_error,
+        source_message_ids=("message-1",),
+        source_messages=(
+            ChatTurnSummarySourceMessage(
+                message_id="message-1",
+                role=ChatMessageRole.ASSISTANT,
+                author_type=ChatMessageAuthorType.ASSISTANT,
+                agent_id=AgentId.GENERATOR,
+                agent_type=AgentType.GENERATOR,
+                agent_label="Generator",
+                content=raw_error,
+                status=ChatMessageStatus.FAILED,
+                created_at=timestamp,
+            ),
+        ),
+        created_at=timestamp,
+        updated_at=timestamp,
+    )
+
+    response = TurnSummaryResponse.from_domain(summary, messages_by_id={})
+
+    expected = (
+        "The original image attachment is no longer available on this server. "
+        "Reattach it to continue."
+    )
+    assert response.content == expected
+    assert response.source_messages[0].content == expected
+
+
+def test_turn_summary_prompt_sanitizes_stale_image_attachment_errors() -> None:
+    with TemporaryDirectory() as temp_dir:
+        service = _build_service(temp_dir)
+        prompt = service._build_turn_summary_prompt(
+            [
+                ChatMessage(
+                    id="message-1",
+                    session_id="session-1",
+                    role=ChatMessageRole.ASSISTANT,
+                    author_type=ChatMessageAuthorType.ASSISTANT,
+                    content=(
+                        "Codex could not read the local image at "
+                        "/tmp/codex-remote-retry-assets/example.jpg"
+                    ),
+                    status=ChatMessageStatus.FAILED,
+                    agent_id=AgentId.GENERATOR,
+                    agent_type=AgentType.GENERATOR,
+                ),
+            ]
+        )
+
+        assert "codex-remote-retry-assets" not in prompt
+        assert (
+            "The original image attachment is no longer available on this server. "
+            "Reattach it to continue."
+        ) in prompt
 
 
 def test_placeholder_session_title_is_generated_after_four_user_turns() -> None:

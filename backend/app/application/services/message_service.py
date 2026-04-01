@@ -49,6 +49,9 @@ from backend.app.domain.entities.chat_session import ChatSession
 from backend.app.domain.entities.chat_turn_summary import ChatTurnSummary
 from backend.app.domain.entities.chat_turn_summary import ChatTurnSummarySourceMessage
 from backend.app.domain.entities.job import Job, JobConversationKind, JobStatus
+from backend.app.domain.entities.text_sanitization import (
+    sanitize_image_attachment_error_text,
+)
 from backend.app.domain.entities.workspace import Workspace
 from backend.app.domain.repositories.chat_repository import (
     ChatRepository,
@@ -3239,9 +3242,10 @@ class MessageService:
                 if message.role == ChatMessageRole.USER
                 else message.agent_id.value.replace("_", " ").title()
             )
+            content = sanitize_image_attachment_error_text(message.content)
             transcript_lines.append(
                 f"{agent_label} [{message.agent_id.value}/{message.role.value}/{message.status.value}]: "
-                f"{' '.join(message.content.split()).strip()}"
+                f"{' '.join((content or '').split()).strip()}"
             )
 
         if not transcript_lines:
