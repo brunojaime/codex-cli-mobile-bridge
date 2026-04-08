@@ -1,0 +1,1 @@
+"""OneNote Connect skill scripts."""
