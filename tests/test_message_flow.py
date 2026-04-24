@@ -414,6 +414,7 @@ def _build_controlled_message_service(
     projects_root: str,
     *,
     barrier_agent_id: AgentId,
+    follow_up_reconcile_interval_seconds: float | None = None,
 ) -> tuple[_BarrierLaunchMessageService, _ControlledExecutionProvider, InMemoryChatRepository]:
     repository = InMemoryChatRepository(projects_root=projects_root)
     provider = _ControlledExecutionProvider()
@@ -423,6 +424,7 @@ def _build_controlled_message_service(
         default_workspace_path=projects_root,
         audio_transcriber=DisabledAudioTranscriber(),
         barrier_agent_id=barrier_agent_id,
+        follow_up_reconcile_interval_seconds=follow_up_reconcile_interval_seconds,
     )
     return service, provider, repository
 
@@ -431,6 +433,7 @@ def _build_watched_controlled_message_service(
     projects_root: str,
     *,
     barrier_agent_id: AgentId,
+    follow_up_reconcile_interval_seconds: float | None = None,
 ) -> tuple[_BarrierLaunchMessageService, _WatchedControlledExecutionProvider, InMemoryChatRepository]:
     repository = InMemoryChatRepository(projects_root=projects_root)
     provider = _WatchedControlledExecutionProvider()
@@ -440,6 +443,7 @@ def _build_watched_controlled_message_service(
         default_workspace_path=projects_root,
         audio_transcriber=DisabledAudioTranscriber(),
         barrier_agent_id=barrier_agent_id,
+        follow_up_reconcile_interval_seconds=follow_up_reconcile_interval_seconds,
     )
     return service, provider, repository
 
@@ -4319,24 +4323,31 @@ def test_chat_message_recovery_metadata_rejects_invalid_combinations() -> None:
         retry_message.validate_recovery_metadata()
 
 
-def test_session_read_recovers_reserved_reviewer_follow_up_idempotently() -> None:
-    client, container = build_session_client_with_container()
-    try:
-        session_response = client.post("/sessions", json={"title": "Recover reviewer"})
-        assert session_response.status_code == 201
-        session_id = session_response.json()["id"]
-
-        message_response = client.post(
-            f"/sessions/{session_id}/messages",
-            json={"message": "Ship the recovery path"},
+def test_session_reads_do_not_recover_reserved_reviewer_follow_up() -> None:
+    with TemporaryDirectory() as temp_dir:
+        workspace = Path(temp_dir) / "repo"
+        workspace.mkdir()
+        service, provider, repository = _build_controlled_message_service(
+            temp_dir,
+            barrier_agent_id=AgentId.REVIEWER,
         )
-        assert message_response.status_code == 202
-        primary_job = wait_for_job(client, message_response.json()["job_id"])
-        run_id = primary_job["run_id"]
-        assert run_id is not None
 
-        repository = container.message_service._repository
-        session = repository.get_session(session_id)
+        session = service.create_session(workspace_path=str(workspace))
+        configuration = session.agent_configuration.normalized()
+        configuration.preset = AgentPreset.REVIEW
+        configuration.agents[AgentId.GENERATOR].max_turns = 1
+        configuration.agents[AgentId.REVIEWER].enabled = False
+        configuration.agents[AgentId.SUMMARY].enabled = False
+        service.update_agent_configuration(session_id=session.id, configuration=configuration)
+
+        initial_job = service.submit_message(
+            "Ship the recovery path.",
+            session_id=session.id,
+        )
+        provider.complete_job(initial_job.id, response="Initial generator response.")
+        service.get_job(initial_job.id)
+
+        session = repository.get_session(session.id)
         assert session is not None
         session.agent_configuration = build_agent_configuration_domain(
             preset="review",
@@ -4344,70 +4355,53 @@ def test_session_read_recovers_reserved_reviewer_follow_up_idempotently() -> Non
             summary_enabled=False,
         )
         session.agent_configuration.agents[AgentId.GENERATOR].max_turns = 1
-        session.active_agent_run_id = run_id
+        session.active_agent_run_id = initial_job.run_id
         session.touch()
         repository.save_session(session)
 
         reviewer_definition = session.agent_configuration.agents[AgentId.REVIEWER]
-        reviewer_placeholder = ChatMessage(
-            id="reserved-reviewer",
-            session_id=session_id,
-            role=ChatMessageRole.USER,
-            author_type=ChatMessageAuthorType.REVIEWER_CODEX,
-            content="",
-            status=ChatMessageStatus.RESERVED,
-            agent_id=AgentId.REVIEWER,
-            agent_label=reviewer_definition.label,
-            visibility=reviewer_definition.visibility,
-            trigger_source=AgentTriggerSource.GENERATOR,
-            run_id=run_id,
-            dedupe_key=f"run:{run_id}:reviewer:1",
-        )
-        repository.reserve_message(reviewer_placeholder)
-
-        session_payload = wait_for_session(
-            client,
-            session_id,
-            predicate=lambda payload: any(
-                message["id"] == "reserved-reviewer"
-                and message["status"] == "completed"
-                and message["job_id"] is not None
-                for message in payload["messages"]
+        repository.reserve_message(
+            ChatMessage(
+                id="reserved-reviewer",
+                session_id=session.id,
+                role=ChatMessageRole.USER,
+                author_type=ChatMessageAuthorType.REVIEWER_CODEX,
+                content="",
+                status=ChatMessageStatus.RESERVED,
+                agent_id=AgentId.REVIEWER,
+                agent_label=reviewer_definition.label,
+                visibility=reviewer_definition.visibility,
+                trigger_source=AgentTriggerSource.GENERATOR,
+                run_id=initial_job.run_id,
+                dedupe_key=f"run:{initial_job.run_id}:reviewer:1",
             )
-            and payload["active_agent_run_id"] is None,
         )
 
-        for _ in range(3):
-            response = client.get(f"/sessions/{session_id}")
-            assert response.status_code == 200
+        baseline_request_count = len(provider.requests)
+        assert service.get_session(session.id) is not None
+        assert service.list_messages(session.id)
 
-        final_payload = client.get(f"/sessions/{session_id}").json()
-        recovered_messages = [
+        reserved_message = next(
             message
-            for message in final_payload["messages"]
-            if message["id"] == "reserved-reviewer"
-        ]
-        assert len(recovered_messages) == 1
-        assert recovered_messages[0]["status"] == "completed"
-        assert recovered_messages[0]["job_id"] is not None
-        assert any(
-            message["id"] == "reserved-reviewer"
-            for message in session_payload["messages"]
+            for message in repository.list_messages(session.id)
+            if message.id == "reserved-reviewer"
         )
-    finally:
-        client.close()
+        assert reserved_message.status == ChatMessageStatus.RESERVED
+        assert reserved_message.job_id is None
+        assert len(provider.requests) == baseline_request_count
 
 
-def test_session_read_cancels_orphaned_reserved_follow_up_with_reason_code() -> None:
-    client, container = build_session_client_with_container()
-    try:
-        session_response = client.post("/sessions", json={"title": "Orphaned reviewer"})
-        assert session_response.status_code == 201
-        session_id = session_response.json()["id"]
+def test_background_reconciler_cancels_orphaned_reserved_follow_up_with_reason_code() -> None:
+    with TemporaryDirectory() as temp_dir:
+        workspace = Path(temp_dir) / "repo"
+        workspace.mkdir()
+        service, _provider, repository = _build_controlled_message_service(
+            temp_dir,
+            barrier_agent_id=AgentId.REVIEWER,
+            follow_up_reconcile_interval_seconds=0.01,
+        )
 
-        repository = container.message_service._repository
-        session = repository.get_session(session_id)
-        assert session is not None
+        session = service.create_session(workspace_path=str(workspace))
         session.active_agent_run_id = "run-active"
         session.touch()
         repository.save_session(session)
@@ -4415,7 +4409,7 @@ def test_session_read_cancels_orphaned_reserved_follow_up_with_reason_code() -> 
         repository.reserve_message(
             ChatMessage(
                 id="orphaned-reviewer",
-                session_id=session_id,
+                session_id=session.id,
                 role=ChatMessageRole.USER,
                 author_type=ChatMessageAuthorType.REVIEWER_CODEX,
                 content="",
@@ -4427,41 +4421,54 @@ def test_session_read_cancels_orphaned_reserved_follow_up_with_reason_code() -> 
             )
         )
 
-        payload = client.get(f"/sessions/{session_id}")
-        assert payload.status_code == 200
-        message = next(
-            item
-            for item in payload.json()["messages"]
-            if item["id"] == "orphaned-reviewer"
+        _, messages, _ = wait_for_repository_session(
+            repository,
+            session.id,
+            predicate=lambda _session, messages, _jobs_by_id: any(
+                message.id == "orphaned-reviewer"
+                and message.status == ChatMessageStatus.CANCELLED
+                and message.reason_code
+                == ChatMessageReasonCode.ORPHANED_FOLLOW_UP_CANCELLED
+                for message in messages
+            ),
         )
-        assert message["status"] == "cancelled"
+
+        orphaned_message = next(
+            message for message in messages if message.id == "orphaned-reviewer"
+        )
+        assert orphaned_message.status == ChatMessageStatus.CANCELLED
         assert (
-            message["reason_code"]
-            == ChatMessageReasonCode.ORPHANED_FOLLOW_UP_CANCELLED.value
+            orphaned_message.reason_code
+            == ChatMessageReasonCode.ORPHANED_FOLLOW_UP_CANCELLED
         )
-    finally:
-        client.close()
 
 
-def test_session_read_attaches_submission_pending_follow_up_without_resubmitting() -> None:
-    client, container = build_session_client_with_container()
-    try:
-        session_response = client.post("/sessions", json={"title": "Attach submitted"})
-        assert session_response.status_code == 201
-        session_id = session_response.json()["id"]
-
-        message_response = client.post(
-            f"/sessions/{session_id}/messages",
-            json={"message": "Ship the attach path"},
+def test_background_reconciler_dispatches_reserved_reviewer_follow_up_idempotently() -> None:
+    with TemporaryDirectory() as temp_dir:
+        workspace = Path(temp_dir) / "repo"
+        workspace.mkdir()
+        service, provider, repository = _build_controlled_message_service(
+            temp_dir,
+            barrier_agent_id=AgentId.REVIEWER,
+            follow_up_reconcile_interval_seconds=0.01,
         )
-        assert message_response.status_code == 202
-        primary_job = wait_for_job(client, message_response.json()["job_id"])
-        run_id = primary_job["run_id"]
-        assert run_id is not None
 
-        service = container.message_service
-        repository = service._repository
-        session = repository.get_session(session_id)
+        session = service.create_session(workspace_path=str(workspace))
+        configuration = session.agent_configuration.normalized()
+        configuration.preset = AgentPreset.REVIEW
+        configuration.agents[AgentId.GENERATOR].max_turns = 1
+        configuration.agents[AgentId.REVIEWER].enabled = False
+        configuration.agents[AgentId.SUMMARY].enabled = False
+        service.update_agent_configuration(session_id=session.id, configuration=configuration)
+
+        initial_job = service.submit_message(
+            "Ship the recovery path.",
+            session_id=session.id,
+        )
+        provider.complete_job(initial_job.id, response="Initial generator response.")
+        service.get_job(initial_job.id)
+
+        session = repository.get_session(session.id)
         assert session is not None
         session.agent_configuration = build_agent_configuration_domain(
             preset="review",
@@ -4469,14 +4476,89 @@ def test_session_read_attaches_submission_pending_follow_up_without_resubmitting
             summary_enabled=False,
         )
         session.agent_configuration.agents[AgentId.GENERATOR].max_turns = 1
-        session.active_agent_run_id = run_id
+        session.active_agent_run_id = initial_job.run_id
+        session.touch()
+        repository.save_session(session)
+
+        reviewer_definition = session.agent_configuration.agents[AgentId.REVIEWER]
+        repository.reserve_message(
+            ChatMessage(
+                id="reserved-reviewer",
+                session_id=session.id,
+                role=ChatMessageRole.USER,
+                author_type=ChatMessageAuthorType.REVIEWER_CODEX,
+                content="",
+                status=ChatMessageStatus.RESERVED,
+                agent_id=AgentId.REVIEWER,
+                agent_label=reviewer_definition.label,
+                visibility=reviewer_definition.visibility,
+                trigger_source=AgentTriggerSource.GENERATOR,
+                run_id=initial_job.run_id,
+                dedupe_key=f"run:{initial_job.run_id}:reviewer:1",
+            )
+        )
+
+        _session, messages, _jobs_by_id = wait_for_repository_session(
+            repository,
+            session.id,
+            predicate=lambda _session, messages, _jobs_by_id: any(
+                message.id == "reserved-reviewer"
+                and message.status == ChatMessageStatus.PENDING
+                and message.job_id is not None
+                for message in messages
+            ),
+        )
+
+        dispatched_messages = [
+            message for message in messages if message.id == "reserved-reviewer"
+        ]
+        assert len(dispatched_messages) == 1
+        assert dispatched_messages[0].status == ChatMessageStatus.PENDING
+        assert dispatched_messages[0].job_id is not None
+        assert len(provider.requests) == 2
+
+
+def test_background_reconciler_attaches_submission_pending_follow_up_without_resubmitting() -> None:
+    with TemporaryDirectory() as temp_dir:
+        workspace = Path(temp_dir) / "repo"
+        workspace.mkdir()
+        service, provider, repository = _build_controlled_message_service(
+            temp_dir,
+            barrier_agent_id=AgentId.REVIEWER,
+            follow_up_reconcile_interval_seconds=0.01,
+        )
+
+        session = service.create_session(workspace_path=str(workspace))
+        configuration = session.agent_configuration.normalized()
+        configuration.preset = AgentPreset.REVIEW
+        configuration.agents[AgentId.GENERATOR].max_turns = 1
+        configuration.agents[AgentId.REVIEWER].enabled = False
+        configuration.agents[AgentId.SUMMARY].enabled = False
+        service.update_agent_configuration(session_id=session.id, configuration=configuration)
+
+        initial_job = service.submit_message(
+            "Ship the attach path.",
+            session_id=session.id,
+        )
+        provider.complete_job(initial_job.id, response="Initial generator response.")
+        service.get_job(initial_job.id)
+
+        session = repository.get_session(session.id)
+        assert session is not None
+        session.agent_configuration = build_agent_configuration_domain(
+            preset="review",
+            reviewer_enabled=True,
+            summary_enabled=False,
+        )
+        session.agent_configuration.agents[AgentId.GENERATOR].max_turns = 1
+        session.active_agent_run_id = initial_job.run_id
         session.touch()
         repository.save_session(session)
 
         reviewer_definition = session.agent_configuration.agents[AgentId.REVIEWER]
         reviewer_placeholder = ChatMessage(
             id="submitted-reviewer",
-            session_id=session_id,
+            session_id=session.id,
             role=ChatMessageRole.USER,
             author_type=ChatMessageAuthorType.REVIEWER_CODEX,
             content="",
@@ -4485,59 +4567,45 @@ def test_session_read_attaches_submission_pending_follow_up_without_resubmitting
             agent_label=reviewer_definition.label,
             visibility=reviewer_definition.visibility,
             trigger_source=AgentTriggerSource.GENERATOR,
-            run_id=run_id,
-            dedupe_key=f"run:{run_id}:reviewer:1",
-            submission_token=f"submission:{run_id}:reviewer:1",
+            run_id=initial_job.run_id,
+            dedupe_key=f"run:{initial_job.run_id}:reviewer:1",
+            submission_token=f"submission:{initial_job.run_id}:reviewer:1",
         )
         repository.reserve_message(reviewer_placeholder)
 
-        original_execute = service._execution_provider.execute
-        primary_response = primary_job["response"]
-        orphan_job_id = original_execute(
+        orphan_job_id = provider.execute(
             service._build_reviewer_execution_message(
                 reviewer_prompt=reviewer_definition.prompt,
-                primary_response=primary_response,
+                primary_response="Initial generator response.",
             ),
             provider_session_id=None,
-            serial_key=service._serial_key_for_agent(session_id, AgentId.REVIEWER),
+            serial_key=service._serial_key_for_agent(session.id, AgentId.REVIEWER),
             submission_token=reviewer_placeholder.submission_token,
             workdir=session.workspace_path,
         )
-        service._execution_provider.execute = lambda *args, **kwargs: (_ for _ in ()).throw(
-            AssertionError("recovery should not resubmit an already-submitted follow-up")
-        )
 
-        session_payload = wait_for_session(
-            client,
-            session_id,
-            predicate=lambda payload: any(
-                message["id"] == "submitted-reviewer"
-                and message["status"] == "completed"
-                and message["job_id"] == orphan_job_id
-                for message in payload["messages"]
-            )
-            and payload["active_agent_run_id"] is None,
+        def fail_if_resubmitted(*args, **kwargs):
+            raise AssertionError("recovery should not resubmit an already-submitted follow-up")
+
+        service._execution_provider.execute = fail_if_resubmitted
+
+        _session, messages, jobs_by_id = wait_for_repository_session(
+            repository,
+            session.id,
+            predicate=lambda _session, messages, jobs_by_id: any(
+                message.id == "submitted-reviewer"
+                and message.status == ChatMessageStatus.PENDING
+                and message.job_id == orphan_job_id
+                and jobs_by_id.get(orphan_job_id) is not None
+                for message in messages
+            ),
         )
 
         recovered_message = next(
-            message
-            for message in session_payload["messages"]
-            if message["id"] == "submitted-reviewer"
+            message for message in messages if message.id == "submitted-reviewer"
         )
-        assert recovered_message["submission_token"] == reviewer_placeholder.submission_token
-        assert recovered_message["job_id"] == orphan_job_id
-
-        for _ in range(3):
-            response = client.get(f"/sessions/{session_id}")
-            assert response.status_code == 200
-            repeated_message = next(
-                message
-                for message in response.json()["messages"]
-                if message["id"] == "submitted-reviewer"
-            )
-            assert repeated_message["job_id"] == orphan_job_id
-    finally:
-        client.close()
+        assert recovered_message.submission_token == reviewer_placeholder.submission_token
+        assert recovered_message.job_id == orphan_job_id
 
 
 def test_submission_pending_without_provider_lookup_becomes_submission_unknown() -> None:

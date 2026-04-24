@@ -214,6 +214,7 @@ class MessageService:
         audio_transcriber: AudioTranscriber,
         document_text_char_limit: int = 20_000,
         title_generation_model: str | None = None,
+        follow_up_reconcile_interval_seconds: float | None = None,
     ) -> None:
         self._repository = repository
         self._execution_provider = execution_provider
@@ -227,6 +228,22 @@ class MessageService:
         self._job_monitor_unsubscribes: dict[str, Callable[[], None] | None] = {}
         self._terminal_job_lock_guard = threading.RLock()
         self._terminal_job_locks: dict[str, _TerminalJobLockEntry] = {}
+        self._follow_up_recovery_guard = threading.RLock()
+        self._follow_up_reconcile_interval_seconds = (
+            follow_up_reconcile_interval_seconds
+            if follow_up_reconcile_interval_seconds is not None
+            and follow_up_reconcile_interval_seconds > 0
+            else None
+        )
+        self._follow_up_reconciler_stop = threading.Event()
+        self._follow_up_reconciler_thread: threading.Thread | None = None
+        if self._follow_up_reconcile_interval_seconds is not None:
+            self._follow_up_reconciler_thread = threading.Thread(
+                target=self._run_follow_up_reconciler,
+                name="message-service-follow-up-reconciler",
+                daemon=True,
+            )
+            self._follow_up_reconciler_thread.start()
 
     def create_session(
         self,
@@ -368,11 +385,7 @@ class MessageService:
         return self._repository.startup_issue()
 
     def get_session(self, session_id: str) -> ChatSession | None:
-        session = self._repository.get_session(session_id)
-        if session is None:
-            return None
-        self._reconcile_reserved_follow_ups(session)
-        return self._repository.get_session(session_id) or session
+        return self._repository.get_session(session_id)
 
     def set_session_archived(
         self,
@@ -391,9 +404,6 @@ class MessageService:
         return session
 
     def list_messages(self, session_id: str) -> list[ChatMessage]:
-        session = self._repository.get_session(session_id)
-        if session is not None:
-            self._reconcile_reserved_follow_ups(session)
         return self._repository.list_messages(session_id)
 
     def update_agent_configuration(
@@ -1268,9 +1278,7 @@ class MessageService:
             return
         if session.active_agent_run_id != job.run_id:
             return
-        if self._recover_submission_pending_follow_up_for_run(session, run_id=job.run_id):
-            return
-        if self._recover_reserved_follow_up_for_run(session, run_id=job.run_id):
+        if self._recover_waiting_follow_up_for_run(session, run_id=job.run_id):
             return
 
         configuration = session.agent_configuration.normalized()
@@ -2222,12 +2230,34 @@ class MessageService:
         self._cancel_reserved_follow_ups_for_inactive_runs(session)
         active_run_id = session.active_agent_run_id
         if active_run_id:
-            if self._recover_submission_pending_follow_up_for_run(
-                session,
-                run_id=active_run_id,
-            ):
-                return
-            self._recover_reserved_follow_up_for_run(session, run_id=active_run_id)
+            self._recover_waiting_follow_up_for_run(session, run_id=active_run_id)
+
+    def _recover_waiting_follow_up_for_run(
+        self,
+        session: ChatSession,
+        *,
+        run_id: str,
+    ) -> bool:
+        with self._follow_up_recovery_guard:
+            if self._recover_submission_pending_follow_up_for_run(session, run_id=run_id):
+                return True
+            return self._recover_reserved_follow_up_for_run(session, run_id=run_id)
+
+    def _run_follow_up_reconciler(self) -> None:
+        interval_seconds = self._follow_up_reconcile_interval_seconds
+        if interval_seconds is None:
+            return
+        while not self._follow_up_reconciler_stop.is_set():
+            try:
+                self._reconcile_all_sessions()
+            except Exception:
+                pass
+            self._follow_up_reconciler_stop.wait(interval_seconds)
+
+    def _reconcile_all_sessions(self) -> None:
+        for listed_session in self._repository.list_sessions():
+            session = self._repository.get_session(listed_session.id) or listed_session
+            self._reconcile_reserved_follow_ups(session)
 
     def _cancel_reserved_follow_ups_for_inactive_runs(
         self,
