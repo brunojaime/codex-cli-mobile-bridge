@@ -1,4 +1,5 @@
 import 'package:codex_mobile_frontend/src/models/chat_session_summary.dart';
+import 'package:codex_mobile_frontend/src/models/codex_tooling.dart';
 import 'package:codex_mobile_frontend/src/models/session_detail.dart';
 import 'package:codex_mobile_frontend/src/services/api_client.dart';
 import 'package:codex_mobile_frontend/src/services/chat_notification_service.dart';
@@ -8,6 +9,36 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
 void main() {
+  test('sendMessage includes codex options when requested', () async {
+    final client = ApiClient(
+      baseUrl: 'http://localhost:8000',
+      client: MockClient((request) async {
+        expect(request.method, 'POST');
+        expect(request.url.path, '/message');
+        final body = request.body;
+        expect(body, contains('"profile":"safe"'));
+        expect(body, contains('"search_enabled":true'));
+        expect(body, contains('"skill_ids":["skill-creator"]'));
+        expect(body, contains('"mcp_server_ids":["github"]'));
+        return http.Response(
+          '{"job_id":"job-1","status":"pending"}',
+          202,
+          headers: <String, String>{'content-type': 'application/json'},
+        );
+      }),
+    );
+
+    await client.sendMessage(
+      'Use the real local Codex skill.',
+      codexRunOptions: const CodexRunOptions(
+        profile: 'safe',
+        searchEnabled: true,
+        skillIds: <String>['skill-creator'],
+        mcpServerIds: <String>['github'],
+      ),
+    );
+  });
+
   test('updateTurnSummaries explains when the backend route is missing',
       () async {
     final client = ApiClient(

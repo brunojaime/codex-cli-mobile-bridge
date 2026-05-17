@@ -13,6 +13,7 @@ import '../models/chat_message.dart';
 import '../models/chat_turn_summary.dart';
 import '../models/agent_configuration.dart';
 import '../models/agent_profile.dart';
+import '../models/codex_tooling.dart';
 import '../models/server_capabilities.dart';
 import '../models/server_health.dart';
 import '../models/server_profile.dart';
@@ -45,6 +46,7 @@ const Key kChatScreenBodyScrollViewKey =
 enum _AppBarOverflowAction {
   conversationContext,
   summaryView,
+  codexTools,
   saveCurrentAgent,
   replyMode,
   servers,
@@ -96,11 +98,14 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   ServerProfile? _activeServer;
   ServerHealth? _activeServerHealth;
   ServerCapabilities? _activeServerCapabilities;
+  CodexToolingSnapshot? _activeCodexTooling;
   String? _serverErrorText;
+  String? _codexToolingErrorText;
   bool _sidebarExpanded = false;
   bool _showArchivedChatsInSidebar = false;
   bool _stickToBottom = true;
   bool _audioRepliesEnabled = false;
+  bool _isLoadingCodexTooling = false;
   bool _isOpeningWorkspacePicker = false;
   String? _lastObservedSessionId;
   final Map<String, _ComposerDraft> _sessionDrafts = <String, _ComposerDraft>{};
@@ -457,8 +462,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                           spacing: 10,
                                           children: <Widget>[
                                             ChoiceChip(
-                                              label:
-                                                  const Text('Conversation'),
+                                              label: const Text('Conversation'),
                                               selected: _chatBodyView ==
                                                   _ChatBodyView.conversation,
                                               onSelected: (selected) {
@@ -492,18 +496,18 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                                     : 'Agent summaries ($summaryMessageCount)',
                                               ),
                                               selected: isShowingAgentSummaries,
-                                              onSelected: summaryMessageCount <=
-                                                      0
-                                                  ? null
-                                                  : (selected) {
-                                                      if (!selected) {
-                                                        return;
-                                                      }
-                                                      _setChatBodyView(
-                                                        _ChatBodyView
-                                                            .agentSummaries,
-                                                      );
-                                                    },
+                                              onSelected:
+                                                  summaryMessageCount <= 0
+                                                      ? null
+                                                      : (selected) {
+                                                          if (!selected) {
+                                                            return;
+                                                          }
+                                                          _setChatBodyView(
+                                                            _ChatBodyView
+                                                                .agentSummaries,
+                                                          );
+                                                        },
                                               selectedColor:
                                                   const Color(0xFF8CA8FF),
                                               backgroundColor:
@@ -525,7 +529,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                                     : 'Turn summaries ($turnSummaryCount)',
                                               ),
                                               selected: isShowingTurnSummaries,
-                                              onSelected: (turnSummaryCount <= 0 &&
+                                              onSelected: (turnSummaryCount <=
+                                                          0 &&
                                                       !currentSession
                                                           .turnSummariesEnabled)
                                                   ? null
@@ -588,8 +593,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                         ),
                                         child: _TurnSummaryBanner(
                                           summaryCount: turnSummaryCount,
-                                          enabled:
-                                              currentSession.turnSummariesEnabled,
+                                          enabled: currentSession
+                                              .turnSummariesEnabled,
                                           onShowFullChat: () {
                                             _setChatBodyView(
                                               _ChatBodyView.conversation,
@@ -628,8 +633,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                               ),
                                             );
                                           },
-                                          childCount:
-                                              currentSession.turnSummaries.length,
+                                          childCount: currentSession
+                                              .turnSummaries.length,
                                         ),
                                       ),
                                     )
@@ -657,22 +662,22 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                                     );
                                                   },
                                                 )
-                                          : showFilteredMessagesPlaceholder
-                                              ? _FilteredMessagesPlaceholder(
-                                                  displayMode: currentSession
-                                                      .agentConfiguration
-                                                      .displayMode,
-                                                  isUpdating:
-                                                      _isUpdatingFilteredMessagesView,
-                                                  errorText:
-                                                      _filteredMessagesViewErrorText,
-                                                  onShowAllMessages:
-                                                      _handleShowAllMessages,
-                                                )
-                                              : _EmptyState(
-                                                  onCreateChat:
-                                                      _openWorkspacePicker,
-                                                ),
+                                              : showFilteredMessagesPlaceholder
+                                                  ? _FilteredMessagesPlaceholder(
+                                                      displayMode: currentSession
+                                                          .agentConfiguration
+                                                          .displayMode,
+                                                      isUpdating:
+                                                          _isUpdatingFilteredMessagesView,
+                                                      errorText:
+                                                          _filteredMessagesViewErrorText,
+                                                      onShowAllMessages:
+                                                          _handleShowAllMessages,
+                                                    )
+                                                  : _EmptyState(
+                                                      onCreateChat:
+                                                          _openWorkspacePicker,
+                                                    ),
                                     )
                                   else
                                     SliverPadding(
@@ -694,17 +699,18 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                                 key: ValueKey<String>(
                                                   'chat-day-separator-${separatorDate.year}-${separatorDate.month}-${separatorDate.day}',
                                                 ),
-                                                label: formatChatDaySeparatorLabel(
+                                                label:
+                                                    formatChatDaySeparatorLabel(
                                                   context,
                                                   separatorDate,
                                                 ),
                                               );
                                             }
                                             final message = entry.message!;
-                                            final nextEntry =
-                                                index + 1 < timelineEntries.length
-                                                    ? timelineEntries[index + 1]
-                                                    : null;
+                                            final nextEntry = index + 1 <
+                                                    timelineEntries.length
+                                                ? timelineEntries[index + 1]
+                                                : null;
                                             final nextMessage =
                                                 nextEntry?.message;
                                             final extraBottomSpacing =
@@ -860,10 +866,12 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     final sessionIdBeforeSend = _chatController.selectedSessionId;
     final workspacePathBeforeSend =
         _chatController.currentSession?.workspacePath;
+    final codexRunOptions = _currentComposerDraft().codexRunOptions;
     final didSend = await _chatController.sendMessage(
       _textController.text,
       sessionIdOverride: sessionIdBeforeSend,
       workspacePathOverride: workspacePathBeforeSend,
+      codexRunOptions: codexRunOptions.isEmpty ? null : codexRunOptions,
     );
     if (didSend &&
         (sessionIdBeforeSend == null ||
@@ -879,10 +887,12 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     final sessionIdBeforeSend = _chatController.selectedSessionId;
     final workspacePathBeforeSend =
         _chatController.currentSession?.workspacePath;
+    final codexRunOptions = _currentComposerDraft().codexRunOptions;
     final didSend = await _chatController.sendAudioMessage(
       audioFile,
       sessionIdOverride: sessionIdBeforeSend,
       workspacePathOverride: workspacePathBeforeSend,
+      codexRunOptions: codexRunOptions.isEmpty ? null : codexRunOptions,
     );
     if (didSend &&
         (sessionIdBeforeSend == null ||
@@ -900,11 +910,13 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     final sessionIdBeforeSend = _chatController.selectedSessionId;
     final workspacePathBeforeSend =
         _chatController.currentSession?.workspacePath;
+    final codexRunOptions = _currentComposerDraft().codexRunOptions;
     final didSend = await _chatController.sendAttachmentsMessage(
       attachments.map((attachment) => attachment.file).toList(),
       message: prompt,
       sessionIdOverride: sessionIdBeforeSend,
       workspacePathOverride: workspacePathBeforeSend,
+      codexRunOptions: codexRunOptions.isEmpty ? null : codexRunOptions,
     );
     if (didSend &&
         (sessionIdBeforeSend == null ||
@@ -1509,10 +1521,13 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       _activeServer = profile;
       _activeServerHealth = null;
       _activeServerCapabilities = null;
+      _activeCodexTooling = null;
       _sidebarWorkspaces = sidebarWorkspaces;
       _sessionReadMarkers = sessionReadMarkers;
       _serverErrorText = null;
+      _codexToolingErrorText = null;
       _audioRepliesEnabled = audioRepliesEnabled;
+      _isLoadingCodexTooling = true;
     });
     _lastObservedSessionId = null;
     _updateStickToBottom(true);
@@ -1522,14 +1537,26 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     try {
       final healthFuture = client.getHealth();
       final capabilitiesFuture = client.getCapabilities();
+      final codexToolingFuture = client.getCodexTooling();
       final initializeFuture = _chatController.initialize();
       final health = await healthFuture;
       final capabilities = await capabilitiesFuture;
+      CodexToolingSnapshot? codexTooling;
+      String? codexToolingErrorText;
+      try {
+        codexTooling = await codexToolingFuture;
+      } catch (error) {
+        codexToolingErrorText =
+            'Codex tooling is unavailable on this backend.\n$error';
+      }
       await initializeFuture;
       if (mounted) {
         setState(() {
           _activeServerHealth = health;
           _activeServerCapabilities = capabilities;
+          _activeCodexTooling = codexTooling;
+          _codexToolingErrorText = codexToolingErrorText;
+          _isLoadingCodexTooling = false;
         });
       }
       _replyPlaybackService.setCapabilities(capabilities);
@@ -1539,7 +1566,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       setState(() {
         _activeServerHealth = null;
         _activeServerCapabilities = null;
+        _activeCodexTooling = null;
         _serverErrorText = 'Failed to connect to ${profile.name}.\n$error';
+        _codexToolingErrorText = null;
+        _isLoadingCodexTooling = false;
       });
     }
 
@@ -1549,6 +1579,43 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         ..dispose();
     }
     return didConnect;
+  }
+
+  Future<void> _refreshCodexTooling({bool showLoading = false}) async {
+    final activeServer = _activeServer;
+    if (activeServer == null) {
+      return;
+    }
+
+    if (showLoading && mounted) {
+      setState(() {
+        _isLoadingCodexTooling = true;
+        _codexToolingErrorText = null;
+      });
+    }
+
+    try {
+      final snapshot =
+          await ApiClient(baseUrl: activeServer.baseUrl).getCodexTooling();
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _activeCodexTooling = snapshot;
+        _codexToolingErrorText = null;
+        _isLoadingCodexTooling = false;
+      });
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _activeCodexTooling = null;
+        _codexToolingErrorText =
+            'Codex tooling is unavailable on this backend.\n$error';
+        _isLoadingCodexTooling = false;
+      });
+    }
   }
 
   AgentProfile _fallbackAgentProfile() {
@@ -1818,9 +1885,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
               ? Icons.chat_bubble_outline_rounded
               : Icons.summarize_outlined,
         ),
-        tooltip: showingSummaryView
-            ? 'Show full chat'
-            : 'Show summary tabs',
+        tooltip: showingSummaryView ? 'Show full chat' : 'Show summary tabs',
       ),
     ];
     if (isCompactAppBar) {
@@ -1842,11 +1907,15 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
               icon: showingSummaryView
                   ? Icons.chat_bubble_outline_rounded
                   : Icons.summarize_outlined,
-              label: showingSummaryView
-                  ? 'Show full chat'
-                  : 'Show summary tabs',
+              label:
+                  showingSummaryView ? 'Show full chat' : 'Show summary tabs',
               enabled: showingSummaryView ||
                   (_chatController.currentSession != null && canShowAnySummary),
+            ),
+            _buildAppBarOverflowMenuItem(
+              action: _AppBarOverflowAction.codexTools,
+              icon: Icons.tune_rounded,
+              label: 'Codex tools',
             ),
             _buildAppBarOverflowMenuItem(
               action: _AppBarOverflowAction.saveCurrentAgent,
@@ -1887,6 +1956,37 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
               },
         icon: const Icon(Icons.topic_outlined),
         tooltip: 'What are we doing?',
+      ),
+      IconButton(
+        onPressed: () async {
+          await _openCodexToolsSheet();
+        },
+        icon: Stack(
+          clipBehavior: Clip.none,
+          children: <Widget>[
+            const Icon(Icons.tune_rounded),
+            if (_currentComposerDraft().codexRunOptions.skillIds.isNotEmpty ||
+                _currentComposerDraft()
+                    .codexRunOptions
+                    .mcpServerIds
+                    .isNotEmpty ||
+                _currentComposerDraft().codexRunOptions.searchEnabled ||
+                (_currentComposerDraft().codexRunOptions.profile?.isNotEmpty ??
+                    false))
+              Positioned(
+                right: -6,
+                top: -6,
+                child: _MenuStatusBadge(
+                  label: _codexSelectionCount(
+                          _currentComposerDraft().codexRunOptions)
+                      .toString(),
+                  backgroundColor: const Color(0xFF55D6BE),
+                  foregroundColor: const Color(0xFF07131D),
+                ),
+              ),
+          ],
+        ),
+        tooltip: 'Codex tools',
       ),
       IconButton(
         onPressed: () async {
@@ -1972,6 +2072,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         }
         _setChatBodyView(_preferredSummaryView());
         return;
+      case _AppBarOverflowAction.codexTools:
+        await _openCodexToolsSheet();
+        return;
       case _AppBarOverflowAction.saveCurrentAgent:
         await _openSaveCurrentAgentProfile();
         return;
@@ -1985,6 +2088,53 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         await _openWorkspacePicker();
         return;
     }
+  }
+
+  int _codexSelectionCount(CodexRunOptions options) {
+    var count = 0;
+    if (options.profile?.trim().isNotEmpty ?? false) {
+      count += 1;
+    }
+    if (options.searchEnabled) {
+      count += 1;
+    }
+    count += options.skillIds.length;
+    count += options.mcpServerIds.length;
+    if (options.configOverrides.isNotEmpty) {
+      count += 1;
+    }
+    return count;
+  }
+
+  Future<void> _openCodexToolsSheet() async {
+    await _refreshCodexTooling(showLoading: true);
+    if (!mounted) {
+      return;
+    }
+
+    final currentDraft = _currentComposerDraft();
+    final result = await showModalBottomSheet<CodexRunOptions>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: const Color(0xFF101931),
+      builder: (context) => _CodexToolsSheet(
+        initialOptions: currentDraft.codexRunOptions,
+        tooling: _activeCodexTooling,
+        errorText: _codexToolingErrorText,
+        loading: _isLoadingCodexTooling,
+      ),
+    );
+    if (result == null) {
+      return;
+    }
+
+    _updateCurrentComposerDraft(
+      _ComposerDraft(
+        text: currentDraft.text,
+        attachments: currentDraft.attachments,
+        codexRunOptions: result,
+      ),
+    );
   }
 
   Future<void> _openConversationContextSheet() async {
@@ -2129,6 +2279,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     final key = _draftKeyForSelectedSession();
     final previous = _sessionDrafts[key];
     final isUnchanged = previous?.text == draft.text &&
+        _sameCodexRunOptions(
+          previous?.codexRunOptions ?? const CodexRunOptions(),
+          draft.codexRunOptions,
+        ) &&
         _sameDraftAttachments(
             previous?.attachments ?? const <_PendingAttachmentDraft>[],
             draft.attachments);
@@ -2166,6 +2320,32 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     }
     for (var index = 0; index < left.length; index += 1) {
       if (left[index].identityKey != right[index].identityKey) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  bool _sameCodexRunOptions(CodexRunOptions left, CodexRunOptions right) {
+    if (left.profile != right.profile ||
+        left.searchEnabled != right.searchEnabled ||
+        left.skillIds.length != right.skillIds.length ||
+        left.mcpServerIds.length != right.mcpServerIds.length ||
+        left.configOverrides.length != right.configOverrides.length) {
+      return false;
+    }
+    for (var index = 0; index < left.skillIds.length; index += 1) {
+      if (left.skillIds[index] != right.skillIds[index]) {
+        return false;
+      }
+    }
+    for (var index = 0; index < left.mcpServerIds.length; index += 1) {
+      if (left.mcpServerIds[index] != right.mcpServerIds[index]) {
+        return false;
+      }
+    }
+    for (var index = 0; index < left.configOverrides.length; index += 1) {
+      if (left.configOverrides[index] != right.configOverrides[index]) {
         return false;
       }
     }
@@ -2683,7 +2863,8 @@ class _SessionTile extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
           children: <Widget>[
-            if (conversationProduct?.statusLine.trim().isNotEmpty == true) ...<Widget>[
+            if (conversationProduct?.statusLine.trim().isNotEmpty ==
+                true) ...<Widget>[
               Text(
                 conversationProduct!.statusLine,
                 maxLines: 1,
@@ -3707,6 +3888,8 @@ class _ComposerState extends State<_Composer> {
       _resetRecorderForSessionChange();
     }
     final draftChanged = oldWidget.draft.text != widget.draft.text ||
+        oldWidget.draft.codexRunOptions.toJson().toString() !=
+            widget.draft.codexRunOptions.toJson().toString() ||
         !_sameDraftAttachments(
           oldWidget.draft.attachments,
           widget.draft.attachments,
@@ -3929,6 +4112,11 @@ class _ComposerState extends State<_Composer> {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: <Widget>[
+        if (!widget.draft.codexRunOptions.isEmpty)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 10),
+            child: _CodexOptionTray(options: widget.draft.codexRunOptions),
+          ),
         if (_pendingAttachments.isNotEmpty)
           Padding(
             padding: const EdgeInsets.only(bottom: 10),
@@ -4111,7 +4299,8 @@ class _ComposerState extends State<_Composer> {
           fileName: file.name,
           mimeType: xFile.mimeType,
         );
-        if (kind == _AttachmentDraftKind.image && !widget.imageAttachmentsEnabled) {
+        if (kind == _AttachmentDraftKind.image &&
+            !widget.imageAttachmentsEnabled) {
           skippedImageCount += 1;
           continue;
         }
@@ -4132,7 +4321,8 @@ class _ComposerState extends State<_Composer> {
           _showImageAttachmentsDisabledSnackBar();
           return;
         }
-        throw Exception('The selected files are not accessible on this device.');
+        throw Exception(
+            'The selected files are not accessible on this device.');
       }
       _appendPendingAttachments(attachments);
       if (skippedImageCount > 0) {
@@ -4365,7 +4555,8 @@ class _ComposerState extends State<_Composer> {
     String? prompt,
   }) {
     unawaited(() async {
-      final sanitizedAttachments = _filterDisallowedImageAttachments(attachments);
+      final sanitizedAttachments =
+          _filterDisallowedImageAttachments(attachments);
       if (sanitizedAttachments.isEmpty) {
         if (mounted) {
           _showImageAttachmentsDisabledSnackBar();
@@ -4424,7 +4615,8 @@ class _ComposerState extends State<_Composer> {
       );
     }
 
-    final nextAttachments = _filterDisallowedImageAttachments(draft.attachments);
+    final nextAttachments =
+        _filterDisallowedImageAttachments(draft.attachments);
     if (mounted) {
       setState(() {
         _hasText = nextText.trim().isNotEmpty;
@@ -4449,6 +4641,7 @@ class _ComposerState extends State<_Composer> {
       _ComposerDraft(
         text: widget.controller.text,
         attachments: List<_PendingAttachmentDraft>.from(_pendingAttachments),
+        codexRunOptions: widget.draft.codexRunOptions,
       ),
     );
   }
@@ -5406,7 +5599,7 @@ class _AgentStudioSheetState extends State<_AgentStudioSheet> {
                     ? 'Any integer. Supervisor runs use at least 1.'
                     : agentId == AgentId.summary
                         ? 'Maximum number of summary calls for each run.'
-                    : 'Any non-negative integer.',
+                        : 'Any non-negative integer.',
               ),
             ),
             const SizedBox(height: 8),
@@ -5640,12 +5833,15 @@ class _ComposerDraft {
   const _ComposerDraft({
     this.text = '',
     this.attachments = const <_PendingAttachmentDraft>[],
+    this.codexRunOptions = const CodexRunOptions(),
   });
 
   final String text;
   final List<_PendingAttachmentDraft> attachments;
+  final CodexRunOptions codexRunOptions;
 
-  bool get isEmpty => text.trim().isEmpty && attachments.isEmpty;
+  bool get isEmpty =>
+      text.trim().isEmpty && attachments.isEmpty && codexRunOptions.isEmpty;
 }
 
 class _VoiceStatusCard extends StatelessWidget {
@@ -5988,6 +6184,349 @@ String _buildAttachmentTraySummary({
     parts.add('$fileCount file${fileCount == 1 ? '' : 's'}');
   }
   return '${parts.join(' and ')} queued. They will be sent together in one Codex turn.';
+}
+
+class _CodexOptionTray extends StatelessWidget {
+  const _CodexOptionTray({
+    required this.options,
+  });
+
+  final CodexRunOptions options;
+
+  @override
+  Widget build(BuildContext context) {
+    final pills = <Widget>[
+      if (options.profile?.trim().isNotEmpty ?? false)
+        _StatusPill(
+          label: 'profile:${options.profile!.trim()}',
+          backgroundColor: const Color(0xFF233151),
+          foregroundColor: const Color(0xFFB7C8F8),
+        ),
+      if (options.searchEnabled)
+        const _StatusPill(
+          label: 'search',
+          backgroundColor: Color(0xFF1F4D45),
+          foregroundColor: Color(0xFFB6F4E4),
+        ),
+      ...options.skillIds.map(
+        (skillId) => _StatusPill(
+          label: skillId,
+          backgroundColor: const Color(0xFF3A2714),
+          foregroundColor: const Color(0xFFFFD9A3),
+        ),
+      ),
+      ...options.mcpServerIds.map(
+        (serverId) => _StatusPill(
+          label: 'mcp:$serverId',
+          backgroundColor: const Color(0xFF2F2146),
+          foregroundColor: const Color(0xFFD9C2FF),
+        ),
+      ),
+      if (options.configOverrides.isNotEmpty)
+        const _StatusPill(
+          label: 'config',
+          backgroundColor: Color(0xFF2B364D),
+          foregroundColor: Color(0xFFB8C3DA),
+        ),
+    ];
+
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        children: pills,
+      ),
+    );
+  }
+}
+
+class _CodexToolsSheet extends StatefulWidget {
+  const _CodexToolsSheet({
+    required this.initialOptions,
+    required this.tooling,
+    required this.errorText,
+    required this.loading,
+  });
+
+  final CodexRunOptions initialOptions;
+  final CodexToolingSnapshot? tooling;
+  final String? errorText;
+  final bool loading;
+
+  @override
+  State<_CodexToolsSheet> createState() => _CodexToolsSheetState();
+}
+
+class _CodexToolsSheetState extends State<_CodexToolsSheet> {
+  late final TextEditingController _profileController;
+  late final TextEditingController _configOverridesController;
+  late bool _searchEnabled;
+  late Set<String> _selectedSkillIds;
+  late Set<String> _selectedMcpServerIds;
+
+  @override
+  void initState() {
+    super.initState();
+    _profileController = TextEditingController(
+      text: widget.initialOptions.profile ?? '',
+    );
+    _configOverridesController = TextEditingController(
+      text: widget.initialOptions.configOverrides.join('\n'),
+    );
+    _searchEnabled = widget.initialOptions.searchEnabled;
+    _selectedSkillIds = widget.initialOptions.skillIds.toSet();
+    _selectedMcpServerIds = widget.initialOptions.mcpServerIds.toSet();
+  }
+
+  @override
+  void dispose() {
+    _profileController.dispose();
+    _configOverridesController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final tooling = widget.tooling;
+    final status = tooling?.status;
+    final insetBottom = MediaQuery.viewInsetsOf(context).bottom;
+
+    return SafeArea(
+      child: Padding(
+        padding: EdgeInsets.only(bottom: insetBottom),
+        child: SingleChildScrollView(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                const ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: Icon(Icons.tune_rounded),
+                  title: Text('Codex tools'),
+                  subtitle: Text(
+                    'Use real local Codex skills, MCPs, profiles, and status.',
+                  ),
+                ),
+                if (widget.loading)
+                  const Padding(
+                    padding: EdgeInsets.only(bottom: 12),
+                    child: LinearProgressIndicator(minHeight: 3),
+                  ),
+                if (widget.errorText != null)
+                  Container(
+                    width: double.infinity,
+                    margin: const EdgeInsets.only(bottom: 12),
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF3B1521),
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: const Color(0xFFFF7A7A)),
+                    ),
+                    child: Text(
+                      widget.errorText!,
+                      style: const TextStyle(color: Color(0xFFFFD7D7)),
+                    ),
+                  ),
+                if (status != null)
+                  Container(
+                    width: double.infinity,
+                    margin: const EdgeInsets.only(bottom: 12),
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF15203B),
+                      borderRadius: BorderRadius.circular(18),
+                      border: Border.all(color: const Color(0xFF24355F)),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: <Widget>[
+                        Row(
+                          children: <Widget>[
+                            Icon(
+                              status.loggedIn
+                                  ? Icons.verified_user_outlined
+                                  : Icons.error_outline_rounded,
+                              color: status.loggedIn
+                                  ? const Color(0xFF55D6BE)
+                                  : const Color(0xFFFF7A7A),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Text(
+                                status.statusSummary,
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          'Command: ${status.command}'
+                          '${status.version == null ? '' : ' · ${status.version}'}',
+                          style: const TextStyle(color: Color(0xFF8B97B5)),
+                        ),
+                        if (status.usageSummary != null) ...<Widget>[
+                          const SizedBox(height: 8),
+                          Text(
+                            status.usageSummary!,
+                            style: const TextStyle(color: Color(0xFF8B97B5)),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                TextField(
+                  controller: _profileController,
+                  decoration: InputDecoration(
+                    labelText: 'Codex profile',
+                    hintText: 'safe',
+                    helperText: tooling == null || tooling.profiles.isEmpty
+                        ? 'Optional. Enter a profile name from ~/.codex/config.toml if you use one.'
+                        : 'Available profiles: ${tooling.profiles.map((profile) => profile.name).join(', ')}',
+                  ),
+                ),
+                const SizedBox(height: 10),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  value: _searchEnabled,
+                  onChanged: (value) {
+                    setState(() {
+                      _searchEnabled = value;
+                    });
+                  },
+                  title: const Text('Enable web search'),
+                  subtitle: const Text(
+                    'Adds `--search` to the local Codex run.',
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  'Installed skills',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+                const SizedBox(height: 8),
+                if (tooling == null || tooling.skills.isEmpty)
+                  const Text(
+                    'No Codex skills were discovered for this backend user.',
+                    style: TextStyle(color: Color(0xFF8B97B5)),
+                  )
+                else
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: tooling.skills.map((skill) {
+                      final selected =
+                          _selectedSkillIds.contains(skill.skillId);
+                      return FilterChip(
+                        selected: selected,
+                        label: Text(skill.skillId),
+                        tooltip: skill.description,
+                        onSelected: (value) {
+                          setState(() {
+                            if (value) {
+                              _selectedSkillIds.add(skill.skillId);
+                            } else {
+                              _selectedSkillIds.remove(skill.skillId);
+                            }
+                          });
+                        },
+                      );
+                    }).toList(),
+                  ),
+                const SizedBox(height: 14),
+                Text(
+                  'Configured MCP servers',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+                const SizedBox(height: 8),
+                if (tooling == null || tooling.mcpServers.isEmpty)
+                  Text(
+                    tooling?.mcpRawOutput?.trim().isNotEmpty == true
+                        ? tooling!.mcpRawOutput!
+                        : 'No MCP servers were reported by `codex mcp list`.',
+                    style: const TextStyle(color: Color(0xFF8B97B5)),
+                  )
+                else
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: tooling.mcpServers.map((server) {
+                      final selected =
+                          _selectedMcpServerIds.contains(server.serverId);
+                      return FilterChip(
+                        selected: selected,
+                        label: Text(server.serverId),
+                        tooltip: server.summary,
+                        onSelected: (value) {
+                          setState(() {
+                            if (value) {
+                              _selectedMcpServerIds.add(server.serverId);
+                            } else {
+                              _selectedMcpServerIds.remove(server.serverId);
+                            }
+                          });
+                        },
+                      );
+                    }).toList(),
+                  ),
+                const SizedBox(height: 14),
+                TextField(
+                  controller: _configOverridesController,
+                  minLines: 2,
+                  maxLines: 4,
+                  decoration: const InputDecoration(
+                    labelText: 'Extra Codex config overrides',
+                    hintText: 'One `key=value` override per line',
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Row(
+                  children: <Widget>[
+                    TextButton(
+                      onPressed: () {
+                        Navigator.of(context).pop(const CodexRunOptions());
+                      },
+                      child: const Text('Clear'),
+                    ),
+                    const Spacer(),
+                    FilledButton(
+                      onPressed: () {
+                        Navigator.of(context).pop(_buildResult());
+                      },
+                      child: const Text('Save'),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  CodexRunOptions _buildResult() {
+    final profile = _profileController.text.trim();
+    final overrides = _configOverridesController.text
+        .split('\n')
+        .map((line) => line.trim())
+        .where((line) => line.isNotEmpty)
+        .toList(growable: false);
+    final skillIds = _selectedSkillIds.toList()..sort();
+    final mcpServerIds = _selectedMcpServerIds.toList()..sort();
+    return CodexRunOptions(
+      profile: profile.isEmpty ? null : profile,
+      searchEnabled: _searchEnabled,
+      skillIds: skillIds,
+      mcpServerIds: mcpServerIds,
+      configOverrides: overrides,
+    );
+  }
 }
 
 class _StatusPill extends StatelessWidget {

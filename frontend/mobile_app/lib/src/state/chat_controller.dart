@@ -10,6 +10,7 @@ import '../models/agent_profile.dart';
 import '../models/agent_profile_blueprint.dart';
 import '../models/chat_message.dart';
 import '../models/chat_session_summary.dart';
+import '../models/codex_tooling.dart';
 import '../models/current_run_execution.dart';
 import '../models/job_status_response.dart';
 import '../models/session_detail.dart';
@@ -565,6 +566,7 @@ class ChatController extends ChangeNotifier {
     String rawText, {
     String? sessionIdOverride,
     String? workspacePathOverride,
+    CodexRunOptions? codexRunOptions,
   }) async {
     final text = rawText.trim();
     if (text.isEmpty) {
@@ -580,6 +582,7 @@ class ChatController extends ChangeNotifier {
         text,
         sessionId: originSessionId,
         workspacePath: originWorkspacePath,
+        codexRunOptions: codexRunOptions,
       );
       await _registerAcceptedJob(
         accepted,
@@ -598,6 +601,7 @@ class ChatController extends ChangeNotifier {
     String? language,
     String? sessionIdOverride,
     String? workspacePathOverride,
+    CodexRunOptions? codexRunOptions,
   }) async {
     final originSessionId = sessionIdOverride ?? _selectedSessionId;
     final originWorkspacePath =
@@ -616,6 +620,7 @@ class ChatController extends ChangeNotifier {
         sessionId: originSessionId,
         workspacePath: originWorkspacePath,
         language: language,
+        codexRunOptions: codexRunOptions,
       );
       await _registerAcceptedJob(
         accepted,
@@ -638,6 +643,7 @@ class ChatController extends ChangeNotifier {
     String? message,
     String? sessionIdOverride,
     String? workspacePathOverride,
+    CodexRunOptions? codexRunOptions,
   }) async {
     final originSessionId = sessionIdOverride ?? _selectedSessionId;
     final originWorkspacePath =
@@ -656,6 +662,7 @@ class ChatController extends ChangeNotifier {
         message: message,
         sessionId: originSessionId,
         workspacePath: originWorkspacePath,
+        codexRunOptions: codexRunOptions,
       );
       await _registerAcceptedJob(
         accepted,
@@ -679,6 +686,7 @@ class ChatController extends ChangeNotifier {
     String? language,
     String? sessionIdOverride,
     String? workspacePathOverride,
+    CodexRunOptions? codexRunOptions,
   }) async {
     final originSessionId = sessionIdOverride ?? _selectedSessionId;
     final originWorkspacePath =
@@ -698,6 +706,7 @@ class ChatController extends ChangeNotifier {
         sessionId: originSessionId,
         workspacePath: originWorkspacePath,
         language: language,
+        codexRunOptions: codexRunOptions,
       );
       await _registerAcceptedJob(
         accepted,
@@ -721,6 +730,7 @@ class ChatController extends ChangeNotifier {
     String? language,
     String? sessionIdOverride,
     String? workspacePathOverride,
+    CodexRunOptions? codexRunOptions,
   }) async {
     if (attachments.isEmpty) {
       return false;
@@ -745,6 +755,7 @@ class ChatController extends ChangeNotifier {
         sessionId: originSessionId,
         workspacePath: originWorkspacePath,
         language: language,
+        codexRunOptions: codexRunOptions,
       );
       await _registerAcceptedJob(
         accepted,
@@ -1491,7 +1502,8 @@ class ChatController extends ChangeNotifier {
 
   String _formatActionError(String prefix, Object error) {
     final detail = '$error'.trim().replaceFirst(RegExp(r'^Exception:\s*'), '');
-    final normalizedPrefix = prefix.trim().replaceFirst(RegExp(r'[.:!?]+$'), '');
+    final normalizedPrefix =
+        prefix.trim().replaceFirst(RegExp(r'[.:!?]+$'), '');
     if (detail.isEmpty) {
       return prefix;
     }

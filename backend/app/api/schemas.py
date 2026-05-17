@@ -35,6 +35,7 @@ from backend.app.domain.entities.conversation_product import (
     ConversationProduct,
     derive_conversation_product,
 )
+from backend.app.domain.entities.codex_options import CodexRunOptions
 from backend.app.domain.entities.job import Job, JobConversationKind, JobStatus
 from backend.app.domain.entities.current_run import (
     CurrentRunExecution,
@@ -58,6 +59,64 @@ class MessageRequest(BaseModel):
     message: str = Field(..., min_length=1, max_length=10000)
     session_id: str | None = None
     workspace_path: str | None = None
+    codex_options: "CodexRunOptionsRequest | None" = None
+
+
+class CodexRunOptionsRequest(BaseModel):
+    profile: str | None = Field(default=None, max_length=120)
+    search_enabled: bool = False
+    skill_ids: list[str] = Field(default_factory=list)
+    mcp_server_ids: list[str] = Field(default_factory=list)
+    config_overrides: list[str] = Field(default_factory=list)
+
+    def to_domain(self) -> CodexRunOptions:
+        return CodexRunOptions(
+            profile=self.profile,
+            search_enabled=self.search_enabled,
+            skill_ids=tuple(self.skill_ids),
+            mcp_server_ids=tuple(self.mcp_server_ids),
+            config_overrides=tuple(self.config_overrides),
+        ).normalized()
+
+
+class CodexSkillResponse(BaseModel):
+    skill_id: str
+    name: str
+    description: str
+    source: str
+    path: str
+
+
+class CodexConfigProfileResponse(BaseModel):
+    name: str
+
+
+class CodexMcpServerResponse(BaseModel):
+    server_id: str
+    summary: str
+
+
+class CodexStatusResponse(BaseModel):
+    cli_available: bool
+    command: str
+    version: str | None = None
+    logged_in: bool = False
+    auth_mode: str | None = None
+    status_summary: str
+    raw_status: str | None = None
+    usage_available: bool = False
+    usage_summary: str | None = None
+    error: str | None = None
+
+
+class CodexToolingResponse(BaseModel):
+    status: CodexStatusResponse
+    profiles: list[CodexConfigProfileResponse] = Field(default_factory=list)
+    skills: list[CodexSkillResponse] = Field(default_factory=list)
+    mcp_servers: list[CodexMcpServerResponse] = Field(default_factory=list)
+    mcp_raw_output: str | None = None
+    mcp_error: str | None = None
+    config_path: str | None = None
 
 
 class MessageRecoveryRequest(BaseModel):

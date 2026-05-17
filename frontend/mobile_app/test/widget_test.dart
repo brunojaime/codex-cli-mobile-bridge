@@ -6,6 +6,7 @@ import 'package:codex_mobile_frontend/src/models/agent_configuration.dart';
 import 'package:codex_mobile_frontend/src/models/agent_profile.dart';
 import 'package:codex_mobile_frontend/src/models/chat_message.dart';
 import 'package:codex_mobile_frontend/src/models/chat_session_summary.dart';
+import 'package:codex_mobile_frontend/src/models/codex_tooling.dart';
 import 'package:codex_mobile_frontend/src/models/job_status_response.dart';
 import 'package:codex_mobile_frontend/src/models/session_detail.dart';
 import 'package:codex_mobile_frontend/src/screens/chat_screen.dart';
@@ -112,7 +113,8 @@ void main() {
     expect(find.text('15:42'), findsOneWidget);
   });
 
-  testWidgets('day separator formatter supports today and yesterday in Spanish', (
+  testWidgets('day separator formatter supports today and yesterday in Spanish',
+      (
     tester,
   ) async {
     late String todayLabel;
@@ -1495,6 +1497,7 @@ class _FakeApiClient extends ApiClient {
   @override
   Future<JobStatusResponse> sendAudioMessage(
     XFile audioFile, {
+    CodexRunOptions? codexRunOptions,
     String? sessionId,
     String? workspacePath,
     String? language,

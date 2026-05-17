@@ -22,6 +22,7 @@ from backend.app.domain.entities.chat_turn_summary import (
     ChatTurnSummary,
     ChatTurnSummarySourceMessage,
 )
+from backend.app.domain.entities.codex_options import CodexRunOptions
 from backend.app.domain.entities.job import utc_now
 from backend.app.domain.entities.job import JobStatus
 from backend.app.infrastructure.execution.base import ExecutionProvider, ExecutionSnapshot
@@ -43,6 +44,7 @@ class _InstantExecutionProvider(ExecutionProvider):
         cleanup_paths: list[str] | None = None,
         provider_session_id: str | None = None,
         model: str | None = None,
+        codex_options: CodexRunOptions | None = None,
         serial_key: str | None = None,
         submission_token: str | None = None,
         workdir: str | None = None,
@@ -102,6 +104,7 @@ class _FailingVisibleExecutionProvider(ExecutionProvider):
         cleanup_paths: list[str] | None = None,
         provider_session_id: str | None = None,
         model: str | None = None,
+        codex_options: CodexRunOptions | None = None,
         serial_key: str | None = None,
         submission_token: str | None = None,
         workdir: str | None = None,
@@ -176,6 +179,7 @@ class _DelayedTurnSummaryExecutionProvider(ExecutionProvider):
         cleanup_paths: list[str] | None = None,
         provider_session_id: str | None = None,
         model: str | None = None,
+        codex_options: CodexRunOptions | None = None,
         serial_key: str | None = None,
         submission_token: str | None = None,
         workdir: str | None = None,

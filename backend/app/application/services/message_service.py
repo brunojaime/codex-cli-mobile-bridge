@@ -48,6 +48,7 @@ from backend.app.domain.entities.agent_run import AgentRun
 from backend.app.domain.entities.chat_session import ChatSession
 from backend.app.domain.entities.chat_turn_summary import ChatTurnSummary
 from backend.app.domain.entities.chat_turn_summary import ChatTurnSummarySourceMessage
+from backend.app.domain.entities.codex_options import CodexRunOptions
 from backend.app.domain.entities.job import Job, JobConversationKind, JobStatus
 from backend.app.domain.entities.text_sanitization import (
     sanitize_image_attachment_error_text,
@@ -537,6 +538,7 @@ class MessageService:
         image_paths: list[str] | None = None,
         cleanup_paths: list[str] | None = None,
         execution_message: str | None = None,
+        codex_options: CodexRunOptions | None = None,
         *,
         author_type: ChatMessageAuthorType = ChatMessageAuthorType.HUMAN,
         agent_id: AgentId = AgentId.USER,
@@ -552,6 +554,7 @@ class MessageService:
             session_id=session_id,
             workspace_path=workspace_path,
         )
+        normalized_codex_options = codex_options.normalized() if codex_options else None
         current_configuration = session.agent_configuration.normalized()
         agent_run: AgentRun | None = None
         self._cancel_reserved_follow_ups_for_inactive_runs(session)
@@ -575,22 +578,28 @@ class MessageService:
         resolved_run_id = run_id or session.active_agent_run_id or str(uuid4())
         entry_agent_id = self._entry_agent_for_configuration(current_configuration)
         entry_agent_definition = current_configuration.agents[entry_agent_id]
+        resolved_user_prompt = self._apply_codex_prompt_preferences(
+            execution_message or message,
+            normalized_codex_options,
+        )
         if conversation_kind == JobConversationKind.PRIMARY:
             if entry_agent_id == AgentId.SUPERVISOR:
                 execution_message = self._build_supervisor_execution_message(
                     session=session,
                     run_id=resolved_run_id,
                     supervisor_prompt=entry_agent_definition.prompt,
-                    user_prompt=execution_message or message,
+                    user_prompt=resolved_user_prompt,
                     supervisor_member_ids=current_configuration.supervisor_member_ids,
                     trigger_source=trigger_source,
                 )
             else:
                 execution_message = self._build_generator_execution_message(
                     generator_prompt=entry_agent_definition.prompt,
-                    user_prompt=execution_message or message,
+                    user_prompt=resolved_user_prompt,
                     trigger_source=trigger_source,
                 )
+        else:
+            execution_message = resolved_user_prompt
 
         user_message = ChatMessage(
             id=str(uuid4()),
@@ -634,6 +643,7 @@ class MessageService:
                 entry_agent_id,
             ),
             model=self._model_for_agent(session, entry_agent_id),
+            codex_options=normalized_codex_options,
             serial_key=self._serial_key_for_agent(session.id, entry_agent_id),
             conversation_kind=conversation_kind,
             agent_id=entry_agent_id,
@@ -666,6 +676,7 @@ class MessageService:
         session_id: str | None = None,
         workspace_path: str | None = None,
         language: str | None = None,
+        codex_options: CodexRunOptions | None = None,
     ) -> AudioSubmission:
         transcript = self._audio_transcriber.transcribe(
             Path(audio_path),
@@ -680,6 +691,7 @@ class MessageService:
             transcript,
             session_id=session_id,
             workspace_path=workspace_path,
+            codex_options=codex_options,
         )
         return AudioSubmission(job=job, transcript=transcript)
 
@@ -693,6 +705,7 @@ class MessageService:
         session_id: str | None = None,
         workspace_path: str | None = None,
         language: str | None = None,
+        codex_options: CodexRunOptions | None = None,
     ) -> DocumentSubmission:
         resolved_path = Path(document_path)
         attached_document_name = filename or resolved_path.name
@@ -732,6 +745,7 @@ class MessageService:
                 workspace_path=workspace_path,
                 cleanup_paths=cleanup_paths,
                 execution_message=prompt,
+                codex_options=codex_options,
             )
             return DocumentSubmission(
                 job=job,
@@ -761,6 +775,7 @@ class MessageService:
             workspace_path=workspace_path,
             cleanup_paths=cleanup_paths,
             execution_message=prompt,
+            codex_options=codex_options,
         )
         return DocumentSubmission(
             job=job,
@@ -777,6 +792,7 @@ class MessageService:
         session_id: str | None = None,
         workspace_path: str | None = None,
         language: str | None = None,
+        codex_options: CodexRunOptions | None = None,
     ) -> Job:
         if not attachments:
             raise ValueError("At least one attachment is required.")
@@ -852,6 +868,7 @@ class MessageService:
             image_paths=image_paths or None,
             cleanup_paths=cleanup_paths,
             execution_message=execution_message,
+            codex_options=codex_options,
         )
 
     def cancel_job(self, job_id: str) -> Job:
@@ -898,6 +915,7 @@ class MessageService:
                 original_job.agent_id,
             ),
             model=self._model_for_agent(session, original_job.agent_id),
+            codex_options=None,
             serial_key=self._serial_key_for_agent(
                 session.id,
                 original_job.agent_id,
@@ -1085,6 +1103,7 @@ class MessageService:
         assistant_message_id: str | None,
         provider_session_id: str | None,
         model: str | None,
+        codex_options: CodexRunOptions | None,
         serial_key: str,
         conversation_kind: JobConversationKind,
         agent_id: AgentId,
@@ -1100,6 +1119,7 @@ class MessageService:
             cleanup_paths=cleanup_paths,
             provider_session_id=provider_session_id,
             model=model,
+            codex_options=codex_options,
             serial_key=serial_key,
             submission_token=submission_token,
             workdir=session.workspace_path,
@@ -2684,6 +2704,7 @@ class MessageService:
                 agent_id,
             ),
             model=self._model_for_agent(session, agent_id),
+            codex_options=None,
             serial_key=self._serial_key_for_agent(session.id, agent_id),
             conversation_kind=conversation_kind,
             agent_id=agent_id,
@@ -2865,6 +2886,32 @@ class MessageService:
             else "Follow-up request from another agent"
         )
         return f"{generator_prompt}\n\n{prefix}:\n{user_prompt.strip()}"
+
+    def _apply_codex_prompt_preferences(
+        self,
+        prompt: str,
+        codex_options: CodexRunOptions | None,
+    ) -> str:
+        if codex_options is None:
+            return prompt
+
+        normalized = codex_options.normalized()
+        guidance: list[str] = []
+        if normalized.skill_ids:
+            skills = ", ".join(f"`{skill_id}`" for skill_id in normalized.skill_ids)
+            guidance.append(
+                "Prefer these Codex skills when they are relevant and available: "
+                f"{skills}."
+            )
+        if normalized.mcp_server_ids:
+            servers = ", ".join(f"`{server_id}`" for server_id in normalized.mcp_server_ids)
+            guidance.append(
+                "If external tools are needed, prefer these MCP servers when relevant: "
+                f"{servers}."
+            )
+        if not guidance:
+            return prompt
+        return f"{' '.join(guidance)}\n\n{prompt.strip()}"
 
     def _build_supervisor_execution_message(
         self,

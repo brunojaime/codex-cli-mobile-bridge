@@ -7,6 +7,7 @@ import '../models/job_status_response.dart';
 import '../models/agent_configuration.dart';
 import '../models/agent_profile.dart';
 import '../models/chat_message.dart';
+import '../models/codex_tooling.dart';
 import '../models/server_capabilities.dart';
 import '../models/session_detail.dart';
 import '../models/chat_session_summary.dart';
@@ -96,6 +97,18 @@ class ApiClient {
     }
 
     return ServerCapabilities.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<CodexToolingSnapshot> getCodexTooling() async {
+    final response = await _client.get(Uri.parse('$baseUrl/codex/tooling'));
+
+    if (response.statusCode != 200) {
+      throw Exception('Failed to fetch Codex tooling: ${response.body}');
+    }
+
+    return CodexToolingSnapshot.fromJson(
       jsonDecode(response.body) as Map<String, dynamic>,
     );
   }
@@ -367,6 +380,7 @@ class ApiClient {
     String message, {
     String? sessionId,
     String? workspacePath,
+    CodexRunOptions? codexRunOptions,
   }) async {
     final response = await _client.post(
       Uri.parse('$baseUrl/message'),
@@ -375,6 +389,8 @@ class ApiClient {
         'message': message,
         if (sessionId != null) 'session_id': sessionId,
         if (workspacePath != null) 'workspace_path': workspacePath,
+        if (codexRunOptions != null && !codexRunOptions.isEmpty)
+          'codex_options': codexRunOptions.toJson(),
       }),
     );
 
@@ -391,6 +407,7 @@ class ApiClient {
     String? sessionId,
     String? workspacePath,
     String? language,
+    CodexRunOptions? codexRunOptions,
   }) async {
     final request = http.MultipartRequest(
       'POST',
@@ -404,6 +421,10 @@ class ApiClient {
     }
     if (language != null) {
       request.fields['language'] = language;
+    }
+    if (codexRunOptions != null && !codexRunOptions.isEmpty) {
+      request.fields['codex_options_json'] =
+          jsonEncode(codexRunOptions.toJson());
     }
 
     request.files.add(
@@ -425,6 +446,7 @@ class ApiClient {
     String? message,
     String? sessionId,
     String? workspacePath,
+    CodexRunOptions? codexRunOptions,
   }) async {
     final request = http.MultipartRequest(
       'POST',
@@ -438,6 +460,10 @@ class ApiClient {
     }
     if (workspacePath != null) {
       request.fields['workspace_path'] = workspacePath;
+    }
+    if (codexRunOptions != null && !codexRunOptions.isEmpty) {
+      request.fields['codex_options_json'] =
+          jsonEncode(codexRunOptions.toJson());
     }
 
     request.files.add(
@@ -460,6 +486,7 @@ class ApiClient {
     String? sessionId,
     String? workspacePath,
     String? language,
+    CodexRunOptions? codexRunOptions,
   }) async {
     final request = http.MultipartRequest(
       'POST',
@@ -476,6 +503,10 @@ class ApiClient {
     }
     if (language != null) {
       request.fields['language'] = language;
+    }
+    if (codexRunOptions != null && !codexRunOptions.isEmpty) {
+      request.fields['codex_options_json'] =
+          jsonEncode(codexRunOptions.toJson());
     }
 
     request.files.add(
@@ -498,6 +529,7 @@ class ApiClient {
     String? sessionId,
     String? workspacePath,
     String? language,
+    CodexRunOptions? codexRunOptions,
   }) async {
     if (attachments.isEmpty) {
       throw Exception('No attachments were provided.');
@@ -518,6 +550,10 @@ class ApiClient {
     }
     if (language != null) {
       request.fields['language'] = language;
+    }
+    if (codexRunOptions != null && !codexRunOptions.isEmpty) {
+      request.fields['codex_options_json'] =
+          jsonEncode(codexRunOptions.toJson());
     }
 
     for (final attachment in attachments) {

@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import IO
 from uuid import uuid4
 
+from backend.app.domain.entities.codex_options import CodexRunOptions
 from backend.app.domain.entities.job import JobStatus
 from backend.app.infrastructure.execution.base import ExecutionProvider, ExecutionSnapshot
 
@@ -34,6 +35,7 @@ class _QueuedExecution:
     cleanup_paths: list[str] | None = None
     provider_session_id: str | None = None
     model: str | None = None
+    codex_options: CodexRunOptions | None = None
     workdir: str | None = None
     serial_key: str | None = None
 
@@ -74,6 +76,7 @@ class LocalExecutionProvider(ExecutionProvider):
         cleanup_paths: list[str] | None = None,
         provider_session_id: str | None = None,
         model: str | None = None,
+        codex_options: CodexRunOptions | None = None,
         serial_key: str | None = None,
         submission_token: str | None = None,
         workdir: str | None = None,
@@ -86,6 +89,7 @@ class LocalExecutionProvider(ExecutionProvider):
             cleanup_paths=cleanup_paths,
             provider_session_id=provider_session_id,
             model=model,
+            codex_options=codex_options.normalized() if codex_options else None,
             workdir=workdir,
             serial_key=serial_key,
         )
@@ -239,6 +243,7 @@ class LocalExecutionProvider(ExecutionProvider):
                 execution.cleanup_paths,
                 resolved_provider_session_id,
                 execution.model,
+                execution.codex_options,
                 execution.workdir,
             ),
             daemon=True,
@@ -253,6 +258,7 @@ class LocalExecutionProvider(ExecutionProvider):
         cleanup_paths: list[str] | None = None,
         provider_session_id: str | None = None,
         model: str | None = None,
+        codex_options: CodexRunOptions | None = None,
         workdir: str | None = None,
     ) -> None:
         if self._is_cancelled(job_id):
@@ -271,6 +277,7 @@ class LocalExecutionProvider(ExecutionProvider):
                 image_paths=image_paths,
                 provider_session_id=provider_session_id,
                 model=model,
+                codex_options=codex_options,
             )
 
             if self._is_cancelled(job_id):
@@ -395,13 +402,15 @@ class LocalExecutionProvider(ExecutionProvider):
         image_paths: list[str] | None = None,
         provider_session_id: str | None = None,
         model: str | None = None,
+        codex_options: CodexRunOptions | None = None,
     ) -> tuple[list[str], str | None]:
         base_parts = shlex.split(self._command)
         image_args = self._build_image_args(image_paths)
         model_args = ["--model", model] if model else []
+        codex_args = self._build_codex_args(codex_options)
 
         if not self._use_exec_mode:
-            return [*base_parts, *model_args, message, *image_args], None
+            return [*base_parts, *model_args, *codex_args, message, *image_args], None
 
         file_descriptor, output_path = tempfile.mkstemp(
             prefix="codex-last-message-",
@@ -417,6 +426,7 @@ class LocalExecutionProvider(ExecutionProvider):
                 "resume",
                 *resume_options,
                 *model_args,
+                *codex_args,
                 provider_session_id,
                 message,
                 *image_args,
@@ -428,10 +438,25 @@ class LocalExecutionProvider(ExecutionProvider):
                 "exec",
                 *exec_options,
                 *model_args,
+                *codex_args,
                 message,
                 *image_args,
             ]
         return exec_parts, output_path
+
+    def _build_codex_args(self, codex_options: CodexRunOptions | None) -> list[str]:
+        if codex_options is None:
+            return []
+
+        normalized = codex_options.normalized()
+        codex_args: list[str] = []
+        if normalized.profile:
+            codex_args.extend(["--profile", normalized.profile])
+        if normalized.search_enabled:
+            codex_args.append("--search")
+        for override in normalized.config_overrides:
+            codex_args.extend(["-c", override])
+        return codex_args
 
     def _build_image_args(self, image_paths: list[str] | None) -> list[str]:
         if not image_paths:

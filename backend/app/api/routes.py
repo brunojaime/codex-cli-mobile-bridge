@@ -16,6 +16,12 @@ from backend.app.api.schemas import (
     ArchiveSessionRequest,
     AudioMessageAcceptedResponse,
     AutoModeConfigRequest,
+    CodexConfigProfileResponse,
+    CodexMcpServerResponse,
+    CodexRunOptionsRequest,
+    CodexSkillResponse,
+    CodexStatusResponse,
+    CodexToolingResponse,
     CreateSessionRequest,
     DocumentMessageAcceptedResponse,
     HealthResponse,
@@ -42,6 +48,7 @@ from backend.app.application.services.message_service import (
 from backend.app.domain.entities.chat_message import ChatMessage, ChatMessageStatus
 from backend.app.domain.entities.job import Job
 from backend.app.container import AppContainer
+from backend.app.infrastructure.codex_tooling import inspect_codex_tooling
 from backend.app.infrastructure.network.tailscale import detect_tailscale_info
 from backend.app.infrastructure.speech.base import (
     SpeechSynthesisError,
@@ -174,10 +181,61 @@ async def post_message(
             payload.message,
             session_id=payload.session_id,
             workspace_path=payload.workspace_path,
+            codex_options=payload.codex_options.to_domain()
+            if payload.codex_options is not None
+            else None,
         )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return MessageAcceptedResponse.from_domain(job)
+
+
+@router.get("/codex/tooling", response_model=CodexToolingResponse)
+async def codex_tooling(
+    container: AppContainer = Depends(get_container),
+) -> CodexToolingResponse:
+    snapshot = await run_in_threadpool(
+        inspect_codex_tooling,
+        container.settings.codex_command,
+    )
+    return CodexToolingResponse(
+        status=CodexStatusResponse(
+            cli_available=snapshot.status.cli_available,
+            command=snapshot.status.command,
+            version=snapshot.status.version,
+            logged_in=snapshot.status.logged_in,
+            auth_mode=snapshot.status.auth_mode,
+            status_summary=snapshot.status.status_summary,
+            raw_status=snapshot.status.raw_status,
+            usage_available=snapshot.status.usage_available,
+            usage_summary=snapshot.status.usage_summary,
+            error=snapshot.status.error,
+        ),
+        profiles=[
+            CodexConfigProfileResponse(name=profile.name)
+            for profile in snapshot.profiles
+        ],
+        skills=[
+            CodexSkillResponse(
+                skill_id=skill.skill_id,
+                name=skill.name,
+                description=skill.description,
+                source=skill.source,
+                path=skill.path,
+            )
+            for skill in snapshot.skills
+        ],
+        mcp_servers=[
+            CodexMcpServerResponse(
+                server_id=server.server_id,
+                summary=server.summary,
+            )
+            for server in snapshot.mcp_servers
+        ],
+        mcp_raw_output=snapshot.mcp_raw_output,
+        mcp_error=snapshot.mcp_error,
+        config_path=snapshot.config_path,
+    )
 
 
 @router.post("/message/audio", response_model=AudioMessageAcceptedResponse, status_code=202)
@@ -186,6 +244,7 @@ async def post_audio_message(
     session_id: str | None = Form(default=None),
     workspace_path: str | None = Form(default=None),
     language: str | None = Form(default=None),
+    codex_options_json: str | None = Form(default=None),
     container: AppContainer = Depends(get_container),
 ) -> AudioMessageAcceptedResponse:
     temp_path = await _store_uploaded_audio(
@@ -194,6 +253,7 @@ async def post_audio_message(
     )
 
     try:
+        codex_options = _parse_codex_options_json(codex_options_json)
         submission = await run_in_threadpool(
             container.message_service.submit_audio_message,
             str(temp_path),
@@ -202,6 +262,7 @@ async def post_audio_message(
             session_id=session_id,
             workspace_path=workspace_path,
             language=language,
+            codex_options=codex_options,
         )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -241,6 +302,7 @@ async def post_document_message(
     session_id: str | None = Form(default=None),
     workspace_path: str | None = Form(default=None),
     language: str | None = Form(default=None),
+    codex_options_json: str | None = Form(default=None),
     container: AppContainer = Depends(get_container),
 ) -> DocumentMessageAcceptedResponse:
     temp_path = await _store_uploaded_file(
@@ -252,6 +314,7 @@ async def post_document_message(
     should_cleanup_immediately = True
 
     try:
+        codex_options = _parse_codex_options_json(codex_options_json)
         submission = await run_in_threadpool(
             container.message_service.submit_document_message,
             str(temp_path),
@@ -261,6 +324,7 @@ async def post_document_message(
             session_id=session_id,
             workspace_path=workspace_path,
             language=language,
+            codex_options=codex_options,
         )
         should_cleanup_immediately = False
     except ValueError as exc:
@@ -292,6 +356,7 @@ async def post_attachment_message(
     session_id: str | None = Form(default=None),
     workspace_path: str | None = Form(default=None),
     language: str | None = Form(default=None),
+    codex_options_json: str | None = Form(default=None),
     container: AppContainer = Depends(get_container),
 ) -> MessageAcceptedResponse:
     stored_files = await _store_uploaded_files(
@@ -303,6 +368,7 @@ async def post_attachment_message(
     should_cleanup_immediately = True
 
     try:
+        codex_options = _parse_codex_options_json(codex_options_json)
         job = await run_in_threadpool(
             container.message_service.submit_attachment_message,
             [
@@ -317,6 +383,7 @@ async def post_attachment_message(
             session_id=session_id,
             workspace_path=workspace_path,
             language=language,
+            codex_options=codex_options,
         )
         should_cleanup_immediately = False
     except ValueError as exc:
@@ -824,3 +891,12 @@ async def _store_uploaded_files(
 def _cleanup_stored_uploads(stored_uploads: list[_StoredUpload]) -> None:
     for stored in stored_uploads:
         stored.path.unlink(missing_ok=True)
+
+
+def _parse_codex_options_json(raw_json: str | None):
+    if raw_json is None or not raw_json.strip():
+        return None
+    try:
+        return CodexRunOptionsRequest.model_validate_json(raw_json).to_domain()
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=f"Invalid codex_options_json: {exc}") from exc

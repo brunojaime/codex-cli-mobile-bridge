@@ -34,6 +34,7 @@ from backend.app.domain.entities.chat_message import (
     ChatMessageStatus,
 )
 from backend.app.domain.entities.chat_session import ChatSession
+from backend.app.domain.entities.codex_options import CodexRunOptions
 from backend.app.domain.entities.job import JobConversationKind, JobStatus
 from backend.app.infrastructure.execution.base import ExecutionProvider, ExecutionSnapshot
 from backend.app.infrastructure.persistence.in_memory_chat_repository import InMemoryChatRepository
@@ -108,6 +109,20 @@ def build_session_client_with_container():
     return TestClient(app), container
 
 
+def build_tooling_client() -> TestClient:
+    settings = Settings(
+        codex_command="python3 tests/fixtures/fake_codex_tooling.py",
+        codex_use_exec=True,
+        projects_root="..",
+        chat_store_backend="memory",
+        execution_timeout_seconds=10,
+        poll_interval_seconds=0,
+        audio_transcription_backend="auto",
+    )
+    app = create_app(settings)
+    return TestClient(app)
+
+
 def build_sqlite_session_client_with_container(
     database_path: str,
 ) -> tuple[TestClient, object]:
@@ -141,6 +156,7 @@ class _ControlledExecutionProvider(ExecutionProvider):
         cleanup_paths: list[str] | None = None,
         provider_session_id: str | None = None,
         model: str | None = None,
+        codex_options: CodexRunOptions | None = None,
         serial_key: str | None = None,
         submission_token: str | None = None,
         workdir: str | None = None,
@@ -156,6 +172,7 @@ class _ControlledExecutionProvider(ExecutionProvider):
                     "cleanup_paths": cleanup_paths,
                     "provider_session_id": provider_session_id,
                     "model": model,
+                    "codex_options": codex_options,
                     "serial_key": serial_key,
                     "submission_token": submission_token,
                     "workdir": workdir,
@@ -6427,3 +6444,108 @@ def test_import_rejects_builtin_agent_profile_ids() -> None:
 
     assert import_response.status_code == 422
     assert "immutable" in import_response.json()["detail"]
+
+
+def test_submit_message_applies_codex_guidance_and_passes_codex_options() -> None:
+    with TemporaryDirectory() as temp_dir:
+        project_dir = Path(temp_dir) / "project"
+        project_dir.mkdir()
+        service, provider, _repository = _build_controlled_message_service(
+            temp_dir,
+            barrier_agent_id=AgentId.REVIEWER,
+        )
+
+        service.submit_message(
+            "Create a reusable skill for release automation.",
+            workspace_path=str(project_dir),
+            codex_options=CodexRunOptions(
+                profile="safe",
+                search_enabled=True,
+                skill_ids=("skill-creator",),
+                mcp_server_ids=("github",),
+                config_overrides=('model="gpt-5.5"',),
+            ),
+        )
+
+        request = provider.requests[-1]
+        assert request["codex_options"] == CodexRunOptions(
+            profile="safe",
+            search_enabled=True,
+            skill_ids=("skill-creator",),
+            mcp_server_ids=("github",),
+            config_overrides=('model="gpt-5.5"',),
+        )
+        assert "Prefer these Codex skills" in request["message"]
+        assert "`skill-creator`" in request["message"]
+        assert "`github`" in request["message"]
+
+
+def test_codex_tooling_endpoint_reports_status_skills_profiles_and_mcp(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with TemporaryDirectory() as temp_dir:
+        home_dir = Path(temp_dir)
+        config_dir = home_dir / ".codex"
+        (config_dir / "skills" / ".system" / "skill-creator").mkdir(parents=True)
+        (
+            config_dir
+            / "plugins"
+            / "cache"
+            / "openai-curated"
+            / "github"
+            / "dc902811"
+            / "skills"
+            / "yeet"
+        ).mkdir(parents=True)
+
+        (config_dir / "skills" / ".system" / "skill-creator" / "SKILL.md").write_text(
+            "---\n"
+            'name: "skill-creator"\n'
+            'description: "Create and refine Codex skills."\n'
+            "---\n",
+            encoding="utf-8",
+        )
+        (
+            config_dir
+            / "plugins"
+            / "cache"
+            / "openai-curated"
+            / "github"
+            / "dc902811"
+            / "skills"
+            / "yeet"
+            / "SKILL.md"
+        ).write_text(
+            "---\n"
+            'name: "yeet"\n'
+            'description: "Publish local changes through GitHub."\n'
+            "---\n",
+            encoding="utf-8",
+        )
+        (config_dir / "config.toml").write_text(
+            '[profiles.safe]\nmodel = "gpt-5.4"\n\n'
+            '[profiles.fast]\nmodel = "gpt-5.4-mini"\n',
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("HOME", str(home_dir))
+
+        client = build_tooling_client()
+        response = client.get("/codex/tooling")
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["status"]["cli_available"] is True
+        assert payload["status"]["logged_in"] is True
+        assert payload["status"]["auth_mode"] == "ChatGPT"
+        assert payload["status"]["usage_available"] is False
+        assert payload["profiles"] == [
+            {"name": "fast"},
+            {"name": "safe"},
+        ]
+        skill_ids = [skill["skill_id"] for skill in payload["skills"]]
+        assert "skill-creator" in skill_ids
+        assert "github:yeet" in skill_ids
+        assert payload["mcp_servers"] == [
+            {"server_id": "github", "summary": "github: GitHub connector available"},
+            {"server_id": "notion", "summary": "notion: Notion docs"},
+        ]
