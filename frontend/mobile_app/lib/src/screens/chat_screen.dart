@@ -839,13 +839,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                 ),
                 _Composer(
                   sessionId: _chatController.selectedSessionId,
-                  session: _chatController.currentSession,
                   controller: _textController,
                   draft: _currentComposerDraft(),
-                  tooling: _activeCodexTooling,
                   onDraftChanged: _updateCurrentComposerDraft,
-                  onToggleSuggestedSkill: _toggleSuggestedCodexSkill,
-                  onOpenCodexTools: _openCodexToolsSheet,
                   onSend: _handleSend,
                   onSendAudio: _handleSendAudio,
                   onSendAttachments: _handleSendAttachments,
@@ -885,38 +881,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       _scrollToBottom();
     }
     return didSend;
-  }
-
-  Future<void> _toggleSuggestedCodexSkill(String skillId) async {
-    final currentDraft = _currentComposerDraft();
-    final selectedSkillIds = currentDraft.codexRunOptions.skillIds.toSet();
-    final wasSelected = selectedSkillIds.remove(skillId);
-    if (!wasSelected) {
-      selectedSkillIds.add(skillId);
-    }
-
-    _updateCurrentComposerDraft(
-      _ComposerDraft(
-        text: currentDraft.text,
-        attachments: currentDraft.attachments,
-        codexRunOptions: currentDraft.codexRunOptions.copyWith(
-          skillIds: selectedSkillIds.toList()..sort(),
-        ),
-      ),
-    );
-
-    if (!mounted) {
-      return;
-    }
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          wasSelected
-              ? 'Removed `$skillId` from this turn.'
-              : 'Added `$skillId` to this turn.',
-        ),
-      ),
-    );
   }
 
   Future<bool> _handleSendAudio(XFile audioFile) async {
@@ -3858,13 +3822,9 @@ String _filteredMessagesPlaceholderText(AgentDisplayMode displayMode) {
 class _Composer extends StatefulWidget {
   const _Composer({
     required this.sessionId,
-    required this.session,
     required this.controller,
     required this.draft,
-    required this.tooling,
     required this.onDraftChanged,
-    required this.onToggleSuggestedSkill,
-    required this.onOpenCodexTools,
     required this.onSend,
     required this.onSendAudio,
     required this.onSendAttachments,
@@ -3877,13 +3837,9 @@ class _Composer extends StatefulWidget {
   });
 
   final String? sessionId;
-  final SessionDetail? session;
   final TextEditingController controller;
   final _ComposerDraft draft;
-  final CodexToolingSnapshot? tooling;
   final ValueChanged<_ComposerDraft> onDraftChanged;
-  final ValueChanged<String> onToggleSuggestedSkill;
-  final Future<void> Function() onOpenCodexTools;
   final Future<bool> Function() onSend;
   final Future<bool> Function(XFile audioFile) onSendAudio;
   final Future<bool> Function(
@@ -4162,17 +4118,6 @@ class _ComposerState extends State<_Composer> {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: <Widget>[
-        if (widget.session != null && widget.tooling != null)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 10),
-            child: _RecommendedCodexSkillTray(
-              session: widget.session!,
-              tooling: widget.tooling!,
-              options: widget.draft.codexRunOptions,
-              onToggleSkill: widget.onToggleSuggestedSkill,
-              onOpenCodexTools: widget.onOpenCodexTools,
-            ),
-          ),
         if (!widget.draft.codexRunOptions.isEmpty)
           Padding(
             padding: const EdgeInsets.only(bottom: 10),
@@ -6297,107 +6242,6 @@ class _CodexOptionTray extends StatelessWidget {
         spacing: 8,
         runSpacing: 8,
         children: pills,
-      ),
-    );
-  }
-}
-
-class _RecommendedCodexSkillTray extends StatelessWidget {
-  const _RecommendedCodexSkillTray({
-    required this.session,
-    required this.tooling,
-    required this.options,
-    required this.onToggleSkill,
-    required this.onOpenCodexTools,
-  });
-
-  final SessionDetail session;
-  final CodexToolingSnapshot tooling;
-  final CodexRunOptions options;
-  final ValueChanged<String> onToggleSkill;
-  final Future<void> Function() onOpenCodexTools;
-
-  @override
-  Widget build(BuildContext context) {
-    final recommendedSkillIds = _recommendedCodexSkillIds(
-      agentProfileId: session.agentProfileId,
-      agentProfileName: session.agentProfileName,
-    );
-    final availableSkills = {
-      for (final skill in tooling.skills) skill.skillId: skill,
-    };
-    final recommendedSkills = recommendedSkillIds
-        .map((skillId) => availableSkills[skillId])
-        .whereType<CodexSkill>()
-        .toList(growable: false);
-    final projectSkills = tooling.skills
-        .where(
-          (skill) =>
-              skill.source == 'repo' ||
-              (skill.source == 'user' &&
-                  skill.skillId.startsWith('codex-mobile-')),
-        )
-        .toList(growable: false);
-    final visibleSkills =
-        recommendedSkills.isNotEmpty ? recommendedSkills : projectSkills;
-    if (visibleSkills.isEmpty) {
-      return const SizedBox.shrink();
-    }
-    final title = recommendedSkills.isNotEmpty
-        ? 'Suggested for this agent'
-        : 'Project Codex skills';
-    final subtitle = recommendedSkills.isNotEmpty
-        ? session.agentProfileName
-        : 'Available in ${session.workspaceName}';
-
-    return Container(
-      padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        color: const Color(0xFF15203B),
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: const Color(0xFF2B395D)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: <Widget>[
-          Row(
-            children: <Widget>[
-              Expanded(
-                child: Text(
-                  title,
-                  style: TextStyle(fontWeight: FontWeight.w700),
-                ),
-              ),
-              TextButton(
-                onPressed: onOpenCodexTools,
-                child: const Text('All tools'),
-              ),
-            ],
-          ),
-          const SizedBox(height: 4),
-          Text(
-            subtitle,
-            style: const TextStyle(
-              color: Color(0xFF8B97B5),
-              height: 1.3,
-            ),
-          ),
-          const SizedBox(height: 10),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: visibleSkills.map((skill) {
-              final selected = options.skillIds.contains(skill.skillId);
-              return FilterChip(
-                selected: selected,
-                label: Text(skill.skillId),
-                tooltip: '${skill.description}\nSource: ${skill.source}',
-                onSelected: (_) => onToggleSkill(skill.skillId),
-              );
-            }).toList(),
-          ),
-        ],
       ),
     );
   }
