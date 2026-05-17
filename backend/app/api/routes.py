@@ -192,11 +192,16 @@ async def post_message(
 
 @router.get("/codex/tooling", response_model=CodexToolingResponse)
 async def codex_tooling(
+    workspace_path: str | None = None,
     container: AppContainer = Depends(get_container),
 ) -> CodexToolingResponse:
+    repo_root = Path(workspace_path).resolve() if workspace_path else Path(
+        container.settings.codex_workdir
+    ).resolve()
     snapshot = await run_in_threadpool(
         inspect_codex_tooling,
         container.settings.codex_command,
+        repo_root=repo_root,
     )
     return CodexToolingResponse(
         status=CodexStatusResponse(

@@ -1537,19 +1537,20 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     try {
       final healthFuture = client.getHealth();
       final capabilitiesFuture = client.getCapabilities();
-      final codexToolingFuture = client.getCodexTooling();
       final initializeFuture = _chatController.initialize();
       final health = await healthFuture;
       final capabilities = await capabilitiesFuture;
+      await initializeFuture;
       CodexToolingSnapshot? codexTooling;
       String? codexToolingErrorText;
       try {
-        codexTooling = await codexToolingFuture;
+        codexTooling = await client.getCodexTooling(
+          workspacePath: _chatController.currentSession?.workspacePath,
+        );
       } catch (error) {
         codexToolingErrorText =
             'Codex tooling is unavailable on this backend.\n$error';
       }
-      await initializeFuture;
       if (mounted) {
         setState(() {
           _activeServerHealth = health;
@@ -1596,7 +1597,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
 
     try {
       final snapshot =
-          await ApiClient(baseUrl: activeServer.baseUrl).getCodexTooling();
+          await ApiClient(baseUrl: activeServer.baseUrl).getCodexTooling(
+        workspacePath: _chatController.currentSession?.workspacePath,
+      );
       if (!mounted) {
         return;
       }
@@ -2113,6 +2116,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     }
 
     final currentDraft = _currentComposerDraft();
+    final currentSession = _chatController.currentSession;
     final result = await showModalBottomSheet<CodexRunOptions>(
       context: context,
       isScrollControlled: true,
@@ -2122,6 +2126,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         tooling: _activeCodexTooling,
         errorText: _codexToolingErrorText,
         loading: _isLoadingCodexTooling,
+        agentProfileId: currentSession?.agentProfileId,
+        agentProfileName: currentSession?.agentProfileName,
       ),
     );
     if (result == null) {
@@ -6247,12 +6253,16 @@ class _CodexToolsSheet extends StatefulWidget {
     required this.tooling,
     required this.errorText,
     required this.loading,
+    this.agentProfileId,
+    this.agentProfileName,
   });
 
   final CodexRunOptions initialOptions;
   final CodexToolingSnapshot? tooling;
   final String? errorText;
   final bool loading;
+  final String? agentProfileId;
+  final String? agentProfileName;
 
   @override
   State<_CodexToolsSheet> createState() => _CodexToolsSheetState();
@@ -6291,6 +6301,9 @@ class _CodexToolsSheetState extends State<_CodexToolsSheet> {
     final tooling = widget.tooling;
     final status = tooling?.status;
     final insetBottom = MediaQuery.viewInsetsOf(context).bottom;
+    final recommendedSkillIds = _recommendedSkillIds();
+    final orderedSkills =
+        tooling == null ? const <CodexSkill>[] : _orderedSkills(tooling.skills);
 
     return SafeArea(
       child: Padding(
@@ -6409,6 +6422,13 @@ class _CodexToolsSheetState extends State<_CodexToolsSheet> {
                   'Installed skills',
                   style: Theme.of(context).textTheme.titleMedium,
                 ),
+                if (recommendedSkillIds.isNotEmpty) ...<Widget>[
+                  const SizedBox(height: 4),
+                  Text(
+                    'Recommended for this agent: ${recommendedSkillIds.join(', ')}',
+                    style: const TextStyle(color: Color(0xFF8B97B5)),
+                  ),
+                ],
                 const SizedBox(height: 8),
                 if (tooling == null || tooling.skills.isEmpty)
                   const Text(
@@ -6419,13 +6439,14 @@ class _CodexToolsSheetState extends State<_CodexToolsSheet> {
                   Wrap(
                     spacing: 8,
                     runSpacing: 8,
-                    children: tooling.skills.map((skill) {
+                    children: orderedSkills.map((skill) {
                       final selected =
                           _selectedSkillIds.contains(skill.skillId);
                       return FilterChip(
                         selected: selected,
                         label: Text(skill.skillId),
-                        tooltip: skill.description,
+                        tooltip:
+                            '${skill.description}\nSource: ${skill.source}',
                         onSelected: (value) {
                           setState(() {
                             if (value) {
@@ -6508,6 +6529,64 @@ class _CodexToolsSheetState extends State<_CodexToolsSheet> {
         ),
       ),
     );
+  }
+
+  List<String> _recommendedSkillIds() {
+    final profileSignals = <String>[
+      widget.agentProfileId ?? '',
+      widget.agentProfileName ?? '',
+    ].join(' ').toLowerCase();
+    final recommended = <String>[];
+
+    if (profileSignals.contains('agent_creator') ||
+        profileSignals.contains('creator')) {
+      recommended.add('skill-creator');
+    }
+    if (profileSignals.contains('android') ||
+        profileSignals.contains('release') ||
+        profileSignals.contains('deploy')) {
+      recommended.add('codex-mobile-android-release');
+    }
+    return recommended;
+  }
+
+  List<CodexSkill> _orderedSkills(List<CodexSkill> skills) {
+    final recommendedSkillIds = _recommendedSkillIds().toSet();
+    final ordered = skills.toList();
+    ordered.sort((left, right) {
+      final leftRank = _skillOrderRank(
+        left,
+        recommendedSkillIds: recommendedSkillIds,
+      );
+      final rightRank = _skillOrderRank(
+        right,
+        recommendedSkillIds: recommendedSkillIds,
+      );
+      if (leftRank != rightRank) {
+        return leftRank.compareTo(rightRank);
+      }
+      return left.skillId.compareTo(right.skillId);
+    });
+    return ordered;
+  }
+
+  int _skillOrderRank(
+    CodexSkill skill, {
+    required Set<String> recommendedSkillIds,
+  }) {
+    if (_selectedSkillIds.contains(skill.skillId)) {
+      return 0;
+    }
+    if (recommendedSkillIds.contains(skill.skillId)) {
+      return 1;
+    }
+    return switch (skill.source) {
+      'repo' => 2,
+      'system' => 3,
+      'user' => 4,
+      'plugin' => 5,
+      _ => 6,
+    };
   }
 
   CodexRunOptions _buildResult() {

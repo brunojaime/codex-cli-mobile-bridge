@@ -101,8 +101,16 @@ class ApiClient {
     );
   }
 
-  Future<CodexToolingSnapshot> getCodexTooling() async {
-    final response = await _client.get(Uri.parse('$baseUrl/codex/tooling'));
+  Future<CodexToolingSnapshot> getCodexTooling({
+    String? workspacePath,
+  }) async {
+    final uri = Uri.parse('$baseUrl/codex/tooling').replace(
+      queryParameters: <String, String>{
+        if (workspacePath != null && workspacePath.trim().isNotEmpty)
+          'workspace_path': workspacePath,
+      },
+    );
+    final response = await _client.get(uri);
 
     if (response.statusCode != 200) {
       throw Exception('Failed to fetch Codex tooling: ${response.body}');

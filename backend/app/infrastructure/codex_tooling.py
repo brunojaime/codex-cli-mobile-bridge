@@ -3,11 +3,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 import shlex
+import shutil
 import subprocess
 import tomllib
 
 
 _SKILL_DESCRIPTION_LIMIT = 240
+_REPO_SKILLS_DIR_NAME = "codex-skills"
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,9 +57,14 @@ class CodexToolingSnapshot:
     config_path: str | None = None
 
 
-def inspect_codex_tooling(command: str, *, home: Path | None = None) -> CodexToolingSnapshot:
+def inspect_codex_tooling(
+    command: str,
+    *,
+    home: Path | None = None,
+    repo_root: Path | None = None,
+) -> CodexToolingSnapshot:
     resolved_home = home or Path.home()
-    skills = discover_codex_skills(resolved_home)
+    skills = discover_codex_skills(resolved_home, repo_root=repo_root)
     profiles, config_path = discover_codex_profiles(resolved_home)
     status = query_codex_status(command)
     mcp_servers, mcp_raw_output, mcp_error = query_codex_mcp_servers(command)
@@ -72,23 +79,48 @@ def inspect_codex_tooling(command: str, *, home: Path | None = None) -> CodexToo
     )
 
 
-def discover_codex_skills(home: Path) -> list[CodexSkill]:
+def discover_codex_skills(
+    home: Path,
+    *,
+    repo_root: Path | None = None,
+) -> list[CodexSkill]:
     skills_by_id: dict[str, CodexSkill] = {}
 
     search_roots = [
         home / ".codex" / "skills",
         home / ".codex" / "plugins",
     ]
+    repo_skills_root = _repo_skills_root(repo_root)
+    if repo_skills_root is not None:
+        search_roots.append(repo_skills_root)
     for root in search_roots:
         if not root.exists():
             continue
         for skill_file in sorted(root.rglob("SKILL.md")):
-            skill = _skill_from_path(skill_file, home=home)
+            skill = _skill_from_path(skill_file, home=home, repo_root=repo_root)
             if skill is None or skill.skill_id in skills_by_id:
                 continue
             skills_by_id[skill.skill_id] = skill
 
     return sorted(skills_by_id.values(), key=lambda item: (item.source, item.skill_id))
+
+
+def sync_repo_skills(home: Path, *, repo_root: Path | None = None) -> tuple[str, ...]:
+    repo_skills_root = _repo_skills_root(repo_root)
+    if repo_skills_root is None or not repo_skills_root.exists():
+        return ()
+
+    installed_skill_ids: list[str] = []
+    target_root = home / ".codex" / "skills"
+    target_root.mkdir(parents=True, exist_ok=True)
+
+    for skill_dir in sorted(_iter_repo_skill_directories(repo_skills_root)):
+        skill_id = skill_dir.name.strip()
+        if not skill_id:
+            continue
+        shutil.copytree(skill_dir, target_root / skill_id, dirs_exist_ok=True)
+        installed_skill_ids.append(skill_id)
+    return tuple(installed_skill_ids)
 
 
 def discover_codex_profiles(home: Path) -> tuple[list[CodexConfigProfile], Path | None]:
@@ -181,8 +213,17 @@ def query_codex_mcp_servers(command: str) -> tuple[list[CodexMcpServer], str | N
     return servers, output, error
 
 
-def _skill_from_path(skill_file: Path, *, home: Path) -> CodexSkill | None:
-    skill_id, source = _skill_identity_for_path(skill_file, home=home)
+def _skill_from_path(
+    skill_file: Path,
+    *,
+    home: Path,
+    repo_root: Path | None = None,
+) -> CodexSkill | None:
+    skill_id, source = _skill_identity_for_path(
+        skill_file,
+        home=home,
+        repo_root=repo_root,
+    )
     if not skill_id:
         return None
 
@@ -197,7 +238,12 @@ def _skill_from_path(skill_file: Path, *, home: Path) -> CodexSkill | None:
     )
 
 
-def _skill_identity_for_path(skill_file: Path, *, home: Path) -> tuple[str | None, str]:
+def _skill_identity_for_path(
+    skill_file: Path,
+    *,
+    home: Path,
+    repo_root: Path | None = None,
+) -> tuple[str | None, str]:
     parts = skill_file.parts
     try:
         relative = skill_file.relative_to(home / ".codex")
@@ -209,6 +255,14 @@ def _skill_identity_for_path(skill_file: Path, *, home: Path) -> tuple[str | Non
         return relative_parts[2], "system"
     if len(relative_parts) >= 2 and relative_parts[0] == "skills":
         return relative_parts[1], "user"
+    repo_skills_root = _repo_skills_root(repo_root)
+    if repo_skills_root is not None:
+        try:
+            repo_relative = skill_file.relative_to(repo_skills_root)
+        except ValueError:
+            repo_relative = None
+        if repo_relative is not None and len(repo_relative.parts) >= 2:
+            return repo_relative.parts[0], "repo"
     if "skills" in parts:
         skills_index = parts.index("skills")
         if skills_index + 1 < len(parts):
@@ -218,6 +272,20 @@ def _skill_identity_for_path(skill_file: Path, *, home: Path) -> tuple[str | Non
                 return f"{plugin_name}:{skill_name}", "plugin"
             return skill_name, "plugin"
     return skill_file.parent.name, "unknown"
+
+
+def _repo_skills_root(repo_root: Path | None) -> Path | None:
+    if repo_root is None:
+        return None
+    return repo_root.resolve() / _REPO_SKILLS_DIR_NAME
+
+
+def _iter_repo_skill_directories(repo_skills_root: Path) -> tuple[Path, ...]:
+    return tuple(
+        path
+        for path in repo_skills_root.iterdir()
+        if path.is_dir() and (path / "SKILL.md").exists()
+    )
 
 
 def _parse_frontmatter(skill_file: Path) -> dict[str, str]:

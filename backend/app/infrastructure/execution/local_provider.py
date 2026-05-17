@@ -14,6 +14,7 @@ from uuid import uuid4
 
 from backend.app.domain.entities.codex_options import CodexRunOptions
 from backend.app.domain.entities.job import JobStatus
+from backend.app.infrastructure.codex_tooling import sync_repo_skills
 from backend.app.infrastructure.execution.base import ExecutionProvider, ExecutionSnapshot
 
 
@@ -271,7 +272,13 @@ class LocalExecutionProvider(ExecutionProvider):
             provider_session_id=provider_session_id,
         )
         output_path: str | None = None
+        resolved_workdir = workdir or self._workdir
         try:
+            if resolved_workdir:
+                sync_repo_skills(
+                    Path.home(),
+                    repo_root=Path(resolved_workdir).resolve(),
+                )
             command_parts, output_path = self._build_command(
                 message,
                 image_paths=image_paths,
@@ -286,7 +293,7 @@ class LocalExecutionProvider(ExecutionProvider):
             try:
                 process = subprocess.Popen(
                     command_parts,
-                    cwd=workdir or self._workdir,
+                    cwd=resolved_workdir,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     text=True,

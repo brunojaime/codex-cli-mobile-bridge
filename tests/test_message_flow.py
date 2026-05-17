@@ -37,6 +37,7 @@ from backend.app.domain.entities.chat_session import ChatSession
 from backend.app.domain.entities.codex_options import CodexRunOptions
 from backend.app.domain.entities.job import JobConversationKind, JobStatus
 from backend.app.infrastructure.execution.base import ExecutionProvider, ExecutionSnapshot
+from backend.app.infrastructure.codex_tooling import discover_codex_skills, sync_repo_skills
 from backend.app.infrastructure.persistence.in_memory_chat_repository import InMemoryChatRepository
 from backend.app.infrastructure.persistence.sqlite_chat_repository import SqliteChatRepository
 from backend.app.infrastructure.speech.base import (
@@ -6543,9 +6544,39 @@ def test_codex_tooling_endpoint_reports_status_skills_profiles_and_mcp(
             {"name": "safe"},
         ]
         skill_ids = [skill["skill_id"] for skill in payload["skills"]]
+        assert "codex-mobile-android-release" in skill_ids
         assert "skill-creator" in skill_ids
         assert "github:yeet" in skill_ids
         assert payload["mcp_servers"] == [
             {"server_id": "github", "summary": "github: GitHub connector available"},
             {"server_id": "notion", "summary": "notion: Notion docs"},
         ]
+
+
+def test_repo_skills_are_discovered_and_synced() -> None:
+    with TemporaryDirectory() as temp_dir:
+        temp_root = Path(temp_dir)
+        home_dir = temp_root / "home"
+        repo_dir = temp_root / "repo"
+        repo_skill_dir = repo_dir / "codex-skills" / "demo-release-skill"
+        repo_skill_dir.mkdir(parents=True)
+        skill_body = (
+            "---\n"
+            'name: "demo-release-skill"\n'
+            'description: "Publish a demo Android release."\n'
+            "---\n"
+        )
+        (repo_skill_dir / "SKILL.md").write_text(skill_body, encoding="utf-8")
+
+        skills = discover_codex_skills(home_dir, repo_root=repo_dir)
+        assert len(skills) == 1
+        assert skills[0].skill_id == "demo-release-skill"
+        assert skills[0].source == "repo"
+        assert skills[0].path == str(repo_skill_dir / "SKILL.md")
+
+        installed_skill_ids = sync_repo_skills(home_dir, repo_root=repo_dir)
+        assert installed_skill_ids == ("demo-release-skill",)
+        installed_skill_file = (
+            home_dir / ".codex" / "skills" / "demo-release-skill" / "SKILL.md"
+        )
+        assert installed_skill_file.read_text(encoding="utf-8") == skill_body
