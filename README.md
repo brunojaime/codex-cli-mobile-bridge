@@ -543,6 +543,69 @@ Stop it with:
 
 Important: this only solves closing the terminal. If the computer sleeps, reboots, or shuts down, the backend stops. For true always-on access, run it on a machine that stays on, or install it as a system service.
 
+### Autostart On Login Or Boot
+
+This repo includes a user-service installer for `systemd`:
+
+```bash
+chmod +x scripts/install_user_services.sh scripts/configure_tailscale_serve.sh
+./scripts/install_user_services.sh
+```
+
+That writes user units under `~/.config/systemd/user/` for:
+
+- the backend
+- userspace `tailscaled` when `TAILSCALE_SOCKET` is set in `.env`
+- Tailscale Serve pointing at `http://127.0.0.1:8000`
+
+To enable and start them immediately:
+
+```bash
+./scripts/install_user_services.sh --enable-now
+```
+
+To make user services start even before you log in after a reboot:
+
+```bash
+loginctl enable-linger "$USER"
+```
+
+Useful commands:
+
+```bash
+systemctl --user status codex-mobile-bridge-backend.service
+systemctl --user restart codex-mobile-bridge-backend.service
+```
+
+If `.env` leaves `TAILSCALE_SOCKET=` empty, the installer skips userspace Tailscale units. In that case use the normal system daemon instead:
+
+```bash
+sudo systemctl enable --now tailscaled
+```
+
+### Start Before Login
+
+If you want the backend and userspace Tailscale to start as soon as the machine boots, without waiting for your desktop session, install the system-level units instead:
+
+```bash
+chmod +x scripts/install_boot_services.sh
+sudo ./scripts/install_boot_services.sh --enable-now
+```
+
+That installer:
+
+- writes the units under `/etc/systemd/system/`
+- runs them as your normal user
+- disables the user-level units to avoid port and socket conflicts at login
+
+Check them with:
+
+```bash
+sudo systemctl status codex-mobile-bridge-backend.service
+sudo systemctl status codex-mobile-bridge-tailscaled.service
+sudo systemctl status codex-mobile-bridge-tailscale-serve.service
+```
+
 The backend exposes:
 
 - `GET /health`
