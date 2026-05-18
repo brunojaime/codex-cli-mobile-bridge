@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -94,6 +95,91 @@ class CodexConfigProfileResponse(BaseModel):
 class CodexMcpServerResponse(BaseModel):
     server_id: str
     summary: str
+    source: str = "external"
+    backing_app_id: str | None = None
+    status: str | None = None
+    selectable: bool = True
+    selectable_reason: str | None = None
+    disabled_reason: str | None = None
+    lookup_error: str | None = None
+
+
+class CodexMcpAppToolResponse(BaseModel):
+    name: str
+    title: str | None = None
+    description: str | None = None
+    read_only: bool
+    destructive: bool
+    idempotent: bool
+    open_world: bool
+    input_schema: dict[str, Any] = Field(default_factory=dict)
+
+
+class CodexMcpAppResourceResponse(BaseModel):
+    name: str
+    title: str | None = None
+    uri: str
+    description: str | None = None
+    mime_type: str | None = None
+
+
+class CodexMcpAppPromptArgumentResponse(BaseModel):
+    name: str
+    description: str | None = None
+    required: bool
+
+
+class CodexMcpAppPromptResponse(BaseModel):
+    name: str
+    title: str | None = None
+    description: str | None = None
+    arguments: list[CodexMcpAppPromptArgumentResponse] = Field(default_factory=list)
+
+
+class CodexMcpAppPreviewResponse(BaseModel):
+    tool_name: str
+    arguments: dict[str, Any] = Field(default_factory=dict)
+    result: Any | None = None
+    is_error: bool
+    error: str | None = None
+
+
+class CodexMcpAppResponse(BaseModel):
+    app_id: str
+    name: str
+    description: str
+    recommended_server_id: str
+    transport: str
+    command: str
+    args: list[str] = Field(default_factory=list)
+    env: dict[str, str] = Field(default_factory=dict)
+    tags: list[str] = Field(default_factory=list)
+    supports_ui_extension: bool = False
+    ui_entry_uri: str | None = None
+    spec_path: str
+    installed: bool = False
+    install_state: str
+    server_present: bool = False
+    server_presence_known: bool = False
+    config_matches: bool | None = None
+    tools: list[CodexMcpAppToolResponse] = Field(default_factory=list)
+    resources: list[CodexMcpAppResourceResponse] = Field(default_factory=list)
+    prompts: list[CodexMcpAppPromptResponse] = Field(default_factory=list)
+    preview: CodexMcpAppPreviewResponse | None = None
+    drift_summary: str | None = None
+    disabled_reason: str | None = None
+    lookup_error: str | None = None
+    validation_error: str | None = None
+    protocol_error: str | None = None
+
+
+class CodexMcpAppInstallResponse(BaseModel):
+    app_id: str
+    server_id: str
+    already_installed: bool
+    reconciled: bool
+    command: str
+    summary: str
 
 
 class CodexStatusResponse(BaseModel):
@@ -105,6 +191,7 @@ class CodexStatusResponse(BaseModel):
     status_summary: str
     raw_status: str | None = None
     usage_available: bool = False
+    usage_label: str | None = None
     usage_summary: str | None = None
     error: str | None = None
 
@@ -114,6 +201,8 @@ class CodexToolingResponse(BaseModel):
     profiles: list[CodexConfigProfileResponse] = Field(default_factory=list)
     skills: list[CodexSkillResponse] = Field(default_factory=list)
     mcp_servers: list[CodexMcpServerResponse] = Field(default_factory=list)
+    mcp_apps: list[CodexMcpAppResponse] = Field(default_factory=list)
+    mcp_server_inventory_complete: bool = True
     mcp_raw_output: str | None = None
     mcp_error: str | None = None
     config_path: str | None = None

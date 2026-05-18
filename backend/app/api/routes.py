@@ -17,6 +17,13 @@ from backend.app.api.schemas import (
     AudioMessageAcceptedResponse,
     AutoModeConfigRequest,
     CodexConfigProfileResponse,
+    CodexMcpAppInstallResponse,
+    CodexMcpAppPreviewResponse,
+    CodexMcpAppPromptArgumentResponse,
+    CodexMcpAppPromptResponse,
+    CodexMcpAppResourceResponse,
+    CodexMcpAppResponse,
+    CodexMcpAppToolResponse,
     CodexMcpServerResponse,
     CodexRunOptionsRequest,
     CodexSkillResponse,
@@ -48,7 +55,12 @@ from backend.app.application.services.message_service import (
 from backend.app.domain.entities.chat_message import ChatMessage, ChatMessageStatus
 from backend.app.domain.entities.job import Job
 from backend.app.container import AppContainer
-from backend.app.infrastructure.codex_tooling import inspect_codex_tooling
+from backend.app.infrastructure.codex_tooling import (
+    inspect_codex_mcp_server_selection,
+    inspect_codex_tooling,
+    validate_requested_mcp_server_ids,
+)
+from backend.app.infrastructure.mcp_apps import install_repo_mcp_app
 from backend.app.infrastructure.network.tailscale import detect_tailscale_info
 from backend.app.infrastructure.speech.base import (
     SpeechSynthesisError,
@@ -174,16 +186,21 @@ async def persistence_integrity(
 async def post_message(
     payload: MessageRequest,
     service: MessageService = Depends(get_message_service),
+    container: AppContainer = Depends(get_container),
 ) -> MessageAcceptedResponse:
+    codex_options = await _validate_codex_options(
+        payload.codex_options.to_domain()
+        if payload.codex_options is not None
+        else None,
+        container=container,
+    )
     try:
         job = await run_in_threadpool(
             service.submit_message,
             payload.message,
             session_id=payload.session_id,
             workspace_path=payload.workspace_path,
-            codex_options=payload.codex_options.to_domain()
-            if payload.codex_options is not None
-            else None,
+            codex_options=codex_options,
         )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -202,6 +219,8 @@ async def codex_tooling(
         inspect_codex_tooling,
         container.settings.codex_command,
         repo_root=repo_root,
+        apps_repo_root=Path(container.settings.codex_workdir).resolve(),
+        projects_root=container.settings.projects_root,
     )
     return CodexToolingResponse(
         status=CodexStatusResponse(
@@ -213,6 +232,7 @@ async def codex_tooling(
             status_summary=snapshot.status.status_summary,
             raw_status=snapshot.status.raw_status,
             usage_available=snapshot.status.usage_available,
+            usage_label=snapshot.status.usage_label,
             usage_summary=snapshot.status.usage_summary,
             error=snapshot.status.error,
         ),
@@ -234,12 +254,128 @@ async def codex_tooling(
             CodexMcpServerResponse(
                 server_id=server.server_id,
                 summary=server.summary,
+                source=server.source,
+                backing_app_id=server.backing_app_id,
+                status=server.status,
+                selectable=server.selectable,
+                selectable_reason=server.selectable_reason,
+                disabled_reason=server.disabled_reason,
+                lookup_error=server.lookup_error,
             )
             for server in snapshot.mcp_servers
         ],
+        mcp_apps=[
+            CodexMcpAppResponse(
+                app_id=app.app_id,
+                name=app.name,
+                description=app.description,
+                recommended_server_id=app.recommended_server_id,
+                transport=app.transport,
+                command=app.command,
+                args=list(app.args),
+                env=dict(app.env),
+                tags=list(app.tags),
+                supports_ui_extension=app.supports_ui_extension,
+                ui_entry_uri=app.ui_entry_uri,
+                spec_path=app.spec_path,
+                installed=app.installed,
+                install_state=app.install_state,
+                server_present=app.server_present,
+                server_presence_known=app.server_presence_known,
+                config_matches=app.config_matches,
+                tools=[
+                    CodexMcpAppToolResponse(
+                        name=tool.name,
+                        title=tool.title,
+                        description=tool.description,
+                        read_only=tool.read_only,
+                        destructive=tool.destructive,
+                        idempotent=tool.idempotent,
+                        open_world=tool.open_world,
+                        input_schema=tool.input_schema,
+                    )
+                    for tool in app.tools
+                ],
+                resources=[
+                    CodexMcpAppResourceResponse(
+                        name=resource.name,
+                        title=resource.title,
+                        uri=resource.uri,
+                        description=resource.description,
+                        mime_type=resource.mime_type,
+                    )
+                    for resource in app.resources
+                ],
+                prompts=[
+                    CodexMcpAppPromptResponse(
+                        name=prompt.name,
+                        title=prompt.title,
+                        description=prompt.description,
+                        arguments=[
+                            CodexMcpAppPromptArgumentResponse(
+                                name=argument.name,
+                                description=argument.description,
+                                required=argument.required,
+                            )
+                            for argument in prompt.arguments
+                        ],
+                    )
+                    for prompt in app.prompts
+                ],
+                preview=(
+                    CodexMcpAppPreviewResponse(
+                        tool_name=app.preview.tool_name,
+                        arguments=app.preview.arguments,
+                        result=app.preview.result,
+                        is_error=app.preview.is_error,
+                        error=app.preview.error,
+                    )
+                    if app.preview is not None
+                    else None
+                ),
+                drift_summary=app.drift_summary,
+                disabled_reason=app.disabled_reason,
+                lookup_error=app.lookup_error,
+                validation_error=app.validation_error,
+                protocol_error=app.protocol_error,
+            )
+            for app in snapshot.mcp_apps
+        ],
+        mcp_server_inventory_complete=snapshot.mcp_server_inventory_complete,
         mcp_raw_output=snapshot.mcp_raw_output,
         mcp_error=snapshot.mcp_error,
         config_path=snapshot.config_path,
+    )
+
+
+@router.post(
+    "/codex/mcp-apps/{app_id}/install",
+    response_model=CodexMcpAppInstallResponse,
+)
+async def install_codex_mcp_app(
+    app_id: str,
+    container: AppContainer = Depends(get_container),
+) -> CodexMcpAppInstallResponse:
+    try:
+        result = await run_in_threadpool(
+            install_repo_mcp_app,
+            container.settings.codex_command,
+            repo_root=Path(container.settings.codex_workdir).resolve(),
+            projects_root=container.settings.projects_root,
+            app_id=app_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    return CodexMcpAppInstallResponse(
+        app_id=result.app_id,
+        server_id=result.server_id,
+        already_installed=result.already_installed,
+        reconciled=result.reconciled,
+        command=result.command,
+        summary=result.summary,
     )
 
 
@@ -258,7 +394,10 @@ async def post_audio_message(
     )
 
     try:
-        codex_options = _parse_codex_options_json(codex_options_json)
+        codex_options = await _parse_and_validate_codex_options_json(
+            codex_options_json,
+            container=container,
+        )
         submission = await run_in_threadpool(
             container.message_service.submit_audio_message,
             str(temp_path),
@@ -319,7 +458,10 @@ async def post_document_message(
     should_cleanup_immediately = True
 
     try:
-        codex_options = _parse_codex_options_json(codex_options_json)
+        codex_options = await _parse_and_validate_codex_options_json(
+            codex_options_json,
+            container=container,
+        )
         submission = await run_in_threadpool(
             container.message_service.submit_document_message,
             str(temp_path),
@@ -373,7 +515,10 @@ async def post_attachment_message(
     should_cleanup_immediately = True
 
     try:
-        codex_options = _parse_codex_options_json(codex_options_json)
+        codex_options = await _parse_and_validate_codex_options_json(
+            codex_options_json,
+            container=container,
+        )
         job = await run_in_threadpool(
             container.message_service.submit_attachment_message,
             [
@@ -546,7 +691,7 @@ async def get_session(
     session_id: str,
     service: MessageService = Depends(get_message_service),
 ) -> SessionDetailResponse:
-    session = service.get_session(session_id)
+    session = service.refresh_session(session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found.")
 
@@ -558,7 +703,7 @@ async def get_session(
     messages = service.list_messages(session_id)
     jobs_by_id = _jobs_by_id_for_messages(service, messages)
 
-    refreshed_session = service.get_session(session_id) or session
+    refreshed_session = service.refresh_session(session_id) or session
 
     return SessionDetailResponse.from_domain(
         refreshed_session,
@@ -599,13 +744,21 @@ async def post_session_message(
     session_id: str,
     payload: MessageRequest,
     service: MessageService = Depends(get_message_service),
+    container: AppContainer = Depends(get_container),
 ) -> MessageAcceptedResponse:
+    codex_options = await _validate_codex_options(
+        payload.codex_options.to_domain()
+        if payload.codex_options is not None
+        else None,
+        container=container,
+    )
     try:
         job = await run_in_threadpool(
             service.submit_message,
             payload.message,
             session_id=session_id,
             workspace_path=payload.workspace_path,
+            codex_options=codex_options,
         )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -905,3 +1058,54 @@ def _parse_codex_options_json(raw_json: str | None):
         return CodexRunOptionsRequest.model_validate_json(raw_json).to_domain()
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=f"Invalid codex_options_json: {exc}") from exc
+
+
+async def _parse_and_validate_codex_options_json(
+    raw_json: str | None,
+    *,
+    container: AppContainer,
+):
+    codex_options = _parse_codex_options_json(raw_json)
+    return await _validate_codex_options(
+        codex_options,
+        container=container,
+    )
+
+
+async def _validate_codex_options(
+    codex_options,
+    *,
+    container: AppContainer,
+):
+    if codex_options is None or not codex_options.mcp_server_ids:
+        return codex_options
+
+    selection_snapshot = await run_in_threadpool(
+        inspect_codex_mcp_server_selection,
+        container.settings.codex_command,
+        repo_root=Path(container.settings.codex_workdir).resolve(),
+        projects_root=container.settings.projects_root,
+    )
+    if selection_snapshot.error is not None:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "Cannot validate requested MCP server selections because "
+                f"`codex mcp list` failed. {selection_snapshot.error}"
+            ),
+        )
+
+    issues = validate_requested_mcp_server_ids(
+        selection_snapshot,
+        codex_options.mcp_server_ids,
+    )
+    if issues:
+        joined = "; ".join(
+            f"`{issue.server_id}` {issue.reason}"
+            for issue in issues
+        )
+        raise HTTPException(
+            status_code=422,
+            detail=f"Rejected MCP server selections: {joined}",
+        )
+    return codex_options

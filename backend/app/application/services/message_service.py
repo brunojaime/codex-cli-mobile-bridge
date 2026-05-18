@@ -388,6 +388,13 @@ class MessageService:
     def get_session(self, session_id: str) -> ChatSession | None:
         return self._repository.get_session(session_id)
 
+    def refresh_session(self, session_id: str) -> ChatSession | None:
+        session = self._repository.get_session(session_id)
+        if session is None:
+            return None
+        self._reconcile_reserved_follow_ups(session)
+        return self._repository.get_session(session_id) or session
+
     def set_session_archived(
         self,
         *,
@@ -1897,6 +1904,7 @@ class MessageService:
             message=assistant_message,
             display_message=f"[{supervisor.label} supervisor turn]",
             execution_message=self._build_supervisor_follow_up_message(
+                session=session,
                 session_id=session.id,
                 run_id=run_id,
                 supervisor_prompt=supervisor.prompt,

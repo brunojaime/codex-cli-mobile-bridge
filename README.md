@@ -48,6 +48,37 @@ docker-compose.yml
 main.py
 ```
 
+## Repo MCP Apps
+
+This repo now supports repo-local MCP apps under `mcp_apps/`.
+
+Each app is discovered from:
+
+```text
+mcp_apps/<module_name>/
+  __init__.py
+  server.py
+  app.json
+```
+
+The backend inspects these apps over the real MCP protocol and exposes them through `/codex/tooling`. The Flutter client shows them in the "Codex tools" sheet, including install state, tool/resource/prompt counts, and preview data when the app defines a `preview_tool`.
+
+Repo app install state is reconciled against the stored Codex MCP server config using `codex mcp get --json`. A repo app can therefore show as missing, matching, drifted, invalid, or protocol-broken.
+
+Repo app specs intentionally do not declare `cwd`. The current Codex CLI install flow persists transport type, command, args, and env, but not a stable `cwd`, so this repo's MCP app contract only advertises fields that round-trip through installation accurately.
+
+The first built-in repo app is `project-catalog`, which exposes the folders under `PROJECTS_ROOT` as a read-only MCP server with project metadata.
+
+To scaffold a new app, use the repo skill helper:
+
+```bash
+uv run python codex-skills/mcp-app-builder/scripts/scaffold_mcp_app.py my-app \
+  --title "My App" \
+  --description "What this app does"
+```
+
+Current limitation: the mobile frontend supports MCP app discovery, preview, install, and run selection, but it does not yet host full inline `io.modelcontextprotocol/ui` iframe apps.
+
 ## Design Review
 
 - Figma board: https://www.figma.com/design/qmN9KrBZgqhvwOjGKyMjPG?node-id=3-2

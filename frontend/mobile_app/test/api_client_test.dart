@@ -88,6 +88,162 @@ void main() {
       'Pull the latest backend changes and restart it.',
     );
   });
+
+  test('getCodexTooling parses repo MCP apps including validation errors',
+      () async {
+    final client = ApiClient(
+      baseUrl: 'http://localhost:8000',
+      client: MockClient((request) async {
+        expect(request.method, 'GET');
+        expect(request.url.path, '/codex/tooling');
+        return http.Response(
+          '''
+          {
+            "status": {
+              "cli_available": true,
+              "command": "codex",
+              "status_summary": "ok"
+            },
+            "profiles": [],
+            "skills": [],
+            "mcp_server_inventory_complete": false,
+            "mcp_servers": [
+              {
+                "server_id": "github",
+                "summary": "github: GitHub connector available",
+                "source": "external",
+                "backing_app_id": null,
+                "status": "disabled",
+                "selectable": false,
+                "selectable_reason": "This external MCP server is disabled in Codex. Re-enable it before selecting it.",
+                "disabled_reason": "Paused by admin",
+                "lookup_error": null
+              }
+            ],
+            "mcp_apps": [
+              {
+                "app_id": "project-catalog",
+                "name": "Project Catalog",
+                "description": "List local projects",
+                "recommended_server_id": "project-catalog",
+                "transport": "stdio",
+                "command": "uv",
+                "args": ["run", "python", "-m", "mcp_apps.project_catalog.server"],
+                "env": {"PROJECTS_ROOT": "/projects"},
+                "tags": ["projects"],
+                "supports_ui_extension": false,
+                "ui_entry_uri": null,
+                "spec_path": "/repo/mcp_apps/project_catalog/app.json",
+                "installed": false,
+                "install_state": "drifted",
+                "server_present": true,
+                "server_presence_known": true,
+                "config_matches": false,
+                "tools": [
+                  {
+                    "name": "list_projects",
+                    "title": "List Projects",
+                    "description": "List projects",
+                    "read_only": true,
+                    "destructive": false,
+                    "idempotent": true,
+                    "open_world": false,
+                    "input_schema": {"type": "object"}
+                  }
+                ],
+                "resources": [
+                  {
+                    "name": "Project Catalog JSON",
+                    "title": null,
+                    "uri": "projects://catalog",
+                    "description": "Catalog",
+                    "mime_type": "application/json"
+                  }
+                ],
+                "prompts": [],
+                "preview": {
+                  "tool_name": "list_projects",
+                  "arguments": {"limit": 2},
+                  "result": {
+                    "project_count": 1,
+                    "projects": [{"name": "alpha"}]
+                  },
+                  "is_error": false,
+                  "error": null
+                },
+                "drift_summary": "args differ between the stored Codex config and the repo app spec",
+                "disabled_reason": "Authorization: [redacted]",
+                "lookup_error": "state unreadable",
+                "validation_error": "Broken preview config",
+                "protocol_error": "Timed out during initialize."
+              }
+            ]
+          }
+          ''',
+          200,
+          headers: <String, String>{'content-type': 'application/json'},
+        );
+      }),
+    );
+
+    final snapshot = await client.getCodexTooling();
+    expect(snapshot.mcpServerInventoryComplete, isFalse);
+    expect(snapshot.mcpServers, hasLength(1));
+    final server = snapshot.mcpServers.single;
+    expect(server.serverId, 'github');
+    expect(server.status, 'disabled');
+    expect(server.selectable, isFalse);
+    expect(server.disabledReason, 'Paused by admin');
+    expect(snapshot.mcpApps, hasLength(1));
+    final app = snapshot.mcpApps.single;
+    expect(app.appId, 'project-catalog');
+    expect(app.recommendedServerId, 'project-catalog');
+    expect(app.tools.single.name, 'list_projects');
+    expect(app.resources.single.uri, 'projects://catalog');
+    expect(app.preview?.toolName, 'list_projects');
+    expect(app.installState, 'drifted');
+    expect(app.serverPresent, isTrue);
+    expect(app.serverPresenceKnown, isTrue);
+    expect(app.configMatches, isFalse);
+    expect(
+      app.driftSummary,
+      'args differ between the stored Codex config and the repo app spec',
+    );
+    expect(app.disabledReason, 'Authorization: [redacted]');
+    expect(app.lookupError, 'state unreadable');
+    expect(app.validationError, 'Broken preview config');
+    expect(app.protocolError, 'Timed out during initialize.');
+  });
+
+  test('installCodexMcpApp posts to the install endpoint', () async {
+    final client = ApiClient(
+      baseUrl: 'http://localhost:8000',
+      client: MockClient((request) async {
+        expect(request.method, 'POST');
+        expect(request.url.path, '/codex/mcp-apps/project-catalog/install');
+        return http.Response(
+          '''
+          {
+            "app_id": "project-catalog",
+            "server_id": "project-catalog",
+            "already_installed": true,
+            "reconciled": false,
+            "command": "uv run python -m mcp_apps.project_catalog.server",
+            "summary": "Already installed"
+          }
+          ''',
+          200,
+          headers: <String, String>{'content-type': 'application/json'},
+        );
+      }),
+    );
+
+    final result = await client.installCodexMcpApp('project-catalog');
+    expect(result.appId, 'project-catalog');
+    expect(result.alreadyInstalled, isTrue);
+    expect(result.reconciled, isFalse);
+    expect(result.summary, 'Already installed');
+  });
 }
 
 class _MissingTurnSummaryRouteApiClient extends ApiClient {

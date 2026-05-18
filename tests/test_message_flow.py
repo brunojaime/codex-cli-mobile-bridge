@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
 import threading
 import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import zipfile
@@ -36,6 +38,7 @@ from backend.app.domain.entities.chat_message import (
 from backend.app.domain.entities.chat_session import ChatSession
 from backend.app.domain.entities.codex_options import CodexRunOptions
 from backend.app.domain.entities.job import JobConversationKind, JobStatus
+from backend.app.infrastructure import mcp_apps as mcp_apps_infra
 from backend.app.infrastructure.execution.base import ExecutionProvider, ExecutionSnapshot
 from backend.app.infrastructure.codex_tooling import discover_codex_skills, sync_repo_skills
 from backend.app.infrastructure.persistence.in_memory_chat_repository import InMemoryChatRepository
@@ -67,11 +70,11 @@ def build_test_client() -> TestClient:
     return TestClient(app)
 
 
-def build_session_client() -> TestClient:
+def build_session_client(*, projects_root: str = "..") -> TestClient:
     settings = Settings(
         codex_command="python3 tests/fixtures/fake_codex_session.py",
         codex_use_exec=True,
-        projects_root="..",
+        projects_root=projects_root,
         chat_store_backend="memory",
         execution_timeout_seconds=10,
         poll_interval_seconds=0,
@@ -95,11 +98,11 @@ def build_json_only_client() -> TestClient:
     return TestClient(app)
 
 
-def build_session_client_with_container():
+def build_session_client_with_container(*, projects_root: str = ".."):
     settings = Settings(
         codex_command="python3 tests/fixtures/fake_codex_session.py",
         codex_use_exec=True,
-        projects_root="..",
+        projects_root=projects_root,
         chat_store_backend="memory",
         execution_timeout_seconds=10,
         poll_interval_seconds=0,
@@ -110,11 +113,17 @@ def build_session_client_with_container():
     return TestClient(app), container
 
 
-def build_tooling_client() -> TestClient:
+def build_tooling_client(
+    projects_root: str = "..",
+    *,
+    codex_workdir: str | None = None,
+    codex_command: str = "python3 tests/fixtures/fake_codex_tooling.py",
+) -> TestClient:
     settings = Settings(
-        codex_command="python3 tests/fixtures/fake_codex_tooling.py",
+        codex_command=codex_command,
         codex_use_exec=True,
-        projects_root="..",
+        codex_workdir=codex_workdir or str(Path.cwd()),
+        projects_root=projects_root,
         chat_store_backend="memory",
         execution_timeout_seconds=10,
         poll_interval_seconds=0,
@@ -142,9 +151,46 @@ def build_sqlite_session_client_with_container(
     return TestClient(app), container
 
 
+def _write_fake_mcp_state(
+    home_dir: Path,
+    servers: dict[str, dict[str, object]],
+) -> None:
+    state_file = home_dir / ".codex" / "fake_mcp_state.json"
+    state_file.parent.mkdir(parents=True, exist_ok=True)
+    state_file.write_text(json.dumps(servers), encoding="utf-8")
+
+
+def _read_fake_mcp_state(home_dir: Path) -> dict[str, dict[str, object]]:
+    state_file = home_dir / ".codex" / "fake_mcp_state.json"
+    return json.loads(state_file.read_text(encoding="utf-8"))
+
+
+def _matching_project_catalog_server_state(
+    projects_root: str = "..",
+) -> dict[str, object]:
+    return {
+        "summary": (
+            "project-catalog: uv run --project "
+            f"{Path.cwd()} python -m mcp_apps.project_catalog.server"
+        ),
+        "transport": "stdio",
+        "command": "uv",
+        "args": [
+            "run",
+            "--project",
+            str(Path.cwd()),
+            "python",
+            "-m",
+            "mcp_apps.project_catalog.server",
+        ],
+        "env": {"PROJECTS_ROOT": projects_root},
+    }
+
+
 class _ControlledExecutionProvider(ExecutionProvider):
     def __init__(self) -> None:
         self._snapshots: dict[str, ExecutionSnapshot] = {}
+        self._submission_tokens: dict[str, str] = {}
         self._job_counter = 0
         self.requests: list[dict[str, object]] = []
         self._lock = threading.RLock()
@@ -186,6 +232,8 @@ class _ControlledExecutionProvider(ExecutionProvider):
                 phase="Queued",
                 latest_activity="Controlled provider queued the job.",
             )
+            if submission_token:
+                self._submission_tokens[submission_token] = job_id
             return job_id
 
     def finish_job(
@@ -243,6 +291,13 @@ class _ControlledExecutionProvider(ExecutionProvider):
     def has_job(self, job_id: str) -> bool:
         with self._lock:
             return job_id in self._snapshots
+
+    def supports_submission_lookup(self) -> bool:
+        return True
+
+    def get_job_id_by_submission_token(self, submission_token: str) -> str | None:
+        with self._lock:
+            return self._submission_tokens.get(submission_token)
 
     def cancel_job(self, job_id: str) -> bool:
         with self._lock:
@@ -5164,24 +5219,29 @@ def test_terminal_follow_up_reason_code_marks_run_completion_path() -> None:
 
 
 def test_workspaces_endpoint_and_session_workspace_binding() -> None:
-    client = build_session_client()
+    with TemporaryDirectory() as temp_dir:
+        projects_root = Path(temp_dir)
+        target_dir = projects_root / "cli-codex-project"
+        target_dir.mkdir()
 
-    workspaces_response = client.get("/workspaces")
-    assert workspaces_response.status_code == 200
-    workspaces = workspaces_response.json()
-    assert any(workspace["name"] == "cli-codex-project" for workspace in workspaces)
+        client = build_session_client(projects_root=str(projects_root))
 
-    target_workspace = next(
-        workspace for workspace in workspaces if workspace["name"] == "cli-codex-project"
-    )
-    create_response = client.post(
-        "/sessions",
-        json={"title": "Fixtures chat", "workspace_path": target_workspace["path"]},
-    )
-    assert create_response.status_code == 201
-    payload = create_response.json()
-    assert payload["workspace_name"] == "cli-codex-project"
-    assert payload["workspace_path"] == target_workspace["path"]
+        workspaces_response = client.get("/workspaces")
+        assert workspaces_response.status_code == 200
+        workspaces = workspaces_response.json()
+        assert any(workspace["name"] == "cli-codex-project" for workspace in workspaces)
+
+        target_workspace = next(
+            workspace for workspace in workspaces if workspace["name"] == "cli-codex-project"
+        )
+        create_response = client.post(
+            "/sessions",
+            json={"title": "Fixtures chat", "workspace_path": target_workspace["path"]},
+        )
+        assert create_response.status_code == 201
+        payload = create_response.json()
+        assert payload["workspace_name"] == "cli-codex-project"
+        assert payload["workspace_path"] == target_workspace["path"]
 
 
 def test_job_response_exposes_phase_metadata() -> None:
@@ -6481,6 +6541,517 @@ def test_submit_message_applies_codex_guidance_and_passes_codex_options() -> Non
         assert "`github`" in request["message"]
 
 
+def test_text_message_route_rejects_unknown_mcp_server_selection() -> None:
+    client = build_session_client()
+
+    response = client.post(
+        "/message",
+        json={
+            "message": "Use Codex with this server.",
+            "codex_options": {
+                "mcp_server_ids": ["ghost-server"],
+            },
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json() == {
+        "detail": (
+            "Rejected MCP server selections: `ghost-server` is not configured "
+            "in current Codex MCP tooling."
+        )
+    }
+
+
+def test_text_message_route_refuses_partial_mcp_list_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("FAKE_CODEX_PARTIAL_LIST_ERROR", "Partial MCP list failed.")
+    client = build_session_client()
+
+    response = client.post(
+        "/message",
+        json={
+            "message": "Use Codex with this server.",
+            "codex_options": {
+                "mcp_server_ids": ["github"],
+            },
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json() == {
+        "detail": (
+            "Cannot validate requested MCP server selections because "
+            "`codex mcp list` failed. Partial MCP list failed."
+        )
+    }
+
+
+def test_codex_tooling_marks_mcp_inventory_incomplete_when_list_partially_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with TemporaryDirectory() as temp_dir:
+        home_dir = Path(temp_dir)
+        monkeypatch.setenv("HOME", str(home_dir))
+        monkeypatch.setenv("FAKE_CODEX_PARTIAL_LIST_ERROR", "Partial MCP list failed.")
+
+        client = build_tooling_client(projects_root="..")
+        response = client.get("/codex/tooling")
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["mcp_server_inventory_complete"] is False
+        assert payload["mcp_error"] == "Partial MCP list failed."
+        github_server = next(
+            server for server in payload["mcp_servers"] if server["server_id"] == "github"
+        )
+        assert github_server["selectable"] is False
+        assert github_server["selectable_reason"] == (
+            "Codex MCP inventory is incomplete, so direct MCP server selection is "
+            "temporarily unavailable. Partial MCP list failed."
+        )
+
+
+@pytest.mark.parametrize(
+    ("server_state", "env_key", "expected_detail"),
+    [
+        (
+            {
+                "project-catalog": {
+                    "summary": (
+                        "project-catalog: uv run --project /tmp python -m "
+                        "mcp_apps.project_catalog.server"
+                    ),
+                    "transport": "stdio",
+                    "command": "uv",
+                    "args": [
+                        "run",
+                        "--project",
+                        "/tmp",
+                        "python",
+                        "-m",
+                        "mcp_apps.project_catalog.server",
+                    ],
+                    "env": {"PROJECTS_ROOT": "/tmp/projects"},
+                },
+            },
+            None,
+            (
+                "Rejected MCP server selections: `project-catalog` is repo-backed "
+                "and currently `drifted`. This repo-backed server drifted from the "
+                "repo app spec. Use the app card to reconcile it first."
+            ),
+        ),
+        (
+            {
+                "project-catalog": {
+                    **_matching_project_catalog_server_state(),
+                    "enabled": False,
+                    "disabled_reason": "Temporarily disabled",
+                },
+            },
+            None,
+            (
+                "Rejected MCP server selections: `project-catalog` is repo-backed "
+                "and currently `disabled`. This repo-backed server is disabled. "
+                "Use the app card to re-enable it first."
+            ),
+        ),
+        (
+            {
+                "project-catalog": {
+                    **_matching_project_catalog_server_state(),
+                },
+            },
+            "FAKE_CODEX_MALFORMED_GET_FOR",
+            (
+                "Rejected MCP server selections: `project-catalog` is repo-backed "
+                "and currently `unreadable`. Codex could not read the stored "
+                "server state safely. Fix that before selecting this repo-backed "
+                "server."
+            ),
+        ),
+    ],
+)
+def test_text_message_route_rejects_unhealthy_repo_backed_mcp_server_selection(
+    monkeypatch: pytest.MonkeyPatch,
+    server_state: dict[str, dict[str, object]],
+    env_key: str | None,
+    expected_detail: str,
+) -> None:
+    with TemporaryDirectory() as temp_dir:
+        home_dir = Path(temp_dir)
+        monkeypatch.setenv("HOME", str(home_dir))
+        if env_key is not None:
+            monkeypatch.setenv(env_key, "project-catalog")
+        _write_fake_mcp_state(home_dir, server_state)
+
+        client = build_session_client()
+        response = client.post(
+            "/message",
+            json={
+                "message": "Use Codex with this repo server.",
+                "codex_options": {
+                    "mcp_server_ids": ["project-catalog"],
+                },
+            },
+        )
+
+        assert response.status_code == 422
+        assert response.json() == {"detail": expected_detail}
+
+
+def test_text_message_route_accepts_external_selectable_mcp_server() -> None:
+    client = build_session_client()
+
+    response = client.post(
+        "/message",
+        json={
+            "message": "Use GitHub for this run.",
+            "codex_options": {
+                "mcp_server_ids": ["github"],
+            },
+        },
+    )
+
+    assert response.status_code == 202
+
+
+def test_codex_tooling_reports_disabled_external_mcp_server(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with TemporaryDirectory() as temp_dir:
+        home_dir = Path(temp_dir)
+        monkeypatch.setenv("HOME", str(home_dir))
+        _write_fake_mcp_state(
+            home_dir,
+            {
+                "github": {
+                    "summary": "github: GitHub connector available",
+                    "enabled": False,
+                    "disabled_reason": "Bearer secret token disabled",
+                    "transport": "stdio",
+                    "command": "github",
+                    "args": [],
+                    "env": {},
+                },
+            },
+        )
+
+        client = build_tooling_client(projects_root="..")
+        response = client.get("/codex/tooling")
+
+        assert response.status_code == 200
+        payload = response.json()
+        github_server = next(
+            server for server in payload["mcp_servers"] if server["server_id"] == "github"
+        )
+        assert github_server["source"] == "external"
+        assert github_server["status"] == "disabled"
+        assert github_server["selectable"] is False
+        assert github_server["disabled_reason"] == "Bearer [redacted] token disabled"
+        assert "secret" not in github_server["disabled_reason"]
+        assert github_server["lookup_error"] is None
+
+
+def test_codex_tooling_reports_unreadable_external_mcp_server(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with TemporaryDirectory() as temp_dir:
+        home_dir = Path(temp_dir)
+        monkeypatch.setenv("HOME", str(home_dir))
+        monkeypatch.setenv("FAKE_CODEX_MALFORMED_GET_FOR", "github")
+
+        client = build_tooling_client(projects_root="..")
+        response = client.get("/codex/tooling")
+
+        assert response.status_code == 200
+        payload = response.json()
+        github_server = next(
+            server for server in payload["mcp_servers"] if server["server_id"] == "github"
+        )
+        assert github_server["source"] == "external"
+        assert github_server["status"] == "unreadable"
+        assert github_server["selectable"] is False
+        assert github_server["lookup_error"] == (
+            "`codex mcp get --json` returned malformed JSON."
+        )
+        assert "secret" not in github_server["lookup_error"]
+
+
+def test_codex_tooling_reports_unreadable_external_mcp_server_when_get_times_out(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with TemporaryDirectory() as temp_dir:
+        home_dir = Path(temp_dir)
+        monkeypatch.setenv("HOME", str(home_dir))
+        monkeypatch.setenv("FAKE_CODEX_SLEEP_GET_FOR", "github")
+        monkeypatch.setenv("FAKE_CODEX_SLEEP_SECONDS", "0.05")
+        monkeypatch.setattr(mcp_apps_infra, "_MCP_GET_SERVER_TIMEOUT_SECONDS", 0.01)
+
+        client = build_tooling_client(projects_root="..")
+        response = client.get("/codex/tooling")
+
+        assert response.status_code == 200
+        payload = response.json()
+        github_server = next(
+            server for server in payload["mcp_servers"] if server["server_id"] == "github"
+        )
+        assert github_server["status"] == "unreadable"
+        assert github_server["selectable"] is False
+        assert github_server["lookup_error"] == (
+            "`codex mcp get --json` timed out while checking the existing server config."
+        )
+        assert "TimeoutExpired" not in github_server["lookup_error"]
+
+
+def test_codex_tooling_reports_repo_app_unreadable_when_get_exec_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with TemporaryDirectory() as temp_dir:
+        home_dir = Path(temp_dir)
+        monkeypatch.setenv("HOME", str(home_dir))
+        _write_fake_mcp_state(
+            home_dir,
+            {
+                "project-catalog": _matching_project_catalog_server_state(),
+            },
+        )
+        real_run = mcp_apps_infra.subprocess.run
+
+        def fake_run(*args, **kwargs):
+            process_args = args[0] if args else kwargs.get("args", [])
+            if process_args[-4:] == [
+                "mcp",
+                "get",
+                "project-catalog",
+                "--json",
+            ]:
+                raise FileNotFoundError("missing codex")
+            return real_run(*args, **kwargs)
+
+        monkeypatch.setattr(mcp_apps_infra.subprocess, "run", fake_run)
+
+        client = build_tooling_client(projects_root="..")
+        response = client.get("/codex/tooling")
+
+        assert response.status_code == 200
+        payload = response.json()
+        project_catalog = next(
+            app for app in payload["mcp_apps"] if app["app_id"] == "project-catalog"
+        )
+        assert project_catalog["install_state"] == "unreadable"
+        assert project_catalog["lookup_error"] == (
+            "`codex mcp get --json` could not be executed while checking the "
+            "existing server config."
+        )
+        assert "FileNotFoundError" not in project_catalog["lookup_error"]
+
+
+@pytest.mark.parametrize(
+    ("state", "env_key", "expected_detail"),
+    [
+        (
+            {
+                "github": {
+                    "summary": "github: GitHub connector available",
+                    "enabled": False,
+                    "disabled_reason": "Bearer secret token disabled",
+                    "transport": "stdio",
+                    "command": "github",
+                    "args": [],
+                    "env": {},
+                },
+            },
+            None,
+            (
+                "Rejected MCP server selections: `github` is external and currently "
+                "`disabled`. This external MCP server is disabled in Codex. "
+                "Disabled reason: Bearer [redacted] token disabled"
+            ),
+        ),
+        (
+            None,
+            "FAKE_CODEX_MALFORMED_GET_FOR",
+            (
+                "Rejected MCP server selections: `github` is external and currently "
+                "`unreadable`. Codex reported this external MCP server, but its "
+                "stored config is unreadable. Fix the stored Codex server entry "
+                "before selecting it."
+            ),
+        ),
+    ],
+)
+def test_text_message_route_rejects_unhealthy_external_mcp_server_selection(
+    monkeypatch: pytest.MonkeyPatch,
+    state: dict[str, dict[str, object]] | None,
+    env_key: str | None,
+    expected_detail: str,
+) -> None:
+    with TemporaryDirectory() as temp_dir:
+        home_dir = Path(temp_dir)
+        monkeypatch.setenv("HOME", str(home_dir))
+        if state is not None:
+            _write_fake_mcp_state(home_dir, state)
+        if env_key is not None:
+            monkeypatch.setenv(env_key, "github")
+
+        client = build_session_client()
+        response = client.post(
+            "/message",
+            json={
+                "message": "Use GitHub for this run.",
+                "codex_options": {
+                    "mcp_server_ids": ["github"],
+                },
+            },
+        )
+
+        assert response.status_code == 422
+        assert response.json() == {"detail": expected_detail}
+        assert "secret" not in response.json()["detail"]
+
+
+def test_text_message_route_rejects_external_mcp_server_when_get_times_out(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with TemporaryDirectory() as temp_dir:
+        home_dir = Path(temp_dir)
+        monkeypatch.setenv("HOME", str(home_dir))
+        monkeypatch.setenv("FAKE_CODEX_SLEEP_GET_FOR", "github")
+        monkeypatch.setenv("FAKE_CODEX_SLEEP_SECONDS", "0.05")
+        monkeypatch.setattr(mcp_apps_infra, "_MCP_GET_SERVER_TIMEOUT_SECONDS", 0.01)
+
+        client = build_session_client()
+        response = client.post(
+            "/message",
+            json={
+                "message": "Use GitHub for this run.",
+                "codex_options": {
+                    "mcp_server_ids": ["github"],
+                },
+            },
+        )
+
+        assert response.status_code == 422
+        assert response.json() == {
+            "detail": (
+                "Rejected MCP server selections: `github` is external and "
+                "currently `unreadable`. Codex could not read this external MCP "
+                "server safely. Fix the stored Codex server entry before selecting "
+                "it."
+            )
+        }
+        assert "TimeoutExpired" not in response.json()["detail"]
+
+
+def test_text_message_route_accepts_matching_repo_backed_mcp_server(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with TemporaryDirectory() as temp_dir:
+        home_dir = Path(temp_dir)
+        monkeypatch.setenv("HOME", str(home_dir))
+        _write_fake_mcp_state(
+            home_dir,
+            {
+                "project-catalog": _matching_project_catalog_server_state(),
+            },
+        )
+
+        client = build_session_client()
+        try:
+            response = client.post(
+                "/message",
+                json={
+                    "message": "Use the repo project catalog MCP app.",
+                    "codex_options": {
+                        "mcp_server_ids": ["project-catalog"],
+                    },
+                },
+            )
+
+            assert response.status_code == 202
+            wait_for_job(client, response.json()["job_id"])
+        finally:
+            client.close()
+
+
+def test_session_message_route_rejects_unknown_mcp_server_selection() -> None:
+    client = build_session_client()
+    session_response = client.post("/sessions", json={"title": "With MCP validation"})
+    assert session_response.status_code == 201
+    session_id = session_response.json()["id"]
+
+    response = client.post(
+        f"/sessions/{session_id}/messages",
+        json={
+            "message": "Use Codex with this server.",
+            "codex_options": {
+                "mcp_server_ids": ["ghost-server"],
+            },
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json() == {
+        "detail": (
+            "Rejected MCP server selections: `ghost-server` is not configured "
+            "in current Codex MCP tooling."
+        )
+    }
+
+
+@pytest.mark.parametrize(
+    ("endpoint", "data", "files"),
+    [
+        (
+            "/message/audio",
+            {"codex_options_json": json.dumps({"mcp_server_ids": ["ghost-server"]})},
+            {"audio": ("voice-note.m4a", b"fake audio bytes", "audio/mp4")},
+        ),
+        (
+            "/message/document",
+            {
+                "message": "Summarize this",
+                "codex_options_json": json.dumps({"mcp_server_ids": ["ghost-server"]}),
+            },
+            {"document": ("notes.txt", b"Line one\nLine two", "text/plain")},
+        ),
+        (
+            "/message/attachments",
+            {
+                "message": "Summarize this",
+                "codex_options_json": json.dumps({"mcp_server_ids": ["ghost-server"]}),
+            },
+            [
+                ("attachments", ("notes.txt", b"Line one\nLine two", "text/plain")),
+            ],
+        ),
+    ],
+)
+def test_upload_routes_reject_unknown_mcp_server_selection(
+    endpoint: str,
+    data: dict[str, str],
+    files: object,
+) -> None:
+    client = build_session_client()
+
+    response = client.post(
+        endpoint,
+        data=data,
+        files=files,
+    )
+
+    assert response.status_code == 422
+    assert response.json() == {
+        "detail": (
+            "Rejected MCP server selections: `ghost-server` is not configured "
+            "in current Codex MCP tooling."
+        )
+    }
+
+
 def test_codex_tooling_endpoint_reports_status_skills_profiles_and_mcp(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -6538,7 +7109,11 @@ def test_codex_tooling_endpoint_reports_status_skills_profiles_and_mcp(
         assert payload["status"]["cli_available"] is True
         assert payload["status"]["logged_in"] is True
         assert payload["status"]["auth_mode"] == "ChatGPT"
-        assert payload["status"]["usage_available"] is False
+        assert payload["status"]["usage_available"] is True
+        assert payload["status"]["usage_label"] == "Pro · 17%/5h · 42%/7d"
+        assert "Codex account: Pro." in payload["status"]["usage_summary"]
+        assert "5h window 17% used" in payload["status"]["usage_summary"]
+        assert "7d window 42% used" in payload["status"]["usage_summary"]
         assert payload["profiles"] == [
             {"name": "fast"},
             {"name": "safe"},
@@ -6548,9 +7123,778 @@ def test_codex_tooling_endpoint_reports_status_skills_profiles_and_mcp(
         assert "skill-creator" in skill_ids
         assert "github:yeet" in skill_ids
         assert payload["mcp_servers"] == [
-            {"server_id": "github", "summary": "github: GitHub connector available"},
-            {"server_id": "notion", "summary": "notion: Notion docs"},
+            {
+                "server_id": "github",
+                "summary": "github: GitHub connector available",
+                "source": "external",
+                "backing_app_id": None,
+                "status": "healthy",
+                "selectable": True,
+                "selectable_reason": None,
+                "disabled_reason": None,
+                "lookup_error": None,
+            },
+            {
+                "server_id": "notion",
+                "summary": "notion: Notion docs",
+                "source": "external",
+                "backing_app_id": None,
+                "status": "healthy",
+                "selectable": True,
+                "selectable_reason": None,
+                "disabled_reason": None,
+                "lookup_error": None,
+            },
         ]
+        assert payload["mcp_server_inventory_complete"] is True
+        app_ids = [app["app_id"] for app in payload["mcp_apps"]]
+        assert "project-catalog" in app_ids
+        project_catalog = next(
+            app for app in payload["mcp_apps"] if app["app_id"] == "project-catalog"
+        )
+        assert project_catalog["recommended_server_id"] == "project-catalog"
+        assert project_catalog["installed"] is False
+        assert project_catalog["install_state"] == "missing"
+        assert project_catalog["server_present"] is False
+        assert "cwd" not in project_catalog
+        project_catalog_server = next(
+            server
+            for server in payload["mcp_servers"]
+            if server["server_id"] == "project-catalog"
+        ) if any(server["server_id"] == "project-catalog" for server in payload["mcp_servers"]) else None
+        assert project_catalog_server is None
+        assert [tool["name"] for tool in project_catalog["tools"]] == [
+            "list_projects",
+            "get_project_metadata",
+        ]
+        assert [resource["uri"] for resource in project_catalog["resources"]] == [
+            "projects://catalog"
+        ]
+        assert [prompt["name"] for prompt in project_catalog["prompts"]] == [
+            "summarize-projects"
+        ]
+        assert project_catalog["preview"]["tool_name"] == "list_projects"
+        assert "projects_root" in project_catalog["preview"]["result"]
+
+
+def test_codex_mcp_app_install_endpoint_registers_repo_app(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with TemporaryDirectory() as temp_dir:
+        home_dir = Path(temp_dir)
+        (home_dir / ".codex").mkdir(parents=True)
+        monkeypatch.setenv("HOME", str(home_dir))
+
+        client = build_tooling_client(projects_root="..")
+        install_response = client.post("/codex/mcp-apps/project-catalog/install")
+
+        assert install_response.status_code == 200
+        payload = install_response.json()
+        assert payload["app_id"] == "project-catalog"
+        assert payload["server_id"] == "project-catalog"
+        assert payload["already_installed"] is False
+        assert payload["reconciled"] is False
+
+        tooling_response = client.get("/codex/tooling")
+        assert tooling_response.status_code == 200
+        tooling_payload = tooling_response.json()
+        server_ids = [server["server_id"] for server in tooling_payload["mcp_servers"]]
+        assert "project-catalog" in server_ids
+        project_catalog_server = next(
+            server
+            for server in tooling_payload["mcp_servers"]
+            if server["server_id"] == "project-catalog"
+        )
+        assert project_catalog_server == {
+            "server_id": "project-catalog",
+            "summary": (
+                "project-catalog: uv run --project "
+                f"{Path.cwd()} python -m mcp_apps.project_catalog.server"
+            ),
+            "source": "repo_app",
+            "backing_app_id": "project-catalog",
+            "status": "matching",
+            "selectable": True,
+            "selectable_reason": None,
+            "disabled_reason": None,
+            "lookup_error": None,
+        }
+        project_catalog = next(
+            app
+            for app in tooling_payload["mcp_apps"]
+            if app["app_id"] == "project-catalog"
+        )
+        assert project_catalog["installed"] is True
+        assert project_catalog["install_state"] == "matching"
+        assert project_catalog["server_present"] is True
+        assert project_catalog["drift_summary"] is None
+
+
+def test_codex_mcp_app_install_endpoint_reports_already_installed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with TemporaryDirectory() as temp_dir:
+        home_dir = Path(temp_dir)
+        (home_dir / ".codex").mkdir(parents=True)
+        monkeypatch.setenv("HOME", str(home_dir))
+
+        client = build_tooling_client(projects_root="..")
+        first_response = client.post("/codex/mcp-apps/project-catalog/install")
+        assert first_response.status_code == 200
+
+        second_response = client.post("/codex/mcp-apps/project-catalog/install")
+        assert second_response.status_code == 200
+        payload = second_response.json()
+        assert payload["app_id"] == "project-catalog"
+        assert payload["already_installed"] is True
+        assert payload["reconciled"] is False
+
+
+def test_codex_tooling_reports_drifted_repo_mcp_app(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with TemporaryDirectory() as temp_dir:
+        home_dir = Path(temp_dir)
+        monkeypatch.setenv("HOME", str(home_dir))
+        _write_fake_mcp_state(
+            home_dir,
+            {
+                "project-catalog": {
+                    "summary": "project-catalog: https://mcp.example.test/sse",
+                    "transport": "sse",
+                    "url": "https://mcp.example.test/sse",
+                    "headers": {"Authorization": "Bearer secret"},
+                },
+            },
+        )
+
+        client = build_tooling_client(projects_root="..")
+        response = client.get("/codex/tooling")
+
+        assert response.status_code == 200
+        payload = response.json()
+        project_catalog = next(
+            app for app in payload["mcp_apps"] if app["app_id"] == "project-catalog"
+        )
+        assert project_catalog["installed"] is False
+        assert project_catalog["install_state"] == "drifted"
+        assert project_catalog["server_present"] is True
+        assert project_catalog["server_presence_known"] is True
+        assert project_catalog["config_matches"] is False
+        assert project_catalog["drift_summary"] == (
+            "transport stored as `sse` but repo app expects `stdio`"
+        )
+        assert "Authorization" not in project_catalog["drift_summary"]
+        assert "Bearer secret" not in project_catalog["drift_summary"]
+        assert "secret" not in project_catalog["drift_summary"]
+        project_catalog_server = next(
+            server
+            for server in payload["mcp_servers"]
+            if server["server_id"] == "project-catalog"
+        )
+        assert project_catalog_server["source"] == "repo_app"
+        assert project_catalog_server["backing_app_id"] == "project-catalog"
+        assert project_catalog_server["status"] == "drifted"
+        assert project_catalog_server["selectable"] is False
+
+
+def test_codex_tooling_reports_matching_but_disabled_stdio_repo_mcp_app(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with TemporaryDirectory() as temp_dir:
+        home_dir = Path(temp_dir)
+        monkeypatch.setenv("HOME", str(home_dir))
+        _write_fake_mcp_state(
+            home_dir,
+            {
+                "project-catalog": {
+                    "summary": "project-catalog: uv run --project /home/batata/Projects/codex-cli-mobile-bridge python -m mcp_apps.project_catalog.server",
+                    "enabled": False,
+                    "disabled_reason": "Authorization: Bearer secret",
+                    "transport": "stdio",
+                    "command": "uv",
+                    "args": [
+                        "run",
+                        "--project",
+                        str(Path.cwd()),
+                        "python",
+                        "-m",
+                        "mcp_apps.project_catalog.server",
+                    ],
+                    "env": {"PROJECTS_ROOT": ".."},
+                },
+            },
+        )
+
+        client = build_tooling_client(projects_root="..")
+        response = client.get("/codex/tooling")
+
+        assert response.status_code == 200
+        payload = response.json()
+        project_catalog = next(
+            app for app in payload["mcp_apps"] if app["app_id"] == "project-catalog"
+        )
+        assert project_catalog["installed"] is False
+        assert project_catalog["install_state"] == "disabled"
+        assert project_catalog["server_present"] is True
+        assert project_catalog["server_presence_known"] is True
+        assert project_catalog["config_matches"] is True
+        assert project_catalog["drift_summary"] is None
+        assert project_catalog["disabled_reason"] == "Authorization: [redacted]"
+        assert "Bearer secret" not in project_catalog["disabled_reason"]
+
+
+def test_codex_tooling_reports_disabled_non_stdio_repo_mcp_app_safely(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with TemporaryDirectory() as temp_dir:
+        home_dir = Path(temp_dir)
+        monkeypatch.setenv("HOME", str(home_dir))
+        _write_fake_mcp_state(
+            home_dir,
+            {
+                "project-catalog": {
+                    "summary": "project-catalog: https://mcp.example.test/sse",
+                    "enabled": False,
+                    "disabled_reason": '{"Authorization":"Bearer secret"}',
+                    "transport": "sse",
+                    "url": "https://mcp.example.test/sse",
+                    "headers": {"Authorization": "Bearer secret"},
+                },
+            },
+        )
+
+        client = build_tooling_client(projects_root="..")
+        response = client.get("/codex/tooling")
+
+        assert response.status_code == 200
+        payload = response.json()
+        project_catalog = next(
+            app for app in payload["mcp_apps"] if app["app_id"] == "project-catalog"
+        )
+        assert project_catalog["installed"] is False
+        assert project_catalog["install_state"] == "disabled"
+        assert project_catalog["server_present"] is True
+        assert project_catalog["server_presence_known"] is True
+        assert project_catalog["config_matches"] is False
+        assert project_catalog["drift_summary"] == (
+            "transport stored as `sse` but repo app expects `stdio`"
+        )
+        assert project_catalog["disabled_reason"] == '{"Authorization":"[redacted]"}'
+        assert "Bearer secret" not in project_catalog["disabled_reason"]
+
+
+@pytest.mark.parametrize(
+    ("env_key", "expected_lookup_error"),
+    [
+        (
+            "FAKE_CODEX_FAIL_GET_FOR",
+            "`codex mcp get --json` failed while checking the existing server config.",
+        ),
+        (
+            "FAKE_CODEX_MALFORMED_GET_FOR",
+            "`codex mcp get --json` returned malformed JSON.",
+        ),
+        (
+            "FAKE_CODEX_UNSUPPORTED_GET_SHAPE_FOR",
+            "`codex mcp get --json` returned an unsupported payload shape.",
+        ),
+    ],
+)
+def test_codex_tooling_reports_unreadable_repo_mcp_app_state(
+    monkeypatch: pytest.MonkeyPatch,
+    env_key: str,
+    expected_lookup_error: str,
+) -> None:
+    with TemporaryDirectory() as temp_dir:
+        home_dir = Path(temp_dir)
+        monkeypatch.setenv("HOME", str(home_dir))
+        monkeypatch.setenv(env_key, "project-catalog")
+        previous_state = {
+            "project-catalog": {
+                "summary": "project-catalog: https://mcp.example.test/sse",
+                "transport": "sse",
+                "url": "https://mcp.example.test/sse",
+                "headers": {"Authorization": "Bearer secret"},
+            },
+        }
+        _write_fake_mcp_state(home_dir, previous_state)
+
+        client = build_tooling_client(projects_root="..")
+        response = client.get("/codex/tooling")
+
+        assert response.status_code == 200
+        payload = response.json()
+        project_catalog = next(
+            app for app in payload["mcp_apps"] if app["app_id"] == "project-catalog"
+        )
+        assert project_catalog["installed"] is False
+        assert project_catalog["install_state"] == "unreadable"
+        if env_key == "FAKE_CODEX_FAIL_GET_FOR":
+            assert project_catalog["server_present"] is False
+            assert project_catalog["server_presence_known"] is False
+        else:
+            assert project_catalog["server_present"] is True
+            assert project_catalog["server_presence_known"] is True
+        assert project_catalog["config_matches"] is None
+        assert project_catalog["lookup_error"] == expected_lookup_error
+        assert project_catalog["drift_summary"] is None
+        assert "Authorization" not in project_catalog["lookup_error"]
+        assert "Bearer secret" not in project_catalog["lookup_error"]
+
+
+def test_codex_mcp_app_install_endpoint_reconciles_drifted_repo_app(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with TemporaryDirectory() as temp_dir:
+        home_dir = Path(temp_dir)
+        monkeypatch.setenv("HOME", str(home_dir))
+        _write_fake_mcp_state(
+            home_dir,
+            {
+                "project-catalog": {
+                    "summary": "project-catalog: uv run --project /tmp python -m mcp_apps.project_catalog.server",
+                    "transport": "stdio",
+                    "command": "uv",
+                    "args": [
+                        "run",
+                        "--project",
+                        "/tmp",
+                        "python",
+                        "-m",
+                        "mcp_apps.project_catalog.server",
+                    ],
+                    "env": {"PROJECTS_ROOT": "/tmp/projects"},
+                },
+            },
+        )
+
+        client = build_tooling_client(projects_root="..")
+        response = client.post("/codex/mcp-apps/project-catalog/install")
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["app_id"] == "project-catalog"
+        assert payload["already_installed"] is False
+        assert payload["reconciled"] is True
+
+        state = _read_fake_mcp_state(home_dir)
+        project_catalog = state["project-catalog"]
+        assert project_catalog["transport"] == "stdio"
+        assert project_catalog["command"] == "uv"
+        assert project_catalog["args"] == [
+            "run",
+            "--project",
+            str(Path.cwd()),
+            "python",
+            "-m",
+            "mcp_apps.project_catalog.server",
+        ]
+        assert project_catalog["env"] == {"PROJECTS_ROOT": ".."}
+
+
+def test_codex_mcp_app_install_endpoint_reenables_disabled_matching_stdio_repo_app(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with TemporaryDirectory() as temp_dir:
+        home_dir = Path(temp_dir)
+        monkeypatch.setenv("HOME", str(home_dir))
+        _write_fake_mcp_state(
+            home_dir,
+            {
+                "project-catalog": {
+                    "summary": "project-catalog: uv run --project /home/batata/Projects/codex-cli-mobile-bridge python -m mcp_apps.project_catalog.server",
+                    "enabled": False,
+                    "disabled_reason": "Authorization: Bearer secret",
+                    "transport": "stdio",
+                    "command": "uv",
+                    "args": [
+                        "run",
+                        "--project",
+                        str(Path.cwd()),
+                        "python",
+                        "-m",
+                        "mcp_apps.project_catalog.server",
+                    ],
+                    "env": {"PROJECTS_ROOT": ".."},
+                },
+            },
+        )
+
+        client = build_tooling_client(projects_root="..")
+        response = client.post("/codex/mcp-apps/project-catalog/install")
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["already_installed"] is False
+        assert payload["reconciled"] is True
+        assert payload["summary"] == (
+            "Re-enabled MCP app `Project Catalog` as `project-catalog`."
+        )
+
+        state = _read_fake_mcp_state(home_dir)
+        project_catalog = state["project-catalog"]
+        assert project_catalog["enabled"] is True
+        assert project_catalog["disabled_reason"] is None
+
+
+@pytest.mark.parametrize(
+    ("env_key", "expected_detail"),
+    [
+        (
+            "FAKE_CODEX_FAIL_GET_FOR",
+            "Cannot determine the existing Codex server state for `project-catalog` safely. `codex mcp get --json` failed while checking the existing server config. Install/reconcile was aborted and the stored config was left unchanged.",
+        ),
+        (
+            "FAKE_CODEX_MALFORMED_GET_FOR",
+            "Cannot determine the existing Codex server state for `project-catalog` safely. `codex mcp get --json` returned malformed JSON. Install/reconcile was aborted and the stored config was left unchanged.",
+        ),
+        (
+            "FAKE_CODEX_UNSUPPORTED_GET_SHAPE_FOR",
+            "Cannot determine the existing Codex server state for `project-catalog` safely. `codex mcp get --json` returned an unsupported payload shape. Install/reconcile was aborted and the stored config was left unchanged.",
+        ),
+    ],
+)
+def test_codex_mcp_app_install_endpoint_refuses_when_installed_state_is_unreadable(
+    monkeypatch: pytest.MonkeyPatch,
+    env_key: str,
+    expected_detail: str,
+) -> None:
+    with TemporaryDirectory() as temp_dir:
+        home_dir = Path(temp_dir)
+        monkeypatch.setenv("HOME", str(home_dir))
+        monkeypatch.setenv(env_key, "project-catalog")
+        previous_state = {
+            "project-catalog": {
+                "summary": "project-catalog: https://mcp.example.test/sse",
+                "transport": "sse",
+                "url": "https://mcp.example.test/sse",
+                "headers": {"Authorization": "Bearer secret"},
+            },
+        }
+        _write_fake_mcp_state(home_dir, previous_state)
+
+        client = build_tooling_client(projects_root="..")
+        response = client.post("/codex/mcp-apps/project-catalog/install")
+
+        assert response.status_code == 422
+        assert response.json() == {"detail": expected_detail}
+        assert _read_fake_mcp_state(home_dir) == previous_state
+        assert "Authorization" not in response.json()["detail"]
+        assert "Bearer secret" not in response.json()["detail"]
+
+
+def test_codex_mcp_app_install_endpoint_returns_422_when_get_times_out(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with TemporaryDirectory() as temp_dir:
+        home_dir = Path(temp_dir)
+        monkeypatch.setenv("HOME", str(home_dir))
+        monkeypatch.setenv("FAKE_CODEX_SLEEP_GET_FOR", "project-catalog")
+        monkeypatch.setenv("FAKE_CODEX_SLEEP_SECONDS", "0.05")
+        monkeypatch.setattr(mcp_apps_infra, "_MCP_GET_SERVER_TIMEOUT_SECONDS", 0.01)
+        previous_state = {
+            "project-catalog": _matching_project_catalog_server_state(),
+        }
+        _write_fake_mcp_state(home_dir, previous_state)
+
+        client = build_tooling_client(projects_root="..")
+        response = client.post("/codex/mcp-apps/project-catalog/install")
+
+        assert response.status_code == 422
+        assert response.json() == {
+            "detail": (
+                "Cannot determine the existing Codex server state for "
+                "`project-catalog` safely. `codex mcp get --json` timed out while "
+                "checking the existing server config. Install/reconcile was "
+                "aborted and the stored config was left unchanged."
+            )
+        }
+        assert _read_fake_mcp_state(home_dir) == previous_state
+        assert "TimeoutExpired" not in response.json()["detail"]
+
+
+def test_codex_mcp_app_install_endpoint_refuses_disabled_non_stdio_without_mutation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with TemporaryDirectory() as temp_dir:
+        home_dir = Path(temp_dir)
+        monkeypatch.setenv("HOME", str(home_dir))
+        previous_state = {
+            "project-catalog": {
+                "summary": "project-catalog: https://mcp.example.test/sse",
+                "enabled": False,
+                "disabled_reason": '{"Authorization":"Bearer secret"}',
+                "transport": "sse",
+                "url": "https://mcp.example.test/sse",
+                "headers": {"Authorization": "Bearer secret"},
+            },
+        }
+        _write_fake_mcp_state(home_dir, previous_state)
+
+        client = build_tooling_client(projects_root="..")
+        response = client.post("/codex/mcp-apps/project-catalog/install")
+
+        assert response.status_code == 422
+        assert response.json() == {
+            "detail": (
+                "Cannot automatically reconcile MCP app `project-catalog` because "
+                "the stored transport `sse` cannot be restored by this backend if "
+                "the update fails. Stored server is disabled: "
+                "{\"Authorization\":\"[redacted]\"}. "
+                "The existing stored Codex server config was left unchanged."
+            )
+        }
+        assert _read_fake_mcp_state(home_dir) == previous_state
+        assert "Bearer secret" not in response.json()["detail"]
+        assert "Authorization\":\"Bearer secret" not in response.json()["detail"]
+
+
+def test_codex_mcp_app_install_endpoint_restores_previous_server_when_reconcile_add_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with TemporaryDirectory() as temp_dir:
+        home_dir = Path(temp_dir)
+        monkeypatch.setenv("HOME", str(home_dir))
+        monkeypatch.setenv(
+            "FAKE_CODEX_FAIL_ADD_IF_ARG_CONTAINS",
+            "mcp_apps.project_catalog.server",
+        )
+        previous_state = {
+            "project-catalog": {
+                "summary": "project-catalog: python3 /tmp/legacy_server.py",
+                "enabled": True,
+                "disabled_reason": None,
+                "transport": "stdio",
+                "command": "python3",
+                "args": ["/tmp/legacy_server.py"],
+                "env": {"PROJECTS_ROOT": "/tmp/legacy-projects"},
+            },
+        }
+        _write_fake_mcp_state(home_dir, previous_state)
+
+        client = build_tooling_client(projects_root="..")
+        response = client.post("/codex/mcp-apps/project-catalog/install")
+
+        assert response.status_code == 422
+        assert response.json() == {
+            "detail": (
+                "Failed to reconcile MCP app `project-catalog` because installing "
+                "the desired config failed. Failed to add server because launch "
+                "args matched `mcp_apps.project_catalog.server`: project-catalog "
+                "The previous server config was restored."
+            )
+        }
+        state = _read_fake_mcp_state(home_dir)
+        assert state["project-catalog"] == previous_state["project-catalog"]
+
+
+def test_codex_mcp_app_install_endpoint_aborts_when_remove_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with TemporaryDirectory() as temp_dir:
+        home_dir = Path(temp_dir)
+        monkeypatch.setenv("HOME", str(home_dir))
+        monkeypatch.setenv("FAKE_CODEX_FAIL_REMOVE_FOR", "project-catalog")
+        previous_state = {
+            "project-catalog": {
+                "summary": "project-catalog: python3 /tmp/legacy_server.py",
+                "transport": "stdio",
+                "command": "python3",
+                "args": ["/tmp/legacy_server.py"],
+                "env": {"PROJECTS_ROOT": "/tmp/legacy-projects"},
+            },
+        }
+        _write_fake_mcp_state(home_dir, previous_state)
+
+        client = build_tooling_client(projects_root="..")
+        response = client.post("/codex/mcp-apps/project-catalog/install")
+
+        assert response.status_code == 422
+        assert response.json() == {
+            "detail": (
+                "Failed to reconcile MCP app `project-catalog` because removing "
+                "the existing stored Codex server config failed. Failed to remove "
+                "server: project-catalog Reconcile was aborted before modifying "
+                "the stored config."
+            )
+        }
+        state = _read_fake_mcp_state(home_dir)
+        assert state["project-catalog"] == previous_state["project-catalog"]
+
+
+def test_codex_mcp_app_install_endpoint_aborts_when_remove_times_out(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with TemporaryDirectory() as temp_dir:
+        home_dir = Path(temp_dir)
+        monkeypatch.setenv("HOME", str(home_dir))
+        monkeypatch.setenv("FAKE_CODEX_SLEEP_REMOVE_FOR", "project-catalog")
+        monkeypatch.setenv("FAKE_CODEX_SLEEP_SECONDS", "0.05")
+        monkeypatch.setattr(mcp_apps_infra, "_MCP_REMOVE_SERVER_TIMEOUT_SECONDS", 0.01)
+        previous_state = {
+            "project-catalog": {
+                "summary": "project-catalog: python3 /tmp/legacy_server.py",
+                "transport": "stdio",
+                "command": "python3",
+                "args": ["/tmp/legacy_server.py"],
+                "env": {"PROJECTS_ROOT": "/tmp/legacy-projects"},
+            },
+        }
+        _write_fake_mcp_state(home_dir, previous_state)
+
+        client = build_tooling_client(projects_root="..")
+        response = client.post("/codex/mcp-apps/project-catalog/install")
+
+        assert response.status_code == 422
+        assert response.json() == {
+            "detail": (
+                "Failed to reconcile MCP app `project-catalog` because removing "
+                "the existing stored Codex server config failed. `codex mcp remove` "
+                "timed out while removing the stored server config. Reconcile was "
+                "aborted before modifying the stored config."
+            )
+        }
+        assert _read_fake_mcp_state(home_dir) == previous_state
+        assert "TimeoutExpired" not in response.json()["detail"]
+
+
+def test_codex_mcp_app_install_endpoint_refuses_non_restorable_reconcile_without_mutation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with TemporaryDirectory() as temp_dir:
+        home_dir = Path(temp_dir)
+        monkeypatch.setenv("HOME", str(home_dir))
+        monkeypatch.setenv(
+            "FAKE_CODEX_FAIL_ADD_IF_ARG_CONTAINS",
+            "mcp_apps.project_catalog.server",
+        )
+        _write_fake_mcp_state(
+            home_dir,
+            {
+                "project-catalog": {
+                    "summary": "project-catalog: https://mcp.example.test/sse",
+                    "transport": "sse",
+                    "url": "https://mcp.example.test/sse",
+                    "headers": {"Authorization": "Bearer secret"},
+                },
+            },
+        )
+
+        client = build_tooling_client(projects_root="..")
+        previous_state = _read_fake_mcp_state(home_dir)
+
+        response = client.post("/codex/mcp-apps/project-catalog/install")
+
+        assert response.status_code == 422
+        assert response.json() == {
+            "detail": (
+                "Cannot automatically reconcile MCP app `project-catalog` because "
+                "the stored transport `sse` cannot be restored by this backend if "
+                "the update fails. The existing stored Codex server config was left "
+                "unchanged."
+            )
+        }
+        assert _read_fake_mcp_state(home_dir) == previous_state
+        detail = response.json()["detail"]
+        assert "Authorization" not in detail
+        assert "Bearer secret" not in detail
+        assert "secret" not in detail
+
+
+def test_codex_mcp_app_install_endpoint_returns_422_on_codex_add_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with TemporaryDirectory() as temp_dir:
+        home_dir = Path(temp_dir)
+        (home_dir / ".codex").mkdir(parents=True)
+        monkeypatch.setenv("HOME", str(home_dir))
+        monkeypatch.setenv("FAKE_CODEX_FAIL_ADD_FOR", "project-catalog")
+
+        client = build_tooling_client(projects_root="..")
+        response = client.post("/codex/mcp-apps/project-catalog/install")
+
+        assert response.status_code == 422
+        assert response.json() == {"detail": "Failed to add server: project-catalog"}
+
+
+def test_codex_mcp_app_install_endpoint_returns_422_when_add_exec_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with TemporaryDirectory() as temp_dir:
+        home_dir = Path(temp_dir)
+        (home_dir / ".codex").mkdir(parents=True)
+        monkeypatch.setenv("HOME", str(home_dir))
+        real_run = mcp_apps_infra.subprocess.run
+
+        def fake_run(*args, **kwargs):
+            process_args = args[0] if args else kwargs.get("args", [])
+            if "mcp" in process_args:
+                mcp_index = process_args.index("mcp")
+                if mcp_index + 1 < len(process_args) and process_args[mcp_index + 1] == "add":
+                    raise FileNotFoundError("missing codex")
+            return real_run(*args, **kwargs)
+
+        monkeypatch.setattr(mcp_apps_infra.subprocess, "run", fake_run)
+
+        client = build_tooling_client(projects_root="..")
+        response = client.post("/codex/mcp-apps/project-catalog/install")
+
+        assert response.status_code == 422
+        assert response.json() == {
+            "detail": (
+                "`codex mcp add` could not be executed while installing the desired "
+                "server config."
+            )
+        }
+        assert "FileNotFoundError" not in response.json()["detail"]
+
+
+def test_codex_mcp_app_install_endpoint_returns_422_for_protocol_broken_app() -> None:
+    with TemporaryDirectory() as temp_dir:
+        temp_root = Path(temp_dir)
+        home_dir = temp_root / "home"
+        repo_root = temp_root / "repo"
+        (home_dir / ".codex").mkdir(parents=True)
+        broken_app_dir = repo_root / "mcp_apps" / "broken_protocol"
+        broken_app_dir.mkdir(parents=True)
+        (broken_app_dir / "app.json").write_text(
+            json.dumps(
+                {
+                    "app_id": "broken-protocol",
+                    "name": "Broken Protocol",
+                    "description": "Broken server",
+                    "recommended_server_id": "broken-protocol",
+                    "transport": "stdio",
+                    "command": "python3",
+                    "args": ["-m", "no.such.module"],
+                    "env": {},
+                },
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        old_home = os.environ.get("HOME")
+        os.environ["HOME"] = str(home_dir)
+        try:
+            client = build_tooling_client(
+                projects_root=str(repo_root),
+                codex_workdir=str(repo_root),
+            )
+            response = client.post("/codex/mcp-apps/broken-protocol/install")
+        finally:
+            if old_home is None:
+                os.environ.pop("HOME", None)
+            else:
+                os.environ["HOME"] = old_home
+
+        assert response.status_code == 422
+        detail = response.json()["detail"]
+        assert "failed protocol inspection and is not installable yet" in detail
+        assert "no.such.module" in detail
+        assert "TaskGroup" not in detail
 
 
 def test_repo_skills_are_discovered_and_synced() -> None:

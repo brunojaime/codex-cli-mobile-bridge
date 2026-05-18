@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math' as math;
 
 import 'package:file_picker/file_picker.dart';
@@ -73,6 +74,8 @@ class ChatScreen extends StatefulWidget {
     this.replyPlaybackServiceOverride,
     this.enableServerBootstrap = true,
     this.initialSidebarWorkspaces = const <Workspace>[],
+    this.initialCodexTooling,
+    this.codexMcpAppInstallerOverride,
   });
 
   final String initialApiBaseUrl;
@@ -81,6 +84,9 @@ class ChatScreen extends StatefulWidget {
   final ReplyPlaybackService? replyPlaybackServiceOverride;
   final bool enableServerBootstrap;
   final List<Workspace> initialSidebarWorkspaces;
+  final CodexToolingSnapshot? initialCodexTooling;
+  final Future<CodexToolingSnapshot?> Function(CodexMcpApp app)?
+      codexMcpAppInstallerOverride;
 
   @override
   State<ChatScreen> createState() => _ChatScreenState();
@@ -133,6 +139,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       _sidebarWorkspaces =
           List<Workspace>.from(widget.initialSidebarWorkspaces);
     }
+    _activeCodexTooling = widget.initialCodexTooling;
     _chatController.addListener(_handleChatControllerChanged);
     if (widget.enableServerBootstrap && widget.controllerOverride == null) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -1621,6 +1628,38 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     }
   }
 
+  Future<CodexToolingSnapshot?> _installCodexMcpApp(
+    CodexMcpApp app,
+  ) async {
+    if (widget.codexMcpAppInstallerOverride != null) {
+      final snapshot = await widget.codexMcpAppInstallerOverride!(app);
+      if (mounted) {
+        setState(() {
+          _activeCodexTooling = snapshot;
+          _codexToolingErrorText = null;
+        });
+      }
+      return snapshot;
+    }
+    final activeServer = _activeServer;
+    if (activeServer == null) {
+      return _activeCodexTooling;
+    }
+
+    final client = ApiClient(baseUrl: activeServer.baseUrl);
+    await client.installCodexMcpApp(app.appId);
+    final snapshot = await client.getCodexTooling(
+      workspacePath: _chatController.currentSession?.workspacePath,
+    );
+    if (mounted) {
+      setState(() {
+        _activeCodexTooling = snapshot;
+        _codexToolingErrorText = null;
+      });
+    }
+    return snapshot;
+  }
+
   AgentProfile _fallbackAgentProfile() {
     return const AgentProfile(
       id: 'default',
@@ -1845,6 +1884,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       if (statusLine != null && statusLine.isNotEmpty) {
         segments.add(statusLine);
       }
+    }
+    final usageLabel = _activeCodexTooling?.status.usageLabel?.trim();
+    if (usageLabel != null && usageLabel.isNotEmpty) {
+      segments.add(usageLabel);
     }
     if (!isCompactAppBar) {
       segments.add(_activeServer?.baseUrl ?? widget.initialApiBaseUrl);
@@ -2128,6 +2171,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         loading: _isLoadingCodexTooling,
         agentProfileId: currentSession?.agentProfileId,
         agentProfileName: currentSession?.agentProfileName,
+        onInstallApp: _installCodexMcpApp,
       ),
     );
     if (result == null) {
@@ -6269,12 +6313,27 @@ List<String> _recommendedCodexSkillIds({
   return recommended;
 }
 
+Set<String> normalizeSelectedCodexMcpServerIds(
+  CodexToolingSnapshot? tooling,
+  Iterable<String> selectedIds,
+) {
+  if (tooling == null) {
+    return <String>{};
+  }
+  final selectableIds = {
+    for (final server in tooling.mcpServers)
+      if (server.selectable) server.serverId,
+  };
+  return selectedIds.where(selectableIds.contains).toSet();
+}
+
 class _CodexToolsSheet extends StatefulWidget {
   const _CodexToolsSheet({
     required this.initialOptions,
     required this.tooling,
     required this.errorText,
     required this.loading,
+    required this.onInstallApp,
     this.agentProfileId,
     this.agentProfileName,
   });
@@ -6283,6 +6342,7 @@ class _CodexToolsSheet extends StatefulWidget {
   final CodexToolingSnapshot? tooling;
   final String? errorText;
   final bool loading;
+  final Future<CodexToolingSnapshot?> Function(CodexMcpApp app) onInstallApp;
   final String? agentProfileId;
   final String? agentProfileName;
 
@@ -6296,6 +6356,10 @@ class _CodexToolsSheetState extends State<_CodexToolsSheet> {
   late bool _searchEnabled;
   late Set<String> _selectedSkillIds;
   late Set<String> _selectedMcpServerIds;
+  CodexToolingSnapshot? _tooling;
+  String? _errorText;
+  bool _isInstallingApp = false;
+  String? _installingAppId;
 
   @override
   void initState() {
@@ -6309,6 +6373,12 @@ class _CodexToolsSheetState extends State<_CodexToolsSheet> {
     _searchEnabled = widget.initialOptions.searchEnabled;
     _selectedSkillIds = widget.initialOptions.skillIds.toSet();
     _selectedMcpServerIds = widget.initialOptions.mcpServerIds.toSet();
+    _tooling = widget.tooling;
+    _selectedMcpServerIds = normalizeSelectedCodexMcpServerIds(
+      _tooling,
+      _selectedMcpServerIds,
+    );
+    _errorText = widget.errorText;
   }
 
   @override
@@ -6320,7 +6390,7 @@ class _CodexToolsSheetState extends State<_CodexToolsSheet> {
 
   @override
   Widget build(BuildContext context) {
-    final tooling = widget.tooling;
+    final tooling = _tooling;
     final status = tooling?.status;
     final insetBottom = MediaQuery.viewInsetsOf(context).bottom;
     final recommendedSkillIds = _recommendedSkillIds();
@@ -6342,15 +6412,15 @@ class _CodexToolsSheetState extends State<_CodexToolsSheet> {
                   leading: Icon(Icons.tune_rounded),
                   title: Text('Codex tools'),
                   subtitle: Text(
-                    'Use real local Codex skills, MCPs, profiles, and status.',
+                    'Use real local Codex skills, MCP apps, profiles, and status.',
                   ),
                 ),
-                if (widget.loading)
+                if (widget.loading || _isInstallingApp)
                   const Padding(
                     padding: EdgeInsets.only(bottom: 12),
                     child: LinearProgressIndicator(minHeight: 3),
                   ),
-                if (widget.errorText != null)
+                if (_errorText != null)
                   Container(
                     width: double.infinity,
                     margin: const EdgeInsets.only(bottom: 12),
@@ -6361,7 +6431,7 @@ class _CodexToolsSheetState extends State<_CodexToolsSheet> {
                       border: Border.all(color: const Color(0xFFFF7A7A)),
                     ),
                     child: Text(
-                      widget.errorText!,
+                      _errorText!,
                       style: const TextStyle(color: Color(0xFFFFD7D7)),
                     ),
                   ),
@@ -6483,10 +6553,45 @@ class _CodexToolsSheetState extends State<_CodexToolsSheet> {
                   ),
                 const SizedBox(height: 14),
                 Text(
+                  'Available MCP apps',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+                const SizedBox(height: 8),
+                if (tooling == null || tooling.mcpApps.isEmpty)
+                  const Text(
+                    'No repo MCP apps were discovered for this backend.',
+                    style: TextStyle(color: Color(0xFF8B97B5)),
+                  )
+                else
+                  Column(
+                    children: tooling.mcpApps
+                        .map((app) => _buildMcpAppCard(context, app))
+                        .toList(),
+                  ),
+                const SizedBox(height: 14),
+                Text(
                   'Configured MCP servers',
                   style: Theme.of(context).textTheme.titleMedium,
                 ),
                 const SizedBox(height: 8),
+                if (tooling != null &&
+                    !tooling.mcpServerInventoryComplete) ...<Widget>[
+                  Container(
+                    width: double.infinity,
+                    margin: const EdgeInsets.only(bottom: 10),
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF3A2714),
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(color: const Color(0xFF7C5A2A)),
+                    ),
+                    child: Text(
+                      'Codex MCP inventory is incomplete, so direct MCP server selection is temporarily unavailable.\n'
+                      '${tooling.mcpError ?? "Retry `codex mcp list` when the CLI is healthy."}',
+                      style: const TextStyle(color: Color(0xFFFFD9A3)),
+                    ),
+                  ),
+                ],
                 if (tooling == null || tooling.mcpServers.isEmpty)
                   Text(
                     tooling?.mcpRawOutput?.trim().isNotEmpty == true
@@ -6504,16 +6609,21 @@ class _CodexToolsSheetState extends State<_CodexToolsSheet> {
                       return FilterChip(
                         selected: selected,
                         label: Text(server.serverId),
-                        tooltip: server.summary,
-                        onSelected: (value) {
-                          setState(() {
-                            if (value) {
-                              _selectedMcpServerIds.add(server.serverId);
-                            } else {
-                              _selectedMcpServerIds.remove(server.serverId);
-                            }
-                          });
-                        },
+                        tooltip: server.selectableReason == null
+                            ? server.summary
+                            : '${server.summary}\n${server.selectableReason}',
+                        onSelected: server.selectable
+                            ? (value) {
+                                setState(() {
+                                  if (value) {
+                                    _selectedMcpServerIds.add(server.serverId);
+                                  } else {
+                                    _selectedMcpServerIds
+                                        .remove(server.serverId);
+                                  }
+                                });
+                              }
+                            : null,
                       );
                     }).toList(),
                   ),
@@ -6599,6 +6709,449 @@ class _CodexToolsSheetState extends State<_CodexToolsSheet> {
     };
   }
 
+  Widget _buildMcpAppCard(BuildContext context, CodexMcpApp app) {
+    final theme = Theme.of(context);
+    final isSelected = _selectedMcpServerIds.contains(app.recommendedServerId);
+    final isInstalling = _installingAppId == app.appId;
+    final validationError = app.validationError?.trim();
+    final lookupError = app.lookupError?.trim();
+    final protocolError = app.protocolError?.trim();
+    final hasInstallBlockingError = (validationError?.isNotEmpty ?? false) ||
+        (lookupError?.isNotEmpty ?? false) ||
+        (protocolError?.isNotEmpty ?? false);
+    final preview = app.preview;
+    final previewResult = preview?.result;
+    final launchSummary = app.launchSummary;
+    final toolCount = app.tools.length;
+    final resourceCount = app.resources.length;
+    final promptCount = app.prompts.length;
+    final installStateStyle = _mcpAppInstallStateStyle(app);
+    final actionLabel = switch (app.installState) {
+      'drifted' => 'Reconcile & enable',
+      'disabled' when app.configMatches == false => 'Reconcile & enable',
+      'disabled' => 'Re-enable & use',
+      _ => 'Install & enable',
+    };
+    final installHelpText = _mcpAppInstallHelpText(
+      app,
+      hasInstallBlockingError: hasInstallBlockingError,
+    );
+
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFF111C34),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(
+          color: installStateStyle.$2,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    Text(
+                      app.name,
+                      style: theme.textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      app.description,
+                      style: const TextStyle(color: Color(0xFFB9C5E3)),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 12),
+              _StatusPill(
+                label: installStateStyle.$1,
+                backgroundColor: installStateStyle.$2,
+                foregroundColor: installStateStyle.$3,
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: <Widget>[
+              _StatusPill(
+                label: 'server:${app.recommendedServerId}',
+                backgroundColor: const Color(0xFF24355F),
+                foregroundColor: const Color(0xFFDCE5FF),
+              ),
+              _StatusPill(
+                label: '$toolCount tool${toolCount == 1 ? '' : 's'}',
+                backgroundColor: const Color(0xFF3A2714),
+                foregroundColor: const Color(0xFFFFD9A3),
+              ),
+              if (resourceCount > 0)
+                _StatusPill(
+                  label:
+                      '$resourceCount resource${resourceCount == 1 ? '' : 's'}',
+                  backgroundColor: const Color(0xFF1D3D52),
+                  foregroundColor: const Color(0xFFBFE8FF),
+                ),
+              if (promptCount > 0)
+                _StatusPill(
+                  label: '$promptCount prompt${promptCount == 1 ? '' : 's'}',
+                  backgroundColor: const Color(0xFF2F2146),
+                  foregroundColor: const Color(0xFFD9C2FF),
+                ),
+              if (app.supportsUiExtension)
+                const _StatusPill(
+                  label: 'ui',
+                  backgroundColor: Color(0xFF32481D),
+                  foregroundColor: Color(0xFFD5F5B6),
+                ),
+              ...app.tags.map(
+                (tag) => _StatusPill(
+                  label: tag,
+                  backgroundColor: const Color(0xFF2B364D),
+                  foregroundColor: const Color(0xFFB8C3DA),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Text(
+            'Launch: $launchSummary',
+            style: const TextStyle(color: Color(0xFF8B97B5)),
+          ),
+          if (validationError != null &&
+              validationError.isNotEmpty) ...<Widget>[
+            const SizedBox(height: 10),
+            Text(
+              'Spec validation failed: $validationError',
+              style: const TextStyle(color: Color(0xFFFFB3B3)),
+            ),
+          ],
+          if (lookupError != null && lookupError.isNotEmpty) ...<Widget>[
+            const SizedBox(height: 10),
+            Text(
+              'Installed server state is unreadable: $lookupError',
+              style: const TextStyle(color: Color(0xFFFFD9A3)),
+            ),
+          ],
+          if (protocolError != null && protocolError.isNotEmpty) ...<Widget>[
+            const SizedBox(height: 10),
+            Text(
+              'Protocol check failed: $protocolError',
+              style: const TextStyle(color: Color(0xFFFFB3B3)),
+            ),
+          ],
+          if (app.driftSummary != null &&
+              app.driftSummary!.trim().isNotEmpty) ...<Widget>[
+            const SizedBox(height: 10),
+            Text(
+              'Stored Codex config drifted: ${app.driftSummary!}',
+              style: const TextStyle(color: Color(0xFFFFD9A3)),
+            ),
+          ],
+          if (app.disabledReason != null &&
+              app.disabledReason!.trim().isNotEmpty) ...<Widget>[
+            const SizedBox(height: 10),
+            Text(
+              'Stored server is disabled: ${app.disabledReason!}',
+              style: const TextStyle(color: Color(0xFFFFD9A3)),
+            ),
+          ],
+          if (preview != null) ...<Widget>[
+            const SizedBox(height: 12),
+            Text(
+              'Preview from `${preview.toolName}`',
+              style: theme.textTheme.bodyMedium?.copyWith(
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 8),
+            _buildMcpPreviewCard(previewResult),
+            if (preview.isError && preview.error != null) ...<Widget>[
+              const SizedBox(height: 8),
+              Text(
+                preview.error!,
+                style: const TextStyle(color: Color(0xFFFFB3B3)),
+              ),
+            ],
+          ],
+          if (toolCount > 0) ...<Widget>[
+            const SizedBox(height: 12),
+            Text(
+              'Tools: ${app.tools.map((tool) => tool.name).join(', ')}',
+              style: const TextStyle(color: Color(0xFF8B97B5)),
+            ),
+          ],
+          const SizedBox(height: 12),
+          Row(
+            children: <Widget>[
+              if (app.installed)
+                FilledButton.tonalIcon(
+                  onPressed: () {
+                    setState(() {
+                      if (isSelected) {
+                        _selectedMcpServerIds.remove(app.recommendedServerId);
+                      } else {
+                        _selectedMcpServerIds.add(app.recommendedServerId);
+                      }
+                    });
+                  },
+                  icon: Icon(
+                    isSelected ? Icons.check_circle_outline : Icons.add_link,
+                  ),
+                  label:
+                      Text(isSelected ? 'Enabled for run' : 'Enable for run'),
+                )
+              else
+                FilledButton.icon(
+                  onPressed: isInstalling || hasInstallBlockingError
+                      ? null
+                      : () => _handleInstallApp(app),
+                  icon: isInstalling
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.download_for_offline_outlined),
+                  label: Text(actionLabel),
+                ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  installHelpText,
+                  style: const TextStyle(color: Color(0xFF8B97B5)),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  (String, Color, Color) _mcpAppInstallStateStyle(CodexMcpApp app) {
+    return switch (app.installState) {
+      'matching' => (
+          'matching',
+          const Color(0xFF1F4D45),
+          const Color(0xFFB6F4E4),
+        ),
+      'drifted' => (
+          'drifted',
+          const Color(0xFF5A3A16),
+          const Color(0xFFFFD9A3),
+        ),
+      'disabled' when app.configMatches == false => (
+          'disabled-drifted',
+          const Color(0xFF5A3A16),
+          const Color(0xFFFFD9A3),
+        ),
+      'disabled' => (
+          'disabled',
+          const Color(0xFF5A3A16),
+          const Color(0xFFFFD9A3),
+        ),
+      'protocol-broken' => (
+          'protocol-broken',
+          const Color(0xFF5A1F28),
+          const Color(0xFFFFC4CB),
+        ),
+      'unreadable' => (
+          'unreadable',
+          const Color(0xFF5A3A16),
+          const Color(0xFFFFD9A3),
+        ),
+      'invalid' => (
+          'invalid',
+          const Color(0xFF5A1F28),
+          const Color(0xFFFFC4CB),
+        ),
+      _ => (
+          'missing',
+          const Color(0xFF2B364D),
+          const Color(0xFFB8C3DA),
+        ),
+    };
+  }
+
+  String _mcpAppInstallHelpText(
+    CodexMcpApp app, {
+    required bool hasInstallBlockingError,
+  }) {
+    if (app.installed) {
+      return 'Installed into Codex and ready for selection.';
+    }
+    if (hasInstallBlockingError) {
+      return switch (app.installState) {
+        'unreadable' =>
+          'Codex could not read the existing stored server state safely. Fix that before installing or reconciling this app.',
+        _ =>
+          'Fix the app spec or server health first. Invalid apps are shown for diagnosis only.',
+      };
+    }
+    return switch (app.installState) {
+      'drifted' =>
+        'The stored Codex server config no longer matches this repo app. Reconcile it and select it for this run.',
+      'disabled' when app.configMatches == false =>
+        'The stored Codex server is disabled and no longer matches this repo app. Reconcile it and select it for this run.',
+      'disabled' =>
+        'The stored Codex server exists but is disabled. Re-enable it and select it for this run.',
+      _ =>
+        'Registers the repo app with `codex mcp add` and selects it for this run.',
+    };
+  }
+
+  Widget _buildMcpPreviewCard(Object? previewResult) {
+    final projects = _extractPreviewProjects(previewResult);
+    if (projects != null && projects.isNotEmpty) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: const Color(0xFF0C152B),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: const Color(0xFF203154)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: projects.map((project) {
+            final name = project['name']?.toString() ?? 'project';
+            final languages =
+                (project['detected_languages'] as List<dynamic>? ??
+                        const <dynamic>[])
+                    .map((item) => item.toString())
+                    .where((item) => item.isNotEmpty)
+                    .join(', ');
+            final signatures = (project['signature_files'] as List<dynamic>? ??
+                    const <dynamic>[])
+                .map((item) => item.toString())
+                .where((item) => item.isNotEmpty)
+                .join(', ');
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Text(
+                    name,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  if (languages.isNotEmpty)
+                    Text(
+                      languages,
+                      style: const TextStyle(color: Color(0xFF8B97B5)),
+                    ),
+                  if (signatures.isNotEmpty)
+                    Text(
+                      signatures,
+                      style: const TextStyle(color: Color(0xFF8B97B5)),
+                    ),
+                ],
+              ),
+            );
+          }).toList(),
+        ),
+      );
+    }
+
+    final pretty = _prettyJson(previewResult);
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0C152B),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFF203154)),
+      ),
+      child: SelectableText(
+        pretty,
+        style: const TextStyle(
+          color: Color(0xFFDCE5FF),
+          fontFamily: 'monospace',
+          fontSize: 12,
+        ),
+      ),
+    );
+  }
+
+  List<Map<String, dynamic>>? _extractPreviewProjects(Object? previewResult) {
+    if (previewResult is! Map<String, dynamic>) {
+      return null;
+    }
+    final projects = previewResult['projects'];
+    if (projects is! List<dynamic>) {
+      return null;
+    }
+    return projects
+        .whereType<Map<String, dynamic>>()
+        .take(5)
+        .toList(growable: false);
+  }
+
+  String _prettyJson(Object? value) {
+    if (value == null) {
+      return 'No preview result.';
+    }
+    try {
+      return const JsonEncoder.withIndent('  ').convert(value);
+    } catch (_) {
+      return value.toString();
+    }
+  }
+
+  Future<void> _handleInstallApp(CodexMcpApp app) async {
+    setState(() {
+      _isInstallingApp = true;
+      _installingAppId = app.appId;
+      _errorText = null;
+    });
+
+    try {
+      final snapshot = await widget.onInstallApp(app);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _tooling = snapshot ?? _tooling;
+        _selectedMcpServerIds = normalizeSelectedCodexMcpServerIds(
+          _tooling,
+          _selectedMcpServerIds,
+        );
+        if (_tooling?.mcpServers.any(
+              (server) =>
+                  server.serverId == app.recommendedServerId &&
+                  server.selectable,
+            ) ??
+            false) {
+          _selectedMcpServerIds.add(app.recommendedServerId);
+        }
+        _isInstallingApp = false;
+        _installingAppId = null;
+      });
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _isInstallingApp = false;
+        _installingAppId = null;
+        _errorText = 'Failed to install `${app.name}`.\n$error';
+      });
+    }
+  }
+
   CodexRunOptions _buildResult() {
     final profile = _profileController.text.trim();
     final overrides = _configOverridesController.text
@@ -6607,7 +7160,11 @@ class _CodexToolsSheetState extends State<_CodexToolsSheet> {
         .where((line) => line.isNotEmpty)
         .toList(growable: false);
     final skillIds = _selectedSkillIds.toList()..sort();
-    final mcpServerIds = _selectedMcpServerIds.toList()..sort();
+    final normalizedMcpServerIds = normalizeSelectedCodexMcpServerIds(
+      _tooling,
+      _selectedMcpServerIds,
+    );
+    final mcpServerIds = normalizedMcpServerIds.toList()..sort();
     return CodexRunOptions(
       profile: profile.isEmpty ? null : profile,
       searchEnabled: _searchEnabled,

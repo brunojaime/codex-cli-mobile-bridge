@@ -121,6 +121,20 @@ class ApiClient {
     );
   }
 
+  Future<CodexMcpAppInstallResult> installCodexMcpApp(String appId) async {
+    final response = await _client.post(
+      Uri.parse('$baseUrl/codex/mcp-apps/$appId/install'),
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception('Failed to install MCP app: ${response.body}');
+    }
+
+    return CodexMcpAppInstallResult.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
   Future<List<Workspace>> listWorkspaces() async {
     final response = await _client.get(Uri.parse('$baseUrl/workspaces'));
 
