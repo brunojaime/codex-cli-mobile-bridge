@@ -158,8 +158,10 @@ BACKEND_MODE=local
 SERVER_NAME=work-laptop
 CODEX_COMMAND=codex
 CODEX_USE_EXEC=true
+CODEX_STREAMING_MODE=auto
 CODEX_EXEC_ARGS=--skip-git-repo-check --color never --dangerously-bypass-approvals-and-sandbox
 CODEX_RESUME_ARGS=--skip-git-repo-check --dangerously-bypass-approvals-and-sandbox
+CODEX_REASONING_EFFORT=high
 CODEX_WORKDIR=.
 PROJECTS_ROOT=/home/alice/Documents/Projects
 CHAT_STORE_BACKEND=sqlite
@@ -177,6 +179,8 @@ OPENAI_API_KEY=
 ```
 
 The backend uses `codex exec` for new messages and `codex exec resume` for follow-up messages inside the same chat session.
+
+When `CODEX_STREAMING_MODE=auto`, the backend prefers `codex app-server` for normal text turns so it can forward real assistant text deltas over the existing job WebSocket. It falls back to the older `codex exec` path for cases the app-server transport does not handle yet, such as image attachments.
 
 `EXECUTION_TIMEOUT_SECONDS=0` disables the backend execution timeout entirely.
 

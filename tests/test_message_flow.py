@@ -6,6 +6,7 @@ import threading
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+import tempfile
 from tempfile import TemporaryDirectory
 import zipfile
 
@@ -88,6 +89,23 @@ def build_json_only_client() -> TestClient:
     settings = Settings(
         codex_command="python3 tests/fixtures/fake_codex_json_only.py",
         codex_use_exec=True,
+        projects_root="..",
+        chat_store_backend="memory",
+        execution_timeout_seconds=10,
+        poll_interval_seconds=0,
+        audio_transcription_backend="auto",
+    )
+    app = create_app(settings)
+    return TestClient(app)
+
+
+def build_app_server_streaming_client() -> TestClient:
+    state_file = Path(tempfile.gettempdir()) / "fake_codex_app_server_threads.json"
+    state_file.unlink(missing_ok=True)
+    settings = Settings(
+        codex_command="python3 tests/fixtures/fake_codex_app_server.py",
+        codex_use_exec=True,
+        codex_streaming_mode="app_server",
         projects_root="..",
         chat_store_backend="memory",
         execution_timeout_seconds=10,
@@ -5273,6 +5291,53 @@ def test_exec_mode_falls_back_to_streamed_agent_message_when_output_file_is_empt
     payload = wait_for_job(client, create_response.json()["job_id"])
     assert payload["status"] == "completed"
     assert payload["response"] == "json-only:hello from streamed json"
+
+
+def test_app_server_streaming_exposes_partial_response_before_completion() -> None:
+    client = build_app_server_streaming_client()
+    message = "this response should stream across multiple chunks"
+
+    create_response = client.post("/message", json={"message": message})
+    assert create_response.status_code == 202
+    job_id = create_response.json()["job_id"]
+
+    deadline = time.monotonic() + 2.0
+    partial_payload: dict | None = None
+    while time.monotonic() < deadline:
+        response = client.get(f"/response/{job_id}")
+        assert response.status_code == 200
+        payload = response.json()
+        if payload["status"] == "running" and payload.get("response"):
+            partial_payload = payload
+            break
+        time.sleep(0.02)
+
+    assert partial_payload is not None
+    assert partial_payload["response"].startswith("turn 1:")
+    assert partial_payload["response"] != f"turn 1: {message}"
+
+    payload = wait_for_job(client, job_id)
+    assert payload["status"] == "completed"
+    assert payload["response"] == f"turn 1: {message}"
+
+
+def test_app_server_streaming_resumes_same_thread_for_follow_up_turns() -> None:
+    client = build_app_server_streaming_client()
+
+    first_response = client.post("/message", json={"message": "first turn"})
+    assert first_response.status_code == 202
+    first_job = wait_for_job(client, first_response.json()["job_id"])
+    assert first_job["response"] == "turn 1: first turn"
+
+    second_response = client.post(
+        f"/sessions/{first_job['session_id']}/messages",
+        json={"message": "second turn"},
+    )
+    assert second_response.status_code == 202
+    second_job = wait_for_job(client, second_response.json()["job_id"])
+
+    assert second_job["response"] == "turn 2: second turn"
+    assert second_job["provider_session_id"] == first_job["provider_session_id"]
 
 
 def test_sqlite_chat_store_persists_sessions_across_app_restarts() -> None:

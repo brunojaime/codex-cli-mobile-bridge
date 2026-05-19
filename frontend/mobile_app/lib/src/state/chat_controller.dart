@@ -1137,11 +1137,9 @@ class ChatController extends ChangeNotifier {
     }
 
     return message.copyWith(
-      text: snapshot.isTerminal
-          ? (snapshot.status == 'failed' || snapshot.status == 'cancelled'
-              ? (snapshot.error ?? message.text)
-              : (snapshot.response ?? message.text))
-          : message.text,
+      text: snapshot.status == 'failed' || snapshot.status == 'cancelled'
+          ? (snapshot.error ?? message.text)
+          : (snapshot.response ?? message.text),
       status: _statusFromJob(snapshot.status),
       jobStatus: snapshot.status,
       jobPhase: snapshot.phase,

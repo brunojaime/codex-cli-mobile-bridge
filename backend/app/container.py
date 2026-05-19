@@ -121,8 +121,10 @@ def _build_execution_provider(settings: Settings) -> ExecutionProvider:
     return LocalExecutionProvider(
         command=settings.codex_command,
         use_exec_mode=settings.codex_use_exec,
+        streaming_mode=settings.codex_streaming_mode,
         exec_args=settings.codex_exec_args,
         resume_args=settings.codex_resume_args,
+        default_reasoning_effort=settings.codex_reasoning_effort,
         workdir=settings.codex_workdir,
         timeout_seconds=settings.execution_timeout_seconds,
     )

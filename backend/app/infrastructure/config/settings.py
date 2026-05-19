@@ -25,8 +25,10 @@ class Settings(BaseSettings):
     cors_origins: list[str] = Field(default_factory=lambda: ["*"])
     codex_command: str = "codex"
     codex_use_exec: bool = True
+    codex_streaming_mode: Literal["auto", "exec", "app_server"] = "auto"
     codex_exec_args: str = "--skip-git-repo-check --color never"
     codex_resume_args: str = "--skip-git-repo-check"
+    codex_reasoning_effort: str | None = "high"
     codex_title_generation_model: str | None = None
     codex_workdir: str = str(Path.cwd())
     projects_root: str = str(Path.cwd().parent)
