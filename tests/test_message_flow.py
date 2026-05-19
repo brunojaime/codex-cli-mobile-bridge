@@ -5341,7 +5341,7 @@ def test_capabilities_endpoint_exposes_speech_output_status() -> None:
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["supports_image_input"] is False
+    assert payload["supports_image_input"] is True
     assert payload["supports_speech_output"] is True
     assert payload["speech_output_backend"] == "openai"
     assert payload["speech_output_voice"] == "cedar"
@@ -5650,7 +5650,7 @@ def test_document_message_flow_rejects_unsupported_documents() -> None:
     assert "Unsupported document type" in create_response.json()["detail"]
 
 
-def test_image_message_flow_rejects_image_uploads() -> None:
+def test_image_message_flow_accepts_image_uploads() -> None:
     client = build_image_client()
 
     create_response = client.post(
@@ -5659,8 +5659,17 @@ def test_image_message_flow_rejects_image_uploads() -> None:
         files={"image": ("diagram.png", b"fake image bytes", "image/png")},
     )
 
-    assert create_response.status_code == 415
-    assert create_response.json()["detail"] == "Image attachments are disabled on this server."
+    assert create_response.status_code == 202
+    payload = create_response.json()
+    assert payload["attached_image_name"] == "diagram.png"
+
+    job = wait_for_job(client, payload["job_id"])
+
+    assert job["status"] == "completed"
+    assert job["message"] == "What does this show?\n\n[Attached files]\n- image: diagram.png"
+    assert "What does this show?" in job["response"]
+    assert "[images: " in job["response"]
+    assert "diagram.png" in job["response"]
 
 
 def test_document_message_flow_rejects_image_uploads() -> None:
@@ -5672,10 +5681,12 @@ def test_document_message_flow_rejects_image_uploads() -> None:
     )
 
     assert create_response.status_code == 415
-    assert create_response.json()["detail"] == "Image attachments are disabled on this server."
+    assert create_response.json()["detail"] == (
+        "Image uploads must use the image or attachment upload endpoints."
+    )
 
 
-def test_attachment_batch_flow_rejects_images() -> None:
+def test_attachment_batch_flow_accepts_images() -> None:
     client = build_multi_attachment_client()
 
     create_response = client.post(
@@ -5688,11 +5699,27 @@ def test_attachment_batch_flow_rejects_images() -> None:
         ],
     )
 
-    assert create_response.status_code == 415
-    assert create_response.json()["detail"] == "Image attachments are disabled on this server."
+    assert create_response.status_code == 202
+    payload = create_response.json()
+
+    job = wait_for_job(client, payload["job_id"])
+
+    assert job["status"] == "completed"
+    assert job["message"] == (
+        "Compare everything in this batch\n\n"
+        "[Attached files]\n"
+        "- image: diagram.png\n"
+        "- text: notes.txt\n"
+        "- audio: voice.ogg"
+    )
+    assert "Attached files:" in job["response"]
+    assert "Extracted document text:\nAlpha line\nBeta line" in job["response"]
+    assert "Transcript:\nTranscribed audio from voice.ogg" in job["response"]
+    assert "[images: " in job["response"]
+    assert "diagram.png" in job["response"]
 
 
-def test_retry_job_rejects_unsupported_image_inputs() -> None:
+def test_retry_job_accepts_image_inputs() -> None:
     with TemporaryDirectory() as tmpdir:
         client, container = build_session_client_with_container()
         service = container.message_service
@@ -5715,8 +5742,11 @@ def test_retry_job_rejects_unsupported_image_inputs() -> None:
 
         retry_response = client.post(f"/jobs/{stored_job.id}/retry")
 
-        assert retry_response.status_code == 415
-        assert retry_response.json()["detail"] == "Image attachments are disabled on this server."
+        assert retry_response.status_code == 202
+        retry_payload = wait_for_job(client, retry_response.json()["job_id"])
+        assert retry_payload["status"] == "completed"
+        assert retry_payload["message"] == "Describe this image."
+        assert "[images: " in retry_payload["response"]
 
 
 def test_agent_creator_profile_can_seed_a_new_chat_for_agent_design() -> None:
@@ -7017,6 +7047,14 @@ def test_session_message_route_rejects_unknown_mcp_server_selection() -> None:
                 "codex_options_json": json.dumps({"mcp_server_ids": ["ghost-server"]}),
             },
             {"document": ("notes.txt", b"Line one\nLine two", "text/plain")},
+        ),
+        (
+            "/message/image",
+            {
+                "message": "Summarize this",
+                "codex_options_json": json.dumps({"mcp_server_ids": ["ghost-server"]}),
+            },
+            {"image": ("diagram.png", b"fake image bytes", "image/png")},
         ),
         (
             "/message/attachments",

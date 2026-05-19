@@ -103,6 +103,94 @@ void main() {
     expect(find.textContaining('Installed into Codex'), findsOneWidget);
   });
 
+  testWidgets('Codex tools sheet can open an MCP app full-screen',
+      (WidgetTester tester) async {
+    tester.view.physicalSize = const Size(1280, 900);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final controller = ChatController(
+      apiClient: _McpToolsTestApiClient(),
+      notificationService: const NoopChatNotificationService(),
+    );
+    addTearDown(controller.dispose);
+    await controller.refreshSessions();
+    await controller.selectSession('session-a');
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ChatScreen(
+          initialApiBaseUrl: 'http://localhost:8000',
+          notificationService: const NoopChatNotificationService(),
+          controllerOverride: controller,
+          enableServerBootstrap: false,
+          initialCodexTooling: _toolingSnapshot(installState: 'matching'),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Codex tools'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Open app'), findsOneWidget);
+    await tester.tap(find.text('Open app'));
+    await tester.pumpAndSettle();
+
+    expect(find.byTooltip('Close app'), findsOneWidget);
+    expect(
+      find.text(
+          'This MCP app is open full-screen. Close it to return to chat.'),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.byTooltip('Close app'));
+    await tester.pumpAndSettle();
+
+    expect(find.byTooltip('Close app'), findsNothing);
+  });
+
+  testWidgets('composer command can open an MCP app and infer a focus hint',
+      (WidgetTester tester) async {
+    tester.view.physicalSize = const Size(1280, 900);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final controller = ChatController(
+      apiClient: _McpToolsTestApiClient(),
+      notificationService: const NoopChatNotificationService(),
+    );
+    addTearDown(controller.dispose);
+    await controller.refreshSessions();
+    await controller.selectSession('session-a');
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ChatScreen(
+          initialApiBaseUrl: 'http://localhost:8000',
+          notificationService: const NoopChatNotificationService(),
+          controllerOverride: controller,
+          enableServerBootstrap: false,
+          initialCodexTooling: _toolingSnapshot(installState: 'matching'),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.enterText(
+        find.byType(TextField).first, 'open project catalog for alpha');
+    await tester.pump();
+    expect(find.byIcon(Icons.arrow_upward_rounded), findsWidgets);
+    await tester.tap(find.byIcon(Icons.arrow_upward_rounded).first);
+    await tester.pumpAndSettle();
+
+    expect(find.byTooltip('Close app'), findsOneWidget);
+    expect(find.text('Project Catalog'), findsWidgets);
+    expect(find.text('focused'), findsOneWidget);
+  });
+
   testWidgets('Codex tools sheet shows drifted apps and reconciles them',
       (WidgetTester tester) async {
     tester.view.physicalSize = const Size(1280, 900);

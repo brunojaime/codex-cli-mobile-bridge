@@ -1290,6 +1290,8 @@ def _format_protocol_error_for_app(
 def _looks_like_missing_server(message: str) -> bool:
     normalized = message.lower()
     return (
+        "no mcp server named" in normalized
+        or
         "unknown mcp server" in normalized
         or "no such mcp server" in normalized
         or "mcp server not found" in normalized

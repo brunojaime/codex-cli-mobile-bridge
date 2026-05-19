@@ -159,6 +159,12 @@ class AudioSubmission:
 
 
 @dataclass(slots=True)
+class ImageSubmission:
+    job: Job
+    attached_image_name: str
+
+
+@dataclass(slots=True)
 class DocumentSubmission:
     job: Job
     document_kind: DocumentKind
@@ -721,7 +727,9 @@ class MessageService:
             content_type=content_type,
         )
         if document_kind == "image":
-            self._raise_image_input_disabled()
+            raise UnsupportedDocumentError(
+                "Image uploads must use the image or attachment upload endpoints."
+            )
         display_message = self._build_document_display_message(
             message=message,
             document_kind=document_kind,
@@ -791,6 +799,51 @@ class MessageService:
             extracted_text_preview=self._build_text_preview(extracted_text),
         )
 
+    def submit_image_message(
+        self,
+        image_path: str,
+        *,
+        filename: str | None = None,
+        content_type: str | None = None,
+        message: str | None = None,
+        session_id: str | None = None,
+        workspace_path: str | None = None,
+        codex_options: CodexRunOptions | None = None,
+    ) -> ImageSubmission:
+        resolved_path = Path(image_path)
+        attached_image_name = filename or resolved_path.name
+        document_kind = self._classify_document(
+            filename=attached_image_name,
+            content_type=content_type,
+        )
+        if document_kind != "image":
+            raise UnsupportedDocumentError("The uploaded file is not a supported image.")
+
+        attachment_summaries = [f"- image: {attached_image_name}"]
+        display_message = self._build_attachment_batch_display_message(
+            message=message,
+            attachment_summaries=attachment_summaries,
+        )
+        execution_message = self._build_attachment_batch_execution_message(
+            message=message,
+            attachment_summaries=attachment_summaries,
+            attachment_details=[],
+            image_count=1,
+        )
+        job = self.submit_message(
+            display_message,
+            session_id=session_id,
+            workspace_path=workspace_path,
+            image_paths=[str(resolved_path)],
+            cleanup_paths=[str(resolved_path)],
+            execution_message=execution_message,
+            codex_options=codex_options,
+        )
+        return ImageSubmission(
+            job=job,
+            attached_image_name=attached_image_name,
+        )
+
     def submit_attachment_message(
         self,
         attachments: list[AttachmentInput],
@@ -820,7 +873,8 @@ class MessageService:
             attachment_summaries.append(f"- {document_kind}: {attached_name}")
 
             if document_kind == "image":
-                self._raise_image_input_disabled()
+                image_paths.append(str(resolved_path))
+                continue
 
             if document_kind == "audio":
                 transcript = self._audio_transcriber.transcribe(
@@ -1096,7 +1150,7 @@ class MessageService:
         return True
 
     def supports_image_input(self) -> bool:
-        return False
+        return True
 
     def _start_job(
         self,
@@ -1154,8 +1208,6 @@ class MessageService:
     ) -> list[str]:
         if not image_paths:
             return []
-        if not self.supports_image_input():
-            self._raise_image_input_disabled()
 
         persisted_paths: list[str] = []
         for image_path in image_paths:
@@ -3496,9 +3548,6 @@ class MessageService:
             "Unsupported document type. Supported uploads are audio, text/code files, "
             "and .docx documents."
         )
-
-    def _raise_image_input_disabled(self) -> None:
-        raise UnsupportedDocumentError("Image attachments are disabled on this server.")
 
     def _looks_like_text_document(
         self,

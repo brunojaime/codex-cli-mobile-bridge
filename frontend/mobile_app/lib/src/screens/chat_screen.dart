@@ -870,6 +870,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   }
 
   Future<bool> _handleSend() async {
+    if (await _maybeHandleOpenMcpAppCommand(_textController.text)) {
+      return true;
+    }
     final sessionIdBeforeSend = _chatController.selectedSessionId;
     final workspacePathBeforeSend =
         _chatController.currentSession?.workspacePath;
@@ -1660,6 +1663,52 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     return snapshot;
   }
 
+  Future<void> _openMcpAppHost(
+    CodexMcpApp app, {
+    String? focusHint,
+  }) async {
+    if (!mounted) {
+      return;
+    }
+    final apps = _activeCodexTooling?.mcpApps ?? <CodexMcpApp>[app];
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        fullscreenDialog: true,
+        builder: (context) => _McpAppHostScreen(
+          apps: apps,
+          initialAppId: app.appId,
+          focusHint: focusHint,
+        ),
+      ),
+    );
+  }
+
+  Future<bool> _maybeHandleOpenMcpAppCommand(String rawMessage) async {
+    if ((_activeCodexTooling?.mcpApps.isEmpty ?? true) &&
+        _activeServer != null) {
+      await _refreshCodexTooling(showLoading: false);
+    }
+    final request = _matchMcpAppOpenCommand(rawMessage, _activeCodexTooling);
+    if (request == null) {
+      return false;
+    }
+    await _openMcpAppHost(
+      request.app,
+      focusHint: request.focusHint,
+    );
+    if (!mounted) {
+      return true;
+    }
+    _textController.clear();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Opened ${request.app.name}.'),
+        duration: const Duration(seconds: 1),
+      ),
+    );
+    return true;
+  }
+
   AgentProfile _fallbackAgentProfile() {
     return const AgentProfile(
       id: 'default',
@@ -2172,6 +2221,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         agentProfileId: currentSession?.agentProfileId,
         agentProfileName: currentSession?.agentProfileName,
         onInstallApp: _installCodexMcpApp,
+        onOpenApp: _openMcpAppHost,
       ),
     );
     if (result == null) {
@@ -6327,6 +6377,122 @@ Set<String> normalizeSelectedCodexMcpServerIds(
   return selectedIds.where(selectableIds.contains).toSet();
 }
 
+class _McpAppOpenRequest {
+  const _McpAppOpenRequest({
+    required this.app,
+    this.focusHint,
+  });
+
+  final CodexMcpApp app;
+  final String? focusHint;
+}
+
+_McpAppOpenRequest? _matchMcpAppOpenCommand(
+  String rawMessage,
+  CodexToolingSnapshot? tooling,
+) {
+  final apps = tooling?.mcpApps ?? const <CodexMcpApp>[];
+  if (apps.isEmpty) {
+    return null;
+  }
+  final normalized = _normalizeMcpAppLookupToken(rawMessage);
+  if (normalized.isEmpty) {
+    return null;
+  }
+
+  String? target;
+  for (final prefix in const <String>['open ', 'launch ', 'show ']) {
+    if (normalized.startsWith(prefix)) {
+      target = normalized.substring(prefix.length).trim();
+      break;
+    }
+  }
+  if (target == null) {
+    return null;
+  }
+
+  target = target.replaceFirst(RegExp(r'^(the|this|that)\s+'), '');
+  target = target.replaceFirst(RegExp(r'^(mcp\s+app|app|mcp)\s+'), '');
+  target = target.trim();
+
+  final genericMatch = RegExp(r'^(mcp\s+apps?|apps?)\b').firstMatch(target);
+  if (genericMatch != null) {
+    final focusHint = target.substring(genericMatch.end).trim();
+    if (apps.length == 1) {
+      return _McpAppOpenRequest(
+        app: apps.single,
+        focusHint: _normalizeFocusHint(focusHint),
+      );
+    }
+    return null;
+  }
+
+  for (final app in apps) {
+    final candidates = <String>{
+      _normalizeMcpAppLookupToken(app.appId),
+      _normalizeMcpAppLookupToken(app.name),
+      _normalizeMcpAppLookupToken(app.recommendedServerId),
+    };
+    for (final candidate in candidates) {
+      if (target == candidate) {
+        return _McpAppOpenRequest(app: app);
+      }
+      if (target.startsWith('$candidate ')) {
+        final trailing = target.substring(candidate.length).trim();
+        return _McpAppOpenRequest(
+          app: app,
+          focusHint: _normalizeFocusHint(trailing),
+        );
+      }
+    }
+  }
+  return null;
+}
+
+String? _normalizeFocusHint(String rawValue) {
+  var normalized = rawValue.trim();
+  if (normalized.isEmpty) {
+    return null;
+  }
+  normalized = normalized.replaceFirst(RegExp(r'^(for|about|on)\s+'), '');
+  normalized = normalized.replaceFirst(RegExp(r'^(the|this|that)\s+'), '');
+  normalized = normalized.replaceFirst(RegExp(r'^(project|repo)\s+'), '');
+  normalized = normalized.trim();
+  return normalized.isEmpty ? null : normalized;
+}
+
+String _normalizeMcpAppLookupToken(String value) {
+  return value.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]+'), ' ').trim();
+}
+
+List<Map<String, dynamic>>? _extractMcpPreviewProjects(
+  Object? previewResult, {
+  int limit = 12,
+}) {
+  if (previewResult is! Map<String, dynamic>) {
+    return null;
+  }
+  final projects = previewResult['projects'];
+  if (projects is! List<dynamic>) {
+    return null;
+  }
+  return projects
+      .whereType<Map<String, dynamic>>()
+      .take(limit)
+      .toList(growable: false);
+}
+
+String _prettyMcpPreviewJson(Object? value) {
+  if (value == null) {
+    return 'No preview result.';
+  }
+  try {
+    return const JsonEncoder.withIndent('  ').convert(value);
+  } catch (_) {
+    return value.toString();
+  }
+}
+
 class _CodexToolsSheet extends StatefulWidget {
   const _CodexToolsSheet({
     required this.initialOptions,
@@ -6334,6 +6500,7 @@ class _CodexToolsSheet extends StatefulWidget {
     required this.errorText,
     required this.loading,
     required this.onInstallApp,
+    required this.onOpenApp,
     this.agentProfileId,
     this.agentProfileName,
   });
@@ -6343,6 +6510,7 @@ class _CodexToolsSheet extends StatefulWidget {
   final String? errorText;
   final bool loading;
   final Future<CodexToolingSnapshot?> Function(CodexMcpApp app) onInstallApp;
+  final Future<void> Function(CodexMcpApp app) onOpenApp;
   final String? agentProfileId;
   final String? agentProfileName;
 
@@ -6892,8 +7060,16 @@ class _CodexToolsSheetState extends State<_CodexToolsSheet> {
             ),
           ],
           const SizedBox(height: 12),
-          Row(
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            crossAxisAlignment: WrapCrossAlignment.center,
             children: <Widget>[
+              FilledButton.tonalIcon(
+                onPressed: () => widget.onOpenApp(app),
+                icon: const Icon(Icons.open_in_full_rounded),
+                label: const Text('Open app'),
+              ),
               if (app.installed)
                 FilledButton.tonalIcon(
                   onPressed: () {
@@ -6925,8 +7101,8 @@ class _CodexToolsSheetState extends State<_CodexToolsSheet> {
                       : const Icon(Icons.download_for_offline_outlined),
                   label: Text(actionLabel),
                 ),
-              const SizedBox(width: 10),
-              Expanded(
+              SizedBox(
+                width: 360,
                 child: Text(
                   installHelpText,
                   style: const TextStyle(color: Color(0xFF8B97B5)),
@@ -7012,7 +7188,7 @@ class _CodexToolsSheetState extends State<_CodexToolsSheet> {
   }
 
   Widget _buildMcpPreviewCard(Object? previewResult) {
-    final projects = _extractPreviewProjects(previewResult);
+    final projects = _extractMcpPreviewProjects(previewResult, limit: 5);
     if (projects != null && projects.isNotEmpty) {
       return Container(
         width: double.infinity,
@@ -7066,7 +7242,7 @@ class _CodexToolsSheetState extends State<_CodexToolsSheet> {
       );
     }
 
-    final pretty = _prettyJson(previewResult);
+    final pretty = _prettyMcpPreviewJson(previewResult);
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(12),
@@ -7084,31 +7260,6 @@ class _CodexToolsSheetState extends State<_CodexToolsSheet> {
         ),
       ),
     );
-  }
-
-  List<Map<String, dynamic>>? _extractPreviewProjects(Object? previewResult) {
-    if (previewResult is! Map<String, dynamic>) {
-      return null;
-    }
-    final projects = previewResult['projects'];
-    if (projects is! List<dynamic>) {
-      return null;
-    }
-    return projects
-        .whereType<Map<String, dynamic>>()
-        .take(5)
-        .toList(growable: false);
-  }
-
-  String _prettyJson(Object? value) {
-    if (value == null) {
-      return 'No preview result.';
-    }
-    try {
-      return const JsonEncoder.withIndent('  ').convert(value);
-    } catch (_) {
-      return value.toString();
-    }
   }
 
   Future<void> _handleInstallApp(CodexMcpApp app) async {
@@ -7204,6 +7355,431 @@ class _StatusPill extends StatelessWidget {
       ),
     );
   }
+}
+
+class _McpAppHostScreen extends StatefulWidget {
+  const _McpAppHostScreen({
+    required this.apps,
+    required this.initialAppId,
+    this.focusHint,
+  });
+
+  final List<CodexMcpApp> apps;
+  final String initialAppId;
+  final String? focusHint;
+
+  @override
+  State<_McpAppHostScreen> createState() => _McpAppHostScreenState();
+}
+
+class _McpAppHostScreenState extends State<_McpAppHostScreen> {
+  late String _selectedAppId;
+
+  @override
+  void initState() {
+    super.initState();
+    _selectedAppId = widget.initialAppId;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final app = widget.apps.firstWhere(
+      (candidate) => candidate.appId == _selectedAppId,
+      orElse: () => widget.apps.first,
+    );
+    final theme = Theme.of(context);
+    final previewProjects = _extractMcpPreviewProjects(app.preview?.result);
+    final preview = app.preview;
+    final installState = app.installState;
+    final focusProjectName = _resolvedProjectFocusName(
+      previewProjects,
+      widget.focusHint,
+    );
+
+    return Scaffold(
+      backgroundColor: const Color(0xFF08111F),
+      appBar: AppBar(
+        backgroundColor: const Color(0xFF0E1730),
+        foregroundColor: Colors.white,
+        title: Text(app.name),
+        leading: IconButton(
+          tooltip: 'Close app',
+          onPressed: () => Navigator.of(context).pop(),
+          icon: const Icon(Icons.close_rounded),
+        ),
+      ),
+      body: SafeArea(
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(20, 20, 20, 28),
+          children: <Widget>[
+            if (widget.apps.length > 1) ...<Widget>[
+              Text(
+                'Apps',
+                style: theme.textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 10),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: widget.apps.map((candidate) {
+                  final selected = candidate.appId == app.appId;
+                  return ChoiceChip(
+                    selected: selected,
+                    label: Text(candidate.name),
+                    onSelected: (_) {
+                      setState(() {
+                        _selectedAppId = candidate.appId;
+                      });
+                    },
+                  );
+                }).toList(),
+              ),
+              const SizedBox(height: 18),
+            ],
+            Text(
+              app.description,
+              style: theme.textTheme.titleMedium?.copyWith(
+                color: const Color(0xFFDCE5FF),
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'This MCP app is open full-screen. Close it to return to chat.',
+              style: TextStyle(color: Color(0xFF8B97B5)),
+            ),
+            const SizedBox(height: 16),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: <Widget>[
+                _StatusPill(
+                  label: installState,
+                  backgroundColor: const Color(0xFF24355F),
+                  foregroundColor: const Color(0xFFDCE5FF),
+                ),
+                _StatusPill(
+                  label: 'server:${app.recommendedServerId}',
+                  backgroundColor: const Color(0xFF1F4D45),
+                  foregroundColor: const Color(0xFFB6F4E4),
+                ),
+                ...app.tags.map(
+                  (tag) => _StatusPill(
+                    label: tag,
+                    backgroundColor: const Color(0xFF2B364D),
+                    foregroundColor: const Color(0xFFB8C3DA),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 18),
+            if (focusProjectName != null) ...<Widget>[
+              _McpAppNoticeCard(
+                tone: _McpAppNoticeTone.info,
+                title: 'Focused from your command',
+                message:
+                    'Showing `${app.name}` with attention on project `$focusProjectName`.',
+              ),
+              const SizedBox(height: 12),
+            ],
+            if (app.lookupError?.trim().isNotEmpty ?? false)
+              _McpAppNoticeCard(
+                tone: _McpAppNoticeTone.warning,
+                title: 'Stored server state needs attention',
+                message: app.lookupError!.trim(),
+              ),
+            if (app.protocolError?.trim().isNotEmpty ?? false)
+              Padding(
+                padding: const EdgeInsets.only(top: 12),
+                child: _McpAppNoticeCard(
+                  tone: _McpAppNoticeTone.error,
+                  title: 'Protocol inspection failed',
+                  message: app.protocolError!.trim(),
+                ),
+              ),
+            if (app.driftSummary?.trim().isNotEmpty ?? false)
+              Padding(
+                padding: const EdgeInsets.only(top: 12),
+                child: _McpAppNoticeCard(
+                  tone: _McpAppNoticeTone.warning,
+                  title: 'Stored Codex config drifted',
+                  message: app.driftSummary!.trim(),
+                ),
+              ),
+            const SizedBox(height: 18),
+            Text(
+              preview == null ? 'App payload' : 'Live preview',
+              style: theme.textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 10),
+            if (previewProjects != null && previewProjects.isNotEmpty)
+              ...previewProjects.map(
+                (project) => Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: _McpProjectPreviewCard(
+                    project: project,
+                    highlighted: _projectMatchesFocus(
+                      project,
+                      focusProjectName,
+                    ),
+                  ),
+                ),
+              )
+            else
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF0C152B),
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(color: const Color(0xFF203154)),
+                ),
+                child: SelectableText(
+                  _prettyMcpPreviewJson(preview?.result),
+                  style: const TextStyle(
+                    color: Color(0xFFDCE5FF),
+                    fontFamily: 'monospace',
+                    fontSize: 12,
+                  ),
+                ),
+              ),
+            const SizedBox(height: 18),
+            Text(
+              'Capabilities',
+              style: theme.textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 10),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: const Color(0xFF111C34),
+                borderRadius: BorderRadius.circular(18),
+                border: Border.all(color: const Color(0xFF203154)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Text(
+                    'Tools: ${app.tools.isEmpty ? "none" : app.tools.map((tool) => tool.name).join(", ")}',
+                    style: const TextStyle(color: Color(0xFFB9C5E3)),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Resources: ${app.resources.isEmpty ? "none" : app.resources.map((resource) => resource.name).join(", ")}',
+                    style: const TextStyle(color: Color(0xFFB9C5E3)),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Prompts: ${app.prompts.isEmpty ? "none" : app.prompts.map((prompt) => prompt.name).join(", ")}',
+                    style: const TextStyle(color: Color(0xFFB9C5E3)),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+enum _McpAppNoticeTone {
+  info,
+  warning,
+  error,
+}
+
+class _McpAppNoticeCard extends StatelessWidget {
+  const _McpAppNoticeCard({
+    required this.tone,
+    required this.title,
+    required this.message,
+  });
+
+  final _McpAppNoticeTone tone;
+  final String title;
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    final backgroundColor = switch (tone) {
+      _McpAppNoticeTone.info => const Color(0xFF1D3D52),
+      _McpAppNoticeTone.warning => const Color(0xFF3A2714),
+      _McpAppNoticeTone.error => const Color(0xFF431B27),
+    };
+    final borderColor = switch (tone) {
+      _McpAppNoticeTone.info => const Color(0xFF2D6587),
+      _McpAppNoticeTone.warning => const Color(0xFF7C5A2A),
+      _McpAppNoticeTone.error => const Color(0xFF8B3D4D),
+    };
+    final foregroundColor = switch (tone) {
+      _McpAppNoticeTone.info => const Color(0xFFBFE8FF),
+      _McpAppNoticeTone.warning => const Color(0xFFFFD9A3),
+      _McpAppNoticeTone.error => const Color(0xFFFFC4CB),
+    };
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: backgroundColor,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: borderColor),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Text(
+            title,
+            style: TextStyle(
+              color: foregroundColor,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            message,
+            style: TextStyle(color: foregroundColor),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _McpProjectPreviewCard extends StatelessWidget {
+  const _McpProjectPreviewCard({
+    required this.project,
+    this.highlighted = false,
+  });
+
+  final Map<String, dynamic> project;
+  final bool highlighted;
+
+  @override
+  Widget build(BuildContext context) {
+    final name = project['name']?.toString() ?? 'project';
+    final path = project['path']?.toString() ?? '';
+    final languages =
+        (project['detected_languages'] as List<dynamic>? ?? const <dynamic>[])
+            .map((item) => item.toString())
+            .where((item) => item.isNotEmpty)
+            .join(', ');
+    final signatures =
+        (project['signature_files'] as List<dynamic>? ?? const <dynamic>[])
+            .map((item) => item.toString())
+            .where((item) => item.isNotEmpty)
+            .join(', ');
+    final readme = project['readme_excerpt']?.toString().trim();
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFF111C34),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(
+          color:
+              highlighted ? const Color(0xFF55D6BE) : const Color(0xFF203154),
+          width: highlighted ? 2 : 1,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          if (highlighted) ...<Widget>[
+            const _StatusPill(
+              label: 'focused',
+              backgroundColor: Color(0xFF1F4D45),
+              foregroundColor: Color(0xFFB6F4E4),
+            ),
+            const SizedBox(height: 10),
+          ],
+          Text(
+            name,
+            style: const TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          if (path.isNotEmpty) ...<Widget>[
+            const SizedBox(height: 6),
+            Text(
+              path,
+              style: const TextStyle(color: Color(0xFF8B97B5)),
+            ),
+          ],
+          if (languages.isNotEmpty) ...<Widget>[
+            const SizedBox(height: 10),
+            Text(
+              languages,
+              style: const TextStyle(color: Color(0xFFDCE5FF)),
+            ),
+          ],
+          if (signatures.isNotEmpty) ...<Widget>[
+            const SizedBox(height: 8),
+            Text(
+              signatures,
+              style: const TextStyle(color: Color(0xFF8B97B5)),
+            ),
+          ],
+          if (readme != null && readme.isNotEmpty) ...<Widget>[
+            const SizedBox(height: 12),
+            Text(
+              readme,
+              style: const TextStyle(color: Color(0xFFB9C5E3)),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+String? _resolvedProjectFocusName(
+  List<Map<String, dynamic>>? projects,
+  String? focusHint,
+) {
+  final normalizedHint = _normalizeFocusHint(focusHint ?? '');
+  if (normalizedHint == null || normalizedHint.isEmpty) {
+    return null;
+  }
+  if (projects == null || projects.isEmpty) {
+    return normalizedHint;
+  }
+  for (final project in projects) {
+    final name = project['name']?.toString();
+    if (name == null || name.trim().isEmpty) {
+      continue;
+    }
+    if (_normalizeMcpAppLookupToken(name) ==
+        _normalizeMcpAppLookupToken(normalizedHint)) {
+      return name;
+    }
+  }
+  return normalizedHint;
+}
+
+bool _projectMatchesFocus(
+  Map<String, dynamic> project,
+  String? focusProjectName,
+) {
+  if (focusProjectName == null || focusProjectName.trim().isEmpty) {
+    return false;
+  }
+  final projectName = project['name']?.toString();
+  if (projectName == null || projectName.trim().isEmpty) {
+    return false;
+  }
+  return _normalizeMcpAppLookupToken(projectName) ==
+      _normalizeMcpAppLookupToken(focusProjectName);
 }
 
 class _ChatTimelineEntry {

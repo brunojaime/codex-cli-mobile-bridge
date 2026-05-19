@@ -430,12 +430,45 @@ async def post_image_message(
     message: str | None = Form(default=None),
     session_id: str | None = Form(default=None),
     workspace_path: str | None = Form(default=None),
+    codex_options_json: str | None = Form(default=None),
     container: AppContainer = Depends(get_container),
 ) -> ImageMessageAcceptedResponse:
-    await image.close()
-    raise HTTPException(
-        status_code=415,
-        detail="Image attachments are disabled on this server.",
+    temp_path = await _store_uploaded_file(
+        image,
+        max_bytes=container.settings.image_max_upload_bytes,
+        default_filename="image-upload.bin",
+        size_limit_label="Image",
+    )
+    should_cleanup_immediately = True
+
+    try:
+        codex_options = await _parse_and_validate_codex_options_json(
+            codex_options_json,
+            container=container,
+        )
+        submission = await run_in_threadpool(
+            container.message_service.submit_image_message,
+            str(temp_path),
+            filename=image.filename or temp_path.name,
+            content_type=image.content_type,
+            message=message,
+            session_id=session_id,
+            workspace_path=workspace_path,
+            codex_options=codex_options,
+        )
+        should_cleanup_immediately = False
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except UnsupportedDocumentError as exc:
+        raise HTTPException(status_code=415, detail=str(exc)) from exc
+    finally:
+        if should_cleanup_immediately:
+            temp_path.unlink(missing_ok=True)
+        await image.close()
+
+    return ImageMessageAcceptedResponse.from_domain(
+        submission.job,
+        attached_image_name=submission.attached_image_name,
     )
 
 

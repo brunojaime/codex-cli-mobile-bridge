@@ -6,7 +6,14 @@ from tempfile import TemporaryDirectory
 
 import pytest
 
-from backend.app.infrastructure.mcp_apps import inspect_repo_mcp_apps
+from backend.app.infrastructure.mcp_apps import (
+    _looks_like_missing_server,
+    inspect_repo_mcp_apps,
+)
+
+
+def test_looks_like_missing_server_matches_current_codex_cli_error_text() -> None:
+    assert _looks_like_missing_server("Error: No MCP server named 'project-catalog' found.")
 
 
 def test_inspect_repo_mcp_apps_reports_malformed_preview_spec() -> None:
