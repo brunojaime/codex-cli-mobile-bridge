@@ -21,6 +21,9 @@ from backend.app.domain.entities.current_run import (
     RunStageId,
     RunStageState,
 )
+from backend.app.domain.entities.text_sanitization import (
+    sanitize_image_attachment_error_text,
+)
 
 
 @dataclass(slots=True, frozen=True)
@@ -55,8 +58,6 @@ _NEXT_STEP_STATES = (
     RunStageState.NOT_SCHEDULED,
     RunStageState.WAITING,
 )
-
-
 def derive_conversation_product(
     session: ChatSession,
     *,
@@ -200,7 +201,7 @@ def _latest_assistant_message(
             continue
         if preferred_agent_set and message.agent_id not in preferred_agent_set:
             continue
-        return _compact_text(message.content, limit=220)
+        return _compact_text(_sanitize_product_text(message.content), limit=220)
     return None
 
 
@@ -216,12 +217,12 @@ def _current_focus(
 
     label = _agent_label(session, _agent_id_for_stage(stage.stage))
     if stage.state == RunStageState.RUNNING:
-        activity = _compact_text(stage.latest_activity, limit=120)
+        activity = _compact_text(_sanitize_product_text(stage.latest_activity), limit=120)
         if activity:
             return f"{label} is active: {activity}"
         return f"{label} is working now."
     if stage.state == RunStageState.FAILED:
-        activity = _compact_text(stage.latest_activity, limit=120)
+        activity = _compact_text(_sanitize_product_text(stage.latest_activity), limit=120)
         if activity:
             return f"{label} failed: {activity}"
         return f"{label} failed and needs attention."
@@ -305,3 +306,7 @@ def _compact_text(value: str | None, *, limit: int) -> str | None:
     if len(normalized) <= limit:
         return normalized
     return f"{normalized[: limit - 3].rstrip()}..."
+
+
+def _sanitize_product_text(value: str | None) -> str | None:
+    return sanitize_image_attachment_error_text(value)

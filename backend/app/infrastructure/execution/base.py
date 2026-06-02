@@ -4,6 +4,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass
 
+from backend.app.domain.entities.codex_options import CodexRunOptions
 from backend.app.domain.entities.job import JobStatus
 
 
@@ -28,6 +29,7 @@ class ExecutionProvider(ABC):
         cleanup_paths: list[str] | None = None,
         provider_session_id: str | None = None,
         model: str | None = None,
+        codex_options: CodexRunOptions | None = None,
         serial_key: str | None = None,
         submission_token: str | None = None,
         workdir: str | None = None,

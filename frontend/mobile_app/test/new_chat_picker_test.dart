@@ -138,6 +138,45 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+
+  testWidgets(
+    'new chat picker can disable turn summaries for the created session',
+    (tester) async {
+      SharedPreferences.setMockInitialValues(<String, Object>{});
+
+      final apiClient = _CreateSessionFallbackApiClient();
+      final controller = ChatController(
+        apiClient: apiClient,
+        notificationService: const NoopChatNotificationService(),
+      );
+      await controller.refreshWorkspaces();
+      addTearDown(controller.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ChatScreen(
+            initialApiBaseUrl: 'http://localhost:8000',
+            notificationService: const NoopChatNotificationService(),
+            controllerOverride: controller,
+            enableServerBootstrap: false,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.widgetWithText(FilledButton, 'New Chat'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Enable summarizer'), findsOneWidget);
+
+      await tester.tap(find.byType(Switch).first);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Project Gamma'));
+      await tester.pumpAndSettle();
+
+      expect(apiClient.createdSessionTurnSummariesEnabled, isFalse);
+    },
+  );
 }
 
 class _NewChatPickerApiClient extends ApiClient {
@@ -194,6 +233,7 @@ class _CreateSessionFallbackApiClient extends ApiClient {
   static final DateTime _timestamp = DateTime.utc(2026, 1, 1);
   String? createdSessionAgentProfileId;
   String? createdSessionWorkspacePath;
+  bool? createdSessionTurnSummariesEnabled;
   SessionDetail? _createdSession;
 
   @override
@@ -264,14 +304,17 @@ class _CreateSessionFallbackApiClient extends ApiClient {
     String? title,
     String? workspacePath,
     String? agentProfileId,
+    bool turnSummariesEnabled = false,
   }) async {
     createdSessionAgentProfileId = agentProfileId;
     createdSessionWorkspacePath = workspacePath;
+    createdSessionTurnSummariesEnabled = turnSummariesEnabled;
     _createdSession = SessionDetail(
       id: 'session-generated',
       title: title ?? 'Project Gamma',
       workspacePath: workspacePath ?? '/workspace/project-gamma',
       workspaceName: 'Project Gamma',
+      turnSummariesEnabled: turnSummariesEnabled,
       agentProfileId: agentProfileId ?? 'default',
       agentProfileName: agentProfileId == 'default' || agentProfileId == null
           ? 'Generator'

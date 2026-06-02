@@ -7,6 +7,7 @@ import '../models/job_status_response.dart';
 import '../models/agent_configuration.dart';
 import '../models/agent_profile.dart';
 import '../models/chat_message.dart';
+import '../models/codex_tooling.dart';
 import '../models/server_capabilities.dart';
 import '../models/session_detail.dart';
 import '../models/chat_session_summary.dart';
@@ -100,6 +101,40 @@ class ApiClient {
     );
   }
 
+  Future<CodexToolingSnapshot> getCodexTooling({
+    String? workspacePath,
+  }) async {
+    final uri = Uri.parse('$baseUrl/codex/tooling').replace(
+      queryParameters: <String, String>{
+        if (workspacePath != null && workspacePath.trim().isNotEmpty)
+          'workspace_path': workspacePath,
+      },
+    );
+    final response = await _client.get(uri);
+
+    if (response.statusCode != 200) {
+      throw Exception('Failed to fetch Codex tooling: ${response.body}');
+    }
+
+    return CodexToolingSnapshot.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<CodexMcpAppInstallResult> installCodexMcpApp(String appId) async {
+    final response = await _client.post(
+      Uri.parse('$baseUrl/codex/mcp-apps/$appId/install'),
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception('Failed to install MCP app: ${response.body}');
+    }
+
+    return CodexMcpAppInstallResult.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
   Future<List<Workspace>> listWorkspaces() async {
     final response = await _client.get(Uri.parse('$baseUrl/workspaces'));
 
@@ -145,6 +180,7 @@ class ApiClient {
     String? title,
     String? workspacePath,
     String? agentProfileId,
+    bool turnSummariesEnabled = false,
   }) async {
     final response = await _client.post(
       Uri.parse('$baseUrl/sessions'),
@@ -153,6 +189,7 @@ class ApiClient {
         'title': title,
         if (workspacePath != null) 'workspace_path': workspacePath,
         if (agentProfileId != null) 'agent_profile_id': agentProfileId,
+        'turn_summaries_enabled': turnSummariesEnabled,
       }),
     );
 
@@ -269,6 +306,56 @@ class ApiClient {
     );
   }
 
+  Future<SessionDetail> updateTurnSummaries(
+    String sessionId, {
+    required bool enabled,
+  }) async {
+    final response = await _client.put(
+      Uri.parse('$baseUrl/sessions/$sessionId/turn-summaries'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode(<String, dynamic>{
+        'enabled': enabled,
+      }),
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception(
+        'Failed to update turn summaries: ${_turnSummaryErrorDetail(response)}',
+      );
+    }
+
+    return SessionDetail.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  String _turnSummaryErrorDetail(http.Response response) {
+    final detail = _responseErrorDetail(response);
+    if (response.statusCode == 404 && detail.toLowerCase() == 'not found') {
+      return 'Turn summaries are not available on the connected backend. Pull the latest backend changes and restart it.';
+    }
+    return detail;
+  }
+
+  String _responseErrorDetail(http.Response response) {
+    final body = response.body.trim();
+    if (body.isEmpty) {
+      return 'HTTP ${response.statusCode}';
+    }
+    try {
+      final decoded = jsonDecode(body);
+      if (decoded is Map<String, dynamic>) {
+        final detail = decoded['detail'];
+        if (detail is String && detail.trim().isNotEmpty) {
+          return detail.trim();
+        }
+      }
+    } catch (_) {
+      // Fall back to the raw body for non-JSON responses.
+    }
+    return body;
+  }
+
   Future<SessionDetail> setSessionArchived(
     String sessionId, {
     required bool archived,
@@ -315,6 +402,7 @@ class ApiClient {
     String message, {
     String? sessionId,
     String? workspacePath,
+    CodexRunOptions? codexRunOptions,
   }) async {
     final response = await _client.post(
       Uri.parse('$baseUrl/message'),
@@ -323,6 +411,8 @@ class ApiClient {
         'message': message,
         if (sessionId != null) 'session_id': sessionId,
         if (workspacePath != null) 'workspace_path': workspacePath,
+        if (codexRunOptions != null && !codexRunOptions.isEmpty)
+          'codex_options': codexRunOptions.toJson(),
       }),
     );
 
@@ -339,6 +429,7 @@ class ApiClient {
     String? sessionId,
     String? workspacePath,
     String? language,
+    CodexRunOptions? codexRunOptions,
   }) async {
     final request = http.MultipartRequest(
       'POST',
@@ -352,6 +443,10 @@ class ApiClient {
     }
     if (language != null) {
       request.fields['language'] = language;
+    }
+    if (codexRunOptions != null && !codexRunOptions.isEmpty) {
+      request.fields['codex_options_json'] =
+          jsonEncode(codexRunOptions.toJson());
     }
 
     request.files.add(
@@ -373,6 +468,7 @@ class ApiClient {
     String? message,
     String? sessionId,
     String? workspacePath,
+    CodexRunOptions? codexRunOptions,
   }) async {
     final request = http.MultipartRequest(
       'POST',
@@ -386,6 +482,10 @@ class ApiClient {
     }
     if (workspacePath != null) {
       request.fields['workspace_path'] = workspacePath;
+    }
+    if (codexRunOptions != null && !codexRunOptions.isEmpty) {
+      request.fields['codex_options_json'] =
+          jsonEncode(codexRunOptions.toJson());
     }
 
     request.files.add(
@@ -408,6 +508,7 @@ class ApiClient {
     String? sessionId,
     String? workspacePath,
     String? language,
+    CodexRunOptions? codexRunOptions,
   }) async {
     final request = http.MultipartRequest(
       'POST',
@@ -424,6 +525,10 @@ class ApiClient {
     }
     if (language != null) {
       request.fields['language'] = language;
+    }
+    if (codexRunOptions != null && !codexRunOptions.isEmpty) {
+      request.fields['codex_options_json'] =
+          jsonEncode(codexRunOptions.toJson());
     }
 
     request.files.add(
@@ -446,6 +551,7 @@ class ApiClient {
     String? sessionId,
     String? workspacePath,
     String? language,
+    CodexRunOptions? codexRunOptions,
   }) async {
     if (attachments.isEmpty) {
       throw Exception('No attachments were provided.');
@@ -466,6 +572,10 @@ class ApiClient {
     }
     if (language != null) {
       request.fields['language'] = language;
+    }
+    if (codexRunOptions != null && !codexRunOptions.isEmpty) {
+      request.fields['codex_options_json'] =
+          jsonEncode(codexRunOptions.toJson());
     }
 
     for (final attachment in attachments) {

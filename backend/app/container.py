@@ -62,6 +62,11 @@ def build_container(settings: Settings | None = None) -> AppContainer:
         audio_transcriber=audio_transcriber,
         document_text_char_limit=resolved_settings.document_text_char_limit,
         title_generation_model=resolved_settings.codex_title_generation_model,
+        follow_up_reconcile_interval_seconds=(
+            float(resolved_settings.poll_interval_seconds)
+            if resolved_settings.poll_interval_seconds > 0
+            else None
+        ),
     )
     job_stream_hub = JobStreamHub(
         poll_interval_seconds=resolved_settings.poll_interval_seconds,

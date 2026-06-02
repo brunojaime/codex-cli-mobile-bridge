@@ -3,6 +3,7 @@ import 'package:codex_mobile_frontend/src/models/chat_message.dart';
 import 'package:codex_mobile_frontend/src/models/chat_session_summary.dart';
 import 'package:codex_mobile_frontend/src/models/conversation_product.dart';
 import 'package:codex_mobile_frontend/src/models/current_run_execution.dart';
+import 'package:codex_mobile_frontend/src/models/chat_turn_summary.dart';
 import 'package:codex_mobile_frontend/src/models/reviewer_lifecycle_state.dart';
 import 'package:codex_mobile_frontend/src/models/session_detail.dart';
 import 'package:codex_mobile_frontend/src/models/workspace.dart';
@@ -83,13 +84,19 @@ void main() {
       (WidgetTester tester) async {
     final apiClient = _ChatScreenOverflowApiClient(
       _buildSession(
-        messages: const <ChatMessage>[],
+        messages: <ChatMessage>[
+          _message(
+            id: 'assistant-1',
+            text: 'Assistant update',
+          ),
+        ],
       ),
     );
 
     await _pumpChatScreen(
       tester,
       width: 800,
+      height: 760,
       session: apiClient.session,
       apiClient: apiClient,
     );
@@ -221,6 +228,77 @@ void main() {
     expect(find.textContaining('Supervisor queued next'), findsOneWidget);
   });
 
+  testWidgets('turn summaries tab shows summary content and provenance',
+      (WidgetTester tester) async {
+    await _pumpChatScreen(
+      tester,
+      width: 800,
+      session: _buildSession(
+        messages: const <ChatMessage>[],
+        turnSummariesEnabled: true,
+        turnSummaries: <ChatTurnSummary>[
+          ChatTurnSummary(
+            id: 'turn-summary-1',
+            content: 'The team enabled the summarizer and added provenance UI.',
+            sourceMessageIds: <String>['user-1', 'assistant-1'],
+            sourceMessages: <ChatTurnSummarySourceMessage>[
+              ChatTurnSummarySourceMessage(
+                messageId: 'user-1',
+                isUser: true,
+                authorType: ChatMessageAuthorType.human,
+                agentId: AgentId.user,
+                agentType: AgentType.human,
+                agentLabel: 'User',
+                content: 'Please add a summarizer tab with provenance details.',
+                status: ChatMessageStatus.completed,
+                createdAt: DateTime.utc(2026, 1, 1, 12, 1),
+              ),
+              ChatTurnSummarySourceMessage(
+                messageId: 'assistant-1',
+                isUser: false,
+                authorType: ChatMessageAuthorType.assistant,
+                agentId: AgentId.generator,
+                agentType: AgentType.generator,
+                agentLabel: 'Generator',
+                content:
+                    'Implemented the turn summary view and stored immutable provenance snapshots.',
+                status: ChatMessageStatus.completed,
+                createdAt: DateTime.utc(2026, 1, 1, 12, 2),
+              ),
+            ],
+            createdAt: DateTime.utc(2026, 1, 1, 12, 3),
+            updatedAt: DateTime.utc(2026, 1, 1, 12, 3),
+          ),
+        ],
+      ),
+    );
+
+    await tester.tap(find.byTooltip('Show summary tabs'));
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+      find.text('The team enabled the summarizer and added provenance UI.'),
+      120,
+      scrollable: _chatBodyScrollable(),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text('The team enabled the summarizer and added provenance UI.'),
+      findsOneWidget,
+    );
+    expect(find.text('Provenance'), findsOneWidget);
+    expect(find.textContaining('User'), findsWidgets);
+    expect(find.textContaining('Generator'), findsWidgets);
+    expect(
+      find.text('Please add a summarizer tab with provenance details.'),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining('Implemented the turn summary view'),
+      findsOneWidget,
+    );
+  });
+
   testWidgets(
       'short viewport keeps reviewer banner, run history, empty state, and composer scrollable',
       (WidgetTester tester) async {
@@ -253,6 +331,7 @@ void main() {
       (WidgetTester tester) async {
     await _pumpChatScreen(
       tester,
+      locale: const Locale('en', 'US'),
       session: _buildSession(
         messages: <ChatMessage>[
           _message(
@@ -286,6 +365,57 @@ void main() {
       find.text('Safety Reviewer running', skipOffstage: false),
     );
     await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('chat screen inserts date separators when messages span days',
+      (WidgetTester tester) async {
+    await _pumpChatScreen(
+      tester,
+      locale: const Locale('en', 'US'),
+      height: 760,
+      session: _buildSession(
+        messages: <ChatMessage>[
+          _message(
+            id: 'user-day-1',
+            text: 'First day prompt',
+            isUser: true,
+            authorType: ChatMessageAuthorType.human,
+            agentId: AgentId.user,
+            agentType: AgentType.human,
+            createdAt: DateTime(2026, 1, 1, 10),
+          ),
+          _message(
+            id: 'assistant-day-1',
+            text: 'First day reply',
+            createdAt: DateTime(2026, 1, 1, 11),
+          ),
+          _message(
+            id: 'assistant-day-2',
+            text: 'Second day reply',
+            createdAt: DateTime(2026, 1, 2, 9),
+          ),
+        ],
+      ),
+    );
+
+    await tester.scrollUntilVisible(
+      find.text('First day reply'),
+      120,
+      scrollable: _chatBodyScrollable(),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('First day reply'), findsOneWidget);
+
+    await tester.scrollUntilVisible(
+      find.text('Second day reply'),
+      120,
+      scrollable: _chatBodyScrollable(),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Second day reply'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -902,6 +1032,7 @@ Future<void> _pumpChatScreen(
   required SessionDetail session,
   ApiClient? apiClient,
   List<Workspace> sidebarWorkspaces = const <Workspace>[],
+  Locale? locale,
   double width = 320,
   double height = 520,
   double keyboardInsetBottom = 0,
@@ -918,6 +1049,11 @@ Future<void> _pumpChatScreen(
 
   await tester.pumpWidget(
     MaterialApp(
+      locale: locale,
+      supportedLocales: const <Locale>[
+        Locale('en', 'US'),
+        Locale('es'),
+      ],
       home: ChatScreen(
         initialApiBaseUrl: 'http://localhost:8000',
         notificationService: const NoopChatNotificationService(),
@@ -1049,6 +1185,8 @@ SessionDetail _buildSession({
   required List<ChatMessage> messages,
   AgentDisplayMode displayMode = AgentDisplayMode.showAll,
   ConversationProduct? conversationProduct,
+  bool turnSummariesEnabled = false,
+  List<ChatTurnSummary> turnSummaries = const <ChatTurnSummary>[],
 }) {
   final configuration = kDefaultAgentConfiguration.copyWith(
     preset: AgentPreset.review,
@@ -1076,12 +1214,14 @@ SessionDetail _buildSession({
     archivedAt: archivedAt,
     workspacePath: workspacePath,
     workspaceName: workspaceName,
+    turnSummariesEnabled: turnSummariesEnabled,
     agentProfileId: 'default',
     agentProfileName: 'Generator',
     agentProfileColor: '#55D6BE',
     createdAt: now,
     updatedAt: now,
     messages: messages,
+    turnSummaries: turnSummaries,
     agentConfiguration: configuration,
     conversationProduct: conversationProduct,
     autoModeEnabled: true,
@@ -1322,6 +1462,8 @@ ChatMessage _message({
   AgentId agentId = AgentId.generator,
   AgentType agentType = AgentType.generator,
   AgentVisibilityMode visibility = AgentVisibilityMode.visible,
+  DateTime? createdAt,
+  DateTime? updatedAt,
 }) {
   final now = DateTime.utc(2026, 1, 1, 12);
   return ChatMessage(
@@ -1333,8 +1475,8 @@ ChatMessage _message({
     agentType: agentType,
     visibility: visibility,
     status: ChatMessageStatus.completed,
-    createdAt: now,
-    updatedAt: now,
+    createdAt: createdAt ?? now,
+    updatedAt: updatedAt ?? createdAt ?? now,
     runId: 'run-12345678',
   );
 }

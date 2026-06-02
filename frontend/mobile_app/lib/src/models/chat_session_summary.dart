@@ -9,6 +9,8 @@ class ChatSessionSummary {
     this.archivedAt,
     required this.workspacePath,
     required this.workspaceName,
+    this.turnSummariesEnabled = false,
+    this.turnSummaryCount = 0,
     this.agentProfileId = 'default',
     this.agentProfileName = 'Generator',
     this.agentProfileColor = '#55D6BE',
@@ -34,6 +36,8 @@ class ChatSessionSummary {
   final DateTime? archivedAt;
   final String workspacePath;
   final String workspaceName;
+  final bool turnSummariesEnabled;
+  final int turnSummaryCount;
   final String agentProfileId;
   final String agentProfileName;
   final String agentProfileColor;
@@ -64,6 +68,8 @@ class ChatSessionSummary {
           : null,
       workspacePath: json['workspace_path'] as String,
       workspaceName: json['workspace_name'] as String,
+      turnSummariesEnabled: json['turn_summaries_enabled'] as bool? ?? false,
+      turnSummaryCount: json['turn_summary_count'] as int? ?? 0,
       agentProfileId: json['agent_profile_id'] as String? ?? 'default',
       agentProfileName: json['agent_profile_name'] as String? ?? 'Generator',
       agentProfileColor: json['agent_profile_color'] as String? ?? '#55D6BE',

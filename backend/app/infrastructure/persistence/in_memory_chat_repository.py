@@ -8,6 +8,7 @@ from backend.app.domain.entities.agent_run import AgentRun
 from backend.app.domain.entities.agent_profile import AgentProfile, builtin_agent_profiles_by_id
 from backend.app.domain.entities.chat_message import ChatMessage
 from backend.app.domain.entities.chat_session import ChatSession
+from backend.app.domain.entities.chat_turn_summary import ChatTurnSummary
 from backend.app.domain.entities.job import Job
 from backend.app.domain.entities.workspace import Workspace
 from backend.app.domain.repositories.chat_repository import (
@@ -23,6 +24,7 @@ class InMemoryChatRepository(ChatRepository):
         self._agent_runs: dict[str, AgentRun] = {}
         self._agent_profiles: dict[str, AgentProfile] = {}
         self._messages: dict[str, ChatMessage] = {}
+        self._turn_summaries: dict[str, ChatTurnSummary] = {}
         self._message_dedupe_keys: dict[str, str] = {}
         self._projects_root = Path(projects_root).resolve()
         self._lock = RLock()
@@ -91,6 +93,21 @@ class InMemoryChatRepository(ChatRepository):
                 self._sessions.values(),
                 key=lambda session: session.updated_at,
                 reverse=True,
+            )
+
+    def save_turn_summary(self, summary: ChatTurnSummary) -> None:
+        with self._lock:
+            self._turn_summaries[summary.id] = summary
+
+    def list_turn_summaries(self, session_id: str) -> list[ChatTurnSummary]:
+        with self._lock:
+            return sorted(
+                (
+                    summary
+                    for summary in self._turn_summaries.values()
+                    if summary.session_id == session_id
+                ),
+                key=lambda summary: (summary.created_at, summary.id),
             )
 
     def save_agent_profile(self, profile: AgentProfile) -> None:

@@ -1,0 +1,33 @@
+{
+  "app_id": "project-catalog",
+  "name": "Project Catalog",
+  "description": "Expose the local projects under PROJECTS_ROOT as a read-only MCP catalog with useful metadata.",
+  "recommended_server_id": "project-catalog",
+  "transport": "stdio",
+  "command": "uv",
+  "args": [
+    "run",
+    "--project",
+    "{repo_root}",
+    "python",
+    "-m",
+    "mcp_apps.project_catalog.server"
+  ],
+  "env": {
+    "PROJECTS_ROOT": "{projects_root}"
+  },
+  "supports_ui_extension": false,
+  "tags": [
+    "projects",
+    "catalog",
+    "metadata",
+    "read-only"
+  ],
+  "preview_tool": {
+    "name": "list_projects",
+    "arguments": {
+      "limit": 6,
+      "include_readme_excerpt": false
+    }
+  }
+}

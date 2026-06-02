@@ -13,6 +13,9 @@ class ChatSession:
     title: str
     workspace_path: str
     workspace_name: str
+    turn_summaries_enabled: bool = False
+    turn_summary_checkpoint_message_id: str | None = None
+    turn_summary_checkpoint_initialized: bool = False
     title_is_placeholder: bool = False
     agent_profile_id: str = "default"
     agent_profile_name: str = "Generator"

@@ -10,6 +10,7 @@ import '../models/agent_profile.dart';
 import '../models/agent_profile_blueprint.dart';
 import '../models/chat_message.dart';
 import '../models/chat_session_summary.dart';
+import '../models/codex_tooling.dart';
 import '../models/current_run_execution.dart';
 import '../models/job_status_response.dart';
 import '../models/session_detail.dart';
@@ -252,12 +253,14 @@ class ChatController extends ChangeNotifier {
   Future<void> createNewSessionWithProfile({
     String? workspacePath,
     String? agentProfileId,
+    bool turnSummariesEnabled = false,
   }) async {
     _setLoading(true);
     try {
       final session = await _apiClient.createSession(
         workspacePath: workspacePath,
         agentProfileId: agentProfileId,
+        turnSummariesEnabled: turnSummariesEnabled,
       );
       _errorText = null;
       await refreshSessions();
@@ -502,10 +505,68 @@ class ChatController extends ChangeNotifier {
     }
   }
 
+  Future<bool> updateTurnSummariesEnabled(bool enabled) async {
+    final sessionId = _selectedSessionId;
+    if (sessionId == null) {
+      return false;
+    }
+
+    try {
+      _errorText = null;
+      final session = await _apiClient.updateTurnSummaries(
+        sessionId,
+        enabled: enabled,
+      );
+      _currentSession = _overlaySessionWithJobSnapshots(session);
+      await refreshSessions();
+      _reconcilePendingJobsForSession(_currentSession);
+      _trackPendingJobsFromSession(_currentSession);
+      notifyListeners();
+      return true;
+    } catch (error) {
+      _errorText = _formatActionError(
+        'Failed to update turn summaries.',
+        error,
+      );
+      notifyListeners();
+      return false;
+    }
+  }
+
+  Future<bool> updateAgentStudioSettings({
+    required AgentConfiguration configuration,
+    required bool turnSummariesEnabled,
+  }) async {
+    final currentSession = _currentSession;
+    if (currentSession == null) {
+      return false;
+    }
+
+    final configChanged =
+        currentSession.agentConfiguration.toJson().toString() !=
+            configuration.toJson().toString();
+    final turnSummariesChanged =
+        currentSession.turnSummariesEnabled != turnSummariesEnabled;
+
+    if (!configChanged && !turnSummariesChanged) {
+      return true;
+    }
+
+    if (configChanged && !await updateAgentConfiguration(configuration)) {
+      return false;
+    }
+    if (turnSummariesChanged &&
+        !await updateTurnSummariesEnabled(turnSummariesEnabled)) {
+      return false;
+    }
+    return true;
+  }
+
   Future<bool> sendMessage(
     String rawText, {
     String? sessionIdOverride,
     String? workspacePathOverride,
+    CodexRunOptions? codexRunOptions,
   }) async {
     final text = rawText.trim();
     if (text.isEmpty) {
@@ -521,6 +582,7 @@ class ChatController extends ChangeNotifier {
         text,
         sessionId: originSessionId,
         workspacePath: originWorkspacePath,
+        codexRunOptions: codexRunOptions,
       );
       await _registerAcceptedJob(
         accepted,
@@ -539,6 +601,7 @@ class ChatController extends ChangeNotifier {
     String? language,
     String? sessionIdOverride,
     String? workspacePathOverride,
+    CodexRunOptions? codexRunOptions,
   }) async {
     final originSessionId = sessionIdOverride ?? _selectedSessionId;
     final originWorkspacePath =
@@ -557,6 +620,7 @@ class ChatController extends ChangeNotifier {
         sessionId: originSessionId,
         workspacePath: originWorkspacePath,
         language: language,
+        codexRunOptions: codexRunOptions,
       );
       await _registerAcceptedJob(
         accepted,
@@ -579,6 +643,7 @@ class ChatController extends ChangeNotifier {
     String? message,
     String? sessionIdOverride,
     String? workspacePathOverride,
+    CodexRunOptions? codexRunOptions,
   }) async {
     final originSessionId = sessionIdOverride ?? _selectedSessionId;
     final originWorkspacePath =
@@ -597,6 +662,7 @@ class ChatController extends ChangeNotifier {
         message: message,
         sessionId: originSessionId,
         workspacePath: originWorkspacePath,
+        codexRunOptions: codexRunOptions,
       );
       await _registerAcceptedJob(
         accepted,
@@ -620,6 +686,7 @@ class ChatController extends ChangeNotifier {
     String? language,
     String? sessionIdOverride,
     String? workspacePathOverride,
+    CodexRunOptions? codexRunOptions,
   }) async {
     final originSessionId = sessionIdOverride ?? _selectedSessionId;
     final originWorkspacePath =
@@ -639,6 +706,7 @@ class ChatController extends ChangeNotifier {
         sessionId: originSessionId,
         workspacePath: originWorkspacePath,
         language: language,
+        codexRunOptions: codexRunOptions,
       );
       await _registerAcceptedJob(
         accepted,
@@ -662,6 +730,7 @@ class ChatController extends ChangeNotifier {
     String? language,
     String? sessionIdOverride,
     String? workspacePathOverride,
+    CodexRunOptions? codexRunOptions,
   }) async {
     if (attachments.isEmpty) {
       return false;
@@ -686,6 +755,7 @@ class ChatController extends ChangeNotifier {
         sessionId: originSessionId,
         workspacePath: originWorkspacePath,
         language: language,
+        codexRunOptions: codexRunOptions,
       );
       await _registerAcceptedJob(
         accepted,
@@ -1428,6 +1498,22 @@ class ChatController extends ChangeNotifier {
       AgentId.scraper => 'Scraper',
       AgentId.user => 'User',
     };
+  }
+
+  String _formatActionError(String prefix, Object error) {
+    final detail = '$error'.trim().replaceFirst(RegExp(r'^Exception:\s*'), '');
+    final normalizedPrefix =
+        prefix.trim().replaceFirst(RegExp(r'[.:!?]+$'), '');
+    if (detail.isEmpty) {
+      return prefix;
+    }
+    if (detail.startsWith(prefix)) {
+      return detail;
+    }
+    if (detail.startsWith('$normalizedPrefix: ')) {
+      return '$prefix\n${detail.substring(normalizedPrefix.length + 2)}';
+    }
+    return '$prefix\n$detail';
   }
 }
 

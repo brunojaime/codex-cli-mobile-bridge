@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -14,6 +15,8 @@ from backend.app.domain.entities.agent_configuration import (
     AgentVisibilityMode,
     CONFIGURABLE_AGENT_IDS,
     LEGACY_AGENT_IDS,
+    SummaryStrategy,
+    SummaryStrategyMode,
     SUPERVISOR_MEMBER_AGENT_IDS,
     TurnBudgetMode,
     normalize_agent_enum_value,
@@ -28,10 +31,12 @@ from backend.app.domain.entities.chat_message import (
     ChatMessageStatus,
 )
 from backend.app.domain.entities.chat_session import ChatSession
+from backend.app.domain.entities.chat_turn_summary import ChatTurnSummary
 from backend.app.domain.entities.conversation_product import (
     ConversationProduct,
     derive_conversation_product,
 )
+from backend.app.domain.entities.codex_options import CodexRunOptions
 from backend.app.domain.entities.job import Job, JobConversationKind, JobStatus
 from backend.app.domain.entities.current_run import (
     CurrentRunExecution,
@@ -45,6 +50,9 @@ from backend.app.domain.entities.reviewer_status import (
     ReviewerLifecycleState,
     derive_reviewer_lifecycle_state,
 )
+from backend.app.domain.entities.text_sanitization import (
+    sanitize_image_attachment_error_text,
+)
 from backend.app.domain.repositories.chat_repository import PersistenceDiagnosticIssue
 
 
@@ -52,6 +60,152 @@ class MessageRequest(BaseModel):
     message: str = Field(..., min_length=1, max_length=10000)
     session_id: str | None = None
     workspace_path: str | None = None
+    codex_options: "CodexRunOptionsRequest | None" = None
+
+
+class CodexRunOptionsRequest(BaseModel):
+    profile: str | None = Field(default=None, max_length=120)
+    search_enabled: bool = False
+    skill_ids: list[str] = Field(default_factory=list)
+    mcp_server_ids: list[str] = Field(default_factory=list)
+    config_overrides: list[str] = Field(default_factory=list)
+
+    def to_domain(self) -> CodexRunOptions:
+        return CodexRunOptions(
+            profile=self.profile,
+            search_enabled=self.search_enabled,
+            skill_ids=tuple(self.skill_ids),
+            mcp_server_ids=tuple(self.mcp_server_ids),
+            config_overrides=tuple(self.config_overrides),
+        ).normalized()
+
+
+class CodexSkillResponse(BaseModel):
+    skill_id: str
+    name: str
+    description: str
+    source: str
+    path: str
+
+
+class CodexConfigProfileResponse(BaseModel):
+    name: str
+
+
+class CodexMcpServerResponse(BaseModel):
+    server_id: str
+    summary: str
+    source: str = "external"
+    backing_app_id: str | None = None
+    status: str | None = None
+    selectable: bool = True
+    selectable_reason: str | None = None
+    disabled_reason: str | None = None
+    lookup_error: str | None = None
+
+
+class CodexMcpAppToolResponse(BaseModel):
+    name: str
+    title: str | None = None
+    description: str | None = None
+    read_only: bool
+    destructive: bool
+    idempotent: bool
+    open_world: bool
+    input_schema: dict[str, Any] = Field(default_factory=dict)
+
+
+class CodexMcpAppResourceResponse(BaseModel):
+    name: str
+    title: str | None = None
+    uri: str
+    description: str | None = None
+    mime_type: str | None = None
+
+
+class CodexMcpAppPromptArgumentResponse(BaseModel):
+    name: str
+    description: str | None = None
+    required: bool
+
+
+class CodexMcpAppPromptResponse(BaseModel):
+    name: str
+    title: str | None = None
+    description: str | None = None
+    arguments: list[CodexMcpAppPromptArgumentResponse] = Field(default_factory=list)
+
+
+class CodexMcpAppPreviewResponse(BaseModel):
+    tool_name: str
+    arguments: dict[str, Any] = Field(default_factory=dict)
+    result: Any | None = None
+    is_error: bool
+    error: str | None = None
+
+
+class CodexMcpAppResponse(BaseModel):
+    app_id: str
+    name: str
+    description: str
+    recommended_server_id: str
+    transport: str
+    command: str
+    args: list[str] = Field(default_factory=list)
+    env: dict[str, str] = Field(default_factory=dict)
+    tags: list[str] = Field(default_factory=list)
+    supports_ui_extension: bool = False
+    ui_entry_uri: str | None = None
+    spec_path: str
+    installed: bool = False
+    install_state: str
+    server_present: bool = False
+    server_presence_known: bool = False
+    config_matches: bool | None = None
+    tools: list[CodexMcpAppToolResponse] = Field(default_factory=list)
+    resources: list[CodexMcpAppResourceResponse] = Field(default_factory=list)
+    prompts: list[CodexMcpAppPromptResponse] = Field(default_factory=list)
+    preview: CodexMcpAppPreviewResponse | None = None
+    drift_summary: str | None = None
+    disabled_reason: str | None = None
+    lookup_error: str | None = None
+    validation_error: str | None = None
+    protocol_error: str | None = None
+
+
+class CodexMcpAppInstallResponse(BaseModel):
+    app_id: str
+    server_id: str
+    already_installed: bool
+    reconciled: bool
+    command: str
+    summary: str
+
+
+class CodexStatusResponse(BaseModel):
+    cli_available: bool
+    command: str
+    version: str | None = None
+    logged_in: bool = False
+    auth_mode: str | None = None
+    status_summary: str
+    raw_status: str | None = None
+    usage_available: bool = False
+    usage_label: str | None = None
+    usage_summary: str | None = None
+    error: str | None = None
+
+
+class CodexToolingResponse(BaseModel):
+    status: CodexStatusResponse
+    profiles: list[CodexConfigProfileResponse] = Field(default_factory=list)
+    skills: list[CodexSkillResponse] = Field(default_factory=list)
+    mcp_servers: list[CodexMcpServerResponse] = Field(default_factory=list)
+    mcp_apps: list[CodexMcpAppResponse] = Field(default_factory=list)
+    mcp_server_inventory_complete: bool = True
+    mcp_raw_output: str | None = None
+    mcp_error: str | None = None
+    config_path: str | None = None
 
 
 class MessageRecoveryRequest(BaseModel):
@@ -66,6 +220,7 @@ class CreateSessionRequest(BaseModel):
     title: str | None = Field(default=None, max_length=120)
     workspace_path: str | None = None
     agent_profile_id: str | None = Field(default=None, max_length=120)
+    turn_summaries_enabled: bool = False
 
 
 class AgentProfileCreateRequest(BaseModel):
@@ -136,6 +291,10 @@ class AutoModeConfigRequest(BaseModel):
     reviewer_prompt: str | None = Field(default=None, max_length=12000)
 
 
+class TurnSummaryConfigRequest(BaseModel):
+    enabled: bool = False
+
+
 class AgentDefinitionPayload(BaseModel):
     agent_id: AgentId
     agent_type: AgentType
@@ -145,6 +304,7 @@ class AgentDefinitionPayload(BaseModel):
     model: str | None = Field(default=None, max_length=120)
     visibility: AgentVisibilityMode
     max_turns: int = Field(..., ge=0)
+    trigger_interval: int = Field(default=0, ge=0)
 
     @model_validator(mode="before")
     @classmethod
@@ -188,6 +348,7 @@ class AgentConfigurationRequest(BaseModel):
     preset: AgentPreset
     display_mode: AgentDisplayMode = AgentDisplayMode.SHOW_ALL
     turn_budget_mode: TurnBudgetMode = TurnBudgetMode.EACH_AGENT
+    summary_strategy: "SummaryStrategyPayload | None" = None
     agents: list[AgentDefinitionPayload]
     supervisor_member_ids: list[AgentId] = Field(default_factory=list)
 
@@ -237,6 +398,11 @@ class AgentConfigurationRequest(BaseModel):
                 "display_mode": self.display_mode.value,
                 "turn_budget_mode": self.turn_budget_mode.value,
                 "supervisor_member_ids": [agent_id.value for agent_id in self.supervisor_member_ids],
+                "summary_strategy": (
+                    self.summary_strategy.to_domain().to_dict()
+                    if self.summary_strategy is not None
+                    else None
+                ),
                 "agents": {
                     agent.agent_id.value: {
                         "agent_id": agent.agent_id.value,
@@ -247,6 +413,7 @@ class AgentConfigurationRequest(BaseModel):
                         "model": agent.model,
                         "visibility": agent.visibility.value,
                         "max_turns": agent.max_turns,
+                        "trigger_interval": agent.trigger_interval,
                     }
                     for agent in self.agents
                 },
@@ -263,13 +430,45 @@ class AgentDefinitionResponse(BaseModel):
     model: str | None = None
     visibility: AgentVisibilityMode
     max_turns: int
+    trigger_interval: int = 0
     provider_session_id: str | None = None
+
+
+class SummaryStrategyPayload(BaseModel):
+    mode: SummaryStrategyMode
+    deterministic_interval: int = Field(default=4, ge=1)
+    supervisor_window_start: int = Field(default=3, ge=1)
+    supervisor_window_end: int = Field(default=6, ge=1)
+
+    @model_validator(mode="after")
+    def validate_window(self) -> "SummaryStrategyPayload":
+        if self.supervisor_window_end < self.supervisor_window_start:
+            raise ValueError("Summary strategy window end must be >= window start.")
+        return self
+
+    def to_domain(self) -> SummaryStrategy:
+        return SummaryStrategy(
+            mode=self.mode,
+            deterministic_interval=self.deterministic_interval,
+            supervisor_window_start=self.supervisor_window_start,
+            supervisor_window_end=self.supervisor_window_end,
+        )
+
+    @classmethod
+    def from_domain(cls, strategy: SummaryStrategy) -> "SummaryStrategyPayload":
+        return cls(
+            mode=strategy.mode,
+            deterministic_interval=strategy.deterministic_interval,
+            supervisor_window_start=strategy.supervisor_window_start,
+            supervisor_window_end=strategy.supervisor_window_end,
+        )
 
 
 class AgentConfigurationResponse(BaseModel):
     preset: AgentPreset
     display_mode: AgentDisplayMode
     turn_budget_mode: TurnBudgetMode
+    summary_strategy: SummaryStrategyPayload
     agents: list[AgentDefinitionResponse]
     supervisor_member_ids: list[AgentId] = Field(default_factory=list)
 
@@ -280,6 +479,7 @@ class AgentConfigurationResponse(BaseModel):
             preset=normalized.preset,
             display_mode=normalized.display_mode,
             turn_budget_mode=normalized.turn_budget_mode,
+            summary_strategy=SummaryStrategyPayload.from_domain(normalized.summary_strategy),
             supervisor_member_ids=list(normalized.supervisor_member_ids),
             agents=[
                 AgentDefinitionResponse(
@@ -291,6 +491,7 @@ class AgentConfigurationResponse(BaseModel):
                     model=agent.model,
                     visibility=agent.visibility,
                     max_turns=agent.max_turns,
+                    trigger_interval=agent.trigger_interval,
                     provider_session_id=agent.provider_session_id,
                 )
                 for agent in normalized.agents.values()
@@ -390,6 +591,34 @@ class DocumentMessageAcceptedResponse(MessageAcceptedResponse):
         )
 
 
+def _summary_turn_range_payload(message: ChatMessage) -> dict[str, int | None]:
+    dedupe_key = (message.dedupe_key or "").strip()
+    if ":summary:" not in dedupe_key:
+        return {
+            "summary_turn_start": None,
+            "summary_turn_end": None,
+        }
+    raw_suffix = dedupe_key.rsplit(":summary:", maxsplit=1)[-1].strip()
+    parts = raw_suffix.split(":")
+    if len(parts) == 2 and all(part.isdigit() for part in parts):
+        start_turn = max(1, int(parts[0]))
+        end_turn = max(start_turn, int(parts[1]))
+        return {
+            "summary_turn_start": start_turn,
+            "summary_turn_end": end_turn,
+        }
+    if len(parts) == 1 and parts[0].isdigit():
+        end_turn = max(1, int(parts[0]))
+        return {
+            "summary_turn_start": 1,
+            "summary_turn_end": end_turn,
+        }
+    return {
+        "summary_turn_start": None,
+        "summary_turn_end": None,
+    }
+
+
 class ChatMessageResponse(BaseModel):
     id: str
     role: ChatMessageRole
@@ -416,6 +645,8 @@ class ChatMessageResponse(BaseModel):
     job_elapsed_seconds: int | None = None
     provider_session_id: str | None = None
     completed_at: datetime | None = None
+    summary_turn_start: int | None = None
+    summary_turn_end: int | None = None
 
     @classmethod
     def from_domain(
@@ -425,6 +656,7 @@ class ChatMessageResponse(BaseModel):
         job: Job | None = None,
     ) -> "ChatMessageResponse":
         return cls(
+            **_summary_turn_range_payload(message),
             id=message.id,
             role=message.role,
             author_type=message.author_type,
@@ -453,6 +685,82 @@ class ChatMessageResponse(BaseModel):
         )
 
 
+class TurnSummarySourceMessageResponse(BaseModel):
+    message_id: str
+    role: ChatMessageRole
+    author_type: ChatMessageAuthorType
+    agent_id: AgentId
+    agent_type: AgentType
+    agent_label: str | None = None
+    content: str | None = None
+    status: ChatMessageStatus
+    created_at: datetime
+
+    @classmethod
+    def from_domain(
+        cls,
+        message: ChatMessage,
+    ) -> "TurnSummarySourceMessageResponse":
+        return cls(
+            message_id=message.id,
+            role=message.role,
+            author_type=message.author_type,
+            agent_id=message.agent_id,
+            agent_type=message.agent_type,
+            agent_label=message.agent_label,
+            content=sanitize_image_attachment_error_text(message.content),
+            status=message.status,
+            created_at=message.created_at,
+        )
+
+
+class TurnSummaryResponse(BaseModel):
+    id: str
+    content: str
+    source_message_ids: list[str] = Field(default_factory=list)
+    source_messages: list[TurnSummarySourceMessageResponse] = Field(default_factory=list)
+    created_at: datetime
+    updated_at: datetime
+
+    @classmethod
+    def from_domain(
+        cls,
+        summary: ChatTurnSummary,
+        *,
+        messages_by_id: dict[str, ChatMessage],
+    ) -> "TurnSummaryResponse":
+        source_messages = (
+            [
+                TurnSummarySourceMessageResponse(
+                    message_id=message.message_id,
+                    role=message.role,
+                    author_type=message.author_type,
+                    agent_id=message.agent_id,
+                    agent_type=message.agent_type,
+                    agent_label=message.agent_label,
+                    content=sanitize_image_attachment_error_text(message.content),
+                    status=message.status,
+                    created_at=message.created_at,
+                )
+                for message in summary.source_messages
+            ]
+            if summary.source_messages
+            else [
+                TurnSummarySourceMessageResponse.from_domain(message)
+                for message_id in summary.source_message_ids
+                if (message := messages_by_id.get(message_id)) is not None
+            ]
+        )
+        return cls(
+            id=summary.id,
+            content=sanitize_image_attachment_error_text(summary.content) or "",
+            source_message_ids=list(summary.source_message_ids),
+            source_messages=source_messages,
+            created_at=summary.created_at,
+            updated_at=summary.updated_at,
+        )
+
+
 class ConversationProductResponse(BaseModel):
     status_line: str
     description: str
@@ -477,6 +785,8 @@ class SessionSummaryResponse(BaseModel):
     archived_at: datetime | None = None
     workspace_path: str
     workspace_name: str
+    turn_summaries_enabled: bool = False
+    turn_summary_count: int = 0
     agent_profile_id: str
     agent_profile_name: str
     agent_profile_color: str
@@ -502,6 +812,7 @@ class SessionSummaryResponse(BaseModel):
         session: ChatSession,
         *,
         messages: list[ChatMessage],
+        turn_summaries: list[ChatTurnSummary] | None = None,
         jobs_by_id: dict[str, Job] | None = None,
     ) -> "SessionSummaryResponse":
         last_message = messages[-1] if messages else None
@@ -530,6 +841,8 @@ class SessionSummaryResponse(BaseModel):
             archived_at=session.archived_at,
             workspace_path=session.workspace_path,
             workspace_name=session.workspace_name,
+            turn_summaries_enabled=session.turn_summaries_enabled,
+            turn_summary_count=len(turn_summaries or []),
             agent_profile_id=session.agent_profile_id,
             agent_profile_name=session.agent_profile_name,
             agent_profile_color=session.agent_profile_color,
@@ -570,6 +883,7 @@ class SessionDetailResponse(BaseModel):
     archived_at: datetime | None = None
     workspace_path: str
     workspace_name: str
+    turn_summaries_enabled: bool = False
     agent_profile_id: str
     agent_profile_name: str
     agent_profile_color: str
@@ -589,6 +903,7 @@ class SessionDetailResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     messages: list[ChatMessageResponse]
+    turn_summaries: list[TurnSummaryResponse] = Field(default_factory=list)
 
     @classmethod
     def from_domain(
@@ -596,6 +911,7 @@ class SessionDetailResponse(BaseModel):
         session: ChatSession,
         *,
         messages: list[ChatMessage],
+        turn_summaries: list[ChatTurnSummary] | None = None,
         jobs_by_id: dict[str, Job] | None = None,
         run_configurations_by_id: dict[str, AgentConfiguration] | None = None,
     ) -> "SessionDetailResponse":
@@ -611,12 +927,14 @@ class SessionDetailResponse(BaseModel):
             jobs_by_id=jobs_by_id,
             run_configurations_by_id=run_configurations_by_id,
         )
+        messages_by_id = {message.id: message for message in messages}
         return cls(
             id=session.id,
             title=session.title,
             archived_at=session.archived_at,
             workspace_path=session.workspace_path,
             workspace_name=session.workspace_name,
+            turn_summaries_enabled=session.turn_summaries_enabled,
             agent_profile_id=session.agent_profile_id,
             agent_profile_name=session.agent_profile_name,
             agent_profile_color=session.agent_profile_color,
@@ -657,6 +975,13 @@ class SessionDetailResponse(BaseModel):
                     job=jobs_by_id.get(message.job_id) if jobs_by_id and message.job_id else None,
                 )
                 for message in messages
+            ],
+            turn_summaries=[
+                TurnSummaryResponse.from_domain(
+                    summary,
+                    messages_by_id=messages_by_id,
+                )
+                for summary in (turn_summaries or [])
             ],
         )
 

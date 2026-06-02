@@ -48,6 +48,37 @@ docker-compose.yml
 main.py
 ```
 
+## Repo MCP Apps
+
+This repo now supports repo-local MCP apps under `mcp_apps/`.
+
+Each app is discovered from:
+
+```text
+mcp_apps/<module_name>/
+  __init__.py
+  server.py
+  app.json
+```
+
+The backend inspects these apps over the real MCP protocol and exposes them through `/codex/tooling`. The Flutter client shows them in the "Codex tools" sheet, including install state, tool/resource/prompt counts, and preview data when the app defines a `preview_tool`.
+
+Repo app install state is reconciled against the stored Codex MCP server config using `codex mcp get --json`. A repo app can therefore show as missing, matching, drifted, invalid, or protocol-broken.
+
+Repo app specs intentionally do not declare `cwd`. The current Codex CLI install flow persists transport type, command, args, and env, but not a stable `cwd`, so this repo's MCP app contract only advertises fields that round-trip through installation accurately.
+
+The first built-in repo app is `project-catalog`, which exposes the folders under `PROJECTS_ROOT` as a read-only MCP server with project metadata.
+
+To scaffold a new app, use the repo skill helper:
+
+```bash
+uv run python codex-skills/mcp-app-builder/scripts/scaffold_mcp_app.py my-app \
+  --title "My App" \
+  --description "What this app does"
+```
+
+Current limitation: the mobile frontend supports MCP app discovery, preview, install, and run selection, but it does not yet host full inline `io.modelcontextprotocol/ui` iframe apps.
+
 ## Design Review
 
 - Figma board: https://www.figma.com/design/qmN9KrBZgqhvwOjGKyMjPG?node-id=3-2
@@ -160,6 +191,219 @@ Voice-note transcription options:
 - `AUDIO_TRANSCRIPTION_MODEL` only matters for `openai`. It does not affect local `faster-whisper`.
 - `AUDIO_TRANSCRIPTION_BACKEND=faster_whisper` forces the local model path and avoids any external API call.
 - `AUDIO_TRANSCRIPTION_BACKEND=disabled` turns the feature off explicitly.
+
+## Git HTTPS Snap Fix
+
+If this environment is using the Codex snap-packaged `git`, HTTPS remotes can fail because `git` does not find its remote helpers at the right exec path. This repo includes:
+
+- `scripts/setup_git_https_snap.sh`
+- `scripts/rollback_git_https_snap.sh`
+- `scripts/test_git_https_snap_setup.sh`
+
+Use the setup script first in preview mode:
+
+```bash
+scripts/setup_git_https_snap.sh --dry-run
+```
+
+Audit the current environment without changing anything:
+
+```bash
+scripts/setup_git_https_snap.sh --check
+```
+
+Machine-readable audit output:
+
+```bash
+scripts/setup_git_https_snap.sh --check --json
+```
+
+The JSON includes:
+
+- `status`
+- ordered `checks`
+- per-check `result`
+- per-check `message`
+
+Formal schema:
+
+- `docs/setup_git_https_snap_check.schema.json`
+
+Apply it for real:
+
+```bash
+scripts/setup_git_https_snap.sh
+```
+
+Machine-readable setup output:
+
+```bash
+scripts/setup_git_https_snap.sh --json
+scripts/setup_git_https_snap.sh --dry-run --json
+```
+
+Rollback:
+
+```bash
+scripts/rollback_git_https_snap.sh
+```
+
+Machine-readable rollback output:
+
+```bash
+scripts/rollback_git_https_snap.sh --json
+scripts/rollback_git_https_snap.sh --dry-run --json
+```
+
+For isolated testing without touching your real config, override:
+
+- `BASHRC=/tmp/some-bashrc`
+- `GIT_CONFIG_GLOBAL=/tmp/some-gitconfig`
+
+There is also a repeatable non-destructive harness:
+
+```bash
+scripts/test_git_https_snap_setup.sh
+```
+
+Shell validation for these scripts:
+
+```bash
+scripts/lint_git_https_snap_shell.sh
+```
+
+That lint step validates shell syntax for the repo-level wrapper plus the script suite, and it also enforces the executable bit on the main command entrypoints:
+
+- `./check_git_https_snap.sh`
+- `scripts/setup_git_https_snap.sh`
+- `scripts/rollback_git_https_snap.sh`
+- `scripts/check_git_https_snap.sh`
+- `scripts/validate_check_git_https_snap_json.sh`
+
+Simplest repo-level command for validating everything in order:
+
+```bash
+./check_git_https_snap.sh
+```
+
+Less noisy success output for humans:
+
+```bash
+./check_git_https_snap.sh --quiet
+```
+
+Equivalent script path if you want the underlying entrypoint directly:
+
+```bash
+scripts/check_git_https_snap.sh
+```
+
+That entrypoint runs:
+
+- shell lint/syntax checks for `check_git_https_snap_lib.sh`, `check_git_https_snap.sh`, `setup_git_https_snap.sh`, `rollback_git_https_snap.sh`, `test_git_https_snap_setup.sh`, and `validate_check_git_https_snap_json.sh`
+- the non-destructive setup/rollback harness
+
+Machine-readable summary of that entrypoint:
+
+```bash
+scripts/check_git_https_snap.sh --json
+./check_git_https_snap.sh --json
+```
+
+`--quiet` only affects the human-readable mode. It keeps the final success line and any failure output, but suppresses the detailed harness logs when everything passes.
+On failure, it keeps a short stage-specific error message instead of dumping the full harness output.
+
+The JSON payload includes:
+
+- `schema_version`
+- `status`
+- ordered `stages`
+- per-stage `result`
+- per-stage `message`
+
+The repo-level wrapper `./check_git_https_snap.sh` and all main scripts also support `-h` / `--help` for flags, purpose, and relevant environment variables where applicable.
+
+Exit code semantics:
+
+- `scripts/setup_git_https_snap.sh`
+  - exit `0`: setup completed, or `--check` confirmed the environment is fully configured
+  - exit non-`0`: preflight failed, setup could not complete, or `--check` found a missing/broken requirement
+- `scripts/rollback_git_https_snap.sh`
+  - exit `0`: rollback completed, or there was nothing left to remove
+  - exit non-`0`: invalid usage or an unexpected rollback failure
+- `scripts/check_git_https_snap.sh`
+  - exit `0`: lint plus harness passed
+  - exit non-`0`: either lint or harness failed; `--json` still reports the failing stage
+- `scripts/validate_check_git_https_snap_json.sh`
+  - exit `0`: both the success payload and the controlled failure payload validated against the JSON contract
+  - exit non-`0`: JSON parse/schema/semantic validation failed in either scenario
+
+Formal schema:
+
+- `docs/check_git_https_snap.schema.json`
+
+The repo-level wrapper keeps the exact same JSON contract and schema as `scripts/check_git_https_snap.sh --json`.
+
+Non-destructive contract validation:
+
+```bash
+scripts/validate_check_git_https_snap_json.sh
+```
+
+Controlled failure check for the quiet human mode:
+
+```bash
+scripts/validate_check_git_https_snap_quiet.sh
+```
+
+Schemas:
+
+- audit JSON: `docs/setup_git_https_snap_check.schema.json`
+- setup/rollback JSON: `docs/git_https_snap_operation.schema.json`
+
+The setup/rollback JSON includes:
+
+- `status`
+- `operation`
+- `dry_run`
+- `targets`
+- `changes`
+
+Each change reports whether it was only detected/planned or actually applied via the `applied` flag.
+
+## Android APK Releases On GitHub
+
+This repository can publish the Android APK to GitHub Releases so you can install updates from your phone without a USB cable.
+
+What is included:
+
+- A GitHub Actions workflow at `.github/workflows/android-release.yml`
+- A local helper command at `scripts/publish_android_release.sh`
+- A stable release asset name: `codex-mobile.apk`
+
+Recommended flow:
+
+1. Update `frontend/mobile_app/pubspec.yaml` and bump the Flutter version.
+2. Commit and push your code changes.
+3. Run `./scripts/publish_android_release.sh --push`.
+4. GitHub Actions builds the APK and publishes a release for that tag.
+5. Download it from:
+   `https://github.com/<owner>/<repo>/releases/latest/download/codex-mobile.apk`
+
+Important details:
+
+- If `frontend/mobile_app/android/key.properties` is present, the Android release build uses that keystore.
+- If no release keystore is configured, the build falls back to the debug key so the workflow still works for internal testing.
+- For stable over-the-air updates, keep the same release keystore forever and always increase the app version in `frontend/mobile_app/pubspec.yaml`.
+
+Optional GitHub repository secrets for proper release signing:
+
+- `ANDROID_KEYSTORE_BASE64`
+- `ANDROID_KEY_ALIAS`
+- `ANDROID_KEY_PASSWORD`
+- `ANDROID_STORE_PASSWORD`
+
+The workflow decodes the keystore into `frontend/mobile_app/android/upload-keystore.jks` during the build and writes `frontend/mobile_app/android/key.properties` on the runner.
 
 ### Local Voice Transcription Setup
 
@@ -329,6 +573,69 @@ Stop it with:
 ```
 
 Important: this only solves closing the terminal. If the computer sleeps, reboots, or shuts down, the backend stops. For true always-on access, run it on a machine that stays on, or install it as a system service.
+
+### Autostart On Login Or Boot
+
+This repo includes a user-service installer for `systemd`:
+
+```bash
+chmod +x scripts/install_user_services.sh scripts/configure_tailscale_serve.sh
+./scripts/install_user_services.sh
+```
+
+That writes user units under `~/.config/systemd/user/` for:
+
+- the backend
+- userspace `tailscaled` when `TAILSCALE_SOCKET` is set in `.env`
+- Tailscale Serve pointing at `http://127.0.0.1:8000`
+
+To enable and start them immediately:
+
+```bash
+./scripts/install_user_services.sh --enable-now
+```
+
+To make user services start even before you log in after a reboot:
+
+```bash
+loginctl enable-linger "$USER"
+```
+
+Useful commands:
+
+```bash
+systemctl --user status codex-mobile-bridge-backend.service
+systemctl --user restart codex-mobile-bridge-backend.service
+```
+
+If `.env` leaves `TAILSCALE_SOCKET=` empty, the installer skips userspace Tailscale units. In that case use the normal system daemon instead:
+
+```bash
+sudo systemctl enable --now tailscaled
+```
+
+### Start Before Login
+
+If you want the backend and userspace Tailscale to start as soon as the machine boots, without waiting for your desktop session, install the system-level units instead:
+
+```bash
+chmod +x scripts/install_boot_services.sh
+sudo ./scripts/install_boot_services.sh --enable-now
+```
+
+That installer:
+
+- writes the units under `/etc/systemd/system/`
+- runs them as your normal user
+- disables the user-level units to avoid port and socket conflicts at login
+
+Check them with:
+
+```bash
+sudo systemctl status codex-mobile-bridge-backend.service
+sudo systemctl status codex-mobile-bridge-tailscaled.service
+sudo systemctl status codex-mobile-bridge-tailscale-serve.service
+```
 
 The backend exposes:
 

@@ -9,6 +9,7 @@ from uuid import uuid4
 
 import httpx
 
+from backend.app.domain.entities.codex_options import CodexRunOptions
 from backend.app.domain.entities.job import JobStatus
 from backend.app.infrastructure.execution.base import ExecutionProvider, ExecutionSnapshot
 
@@ -31,6 +32,7 @@ class _QueuedLambdaExecution:
     cleanup_paths: list[str] | None = None
     provider_session_id: str | None = None
     model: str | None = None
+    codex_options: CodexRunOptions | None = None
     workdir: str | None = None
     serial_key: str | None = None
 
@@ -66,6 +68,7 @@ class LambdaExecutionProvider(ExecutionProvider):
         cleanup_paths: list[str] | None = None,
         provider_session_id: str | None = None,
         model: str | None = None,
+        codex_options: CodexRunOptions | None = None,
         serial_key: str | None = None,
         submission_token: str | None = None,
         workdir: str | None = None,
@@ -78,6 +81,7 @@ class LambdaExecutionProvider(ExecutionProvider):
             cleanup_paths=cleanup_paths,
             provider_session_id=provider_session_id,
             model=model,
+            codex_options=codex_options.normalized() if codex_options else None,
             workdir=workdir,
             serial_key=serial_key,
         )

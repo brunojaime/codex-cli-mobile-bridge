@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.codex-cli-mobile-bridge/docs/git_https_snap_operation.schema.json",
+  "title": "setup_git_https_snap.sh --json / rollback_git_https_snap.sh --json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["status", "operation", "dry_run", "targets", "changes"],
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["passed", "failed"]
+    },
+    "operation": {
+      "type": "string",
+      "enum": ["setup", "rollback"]
+    },
+    "dry_run": {
+      "type": "boolean"
+    },
+    "targets": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["bashrc", "git_config_global"],
+      "properties": {
+        "bashrc": {
+          "type": "string",
+          "minLength": 1
+        },
+        "git_config_global": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "changes": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["target", "action", "applied", "message"],
+        "properties": {
+          "target": {
+            "type": "string",
+            "enum": ["bashrc_export", "credential_helper"]
+          },
+          "action": {
+            "type": "string",
+            "enum": ["appended", "unchanged", "configured", "removed", "not_present"]
+          },
+          "applied": {
+            "type": "boolean"
+          },
+          "message": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    }
+  }
+}

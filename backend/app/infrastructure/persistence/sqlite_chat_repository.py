@@ -29,6 +29,10 @@ from backend.app.domain.entities.agent_configuration import (
 from backend.app.domain.entities.agent_run import AgentRun
 from backend.app.domain.entities.agent_profile import AgentProfile, builtin_agent_profiles_by_id
 from backend.app.domain.entities.chat_session import ChatSession
+from backend.app.domain.entities.chat_turn_summary import (
+    ChatTurnSummary,
+    ChatTurnSummarySourceMessage,
+)
 from backend.app.domain.entities.job import Job, JobConversationKind, JobStatus
 from backend.app.domain.entities.workspace import Workspace
 from backend.app.domain.repositories.chat_repository import (
@@ -130,6 +134,23 @@ class SqliteChatRepository(ChatRepository):
             ).fetchall()
         return [self._session_from_row(row) for row in rows]
 
+    def save_turn_summary(self, summary: ChatTurnSummary) -> None:
+        with self._lock, self._connect() as connection:
+            self._write_turn_summary(connection, summary)
+            connection.commit()
+
+    def list_turn_summaries(self, session_id: str) -> list[ChatTurnSummary]:
+        with self._lock, self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM turn_summaries
+                WHERE session_id = ?
+                ORDER BY created_at ASC, id ASC
+                """,
+                (session_id,),
+            ).fetchall()
+        return [self._turn_summary_from_row(row) for row in rows]
+
     def save_agent_profile(self, profile: AgentProfile) -> None:
         with self._lock, self._connect() as connection:
             self._write_agent_profile(connection, profile)
@@ -215,6 +236,11 @@ class SqliteChatRepository(ChatRepository):
                     self._job_from_row(row)
                 except PersistenceDataError as exc:
                     issues.append(exc.to_issue())
+            for row in connection.execute("SELECT * FROM turn_summaries").fetchall():
+                try:
+                    self._turn_summary_from_row(row)
+                except PersistenceDataError as exc:
+                    issues.append(exc.to_issue())
         return issues
 
     def _reserved_builtin_agent_profile_issue(
@@ -270,6 +296,9 @@ class SqliteChatRepository(ChatRepository):
                     title_is_placeholder INTEGER NOT NULL DEFAULT 0,
                     workspace_path TEXT NOT NULL,
                     workspace_name TEXT NOT NULL,
+                    turn_summaries_enabled INTEGER NOT NULL DEFAULT 0,
+                    turn_summary_checkpoint_message_id TEXT,
+                    turn_summary_checkpoint_initialized INTEGER NOT NULL DEFAULT 0,
                     agent_profile_id TEXT NOT NULL DEFAULT 'default',
                     agent_profile_name TEXT NOT NULL DEFAULT 'Generator',
                     agent_profile_color TEXT NOT NULL DEFAULT '#55D6BE',
@@ -359,6 +388,17 @@ class SqliteChatRepository(ChatRepository):
                     FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE
                 );
 
+                CREATE TABLE IF NOT EXISTS turn_summaries (
+                    id TEXT PRIMARY KEY,
+                    session_id TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    source_message_ids_json TEXT NOT NULL DEFAULT '[]',
+                    source_messages_json TEXT NOT NULL DEFAULT '[]',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE
+                );
+
                 CREATE INDEX IF NOT EXISTS idx_sessions_updated_at
                 ON sessions(updated_at DESC);
 
@@ -375,6 +415,24 @@ class SqliteChatRepository(ChatRepository):
             connection,
             "sessions",
             "title_is_placeholder",
+            "INTEGER NOT NULL DEFAULT 0",
+        )
+        self._ensure_column(
+            connection,
+            "sessions",
+            "turn_summaries_enabled",
+            "INTEGER NOT NULL DEFAULT 0",
+        )
+        self._ensure_column(
+            connection,
+            "sessions",
+            "turn_summary_checkpoint_message_id",
+            "TEXT",
+        )
+        self._ensure_column(
+            connection,
+            "sessions",
+            "turn_summary_checkpoint_initialized",
             "INTEGER NOT NULL DEFAULT 0",
         )
         self._ensure_column(connection, "sessions", "agent_profile_id", "TEXT NOT NULL DEFAULT 'default'")
@@ -451,6 +509,26 @@ class SqliteChatRepository(ChatRepository):
             )
             """
         )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS turn_summaries (
+                id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                content TEXT NOT NULL,
+                source_message_ids_json TEXT NOT NULL DEFAULT '[]',
+                source_messages_json TEXT NOT NULL DEFAULT '[]',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE
+            )
+            """
+        )
+        self._ensure_column(
+            connection,
+            "turn_summaries",
+            "source_messages_json",
+            "TEXT NOT NULL DEFAULT '[]'",
+        )
         self._ensure_column(
             connection,
             "jobs",
@@ -469,12 +547,19 @@ class SqliteChatRepository(ChatRepository):
             "INTEGER NOT NULL DEFAULT 0",
         )
         self._ensure_column(connection, "agent_profiles", "configuration_json", "TEXT")
+        self._repair_legacy_turn_summary_checkpoints(connection)
         self._repair_duplicate_message_dedupe_keys(connection)
         connection.execute(
             """
             CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_dedupe_key
             ON messages(dedupe_key)
             WHERE dedupe_key IS NOT NULL
+            """
+        )
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_turn_summaries_session_created_at
+            ON turn_summaries(session_id, created_at ASC)
             """
         )
         current_version = connection.execute("PRAGMA user_version").fetchone()[0]
@@ -519,6 +604,11 @@ class SqliteChatRepository(ChatRepository):
                 table="sessions",
                 row_id=session_id,
                 field="workspace_name",
+            ),
+            turn_summaries_enabled=bool(row["turn_summaries_enabled"]),
+            turn_summary_checkpoint_message_id=row["turn_summary_checkpoint_message_id"],
+            turn_summary_checkpoint_initialized=bool(
+                row["turn_summary_checkpoint_initialized"]
             ),
             agent_profile_id=self._read_required_text(
                 row["agent_profile_id"],
@@ -635,6 +725,55 @@ class SqliteChatRepository(ChatRepository):
                 code="invalid_configuration_json",
                 detail=str(exc),
             ) from exc
+
+    def _turn_summary_from_row(self, row: sqlite3.Row) -> ChatTurnSummary:
+        summary_id = self._read_required_text(
+            row["id"],
+            table="turn_summaries",
+            row_id=None,
+            field="id",
+        )
+        return ChatTurnSummary(
+            id=summary_id,
+            session_id=self._read_required_text(
+                row["session_id"],
+                table="turn_summaries",
+                row_id=summary_id,
+                field="session_id",
+            ),
+            content=self._read_required_text(
+                row["content"],
+                table="turn_summaries",
+                row_id=summary_id,
+                field="content",
+            ),
+            source_message_ids=tuple(
+                self._read_json_string_list(
+                    row["source_message_ids_json"],
+                    table="turn_summaries",
+                    row_id=summary_id,
+                    field="source_message_ids_json",
+                )
+            ),
+            source_messages=tuple(
+                self._read_turn_summary_source_messages(
+                    row["source_messages_json"],
+                    row_id=summary_id,
+                )
+            ),
+            created_at=self._deserialize_required_datetime(
+                row["created_at"],
+                table="turn_summaries",
+                row_id=summary_id,
+                field="created_at",
+            ),
+            updated_at=self._deserialize_required_datetime(
+                row["updated_at"],
+                table="turn_summaries",
+                row_id=summary_id,
+                field="updated_at",
+            ),
+        )
 
     def _message_from_row(self, row: sqlite3.Row) -> ChatMessage:
         message_id = self._read_required_text(
@@ -943,6 +1082,79 @@ class SqliteChatRepository(ChatRepository):
                     (duplicate_row["id"],),
                 )
 
+    def _repair_legacy_turn_summary_checkpoints(
+        self,
+        connection: sqlite3.Connection,
+    ) -> None:
+        legacy_rows = connection.execute(
+            """
+            SELECT id
+            FROM sessions
+            WHERE turn_summaries_enabled = 1
+              AND turn_summary_checkpoint_initialized = 0
+              AND turn_summary_checkpoint_message_id IS NULL
+            """
+        ).fetchall()
+        for row in legacy_rows:
+            session_id = row["id"]
+            checkpoint_message_id = self._legacy_turn_summary_checkpoint_for_session(
+                connection,
+                session_id=session_id,
+            )
+            if checkpoint_message_id is None:
+                continue
+            connection.execute(
+                """
+                UPDATE sessions
+                SET turn_summary_checkpoint_message_id = ?,
+                    turn_summary_checkpoint_initialized = 1
+                WHERE id = ?
+                """,
+                (checkpoint_message_id, session_id),
+            )
+
+    def _legacy_turn_summary_checkpoint_for_session(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        session_id: str,
+    ) -> str | None:
+        last_summary_row = connection.execute(
+            """
+            SELECT source_message_ids_json
+            FROM turn_summaries
+            WHERE session_id = ?
+            ORDER BY created_at DESC, id DESC
+            LIMIT 1
+            """,
+            (session_id,),
+        ).fetchone()
+        if last_summary_row is not None:
+            source_message_ids = self._read_json_string_list(
+                last_summary_row["source_message_ids_json"],
+                table="turn_summaries",
+                row_id=None,
+                field="source_message_ids_json",
+            )
+            if source_message_ids:
+                return source_message_ids[-1]
+
+        latest_message_row = connection.execute(
+            """
+            SELECT id
+            FROM messages
+            WHERE session_id = ?
+              AND TRIM(content) != ''
+              AND status IN ('completed', 'failed', 'cancelled')
+            ORDER BY created_at DESC, id DESC
+            LIMIT 1
+            """,
+            (session_id,),
+        ).fetchone()
+        if latest_message_row is None:
+            return None
+        return latest_message_row["id"]
+
     def _collect_low_level_integrity_issues(
         self,
         connection: sqlite3.Connection,
@@ -1077,6 +1289,130 @@ class SqliteChatRepository(ChatRepository):
                 detail=f"Expected a non-empty {field} value.",
             )
         return value
+
+    def _read_json_string_list(
+        self,
+        value: object,
+        *,
+        table: str,
+        row_id: str | None,
+        field: str,
+    ) -> list[str]:
+        if not isinstance(value, str) or not value.strip():
+            return []
+        try:
+            payload = json.loads(value)
+        except json.JSONDecodeError as exc:
+            raise PersistenceDataError(
+                table=table,
+                row_id=row_id,
+                field=field,
+                code=f"invalid_{field}",
+                detail="Expected valid JSON.",
+            ) from exc
+        if not isinstance(payload, list) or not all(isinstance(item, str) for item in payload):
+            raise PersistenceDataError(
+                table=table,
+                row_id=row_id,
+                field=field,
+                code=f"invalid_{field}",
+                detail="Expected a JSON array of strings.",
+            )
+        return payload
+
+    def _read_turn_summary_source_messages(
+        self,
+        value: object,
+        *,
+        row_id: str | None,
+    ) -> list[ChatTurnSummarySourceMessage]:
+        if not isinstance(value, str) or not value.strip():
+            return []
+        try:
+            payload = json.loads(value)
+        except json.JSONDecodeError as exc:
+            raise PersistenceDataError(
+                table="turn_summaries",
+                row_id=row_id,
+                field="source_messages_json",
+                code="invalid_source_messages_json",
+                detail="Expected valid JSON.",
+            ) from exc
+        if not isinstance(payload, list):
+            raise PersistenceDataError(
+                table="turn_summaries",
+                row_id=row_id,
+                field="source_messages_json",
+                code="invalid_source_messages_json",
+                detail="Expected a JSON array of provenance objects.",
+            )
+
+        source_messages: list[ChatTurnSummarySourceMessage] = []
+        for index, item in enumerate(payload):
+            if not isinstance(item, dict):
+                raise PersistenceDataError(
+                    table="turn_summaries",
+                    row_id=row_id,
+                    field="source_messages_json",
+                    code="invalid_source_messages_json",
+                    detail=f"Expected object at index {index}.",
+                )
+            source_messages.append(
+                ChatTurnSummarySourceMessage(
+                    message_id=self._read_required_text(
+                        item.get("message_id"),
+                        table="turn_summaries",
+                        row_id=row_id,
+                        field="source_messages_json.message_id",
+                    ),
+                    role=self._read_required_enum(
+                        item.get("role"),
+                        ChatMessageRole,
+                        table="turn_summaries",
+                        row_id=row_id,
+                        field="source_messages_json.role",
+                    ),
+                    author_type=self._read_required_enum(
+                        item.get("author_type"),
+                        ChatMessageAuthorType,
+                        table="turn_summaries",
+                        row_id=row_id,
+                        field="source_messages_json.author_type",
+                    ),
+                    agent_id=self._read_required_enum(
+                        item.get("agent_id"),
+                        AgentId,
+                        table="turn_summaries",
+                        row_id=row_id,
+                        field="source_messages_json.agent_id",
+                    ),
+                    agent_type=self._read_required_enum(
+                        item.get("agent_type"),
+                        AgentType,
+                        table="turn_summaries",
+                        row_id=row_id,
+                        field="source_messages_json.agent_type",
+                    ),
+                    agent_label=item.get("agent_label"),
+                    content=item.get("content")
+                    if isinstance(item.get("content"), str)
+                    else None,
+                    status=self._read_required_enum(
+                        item.get("status"),
+                        ChatMessageStatus,
+                        table="turn_summaries",
+                        row_id=row_id,
+                        field="source_messages_json.status",
+                    ),
+                    created_at=self._deserialize_required_datetime(
+                        item.get("created_at"),
+                        table="turn_summaries",
+                        row_id=row_id,
+                        field="source_messages_json.created_at",
+                    ),
+                )
+            )
+        return source_messages
 
     def _load_agent_configuration(self, row: sqlite3.Row) -> AgentConfiguration:
         configuration_json = row["agent_configuration_json"]
@@ -1256,6 +1592,9 @@ class SqliteChatRepository(ChatRepository):
                 title_is_placeholder,
                 workspace_path,
                 workspace_name,
+                turn_summaries_enabled,
+                turn_summary_checkpoint_message_id,
+                turn_summary_checkpoint_initialized,
                 agent_profile_id,
                 agent_profile_name,
                 agent_profile_color,
@@ -1271,12 +1610,15 @@ class SqliteChatRepository(ChatRepository):
                 archived_at,
                 created_at,
                 updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 title = excluded.title,
                 title_is_placeholder = excluded.title_is_placeholder,
                 workspace_path = excluded.workspace_path,
                 workspace_name = excluded.workspace_name,
+                turn_summaries_enabled = excluded.turn_summaries_enabled,
+                turn_summary_checkpoint_message_id = excluded.turn_summary_checkpoint_message_id,
+                turn_summary_checkpoint_initialized = excluded.turn_summary_checkpoint_initialized,
                 agent_profile_id = excluded.agent_profile_id,
                 agent_profile_name = excluded.agent_profile_name,
                 agent_profile_color = excluded.agent_profile_color,
@@ -1299,6 +1641,9 @@ class SqliteChatRepository(ChatRepository):
                 1 if session.title_is_placeholder else 0,
                 session.workspace_path,
                 session.workspace_name,
+                1 if session.turn_summaries_enabled else 0,
+                session.turn_summary_checkpoint_message_id,
+                1 if session.turn_summary_checkpoint_initialized else 0,
                 session.agent_profile_id,
                 session.agent_profile_name,
                 session.agent_profile_color,
@@ -1314,6 +1659,57 @@ class SqliteChatRepository(ChatRepository):
                 self._serialize_datetime(session.archived_at),
                 self._serialize_datetime(session.created_at),
                 self._serialize_datetime(session.updated_at),
+            ),
+        )
+
+    def _write_turn_summary(
+        self,
+        connection: sqlite3.Connection,
+        summary: ChatTurnSummary,
+    ) -> None:
+        connection.execute(
+            """
+            INSERT INTO turn_summaries (
+                id,
+                session_id,
+                content,
+                source_message_ids_json,
+                source_messages_json,
+                created_at,
+                updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                content = excluded.content,
+                source_message_ids_json = excluded.source_message_ids_json,
+                source_messages_json = excluded.source_messages_json,
+                created_at = excluded.created_at,
+                updated_at = excluded.updated_at
+            """,
+            (
+                summary.id,
+                summary.session_id,
+                summary.content,
+                json.dumps(list(summary.source_message_ids)),
+                json.dumps(
+                    [
+                        {
+                            "message_id": source_message.message_id,
+                            "role": source_message.role.value,
+                            "author_type": source_message.author_type.value,
+                            "agent_id": source_message.agent_id.value,
+                            "agent_type": source_message.agent_type.value,
+                            "agent_label": source_message.agent_label,
+                            "content": source_message.content,
+                            "status": source_message.status.value,
+                            "created_at": self._serialize_datetime(
+                                source_message.created_at
+                            ),
+                        }
+                        for source_message in summary.source_messages
+                    ]
+                ),
+                self._serialize_datetime(summary.created_at),
+                self._serialize_datetime(summary.updated_at),
             ),
         )
 

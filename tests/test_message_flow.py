@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
 import threading
 import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import zipfile
@@ -17,6 +19,7 @@ from backend.app.domain.entities.agent_configuration import (
     AgentDisplayMode,
     AgentId,
     AgentPreset,
+    SummaryStrategyMode,
     AgentTriggerSource,
     AgentType,
     AgentVisibilityMode,
@@ -33,8 +36,11 @@ from backend.app.domain.entities.chat_message import (
     ChatMessageStatus,
 )
 from backend.app.domain.entities.chat_session import ChatSession
+from backend.app.domain.entities.codex_options import CodexRunOptions
 from backend.app.domain.entities.job import JobConversationKind, JobStatus
+from backend.app.infrastructure import mcp_apps as mcp_apps_infra
 from backend.app.infrastructure.execution.base import ExecutionProvider, ExecutionSnapshot
+from backend.app.infrastructure.codex_tooling import discover_codex_skills, sync_repo_skills
 from backend.app.infrastructure.persistence.in_memory_chat_repository import InMemoryChatRepository
 from backend.app.infrastructure.persistence.sqlite_chat_repository import SqliteChatRepository
 from backend.app.infrastructure.speech.base import (
@@ -64,9 +70,23 @@ def build_test_client() -> TestClient:
     return TestClient(app)
 
 
-def build_session_client() -> TestClient:
+def build_session_client(*, projects_root: str = "..") -> TestClient:
     settings = Settings(
         codex_command="python3 tests/fixtures/fake_codex_session.py",
+        codex_use_exec=True,
+        projects_root=projects_root,
+        chat_store_backend="memory",
+        execution_timeout_seconds=10,
+        poll_interval_seconds=0,
+        audio_transcription_backend="auto",
+    )
+    app = create_app(settings)
+    return TestClient(app)
+
+
+def build_json_only_client() -> TestClient:
+    settings = Settings(
+        codex_command="python3 tests/fixtures/fake_codex_json_only.py",
         codex_use_exec=True,
         projects_root="..",
         chat_store_backend="memory",
@@ -78,11 +98,11 @@ def build_session_client() -> TestClient:
     return TestClient(app)
 
 
-def build_session_client_with_container():
+def build_session_client_with_container(*, projects_root: str = ".."):
     settings = Settings(
         codex_command="python3 tests/fixtures/fake_codex_session.py",
         codex_use_exec=True,
-        projects_root="..",
+        projects_root=projects_root,
         chat_store_backend="memory",
         execution_timeout_seconds=10,
         poll_interval_seconds=0,
@@ -91,6 +111,26 @@ def build_session_client_with_container():
     app = create_app(settings)
     container = app.dependency_overrides[get_container]()
     return TestClient(app), container
+
+
+def build_tooling_client(
+    projects_root: str = "..",
+    *,
+    codex_workdir: str | None = None,
+    codex_command: str = "python3 tests/fixtures/fake_codex_tooling.py",
+) -> TestClient:
+    settings = Settings(
+        codex_command=codex_command,
+        codex_use_exec=True,
+        codex_workdir=codex_workdir or str(Path.cwd()),
+        projects_root=projects_root,
+        chat_store_backend="memory",
+        execution_timeout_seconds=10,
+        poll_interval_seconds=0,
+        audio_transcription_backend="auto",
+    )
+    app = create_app(settings)
+    return TestClient(app)
 
 
 def build_sqlite_session_client_with_container(
@@ -111,10 +151,48 @@ def build_sqlite_session_client_with_container(
     return TestClient(app), container
 
 
+def _write_fake_mcp_state(
+    home_dir: Path,
+    servers: dict[str, dict[str, object]],
+) -> None:
+    state_file = home_dir / ".codex" / "fake_mcp_state.json"
+    state_file.parent.mkdir(parents=True, exist_ok=True)
+    state_file.write_text(json.dumps(servers), encoding="utf-8")
+
+
+def _read_fake_mcp_state(home_dir: Path) -> dict[str, dict[str, object]]:
+    state_file = home_dir / ".codex" / "fake_mcp_state.json"
+    return json.loads(state_file.read_text(encoding="utf-8"))
+
+
+def _matching_project_catalog_server_state(
+    projects_root: str = "..",
+) -> dict[str, object]:
+    return {
+        "summary": (
+            "project-catalog: uv run --project "
+            f"{Path.cwd()} python -m mcp_apps.project_catalog.server"
+        ),
+        "transport": "stdio",
+        "command": "uv",
+        "args": [
+            "run",
+            "--project",
+            str(Path.cwd()),
+            "python",
+            "-m",
+            "mcp_apps.project_catalog.server",
+        ],
+        "env": {"PROJECTS_ROOT": projects_root},
+    }
+
+
 class _ControlledExecutionProvider(ExecutionProvider):
     def __init__(self) -> None:
         self._snapshots: dict[str, ExecutionSnapshot] = {}
+        self._submission_tokens: dict[str, str] = {}
         self._job_counter = 0
+        self.requests: list[dict[str, object]] = []
         self._lock = threading.RLock()
 
     def execute(
@@ -125,6 +203,7 @@ class _ControlledExecutionProvider(ExecutionProvider):
         cleanup_paths: list[str] | None = None,
         provider_session_id: str | None = None,
         model: str | None = None,
+        codex_options: CodexRunOptions | None = None,
         serial_key: str | None = None,
         submission_token: str | None = None,
         workdir: str | None = None,
@@ -132,6 +211,20 @@ class _ControlledExecutionProvider(ExecutionProvider):
         with self._lock:
             self._job_counter += 1
             job_id = f"job-{self._job_counter}"
+            self.requests.append(
+                {
+                    "job_id": job_id,
+                    "message": message,
+                    "image_paths": image_paths,
+                    "cleanup_paths": cleanup_paths,
+                    "provider_session_id": provider_session_id,
+                    "model": model,
+                    "codex_options": codex_options,
+                    "serial_key": serial_key,
+                    "submission_token": submission_token,
+                    "workdir": workdir,
+                }
+            )
             self._snapshots[job_id] = ExecutionSnapshot(
                 job_id=job_id,
                 status=JobStatus.PENDING,
@@ -139,6 +232,8 @@ class _ControlledExecutionProvider(ExecutionProvider):
                 phase="Queued",
                 latest_activity="Controlled provider queued the job.",
             )
+            if submission_token:
+                self._submission_tokens[submission_token] = job_id
             return job_id
 
     def finish_job(
@@ -196,6 +291,13 @@ class _ControlledExecutionProvider(ExecutionProvider):
     def has_job(self, job_id: str) -> bool:
         with self._lock:
             return job_id in self._snapshots
+
+    def supports_submission_lookup(self) -> bool:
+        return True
+
+    def get_job_id_by_submission_token(self, submission_token: str) -> str | None:
+        with self._lock:
+            return self._submission_tokens.get(submission_token)
 
     def cancel_job(self, job_id: str) -> bool:
         with self._lock:
@@ -385,6 +487,7 @@ def _build_controlled_message_service(
     projects_root: str,
     *,
     barrier_agent_id: AgentId,
+    follow_up_reconcile_interval_seconds: float | None = None,
 ) -> tuple[_BarrierLaunchMessageService, _ControlledExecutionProvider, InMemoryChatRepository]:
     repository = InMemoryChatRepository(projects_root=projects_root)
     provider = _ControlledExecutionProvider()
@@ -394,6 +497,7 @@ def _build_controlled_message_service(
         default_workspace_path=projects_root,
         audio_transcriber=DisabledAudioTranscriber(),
         barrier_agent_id=barrier_agent_id,
+        follow_up_reconcile_interval_seconds=follow_up_reconcile_interval_seconds,
     )
     return service, provider, repository
 
@@ -402,6 +506,7 @@ def _build_watched_controlled_message_service(
     projects_root: str,
     *,
     barrier_agent_id: AgentId,
+    follow_up_reconcile_interval_seconds: float | None = None,
 ) -> tuple[_BarrierLaunchMessageService, _WatchedControlledExecutionProvider, InMemoryChatRepository]:
     repository = InMemoryChatRepository(projects_root=projects_root)
     provider = _WatchedControlledExecutionProvider()
@@ -411,6 +516,7 @@ def _build_watched_controlled_message_service(
         default_workspace_path=projects_root,
         audio_transcriber=DisabledAudioTranscriber(),
         barrier_agent_id=barrier_agent_id,
+        follow_up_reconcile_interval_seconds=follow_up_reconcile_interval_seconds,
     )
     return service, provider, repository
 
@@ -641,11 +747,26 @@ def build_agent_configuration_payload(
     display_mode: str = "show_all",
     reviewer_enabled: bool = True,
     summary_enabled: bool = True,
+    summary_max_turns: int = 1,
+    summary_trigger_interval: int = 0,
+    summary_window_start: int = 3,
+    summary_window_end: int = 6,
     reviewer_visibility: str = "collapsed",
 ) -> dict:
+    normalized_interval = max(1, summary_trigger_interval or 4)
     return {
         "preset": preset,
         "display_mode": display_mode,
+        "summary_strategy": {
+            "mode": (
+                SummaryStrategyMode.SUPERVISOR_WINDOW.value
+                if preset == AgentPreset.SUPERVISOR.value
+                else SummaryStrategyMode.DETERMINISTIC.value
+            ),
+            "deterministic_interval": normalized_interval,
+            "supervisor_window_start": summary_window_start,
+            "supervisor_window_end": summary_window_end,
+        },
         "agents": [
             {
                 "agent_id": "generator",
@@ -672,7 +793,8 @@ def build_agent_configuration_payload(
                 "label": "Summary",
                 "prompt": "Summarize the run for the user.",
                 "visibility": "visible",
-                "max_turns": 1,
+                "max_turns": summary_max_turns,
+                "trigger_interval": summary_trigger_interval,
             },
         ],
     }
@@ -682,6 +804,11 @@ def build_supervisor_configuration_payload(
     *,
     supervisor_member_ids: list[str] | None = None,
     turn_budget_mode: str = "each_agent",
+    summary_enabled: bool = False,
+    summary_max_turns: int = 1,
+    summary_trigger_interval: int = 0,
+    summary_window_start: int = 3,
+    summary_window_end: int = 6,
 ) -> dict:
     selected_members = supervisor_member_ids or ["qa", "ux", "senior_engineer", "scraper"]
 
@@ -692,6 +819,12 @@ def build_supervisor_configuration_payload(
         "preset": "supervisor",
         "display_mode": "collapse_specialists",
         "turn_budget_mode": turn_budget_mode,
+        "summary_strategy": {
+            "mode": SummaryStrategyMode.SUPERVISOR_WINDOW.value,
+            "deterministic_interval": max(1, summary_trigger_interval or 4),
+            "supervisor_window_start": summary_window_start,
+            "supervisor_window_end": summary_window_end,
+        },
         "supervisor_member_ids": selected_members,
         "agents": [
             {
@@ -715,11 +848,12 @@ def build_supervisor_configuration_payload(
             {
                 "agent_id": "summary",
                 "agent_type": "summary",
-                "enabled": False,
+                "enabled": summary_enabled,
                 "label": "Summary",
                 "prompt": "Summarize the run for the user.",
                 "visibility": "visible",
-                "max_turns": 0,
+                "max_turns": summary_max_turns if summary_enabled else 0,
+                "trigger_interval": summary_trigger_interval,
             },
             {
                 "agent_id": "supervisor",
@@ -779,6 +913,10 @@ def build_agent_configuration_domain(
     display_mode: str = "show_all",
     reviewer_enabled: bool = True,
     summary_enabled: bool = True,
+    summary_max_turns: int = 1,
+    summary_trigger_interval: int = 0,
+    summary_window_start: int = 3,
+    summary_window_end: int = 6,
     reviewer_visibility: str = "collapsed",
 ) -> AgentConfiguration:
     payload = build_agent_configuration_payload(
@@ -786,18 +924,25 @@ def build_agent_configuration_domain(
         display_mode=display_mode,
         reviewer_enabled=reviewer_enabled,
         summary_enabled=summary_enabled,
+        summary_max_turns=summary_max_turns,
+        summary_trigger_interval=summary_trigger_interval,
+        summary_window_start=summary_window_start,
+        summary_window_end=summary_window_end,
         reviewer_visibility=reviewer_visibility,
     )
     return AgentConfiguration.from_dict(
         {
             "preset": payload["preset"],
             "display_mode": payload["display_mode"],
+            "summary_strategy": payload["summary_strategy"],
             "agents": {
                 agent["agent_id"]: agent
                 for agent in payload["agents"]
             },
         }
     )
+
+
 def test_message_flow_returns_completed_response() -> None:
     client = build_test_client()
 
@@ -1628,6 +1773,133 @@ def test_summary_runs_directly_when_reviewer_is_disabled() -> None:
     assert all(message["agent_id"] != "reviewer" for message in session_payload["messages"])
 
 
+def test_summary_interval_can_run_before_reviewer_continues() -> None:
+    client = build_session_client()
+    session_response = client.post("/sessions", json={"title": "Summary cadence"})
+    assert session_response.status_code == 201
+    session_id = session_response.json()["id"]
+
+    configuration = build_agent_configuration_payload(
+        preset="triad",
+        reviewer_enabled=True,
+        summary_enabled=True,
+        summary_max_turns=1,
+        summary_trigger_interval=1,
+    )
+    generator = next(
+        agent for agent in configuration["agents"] if agent["agent_id"] == "generator"
+    )
+    generator["max_turns"] = 1
+
+    config_response = client.put(
+        f"/sessions/{session_id}/agents",
+        json=configuration,
+    )
+    assert config_response.status_code == 200
+    assert (
+        config_response.json()["agent_configuration"]["summary_strategy"]["mode"]
+        == "deterministic"
+    )
+    assert (
+        config_response.json()["agent_configuration"]["summary_strategy"][
+            "deterministic_interval"
+        ]
+        == 1
+    )
+
+    message_response = client.post(
+        f"/sessions/{session_id}/messages",
+        json={"message": "Run the summary before the reviewer."},
+    )
+    assert message_response.status_code == 202
+
+    session_payload = wait_for_session(
+        client,
+        session_id,
+        predicate=lambda payload: (
+            payload["active_agent_run_id"] is None
+            and any(message["agent_id"] == "summary" for message in payload["messages"])
+            and any(message["agent_id"] == "reviewer" for message in payload["messages"])
+        ),
+    )
+
+    agent_order = [
+        message["agent_id"]
+        for message in session_payload["messages"]
+        if message["agent_id"] != "user"
+    ]
+    summary_message = next(
+        message for message in session_payload["messages"] if message["agent_id"] == "summary"
+    )
+    assert agent_order.index("summary") < agent_order.index("reviewer")
+    assert summary_message["summary_turn_start"] == 1
+    assert summary_message["summary_turn_end"] == 1
+
+
+def test_supervisor_summary_interval_can_publish_mid_run() -> None:
+    client = build_session_client()
+    session_response = client.post("/sessions", json={"title": "Supervisor summary cadence"})
+    assert session_response.status_code == 201
+    session_id = session_response.json()["id"]
+
+    config_response = client.put(
+        f"/sessions/{session_id}/agents",
+        json=build_supervisor_configuration_payload(
+            supervisor_member_ids=["qa"],
+            summary_enabled=True,
+            summary_max_turns=2,
+            summary_window_start=3,
+            summary_window_end=6,
+        ),
+    )
+    assert config_response.status_code == 200
+    assert (
+        config_response.json()["agent_configuration"]["summary_strategy"]["mode"]
+        == "supervisor_window"
+    )
+    assert (
+        config_response.json()["agent_configuration"]["summary_strategy"][
+            "supervisor_window_start"
+        ]
+        == 3
+    )
+    assert (
+        config_response.json()["agent_configuration"]["summary_strategy"][
+            "supervisor_window_end"
+        ]
+        == 6
+    )
+
+    create_response = client.post(
+        f"/sessions/{session_id}/messages",
+        json={"message": "Run the supervisor workflow with summaries."},
+    )
+    assert create_response.status_code == 202
+
+    session_payload = wait_for_session(
+        client,
+        session_id,
+        predicate=lambda payload: (
+            payload["active_agent_run_id"] is None
+            and any(message["agent_id"] == "summary" for message in payload["messages"])
+            and sum(1 for message in payload["messages"] if message["agent_id"] == "supervisor") >= 2
+        ),
+    )
+
+    agent_order = [
+        message["agent_id"]
+        for message in session_payload["messages"]
+        if message["agent_id"] != "user"
+    ]
+    summary_message = next(
+        message for message in session_payload["messages"] if message["agent_id"] == "summary"
+    )
+    assert agent_order.index("summary") < len(agent_order) - 1
+    assert "qa" in agent_order
+    assert summary_message["summary_turn_start"] == 1
+    assert summary_message["summary_turn_end"] == 3
+
+
 def test_agent_endpoint_round_trip_drives_full_triad_chain_and_persists_final_state() -> None:
     client = build_session_client()
     session_response = client.post("/sessions", json={"title": "Full triad"})
@@ -2008,6 +2280,337 @@ def test_concurrent_terminal_processing_does_not_duplicate_summary_follow_up() -
         assert len(summary_messages) == 1
         assert summary_messages[0].job_id is not None
         assert len(repository._jobs) == 2
+
+
+def _save_summary_transcript_message(
+    repository: InMemoryChatRepository,
+    *,
+    session_id: str,
+    run_id: str,
+    message_id: str,
+    created_at: datetime,
+    role: ChatMessageRole,
+    author_type: ChatMessageAuthorType,
+    agent_id: AgentId,
+    agent_type: AgentType,
+    content: str,
+) -> None:
+    repository.save_message(
+        ChatMessage(
+            id=message_id,
+            session_id=session_id,
+            role=role,
+            author_type=author_type,
+            content=content,
+            status=ChatMessageStatus.COMPLETED,
+            agent_id=agent_id,
+            agent_type=agent_type,
+            trigger_source=AgentTriggerSource.USER,
+            run_id=run_id,
+            created_at=created_at,
+            updated_at=created_at,
+        )
+    )
+
+
+def _seed_summary_transcript_run(
+    repository: InMemoryChatRepository,
+    *,
+    session_id: str,
+    run_id: str,
+    base_time: datetime,
+) -> None:
+    _save_summary_transcript_message(
+        repository,
+        session_id=session_id,
+        run_id=run_id,
+        message_id="user-initial",
+        created_at=base_time,
+        role=ChatMessageRole.USER,
+        author_type=ChatMessageAuthorType.HUMAN,
+        agent_id=AgentId.USER,
+        agent_type=AgentType.HUMAN,
+        content="Build the feature with regression coverage.",
+    )
+    _save_summary_transcript_message(
+        repository,
+        session_id=session_id,
+        run_id=run_id,
+        message_id="generator-1",
+        created_at=base_time + timedelta(seconds=1),
+        role=ChatMessageRole.ASSISTANT,
+        author_type=ChatMessageAuthorType.ASSISTANT,
+        agent_id=AgentId.GENERATOR,
+        agent_type=AgentType.GENERATOR,
+        content="Generator draft one.",
+    )
+    _save_summary_transcript_message(
+        repository,
+        session_id=session_id,
+        run_id=run_id,
+        message_id="human-follow-up",
+        created_at=base_time + timedelta(seconds=2),
+        role=ChatMessageRole.USER,
+        author_type=ChatMessageAuthorType.HUMAN,
+        agent_id=AgentId.USER,
+        agent_type=AgentType.HUMAN,
+        content="Please verify the edge cases too.",
+    )
+    _save_summary_transcript_message(
+        repository,
+        session_id=session_id,
+        run_id=run_id,
+        message_id="reviewer-1",
+        created_at=base_time + timedelta(seconds=3),
+        role=ChatMessageRole.USER,
+        author_type=ChatMessageAuthorType.REVIEWER_CODEX,
+        agent_id=AgentId.REVIEWER,
+        agent_type=AgentType.REVIEWER,
+        content="Ask the generator to add integration coverage.",
+    )
+    _save_summary_transcript_message(
+        repository,
+        session_id=session_id,
+        run_id=run_id,
+        message_id="summary-old",
+        created_at=base_time + timedelta(seconds=4),
+        role=ChatMessageRole.ASSISTANT,
+        author_type=ChatMessageAuthorType.ASSISTANT,
+        agent_id=AgentId.SUMMARY,
+        agent_type=AgentType.SUMMARY,
+        content="Old summary that should stay out of the next transcript.",
+    )
+    _save_summary_transcript_message(
+        repository,
+        session_id=session_id,
+        run_id=run_id,
+        message_id="generator-2",
+        created_at=base_time + timedelta(seconds=5),
+        role=ChatMessageRole.ASSISTANT,
+        author_type=ChatMessageAuthorType.ASSISTANT,
+        agent_id=AgentId.GENERATOR,
+        agent_type=AgentType.GENERATOR,
+        content="Generator draft two with more tests.",
+    )
+
+
+def test_summary_execution_message_scopes_first_turn_and_excludes_prior_summaries() -> None:
+    with TemporaryDirectory() as temp_dir:
+        workspace = Path(temp_dir) / "repo"
+        workspace.mkdir()
+        service, _, repository = _build_controlled_message_service(
+            temp_dir,
+            barrier_agent_id=AgentId.SUMMARY,
+        )
+
+        session = service.create_session(workspace_path=str(workspace))
+        configuration = build_agent_configuration_domain(
+            preset="triad",
+            reviewer_enabled=True,
+            summary_enabled=True,
+        )
+        service.update_agent_configuration(session_id=session.id, configuration=configuration)
+        session = repository.get_session(session.id)
+        assert session is not None
+
+        run_id = "run-summary-transcript"
+        base_time = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        _seed_summary_transcript_run(
+            repository,
+            session_id=session.id,
+            run_id=run_id,
+            base_time=base_time,
+        )
+
+        execution_message = service._build_summary_execution_message(
+            session_id=session.id,
+            run_id=run_id,
+            summary_prompt=session.agent_configuration.agents[AgentId.SUMMARY].prompt,
+            summary_turn_start=1,
+            summary_turn_end=1,
+        )
+
+        assert "Summarize completed agent turns 1 through 1." in execution_message
+        assert (
+            "Turn 1 - User [user/user]: Build the feature with regression coverage."
+            in execution_message
+        )
+        assert "Turn 1 - Generator [generator/assistant]: Generator draft one." in execution_message
+        assert "Please verify the edge cases too." not in execution_message
+        assert "Ask the generator to add integration coverage." not in execution_message
+        assert "Generator draft two with more tests." not in execution_message
+        assert "Old summary that should stay out of the next transcript." not in execution_message
+
+
+def test_summary_execution_message_assigns_between_turn_context_to_next_completed_turn() -> None:
+    with TemporaryDirectory() as temp_dir:
+        workspace = Path(temp_dir) / "repo"
+        workspace.mkdir()
+        service, _, repository = _build_controlled_message_service(
+            temp_dir,
+            barrier_agent_id=AgentId.SUMMARY,
+        )
+
+        session = service.create_session(workspace_path=str(workspace))
+        configuration = build_agent_configuration_domain(
+            preset="triad",
+            reviewer_enabled=True,
+            summary_enabled=True,
+        )
+        service.update_agent_configuration(session_id=session.id, configuration=configuration)
+        session = repository.get_session(session.id)
+        assert session is not None
+
+        run_id = "run-summary-transcript"
+        base_time = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        _seed_summary_transcript_run(
+            repository,
+            session_id=session.id,
+            run_id=run_id,
+            base_time=base_time,
+        )
+
+        execution_message = service._build_summary_execution_message(
+            session_id=session.id,
+            run_id=run_id,
+            summary_prompt=session.agent_configuration.agents[AgentId.SUMMARY].prompt,
+            summary_turn_start=2,
+            summary_turn_end=2,
+        )
+
+        assert "Summarize completed agent turns 2 through 2." in execution_message
+        assert "Turn 1 - Generator [generator/assistant]: Generator draft one." not in execution_message
+        assert "Turn 3 - Generator [generator/assistant]: Generator draft two with more tests." not in execution_message
+        assert (
+            "Turn 2 - User [user/user]: Please verify the edge cases too."
+            in execution_message
+        )
+        assert (
+            "Turn 2 - Reviewer [reviewer/user]: Ask the generator to add integration coverage."
+            in execution_message
+        )
+        assert "Old summary that should stay out of the next transcript." not in execution_message
+
+
+def test_mid_run_summary_launch_uses_scoped_transcript_window() -> None:
+    with TemporaryDirectory() as temp_dir:
+        workspace = Path(temp_dir) / "repo"
+        workspace.mkdir()
+        service, provider, repository = _build_controlled_message_service(
+            temp_dir,
+            barrier_agent_id=AgentId.SUMMARY,
+        )
+
+        session = service.create_session(workspace_path=str(workspace))
+        configuration = session.agent_configuration.normalized()
+        configuration.preset = AgentPreset.TRIAD
+        configuration.agents[AgentId.GENERATOR].max_turns = 2
+        configuration.agents[AgentId.REVIEWER].enabled = True
+        configuration.agents[AgentId.REVIEWER].max_turns = 1
+        configuration.agents[AgentId.SUMMARY].enabled = True
+        configuration.agents[AgentId.SUMMARY].max_turns = 2
+        configuration.summary_strategy.deterministic_interval = 2
+        service.update_agent_configuration(session_id=session.id, configuration=configuration)
+
+        initial_job = service.submit_message(
+            "Build the feature with regression coverage.",
+            session_id=session.id,
+        )
+        run_id = initial_job.run_id
+        assert run_id is not None
+
+        provider.complete_job(initial_job.id, response="Generator draft one.")
+        generator_message = next(
+            message
+            for message in repository.list_messages(session.id)
+            if message.run_id == run_id and message.agent_id == AgentId.GENERATOR
+        )
+        between_turn_created_at = generator_message.created_at + timedelta(microseconds=1)
+        old_summary_created_at = generator_message.created_at + timedelta(microseconds=2)
+        repository.save_message(
+            ChatMessage(
+                id="human-between-turns",
+                session_id=session.id,
+                role=ChatMessageRole.USER,
+                author_type=ChatMessageAuthorType.HUMAN,
+                content="Please verify the edge cases too.",
+                status=ChatMessageStatus.COMPLETED,
+                agent_id=AgentId.USER,
+                agent_type=AgentType.HUMAN,
+                trigger_source=AgentTriggerSource.USER,
+                run_id=run_id,
+                created_at=between_turn_created_at,
+                updated_at=between_turn_created_at,
+            )
+        )
+        repository.save_message(
+            ChatMessage(
+                id="prior-summary",
+                session_id=session.id,
+                role=ChatMessageRole.ASSISTANT,
+                author_type=ChatMessageAuthorType.ASSISTANT,
+                content="Old summary that should not be replayed.",
+                status=ChatMessageStatus.COMPLETED,
+                agent_id=AgentId.SUMMARY,
+                agent_type=AgentType.SUMMARY,
+                trigger_source=AgentTriggerSource.GENERATOR,
+                run_id=run_id,
+                created_at=old_summary_created_at,
+                updated_at=old_summary_created_at,
+            )
+        )
+
+        service.get_job(initial_job.id)
+
+        reviewer_message = next(
+            message
+            for message in repository.list_messages(session.id)
+            if message.run_id == run_id
+            and message.agent_id == AgentId.REVIEWER
+            and message.job_id is not None
+        )
+        provider.complete_job(
+            reviewer_message.job_id,
+            response="Ask the generator to add integration coverage.",
+        )
+        service.get_job(reviewer_message.job_id)
+
+        summary_message = next(
+            message
+            for message in repository.list_messages(session.id)
+            if message.run_id == run_id
+            and message.agent_id == AgentId.SUMMARY
+            and message.job_id is not None
+        )
+        summary_job = repository.get_job(summary_message.job_id)
+        assert summary_job is not None
+        launched_summary_request = next(
+            request
+            for request in provider.requests
+            if request["job_id"] == summary_message.job_id
+        )
+        launched_summary_prompt = str(launched_summary_request["message"])
+
+        assert summary_message.dedupe_key == f"run:{run_id}:summary:1:2"
+        assert summary_job.execution_message == launched_summary_prompt
+        assert "Summarize completed agent turns 1 through 2." in launched_summary_prompt
+        assert (
+            "Turn 1 - User [user/user]: Build the feature with regression coverage."
+            in launched_summary_prompt
+        )
+        assert (
+            "Turn 2 - User [user/user]: Please verify the edge cases too."
+            in launched_summary_prompt
+        )
+        assert (
+            "Turn 1 - User [user/user]: Please verify the edge cases too."
+            not in launched_summary_prompt
+        )
+        assert (
+            "Turn 2 - Reviewer [reviewer/user]: Ask the generator to add integration coverage."
+            in launched_summary_prompt
+        )
+        assert "Old summary that should not be replayed." not in launched_summary_prompt
 
 
 def test_terminal_job_lock_bookkeeping_is_cleaned_up_after_processing() -> None:
@@ -3793,24 +4396,31 @@ def test_chat_message_recovery_metadata_rejects_invalid_combinations() -> None:
         retry_message.validate_recovery_metadata()
 
 
-def test_session_read_recovers_reserved_reviewer_follow_up_idempotently() -> None:
-    client, container = build_session_client_with_container()
-    try:
-        session_response = client.post("/sessions", json={"title": "Recover reviewer"})
-        assert session_response.status_code == 201
-        session_id = session_response.json()["id"]
-
-        message_response = client.post(
-            f"/sessions/{session_id}/messages",
-            json={"message": "Ship the recovery path"},
+def test_session_reads_do_not_recover_reserved_reviewer_follow_up() -> None:
+    with TemporaryDirectory() as temp_dir:
+        workspace = Path(temp_dir) / "repo"
+        workspace.mkdir()
+        service, provider, repository = _build_controlled_message_service(
+            temp_dir,
+            barrier_agent_id=AgentId.REVIEWER,
         )
-        assert message_response.status_code == 202
-        primary_job = wait_for_job(client, message_response.json()["job_id"])
-        run_id = primary_job["run_id"]
-        assert run_id is not None
 
-        repository = container.message_service._repository
-        session = repository.get_session(session_id)
+        session = service.create_session(workspace_path=str(workspace))
+        configuration = session.agent_configuration.normalized()
+        configuration.preset = AgentPreset.REVIEW
+        configuration.agents[AgentId.GENERATOR].max_turns = 1
+        configuration.agents[AgentId.REVIEWER].enabled = False
+        configuration.agents[AgentId.SUMMARY].enabled = False
+        service.update_agent_configuration(session_id=session.id, configuration=configuration)
+
+        initial_job = service.submit_message(
+            "Ship the recovery path.",
+            session_id=session.id,
+        )
+        provider.complete_job(initial_job.id, response="Initial generator response.")
+        service.get_job(initial_job.id)
+
+        session = repository.get_session(session.id)
         assert session is not None
         session.agent_configuration = build_agent_configuration_domain(
             preset="review",
@@ -3818,70 +4428,53 @@ def test_session_read_recovers_reserved_reviewer_follow_up_idempotently() -> Non
             summary_enabled=False,
         )
         session.agent_configuration.agents[AgentId.GENERATOR].max_turns = 1
-        session.active_agent_run_id = run_id
+        session.active_agent_run_id = initial_job.run_id
         session.touch()
         repository.save_session(session)
 
         reviewer_definition = session.agent_configuration.agents[AgentId.REVIEWER]
-        reviewer_placeholder = ChatMessage(
-            id="reserved-reviewer",
-            session_id=session_id,
-            role=ChatMessageRole.USER,
-            author_type=ChatMessageAuthorType.REVIEWER_CODEX,
-            content="",
-            status=ChatMessageStatus.RESERVED,
-            agent_id=AgentId.REVIEWER,
-            agent_label=reviewer_definition.label,
-            visibility=reviewer_definition.visibility,
-            trigger_source=AgentTriggerSource.GENERATOR,
-            run_id=run_id,
-            dedupe_key=f"run:{run_id}:reviewer:1",
-        )
-        repository.reserve_message(reviewer_placeholder)
-
-        session_payload = wait_for_session(
-            client,
-            session_id,
-            predicate=lambda payload: any(
-                message["id"] == "reserved-reviewer"
-                and message["status"] == "completed"
-                and message["job_id"] is not None
-                for message in payload["messages"]
+        repository.reserve_message(
+            ChatMessage(
+                id="reserved-reviewer",
+                session_id=session.id,
+                role=ChatMessageRole.USER,
+                author_type=ChatMessageAuthorType.REVIEWER_CODEX,
+                content="",
+                status=ChatMessageStatus.RESERVED,
+                agent_id=AgentId.REVIEWER,
+                agent_label=reviewer_definition.label,
+                visibility=reviewer_definition.visibility,
+                trigger_source=AgentTriggerSource.GENERATOR,
+                run_id=initial_job.run_id,
+                dedupe_key=f"run:{initial_job.run_id}:reviewer:1",
             )
-            and payload["active_agent_run_id"] is None,
         )
 
-        for _ in range(3):
-            response = client.get(f"/sessions/{session_id}")
-            assert response.status_code == 200
+        baseline_request_count = len(provider.requests)
+        assert service.get_session(session.id) is not None
+        assert service.list_messages(session.id)
 
-        final_payload = client.get(f"/sessions/{session_id}").json()
-        recovered_messages = [
+        reserved_message = next(
             message
-            for message in final_payload["messages"]
-            if message["id"] == "reserved-reviewer"
-        ]
-        assert len(recovered_messages) == 1
-        assert recovered_messages[0]["status"] == "completed"
-        assert recovered_messages[0]["job_id"] is not None
-        assert any(
-            message["id"] == "reserved-reviewer"
-            for message in session_payload["messages"]
+            for message in repository.list_messages(session.id)
+            if message.id == "reserved-reviewer"
         )
-    finally:
-        client.close()
+        assert reserved_message.status == ChatMessageStatus.RESERVED
+        assert reserved_message.job_id is None
+        assert len(provider.requests) == baseline_request_count
 
 
-def test_session_read_cancels_orphaned_reserved_follow_up_with_reason_code() -> None:
-    client, container = build_session_client_with_container()
-    try:
-        session_response = client.post("/sessions", json={"title": "Orphaned reviewer"})
-        assert session_response.status_code == 201
-        session_id = session_response.json()["id"]
+def test_background_reconciler_cancels_orphaned_reserved_follow_up_with_reason_code() -> None:
+    with TemporaryDirectory() as temp_dir:
+        workspace = Path(temp_dir) / "repo"
+        workspace.mkdir()
+        service, _provider, repository = _build_controlled_message_service(
+            temp_dir,
+            barrier_agent_id=AgentId.REVIEWER,
+            follow_up_reconcile_interval_seconds=0.01,
+        )
 
-        repository = container.message_service._repository
-        session = repository.get_session(session_id)
-        assert session is not None
+        session = service.create_session(workspace_path=str(workspace))
         session.active_agent_run_id = "run-active"
         session.touch()
         repository.save_session(session)
@@ -3889,7 +4482,7 @@ def test_session_read_cancels_orphaned_reserved_follow_up_with_reason_code() -> 
         repository.reserve_message(
             ChatMessage(
                 id="orphaned-reviewer",
-                session_id=session_id,
+                session_id=session.id,
                 role=ChatMessageRole.USER,
                 author_type=ChatMessageAuthorType.REVIEWER_CODEX,
                 content="",
@@ -3901,41 +4494,54 @@ def test_session_read_cancels_orphaned_reserved_follow_up_with_reason_code() -> 
             )
         )
 
-        payload = client.get(f"/sessions/{session_id}")
-        assert payload.status_code == 200
-        message = next(
-            item
-            for item in payload.json()["messages"]
-            if item["id"] == "orphaned-reviewer"
+        _, messages, _ = wait_for_repository_session(
+            repository,
+            session.id,
+            predicate=lambda _session, messages, _jobs_by_id: any(
+                message.id == "orphaned-reviewer"
+                and message.status == ChatMessageStatus.CANCELLED
+                and message.reason_code
+                == ChatMessageReasonCode.ORPHANED_FOLLOW_UP_CANCELLED
+                for message in messages
+            ),
         )
-        assert message["status"] == "cancelled"
+
+        orphaned_message = next(
+            message for message in messages if message.id == "orphaned-reviewer"
+        )
+        assert orphaned_message.status == ChatMessageStatus.CANCELLED
         assert (
-            message["reason_code"]
-            == ChatMessageReasonCode.ORPHANED_FOLLOW_UP_CANCELLED.value
+            orphaned_message.reason_code
+            == ChatMessageReasonCode.ORPHANED_FOLLOW_UP_CANCELLED
         )
-    finally:
-        client.close()
 
 
-def test_session_read_attaches_submission_pending_follow_up_without_resubmitting() -> None:
-    client, container = build_session_client_with_container()
-    try:
-        session_response = client.post("/sessions", json={"title": "Attach submitted"})
-        assert session_response.status_code == 201
-        session_id = session_response.json()["id"]
-
-        message_response = client.post(
-            f"/sessions/{session_id}/messages",
-            json={"message": "Ship the attach path"},
+def test_background_reconciler_dispatches_reserved_reviewer_follow_up_idempotently() -> None:
+    with TemporaryDirectory() as temp_dir:
+        workspace = Path(temp_dir) / "repo"
+        workspace.mkdir()
+        service, provider, repository = _build_controlled_message_service(
+            temp_dir,
+            barrier_agent_id=AgentId.REVIEWER,
+            follow_up_reconcile_interval_seconds=0.01,
         )
-        assert message_response.status_code == 202
-        primary_job = wait_for_job(client, message_response.json()["job_id"])
-        run_id = primary_job["run_id"]
-        assert run_id is not None
 
-        service = container.message_service
-        repository = service._repository
-        session = repository.get_session(session_id)
+        session = service.create_session(workspace_path=str(workspace))
+        configuration = session.agent_configuration.normalized()
+        configuration.preset = AgentPreset.REVIEW
+        configuration.agents[AgentId.GENERATOR].max_turns = 1
+        configuration.agents[AgentId.REVIEWER].enabled = False
+        configuration.agents[AgentId.SUMMARY].enabled = False
+        service.update_agent_configuration(session_id=session.id, configuration=configuration)
+
+        initial_job = service.submit_message(
+            "Ship the recovery path.",
+            session_id=session.id,
+        )
+        provider.complete_job(initial_job.id, response="Initial generator response.")
+        service.get_job(initial_job.id)
+
+        session = repository.get_session(session.id)
         assert session is not None
         session.agent_configuration = build_agent_configuration_domain(
             preset="review",
@@ -3943,14 +4549,89 @@ def test_session_read_attaches_submission_pending_follow_up_without_resubmitting
             summary_enabled=False,
         )
         session.agent_configuration.agents[AgentId.GENERATOR].max_turns = 1
-        session.active_agent_run_id = run_id
+        session.active_agent_run_id = initial_job.run_id
+        session.touch()
+        repository.save_session(session)
+
+        reviewer_definition = session.agent_configuration.agents[AgentId.REVIEWER]
+        repository.reserve_message(
+            ChatMessage(
+                id="reserved-reviewer",
+                session_id=session.id,
+                role=ChatMessageRole.USER,
+                author_type=ChatMessageAuthorType.REVIEWER_CODEX,
+                content="",
+                status=ChatMessageStatus.RESERVED,
+                agent_id=AgentId.REVIEWER,
+                agent_label=reviewer_definition.label,
+                visibility=reviewer_definition.visibility,
+                trigger_source=AgentTriggerSource.GENERATOR,
+                run_id=initial_job.run_id,
+                dedupe_key=f"run:{initial_job.run_id}:reviewer:1",
+            )
+        )
+
+        _session, messages, _jobs_by_id = wait_for_repository_session(
+            repository,
+            session.id,
+            predicate=lambda _session, messages, _jobs_by_id: any(
+                message.id == "reserved-reviewer"
+                and message.status == ChatMessageStatus.PENDING
+                and message.job_id is not None
+                for message in messages
+            ),
+        )
+
+        dispatched_messages = [
+            message for message in messages if message.id == "reserved-reviewer"
+        ]
+        assert len(dispatched_messages) == 1
+        assert dispatched_messages[0].status == ChatMessageStatus.PENDING
+        assert dispatched_messages[0].job_id is not None
+        assert len(provider.requests) == 2
+
+
+def test_background_reconciler_attaches_submission_pending_follow_up_without_resubmitting() -> None:
+    with TemporaryDirectory() as temp_dir:
+        workspace = Path(temp_dir) / "repo"
+        workspace.mkdir()
+        service, provider, repository = _build_controlled_message_service(
+            temp_dir,
+            barrier_agent_id=AgentId.REVIEWER,
+            follow_up_reconcile_interval_seconds=0.01,
+        )
+
+        session = service.create_session(workspace_path=str(workspace))
+        configuration = session.agent_configuration.normalized()
+        configuration.preset = AgentPreset.REVIEW
+        configuration.agents[AgentId.GENERATOR].max_turns = 1
+        configuration.agents[AgentId.REVIEWER].enabled = False
+        configuration.agents[AgentId.SUMMARY].enabled = False
+        service.update_agent_configuration(session_id=session.id, configuration=configuration)
+
+        initial_job = service.submit_message(
+            "Ship the attach path.",
+            session_id=session.id,
+        )
+        provider.complete_job(initial_job.id, response="Initial generator response.")
+        service.get_job(initial_job.id)
+
+        session = repository.get_session(session.id)
+        assert session is not None
+        session.agent_configuration = build_agent_configuration_domain(
+            preset="review",
+            reviewer_enabled=True,
+            summary_enabled=False,
+        )
+        session.agent_configuration.agents[AgentId.GENERATOR].max_turns = 1
+        session.active_agent_run_id = initial_job.run_id
         session.touch()
         repository.save_session(session)
 
         reviewer_definition = session.agent_configuration.agents[AgentId.REVIEWER]
         reviewer_placeholder = ChatMessage(
             id="submitted-reviewer",
-            session_id=session_id,
+            session_id=session.id,
             role=ChatMessageRole.USER,
             author_type=ChatMessageAuthorType.REVIEWER_CODEX,
             content="",
@@ -3959,59 +4640,45 @@ def test_session_read_attaches_submission_pending_follow_up_without_resubmitting
             agent_label=reviewer_definition.label,
             visibility=reviewer_definition.visibility,
             trigger_source=AgentTriggerSource.GENERATOR,
-            run_id=run_id,
-            dedupe_key=f"run:{run_id}:reviewer:1",
-            submission_token=f"submission:{run_id}:reviewer:1",
+            run_id=initial_job.run_id,
+            dedupe_key=f"run:{initial_job.run_id}:reviewer:1",
+            submission_token=f"submission:{initial_job.run_id}:reviewer:1",
         )
         repository.reserve_message(reviewer_placeholder)
 
-        original_execute = service._execution_provider.execute
-        primary_response = primary_job["response"]
-        orphan_job_id = original_execute(
+        orphan_job_id = provider.execute(
             service._build_reviewer_execution_message(
                 reviewer_prompt=reviewer_definition.prompt,
-                primary_response=primary_response,
+                primary_response="Initial generator response.",
             ),
             provider_session_id=None,
-            serial_key=service._serial_key_for_agent(session_id, AgentId.REVIEWER),
+            serial_key=service._serial_key_for_agent(session.id, AgentId.REVIEWER),
             submission_token=reviewer_placeholder.submission_token,
             workdir=session.workspace_path,
         )
-        service._execution_provider.execute = lambda *args, **kwargs: (_ for _ in ()).throw(
-            AssertionError("recovery should not resubmit an already-submitted follow-up")
-        )
 
-        session_payload = wait_for_session(
-            client,
-            session_id,
-            predicate=lambda payload: any(
-                message["id"] == "submitted-reviewer"
-                and message["status"] == "completed"
-                and message["job_id"] == orphan_job_id
-                for message in payload["messages"]
-            )
-            and payload["active_agent_run_id"] is None,
+        def fail_if_resubmitted(*args, **kwargs):
+            raise AssertionError("recovery should not resubmit an already-submitted follow-up")
+
+        service._execution_provider.execute = fail_if_resubmitted
+
+        _session, messages, jobs_by_id = wait_for_repository_session(
+            repository,
+            session.id,
+            predicate=lambda _session, messages, jobs_by_id: any(
+                message.id == "submitted-reviewer"
+                and message.status == ChatMessageStatus.PENDING
+                and message.job_id == orphan_job_id
+                and jobs_by_id.get(orphan_job_id) is not None
+                for message in messages
+            ),
         )
 
         recovered_message = next(
-            message
-            for message in session_payload["messages"]
-            if message["id"] == "submitted-reviewer"
+            message for message in messages if message.id == "submitted-reviewer"
         )
-        assert recovered_message["submission_token"] == reviewer_placeholder.submission_token
-        assert recovered_message["job_id"] == orphan_job_id
-
-        for _ in range(3):
-            response = client.get(f"/sessions/{session_id}")
-            assert response.status_code == 200
-            repeated_message = next(
-                message
-                for message in response.json()["messages"]
-                if message["id"] == "submitted-reviewer"
-            )
-            assert repeated_message["job_id"] == orphan_job_id
-    finally:
-        client.close()
+        assert recovered_message.submission_token == reviewer_placeholder.submission_token
+        assert recovered_message.job_id == orphan_job_id
 
 
 def test_submission_pending_without_provider_lookup_becomes_submission_unknown() -> None:
@@ -4552,24 +5219,29 @@ def test_terminal_follow_up_reason_code_marks_run_completion_path() -> None:
 
 
 def test_workspaces_endpoint_and_session_workspace_binding() -> None:
-    client = build_session_client()
+    with TemporaryDirectory() as temp_dir:
+        projects_root = Path(temp_dir)
+        target_dir = projects_root / "cli-codex-project"
+        target_dir.mkdir()
 
-    workspaces_response = client.get("/workspaces")
-    assert workspaces_response.status_code == 200
-    workspaces = workspaces_response.json()
-    assert any(workspace["name"] == "cli-codex-project" for workspace in workspaces)
+        client = build_session_client(projects_root=str(projects_root))
 
-    target_workspace = next(
-        workspace for workspace in workspaces if workspace["name"] == "cli-codex-project"
-    )
-    create_response = client.post(
-        "/sessions",
-        json={"title": "Fixtures chat", "workspace_path": target_workspace["path"]},
-    )
-    assert create_response.status_code == 201
-    payload = create_response.json()
-    assert payload["workspace_name"] == "cli-codex-project"
-    assert payload["workspace_path"] == target_workspace["path"]
+        workspaces_response = client.get("/workspaces")
+        assert workspaces_response.status_code == 200
+        workspaces = workspaces_response.json()
+        assert any(workspace["name"] == "cli-codex-project" for workspace in workspaces)
+
+        target_workspace = next(
+            workspace for workspace in workspaces if workspace["name"] == "cli-codex-project"
+        )
+        create_response = client.post(
+            "/sessions",
+            json={"title": "Fixtures chat", "workspace_path": target_workspace["path"]},
+        )
+        assert create_response.status_code == 201
+        payload = create_response.json()
+        assert payload["workspace_name"] == "cli-codex-project"
+        assert payload["workspace_path"] == target_workspace["path"]
 
 
 def test_job_response_exposes_phase_metadata() -> None:
@@ -4590,6 +5262,17 @@ def test_job_response_exposes_phase_metadata() -> None:
     assert assistant_message["job_status"] == "completed"
     assert assistant_message["job_phase"] == "Completed"
     assert assistant_message["job_elapsed_seconds"] >= 0
+
+
+def test_exec_mode_falls_back_to_streamed_agent_message_when_output_file_is_empty() -> None:
+    client = build_json_only_client()
+
+    create_response = client.post("/message", json={"message": "hello from streamed json"})
+    assert create_response.status_code == 202
+
+    payload = wait_for_job(client, create_response.json()["job_id"])
+    assert payload["status"] == "completed"
+    assert payload["response"] == "json-only:hello from streamed json"
 
 
 def test_sqlite_chat_store_persists_sessions_across_app_restarts() -> None:
@@ -4658,6 +5341,7 @@ def test_capabilities_endpoint_exposes_speech_output_status() -> None:
 
     assert response.status_code == 200
     payload = response.json()
+    assert payload["supports_image_input"] is True
     assert payload["supports_speech_output"] is True
     assert payload["speech_output_backend"] == "openai"
     assert payload["speech_output_voice"] == "cedar"
@@ -4966,7 +5650,7 @@ def test_document_message_flow_rejects_unsupported_documents() -> None:
     assert "Unsupported document type" in create_response.json()["detail"]
 
 
-def test_image_message_flow_attaches_image_to_codex_cli() -> None:
+def test_image_message_flow_accepts_image_uploads() -> None:
     client = build_image_client()
 
     create_response = client.post(
@@ -4976,36 +5660,33 @@ def test_image_message_flow_attaches_image_to_codex_cli() -> None:
     )
 
     assert create_response.status_code == 202
-    assert create_response.json()["attached_image_name"] == "diagram.png"
+    payload = create_response.json()
+    assert payload["attached_image_name"] == "diagram.png"
 
-    payload = wait_for_job(client, create_response.json()["job_id"])
+    job = wait_for_job(client, payload["job_id"])
 
-    assert payload["status"] == "completed"
-    assert payload["message"] == "What does this show?"
-    assert "[images: " in payload["response"]
-    assert ".png]" in payload["response"]
+    assert job["status"] == "completed"
+    assert job["message"] == "What does this show?\n\n[Attached files]\n- image: diagram.png"
+    assert "What does this show?" in job["response"]
+    assert "[images: " in job["response"]
+    assert "diagram.png" in job["response"]
 
 
-def test_image_message_flow_uses_default_prompt_when_message_is_blank() -> None:
-    client = build_image_client()
+def test_document_message_flow_rejects_image_uploads() -> None:
+    client = build_test_client()
 
     create_response = client.post(
-        "/message/image",
-        data={"message": "   "},
-        files={"image": ("diagram.png", b"fake image bytes", "image/png")},
+        "/message/document",
+        files={"document": ("diagram.png", b"fake image bytes", "image/png")},
     )
 
-    assert create_response.status_code == 202
-
-    payload = wait_for_job(client, create_response.json()["job_id"])
-
-    assert payload["status"] == "completed"
-    assert payload["message"] == "Please analyze the attached image."
-    assert "[images: " in payload["response"]
-    assert ".png]" in payload["response"]
+    assert create_response.status_code == 415
+    assert create_response.json()["detail"] == (
+        "Image uploads must use the image or attachment upload endpoints."
+    )
 
 
-def test_attachment_batch_flow_combines_image_text_and_audio_inputs() -> None:
+def test_attachment_batch_flow_accepts_images() -> None:
     client = build_multi_attachment_client()
 
     create_response = client.post(
@@ -5019,22 +5700,53 @@ def test_attachment_batch_flow_combines_image_text_and_audio_inputs() -> None:
     )
 
     assert create_response.status_code == 202
-    payload = wait_for_job(client, create_response.json()["job_id"])
+    payload = create_response.json()
 
-    assert payload["status"] == "completed"
-    assert payload["message"] == (
+    job = wait_for_job(client, payload["job_id"])
+
+    assert job["status"] == "completed"
+    assert job["message"] == (
         "Compare everything in this batch\n\n"
         "[Attached files]\n"
         "- image: diagram.png\n"
         "- text: notes.txt\n"
         "- audio: voice.ogg"
     )
-    assert "[images: " in payload["response"]
-    assert ".png]" in payload["response"]
-    assert "Document name: notes.txt" in payload["response"]
-    assert "Extracted document text:\nAlpha line\nBeta line" in payload["response"]
-    assert "Document name: voice.ogg" in payload["response"]
-    assert "Transcript:\nTranscribed audio from voice.ogg" in payload["response"]
+    assert "Attached files:" in job["response"]
+    assert "Extracted document text:\nAlpha line\nBeta line" in job["response"]
+    assert "Transcript:\nTranscribed audio from voice.ogg" in job["response"]
+    assert "[images: " in job["response"]
+    assert "diagram.png" in job["response"]
+
+
+def test_retry_job_accepts_image_inputs() -> None:
+    with TemporaryDirectory() as tmpdir:
+        client, container = build_session_client_with_container()
+        service = container.message_service
+        repository = service._repository
+
+        image_path = Path(tmpdir) / "diagram.png"
+        image_path.write_bytes(b"fake image bytes")
+
+        create_response = client.post(
+            "/message",
+            json={"message": "Describe this image."},
+        )
+        assert create_response.status_code == 202
+        payload = wait_for_job(client, create_response.json()["job_id"])
+
+        stored_job = repository.get_job(payload["job_id"])
+        assert stored_job is not None
+        stored_job.image_paths = [str(image_path)]
+        repository.save_job(stored_job)
+
+        retry_response = client.post(f"/jobs/{stored_job.id}/retry")
+
+        assert retry_response.status_code == 202
+        retry_payload = wait_for_job(client, retry_response.json()["job_id"])
+        assert retry_payload["status"] == "completed"
+        assert retry_payload["message"] == "Describe this image."
+        assert "[images: " in retry_payload["response"]
 
 
 def test_agent_creator_profile_can_seed_a_new_chat_for_agent_design() -> None:
@@ -5823,3 +6535,1430 @@ def test_import_rejects_builtin_agent_profile_ids() -> None:
 
     assert import_response.status_code == 422
     assert "immutable" in import_response.json()["detail"]
+
+
+def test_submit_message_applies_codex_guidance_and_passes_codex_options() -> None:
+    with TemporaryDirectory() as temp_dir:
+        project_dir = Path(temp_dir) / "project"
+        project_dir.mkdir()
+        service, provider, _repository = _build_controlled_message_service(
+            temp_dir,
+            barrier_agent_id=AgentId.REVIEWER,
+        )
+
+        service.submit_message(
+            "Create a reusable skill for release automation.",
+            workspace_path=str(project_dir),
+            codex_options=CodexRunOptions(
+                profile="safe",
+                search_enabled=True,
+                skill_ids=("skill-creator",),
+                mcp_server_ids=("github",),
+                config_overrides=('model="gpt-5.5"',),
+            ),
+        )
+
+        request = provider.requests[-1]
+        assert request["codex_options"] == CodexRunOptions(
+            profile="safe",
+            search_enabled=True,
+            skill_ids=("skill-creator",),
+            mcp_server_ids=("github",),
+            config_overrides=('model="gpt-5.5"',),
+        )
+        assert "Prefer these Codex skills" in request["message"]
+        assert "`skill-creator`" in request["message"]
+        assert "`github`" in request["message"]
+
+
+def test_text_message_route_rejects_unknown_mcp_server_selection() -> None:
+    client = build_session_client()
+
+    response = client.post(
+        "/message",
+        json={
+            "message": "Use Codex with this server.",
+            "codex_options": {
+                "mcp_server_ids": ["ghost-server"],
+            },
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json() == {
+        "detail": (
+            "Rejected MCP server selections: `ghost-server` is not configured "
+            "in current Codex MCP tooling."
+        )
+    }
+
+
+def test_text_message_route_refuses_partial_mcp_list_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("FAKE_CODEX_PARTIAL_LIST_ERROR", "Partial MCP list failed.")
+    client = build_session_client()
+
+    response = client.post(
+        "/message",
+        json={
+            "message": "Use Codex with this server.",
+            "codex_options": {
+                "mcp_server_ids": ["github"],
+            },
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json() == {
+        "detail": (
+            "Cannot validate requested MCP server selections because "
+            "`codex mcp list` failed. Partial MCP list failed."
+        )
+    }
+
+
+def test_codex_tooling_marks_mcp_inventory_incomplete_when_list_partially_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with TemporaryDirectory() as temp_dir:
+        home_dir = Path(temp_dir)
+        monkeypatch.setenv("HOME", str(home_dir))
+        monkeypatch.setenv("FAKE_CODEX_PARTIAL_LIST_ERROR", "Partial MCP list failed.")
+
+        client = build_tooling_client(projects_root="..")
+        response = client.get("/codex/tooling")
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["mcp_server_inventory_complete"] is False
+        assert payload["mcp_error"] == "Partial MCP list failed."
+        github_server = next(
+            server for server in payload["mcp_servers"] if server["server_id"] == "github"
+        )
+        assert github_server["selectable"] is False
+        assert github_server["selectable_reason"] == (
+            "Codex MCP inventory is incomplete, so direct MCP server selection is "
+            "temporarily unavailable. Partial MCP list failed."
+        )
+
+
+@pytest.mark.parametrize(
+    ("server_state", "env_key", "expected_detail"),
+    [
+        (
+            {
+                "project-catalog": {
+                    "summary": (
+                        "project-catalog: uv run --project /tmp python -m "
+                        "mcp_apps.project_catalog.server"
+                    ),
+                    "transport": "stdio",
+                    "command": "uv",
+                    "args": [
+                        "run",
+                        "--project",
+                        "/tmp",
+                        "python",
+                        "-m",
+                        "mcp_apps.project_catalog.server",
+                    ],
+                    "env": {"PROJECTS_ROOT": "/tmp/projects"},
+                },
+            },
+            None,
+            (
+                "Rejected MCP server selections: `project-catalog` is repo-backed "
+                "and currently `drifted`. This repo-backed server drifted from the "
+                "repo app spec. Use the app card to reconcile it first."
+            ),
+        ),
+        (
+            {
+                "project-catalog": {
+                    **_matching_project_catalog_server_state(),
+                    "enabled": False,
+                    "disabled_reason": "Temporarily disabled",
+                },
+            },
+            None,
+            (
+                "Rejected MCP server selections: `project-catalog` is repo-backed "
+                "and currently `disabled`. This repo-backed server is disabled. "
+                "Use the app card to re-enable it first."
+            ),
+        ),
+        (
+            {
+                "project-catalog": {
+                    **_matching_project_catalog_server_state(),
+                },
+            },
+            "FAKE_CODEX_MALFORMED_GET_FOR",
+            (
+                "Rejected MCP server selections: `project-catalog` is repo-backed "
+                "and currently `unreadable`. Codex could not read the stored "
+                "server state safely. Fix that before selecting this repo-backed "
+                "server."
+            ),
+        ),
+    ],
+)
+def test_text_message_route_rejects_unhealthy_repo_backed_mcp_server_selection(
+    monkeypatch: pytest.MonkeyPatch,
+    server_state: dict[str, dict[str, object]],
+    env_key: str | None,
+    expected_detail: str,
+) -> None:
+    with TemporaryDirectory() as temp_dir:
+        home_dir = Path(temp_dir)
+        monkeypatch.setenv("HOME", str(home_dir))
+        if env_key is not None:
+            monkeypatch.setenv(env_key, "project-catalog")
+        _write_fake_mcp_state(home_dir, server_state)
+
+        client = build_session_client()
+        response = client.post(
+            "/message",
+            json={
+                "message": "Use Codex with this repo server.",
+                "codex_options": {
+                    "mcp_server_ids": ["project-catalog"],
+                },
+            },
+        )
+
+        assert response.status_code == 422
+        assert response.json() == {"detail": expected_detail}
+
+
+def test_text_message_route_accepts_external_selectable_mcp_server() -> None:
+    client = build_session_client()
+
+    response = client.post(
+        "/message",
+        json={
+            "message": "Use GitHub for this run.",
+            "codex_options": {
+                "mcp_server_ids": ["github"],
+            },
+        },
+    )
+
+    assert response.status_code == 202
+
+
+def test_codex_tooling_reports_disabled_external_mcp_server(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with TemporaryDirectory() as temp_dir:
+        home_dir = Path(temp_dir)
+        monkeypatch.setenv("HOME", str(home_dir))
+        _write_fake_mcp_state(
+            home_dir,
+            {
+                "github": {
+                    "summary": "github: GitHub connector available",
+                    "enabled": False,
+                    "disabled_reason": "Bearer secret token disabled",
+                    "transport": "stdio",
+                    "command": "github",
+                    "args": [],
+                    "env": {},
+                },
+            },
+        )
+
+        client = build_tooling_client(projects_root="..")
+        response = client.get("/codex/tooling")
+
+        assert response.status_code == 200
+        payload = response.json()
+        github_server = next(
+            server for server in payload["mcp_servers"] if server["server_id"] == "github"
+        )
+        assert github_server["source"] == "external"
+        assert github_server["status"] == "disabled"
+        assert github_server["selectable"] is False
+        assert github_server["disabled_reason"] == "Bearer [redacted] token disabled"
+        assert "secret" not in github_server["disabled_reason"]
+        assert github_server["lookup_error"] is None
+
+
+def test_codex_tooling_reports_unreadable_external_mcp_server(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with TemporaryDirectory() as temp_dir:
+        home_dir = Path(temp_dir)
+        monkeypatch.setenv("HOME", str(home_dir))
+        monkeypatch.setenv("FAKE_CODEX_MALFORMED_GET_FOR", "github")
+
+        client = build_tooling_client(projects_root="..")
+        response = client.get("/codex/tooling")
+
+        assert response.status_code == 200
+        payload = response.json()
+        github_server = next(
+            server for server in payload["mcp_servers"] if server["server_id"] == "github"
+        )
+        assert github_server["source"] == "external"
+        assert github_server["status"] == "unreadable"
+        assert github_server["selectable"] is False
+        assert github_server["lookup_error"] == (
+            "`codex mcp get --json` returned malformed JSON."
+        )
+        assert "secret" not in github_server["lookup_error"]
+
+
+def test_codex_tooling_reports_unreadable_external_mcp_server_when_get_times_out(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with TemporaryDirectory() as temp_dir:
+        home_dir = Path(temp_dir)
+        monkeypatch.setenv("HOME", str(home_dir))
+        monkeypatch.setenv("FAKE_CODEX_SLEEP_GET_FOR", "github")
+        monkeypatch.setenv("FAKE_CODEX_SLEEP_SECONDS", "0.05")
+        monkeypatch.setattr(mcp_apps_infra, "_MCP_GET_SERVER_TIMEOUT_SECONDS", 0.01)
+
+        client = build_tooling_client(projects_root="..")
+        response = client.get("/codex/tooling")
+
+        assert response.status_code == 200
+        payload = response.json()
+        github_server = next(
+            server for server in payload["mcp_servers"] if server["server_id"] == "github"
+        )
+        assert github_server["status"] == "unreadable"
+        assert github_server["selectable"] is False
+        assert github_server["lookup_error"] == (
+            "`codex mcp get --json` timed out while checking the existing server config."
+        )
+        assert "TimeoutExpired" not in github_server["lookup_error"]
+
+
+def test_codex_tooling_reports_repo_app_unreadable_when_get_exec_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with TemporaryDirectory() as temp_dir:
+        home_dir = Path(temp_dir)
+        monkeypatch.setenv("HOME", str(home_dir))
+        _write_fake_mcp_state(
+            home_dir,
+            {
+                "project-catalog": _matching_project_catalog_server_state(),
+            },
+        )
+        real_run = mcp_apps_infra.subprocess.run
+
+        def fake_run(*args, **kwargs):
+            process_args = args[0] if args else kwargs.get("args", [])
+            if process_args[-4:] == [
+                "mcp",
+                "get",
+                "project-catalog",
+                "--json",
+            ]:
+                raise FileNotFoundError("missing codex")
+            return real_run(*args, **kwargs)
+
+        monkeypatch.setattr(mcp_apps_infra.subprocess, "run", fake_run)
+
+        client = build_tooling_client(projects_root="..")
+        response = client.get("/codex/tooling")
+
+        assert response.status_code == 200
+        payload = response.json()
+        project_catalog = next(
+            app for app in payload["mcp_apps"] if app["app_id"] == "project-catalog"
+        )
+        assert project_catalog["install_state"] == "unreadable"
+        assert project_catalog["lookup_error"] == (
+            "`codex mcp get --json` could not be executed while checking the "
+            "existing server config."
+        )
+        assert "FileNotFoundError" not in project_catalog["lookup_error"]
+
+
+@pytest.mark.parametrize(
+    ("state", "env_key", "expected_detail"),
+    [
+        (
+            {
+                "github": {
+                    "summary": "github: GitHub connector available",
+                    "enabled": False,
+                    "disabled_reason": "Bearer secret token disabled",
+                    "transport": "stdio",
+                    "command": "github",
+                    "args": [],
+                    "env": {},
+                },
+            },
+            None,
+            (
+                "Rejected MCP server selections: `github` is external and currently "
+                "`disabled`. This external MCP server is disabled in Codex. "
+                "Disabled reason: Bearer [redacted] token disabled"
+            ),
+        ),
+        (
+            None,
+            "FAKE_CODEX_MALFORMED_GET_FOR",
+            (
+                "Rejected MCP server selections: `github` is external and currently "
+                "`unreadable`. Codex reported this external MCP server, but its "
+                "stored config is unreadable. Fix the stored Codex server entry "
+                "before selecting it."
+            ),
+        ),
+    ],
+)
+def test_text_message_route_rejects_unhealthy_external_mcp_server_selection(
+    monkeypatch: pytest.MonkeyPatch,
+    state: dict[str, dict[str, object]] | None,
+    env_key: str | None,
+    expected_detail: str,
+) -> None:
+    with TemporaryDirectory() as temp_dir:
+        home_dir = Path(temp_dir)
+        monkeypatch.setenv("HOME", str(home_dir))
+        if state is not None:
+            _write_fake_mcp_state(home_dir, state)
+        if env_key is not None:
+            monkeypatch.setenv(env_key, "github")
+
+        client = build_session_client()
+        response = client.post(
+            "/message",
+            json={
+                "message": "Use GitHub for this run.",
+                "codex_options": {
+                    "mcp_server_ids": ["github"],
+                },
+            },
+        )
+
+        assert response.status_code == 422
+        assert response.json() == {"detail": expected_detail}
+        assert "secret" not in response.json()["detail"]
+
+
+def test_text_message_route_rejects_external_mcp_server_when_get_times_out(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with TemporaryDirectory() as temp_dir:
+        home_dir = Path(temp_dir)
+        monkeypatch.setenv("HOME", str(home_dir))
+        monkeypatch.setenv("FAKE_CODEX_SLEEP_GET_FOR", "github")
+        monkeypatch.setenv("FAKE_CODEX_SLEEP_SECONDS", "0.05")
+        monkeypatch.setattr(mcp_apps_infra, "_MCP_GET_SERVER_TIMEOUT_SECONDS", 0.01)
+
+        client = build_session_client()
+        response = client.post(
+            "/message",
+            json={
+                "message": "Use GitHub for this run.",
+                "codex_options": {
+                    "mcp_server_ids": ["github"],
+                },
+            },
+        )
+
+        assert response.status_code == 422
+        assert response.json() == {
+            "detail": (
+                "Rejected MCP server selections: `github` is external and "
+                "currently `unreadable`. Codex could not read this external MCP "
+                "server safely. Fix the stored Codex server entry before selecting "
+                "it."
+            )
+        }
+        assert "TimeoutExpired" not in response.json()["detail"]
+
+
+def test_text_message_route_accepts_matching_repo_backed_mcp_server(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with TemporaryDirectory() as temp_dir:
+        home_dir = Path(temp_dir)
+        monkeypatch.setenv("HOME", str(home_dir))
+        _write_fake_mcp_state(
+            home_dir,
+            {
+                "project-catalog": _matching_project_catalog_server_state(),
+            },
+        )
+
+        client = build_session_client()
+        try:
+            response = client.post(
+                "/message",
+                json={
+                    "message": "Use the repo project catalog MCP app.",
+                    "codex_options": {
+                        "mcp_server_ids": ["project-catalog"],
+                    },
+                },
+            )
+
+            assert response.status_code == 202
+            wait_for_job(client, response.json()["job_id"])
+        finally:
+            client.close()
+
+
+def test_session_message_route_rejects_unknown_mcp_server_selection() -> None:
+    client = build_session_client()
+    session_response = client.post("/sessions", json={"title": "With MCP validation"})
+    assert session_response.status_code == 201
+    session_id = session_response.json()["id"]
+
+    response = client.post(
+        f"/sessions/{session_id}/messages",
+        json={
+            "message": "Use Codex with this server.",
+            "codex_options": {
+                "mcp_server_ids": ["ghost-server"],
+            },
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json() == {
+        "detail": (
+            "Rejected MCP server selections: `ghost-server` is not configured "
+            "in current Codex MCP tooling."
+        )
+    }
+
+
+@pytest.mark.parametrize(
+    ("endpoint", "data", "files"),
+    [
+        (
+            "/message/audio",
+            {"codex_options_json": json.dumps({"mcp_server_ids": ["ghost-server"]})},
+            {"audio": ("voice-note.m4a", b"fake audio bytes", "audio/mp4")},
+        ),
+        (
+            "/message/document",
+            {
+                "message": "Summarize this",
+                "codex_options_json": json.dumps({"mcp_server_ids": ["ghost-server"]}),
+            },
+            {"document": ("notes.txt", b"Line one\nLine two", "text/plain")},
+        ),
+        (
+            "/message/image",
+            {
+                "message": "Summarize this",
+                "codex_options_json": json.dumps({"mcp_server_ids": ["ghost-server"]}),
+            },
+            {"image": ("diagram.png", b"fake image bytes", "image/png")},
+        ),
+        (
+            "/message/attachments",
+            {
+                "message": "Summarize this",
+                "codex_options_json": json.dumps({"mcp_server_ids": ["ghost-server"]}),
+            },
+            [
+                ("attachments", ("notes.txt", b"Line one\nLine two", "text/plain")),
+            ],
+        ),
+    ],
+)
+def test_upload_routes_reject_unknown_mcp_server_selection(
+    endpoint: str,
+    data: dict[str, str],
+    files: object,
+) -> None:
+    client = build_session_client()
+
+    response = client.post(
+        endpoint,
+        data=data,
+        files=files,
+    )
+
+    assert response.status_code == 422
+    assert response.json() == {
+        "detail": (
+            "Rejected MCP server selections: `ghost-server` is not configured "
+            "in current Codex MCP tooling."
+        )
+    }
+
+
+def test_codex_tooling_endpoint_reports_status_skills_profiles_and_mcp(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with TemporaryDirectory() as temp_dir:
+        home_dir = Path(temp_dir)
+        config_dir = home_dir / ".codex"
+        (config_dir / "skills" / ".system" / "skill-creator").mkdir(parents=True)
+        (
+            config_dir
+            / "plugins"
+            / "cache"
+            / "openai-curated"
+            / "github"
+            / "dc902811"
+            / "skills"
+            / "yeet"
+        ).mkdir(parents=True)
+
+        (config_dir / "skills" / ".system" / "skill-creator" / "SKILL.md").write_text(
+            "---\n"
+            'name: "skill-creator"\n'
+            'description: "Create and refine Codex skills."\n'
+            "---\n",
+            encoding="utf-8",
+        )
+        (
+            config_dir
+            / "plugins"
+            / "cache"
+            / "openai-curated"
+            / "github"
+            / "dc902811"
+            / "skills"
+            / "yeet"
+            / "SKILL.md"
+        ).write_text(
+            "---\n"
+            'name: "yeet"\n'
+            'description: "Publish local changes through GitHub."\n'
+            "---\n",
+            encoding="utf-8",
+        )
+        (config_dir / "config.toml").write_text(
+            '[profiles.safe]\nmodel = "gpt-5.4"\n\n'
+            '[profiles.fast]\nmodel = "gpt-5.4-mini"\n',
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("HOME", str(home_dir))
+
+        client = build_tooling_client()
+        response = client.get("/codex/tooling")
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["status"]["cli_available"] is True
+        assert payload["status"]["logged_in"] is True
+        assert payload["status"]["auth_mode"] == "ChatGPT"
+        assert payload["status"]["usage_available"] is True
+        assert payload["status"]["usage_label"] == "Pro · 17%/5h · 42%/7d"
+        assert "Codex account: Pro." in payload["status"]["usage_summary"]
+        assert "5h window 17% used" in payload["status"]["usage_summary"]
+        assert "7d window 42% used" in payload["status"]["usage_summary"]
+        assert payload["profiles"] == [
+            {"name": "fast"},
+            {"name": "safe"},
+        ]
+        skill_ids = [skill["skill_id"] for skill in payload["skills"]]
+        assert "codex-mobile-android-release" in skill_ids
+        assert "skill-creator" in skill_ids
+        assert "github:yeet" in skill_ids
+        assert payload["mcp_servers"] == [
+            {
+                "server_id": "github",
+                "summary": "github: GitHub connector available",
+                "source": "external",
+                "backing_app_id": None,
+                "status": "healthy",
+                "selectable": True,
+                "selectable_reason": None,
+                "disabled_reason": None,
+                "lookup_error": None,
+            },
+            {
+                "server_id": "notion",
+                "summary": "notion: Notion docs",
+                "source": "external",
+                "backing_app_id": None,
+                "status": "healthy",
+                "selectable": True,
+                "selectable_reason": None,
+                "disabled_reason": None,
+                "lookup_error": None,
+            },
+        ]
+        assert payload["mcp_server_inventory_complete"] is True
+        app_ids = [app["app_id"] for app in payload["mcp_apps"]]
+        assert "project-catalog" in app_ids
+        project_catalog = next(
+            app for app in payload["mcp_apps"] if app["app_id"] == "project-catalog"
+        )
+        assert project_catalog["recommended_server_id"] == "project-catalog"
+        assert project_catalog["installed"] is False
+        assert project_catalog["install_state"] == "missing"
+        assert project_catalog["server_present"] is False
+        assert "cwd" not in project_catalog
+        project_catalog_server = next(
+            server
+            for server in payload["mcp_servers"]
+            if server["server_id"] == "project-catalog"
+        ) if any(server["server_id"] == "project-catalog" for server in payload["mcp_servers"]) else None
+        assert project_catalog_server is None
+        assert [tool["name"] for tool in project_catalog["tools"]] == [
+            "list_projects",
+            "get_project_metadata",
+        ]
+        assert [resource["uri"] for resource in project_catalog["resources"]] == [
+            "projects://catalog"
+        ]
+        assert [prompt["name"] for prompt in project_catalog["prompts"]] == [
+            "summarize-projects"
+        ]
+        assert project_catalog["preview"]["tool_name"] == "list_projects"
+        assert "projects_root" in project_catalog["preview"]["result"]
+
+
+def test_codex_mcp_app_install_endpoint_registers_repo_app(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with TemporaryDirectory() as temp_dir:
+        home_dir = Path(temp_dir)
+        (home_dir / ".codex").mkdir(parents=True)
+        monkeypatch.setenv("HOME", str(home_dir))
+
+        client = build_tooling_client(projects_root="..")
+        install_response = client.post("/codex/mcp-apps/project-catalog/install")
+
+        assert install_response.status_code == 200
+        payload = install_response.json()
+        assert payload["app_id"] == "project-catalog"
+        assert payload["server_id"] == "project-catalog"
+        assert payload["already_installed"] is False
+        assert payload["reconciled"] is False
+
+        tooling_response = client.get("/codex/tooling")
+        assert tooling_response.status_code == 200
+        tooling_payload = tooling_response.json()
+        server_ids = [server["server_id"] for server in tooling_payload["mcp_servers"]]
+        assert "project-catalog" in server_ids
+        project_catalog_server = next(
+            server
+            for server in tooling_payload["mcp_servers"]
+            if server["server_id"] == "project-catalog"
+        )
+        assert project_catalog_server == {
+            "server_id": "project-catalog",
+            "summary": (
+                "project-catalog: uv run --project "
+                f"{Path.cwd()} python -m mcp_apps.project_catalog.server"
+            ),
+            "source": "repo_app",
+            "backing_app_id": "project-catalog",
+            "status": "matching",
+            "selectable": True,
+            "selectable_reason": None,
+            "disabled_reason": None,
+            "lookup_error": None,
+        }
+        project_catalog = next(
+            app
+            for app in tooling_payload["mcp_apps"]
+            if app["app_id"] == "project-catalog"
+        )
+        assert project_catalog["installed"] is True
+        assert project_catalog["install_state"] == "matching"
+        assert project_catalog["server_present"] is True
+        assert project_catalog["drift_summary"] is None
+
+
+def test_codex_mcp_app_install_endpoint_reports_already_installed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with TemporaryDirectory() as temp_dir:
+        home_dir = Path(temp_dir)
+        (home_dir / ".codex").mkdir(parents=True)
+        monkeypatch.setenv("HOME", str(home_dir))
+
+        client = build_tooling_client(projects_root="..")
+        first_response = client.post("/codex/mcp-apps/project-catalog/install")
+        assert first_response.status_code == 200
+
+        second_response = client.post("/codex/mcp-apps/project-catalog/install")
+        assert second_response.status_code == 200
+        payload = second_response.json()
+        assert payload["app_id"] == "project-catalog"
+        assert payload["already_installed"] is True
+        assert payload["reconciled"] is False
+
+
+def test_codex_tooling_reports_drifted_repo_mcp_app(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with TemporaryDirectory() as temp_dir:
+        home_dir = Path(temp_dir)
+        monkeypatch.setenv("HOME", str(home_dir))
+        _write_fake_mcp_state(
+            home_dir,
+            {
+                "project-catalog": {
+                    "summary": "project-catalog: https://mcp.example.test/sse",
+                    "transport": "sse",
+                    "url": "https://mcp.example.test/sse",
+                    "headers": {"Authorization": "Bearer secret"},
+                },
+            },
+        )
+
+        client = build_tooling_client(projects_root="..")
+        response = client.get("/codex/tooling")
+
+        assert response.status_code == 200
+        payload = response.json()
+        project_catalog = next(
+            app for app in payload["mcp_apps"] if app["app_id"] == "project-catalog"
+        )
+        assert project_catalog["installed"] is False
+        assert project_catalog["install_state"] == "drifted"
+        assert project_catalog["server_present"] is True
+        assert project_catalog["server_presence_known"] is True
+        assert project_catalog["config_matches"] is False
+        assert project_catalog["drift_summary"] == (
+            "transport stored as `sse` but repo app expects `stdio`"
+        )
+        assert "Authorization" not in project_catalog["drift_summary"]
+        assert "Bearer secret" not in project_catalog["drift_summary"]
+        assert "secret" not in project_catalog["drift_summary"]
+        project_catalog_server = next(
+            server
+            for server in payload["mcp_servers"]
+            if server["server_id"] == "project-catalog"
+        )
+        assert project_catalog_server["source"] == "repo_app"
+        assert project_catalog_server["backing_app_id"] == "project-catalog"
+        assert project_catalog_server["status"] == "drifted"
+        assert project_catalog_server["selectable"] is False
+
+
+def test_codex_tooling_reports_matching_but_disabled_stdio_repo_mcp_app(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with TemporaryDirectory() as temp_dir:
+        home_dir = Path(temp_dir)
+        monkeypatch.setenv("HOME", str(home_dir))
+        _write_fake_mcp_state(
+            home_dir,
+            {
+                "project-catalog": {
+                    "summary": "project-catalog: uv run --project /home/batata/Projects/codex-cli-mobile-bridge python -m mcp_apps.project_catalog.server",
+                    "enabled": False,
+                    "disabled_reason": "Authorization: Bearer secret",
+                    "transport": "stdio",
+                    "command": "uv",
+                    "args": [
+                        "run",
+                        "--project",
+                        str(Path.cwd()),
+                        "python",
+                        "-m",
+                        "mcp_apps.project_catalog.server",
+                    ],
+                    "env": {"PROJECTS_ROOT": ".."},
+                },
+            },
+        )
+
+        client = build_tooling_client(projects_root="..")
+        response = client.get("/codex/tooling")
+
+        assert response.status_code == 200
+        payload = response.json()
+        project_catalog = next(
+            app for app in payload["mcp_apps"] if app["app_id"] == "project-catalog"
+        )
+        assert project_catalog["installed"] is False
+        assert project_catalog["install_state"] == "disabled"
+        assert project_catalog["server_present"] is True
+        assert project_catalog["server_presence_known"] is True
+        assert project_catalog["config_matches"] is True
+        assert project_catalog["drift_summary"] is None
+        assert project_catalog["disabled_reason"] == "Authorization: [redacted]"
+        assert "Bearer secret" not in project_catalog["disabled_reason"]
+
+
+def test_codex_tooling_reports_disabled_non_stdio_repo_mcp_app_safely(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with TemporaryDirectory() as temp_dir:
+        home_dir = Path(temp_dir)
+        monkeypatch.setenv("HOME", str(home_dir))
+        _write_fake_mcp_state(
+            home_dir,
+            {
+                "project-catalog": {
+                    "summary": "project-catalog: https://mcp.example.test/sse",
+                    "enabled": False,
+                    "disabled_reason": '{"Authorization":"Bearer secret"}',
+                    "transport": "sse",
+                    "url": "https://mcp.example.test/sse",
+                    "headers": {"Authorization": "Bearer secret"},
+                },
+            },
+        )
+
+        client = build_tooling_client(projects_root="..")
+        response = client.get("/codex/tooling")
+
+        assert response.status_code == 200
+        payload = response.json()
+        project_catalog = next(
+            app for app in payload["mcp_apps"] if app["app_id"] == "project-catalog"
+        )
+        assert project_catalog["installed"] is False
+        assert project_catalog["install_state"] == "disabled"
+        assert project_catalog["server_present"] is True
+        assert project_catalog["server_presence_known"] is True
+        assert project_catalog["config_matches"] is False
+        assert project_catalog["drift_summary"] == (
+            "transport stored as `sse` but repo app expects `stdio`"
+        )
+        assert project_catalog["disabled_reason"] == '{"Authorization":"[redacted]"}'
+        assert "Bearer secret" not in project_catalog["disabled_reason"]
+
+
+@pytest.mark.parametrize(
+    ("env_key", "expected_lookup_error"),
+    [
+        (
+            "FAKE_CODEX_FAIL_GET_FOR",
+            "`codex mcp get --json` failed while checking the existing server config.",
+        ),
+        (
+            "FAKE_CODEX_MALFORMED_GET_FOR",
+            "`codex mcp get --json` returned malformed JSON.",
+        ),
+        (
+            "FAKE_CODEX_UNSUPPORTED_GET_SHAPE_FOR",
+            "`codex mcp get --json` returned an unsupported payload shape.",
+        ),
+    ],
+)
+def test_codex_tooling_reports_unreadable_repo_mcp_app_state(
+    monkeypatch: pytest.MonkeyPatch,
+    env_key: str,
+    expected_lookup_error: str,
+) -> None:
+    with TemporaryDirectory() as temp_dir:
+        home_dir = Path(temp_dir)
+        monkeypatch.setenv("HOME", str(home_dir))
+        monkeypatch.setenv(env_key, "project-catalog")
+        previous_state = {
+            "project-catalog": {
+                "summary": "project-catalog: https://mcp.example.test/sse",
+                "transport": "sse",
+                "url": "https://mcp.example.test/sse",
+                "headers": {"Authorization": "Bearer secret"},
+            },
+        }
+        _write_fake_mcp_state(home_dir, previous_state)
+
+        client = build_tooling_client(projects_root="..")
+        response = client.get("/codex/tooling")
+
+        assert response.status_code == 200
+        payload = response.json()
+        project_catalog = next(
+            app for app in payload["mcp_apps"] if app["app_id"] == "project-catalog"
+        )
+        assert project_catalog["installed"] is False
+        assert project_catalog["install_state"] == "unreadable"
+        if env_key == "FAKE_CODEX_FAIL_GET_FOR":
+            assert project_catalog["server_present"] is False
+            assert project_catalog["server_presence_known"] is False
+        else:
+            assert project_catalog["server_present"] is True
+            assert project_catalog["server_presence_known"] is True
+        assert project_catalog["config_matches"] is None
+        assert project_catalog["lookup_error"] == expected_lookup_error
+        assert project_catalog["drift_summary"] is None
+        assert "Authorization" not in project_catalog["lookup_error"]
+        assert "Bearer secret" not in project_catalog["lookup_error"]
+
+
+def test_codex_mcp_app_install_endpoint_reconciles_drifted_repo_app(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with TemporaryDirectory() as temp_dir:
+        home_dir = Path(temp_dir)
+        monkeypatch.setenv("HOME", str(home_dir))
+        _write_fake_mcp_state(
+            home_dir,
+            {
+                "project-catalog": {
+                    "summary": "project-catalog: uv run --project /tmp python -m mcp_apps.project_catalog.server",
+                    "transport": "stdio",
+                    "command": "uv",
+                    "args": [
+                        "run",
+                        "--project",
+                        "/tmp",
+                        "python",
+                        "-m",
+                        "mcp_apps.project_catalog.server",
+                    ],
+                    "env": {"PROJECTS_ROOT": "/tmp/projects"},
+                },
+            },
+        )
+
+        client = build_tooling_client(projects_root="..")
+        response = client.post("/codex/mcp-apps/project-catalog/install")
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["app_id"] == "project-catalog"
+        assert payload["already_installed"] is False
+        assert payload["reconciled"] is True
+
+        state = _read_fake_mcp_state(home_dir)
+        project_catalog = state["project-catalog"]
+        assert project_catalog["transport"] == "stdio"
+        assert project_catalog["command"] == "uv"
+        assert project_catalog["args"] == [
+            "run",
+            "--project",
+            str(Path.cwd()),
+            "python",
+            "-m",
+            "mcp_apps.project_catalog.server",
+        ]
+        assert project_catalog["env"] == {"PROJECTS_ROOT": ".."}
+
+
+def test_codex_mcp_app_install_endpoint_reenables_disabled_matching_stdio_repo_app(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with TemporaryDirectory() as temp_dir:
+        home_dir = Path(temp_dir)
+        monkeypatch.setenv("HOME", str(home_dir))
+        _write_fake_mcp_state(
+            home_dir,
+            {
+                "project-catalog": {
+                    "summary": "project-catalog: uv run --project /home/batata/Projects/codex-cli-mobile-bridge python -m mcp_apps.project_catalog.server",
+                    "enabled": False,
+                    "disabled_reason": "Authorization: Bearer secret",
+                    "transport": "stdio",
+                    "command": "uv",
+                    "args": [
+                        "run",
+                        "--project",
+                        str(Path.cwd()),
+                        "python",
+                        "-m",
+                        "mcp_apps.project_catalog.server",
+                    ],
+                    "env": {"PROJECTS_ROOT": ".."},
+                },
+            },
+        )
+
+        client = build_tooling_client(projects_root="..")
+        response = client.post("/codex/mcp-apps/project-catalog/install")
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["already_installed"] is False
+        assert payload["reconciled"] is True
+        assert payload["summary"] == (
+            "Re-enabled MCP app `Project Catalog` as `project-catalog`."
+        )
+
+        state = _read_fake_mcp_state(home_dir)
+        project_catalog = state["project-catalog"]
+        assert project_catalog["enabled"] is True
+        assert project_catalog["disabled_reason"] is None
+
+
+@pytest.mark.parametrize(
+    ("env_key", "expected_detail"),
+    [
+        (
+            "FAKE_CODEX_FAIL_GET_FOR",
+            "Cannot determine the existing Codex server state for `project-catalog` safely. `codex mcp get --json` failed while checking the existing server config. Install/reconcile was aborted and the stored config was left unchanged.",
+        ),
+        (
+            "FAKE_CODEX_MALFORMED_GET_FOR",
+            "Cannot determine the existing Codex server state for `project-catalog` safely. `codex mcp get --json` returned malformed JSON. Install/reconcile was aborted and the stored config was left unchanged.",
+        ),
+        (
+            "FAKE_CODEX_UNSUPPORTED_GET_SHAPE_FOR",
+            "Cannot determine the existing Codex server state for `project-catalog` safely. `codex mcp get --json` returned an unsupported payload shape. Install/reconcile was aborted and the stored config was left unchanged.",
+        ),
+    ],
+)
+def test_codex_mcp_app_install_endpoint_refuses_when_installed_state_is_unreadable(
+    monkeypatch: pytest.MonkeyPatch,
+    env_key: str,
+    expected_detail: str,
+) -> None:
+    with TemporaryDirectory() as temp_dir:
+        home_dir = Path(temp_dir)
+        monkeypatch.setenv("HOME", str(home_dir))
+        monkeypatch.setenv(env_key, "project-catalog")
+        previous_state = {
+            "project-catalog": {
+                "summary": "project-catalog: https://mcp.example.test/sse",
+                "transport": "sse",
+                "url": "https://mcp.example.test/sse",
+                "headers": {"Authorization": "Bearer secret"},
+            },
+        }
+        _write_fake_mcp_state(home_dir, previous_state)
+
+        client = build_tooling_client(projects_root="..")
+        response = client.post("/codex/mcp-apps/project-catalog/install")
+
+        assert response.status_code == 422
+        assert response.json() == {"detail": expected_detail}
+        assert _read_fake_mcp_state(home_dir) == previous_state
+        assert "Authorization" not in response.json()["detail"]
+        assert "Bearer secret" not in response.json()["detail"]
+
+
+def test_codex_mcp_app_install_endpoint_returns_422_when_get_times_out(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with TemporaryDirectory() as temp_dir:
+        home_dir = Path(temp_dir)
+        monkeypatch.setenv("HOME", str(home_dir))
+        monkeypatch.setenv("FAKE_CODEX_SLEEP_GET_FOR", "project-catalog")
+        monkeypatch.setenv("FAKE_CODEX_SLEEP_SECONDS", "0.05")
+        monkeypatch.setattr(mcp_apps_infra, "_MCP_GET_SERVER_TIMEOUT_SECONDS", 0.01)
+        previous_state = {
+            "project-catalog": _matching_project_catalog_server_state(),
+        }
+        _write_fake_mcp_state(home_dir, previous_state)
+
+        client = build_tooling_client(projects_root="..")
+        response = client.post("/codex/mcp-apps/project-catalog/install")
+
+        assert response.status_code == 422
+        assert response.json() == {
+            "detail": (
+                "Cannot determine the existing Codex server state for "
+                "`project-catalog` safely. `codex mcp get --json` timed out while "
+                "checking the existing server config. Install/reconcile was "
+                "aborted and the stored config was left unchanged."
+            )
+        }
+        assert _read_fake_mcp_state(home_dir) == previous_state
+        assert "TimeoutExpired" not in response.json()["detail"]
+
+
+def test_codex_mcp_app_install_endpoint_refuses_disabled_non_stdio_without_mutation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with TemporaryDirectory() as temp_dir:
+        home_dir = Path(temp_dir)
+        monkeypatch.setenv("HOME", str(home_dir))
+        previous_state = {
+            "project-catalog": {
+                "summary": "project-catalog: https://mcp.example.test/sse",
+                "enabled": False,
+                "disabled_reason": '{"Authorization":"Bearer secret"}',
+                "transport": "sse",
+                "url": "https://mcp.example.test/sse",
+                "headers": {"Authorization": "Bearer secret"},
+            },
+        }
+        _write_fake_mcp_state(home_dir, previous_state)
+
+        client = build_tooling_client(projects_root="..")
+        response = client.post("/codex/mcp-apps/project-catalog/install")
+
+        assert response.status_code == 422
+        assert response.json() == {
+            "detail": (
+                "Cannot automatically reconcile MCP app `project-catalog` because "
+                "the stored transport `sse` cannot be restored by this backend if "
+                "the update fails. Stored server is disabled: "
+                "{\"Authorization\":\"[redacted]\"}. "
+                "The existing stored Codex server config was left unchanged."
+            )
+        }
+        assert _read_fake_mcp_state(home_dir) == previous_state
+        assert "Bearer secret" not in response.json()["detail"]
+        assert "Authorization\":\"Bearer secret" not in response.json()["detail"]
+
+
+def test_codex_mcp_app_install_endpoint_restores_previous_server_when_reconcile_add_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with TemporaryDirectory() as temp_dir:
+        home_dir = Path(temp_dir)
+        monkeypatch.setenv("HOME", str(home_dir))
+        monkeypatch.setenv(
+            "FAKE_CODEX_FAIL_ADD_IF_ARG_CONTAINS",
+            "mcp_apps.project_catalog.server",
+        )
+        previous_state = {
+            "project-catalog": {
+                "summary": "project-catalog: python3 /tmp/legacy_server.py",
+                "enabled": True,
+                "disabled_reason": None,
+                "transport": "stdio",
+                "command": "python3",
+                "args": ["/tmp/legacy_server.py"],
+                "env": {"PROJECTS_ROOT": "/tmp/legacy-projects"},
+            },
+        }
+        _write_fake_mcp_state(home_dir, previous_state)
+
+        client = build_tooling_client(projects_root="..")
+        response = client.post("/codex/mcp-apps/project-catalog/install")
+
+        assert response.status_code == 422
+        assert response.json() == {
+            "detail": (
+                "Failed to reconcile MCP app `project-catalog` because installing "
+                "the desired config failed. Failed to add server because launch "
+                "args matched `mcp_apps.project_catalog.server`: project-catalog "
+                "The previous server config was restored."
+            )
+        }
+        state = _read_fake_mcp_state(home_dir)
+        assert state["project-catalog"] == previous_state["project-catalog"]
+
+
+def test_codex_mcp_app_install_endpoint_aborts_when_remove_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with TemporaryDirectory() as temp_dir:
+        home_dir = Path(temp_dir)
+        monkeypatch.setenv("HOME", str(home_dir))
+        monkeypatch.setenv("FAKE_CODEX_FAIL_REMOVE_FOR", "project-catalog")
+        previous_state = {
+            "project-catalog": {
+                "summary": "project-catalog: python3 /tmp/legacy_server.py",
+                "transport": "stdio",
+                "command": "python3",
+                "args": ["/tmp/legacy_server.py"],
+                "env": {"PROJECTS_ROOT": "/tmp/legacy-projects"},
+            },
+        }
+        _write_fake_mcp_state(home_dir, previous_state)
+
+        client = build_tooling_client(projects_root="..")
+        response = client.post("/codex/mcp-apps/project-catalog/install")
+
+        assert response.status_code == 422
+        assert response.json() == {
+            "detail": (
+                "Failed to reconcile MCP app `project-catalog` because removing "
+                "the existing stored Codex server config failed. Failed to remove "
+                "server: project-catalog Reconcile was aborted before modifying "
+                "the stored config."
+            )
+        }
+        state = _read_fake_mcp_state(home_dir)
+        assert state["project-catalog"] == previous_state["project-catalog"]
+
+
+def test_codex_mcp_app_install_endpoint_aborts_when_remove_times_out(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with TemporaryDirectory() as temp_dir:
+        home_dir = Path(temp_dir)
+        monkeypatch.setenv("HOME", str(home_dir))
+        monkeypatch.setenv("FAKE_CODEX_SLEEP_REMOVE_FOR", "project-catalog")
+        monkeypatch.setenv("FAKE_CODEX_SLEEP_SECONDS", "0.05")
+        monkeypatch.setattr(mcp_apps_infra, "_MCP_REMOVE_SERVER_TIMEOUT_SECONDS", 0.01)
+        previous_state = {
+            "project-catalog": {
+                "summary": "project-catalog: python3 /tmp/legacy_server.py",
+                "transport": "stdio",
+                "command": "python3",
+                "args": ["/tmp/legacy_server.py"],
+                "env": {"PROJECTS_ROOT": "/tmp/legacy-projects"},
+            },
+        }
+        _write_fake_mcp_state(home_dir, previous_state)
+
+        client = build_tooling_client(projects_root="..")
+        response = client.post("/codex/mcp-apps/project-catalog/install")
+
+        assert response.status_code == 422
+        assert response.json() == {
+            "detail": (
+                "Failed to reconcile MCP app `project-catalog` because removing "
+                "the existing stored Codex server config failed. `codex mcp remove` "
+                "timed out while removing the stored server config. Reconcile was "
+                "aborted before modifying the stored config."
+            )
+        }
+        assert _read_fake_mcp_state(home_dir) == previous_state
+        assert "TimeoutExpired" not in response.json()["detail"]
+
+
+def test_codex_mcp_app_install_endpoint_refuses_non_restorable_reconcile_without_mutation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with TemporaryDirectory() as temp_dir:
+        home_dir = Path(temp_dir)
+        monkeypatch.setenv("HOME", str(home_dir))
+        monkeypatch.setenv(
+            "FAKE_CODEX_FAIL_ADD_IF_ARG_CONTAINS",
+            "mcp_apps.project_catalog.server",
+        )
+        _write_fake_mcp_state(
+            home_dir,
+            {
+                "project-catalog": {
+                    "summary": "project-catalog: https://mcp.example.test/sse",
+                    "transport": "sse",
+                    "url": "https://mcp.example.test/sse",
+                    "headers": {"Authorization": "Bearer secret"},
+                },
+            },
+        )
+
+        client = build_tooling_client(projects_root="..")
+        previous_state = _read_fake_mcp_state(home_dir)
+
+        response = client.post("/codex/mcp-apps/project-catalog/install")
+
+        assert response.status_code == 422
+        assert response.json() == {
+            "detail": (
+                "Cannot automatically reconcile MCP app `project-catalog` because "
+                "the stored transport `sse` cannot be restored by this backend if "
+                "the update fails. The existing stored Codex server config was left "
+                "unchanged."
+            )
+        }
+        assert _read_fake_mcp_state(home_dir) == previous_state
+        detail = response.json()["detail"]
+        assert "Authorization" not in detail
+        assert "Bearer secret" not in detail
+        assert "secret" not in detail
+
+
+def test_codex_mcp_app_install_endpoint_returns_422_on_codex_add_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with TemporaryDirectory() as temp_dir:
+        home_dir = Path(temp_dir)
+        (home_dir / ".codex").mkdir(parents=True)
+        monkeypatch.setenv("HOME", str(home_dir))
+        monkeypatch.setenv("FAKE_CODEX_FAIL_ADD_FOR", "project-catalog")
+
+        client = build_tooling_client(projects_root="..")
+        response = client.post("/codex/mcp-apps/project-catalog/install")
+
+        assert response.status_code == 422
+        assert response.json() == {"detail": "Failed to add server: project-catalog"}
+
+
+def test_codex_mcp_app_install_endpoint_returns_422_when_add_exec_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with TemporaryDirectory() as temp_dir:
+        home_dir = Path(temp_dir)
+        (home_dir / ".codex").mkdir(parents=True)
+        monkeypatch.setenv("HOME", str(home_dir))
+        real_run = mcp_apps_infra.subprocess.run
+
+        def fake_run(*args, **kwargs):
+            process_args = args[0] if args else kwargs.get("args", [])
+            if "mcp" in process_args:
+                mcp_index = process_args.index("mcp")
+                if mcp_index + 1 < len(process_args) and process_args[mcp_index + 1] == "add":
+                    raise FileNotFoundError("missing codex")
+            return real_run(*args, **kwargs)
+
+        monkeypatch.setattr(mcp_apps_infra.subprocess, "run", fake_run)
+
+        client = build_tooling_client(projects_root="..")
+        response = client.post("/codex/mcp-apps/project-catalog/install")
+
+        assert response.status_code == 422
+        assert response.json() == {
+            "detail": (
+                "`codex mcp add` could not be executed while installing the desired "
+                "server config."
+            )
+        }
+        assert "FileNotFoundError" not in response.json()["detail"]
+
+
+def test_codex_mcp_app_install_endpoint_returns_422_for_protocol_broken_app() -> None:
+    with TemporaryDirectory() as temp_dir:
+        temp_root = Path(temp_dir)
+        home_dir = temp_root / "home"
+        repo_root = temp_root / "repo"
+        (home_dir / ".codex").mkdir(parents=True)
+        broken_app_dir = repo_root / "mcp_apps" / "broken_protocol"
+        broken_app_dir.mkdir(parents=True)
+        (broken_app_dir / "app.json").write_text(
+            json.dumps(
+                {
+                    "app_id": "broken-protocol",
+                    "name": "Broken Protocol",
+                    "description": "Broken server",
+                    "recommended_server_id": "broken-protocol",
+                    "transport": "stdio",
+                    "command": "python3",
+                    "args": ["-m", "no.such.module"],
+                    "env": {},
+                },
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        old_home = os.environ.get("HOME")
+        os.environ["HOME"] = str(home_dir)
+        try:
+            client = build_tooling_client(
+                projects_root=str(repo_root),
+                codex_workdir=str(repo_root),
+            )
+            response = client.post("/codex/mcp-apps/broken-protocol/install")
+        finally:
+            if old_home is None:
+                os.environ.pop("HOME", None)
+            else:
+                os.environ["HOME"] = old_home
+
+        assert response.status_code == 422
+        detail = response.json()["detail"]
+        assert "failed protocol inspection and is not installable yet" in detail
+        assert "no.such.module" in detail
+        assert "TaskGroup" not in detail
+
+
+def test_repo_skills_are_discovered_and_synced() -> None:
+    with TemporaryDirectory() as temp_dir:
+        temp_root = Path(temp_dir)
+        home_dir = temp_root / "home"
+        repo_dir = temp_root / "repo"
+        repo_skill_dir = repo_dir / "codex-skills" / "demo-release-skill"
+        repo_skill_dir.mkdir(parents=True)
+        skill_body = (
+            "---\n"
+            'name: "demo-release-skill"\n'
+            'description: "Publish a demo Android release."\n'
+            "---\n"
+        )
+        (repo_skill_dir / "SKILL.md").write_text(skill_body, encoding="utf-8")
+
+        skills = discover_codex_skills(home_dir, repo_root=repo_dir)
+        assert len(skills) == 1
+        assert skills[0].skill_id == "demo-release-skill"
+        assert skills[0].source == "repo"
+        assert skills[0].path == str(repo_skill_dir / "SKILL.md")
+
+        installed_skill_ids = sync_repo_skills(home_dir, repo_root=repo_dir)
+        assert installed_skill_ids == ("demo-release-skill",)
+        installed_skill_file = (
+            home_dir / ".codex" / "skills" / "demo-release-skill" / "SKILL.md"
+        )
+        assert installed_skill_file.read_text(encoding="utf-8") == skill_body

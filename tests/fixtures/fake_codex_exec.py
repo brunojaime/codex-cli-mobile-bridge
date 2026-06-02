@@ -21,8 +21,12 @@ def main() -> int:
             index += 2
             continue
 
-        if current in {"--skip-git-repo-check", "--color"}:
-            index += 2 if current == "--color" else 1
+        if current in {"--skip-git-repo-check", "--color", "--profile", "-c"}:
+            index += 2
+            continue
+
+        if current == "--search":
+            index += 1
             continue
 
         filtered_args.append(current)

@@ -34,6 +34,7 @@ from backend.app.domain.entities.agent_configuration import (
     AgentTriggerSource,
     AgentType,
     AgentVisibilityMode,
+    SummaryStrategyMode,
     SUPERVISOR_MEMBER_AGENT_IDS,
     TurnBudgetMode,
     normalize_agent_enum_value,
@@ -45,7 +46,13 @@ from backend.app.domain.entities.agent_profile import (
 )
 from backend.app.domain.entities.agent_run import AgentRun
 from backend.app.domain.entities.chat_session import ChatSession
+from backend.app.domain.entities.chat_turn_summary import ChatTurnSummary
+from backend.app.domain.entities.chat_turn_summary import ChatTurnSummarySourceMessage
+from backend.app.domain.entities.codex_options import CodexRunOptions
 from backend.app.domain.entities.job import Job, JobConversationKind, JobStatus
+from backend.app.domain.entities.text_sanitization import (
+    sanitize_image_attachment_error_text,
+)
 from backend.app.domain.entities.workspace import Workspace
 from backend.app.domain.repositories.chat_repository import (
     ChatRepository,
@@ -57,6 +64,8 @@ from backend.app.infrastructure.transcription.base import AudioTranscriber, Audi
 
 
 DocumentKind = Literal["audio", "docx", "image", "text"]
+_TURN_SUMMARY_TRIGGER_MESSAGE_COUNT = 4
+_TURN_SUMMARY_COMPLETION_TIMEOUT_SECONDS = 15.0
 
 _AUDIO_SUFFIXES = {
     ".aac",
@@ -150,6 +159,12 @@ class AudioSubmission:
 
 
 @dataclass(slots=True)
+class ImageSubmission:
+    job: Job
+    attached_image_name: str
+
+
+@dataclass(slots=True)
 class DocumentSubmission:
     job: Job
     document_kind: DocumentKind
@@ -176,6 +191,7 @@ class SupervisorDecision:
     next_agent_id: AgentId | None
     instruction: str
     user_response: str
+    request_summary: bool = False
 
     @property
     def is_complete(self) -> bool:
@@ -205,6 +221,7 @@ class MessageService:
         audio_transcriber: AudioTranscriber,
         document_text_char_limit: int = 20_000,
         title_generation_model: str | None = None,
+        follow_up_reconcile_interval_seconds: float | None = None,
     ) -> None:
         self._repository = repository
         self._execution_provider = execution_provider
@@ -218,6 +235,22 @@ class MessageService:
         self._job_monitor_unsubscribes: dict[str, Callable[[], None] | None] = {}
         self._terminal_job_lock_guard = threading.RLock()
         self._terminal_job_locks: dict[str, _TerminalJobLockEntry] = {}
+        self._follow_up_recovery_guard = threading.RLock()
+        self._follow_up_reconcile_interval_seconds = (
+            follow_up_reconcile_interval_seconds
+            if follow_up_reconcile_interval_seconds is not None
+            and follow_up_reconcile_interval_seconds > 0
+            else None
+        )
+        self._follow_up_reconciler_stop = threading.Event()
+        self._follow_up_reconciler_thread: threading.Thread | None = None
+        if self._follow_up_reconcile_interval_seconds is not None:
+            self._follow_up_reconciler_thread = threading.Thread(
+                target=self._run_follow_up_reconciler,
+                name="message-service-follow-up-reconciler",
+                daemon=True,
+            )
+            self._follow_up_reconciler_thread.start()
 
     def create_session(
         self,
@@ -225,6 +258,7 @@ class MessageService:
         title: str | None = None,
         workspace_path: str | None = None,
         agent_profile_id: str | None = None,
+        turn_summaries_enabled: bool = False,
         title_is_placeholder: bool | None = None,
     ) -> ChatSession:
         workspace = self._resolve_workspace(workspace_path)
@@ -236,6 +270,8 @@ class MessageService:
             title=resolved_title,
             workspace_path=workspace.path,
             workspace_name=workspace.name,
+            turn_summaries_enabled=turn_summaries_enabled,
+            turn_summary_checkpoint_initialized=turn_summaries_enabled,
             title_is_placeholder=(
                 title_is_placeholder if title_is_placeholder is not None else title is None
             ),
@@ -249,6 +285,9 @@ class MessageService:
 
     def list_sessions(self) -> list[ChatSession]:
         return self._repository.list_sessions()
+
+    def list_turn_summaries(self, session_id: str) -> list[ChatTurnSummary]:
+        return self._repository.list_turn_summaries(session_id)
 
     def list_agent_profiles(self) -> list[AgentProfile]:
         builtins = builtin_agent_profiles_by_id()
@@ -353,6 +392,9 @@ class MessageService:
         return self._repository.startup_issue()
 
     def get_session(self, session_id: str) -> ChatSession | None:
+        return self._repository.get_session(session_id)
+
+    def refresh_session(self, session_id: str) -> ChatSession | None:
         session = self._repository.get_session(session_id)
         if session is None:
             return None
@@ -376,9 +418,6 @@ class MessageService:
         return session
 
     def list_messages(self, session_id: str) -> list[ChatMessage]:
-        session = self._repository.get_session(session_id)
-        if session is not None:
-            self._reconcile_reserved_follow_ups(session)
         return self._repository.list_messages(session_id)
 
     def update_agent_configuration(
@@ -400,6 +439,27 @@ class MessageService:
         self._repository.save_session(session)
         return session
 
+    def update_turn_summaries(
+        self,
+        *,
+        session_id: str,
+        enabled: bool,
+    ) -> ChatSession:
+        session = self.get_session(session_id)
+        if session is None:
+            raise ValueError(f"Session {session_id} was not found.")
+        self._ensure_session_can_be_reconfigured(session)
+
+        if enabled and not session.turn_summaries_enabled:
+            session.turn_summary_checkpoint_message_id = (
+                self._latest_eligible_turn_summary_message_id(session.id)
+            )
+            session.turn_summary_checkpoint_initialized = True
+        session.turn_summaries_enabled = enabled
+        session.touch()
+        self._repository.save_session(session)
+        return session
+
     def _profile_configuration_for_storage(
         self,
         configuration: AgentConfiguration,
@@ -417,6 +477,7 @@ class MessageService:
             turn_budget_mode=normalized.turn_budget_mode,
             agents=sanitized_agents,
             supervisor_member_ids=normalized.supervisor_member_ids,
+            summary_strategy=normalized.summary_strategy,
         ).normalized()
 
     def _run_configuration_snapshot(
@@ -490,6 +551,7 @@ class MessageService:
         image_paths: list[str] | None = None,
         cleanup_paths: list[str] | None = None,
         execution_message: str | None = None,
+        codex_options: CodexRunOptions | None = None,
         *,
         author_type: ChatMessageAuthorType = ChatMessageAuthorType.HUMAN,
         agent_id: AgentId = AgentId.USER,
@@ -505,6 +567,7 @@ class MessageService:
             session_id=session_id,
             workspace_path=workspace_path,
         )
+        normalized_codex_options = codex_options.normalized() if codex_options else None
         current_configuration = session.agent_configuration.normalized()
         agent_run: AgentRun | None = None
         self._cancel_reserved_follow_ups_for_inactive_runs(session)
@@ -528,20 +591,28 @@ class MessageService:
         resolved_run_id = run_id or session.active_agent_run_id or str(uuid4())
         entry_agent_id = self._entry_agent_for_configuration(current_configuration)
         entry_agent_definition = current_configuration.agents[entry_agent_id]
+        resolved_user_prompt = self._apply_codex_prompt_preferences(
+            execution_message or message,
+            normalized_codex_options,
+        )
         if conversation_kind == JobConversationKind.PRIMARY:
             if entry_agent_id == AgentId.SUPERVISOR:
                 execution_message = self._build_supervisor_execution_message(
+                    session=session,
+                    run_id=resolved_run_id,
                     supervisor_prompt=entry_agent_definition.prompt,
-                    user_prompt=execution_message or message,
+                    user_prompt=resolved_user_prompt,
                     supervisor_member_ids=current_configuration.supervisor_member_ids,
                     trigger_source=trigger_source,
                 )
             else:
                 execution_message = self._build_generator_execution_message(
                     generator_prompt=entry_agent_definition.prompt,
-                    user_prompt=execution_message or message,
+                    user_prompt=resolved_user_prompt,
                     trigger_source=trigger_source,
                 )
+        else:
+            execution_message = resolved_user_prompt
 
         user_message = ChatMessage(
             id=str(uuid4()),
@@ -585,6 +656,7 @@ class MessageService:
                 entry_agent_id,
             ),
             model=self._model_for_agent(session, entry_agent_id),
+            codex_options=normalized_codex_options,
             serial_key=self._serial_key_for_agent(session.id, entry_agent_id),
             conversation_kind=conversation_kind,
             agent_id=entry_agent_id,
@@ -617,6 +689,7 @@ class MessageService:
         session_id: str | None = None,
         workspace_path: str | None = None,
         language: str | None = None,
+        codex_options: CodexRunOptions | None = None,
     ) -> AudioSubmission:
         transcript = self._audio_transcriber.transcribe(
             Path(audio_path),
@@ -631,6 +704,7 @@ class MessageService:
             transcript,
             session_id=session_id,
             workspace_path=workspace_path,
+            codex_options=codex_options,
         )
         return AudioSubmission(job=job, transcript=transcript)
 
@@ -644,6 +718,7 @@ class MessageService:
         session_id: str | None = None,
         workspace_path: str | None = None,
         language: str | None = None,
+        codex_options: CodexRunOptions | None = None,
     ) -> DocumentSubmission:
         resolved_path = Path(document_path)
         attached_document_name = filename or resolved_path.name
@@ -651,28 +726,16 @@ class MessageService:
             filename=attached_document_name,
             content_type=content_type,
         )
+        if document_kind == "image":
+            raise UnsupportedDocumentError(
+                "Image uploads must use the image or attachment upload endpoints."
+            )
         display_message = self._build_document_display_message(
             message=message,
             document_kind=document_kind,
             document_name=attached_document_name,
         )
         cleanup_paths = [str(resolved_path)]
-
-        if document_kind == "image":
-            prompt = (message or "").strip() or "Please analyze the attached document image."
-            job = self.submit_message(
-                display_message,
-                session_id=session_id,
-                workspace_path=workspace_path,
-                image_paths=[str(resolved_path)],
-                cleanup_paths=cleanup_paths,
-                execution_message=prompt,
-            )
-            return DocumentSubmission(
-                job=job,
-                document_kind=document_kind,
-                attached_document_name=attached_document_name,
-            )
 
         if document_kind == "audio":
             transcript = self._audio_transcriber.transcribe(
@@ -697,6 +760,7 @@ class MessageService:
                 workspace_path=workspace_path,
                 cleanup_paths=cleanup_paths,
                 execution_message=prompt,
+                codex_options=codex_options,
             )
             return DocumentSubmission(
                 job=job,
@@ -726,12 +790,58 @@ class MessageService:
             workspace_path=workspace_path,
             cleanup_paths=cleanup_paths,
             execution_message=prompt,
+            codex_options=codex_options,
         )
         return DocumentSubmission(
             job=job,
             document_kind=document_kind,
             attached_document_name=attached_document_name,
             extracted_text_preview=self._build_text_preview(extracted_text),
+        )
+
+    def submit_image_message(
+        self,
+        image_path: str,
+        *,
+        filename: str | None = None,
+        content_type: str | None = None,
+        message: str | None = None,
+        session_id: str | None = None,
+        workspace_path: str | None = None,
+        codex_options: CodexRunOptions | None = None,
+    ) -> ImageSubmission:
+        resolved_path = Path(image_path)
+        attached_image_name = filename or resolved_path.name
+        document_kind = self._classify_document(
+            filename=attached_image_name,
+            content_type=content_type,
+        )
+        if document_kind != "image":
+            raise UnsupportedDocumentError("The uploaded file is not a supported image.")
+
+        attachment_summaries = [f"- image: {attached_image_name}"]
+        display_message = self._build_attachment_batch_display_message(
+            message=message,
+            attachment_summaries=attachment_summaries,
+        )
+        execution_message = self._build_attachment_batch_execution_message(
+            message=message,
+            attachment_summaries=attachment_summaries,
+            attachment_details=[],
+            image_count=1,
+        )
+        job = self.submit_message(
+            display_message,
+            session_id=session_id,
+            workspace_path=workspace_path,
+            image_paths=[str(resolved_path)],
+            cleanup_paths=[str(resolved_path)],
+            execution_message=execution_message,
+            codex_options=codex_options,
+        )
+        return ImageSubmission(
+            job=job,
+            attached_image_name=attached_image_name,
         )
 
     def submit_attachment_message(
@@ -742,6 +852,7 @@ class MessageService:
         session_id: str | None = None,
         workspace_path: str | None = None,
         language: str | None = None,
+        codex_options: CodexRunOptions | None = None,
     ) -> Job:
         if not attachments:
             raise ValueError("At least one attachment is required.")
@@ -818,6 +929,7 @@ class MessageService:
             image_paths=image_paths or None,
             cleanup_paths=cleanup_paths,
             execution_message=execution_message,
+            codex_options=codex_options,
         )
 
     def cancel_job(self, job_id: str) -> Job:
@@ -864,6 +976,7 @@ class MessageService:
                 original_job.agent_id,
             ),
             model=self._model_for_agent(session, original_job.agent_id),
+            codex_options=None,
             serial_key=self._serial_key_for_agent(
                 session.id,
                 original_job.agent_id,
@@ -1036,6 +1149,9 @@ class MessageService:
     def supports_job_retry(self) -> bool:
         return True
 
+    def supports_image_input(self) -> bool:
+        return True
+
     def _start_job(
         self,
         *,
@@ -1048,6 +1164,7 @@ class MessageService:
         assistant_message_id: str | None,
         provider_session_id: str | None,
         model: str | None,
+        codex_options: CodexRunOptions | None,
         serial_key: str,
         conversation_kind: JobConversationKind,
         agent_id: AgentId,
@@ -1063,6 +1180,7 @@ class MessageService:
             cleanup_paths=cleanup_paths,
             provider_session_id=provider_session_id,
             model=model,
+            codex_options=codex_options,
             serial_key=serial_key,
             submission_token=submission_token,
             workdir=session.workspace_path,
@@ -1200,6 +1318,7 @@ class MessageService:
                                     run_id=job.run_id,
                                 ),
                             )
+                        self._maybe_generate_turn_summary(session=session, job=job)
                     job.auto_chain_processed = True
                     self._repository.save_job(job)
                 return self._repository.get_job(job_id) or job
@@ -1238,9 +1357,7 @@ class MessageService:
             return
         if session.active_agent_run_id != job.run_id:
             return
-        if self._recover_submission_pending_follow_up_for_run(session, run_id=job.run_id):
-            return
-        if self._recover_reserved_follow_up_for_run(session, run_id=job.run_id):
+        if self._recover_waiting_follow_up_for_run(session, run_id=job.run_id):
             return
 
         configuration = session.agent_configuration.normalized()
@@ -1254,8 +1371,11 @@ class MessageService:
 
         generator = configuration.agents[AgentId.GENERATOR]
         reviewer = configuration.agents[AgentId.REVIEWER]
-        summary = configuration.agents[AgentId.SUMMARY]
-
+        continuation_agent_id = (
+            self._agent_id_from_trigger_source(job.trigger_source)
+            if job.agent_id == AgentId.SUMMARY
+            else job.agent_id
+        )
         generator_turns = self._count_agent_messages(
             session.id,
             run_id=job.run_id,
@@ -1266,13 +1386,15 @@ class MessageService:
             run_id=job.run_id,
             agent_id=AgentId.REVIEWER,
         )
-        summary_turns = self._count_agent_messages(
-            session.id,
-            run_id=job.run_id,
-            agent_id=AgentId.SUMMARY,
-        )
+        if continuation_agent_id == AgentId.GENERATOR:
+            if self._maybe_start_due_summary(
+                session=session,
+                run_id=job.run_id,
+                trigger_source=AgentTriggerSource.GENERATOR,
+                finalizing=False,
+            ):
+                return
 
-        if job.agent_id == AgentId.GENERATOR:
             next_reviewer_turn_number = reviewer_turns + 1
             reviewer_message = self._find_agent_message(
                 session.id,
@@ -1287,7 +1409,11 @@ class MessageService:
                     self._start_reviewer_turn(
                         session=session,
                         run_id=job.run_id,
-                        primary_response=(job.response or "").strip(),
+                        primary_response=self._latest_completed_agent_response(
+                            session.id,
+                            run_id=job.run_id,
+                            agent_id=AgentId.GENERATOR,
+                        ),
                         reviewer_turn_number=next_reviewer_turn_number,
                     )
                     return
@@ -1300,23 +1426,13 @@ class MessageService:
                         completed_turn_index=reviewer_turns,
                     )
                     return
-            summary_message = self._find_agent_message(
-                session.id,
+            if self._maybe_start_due_summary(
+                session=session,
                 run_id=job.run_id,
-                agent_id=AgentId.SUMMARY,
-                role=ChatMessageRole.ASSISTANT,
-            )
-            if summary.enabled and summary.max_turns > summary_turns:
-                if summary_message is None:
-                    self._start_summary_turn(
-                        session=session,
-                        run_id=job.run_id,
-                        trigger_source=AgentTriggerSource.GENERATOR,
-                        dedupe_key=f"run:{job.run_id}:summary",
-                    )
-                    return
-                if is_follow_up_waiting_status(summary_message.status):
-                    return
+                trigger_source=AgentTriggerSource.GENERATOR,
+                finalizing=True,
+            ):
+                return
             self._complete_agent_run(
                 session=session,
                 run_id=job.run_id,
@@ -1324,8 +1440,25 @@ class MessageService:
             )
             return
 
-        if job.agent_id == AgentId.REVIEWER:
-            reviewer_prompt = (job.response or "").strip()
+        if continuation_agent_id == AgentId.REVIEWER:
+            if self._maybe_start_due_summary(
+                session=session,
+                run_id=job.run_id,
+                trigger_source=AgentTriggerSource.REVIEWER,
+                finalizing=False,
+            ):
+                return
+
+            reviewer_prompt = self._latest_completed_agent_response(
+                session.id,
+                run_id=job.run_id,
+                agent_id=AgentId.REVIEWER,
+            )
+            reviewer_message = self._latest_completed_agent_message(
+                session.id,
+                run_id=job.run_id,
+                agent_id=AgentId.REVIEWER,
+            )
             next_generator_turn_number = generator_turns + 1
             generator_follow_up = self._find_agent_message(
                 session.id,
@@ -1341,7 +1474,7 @@ class MessageService:
                         session=session,
                         run_id=job.run_id,
                         reviewer_prompt=reviewer_prompt,
-                        reviewer_message_id=job.assistant_message_id,
+                        reviewer_message_id=reviewer_message.id if reviewer_message else None,
                         generator_turn_number=next_generator_turn_number,
                     )
                     session.active_agent_turn_index = reviewer_turns
@@ -1358,23 +1491,13 @@ class MessageService:
                         completed_turn_index=reviewer_turns,
                     )
                     return
-            summary_message = self._find_agent_message(
-                session.id,
+            if self._maybe_start_due_summary(
+                session=session,
                 run_id=job.run_id,
-                agent_id=AgentId.SUMMARY,
-                role=ChatMessageRole.ASSISTANT,
-            )
-            if summary.enabled and summary.max_turns > summary_turns:
-                if summary_message is None:
-                    self._start_summary_turn(
-                        session=session,
-                        run_id=job.run_id,
-                        trigger_source=AgentTriggerSource.REVIEWER,
-                        dedupe_key=f"run:{job.run_id}:summary",
-                    )
-                    return
-                if is_follow_up_waiting_status(summary_message.status):
-                    return
+                trigger_source=AgentTriggerSource.REVIEWER,
+                finalizing=True,
+            ):
+                return
             self._complete_agent_run(
                 session=session,
                 run_id=job.run_id,
@@ -1396,49 +1519,89 @@ class MessageService:
         job: Job,
         configuration: AgentConfiguration,
     ) -> None:
-        if job.agent_id == AgentId.SUPERVISOR:
-            decision = self._parse_supervisor_decision(job.response or "")
+        run_id = job.run_id or ""
+        continuation_agent_id = (
+            self._agent_id_from_trigger_source(job.trigger_source)
+            if job.agent_id == AgentId.SUMMARY
+            else job.agent_id
+        )
+
+        if continuation_agent_id == AgentId.SUPERVISOR:
+            decision = self._parse_supervisor_decision(
+                self._latest_completed_agent_response(
+                    session.id,
+                    run_id=run_id,
+                    agent_id=AgentId.SUPERVISOR,
+                )
+            )
+            supervisor_message = self._latest_completed_agent_message(
+                session.id,
+                run_id=run_id,
+                agent_id=AgentId.SUPERVISOR,
+            )
+            supervisor_turns = self._count_agent_messages(
+                session.id,
+                run_id=run_id,
+                agent_id=AgentId.SUPERVISOR,
+            )
+            if decision is not None and self._maybe_start_due_summary(
+                session=session,
+                run_id=run_id,
+                trigger_source=AgentTriggerSource.SUPERVISOR,
+                finalizing=False,
+                requested_by_supervisor=decision.request_summary,
+            ):
+                return
             if decision is None:
+                if self._maybe_start_due_summary(
+                    session=session,
+                    run_id=run_id,
+                    trigger_source=AgentTriggerSource.SUPERVISOR,
+                    finalizing=True,
+                ):
+                    return
                 self._complete_agent_run(
                     session=session,
-                    run_id=job.run_id or "",
-                    completed_turn_index=self._count_agent_messages(
-                        session.id,
-                        run_id=job.run_id or "",
-                        agent_id=AgentId.SUPERVISOR,
-                    ),
+                    run_id=run_id,
+                    completed_turn_index=supervisor_turns,
                 )
                 return
 
             if decision.is_complete or decision.next_agent_id is None:
+                if self._maybe_start_due_summary(
+                    session=session,
+                    run_id=run_id,
+                    trigger_source=AgentTriggerSource.SUPERVISOR,
+                    finalizing=True,
+                ):
+                    return
                 self._complete_agent_run(
                     session=session,
-                    run_id=job.run_id or "",
-                    completed_turn_index=self._count_agent_messages(
-                        session.id,
-                        run_id=job.run_id or "",
-                        agent_id=AgentId.SUPERVISOR,
-                    ),
+                    run_id=run_id,
+                    completed_turn_index=supervisor_turns,
                 )
                 return
 
             specialist_id = decision.next_agent_id
             if specialist_id not in SUPERVISOR_MEMBER_AGENT_IDS:
+                if self._maybe_start_due_summary(
+                    session=session,
+                    run_id=run_id,
+                    trigger_source=AgentTriggerSource.SUPERVISOR,
+                    finalizing=True,
+                ):
+                    return
                 self._complete_agent_run(
                     session=session,
-                    run_id=job.run_id or "",
-                    completed_turn_index=self._count_agent_messages(
-                        session.id,
-                        run_id=job.run_id or "",
-                        agent_id=AgentId.SUPERVISOR,
-                    ),
+                    run_id=run_id,
+                    completed_turn_index=supervisor_turns,
                 )
                 return
 
             specialist = configuration.agents[specialist_id]
             specialist_turns = self._count_agent_messages(
                 session.id,
-                run_id=job.run_id or "",
+                run_id=run_id,
                 agent_id=specialist_id,
             )
             specialist_budget_exhausted = (
@@ -1446,20 +1609,23 @@ class MessageService:
                 and specialist.max_turns <= specialist_turns
             )
             if not specialist.enabled or specialist_budget_exhausted:
+                if self._maybe_start_due_summary(
+                    session=session,
+                    run_id=run_id,
+                    trigger_source=AgentTriggerSource.SUPERVISOR,
+                    finalizing=True,
+                ):
+                    return
                 self._complete_agent_run(
                     session=session,
-                    run_id=job.run_id or "",
-                    completed_turn_index=self._count_agent_messages(
-                        session.id,
-                        run_id=job.run_id or "",
-                        agent_id=AgentId.SUPERVISOR,
-                    ),
+                    run_id=run_id,
+                    completed_turn_index=supervisor_turns,
                 )
                 return
 
             specialist_message = self._find_agent_message(
                 session.id,
-                run_id=job.run_id or "",
+                run_id=run_id,
                 agent_id=specialist_id,
                 trigger_source=AgentTriggerSource.SUPERVISOR,
                 role=ChatMessageRole.ASSISTANT,
@@ -1468,64 +1634,94 @@ class MessageService:
             if specialist_message is None:
                 self._start_specialist_turn(
                     session=session,
-                    run_id=job.run_id or "",
+                    run_id=run_id,
                     specialist_id=specialist_id,
-                    supervisor_message_id=job.assistant_message_id,
+                    supervisor_message_id=supervisor_message.id if supervisor_message else None,
                     supervisor_instruction=decision.instruction,
                     turn_number=specialist_turns + 1,
                 )
                 return
             if is_follow_up_waiting_status(specialist_message.status):
                 return
+            if self._maybe_start_due_summary(
+                session=session,
+                run_id=run_id,
+                trigger_source=AgentTriggerSource.SUPERVISOR,
+                finalizing=True,
+            ):
+                return
             self._complete_agent_run(
                 session=session,
-                run_id=job.run_id or "",
-                completed_turn_index=self._count_agent_messages(
-                    session.id,
-                    run_id=job.run_id or "",
-                    agent_id=AgentId.SUPERVISOR,
-                ),
+                run_id=run_id,
+                completed_turn_index=supervisor_turns,
             )
             return
 
-        if job.agent_id in SUPERVISOR_MEMBER_AGENT_IDS:
+        if continuation_agent_id in SUPERVISOR_MEMBER_AGENT_IDS:
+            trigger_source = self._trigger_source_for_agent(continuation_agent_id)
+            if self._maybe_start_due_summary(
+                session=session,
+                run_id=run_id,
+                trigger_source=trigger_source,
+                finalizing=False,
+            ):
+                return
+
             supervisor_turns = self._count_agent_messages(
                 session.id,
-                run_id=job.run_id or "",
+                run_id=run_id,
                 agent_id=AgentId.SUPERVISOR,
             )
             supervisor = configuration.agents[AgentId.SUPERVISOR]
             if supervisor.max_turns <= supervisor_turns:
+                if self._maybe_start_due_summary(
+                    session=session,
+                    run_id=run_id,
+                    trigger_source=trigger_source,
+                    finalizing=True,
+                ):
+                    return
                 self._complete_agent_run(
                     session=session,
-                    run_id=job.run_id or "",
+                    run_id=run_id,
                     completed_turn_index=supervisor_turns,
                 )
                 return
 
             supervisor_message = self._find_agent_message(
                 session.id,
-                run_id=job.run_id or "",
+                run_id=run_id,
                 agent_id=AgentId.SUPERVISOR,
-                trigger_source=self._trigger_source_for_agent(job.agent_id),
+                trigger_source=trigger_source,
                 role=ChatMessageRole.ASSISTANT,
                 dedupe_key=f"run:{job.run_id}:supervisor:{supervisor_turns + 1}",
             )
             if supervisor_message is None:
                 self._continue_supervisor_from_specialist(
                     session=session,
-                    run_id=job.run_id or "",
-                    specialist_id=job.agent_id,
-                    specialist_report=(job.response or "").strip(),
+                    run_id=run_id,
+                    specialist_id=continuation_agent_id,
+                    specialist_report=self._latest_completed_agent_response(
+                        session.id,
+                        run_id=run_id,
+                        agent_id=continuation_agent_id,
+                    ),
                     supervisor_turn_number=supervisor_turns + 1,
                 )
                 return
             if is_follow_up_waiting_status(supervisor_message.status):
                 return
 
+            if self._maybe_start_due_summary(
+                session=session,
+                run_id=run_id,
+                trigger_source=trigger_source,
+                finalizing=True,
+            ):
+                return
             self._complete_agent_run(
                 session=session,
-                run_id=job.run_id or "",
+                run_id=run_id,
                 completed_turn_index=supervisor_turns,
             )
 
@@ -1632,6 +1828,8 @@ class MessageService:
         run_id: str,
         trigger_source: AgentTriggerSource,
         dedupe_key: str,
+        summary_turn_start: int,
+        summary_turn_end: int,
     ) -> None:
         summary = session.agent_configuration.normalized().agents[AgentId.SUMMARY]
         summary_message = ChatMessage(
@@ -1661,6 +1859,8 @@ class MessageService:
                 session_id=session.id,
                 run_id=run_id,
                 summary_prompt=summary.prompt,
+                summary_turn_start=summary_turn_start,
+                summary_turn_end=summary_turn_end,
             ),
             user_message_id=None,
             conversation_kind=JobConversationKind.SUMMARY,
@@ -1756,6 +1956,7 @@ class MessageService:
             message=assistant_message,
             display_message=f"[{supervisor.label} supervisor turn]",
             execution_message=self._build_supervisor_follow_up_message(
+                session=session,
                 session_id=session.id,
                 run_id=run_id,
                 supervisor_prompt=supervisor.prompt,
@@ -1825,6 +2026,161 @@ class MessageService:
             and message.agent_id == agent_id
             and message.status == ChatMessageStatus.COMPLETED
         )
+
+    def _count_completed_non_summary_messages(
+        self,
+        session_id: str,
+        *,
+        run_id: str,
+    ) -> int:
+        return sum(
+            1
+            for message in self._repository.list_messages(session_id)
+            if message.run_id == run_id
+            and message.status == ChatMessageStatus.COMPLETED
+            and message.agent_id not in {AgentId.USER, AgentId.SUMMARY}
+        )
+
+    def _latest_completed_agent_response(
+        self,
+        session_id: str,
+        *,
+        run_id: str,
+        agent_id: AgentId,
+    ) -> str:
+        message = self._latest_completed_agent_message(
+            session_id,
+            run_id=run_id,
+            agent_id=agent_id,
+        )
+        if message is None:
+            return ""
+        return (self._job_response_for_message(message) or message.content or "").strip()
+
+    def _summary_turn_range_for_message(
+        self,
+        message: ChatMessage,
+    ) -> tuple[int, int] | None:
+        dedupe_key = (message.dedupe_key or "").strip()
+        if ":summary:" not in dedupe_key:
+            return None
+        raw_suffix = dedupe_key.rsplit(":summary:", maxsplit=1)[-1].strip()
+        parts = raw_suffix.split(":")
+        if len(parts) == 2 and all(part.isdigit() for part in parts):
+            start_turn = max(1, int(parts[0]))
+            end_turn = max(start_turn, int(parts[1]))
+            return start_turn, end_turn
+        if len(parts) == 1 and parts[0].isdigit():
+            end_turn = max(1, int(parts[0]))
+            return 1, end_turn
+        return None
+
+    def _latest_summary_coverage_count(
+        self,
+        session_id: str,
+        *,
+        run_id: str,
+    ) -> int:
+        return max(
+            (
+                self._summary_turn_range_for_message(message)[1]
+                for message in self._repository.list_messages(session_id)
+                if message.run_id == run_id
+                and message.agent_id == AgentId.SUMMARY
+                and message.status == ChatMessageStatus.COMPLETED
+                and self._summary_turn_range_for_message(message) is not None
+            ),
+            default=0,
+        )
+
+    def _summary_due_turn_range(
+        self,
+        session: ChatSession,
+        *,
+        run_id: str,
+        finalizing: bool,
+        requested_by_supervisor: bool = False,
+    ) -> tuple[int, int] | None:
+        configuration = session.agent_configuration.normalized()
+        summary = configuration.agents[AgentId.SUMMARY]
+        summary_strategy = configuration.summary_strategy
+        if not summary.enabled or summary.max_turns <= 0:
+            return None
+
+        completed_non_summary_turns = self._count_completed_non_summary_messages(
+            session.id,
+            run_id=run_id,
+        )
+        if completed_non_summary_turns <= 0:
+            return None
+
+        completed_summary_turns = self._count_agent_messages(
+            session.id,
+            run_id=run_id,
+            agent_id=AgentId.SUMMARY,
+        )
+        if completed_summary_turns >= summary.max_turns:
+            return None
+
+        latest_coverage = self._latest_summary_coverage_count(
+            session.id,
+            run_id=run_id,
+        )
+        pending_delta = completed_non_summary_turns - latest_coverage
+        if pending_delta <= 0:
+            return None
+
+        if summary_strategy.mode == SummaryStrategyMode.SUPERVISOR_WINDOW:
+            within_window = (
+                completed_non_summary_turns >= summary_strategy.supervisor_window_start
+                and completed_non_summary_turns <= summary_strategy.supervisor_window_end
+            )
+            if not requested_by_supervisor or not within_window:
+                return None
+            return latest_coverage + 1, completed_non_summary_turns
+
+        if pending_delta < summary_strategy.deterministic_interval and not finalizing:
+            return None
+
+        return latest_coverage + 1, completed_non_summary_turns
+
+    def _maybe_start_due_summary(
+        self,
+        *,
+        session: ChatSession,
+        run_id: str,
+        trigger_source: AgentTriggerSource,
+        finalizing: bool,
+        requested_by_supervisor: bool = False,
+    ) -> bool:
+        turn_range = self._summary_due_turn_range(
+            session,
+            run_id=run_id,
+            finalizing=finalizing,
+            requested_by_supervisor=requested_by_supervisor,
+        )
+        if turn_range is None:
+            return False
+        summary_turn_start, summary_turn_end = turn_range
+
+        dedupe_key = f"run:{run_id}:summary:{summary_turn_start}:{summary_turn_end}"
+        summary_message = self._find_agent_message(
+            session.id,
+            run_id=run_id,
+            agent_id=AgentId.SUMMARY,
+            dedupe_key=dedupe_key,
+        )
+        if summary_message is None:
+            self._start_summary_turn(
+                session=session,
+                run_id=run_id,
+                trigger_source=trigger_source,
+                dedupe_key=dedupe_key,
+                summary_turn_start=summary_turn_start,
+                summary_turn_end=summary_turn_end,
+            )
+            return True
+        return is_follow_up_waiting_status(summary_message.status)
 
     def _completed_turn_index_for_run(
         self,
@@ -1954,12 +2310,34 @@ class MessageService:
         self._cancel_reserved_follow_ups_for_inactive_runs(session)
         active_run_id = session.active_agent_run_id
         if active_run_id:
-            if self._recover_submission_pending_follow_up_for_run(
-                session,
-                run_id=active_run_id,
-            ):
-                return
-            self._recover_reserved_follow_up_for_run(session, run_id=active_run_id)
+            self._recover_waiting_follow_up_for_run(session, run_id=active_run_id)
+
+    def _recover_waiting_follow_up_for_run(
+        self,
+        session: ChatSession,
+        *,
+        run_id: str,
+    ) -> bool:
+        with self._follow_up_recovery_guard:
+            if self._recover_submission_pending_follow_up_for_run(session, run_id=run_id):
+                return True
+            return self._recover_reserved_follow_up_for_run(session, run_id=run_id)
+
+    def _run_follow_up_reconciler(self) -> None:
+        interval_seconds = self._follow_up_reconcile_interval_seconds
+        if interval_seconds is None:
+            return
+        while not self._follow_up_reconciler_stop.is_set():
+            try:
+                self._reconcile_all_sessions()
+            except Exception:
+                pass
+            self._follow_up_reconciler_stop.wait(interval_seconds)
+
+    def _reconcile_all_sessions(self) -> None:
+        for listed_session in self._repository.list_sessions():
+            session = self._repository.get_session(listed_session.id) or listed_session
+            self._reconcile_reserved_follow_ups(session)
 
     def _cancel_reserved_follow_ups_for_inactive_runs(
         self,
@@ -2252,12 +2630,15 @@ class MessageService:
             )
 
         if message.agent_id == AgentId.SUMMARY:
+            summary_turn_range = self._summary_turn_range_for_message(message) or (1, 1)
             return FollowUpContext(
                 display_message=f"[{definition.label} summary turn]",
                 execution_message=self._build_summary_execution_message(
                     session_id=session.id,
                     run_id=message.run_id or "",
                     summary_prompt=definition.prompt,
+                    summary_turn_start=summary_turn_range[0],
+                    summary_turn_end=summary_turn_range[1],
                 ),
                 user_message_id=None,
                 conversation_kind=JobConversationKind.SUMMARY,
@@ -2304,6 +2685,8 @@ class MessageService:
                 return FollowUpContext(
                     display_message=f"[{definition.label} supervisor turn]",
                     execution_message=self._build_supervisor_execution_message(
+                        session=session,
+                        run_id=message.run_id or "",
                         supervisor_prompt=definition.prompt,
                         user_prompt=user_message.content.strip(),
                         supervisor_member_ids=configuration.supervisor_member_ids,
@@ -2329,6 +2712,7 @@ class MessageService:
             return FollowUpContext(
                 display_message=f"[{definition.label} supervisor turn]",
                 execution_message=self._build_supervisor_follow_up_message(
+                    session=session,
                     session_id=session.id,
                     run_id=message.run_id or "",
                     supervisor_prompt=definition.prompt,
@@ -2380,6 +2764,7 @@ class MessageService:
                 agent_id,
             ),
             model=self._model_for_agent(session, agent_id),
+            codex_options=None,
             serial_key=self._serial_key_for_agent(session.id, agent_id),
             conversation_kind=conversation_kind,
             agent_id=agent_id,
@@ -2562,9 +2947,37 @@ class MessageService:
         )
         return f"{generator_prompt}\n\n{prefix}:\n{user_prompt.strip()}"
 
+    def _apply_codex_prompt_preferences(
+        self,
+        prompt: str,
+        codex_options: CodexRunOptions | None,
+    ) -> str:
+        if codex_options is None:
+            return prompt
+
+        normalized = codex_options.normalized()
+        guidance: list[str] = []
+        if normalized.skill_ids:
+            skills = ", ".join(f"`{skill_id}`" for skill_id in normalized.skill_ids)
+            guidance.append(
+                "Prefer these Codex skills when they are relevant and available: "
+                f"{skills}."
+            )
+        if normalized.mcp_server_ids:
+            servers = ", ".join(f"`{server_id}`" for server_id in normalized.mcp_server_ids)
+            guidance.append(
+                "If external tools are needed, prefer these MCP servers when relevant: "
+                f"{servers}."
+            )
+        if not guidance:
+            return prompt
+        return f"{' '.join(guidance)}\n\n{prompt.strip()}"
+
     def _build_supervisor_execution_message(
         self,
         *,
+        session: ChatSession,
+        run_id: str,
         supervisor_prompt: str,
         user_prompt: str,
         supervisor_member_ids: tuple[AgentId, ...],
@@ -2579,12 +2992,14 @@ class MessageService:
         return (
             f"{supervisor_prompt}\n\n"
             f"Available specialist ids: {available_specialists}\n"
+            f"{self._summary_guidance_for_supervisor(session=session, run_id=run_id)}\n"
             f"{prefix}:\n{user_prompt.strip()}"
         )
 
     def _build_supervisor_follow_up_message(
         self,
         *,
+        session: ChatSession,
         session_id: str,
         run_id: str,
         supervisor_prompt: str,
@@ -2597,9 +3012,32 @@ class MessageService:
         return (
             f"{supervisor_prompt}\n\n"
             f"Available specialist ids: {available_specialists}\n"
+            f"{self._summary_guidance_for_supervisor(session=session, run_id=run_id)}\n"
             f"Latest specialist report agent_id: {specialist_id.value}\n"
             f"Latest specialist report:\n{specialist_report.strip()}\n\n"
             f"Conversation transcript for this run:\n{transcript}"
+        )
+
+    def _summary_guidance_for_supervisor(
+        self,
+        *,
+        session: ChatSession,
+        run_id: str,
+    ) -> str:
+        configuration = session.agent_configuration.normalized()
+        summary = configuration.agents[AgentId.SUMMARY]
+        if not summary.enabled:
+            return "Summary agent is disabled for this run."
+        strategy = configuration.summary_strategy
+        completed_turns = self._count_completed_non_summary_messages(
+            session.id,
+            run_id=run_id,
+        )
+        return (
+            "Summary agent window: turns "
+            f"{strategy.supervisor_window_start} to {strategy.supervisor_window_end}. "
+            f"Current completed agent turn: {completed_turns}. "
+            "Set request_summary=true only when you want the summary agent to act now."
         )
     
     def _build_specialist_execution_message(
@@ -2635,9 +3073,21 @@ class MessageService:
         session_id: str,
         run_id: str,
         summary_prompt: str,
+        summary_turn_start: int,
+        summary_turn_end: int,
     ) -> str:
-        transcript = self._build_run_transcript(session_id=session_id, run_id=run_id)
-        return f"{summary_prompt}\n\nConversation transcript for this run:\n{transcript}"
+        transcript = self._build_summary_turn_transcript(
+            session_id=session_id,
+            run_id=run_id,
+            start_turn=summary_turn_start,
+            end_turn=summary_turn_end,
+        )
+        return (
+            f"{summary_prompt}\n\n"
+            f"Summarize completed agent turns {summary_turn_start} through "
+            f"{summary_turn_end}.\n\n"
+            f"Conversation transcript for those turns:\n{transcript}"
+        )
 
     def _build_run_transcript(
         self,
@@ -2649,10 +3099,79 @@ class MessageService:
         for message in self._repository.list_messages(session_id):
             if message.run_id != run_id or not message.content.strip():
                 continue
+            agent_label = (
+                message.agent_label.strip()
+                if message.agent_label and message.agent_label.strip()
+                else message.agent_id.value.replace("_", " ").title()
+            )
             transcript_parts.append(
-                f"{message.agent_id.value}/{message.role.value}: {message.content.strip()}"
+                f"{agent_label} [{message.agent_id.value}/{message.role.value}]: "
+                f"{message.content.strip()}"
             )
         return "\n\n".join(transcript_parts)
+
+    def _build_summary_turn_transcript(
+        self,
+        *,
+        session_id: str,
+        run_id: str,
+        start_turn: int,
+        end_turn: int,
+    ) -> str:
+        run_messages = [
+            message
+            for message in self._repository.list_messages(session_id)
+            if message.run_id == run_id and message.content.strip()
+        ]
+        completed_turn_numbers_by_message_id: dict[str, int] = {}
+        completed_message_indexes: list[int] = []
+        completed_turn_index = 0
+        for index, message in enumerate(run_messages):
+            if (
+                message.status == ChatMessageStatus.COMPLETED
+                and message.agent_id not in {AgentId.USER, AgentId.SUMMARY}
+            ):
+                completed_turn_index += 1
+                completed_turn_numbers_by_message_id[message.id] = completed_turn_index
+                completed_message_indexes.append(index)
+
+        transcript_parts: list[str] = []
+        latest_completed_turn = 0
+        for index, message in enumerate(run_messages):
+            if message.agent_id == AgentId.SUMMARY:
+                continue
+
+            current_turn = completed_turn_numbers_by_message_id.get(message.id)
+            if current_turn is None:
+                current_turn = next(
+                    (
+                        completed_turn_numbers_by_message_id[run_messages[candidate_index].id]
+                        for candidate_index in completed_message_indexes
+                        if candidate_index >= index
+                    ),
+                    latest_completed_turn or (1 if completed_message_indexes else 0),
+                )
+
+            if current_turn < start_turn or current_turn > end_turn:
+                if message.id in completed_turn_numbers_by_message_id:
+                    latest_completed_turn = completed_turn_numbers_by_message_id[message.id]
+                continue
+
+            agent_label = (
+                message.agent_label.strip()
+                if message.agent_label and message.agent_label.strip()
+                else message.agent_id.value.replace("_", " ").title()
+            )
+            transcript_parts.append(
+                f"Turn {current_turn} - {agent_label} "
+                f"[{message.agent_id.value}/{message.role.value}]: {message.content.strip()}"
+            )
+            if message.id in completed_turn_numbers_by_message_id:
+                latest_completed_turn = completed_turn_numbers_by_message_id[message.id]
+
+        if transcript_parts:
+            return "\n\n".join(transcript_parts)
+        return self._build_run_transcript(session_id=session_id, run_id=run_id)
 
     def _parse_supervisor_decision(
         self,
@@ -2697,12 +3216,14 @@ class MessageService:
 
         instruction = str(payload.get("instruction") or "").strip()
         user_response = str(payload.get("user_response") or "").strip()
+        request_summary = payload.get("request_summary") is True
         return SupervisorDecision(
             status=status,
             plan=plan,
             next_agent_id=next_agent_id,
             instruction=instruction,
             user_response=user_response,
+            request_summary=request_summary,
         )
 
     def _format_supervisor_message_content(
@@ -2720,7 +3241,161 @@ class MessageService:
         if not decision.is_complete and decision.next_agent_id is not None:
             lines.append("")
             lines.append(f"Next agent: {decision.next_agent_id.value}")
+        if decision.request_summary:
+            lines.append("")
+            lines.append("Summary requested for the current turn window.")
         return "\n".join(lines).strip() or "Supervisor completed the turn."
+
+    def _maybe_generate_turn_summary(
+        self,
+        *,
+        session: ChatSession,
+        job: Job,
+    ) -> None:
+        if not session.turn_summaries_enabled or not job.status.is_terminal:
+            return
+
+        source_messages = self._pending_turn_summary_messages(session.id)
+        if len(source_messages) < _TURN_SUMMARY_TRIGGER_MESSAGE_COUNT:
+            return
+
+        content = self._generate_turn_summary_with_codex(session, source_messages)
+        if content is None:
+            return
+
+        summary = ChatTurnSummary(
+            id=str(uuid4()),
+            session_id=session.id,
+            content=content,
+            source_message_ids=tuple(message.id for message in source_messages),
+            source_messages=tuple(
+                ChatTurnSummarySourceMessage.from_message(message)
+                for message in source_messages
+            ),
+        )
+        self._repository.save_turn_summary(summary)
+        session.turn_summary_checkpoint_message_id = source_messages[-1].id
+        session.turn_summary_checkpoint_initialized = True
+        session.touch()
+        self._repository.save_session(session)
+
+    def _pending_turn_summary_messages(
+        self,
+        session_id: str,
+    ) -> list[ChatMessage]:
+        session = self._repository.get_session(session_id)
+        messages = self._eligible_messages_for_turn_summary(session_id)
+        checkpoint_message_id = (
+            session.turn_summary_checkpoint_message_id if session is not None else None
+        ) or self._latest_turn_summary_source_message_id(session_id)
+        if checkpoint_message_id is None:
+            return messages
+
+        start_index = next(
+            (
+                index + 1
+                for index, message in enumerate(messages)
+                if message.id == checkpoint_message_id
+            ),
+            0,
+        )
+        return messages[start_index:]
+
+    def _latest_turn_summary_source_message_id(
+        self,
+        session_id: str,
+    ) -> str | None:
+        summaries = self._repository.list_turn_summaries(session_id)
+        if not summaries:
+            return None
+        source_message_ids = summaries[-1].source_message_ids
+        if not source_message_ids:
+            return None
+        return source_message_ids[-1]
+
+    def _eligible_messages_for_turn_summary(
+        self,
+        session_id: str,
+    ) -> list[ChatMessage]:
+        return [
+            message
+            for message in self._repository.list_messages(session_id)
+            if message.content.strip()
+            and message.status in {
+                ChatMessageStatus.COMPLETED,
+                ChatMessageStatus.FAILED,
+                ChatMessageStatus.CANCELLED,
+            }
+        ]
+
+    def _latest_eligible_turn_summary_message_id(
+        self,
+        session_id: str,
+    ) -> str | None:
+        eligible_messages = self._eligible_messages_for_turn_summary(session_id)
+        if not eligible_messages:
+            return None
+        return eligible_messages[-1].id
+
+    def _generate_turn_summary_with_codex(
+        self,
+        session: ChatSession,
+        source_messages: list[ChatMessage],
+    ) -> str | None:
+        prompt = self._build_turn_summary_prompt(source_messages)
+        if not prompt:
+            return None
+
+        try:
+            job_id = self._execution_provider.execute(
+                prompt,
+                serial_key=f"{session.id}:turn-summary",
+                workdir=session.workspace_path,
+            )
+        except Exception:
+            return None
+
+        deadline = time.monotonic() + _TURN_SUMMARY_COMPLETION_TIMEOUT_SECONDS
+        snapshot = self._execution_provider.get_snapshot(job_id)
+        while not snapshot.status.is_terminal and time.monotonic() < deadline:
+            time.sleep(0.05)
+            snapshot = self._execution_provider.get_snapshot(job_id)
+
+        if snapshot.status != JobStatus.COMPLETED:
+            return None
+
+        normalized = (snapshot.response or "").strip()
+        return normalized or None
+
+    def _build_turn_summary_prompt(
+        self,
+        messages: list[ChatMessage],
+    ) -> str:
+        transcript_lines: list[str] = []
+        for message in messages:
+            agent_label = (
+                message.agent_label.strip()
+                if message.agent_label and message.agent_label.strip()
+                else "User"
+                if message.role == ChatMessageRole.USER
+                else message.agent_id.value.replace("_", " ").title()
+            )
+            content = sanitize_image_attachment_error_text(message.content)
+            transcript_lines.append(
+                f"{agent_label} [{message.agent_id.value}/{message.role.value}/{message.status.value}]: "
+                f"{' '.join((content or '').split()).strip()}"
+            )
+
+        if not transcript_lines:
+            return ""
+
+        return (
+            "Summarize these recent chat updates for future context. "
+            "Explain what happened, what changed, current state, open risks, and the next likely step. "
+            "Use plain text and keep it concise but specific.\n\n"
+            "Updates:\n"
+            + "\n\n".join(transcript_lines)
+        )
 
     def _derive_title(self, message: str) -> str:
         normalized = " ".join(message.split())
@@ -2870,7 +3545,7 @@ class MessageService:
             return "text"
 
         raise UnsupportedDocumentError(
-            "Unsupported document type. Supported uploads are images, audio, text/code files, "
+            "Unsupported document type. Supported uploads are audio, text/code files, "
             "and .docx documents."
         )
 

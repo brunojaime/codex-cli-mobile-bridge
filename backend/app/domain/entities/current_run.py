@@ -553,14 +553,21 @@ def _supervisor_stage_agent_ids(
         for message in run_messages
         if message.agent_id in SUPERVISOR_MEMBER_AGENT_IDS
     }
-    return (
+    summary_enabled = (
+        configuration.agents[AgentId.SUMMARY].enabled if configuration is not None else False
+    )
+    summary_observed = any(message.agent_id == AgentId.SUMMARY for message in run_messages)
+    agent_ids = [
         AgentId.SUPERVISOR,
         *(
             agent_id
             for agent_id in SUPERVISOR_MEMBER_AGENT_IDS
             if agent_id in configured_members or agent_id in observed_members
         ),
-    )
+    ]
+    if summary_enabled or summary_observed:
+        agent_ids.append(AgentId.SUMMARY)
+    return tuple(agent_ids)
 
 
 def _participant_agent_ids_for_run(
@@ -574,6 +581,7 @@ def _participant_agent_ids_for_run(
         for agent_id in (
             AgentId.SUPERVISOR,
             *SUPERVISOR_MEMBER_AGENT_IDS,
+            AgentId.SUMMARY,
         )
         if any(message.agent_id == agent_id for message in run_messages)
     )
@@ -583,7 +591,8 @@ def _participant_agent_ids_for_run(
         return tuple(
             _agent_id_for_stage(stage.stage)
             for stage in stages
-            if stage.configured and _agent_id_for_stage(stage.stage) in SUPERVISOR_AGENT_IDS
+            if stage.configured
+            and _agent_id_for_stage(stage.stage) in (*SUPERVISOR_AGENT_IDS, AgentId.SUMMARY)
         )
     return tuple(
         _agent_id_for_stage(stage.stage)
@@ -600,7 +609,7 @@ def _effective_supervisor_stage_budget(
 ) -> int:
     if definition is None or not definition.enabled:
         return 0
-    if agent_id == AgentId.SUPERVISOR:
+    if agent_id in {AgentId.SUPERVISOR, AgentId.SUMMARY}:
         return definition.max_turns
     if configuration is None or configuration.turn_budget_mode != TurnBudgetMode.EACH_AGENT:
         return 0
