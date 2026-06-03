@@ -6862,6 +6862,26 @@ def test_submit_message_applies_codex_guidance_and_passes_codex_options() -> Non
         assert "`github`" in request["message"]
 
 
+def test_submit_message_adds_authenticated_github_guidance_for_repo_references() -> None:
+    with TemporaryDirectory() as temp_dir:
+        project_dir = Path(temp_dir) / "project"
+        project_dir.mkdir()
+        service, provider, _repository = _build_controlled_message_service(
+            temp_dir,
+            barrier_agent_id=AgentId.GENERATOR,
+        )
+
+        service.submit_message(
+            "Inspect brunojaime/software-project-builder and incorporate it here.",
+            workspace_path=str(project_dir),
+        )
+
+        request = provider.requests[-1]
+        assert "Private GitHub repositories may return 404" in request["message"]
+        assert "`gh repo view OWNER/REPO`" in request["message"]
+        assert "brunojaime/software-project-builder" in request["message"]
+
+
 def test_text_message_route_rejects_unknown_mcp_server_selection() -> None:
     client = build_session_client()
 

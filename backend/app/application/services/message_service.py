@@ -4,6 +4,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 import json
 from pathlib import Path
+import re
 import shutil
 import tempfile
 import threading
@@ -66,6 +67,18 @@ from backend.app.infrastructure.transcription.base import AudioTranscriber, Audi
 DocumentKind = Literal["audio", "docx", "image", "text"]
 _TURN_SUMMARY_TRIGGER_MESSAGE_COUNT = 4
 _TURN_SUMMARY_COMPLETION_TIMEOUT_SECONDS = 15.0
+_GITHUB_REPOSITORY_REFERENCE_PATTERN = re.compile(
+    r"https?://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+"
+    r"|(?<![\w./-])[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?![\w./-])",
+    re.IGNORECASE,
+)
+_GITHUB_ACCESS_GUIDANCE = (
+    "Private GitHub repositories may return 404 through unauthenticated web or "
+    "API checks. When inspecting GitHub repositories, first try authenticated "
+    "host tools such as `gh repo view OWNER/REPO`, `gh repo clone OWNER/REPO`, "
+    "or `git ls-remote https://github.com/OWNER/REPO.git` before concluding "
+    "that a repository is missing or inaccessible."
+)
 
 _AUDIO_SUFFIXES = {
     ".aac",
@@ -2953,23 +2966,24 @@ class MessageService:
         prompt: str,
         codex_options: CodexRunOptions | None,
     ) -> str:
-        if codex_options is None:
-            return prompt
-
-        normalized = codex_options.normalized()
         guidance: list[str] = []
-        if normalized.skill_ids:
-            skills = ", ".join(f"`{skill_id}`" for skill_id in normalized.skill_ids)
-            guidance.append(
-                "Prefer these Codex skills when they are relevant and available: "
-                f"{skills}."
-            )
-        if normalized.mcp_server_ids:
-            servers = ", ".join(f"`{server_id}`" for server_id in normalized.mcp_server_ids)
-            guidance.append(
-                "If external tools are needed, prefer these MCP servers when relevant: "
-                f"{servers}."
-            )
+        if _GITHUB_REPOSITORY_REFERENCE_PATTERN.search(prompt):
+            guidance.append(_GITHUB_ACCESS_GUIDANCE)
+
+        if codex_options is not None:
+            normalized = codex_options.normalized()
+            if normalized.skill_ids:
+                skills = ", ".join(f"`{skill_id}`" for skill_id in normalized.skill_ids)
+                guidance.append(
+                    "Prefer these Codex skills when they are relevant and available: "
+                    f"{skills}."
+                )
+            if normalized.mcp_server_ids:
+                servers = ", ".join(f"`{server_id}`" for server_id in normalized.mcp_server_ids)
+                guidance.append(
+                    "If external tools are needed, prefer these MCP servers when relevant: "
+                    f"{servers}."
+                )
         if not guidance:
             return prompt
         return f"{' '.join(guidance)}\n\n{prompt.strip()}"
