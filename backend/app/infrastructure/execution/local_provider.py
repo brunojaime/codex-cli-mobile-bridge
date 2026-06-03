@@ -546,6 +546,13 @@ class LocalExecutionProvider(ExecutionProvider):
                         "method": "thread/resume",
                         "params": {
                             "threadId": provider_session_id,
+                            "cwd": resolved_workdir,
+                            "approvalPolicy": self._approval_policy_for_app_server(
+                                self._resume_args
+                            ),
+                            "sandbox": self._app_server_thread_sandbox(
+                                self._resume_args
+                            ),
                         },
                     },
                 )
@@ -576,7 +583,7 @@ class LocalExecutionProvider(ExecutionProvider):
                             "approvalPolicy": self._approval_policy_for_app_server(
                                 self._exec_args
                             ),
-                            "sandbox": self._compatible_app_server_sandbox(
+                            "sandbox": self._app_server_thread_sandbox(
                                 self._exec_args
                             ),
                             "experimentalRawEvents": False,
@@ -625,8 +632,9 @@ class LocalExecutionProvider(ExecutionProvider):
                         "approvalPolicy": self._approval_policy_for_app_server(
                             self._resume_args if provider_session_id else self._exec_args
                         ),
-                        "sandboxPolicy": self._compatible_app_server_sandbox(
-                            self._resume_args if provider_session_id else self._exec_args
+                        "sandboxPolicy": self._app_server_turn_sandbox_policy(
+                            self._resume_args if provider_session_id else self._exec_args,
+                            workdir=resolved_workdir,
                         ),
                         "model": model,
                         "effort": reasoning_effort,
@@ -922,11 +930,30 @@ class LocalExecutionProvider(ExecutionProvider):
                 return parts[index + 1]
         return None
 
-    def _compatible_app_server_sandbox(self, args: str) -> str | None:
+    def _app_server_thread_sandbox(self, args: str) -> str | None:
+        return self._sandbox_for_app_server(args)
+
+    def _app_server_turn_sandbox_policy(
+        self,
+        args: str,
+        *,
+        workdir: str | None,
+    ) -> dict[str, object] | None:
         sandbox = self._sandbox_for_app_server(args)
         if sandbox == "danger-full-access":
-            return None
-        return sandbox
+            return {"type": "dangerFullAccess"}
+        if sandbox == "read-only":
+            return {"type": "readOnly", "networkAccess": False}
+        if sandbox == "workspace-write":
+            writable_roots = [str(Path(workdir).resolve())] if workdir else []
+            return {
+                "type": "workspaceWrite",
+                "writableRoots": writable_roots,
+                "networkAccess": False,
+                "excludeTmpdirEnvVar": False,
+                "excludeSlashTmp": False,
+            }
+        return None
 
     def _app_server_send(
         self,

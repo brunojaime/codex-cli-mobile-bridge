@@ -5518,6 +5518,35 @@ def test_app_server_event_descriptions_do_not_expose_raw_tool_item_names() -> No
     assert latest_activity == "Calling MCP tool."
 
 
+def test_app_server_sandbox_payload_preserves_danger_full_access() -> None:
+    provider = LocalExecutionProvider(command="codex")
+    args = "--skip-git-repo-check --dangerously-bypass-approvals-and-sandbox"
+
+    assert provider._app_server_thread_sandbox(args) == "danger-full-access"
+    assert provider._app_server_turn_sandbox_policy(
+        args,
+        workdir="/tmp/codex-workdir",
+    ) == {"type": "dangerFullAccess"}
+
+
+def test_app_server_sandbox_payload_uses_structured_turn_policy() -> None:
+    provider = LocalExecutionProvider(command="codex")
+
+    assert provider._app_server_thread_sandbox("--sandbox workspace-write") == (
+        "workspace-write"
+    )
+    assert provider._app_server_turn_sandbox_policy(
+        "--sandbox workspace-write",
+        workdir="/tmp/codex-workdir",
+    ) == {
+        "type": "workspaceWrite",
+        "writableRoots": ["/tmp/codex-workdir"],
+        "networkAccess": False,
+        "excludeTmpdirEnvVar": False,
+        "excludeSlashTmp": False,
+    }
+
+
 def test_app_server_streaming_resumes_same_thread_for_follow_up_turns() -> None:
     client = build_app_server_streaming_client()
 
