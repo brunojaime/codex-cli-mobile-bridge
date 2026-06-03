@@ -79,6 +79,7 @@ class ChatBubble extends StatelessWidget {
       bottomRight: Radius.circular(isUser ? 6 : 18),
     );
     final timestampLabel = formatChatMessageTime(context, message.createdAt);
+    final activityPresentation = isUser ? null : _activityPresentation(message);
 
     return Column(
       crossAxisAlignment: alignment,
@@ -148,15 +149,10 @@ class ChatBubble extends StatelessWidget {
                 ),
                 const SizedBox(height: 10),
               ],
-              if (message.jobLatestActivity != null &&
-                  message.jobLatestActivity!.isNotEmpty) ...[
-                Text(
-                  message.jobLatestActivity!,
-                  style: TextStyle(
-                    color: textColor.withValues(alpha: 0.72),
-                    fontSize: 12,
-                    height: 1.4,
-                  ),
+              if (activityPresentation != null) ...[
+                _ActivityStatusStrip(
+                  presentation: activityPresentation,
+                  textColor: textColor,
                 ),
                 const SizedBox(height: 10),
               ],
@@ -503,6 +499,82 @@ class _AssistantHeader extends StatelessWidget {
   }
 }
 
+class _ActivityStatusPresentation {
+  const _ActivityStatusPresentation({
+    required this.label,
+    required this.detail,
+    required this.icon,
+    required this.color,
+  });
+
+  final String label;
+  final String detail;
+  final IconData icon;
+  final Color color;
+}
+
+class _ActivityStatusStrip extends StatelessWidget {
+  const _ActivityStatusStrip({
+    required this.presentation,
+    required this.textColor,
+  });
+
+  final _ActivityStatusPresentation presentation;
+  final Color textColor;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0F1730).withValues(alpha: 0.64),
+        borderRadius: BorderRadius.circular(10),
+        border: Border(
+          left: BorderSide(color: presentation.color, width: 3),
+        ),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Icon(
+            presentation.icon,
+            color: presentation.color,
+            size: 17,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Text(
+                  presentation.label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: presentation.color,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  presentation.detail,
+                  style: TextStyle(
+                    color: textColor.withValues(alpha: 0.82),
+                    fontSize: 12,
+                    height: 1.35,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 Color _agentHeaderColor(AgentId agentId) {
   return switch (agentId) {
     AgentId.summary => const Color(0xFFAED3FF),
@@ -514,6 +586,68 @@ Color _agentHeaderColor(AgentId agentId) {
     AgentId.scraper => const Color(0xFF7FD5C7),
     _ => const Color(0xFF7CF2D4),
   };
+}
+
+_ActivityStatusPresentation? _activityPresentation(ChatMessage message) {
+  final rawDetail = message.jobLatestActivity?.trim();
+  if (rawDetail == null || rawDetail.isEmpty) {
+    return null;
+  }
+  final detail = _cleanActivityDetail(rawDetail);
+  final phase = (message.jobPhase ?? '').toLowerCase();
+  final combined = '$phase ${rawDetail.toLowerCase()}';
+
+  if (combined.contains('reason')) {
+    return _ActivityStatusPresentation(
+      label: 'Reasoning',
+      detail: detail,
+      icon: Icons.psychology_alt_outlined,
+      color: const Color(0xFFFFC857),
+    );
+  }
+  if (combined.contains('tool') || combined.contains('mcp')) {
+    return _ActivityStatusPresentation(
+      label: 'Tools',
+      detail: detail,
+      icon: Icons.extension_rounded,
+      color: const Color(0xFF8FEAFF),
+    );
+  }
+  if (combined.contains('draft') || combined.contains('compos')) {
+    return _ActivityStatusPresentation(
+      label: 'Drafting',
+      detail: detail,
+      icon: Icons.edit_note_rounded,
+      color: const Color(0xFF55D6BE),
+    );
+  }
+  if (combined.contains('final')) {
+    return _ActivityStatusPresentation(
+      label: 'Finalizing',
+      detail: detail,
+      icon: Icons.task_alt_rounded,
+      color: const Color(0xFFB8C8EA),
+    );
+  }
+  return _ActivityStatusPresentation(
+    label: 'Activity',
+    detail: detail,
+    icon: Icons.sync_rounded,
+    color: const Color(0xFF9FD3FF),
+  );
+}
+
+String _cleanActivityDetail(String value) {
+  final trimmed = value.trim();
+  if (trimmed == 'call-mcp-tool') {
+    return 'Calling MCP tool.';
+  }
+  if (trimmed == 'mcpToolCall') {
+    return 'Running MCP tool.';
+  }
+  return trimmed
+      .replaceAll('call-mcp-tool', 'MCP tool call')
+      .replaceAll('mcpToolCall', 'MCP tool call');
 }
 
 String _defaultAgentLabel(AgentId agentId) {

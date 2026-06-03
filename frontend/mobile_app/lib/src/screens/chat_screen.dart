@@ -343,25 +343,20 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                     ),
                   ),
                   Expanded(
-                    child: _sidebarWorkspaces.isEmpty
-                        ? const Center(
+                    child: sessionGroups.isEmpty
+                        ? Center(
                             child: Text(
-                              'No projects pinned yet',
-                              style: TextStyle(color: Color(0xFF8B97B5)),
-                            ),
-                          )
-                        : sessionGroups.isEmpty
-                            ? Center(
-                                child: Text(
-                                  _showArchivedChatsInSidebar
+                              _sidebarWorkspaces.isEmpty
+                                  ? 'No projects pinned yet'
+                                  : _showArchivedChatsInSidebar
                                       ? 'No archived chats yet'
                                       : 'No chats yet',
-                                  style: const TextStyle(
-                                    color: Color(0xFF8B97B5),
-                                  ),
-                                ),
-                              )
-                            : ListView(children: sessionGroups),
+                              style: const TextStyle(
+                                color: Color(0xFF8B97B5),
+                              ),
+                            ),
+                          )
+                        : ListView(children: sessionGroups),
                   ),
                 ],
               ),
@@ -379,436 +374,457 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                           children: <Widget>[
                             NotificationListener<ScrollNotification>(
                               onNotification: _handleScrollNotification,
-                              child: CustomScrollView(
-                                key: kChatScreenBodyScrollViewKey,
-                                controller: _scrollController,
-                                slivers: <Widget>[
-                                  if (_chatController.errorText != null)
-                                    SliverToBoxAdapter(
-                                      child: Container(
-                                        width: double.infinity,
-                                        margin: const EdgeInsets.fromLTRB(
-                                          16,
-                                          8,
-                                          16,
-                                          0,
-                                        ),
-                                        padding: const EdgeInsets.all(12),
-                                        decoration: BoxDecoration(
-                                          color: const Color(0xFF3B1521),
-                                          borderRadius:
-                                              BorderRadius.circular(14),
-                                        ),
-                                        child: Text(
-                                          _chatController.errorText!,
-                                          style: const TextStyle(
-                                            color: Colors.white,
+                              child: RefreshIndicator(
+                                onRefresh: () =>
+                                    _chatController.refreshAppState(
+                                  failurePrefix:
+                                      'Failed to refresh chats from the backend.',
+                                ),
+                                child: CustomScrollView(
+                                  key: kChatScreenBodyScrollViewKey,
+                                  controller: _scrollController,
+                                  physics:
+                                      const AlwaysScrollableScrollPhysics(),
+                                  slivers: <Widget>[
+                                    if (_chatController.errorText != null)
+                                      SliverToBoxAdapter(
+                                        child: Container(
+                                          width: double.infinity,
+                                          margin: const EdgeInsets.fromLTRB(
+                                            16,
+                                            8,
+                                            16,
+                                            0,
+                                          ),
+                                          padding: const EdgeInsets.all(12),
+                                          decoration: BoxDecoration(
+                                            color: const Color(0xFF3B1521),
+                                            borderRadius:
+                                                BorderRadius.circular(14),
+                                          ),
+                                          child: Text(
+                                            _chatController.errorText!,
+                                            style: const TextStyle(
+                                              color: Colors.white,
+                                            ),
                                           ),
                                         ),
                                       ),
-                                    ),
-                                  if (_serverErrorText != null)
-                                    SliverToBoxAdapter(
-                                      child: Container(
-                                        width: double.infinity,
-                                        margin: const EdgeInsets.fromLTRB(
-                                          16,
-                                          8,
-                                          16,
-                                          0,
-                                        ),
-                                        padding: const EdgeInsets.all(12),
-                                        decoration: BoxDecoration(
-                                          color: const Color(0xFF362411),
-                                          borderRadius:
-                                              BorderRadius.circular(14),
-                                        ),
-                                        child: Text(
-                                          _serverErrorText!,
-                                          style: const TextStyle(
-                                            color: Colors.white,
+                                    if (_serverErrorText != null)
+                                      SliverToBoxAdapter(
+                                        child: Container(
+                                          width: double.infinity,
+                                          margin: const EdgeInsets.fromLTRB(
+                                            16,
+                                            8,
+                                            16,
+                                            0,
+                                          ),
+                                          padding: const EdgeInsets.all(12),
+                                          decoration: BoxDecoration(
+                                            color: const Color(0xFF362411),
+                                            borderRadius:
+                                                BorderRadius.circular(14),
+                                          ),
+                                          child: Text(
+                                            _serverErrorText!,
+                                            style: const TextStyle(
+                                              color: Colors.white,
+                                            ),
                                           ),
                                         ),
                                       ),
-                                    ),
-                                  if (currentSession != null)
-                                    SliverToBoxAdapter(
-                                      child: ReviewerStatusBanner(
-                                        session: currentSession,
-                                      ),
-                                    ),
-                                  if (currentSession != null)
-                                    SliverPadding(
-                                      padding: const EdgeInsets.fromLTRB(
-                                        16,
-                                        8,
-                                        16,
-                                        0,
-                                      ),
-                                      sliver: SliverToBoxAdapter(
-                                        child: CurrentRunTimelineCard(
+                                    if (currentSession != null)
+                                      SliverToBoxAdapter(
+                                        child: ReviewerStatusBanner(
                                           session: currentSession,
                                         ),
                                       ),
-                                    ),
-                                  if (currentSession != null &&
-                                      (summaryMessageCount > 0 ||
-                                          turnSummaryCount > 0 ||
-                                          currentSession.turnSummariesEnabled ||
-                                          _chatBodyView !=
-                                              _ChatBodyView.conversation))
-                                    SliverToBoxAdapter(
-                                      child: Padding(
+                                    if (currentSession != null)
+                                      SliverPadding(
                                         padding: const EdgeInsets.fromLTRB(
                                           16,
-                                          10,
+                                          8,
                                           16,
                                           0,
                                         ),
-                                        child: Wrap(
-                                          spacing: 10,
-                                          children: <Widget>[
-                                            ChoiceChip(
-                                              label: const Text('Conversation'),
-                                              selected: _chatBodyView ==
-                                                  _ChatBodyView.conversation,
-                                              onSelected: (selected) {
-                                                if (!selected) {
-                                                  return;
-                                                }
-                                                _setChatBodyView(
-                                                  _ChatBodyView.conversation,
-                                                );
-                                              },
-                                              selectedColor:
-                                                  const Color(0xFF55D6BE),
-                                              backgroundColor:
-                                                  const Color(0xFF16213C),
-                                              labelStyle: TextStyle(
-                                                color: _chatBodyView ==
-                                                        _ChatBodyView
-                                                            .conversation
-                                                    ? const Color(0xFF07131D)
-                                                    : const Color(0xFFDCE5FF),
-                                                fontWeight: FontWeight.w700,
-                                              ),
-                                              side: const BorderSide(
-                                                color: Color(0xFF23304F),
-                                              ),
-                                            ),
-                                            ChoiceChip(
-                                              label: Text(
-                                                summaryMessageCount == 1
-                                                    ? 'Agent summary'
-                                                    : 'Agent summaries ($summaryMessageCount)',
-                                              ),
-                                              selected: isShowingAgentSummaries,
-                                              onSelected:
-                                                  summaryMessageCount <= 0
-                                                      ? null
-                                                      : (selected) {
-                                                          if (!selected) {
-                                                            return;
-                                                          }
-                                                          _setChatBodyView(
-                                                            _ChatBodyView
-                                                                .agentSummaries,
-                                                          );
-                                                        },
-                                              selectedColor:
-                                                  const Color(0xFF8CA8FF),
-                                              backgroundColor:
-                                                  const Color(0xFF16213C),
-                                              labelStyle: TextStyle(
-                                                color: isShowingAgentSummaries
-                                                    ? const Color(0xFF07131D)
-                                                    : const Color(0xFFDCE5FF),
-                                                fontWeight: FontWeight.w700,
-                                              ),
-                                              side: const BorderSide(
-                                                color: Color(0xFF23304F),
-                                              ),
-                                            ),
-                                            ChoiceChip(
-                                              label: Text(
-                                                turnSummaryCount == 1
-                                                    ? 'Turn summary'
-                                                    : 'Turn summaries ($turnSummaryCount)',
-                                              ),
-                                              selected: isShowingTurnSummaries,
-                                              onSelected: (turnSummaryCount <=
-                                                          0 &&
-                                                      !currentSession
-                                                          .turnSummariesEnabled)
-                                                  ? null
-                                                  : (selected) {
-                                                      if (!selected) {
-                                                        return;
-                                                      }
-                                                      _setChatBodyView(
-                                                        _ChatBodyView
-                                                            .turnSummaries,
-                                                      );
-                                                    },
-                                              selectedColor:
-                                                  const Color(0xFFFFC857),
-                                              backgroundColor:
-                                                  const Color(0xFF16213C),
-                                              labelStyle: TextStyle(
-                                                color: isShowingTurnSummaries
-                                                    ? const Color(0xFF2A1600)
-                                                    : const Color(0xFFDCE5FF),
-                                                fontWeight: FontWeight.w700,
-                                              ),
-                                              side: const BorderSide(
-                                                color: Color(0xFF23304F),
-                                              ),
-                                            ),
-                                          ],
+                                        sliver: SliverToBoxAdapter(
+                                          child: CurrentRunTimelineCard(
+                                            session: currentSession,
+                                          ),
                                         ),
                                       ),
-                                    ),
-                                  if (isShowingAgentSummaries &&
-                                      currentSession != null)
-                                    SliverToBoxAdapter(
-                                      child: Padding(
-                                        padding: const EdgeInsets.fromLTRB(
-                                          16,
-                                          10,
-                                          16,
-                                          0,
-                                        ),
-                                        child: _SummaryViewBanner(
-                                          summaryCount: summaryMessageCount,
-                                          onShowFullChat: () {
-                                            _setChatBodyView(
-                                              _ChatBodyView.conversation,
-                                            );
-                                          },
-                                        ),
-                                      ),
-                                    ),
-                                  if (isShowingTurnSummaries &&
-                                      currentSession != null)
-                                    SliverToBoxAdapter(
-                                      child: Padding(
-                                        padding: const EdgeInsets.fromLTRB(
-                                          16,
-                                          10,
-                                          16,
-                                          0,
-                                        ),
-                                        child: _TurnSummaryBanner(
-                                          summaryCount: turnSummaryCount,
-                                          enabled: currentSession
-                                              .turnSummariesEnabled,
-                                          onShowFullChat: () {
-                                            _setChatBodyView(
-                                              _ChatBodyView.conversation,
-                                            );
-                                          },
-                                        ),
-                                      ),
-                                    ),
-                                  if (isShowingTurnSummaries &&
-                                      currentSession != null &&
-                                      turnSummaryCount > 0)
-                                    SliverPadding(
-                                      padding: const EdgeInsets.fromLTRB(
-                                        16,
-                                        12,
-                                        16,
-                                        16,
-                                      ),
-                                      sliver: SliverList(
-                                        delegate: SliverChildBuilderDelegate(
-                                          (context, index) {
-                                            final summary = currentSession
-                                                .turnSummaries[index];
-                                            return Padding(
-                                              padding: EdgeInsets.only(
-                                                bottom: index ==
-                                                        currentSession
-                                                                .turnSummaries
-                                                                .length -
-                                                            1
-                                                    ? 0
-                                                    : 12,
-                                              ),
-                                              child: _TurnSummaryCard(
-                                                summary: summary,
-                                              ),
-                                            );
-                                          },
-                                          childCount: currentSession
-                                              .turnSummaries.length,
-                                        ),
-                                      ),
-                                    )
-                                  else if (messages.isEmpty)
-                                    SliverFillRemaining(
-                                      hasScrollBody: false,
-                                      child: isShowingAgentSummaries &&
-                                              currentSession != null
-                                          ? _SummaryMessagesPlaceholder(
-                                              onShowFullChat: () {
-                                                _setChatBodyView(
-                                                  _ChatBodyView.conversation,
-                                                );
-                                              },
-                                            )
-                                          : isShowingTurnSummaries &&
-                                                  currentSession != null
-                                              ? _TurnSummariesPlaceholder(
-                                                  enabled: currentSession
-                                                      .turnSummariesEnabled,
-                                                  onShowFullChat: () {
-                                                    _setChatBodyView(
-                                                      _ChatBodyView
-                                                          .conversation,
-                                                    );
-                                                  },
-                                                )
-                                              : showFilteredMessagesPlaceholder
-                                                  ? _FilteredMessagesPlaceholder(
-                                                      displayMode: currentSession
-                                                          .agentConfiguration
-                                                          .displayMode,
-                                                      isUpdating:
-                                                          _isUpdatingFilteredMessagesView,
-                                                      errorText:
-                                                          _filteredMessagesViewErrorText,
-                                                      onShowAllMessages:
-                                                          _handleShowAllMessages,
-                                                    )
-                                                  : _EmptyState(
-                                                      onCreateChat:
-                                                          _openWorkspacePicker,
-                                                    ),
-                                    )
-                                  else
-                                    SliverPadding(
-                                      padding: const EdgeInsets.fromLTRB(
-                                        16,
-                                        12,
-                                        16,
-                                        16,
-                                      ),
-                                      sliver: SliverList(
-                                        delegate: SliverChildBuilderDelegate(
-                                          (context, index) {
-                                            final entry =
-                                                timelineEntries[index];
-                                            if (entry.separatorDate != null) {
-                                              final separatorDate =
-                                                  entry.separatorDate!;
-                                              return _ChatDaySeparator(
-                                                key: ValueKey<String>(
-                                                  'chat-day-separator-${separatorDate.year}-${separatorDate.month}-${separatorDate.day}',
-                                                ),
+                                    if (currentSession != null &&
+                                        (summaryMessageCount > 0 ||
+                                            turnSummaryCount > 0 ||
+                                            currentSession
+                                                .turnSummariesEnabled ||
+                                            _chatBodyView !=
+                                                _ChatBodyView.conversation))
+                                      SliverToBoxAdapter(
+                                        child: Padding(
+                                          padding: const EdgeInsets.fromLTRB(
+                                            16,
+                                            10,
+                                            16,
+                                            0,
+                                          ),
+                                          child: Wrap(
+                                            spacing: 10,
+                                            children: <Widget>[
+                                              ChoiceChip(
                                                 label:
-                                                    formatChatDaySeparatorLabel(
-                                                  context,
-                                                  separatorDate,
+                                                    const Text('Conversation'),
+                                                selected: _chatBodyView ==
+                                                    _ChatBodyView.conversation,
+                                                onSelected: (selected) {
+                                                  if (!selected) {
+                                                    return;
+                                                  }
+                                                  _setChatBodyView(
+                                                    _ChatBodyView.conversation,
+                                                  );
+                                                },
+                                                selectedColor:
+                                                    const Color(0xFF55D6BE),
+                                                backgroundColor:
+                                                    const Color(0xFF16213C),
+                                                labelStyle: TextStyle(
+                                                  color: _chatBodyView ==
+                                                          _ChatBodyView
+                                                              .conversation
+                                                      ? const Color(0xFF07131D)
+                                                      : const Color(0xFFDCE5FF),
+                                                  fontWeight: FontWeight.w700,
+                                                ),
+                                                side: const BorderSide(
+                                                  color: Color(0xFF23304F),
+                                                ),
+                                              ),
+                                              Tooltip(
+                                                message: 'Show summaries',
+                                                child: ChoiceChip(
+                                                  label: Text(
+                                                    summaryMessageCount == 1
+                                                        ? 'Agent summary'
+                                                        : 'Agent summaries ($summaryMessageCount)',
+                                                  ),
+                                                  selected:
+                                                      isShowingAgentSummaries,
+                                                  onSelected:
+                                                      summaryMessageCount <= 0
+                                                          ? null
+                                                          : (selected) {
+                                                              if (!selected) {
+                                                                return;
+                                                              }
+                                                              _setChatBodyView(
+                                                                _ChatBodyView
+                                                                    .agentSummaries,
+                                                              );
+                                                            },
+                                                  selectedColor:
+                                                      const Color(0xFF8CA8FF),
+                                                  backgroundColor:
+                                                      const Color(0xFF16213C),
+                                                  labelStyle: TextStyle(
+                                                    color:
+                                                        isShowingAgentSummaries
+                                                            ? const Color(
+                                                                0xFF07131D)
+                                                            : const Color(
+                                                                0xFFDCE5FF),
+                                                    fontWeight: FontWeight.w700,
+                                                  ),
+                                                  side: const BorderSide(
+                                                    color: Color(0xFF23304F),
+                                                  ),
+                                                ),
+                                              ),
+                                              ChoiceChip(
+                                                label: Text(
+                                                  turnSummaryCount == 1
+                                                      ? 'Turn summary'
+                                                      : 'Turn summaries ($turnSummaryCount)',
+                                                ),
+                                                selected:
+                                                    isShowingTurnSummaries,
+                                                onSelected: (turnSummaryCount <=
+                                                            0 &&
+                                                        !currentSession
+                                                            .turnSummariesEnabled)
+                                                    ? null
+                                                    : (selected) {
+                                                        if (!selected) {
+                                                          return;
+                                                        }
+                                                        _setChatBodyView(
+                                                          _ChatBodyView
+                                                              .turnSummaries,
+                                                        );
+                                                      },
+                                                selectedColor:
+                                                    const Color(0xFFFFC857),
+                                                backgroundColor:
+                                                    const Color(0xFF16213C),
+                                                labelStyle: TextStyle(
+                                                  color: isShowingTurnSummaries
+                                                      ? const Color(0xFF2A1600)
+                                                      : const Color(0xFFDCE5FF),
+                                                  fontWeight: FontWeight.w700,
+                                                ),
+                                                side: const BorderSide(
+                                                  color: Color(0xFF23304F),
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      ),
+                                    if (isShowingAgentSummaries &&
+                                        currentSession != null)
+                                      SliverToBoxAdapter(
+                                        child: Padding(
+                                          padding: const EdgeInsets.fromLTRB(
+                                            16,
+                                            10,
+                                            16,
+                                            0,
+                                          ),
+                                          child: _SummaryViewBanner(
+                                            summaryCount: summaryMessageCount,
+                                            onShowFullChat: () {
+                                              _setChatBodyView(
+                                                _ChatBodyView.conversation,
+                                              );
+                                            },
+                                          ),
+                                        ),
+                                      ),
+                                    if (isShowingTurnSummaries &&
+                                        currentSession != null)
+                                      SliverToBoxAdapter(
+                                        child: Padding(
+                                          padding: const EdgeInsets.fromLTRB(
+                                            16,
+                                            10,
+                                            16,
+                                            0,
+                                          ),
+                                          child: _TurnSummaryBanner(
+                                            summaryCount: turnSummaryCount,
+                                            enabled: currentSession
+                                                .turnSummariesEnabled,
+                                            onShowFullChat: () {
+                                              _setChatBodyView(
+                                                _ChatBodyView.conversation,
+                                              );
+                                            },
+                                          ),
+                                        ),
+                                      ),
+                                    if (isShowingTurnSummaries &&
+                                        currentSession != null &&
+                                        turnSummaryCount > 0)
+                                      SliverPadding(
+                                        padding: const EdgeInsets.fromLTRB(
+                                          16,
+                                          12,
+                                          16,
+                                          16,
+                                        ),
+                                        sliver: SliverList(
+                                          delegate: SliverChildBuilderDelegate(
+                                            (context, index) {
+                                              final summary = currentSession
+                                                  .turnSummaries[index];
+                                              return Padding(
+                                                padding: EdgeInsets.only(
+                                                  bottom: index ==
+                                                          currentSession
+                                                                  .turnSummaries
+                                                                  .length -
+                                                              1
+                                                      ? 0
+                                                      : 12,
+                                                ),
+                                                child: _TurnSummaryCard(
+                                                  summary: summary,
                                                 ),
                                               );
-                                            }
-                                            final message = entry.message!;
-                                            final nextEntry = index + 1 <
-                                                    timelineEntries.length
-                                                ? timelineEntries[index + 1]
-                                                : null;
-                                            final nextMessage =
-                                                nextEntry?.message;
-                                            final extraBottomSpacing =
-                                                nextMessage != null &&
-                                                        nextMessage.isUser !=
-                                                            message.isUser
-                                                    ? 10.0
-                                                    : 0.0;
-                                            return Align(
-                                              alignment: message.isUser
-                                                  ? Alignment.centerRight
-                                                  : Alignment.centerLeft,
-                                              child: Padding(
-                                                padding: EdgeInsets.only(
-                                                  bottom: extraBottomSpacing,
-                                                ),
-                                                child: ChatBubble(
+                                            },
+                                            childCount: currentSession
+                                                .turnSummaries.length,
+                                          ),
+                                        ),
+                                      )
+                                    else if (messages.isEmpty)
+                                      SliverFillRemaining(
+                                        hasScrollBody: false,
+                                        child: isShowingAgentSummaries &&
+                                                currentSession != null
+                                            ? _SummaryMessagesPlaceholder(
+                                                onShowFullChat: () {
+                                                  _setChatBodyView(
+                                                    _ChatBodyView.conversation,
+                                                  );
+                                                },
+                                              )
+                                            : isShowingTurnSummaries &&
+                                                    currentSession != null
+                                                ? _TurnSummariesPlaceholder(
+                                                    enabled: currentSession
+                                                        .turnSummariesEnabled,
+                                                    onShowFullChat: () {
+                                                      _setChatBodyView(
+                                                        _ChatBodyView
+                                                            .conversation,
+                                                      );
+                                                    },
+                                                  )
+                                                : showFilteredMessagesPlaceholder
+                                                    ? _FilteredMessagesPlaceholder(
+                                                        displayMode: currentSession
+                                                            .agentConfiguration
+                                                            .displayMode,
+                                                        isUpdating:
+                                                            _isUpdatingFilteredMessagesView,
+                                                        errorText:
+                                                            _filteredMessagesViewErrorText,
+                                                        onShowAllMessages:
+                                                            _handleShowAllMessages,
+                                                      )
+                                                    : _EmptyState(
+                                                        onCreateChat:
+                                                            _openWorkspacePicker,
+                                                      ),
+                                      )
+                                    else
+                                      SliverPadding(
+                                        padding: const EdgeInsets.fromLTRB(
+                                          16,
+                                          12,
+                                          16,
+                                          16,
+                                        ),
+                                        sliver: SliverList(
+                                          delegate: SliverChildBuilderDelegate(
+                                            (context, index) {
+                                              final entry =
+                                                  timelineEntries[index];
+                                              if (entry.separatorDate != null) {
+                                                final separatorDate =
+                                                    entry.separatorDate!;
+                                                return _ChatDaySeparator(
                                                   key: ValueKey<String>(
-                                                    'chat-bubble-${message.id}',
+                                                    'chat-day-separator-${separatorDate.year}-${separatorDate.month}-${separatorDate.day}',
                                                   ),
-                                                  message: message,
-                                                  isCollapsed:
-                                                      _isMessageCollapsed(
-                                                    message,
+                                                  label:
+                                                      formatChatDaySeparatorLabel(
+                                                    context,
+                                                    separatorDate,
                                                   ),
-                                                  onToggleCollapsed: () =>
-                                                      _toggleMessageCollapsed(
-                                                    message,
+                                                );
+                                              }
+                                              final message = entry.message!;
+                                              final nextEntry = index + 1 <
+                                                      timelineEntries.length
+                                                  ? timelineEntries[index + 1]
+                                                  : null;
+                                              final nextMessage =
+                                                  nextEntry?.message;
+                                              final extraBottomSpacing =
+                                                  nextMessage != null &&
+                                                          nextMessage.isUser !=
+                                                              message.isUser
+                                                      ? 10.0
+                                                      : 0.0;
+                                              return Align(
+                                                alignment: message.isUser
+                                                    ? Alignment.centerRight
+                                                    : Alignment.centerLeft,
+                                                child: Padding(
+                                                  padding: EdgeInsets.only(
+                                                    bottom: extraBottomSpacing,
                                                   ),
-                                                  generatorColor: _chatController
-                                                              .currentSession !=
-                                                          null
-                                                      ? _colorFromHex(
-                                                          _chatController
-                                                              .currentSession!
-                                                              .agentProfileColor,
-                                                        )
-                                                      : null,
-                                                  onOptionSelected:
-                                                      _handleSuggestedReply,
-                                                  onLinkTap:
-                                                      _handleMessageLinkTap,
-                                                  onCancelJob:
-                                                      (_activeServerCapabilities
-                                                                      ?.supportsJobCancellation ??
-                                                                  false) &&
-                                                              message.jobId !=
-                                                                  null
-                                                          ? () =>
-                                                              _handleCancelJob(
-                                                                message.jobId!,
-                                                              )
-                                                          : null,
-                                                  onRetryJob:
-                                                      (_activeServerCapabilities
-                                                                      ?.supportsJobRetry ??
-                                                                  false) &&
-                                                              message.jobId !=
-                                                                  null
-                                                          ? () =>
-                                                              _handleRetryJob(
-                                                                message.jobId!,
-                                                              )
-                                                          : null,
-                                                  onRecoverUnknownSubmission: message
-                                                              .status ==
-                                                          ChatMessageStatus
-                                                              .submissionUnknown
-                                                      ? () =>
-                                                          _handleRecoverUnknownSubmission(
-                                                            message.id,
+                                                  child: ChatBubble(
+                                                    key: ValueKey<String>(
+                                                      'chat-bubble-${message.id}',
+                                                    ),
+                                                    message: message,
+                                                    isCollapsed:
+                                                        _isMessageCollapsed(
+                                                      message,
+                                                    ),
+                                                    onToggleCollapsed: () =>
+                                                        _toggleMessageCollapsed(
+                                                      message,
+                                                    ),
+                                                    generatorColor: _chatController
+                                                                .currentSession !=
+                                                            null
+                                                        ? _colorFromHex(
+                                                            _chatController
+                                                                .currentSession!
+                                                                .agentProfileColor,
                                                           )
-                                                      : null,
-                                                  onCancelUnknownSubmission: message
-                                                              .status ==
-                                                          ChatMessageStatus
-                                                              .submissionUnknown
-                                                      ? () =>
-                                                          _handleCancelUnknownSubmission(
-                                                            message.id,
-                                                          )
-                                                      : null,
+                                                        : null,
+                                                    onOptionSelected:
+                                                        _handleSuggestedReply,
+                                                    onLinkTap:
+                                                        _handleMessageLinkTap,
+                                                    onCancelJob:
+                                                        (_activeServerCapabilities
+                                                                        ?.supportsJobCancellation ??
+                                                                    false) &&
+                                                                message.jobId !=
+                                                                    null
+                                                            ? () =>
+                                                                _handleCancelJob(
+                                                                  message
+                                                                      .jobId!,
+                                                                )
+                                                            : null,
+                                                    onRetryJob:
+                                                        (_activeServerCapabilities
+                                                                        ?.supportsJobRetry ??
+                                                                    false) &&
+                                                                message.jobId !=
+                                                                    null
+                                                            ? () =>
+                                                                _handleRetryJob(
+                                                                  message
+                                                                      .jobId!,
+                                                                )
+                                                            : null,
+                                                    onRecoverUnknownSubmission: message
+                                                                .status ==
+                                                            ChatMessageStatus
+                                                                .submissionUnknown
+                                                        ? () =>
+                                                            _handleRecoverUnknownSubmission(
+                                                              message.id,
+                                                            )
+                                                        : null,
+                                                    onCancelUnknownSubmission: message
+                                                                .status ==
+                                                            ChatMessageStatus
+                                                                .submissionUnknown
+                                                        ? () =>
+                                                            _handleCancelUnknownSubmission(
+                                                              message.id,
+                                                            )
+                                                        : null,
+                                                  ),
                                                 ),
-                                              ),
-                                            );
-                                          },
-                                          childCount: timelineEntries.length,
+                                              );
+                                            },
+                                            childCount: timelineEntries.length,
+                                          ),
                                         ),
                                       ),
-                                    ),
-                                ],
+                                  ],
+                                ),
                               ),
                             ),
                             Positioned(
@@ -2462,7 +2478,28 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           .add(session);
     }
 
-    for (final workspace in _sidebarWorkspaces) {
+    final visibleWorkspaces = <Workspace>[..._sidebarWorkspaces];
+    final visibleWorkspacePaths =
+        visibleWorkspaces.map((workspace) => workspace.path).toSet();
+    final knownWorkspacePaths =
+        _chatController.workspaces.map((workspace) => workspace.path).toSet();
+    if (knownWorkspacePaths.isNotEmpty) {
+      for (final workspacePath in groupedSessions.keys) {
+        if (visibleWorkspacePaths.contains(workspacePath) ||
+            knownWorkspacePaths.contains(workspacePath)) {
+          continue;
+        }
+        visibleWorkspacePaths.add(workspacePath);
+        visibleWorkspaces.add(
+          Workspace(
+            name: _fallbackWorkspaceName(workspacePath),
+            path: workspacePath,
+          ),
+        );
+      }
+    }
+
+    for (final workspace in visibleWorkspaces) {
       final sessions =
           groupedSessions[workspace.path] ?? <ChatSessionSummary>[];
       final visibleSessions = sessions
@@ -2716,6 +2753,18 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     }
 
     return sessionGroups;
+  }
+
+  String _fallbackWorkspaceName(String workspacePath) {
+    final trimmed = workspacePath.trim();
+    if (trimmed.isEmpty) {
+      return 'Unknown project';
+    }
+    final parts = trimmed.split('/').where((part) => part.isNotEmpty).toList();
+    if (parts.isEmpty) {
+      return trimmed;
+    }
+    return parts.last;
   }
 
   void _handleChatControllerChanged() {

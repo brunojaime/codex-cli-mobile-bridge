@@ -1105,9 +1105,7 @@ class MessageService:
             return None
 
         if job.status.is_terminal:
-            if not job.auto_chain_processed:
-                return self._sync_terminal_job_side_effects(job.id) or job
-            return job
+            return self._sync_terminal_job_side_effects(job.id) or job
 
         if not self._execution_provider.has_job(job_id):
             job.sync(
@@ -1133,6 +1131,9 @@ class MessageService:
             return self._sync_terminal_job_side_effects(job.id) or job
         self._sync_job_side_effects(job)
         return job
+
+    def get_stored_job(self, job_id: str) -> Job | None:
+        return self._repository.get_job(job_id)
 
     def watch_job(
         self,

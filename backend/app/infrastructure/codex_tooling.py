@@ -390,7 +390,11 @@ def query_codex_mcp_servers(command: str) -> tuple[list[CodexMcpServer], str | N
     for line in lines:
         if line.startswith("No MCP servers configured yet."):
             continue
+        if _is_mcp_list_header(line):
+            continue
         server_id = _parse_mcp_server_id(line)
+        if not server_id:
+            continue
         if server_id in seen:
             continue
         seen.add(server_id)
@@ -867,3 +871,8 @@ def _parse_mcp_server_id(line: str) -> str:
     if ":" in line:
         return line.split(":", maxsplit=1)[0].strip()
     return line.split(maxsplit=1)[0].strip()
+
+
+def _is_mcp_list_header(line: str) -> bool:
+    columns = line.split()
+    return len(columns) >= 2 and columns[0] == "Name" and columns[1] == "Command"

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import tempfile
 import time
@@ -219,24 +220,179 @@ def main() -> int:
                 }
             )
 
-            midpoint = max(1, len(response_text) // 2)
-            for chunk in (response_text[:midpoint], response_text[midpoint:]):
+            if os.environ.get("FAKE_CODEX_TOOL_AND_REASONING_EVENTS", "").strip():
+                reasoning_item_id = f"reasoning-{uuid.uuid4()}"
+                commentary_item_id = f"commentary-{uuid.uuid4()}"
+                tool_item_id = f"tool-{uuid.uuid4()}"
                 _print(
                     {
-                        "method": "codex/event/agent_message_content_delta",
+                        "method": "item/started",
                         "params": {
-                            "id": turn_id,
-                            "msg": {
-                                "type": "agent_message_content_delta",
-                                "thread_id": thread_id,
-                                "turn_id": turn_id,
-                                "item_id": item_id,
-                                "delta": chunk,
+                            "item": {
+                                "type": "reasoning",
+                                "id": reasoning_item_id,
+                                "summary": [],
+                                "content": [],
                             },
-                            "conversationId": thread_id,
+                            "threadId": thread_id,
+                            "turnId": turn_id,
                         },
                     }
                 )
+                _print(
+                    {
+                        "method": "item/reasoning/textDelta",
+                        "params": {
+                            "threadId": thread_id,
+                            "turnId": turn_id,
+                            "itemId": reasoning_item_id,
+                            "delta": "internal reasoning should not stream as response",
+                            "contentIndex": 0,
+                        },
+                    }
+                )
+                _print(
+                    {
+                        "method": "item/completed",
+                        "params": {
+                            "item": {
+                                "type": "reasoning",
+                                "id": reasoning_item_id,
+                                "summary": ["considered tools"],
+                                "content": ["internal reasoning"],
+                            },
+                            "threadId": thread_id,
+                            "turnId": turn_id,
+                        },
+                    }
+                )
+                _print(
+                    {
+                        "method": "item/started",
+                        "params": {
+                            "item": {
+                                "type": "mcpToolCall",
+                                "id": tool_item_id,
+                                "server": "project-catalog",
+                                "tool": "list_projects",
+                                "status": "inProgress",
+                                "arguments": {},
+                                "pluginId": None,
+                                "result": None,
+                                "error": None,
+                                "durationMs": None,
+                            },
+                            "threadId": thread_id,
+                            "turnId": turn_id,
+                        },
+                    }
+                )
+                _print(
+                    {
+                        "method": "item/mcpToolCall/progress",
+                        "params": {
+                            "threadId": thread_id,
+                            "turnId": turn_id,
+                            "itemId": tool_item_id,
+                            "message": "Reading project catalog.",
+                        },
+                    }
+                )
+                _print(
+                    {
+                        "method": "item/completed",
+                        "params": {
+                            "item": {
+                                "type": "mcpToolCall",
+                                "id": tool_item_id,
+                                "server": "project-catalog",
+                                "tool": "list_projects",
+                                "status": "completed",
+                                "arguments": {},
+                                "pluginId": None,
+                                "result": {"content": []},
+                                "error": None,
+                                "durationMs": 12,
+                            },
+                            "threadId": thread_id,
+                            "turnId": turn_id,
+                        },
+                    }
+                )
+                _print(
+                    {
+                        "method": "item/started",
+                        "params": {
+                            "item": {
+                                "type": "agentMessage",
+                                "id": commentary_item_id,
+                                "text": "",
+                                "phase": "commentary",
+                            },
+                            "threadId": thread_id,
+                            "turnId": turn_id,
+                        },
+                    }
+                )
+                _print(
+                    {
+                        "method": "item/agentMessage/delta",
+                        "params": {
+                            "threadId": thread_id,
+                            "turnId": turn_id,
+                            "itemId": commentary_item_id,
+                            "delta": "call-mcp-tool",
+                        },
+                    }
+                )
+                _print(
+                    {
+                        "method": "item/completed",
+                        "params": {
+                            "item": {
+                                "type": "agentMessage",
+                                "id": commentary_item_id,
+                                "text": "call-mcp-tool",
+                                "phase": "commentary",
+                            },
+                            "threadId": thread_id,
+                            "turnId": turn_id,
+                        },
+                    }
+                )
+
+            midpoint = max(1, len(response_text) // 2)
+            use_legacy_delta = os.environ.get("FAKE_CODEX_LEGACY_DELTA", "").strip()
+            for chunk in (response_text[:midpoint], response_text[midpoint:]):
+                if use_legacy_delta:
+                    _print(
+                        {
+                            "method": "codex/event/agent_message_content_delta",
+                            "params": {
+                                "id": turn_id,
+                                "msg": {
+                                    "type": "agent_message_content_delta",
+                                    "thread_id": thread_id,
+                                    "turn_id": turn_id,
+                                    "item_id": item_id,
+                                    "delta": chunk,
+                                },
+                                "conversationId": thread_id,
+                            },
+                        }
+                    )
+                else:
+                    _print(
+                        {
+                            "method": "item/agentMessage/delta",
+                            "params": {
+                                "threadId": thread_id,
+                                "turnId": turn_id,
+                                "itemId": item_id,
+                                "delta": chunk,
+                            },
+                        }
+                    )
                 time.sleep(0.05)
 
             _print(

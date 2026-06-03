@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shlex
 import subprocess
 import tempfile
@@ -465,6 +466,8 @@ class LocalExecutionProvider(ExecutionProvider):
         turn_completed = False
         thread_id = provider_session_id
         resolved_workdir = workdir or self._workdir
+        final_agent_message_item_ids: set[str] = set()
+        non_final_agent_message_item_ids: set[str] = set()
 
         def response_buffer_setter(value: str) -> None:
             nonlocal response_buffer
@@ -530,6 +533,8 @@ class LocalExecutionProvider(ExecutionProvider):
                 set_response_buffer=lambda value: None,
                 set_final_response=lambda value: None,
                 mark_turn_completed=lambda: None,
+                final_agent_message_item_ids=final_agent_message_item_ids,
+                non_final_agent_message_item_ids=non_final_agent_message_item_ids,
             )
             self._app_server_send(process, {"method": "initialized"})
 
@@ -553,6 +558,8 @@ class LocalExecutionProvider(ExecutionProvider):
                         set_response_buffer=lambda value: None,
                         set_final_response=lambda value: None,
                         mark_turn_completed=lambda: None,
+                        final_agent_message_item_ids=final_agent_message_item_ids,
+                        non_final_agent_message_item_ids=non_final_agent_message_item_ids,
                     )
                 except _AppServerRequestError:
                     thread_id = None
@@ -569,7 +576,9 @@ class LocalExecutionProvider(ExecutionProvider):
                             "approvalPolicy": self._approval_policy_for_app_server(
                                 self._exec_args
                             ),
-                            "sandbox": self._sandbox_for_app_server(self._exec_args),
+                            "sandbox": self._compatible_app_server_sandbox(
+                                self._exec_args
+                            ),
                             "experimentalRawEvents": False,
                         },
                     },
@@ -582,6 +591,8 @@ class LocalExecutionProvider(ExecutionProvider):
                     set_response_buffer=lambda value: None,
                     set_final_response=lambda value: None,
                     mark_turn_completed=lambda: None,
+                    final_agent_message_item_ids=final_agent_message_item_ids,
+                    non_final_agent_message_item_ids=non_final_agent_message_item_ids,
                 )
 
             if self._is_cancelled(job_id):
@@ -614,7 +625,7 @@ class LocalExecutionProvider(ExecutionProvider):
                         "approvalPolicy": self._approval_policy_for_app_server(
                             self._resume_args if provider_session_id else self._exec_args
                         ),
-                        "sandboxPolicy": self._sandbox_for_app_server(
+                        "sandboxPolicy": self._compatible_app_server_sandbox(
                             self._resume_args if provider_session_id else self._exec_args
                         ),
                         "model": model,
@@ -630,6 +641,8 @@ class LocalExecutionProvider(ExecutionProvider):
                 set_response_buffer=lambda value: response_buffer_setter(value),
                 set_final_response=lambda value: final_response_setter(value),
                 mark_turn_completed=lambda: turn_completed_setter(),
+                final_agent_message_item_ids=final_agent_message_item_ids,
+                non_final_agent_message_item_ids=non_final_agent_message_item_ids,
             )
 
             if self._timeout_seconds is None or self._timeout_seconds <= 0:
@@ -641,6 +654,8 @@ class LocalExecutionProvider(ExecutionProvider):
                     set_response_buffer=lambda value: response_buffer_setter(value),
                     set_final_response=lambda value: final_response_setter(value),
                     mark_turn_completed=lambda: turn_completed_setter(),
+                    final_agent_message_item_ids=final_agent_message_item_ids,
+                    non_final_agent_message_item_ids=non_final_agent_message_item_ids,
                 )
             else:
                 self._stream_app_server_notifications(
@@ -652,6 +667,8 @@ class LocalExecutionProvider(ExecutionProvider):
                     set_final_response=lambda value: final_response_setter(value),
                     mark_turn_completed=lambda: turn_completed_setter(),
                     timeout_seconds=self._timeout_seconds,
+                    final_agent_message_item_ids=final_agent_message_item_ids,
+                    non_final_agent_message_item_ids=non_final_agent_message_item_ids,
                 )
 
             if self._is_cancelled(job_id):
@@ -764,7 +781,10 @@ class LocalExecutionProvider(ExecutionProvider):
         base_parts = shlex.split(self._command)
         image_args = self._build_image_args(image_paths)
         model_args = ["--model", model] if model else []
-        codex_args = self._build_codex_args(codex_options)
+        codex_args = self._build_codex_args(
+            codex_options,
+            include_default_reasoning_effort=self._use_exec_mode,
+        )
 
         if not self._use_exec_mode:
             return [*base_parts, *model_args, *codex_args, message, *image_args], None
@@ -829,7 +849,12 @@ class LocalExecutionProvider(ExecutionProvider):
             args.extend(["-c", override])
         return args
 
-    def _build_codex_args(self, codex_options: CodexRunOptions | None) -> list[str]:
+    def _build_codex_args(
+        self,
+        codex_options: CodexRunOptions | None,
+        *,
+        include_default_reasoning_effort: bool = True,
+    ) -> list[str]:
         normalized = codex_options.normalized() if codex_options is not None else None
         codex_args: list[str] = []
         if normalized is not None and normalized.profile:
@@ -838,6 +863,8 @@ class LocalExecutionProvider(ExecutionProvider):
             codex_args.append("--search")
         overrides = list(normalized.config_overrides) if normalized is not None else []
         if (
+            include_default_reasoning_effort
+            and
             self._default_reasoning_effort is not None
             and not any(
                 override.strip().startswith("model_reasoning_effort")
@@ -895,6 +922,12 @@ class LocalExecutionProvider(ExecutionProvider):
                 return parts[index + 1]
         return None
 
+    def _compatible_app_server_sandbox(self, args: str) -> str | None:
+        sandbox = self._sandbox_for_app_server(args)
+        if sandbox == "danger-full-access":
+            return None
+        return sandbox
+
     def _app_server_send(
         self,
         process: subprocess.Popen[str],
@@ -915,6 +948,8 @@ class LocalExecutionProvider(ExecutionProvider):
         set_response_buffer: Callable[[str], None],
         set_final_response: Callable[[str | None], None],
         mark_turn_completed: Callable[[], None],
+        final_agent_message_item_ids: set[str],
+        non_final_agent_message_item_ids: set[str],
     ) -> str:
         payload = self._await_app_server_response(
             process,
@@ -924,6 +959,8 @@ class LocalExecutionProvider(ExecutionProvider):
             set_response_buffer=set_response_buffer,
             set_final_response=set_final_response,
             mark_turn_completed=mark_turn_completed,
+            final_agent_message_item_ids=final_agent_message_item_ids,
+            non_final_agent_message_item_ids=non_final_agent_message_item_ids,
         )
         result = payload.get("result")
         if not isinstance(result, dict):
@@ -946,6 +983,8 @@ class LocalExecutionProvider(ExecutionProvider):
         set_response_buffer: Callable[[str], None],
         set_final_response: Callable[[str | None], None],
         mark_turn_completed: Callable[[], None],
+        final_agent_message_item_ids: set[str],
+        non_final_agent_message_item_ids: set[str],
     ) -> dict[str, object]:
         while True:
             payload = self._read_app_server_payload(process)
@@ -966,6 +1005,8 @@ class LocalExecutionProvider(ExecutionProvider):
                 set_response_buffer=set_response_buffer,
                 set_final_response=set_final_response,
                 mark_turn_completed=mark_turn_completed,
+                final_agent_message_item_ids=final_agent_message_item_ids,
+                non_final_agent_message_item_ids=non_final_agent_message_item_ids,
             )
 
     def _stream_app_server_notifications(
@@ -978,6 +1019,8 @@ class LocalExecutionProvider(ExecutionProvider):
         set_response_buffer: Callable[[str], None],
         set_final_response: Callable[[str | None], None],
         mark_turn_completed: Callable[[], None],
+        final_agent_message_item_ids: set[str],
+        non_final_agent_message_item_ids: set[str],
         timeout_seconds: int | None = None,
     ) -> None:
         deadline = (
@@ -1005,6 +1048,8 @@ class LocalExecutionProvider(ExecutionProvider):
                 set_response_buffer=set_response_buffer,
                 set_final_response=set_final_response,
                 mark_turn_completed=mark_turn_completed,
+                final_agent_message_item_ids=final_agent_message_item_ids,
+                non_final_agent_message_item_ids=non_final_agent_message_item_ids,
             ):
                 return
 
@@ -1060,21 +1105,44 @@ class LocalExecutionProvider(ExecutionProvider):
         set_response_buffer: Callable[[str], None],
         set_final_response: Callable[[str | None], None],
         mark_turn_completed: Callable[[], None],
+        final_agent_message_item_ids: set[str],
+        non_final_agent_message_item_ids: set[str],
     ) -> bool:
         method = payload.get("method")
         if not isinstance(method, str):
             return False
 
-        if method == "codex/event/agent_message_content_delta":
+        if method in {"item/started", "item/completed"}:
+            self._track_app_server_agent_message_item(
+                payload,
+                final_agent_message_item_ids=final_agent_message_item_ids,
+                non_final_agent_message_item_ids=non_final_agent_message_item_ids,
+            )
+
+        if method in {
+            "codex/event/agent_message_content_delta",
+            "item/agentMessage/delta",
+        }:
             params = payload.get("params")
             if not isinstance(params, dict):
                 return False
+            delta: object | None
             msg = params.get("msg")
-            if not isinstance(msg, dict):
-                return False
-            delta = msg.get("delta")
+            if isinstance(msg, dict):
+                delta = msg.get("delta")
+            else:
+                delta = params.get("delta")
             if not isinstance(delta, str) or not delta:
                 return False
+            item_id = params.get("itemId")
+            if isinstance(item_id, str):
+                if item_id in non_final_agent_message_item_ids:
+                    return False
+                if (
+                    final_agent_message_item_ids
+                    and item_id not in final_agent_message_item_ids
+                ):
+                    return False
             updated_response = response_buffer_ref() + delta
             set_response_buffer(updated_response)
             self._set_state(
@@ -1087,7 +1155,11 @@ class LocalExecutionProvider(ExecutionProvider):
             return False
 
         if method in {"item/completed", "codex/event/item_completed"}:
-            final_text = self._extract_app_server_agent_message(payload)
+            final_text = self._extract_app_server_agent_message(
+                payload,
+                final_agent_message_item_ids=final_agent_message_item_ids,
+                non_final_agent_message_item_ids=non_final_agent_message_item_ids,
+            )
             if final_text is not None:
                 set_final_response(final_text)
                 set_response_buffer(final_text)
@@ -1133,18 +1205,50 @@ class LocalExecutionProvider(ExecutionProvider):
 
         return False
 
+    def _track_app_server_agent_message_item(
+        self,
+        payload: dict[str, object],
+        *,
+        final_agent_message_item_ids: set[str],
+        non_final_agent_message_item_ids: set[str],
+    ) -> None:
+        item = self._app_server_item(payload)
+        if item is None:
+            return
+        if self._app_server_item_type(item) not in {"agentMessage", "AgentMessage"}:
+            return
+        item_id = item.get("id")
+        if not isinstance(item_id, str) or not item_id:
+            return
+        phase = item.get("phase")
+        if phase == "commentary":
+            non_final_agent_message_item_ids.add(item_id)
+            final_agent_message_item_ids.discard(item_id)
+            return
+        if phase == "final_answer":
+            final_agent_message_item_ids.add(item_id)
+            non_final_agent_message_item_ids.discard(item_id)
+
     def _extract_app_server_agent_message(
         self,
         payload: dict[str, object],
+        *,
+        final_agent_message_item_ids: set[str],
+        non_final_agent_message_item_ids: set[str],
     ) -> str | None:
-        params = payload.get("params")
-        if not isinstance(params, dict):
+        item = self._app_server_item(payload)
+        if item is None:
             return None
-        item = params.get("item")
-        if not isinstance(item, dict):
+        if self._app_server_item_type(item) not in {"agentMessage", "AgentMessage"}:
             return None
-        item_type = str(item.get("type") or "")
-        if item_type not in {"agentMessage", "AgentMessage"}:
+        item_id = item.get("id")
+        if isinstance(item_id, str):
+            if item_id in non_final_agent_message_item_ids:
+                return None
+            if final_agent_message_item_ids and item_id not in final_agent_message_item_ids:
+                return None
+        phase = item.get("phase")
+        if phase == "commentary":
             return None
         text = item.get("text")
         if isinstance(text, str):
@@ -1163,6 +1267,16 @@ class LocalExecutionProvider(ExecutionProvider):
             return None
         return "".join(segments)
 
+    def _app_server_item(self, payload: dict[str, object]) -> dict[str, object] | None:
+        params = payload.get("params")
+        if not isinstance(params, dict):
+            return None
+        item = params.get("item")
+        return item if isinstance(item, dict) else None
+
+    def _app_server_item_type(self, item: dict[str, object]) -> str:
+        return str(item.get("type") or "")
+
     def _describe_app_server_event(
         self,
         payload: dict[str, object],
@@ -1179,40 +1293,101 @@ class LocalExecutionProvider(ExecutionProvider):
                 "Finalizing",
                 "Codex finished the turn and is preparing the final output.",
             )
-        if method == "codex/event/mcp_startup_update":
+        if method in {
+            "item/reasoning/textDelta",
+            "item/reasoning/summaryTextDelta",
+            "item/reasoning/summaryPartAdded",
+        }:
+            return ("Reasoning", "Codex is reasoning.")
+        if method == "item/mcpToolCall/progress":
+            params = payload.get("params")
+            if isinstance(params, dict):
+                message = params.get("message")
+                if isinstance(message, str) and message.strip():
+                    return ("Running tools", message.strip())
+            return ("Running tools", "MCP tool call is running.")
+        if method in {
+            "codex/event/mcp_startup_update",
+            "mcpServer/startupStatus/updated",
+        }:
             params = payload.get("params")
             if not isinstance(params, dict):
                 return ("Starting Codex CLI", None)
             msg = params.get("msg")
-            if not isinstance(msg, dict):
-                return ("Starting Codex CLI", None)
-            server = str(msg.get("server") or "MCP server")
-            status = msg.get("status")
-            if not isinstance(status, dict):
-                return ("Starting Codex CLI", f"{server} startup changed.")
-            state = str(status.get("state") or "starting")
+            server = "MCP server"
+            state = "starting"
+            error: str | None = None
+            if isinstance(msg, dict):
+                server = str(msg.get("server") or server)
+                status = msg.get("status")
+                if isinstance(status, dict):
+                    state = str(status.get("state") or state)
+                    raw_error = status.get("error")
+                    if raw_error is not None:
+                        error = str(raw_error)
+            else:
+                server = str(params.get("name") or server)
+                state = str(params.get("status") or state)
+                raw_error = params.get("error")
+                if raw_error is not None:
+                    error = str(raw_error)
             if state == "failed":
-                error = str(status.get("error") or "unknown error")
-                return ("Starting Codex CLI", f"{server} failed to start: {error}")
+                return (
+                    "Starting Codex CLI",
+                    f"{server} failed to start: {error or 'unknown error'}",
+                )
             return ("Starting Codex CLI", f"{server} is {state}.")
         if method in {"item/started", "item/completed"}:
-            params = payload.get("params")
-            if not isinstance(params, dict):
+            item = self._app_server_item(payload)
+            if item is None:
                 return ("Running Codex", None)
-            item = params.get("item")
-            if not isinstance(item, dict):
-                return ("Running Codex", None)
-            item_type = str(item.get("type") or "")
+            item_type = self._app_server_item_type(item)
             if item_type in {"agentMessage", "AgentMessage"}:
                 if method == "item/completed":
                     return ("Finalizing", "Codex completed the reply.")
                 return ("Drafting reply", "Codex is composing the reply.")
+            if item_type in {"reasoning", "Reasoning"}:
+                if method == "item/completed":
+                    return ("Reasoning", "Codex finished reasoning.")
+                return ("Reasoning", "Codex is reasoning.")
+            if item_type in {"mcpToolCall", "McpToolCall", "call-mcp-tool"}:
+                tool_name = self._app_server_tool_name(item)
+                label = f"MCP tool `{tool_name}`" if tool_name else "MCP tool"
+                if method == "item/completed":
+                    return ("Running tools", f"Completed {label}.")
+                return ("Running tools", f"Calling {label}.")
+            if item_type in {
+                "dynamicToolCall",
+                "DynamicToolCall",
+                "collabAgentToolCall",
+                "CollabAgentToolCall",
+            }:
+                tool_name = self._app_server_tool_name(item)
+                label = f"tool `{tool_name}`" if tool_name else "tool"
+                if method == "item/completed":
+                    return ("Running tools", f"Completed {label}.")
+                return ("Running tools", f"Calling {label}.")
+            if item_type in {"commandExecution", "CommandExecution"}:
+                if method == "item/completed":
+                    return ("Running command", "Command completed.")
+                return ("Running command", "Running command.")
+            if item_type in {"fileChange", "FileChange"}:
+                if method == "item/completed":
+                    return ("Editing files", "File changes completed.")
+                return ("Editing files", "Applying file changes.")
             if item_type:
                 human_item = self._humanize(item_type)
                 if method == "item/completed":
                     return ("Running tools", f"Completed {human_item.lower()}.")
                 return ("Running tools", f"Started {human_item.lower()}.")
         return (None, None)
+
+    def _app_server_tool_name(self, item: dict[str, object]) -> str | None:
+        for key in ("tool", "name"):
+            value = item.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        return None
 
     def _consume_stream(
         self,
@@ -1386,7 +1561,16 @@ class LocalExecutionProvider(ExecutionProvider):
         return ("Running Codex", self._humanize(event_type))
 
     def _humanize(self, value: str) -> str:
-        return value.replace(".", " ").replace("_", " ").strip().capitalize()
+        spaced = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", value)
+        words = (
+            spaced.replace(".", " ")
+            .replace("_", " ")
+            .replace("-", " ")
+            .strip()
+        )
+        if not words:
+            return ""
+        return " ".join(words.split()).capitalize()
 
     def _first_non_empty(self, lines: list[str]) -> str | None:
         for line in lines:

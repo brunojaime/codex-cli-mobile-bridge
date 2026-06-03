@@ -113,6 +113,57 @@ void main() {
     expect(find.text('15:42'), findsOneWidget);
   });
 
+  testWidgets('renders reasoning and tool activity as status strips', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Column(
+            children: <Widget>[
+              ChatBubble(
+                message: ChatMessage(
+                  id: 'assistant-reasoning',
+                  text: '',
+                  isUser: false,
+                  authorType: ChatMessageAuthorType.assistant,
+                  status: ChatMessageStatus.pending,
+                  createdAt: DateTime.utc(2026, 1, 1),
+                  updatedAt: DateTime.utc(2026, 1, 1),
+                  jobStatus: 'running',
+                  jobPhase: 'Reasoning',
+                  jobLatestActivity: 'Codex is reasoning.',
+                ),
+              ),
+              ChatBubble(
+                message: ChatMessage(
+                  id: 'assistant-tool',
+                  text: '',
+                  isUser: false,
+                  authorType: ChatMessageAuthorType.assistant,
+                  status: ChatMessageStatus.pending,
+                  createdAt: DateTime.utc(2026, 1, 1),
+                  updatedAt: DateTime.utc(2026, 1, 1),
+                  jobStatus: 'running',
+                  jobPhase: 'Running tools',
+                  jobLatestActivity: 'call-mcp-tool',
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('Reasoning'), findsAtLeastNWidgets(1));
+    expect(find.byIcon(Icons.psychology_alt_outlined), findsOneWidget);
+    expect(find.text('Codex is reasoning.'), findsOneWidget);
+    expect(find.text('Tools'), findsOneWidget);
+    expect(find.byIcon(Icons.extension_rounded), findsOneWidget);
+    expect(find.text('Calling MCP tool.'), findsOneWidget);
+    expect(find.text('call-mcp-tool'), findsNothing);
+  });
+
   testWidgets('day separator formatter supports today and yesterday in Spanish',
       (
     tester,

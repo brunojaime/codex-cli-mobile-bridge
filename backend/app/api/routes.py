@@ -655,14 +655,25 @@ async def import_agent_profiles(
 def _jobs_by_id_for_messages(
     service: MessageService,
     messages: list[ChatMessage],
+    *,
+    sync_jobs: bool = True,
 ) -> dict[str, Job]:
     jobs_by_id: dict[str, Job] = {}
+    terminal_sync_seen = False
     for message in messages:
         if not message.job_id:
             continue
-        synced_job = service.get_job(message.job_id)
+        synced_job = (
+            service.get_job(message.job_id)
+            if sync_jobs
+            else service.get_stored_job(message.job_id)
+        )
         if synced_job is not None:
             jobs_by_id[message.job_id] = synced_job
+            if synced_job.status.is_terminal:
+                terminal_sync_seen = True
+    if sync_jobs and terminal_sync_seen and messages:
+        messages[:] = service.list_messages(messages[0].session_id)
     return jobs_by_id
 
 
@@ -685,7 +696,7 @@ async def list_sessions(
 
     for session in sessions:
         messages = service.list_messages(session.id)
-        jobs_by_id = _jobs_by_id_for_messages(service, messages)
+        jobs_by_id = _jobs_by_id_for_messages(service, messages, sync_jobs=False)
         responses.append(
             SessionSummaryResponse.from_domain(
                 session,

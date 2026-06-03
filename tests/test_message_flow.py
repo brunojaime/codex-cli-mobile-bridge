@@ -14,7 +14,8 @@ from fastapi.testclient import TestClient
 import pytest
 
 from backend.app.application.services.message_service import MessageService
-from backend.app.api.routes import get_container
+from backend.app.api.routes import _jobs_by_id_for_messages, get_container
+from backend.app.api.schemas import SessionSummaryResponse
 from backend.app.domain.entities.agent_configuration import (
     AgentConfiguration,
     AgentDisplayMode,
@@ -41,6 +42,7 @@ from backend.app.domain.entities.codex_options import CodexRunOptions
 from backend.app.domain.entities.job import JobConversationKind, JobStatus
 from backend.app.infrastructure import mcp_apps as mcp_apps_infra
 from backend.app.infrastructure.execution.base import ExecutionProvider, ExecutionSnapshot
+from backend.app.infrastructure.execution.local_provider import LocalExecutionProvider
 from backend.app.infrastructure.codex_tooling import discover_codex_skills, sync_repo_skills
 from backend.app.infrastructure.persistence.in_memory_chat_repository import InMemoryChatRepository
 from backend.app.infrastructure.persistence.sqlite_chat_repository import SqliteChatRepository
@@ -106,6 +108,8 @@ def build_app_server_streaming_client() -> TestClient:
         codex_command="python3 tests/fixtures/fake_codex_app_server.py",
         codex_use_exec=True,
         codex_streaming_mode="app_server",
+        codex_exec_args="--skip-git-repo-check --color never --dangerously-bypass-approvals-and-sandbox",
+        codex_resume_args="--skip-git-repo-check --dangerously-bypass-approvals-and-sandbox",
         projects_root="..",
         chat_store_backend="memory",
         execution_timeout_seconds=10,
@@ -1996,6 +2000,109 @@ def test_sessions_endpoints_include_conversation_product_fields() -> None:
     detail_response = client.get(f"/sessions/{session_id}")
     assert detail_response.status_code == 200
     assert detail_response.json()["conversation_product"] == summary_entry["conversation_product"]
+
+
+def test_session_summary_uses_messages_refreshed_by_terminal_job_sync() -> None:
+    with TemporaryDirectory() as temp_dir:
+        workspace = Path(temp_dir) / "repo"
+        workspace.mkdir()
+        service, provider, repository = _build_controlled_message_service(
+            temp_dir,
+            barrier_agent_id=AgentId.REVIEWER,
+        )
+        session = service.create_session(workspace_path=str(workspace))
+
+        job = service.submit_message("Build the stale pending regression case.", session_id=session.id)
+        stale_messages = repository.list_messages(session.id)
+        assistant_message = next(
+            message for message in stale_messages if message.role == ChatMessageRole.ASSISTANT
+        )
+        assert assistant_message.status == ChatMessageStatus.PENDING
+
+        provider.complete_job(job.id, response="Finished after the first message read.")
+
+        jobs_by_id = _jobs_by_id_for_messages(service, stale_messages)
+        summary = SessionSummaryResponse.from_domain(
+            session,
+            messages=stale_messages,
+            jobs_by_id=jobs_by_id,
+        )
+
+        refreshed_assistant_message = next(
+            message for message in stale_messages if message.role == ChatMessageRole.ASSISTANT
+        )
+        assert refreshed_assistant_message.status == ChatMessageStatus.COMPLETED
+        assert refreshed_assistant_message.content == "Finished after the first message read."
+        assert summary.has_pending_messages is False
+
+
+def test_session_summary_can_use_stored_jobs_without_resyncing_history() -> None:
+    with TemporaryDirectory() as temp_dir:
+        workspace = Path(temp_dir) / "repo"
+        workspace.mkdir()
+        service, provider, repository = _build_controlled_message_service(
+            temp_dir,
+            barrier_agent_id=AgentId.REVIEWER,
+        )
+        session = service.create_session(workspace_path=str(workspace))
+
+        job = service.submit_message("Build the stored history snapshot.", session_id=session.id)
+        stale_messages = repository.list_messages(session.id)
+        provider.complete_job(job.id, response="Finished but not reconciled.")
+
+        jobs_by_id = _jobs_by_id_for_messages(
+            service,
+            stale_messages,
+            sync_jobs=False,
+        )
+
+        assert jobs_by_id[job.id].status == JobStatus.PENDING
+        assert any(
+            message.status == ChatMessageStatus.PENDING
+            and message.job_id == job.id
+            for message in stale_messages
+        )
+
+
+def test_terminal_job_read_repairs_stale_pending_assistant_message() -> None:
+    with TemporaryDirectory() as temp_dir:
+        workspace = Path(temp_dir) / "repo"
+        workspace.mkdir()
+        service, _provider, repository = _build_controlled_message_service(
+            temp_dir,
+            barrier_agent_id=AgentId.REVIEWER,
+        )
+        session = service.create_session(workspace_path=str(workspace))
+
+        job = service.submit_message("Repair a stale terminal job side effect.", session_id=session.id)
+        persisted_job = repository.get_job(job.id)
+        assert persisted_job is not None
+        persisted_job.sync(
+            status=JobStatus.COMPLETED,
+            response="Terminal result that was not copied to the message.",
+            phase="Completed",
+            latest_activity="Codex returned a final response.",
+        )
+        persisted_job.auto_chain_processed = True
+        repository.save_job(persisted_job)
+
+        stale_assistant_message = next(
+            message
+            for message in repository.list_messages(session.id)
+            if message.role == ChatMessageRole.ASSISTANT
+        )
+        assert stale_assistant_message.status == ChatMessageStatus.PENDING
+        assert stale_assistant_message.content == ""
+
+        service.get_job(job.id)
+
+        repaired_assistant_message = next(
+            message
+            for message in repository.list_messages(session.id)
+            if message.role == ChatMessageRole.ASSISTANT
+        )
+        assert repaired_assistant_message.status == ChatMessageStatus.COMPLETED
+        assert repaired_assistant_message.content == "Terminal result that was not copied to the message."
 
 
 def test_session_detail_sanitizes_conversation_product_when_hidden_specialist_replies_exist() -> None:
@@ -5321,6 +5428,96 @@ def test_app_server_streaming_exposes_partial_response_before_completion() -> No
     assert payload["response"] == f"turn 1: {message}"
 
 
+def test_app_server_streaming_accepts_legacy_delta_events(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("FAKE_CODEX_LEGACY_DELTA", "1")
+    client = build_app_server_streaming_client()
+    message = "legacy delta format"
+
+    create_response = client.post("/message", json={"message": message})
+    assert create_response.status_code == 202
+    job_id = create_response.json()["job_id"]
+
+    deadline = time.monotonic() + 2.0
+    partial_payload: dict | None = None
+    while time.monotonic() < deadline:
+        response = client.get(f"/response/{job_id}")
+        assert response.status_code == 200
+        payload = response.json()
+        if payload["status"] == "running" and payload.get("response"):
+            partial_payload = payload
+            break
+        time.sleep(0.02)
+
+    assert partial_payload is not None
+    assert partial_payload["response"].startswith("turn 1:")
+    assert partial_payload["response"] != f"turn 1: {message}"
+
+    payload = wait_for_job(client, job_id)
+    assert payload["status"] == "completed"
+    assert payload["response"] == f"turn 1: {message}"
+
+
+def test_app_server_streaming_ignores_reasoning_tool_and_commentary_events(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("FAKE_CODEX_TOOL_AND_REASONING_EVENTS", "1")
+    client = build_app_server_streaming_client()
+    message = "keep only the final answer"
+
+    create_response = client.post("/message", json={"message": message})
+    assert create_response.status_code == 202
+    job_id = create_response.json()["job_id"]
+
+    payload = wait_for_job(client, job_id)
+
+    assert payload["status"] == "completed"
+    assert payload["response"] == f"turn 1: {message}"
+    assert "call-mcp-tool" not in payload["response"]
+    assert "internal reasoning" not in payload["response"]
+
+
+def test_app_server_event_descriptions_do_not_expose_raw_tool_item_names() -> None:
+    provider = LocalExecutionProvider(command="codex")
+
+    phase, latest_activity = provider._describe_app_server_event(
+        {
+            "method": "item/started",
+            "params": {
+                "item": {
+                    "type": "mcpToolCall",
+                    "id": "tool-1",
+                    "server": "project-catalog",
+                    "tool": "list_projects",
+                    "status": "inProgress",
+                },
+                "threadId": "thread-1",
+                "turnId": "turn-1",
+            },
+        }
+    )
+    assert phase == "Running tools"
+    assert latest_activity == "Calling MCP tool `list_projects`."
+
+    phase, latest_activity = provider._describe_app_server_event(
+        {
+            "method": "item/started",
+            "params": {
+                "item": {
+                    "type": "call-mcp-tool",
+                    "id": "tool-2",
+                    "status": "inProgress",
+                },
+                "threadId": "thread-1",
+                "turnId": "turn-1",
+            },
+        }
+    )
+    assert phase == "Running tools"
+    assert latest_activity == "Calling MCP tool."
+
+
 def test_app_server_streaming_resumes_same_thread_for_follow_up_turns() -> None:
     client = build_app_server_streaming_client()
 
@@ -7331,6 +7528,26 @@ def test_codex_mcp_app_install_endpoint_registers_repo_app(
         assert project_catalog["install_state"] == "matching"
         assert project_catalog["server_present"] is True
         assert project_catalog["drift_summary"] is None
+
+
+def test_codex_tooling_ignores_mcp_list_table_header(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with TemporaryDirectory() as temp_dir:
+        home_dir = Path(temp_dir)
+        (home_dir / ".codex").mkdir(parents=True)
+        monkeypatch.setenv("HOME", str(home_dir))
+        monkeypatch.setenv("FAKE_CODEX_MCP_LIST_TABLE", "1")
+
+        client = build_tooling_client(projects_root="..")
+        client.post("/codex/mcp-apps/project-catalog/install")
+
+        response = client.get("/codex/tooling")
+
+        assert response.status_code == 200
+        server_ids = [server["server_id"] for server in response.json()["mcp_servers"]]
+        assert "project-catalog" in server_ids
+        assert "Name" not in server_ids
 
 
 def test_codex_mcp_app_install_endpoint_reports_already_installed(
