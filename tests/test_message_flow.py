@@ -3193,6 +3193,176 @@ def test_cancelled_reviewer_follow_up_converges_in_background_without_downstream
         assert service._terminal_job_locks == {}
 
 
+def test_reviewer_prompt_triggers_generator_follow_up_in_background_without_polling() -> None:
+    with TemporaryDirectory() as temp_dir:
+        workspace = Path(temp_dir) / "repo"
+        workspace.mkdir()
+        service, provider, repository = _build_watched_controlled_message_service(
+            temp_dir,
+            barrier_agent_id=AgentId.SUPERVISOR,
+        )
+
+        session = service.create_session(workspace_path=str(workspace))
+        configuration = session.agent_configuration.normalized()
+        configuration.preset = AgentPreset.REVIEW
+        configuration.agents[AgentId.GENERATOR].max_turns = 2
+        configuration.agents[AgentId.REVIEWER].enabled = True
+        configuration.agents[AgentId.REVIEWER].max_turns = 1
+        configuration.agents[AgentId.SUMMARY].enabled = False
+        service.update_agent_configuration(session_id=session.id, configuration=configuration)
+
+        initial_job = service.submit_message(
+            "Build the initial implementation.",
+            session_id=session.id,
+        )
+        provider.complete_job(initial_job.id, response="Initial generator response.")
+
+        _, messages, _ = wait_for_repository_session(
+            repository,
+            session.id,
+            predicate=lambda current_session, current_messages, current_jobs: (
+                current_session is not None
+                and any(
+                    message.run_id == initial_job.run_id
+                    and message.agent_id == AgentId.REVIEWER
+                    and message.job_id is not None
+                    for message in current_messages
+                )
+                and current_jobs.get(initial_job.id) is not None
+                and current_jobs[initial_job.id].auto_chain_processed is True
+            ),
+        )
+        reviewer_message = next(
+            message
+            for message in messages
+            if message.run_id == initial_job.run_id and message.agent_id == AgentId.REVIEWER
+        )
+        assert reviewer_message.job_id is not None
+
+        provider.complete_job(
+            reviewer_message.job_id,
+            response="Ask the generator to add regression coverage before shipping.",
+        )
+
+        session, messages, jobs_by_id = wait_for_repository_session(
+            repository,
+            session.id,
+            predicate=lambda current_session, current_messages, current_jobs: (
+                current_session is not None
+                and current_session.active_agent_run_id == initial_job.run_id
+                and any(
+                    message.run_id == initial_job.run_id
+                    and message.agent_id == AgentId.GENERATOR
+                    and message.trigger_source == AgentTriggerSource.REVIEWER
+                    and message.job_id is not None
+                    for message in current_messages
+                )
+                and current_jobs.get(reviewer_message.job_id) is not None
+                and current_jobs[reviewer_message.job_id].auto_chain_processed is True
+                and service._job_monitor_unsubscribes
+            ),
+        )
+        generator_follow_up = next(
+            message
+            for message in messages
+            if message.run_id == initial_job.run_id
+            and message.agent_id == AgentId.GENERATOR
+            and message.trigger_source == AgentTriggerSource.REVIEWER
+        )
+        assert generator_follow_up.job_id is not None
+
+        provider.complete_job(
+            generator_follow_up.job_id,
+            response="Generator added regression coverage.",
+        )
+        session, messages, generator_job = wait_for_background_terminal_convergence(
+            service,
+            repository,
+            session_id=session.id,
+            job_id=generator_follow_up.job_id,
+            expected_status=JobStatus.COMPLETED,
+        )
+
+        assert session.active_agent_run_id is None
+        assert generator_job.auto_chain_processed is True
+        assert any(
+            message.id == generator_follow_up.id
+            and message.status == ChatMessageStatus.COMPLETED
+            and message.content == "Generator added regression coverage."
+            for message in messages
+        )
+        assert jobs_by_id[reviewer_message.job_id].auto_chain_processed is True
+        assert service._job_monitor_unsubscribes == {}
+        assert service._terminal_job_locks == {}
+
+
+def test_local_provider_completes_reviewer_generator_chain_without_frontend_polling() -> None:
+    client, container = build_session_client_with_container()
+
+    try:
+        session_response = client.post("/sessions", json={"title": "Local background chain"})
+        assert session_response.status_code == 201
+        session_id = session_response.json()["id"]
+
+        config_response = client.put(
+            f"/sessions/{session_id}/agents",
+            json=build_agent_configuration_payload(
+                preset="review",
+                summary_enabled=False,
+            ),
+        )
+        assert config_response.status_code == 200
+
+        message_response = client.post(
+            f"/sessions/{session_id}/messages",
+            json={"message": "Build the first version in background."},
+        )
+        assert message_response.status_code == 202
+        initial_job_id = message_response.json()["job_id"]
+
+        service = container.message_service
+        repository = service._repository
+        session, messages, jobs_by_id = wait_for_repository_session(
+            repository,
+            session_id,
+            predicate=lambda current_session, current_messages, current_jobs: (
+                current_session is not None
+                and current_session.active_agent_run_id is None
+                and len(current_messages) >= 4
+                and all(
+                    job is not None
+                    and job.status == JobStatus.COMPLETED
+                    and job.auto_chain_processed is True
+                    for job in current_jobs.values()
+                )
+                and service._job_monitor_unsubscribes == {}
+                and service._terminal_job_locks == {}
+            ),
+            timeout_seconds=10.0,
+        )
+
+        assert session.active_agent_run_id is None
+        assert initial_job_id in jobs_by_id
+        assert [
+            (message.agent_id, message.trigger_source, message.status)
+            for message in messages
+            if message.agent_id != AgentId.USER
+        ] == [
+            (AgentId.GENERATOR, AgentTriggerSource.USER, ChatMessageStatus.COMPLETED),
+            (AgentId.REVIEWER, AgentTriggerSource.GENERATOR, ChatMessageStatus.COMPLETED),
+            (AgentId.GENERATOR, AgentTriggerSource.REVIEWER, ChatMessageStatus.COMPLETED),
+        ]
+
+        final_response = client.get(f"/sessions/{session_id}")
+        assert final_response.status_code == 200
+        final_payload = final_response.json()
+        assert final_payload["active_agent_run_id"] is None
+        assert final_payload["messages"][-1]["agent_id"] == "generator"
+        assert final_payload["messages"][-1]["job_status"] == "completed"
+    finally:
+        client.close()
+
+
 def test_failed_supervisor_specialist_follow_up_converges_in_background() -> None:
     with TemporaryDirectory() as temp_dir:
         workspace = Path(temp_dir) / "repo"
@@ -6679,6 +6849,133 @@ def test_reviewer_runs_again_when_multiple_review_turns_are_configured() -> None
     assert len(completed_reviewers) == 2
     assert len(completed_generators) == 3
     assert payload["active_agent_turn_index"] == 2
+
+
+def test_terminal_reviewer_response_stops_review_loop_even_with_budget() -> None:
+    with TemporaryDirectory() as temp_dir:
+        workspace = Path(temp_dir) / "repo"
+        workspace.mkdir()
+        service, provider, repository = _build_controlled_message_service(
+            temp_dir,
+            barrier_agent_id=AgentId.SUPERVISOR,
+        )
+
+        session = service.create_session(workspace_path=str(workspace))
+        configuration = session.agent_configuration.normalized()
+        configuration.preset = AgentPreset.REVIEW
+        configuration.agents[AgentId.GENERATOR].max_turns = 3
+        configuration.agents[AgentId.REVIEWER].enabled = True
+        configuration.agents[AgentId.REVIEWER].max_turns = 2
+        configuration.agents[AgentId.SUMMARY].enabled = False
+        service.update_agent_configuration(
+            session_id=session.id,
+            configuration=configuration,
+        )
+
+        initial_job = service.submit_message(
+            "Build the initial implementation.",
+            session_id=session.id,
+        )
+        provider.complete_job(initial_job.id, response="Initial implementation done.")
+        service.get_job(initial_job.id)
+
+        reviewer_message = next(
+            message
+            for message in repository.list_messages(session.id)
+            if message.run_id == initial_job.run_id
+            and message.agent_id == AgentId.REVIEWER
+        )
+        assert reviewer_message.job_id is not None
+
+        provider.complete_job(
+            reviewer_message.job_id,
+            response=json.dumps(
+                {
+                    "status": "complete",
+                    "summary": "No further generator work is needed.",
+                }
+            ),
+        )
+        service.get_job(reviewer_message.job_id)
+
+        persisted_session = repository.get_session(session.id)
+        messages = repository.list_messages(session.id)
+        generator_follow_ups = [
+            message
+            for message in messages
+            if message.run_id == initial_job.run_id
+            and message.agent_id == AgentId.GENERATOR
+            and message.trigger_source == AgentTriggerSource.REVIEWER
+        ]
+
+        assert persisted_session is not None
+        assert persisted_session.active_agent_run_id is None
+        assert generator_follow_ups == []
+        assert len(repository._jobs) == 2
+
+
+def test_structured_reviewer_continue_sends_prompt_only_to_generator() -> None:
+    with TemporaryDirectory() as temp_dir:
+        workspace = Path(temp_dir) / "repo"
+        workspace.mkdir()
+        service, provider, repository = _build_controlled_message_service(
+            temp_dir,
+            barrier_agent_id=AgentId.SUPERVISOR,
+        )
+
+        session = service.create_session(workspace_path=str(workspace))
+        configuration = session.agent_configuration.normalized()
+        configuration.preset = AgentPreset.REVIEW
+        configuration.agents[AgentId.GENERATOR].max_turns = 2
+        configuration.agents[AgentId.REVIEWER].enabled = True
+        configuration.agents[AgentId.REVIEWER].max_turns = 1
+        configuration.agents[AgentId.SUMMARY].enabled = False
+        service.update_agent_configuration(
+            session_id=session.id,
+            configuration=configuration,
+        )
+
+        initial_job = service.submit_message(
+            "Build the initial implementation.",
+            session_id=session.id,
+        )
+        provider.complete_job(initial_job.id, response="Initial implementation done.")
+        service.get_job(initial_job.id)
+
+        reviewer_message = next(
+            message
+            for message in repository.list_messages(session.id)
+            if message.run_id == initial_job.run_id
+            and message.agent_id == AgentId.REVIEWER
+        )
+        assert reviewer_message.job_id is not None
+
+        provider.complete_job(
+            reviewer_message.job_id,
+            response=json.dumps(
+                {
+                    "status": "continue",
+                    "prompt": "Add regression tests for the completed flow.",
+                }
+            ),
+        )
+        service.get_job(reviewer_message.job_id)
+
+        generator_follow_up = next(
+            message
+            for message in repository.list_messages(session.id)
+            if message.run_id == initial_job.run_id
+            and message.agent_id == AgentId.GENERATOR
+            and message.trigger_source == AgentTriggerSource.REVIEWER
+        )
+        assert generator_follow_up.job_id is not None
+        request = next(
+            request
+            for request in provider.requests
+            if request["job_id"] == generator_follow_up.job_id
+        )
+        assert "Add regression tests for the completed flow." in request["message"]
+        assert '"status": "continue"' not in request["message"]
 
 
 def test_legacy_prompt_only_agent_profile_hydrates_default_configuration() -> None:

@@ -211,6 +211,17 @@ class SupervisorDecision:
         return self.status == "complete"
 
 
+@dataclass(slots=True, frozen=True)
+class ReviewerDecision:
+    status: str
+    prompt: str
+    summary: str = ""
+
+    @property
+    def is_complete(self) -> bool:
+        return self.status == "complete"
+
+
 @dataclass(slots=True)
 class AttachmentInput:
     path: str
@@ -1468,6 +1479,9 @@ class MessageService:
                 run_id=job.run_id,
                 agent_id=AgentId.REVIEWER,
             )
+            reviewer_decision = self._parse_reviewer_decision(reviewer_prompt)
+            if reviewer_decision is not None:
+                reviewer_prompt = reviewer_decision.prompt
             reviewer_message = self._latest_completed_agent_message(
                 session.id,
                 run_id=job.run_id,
@@ -1482,6 +1496,21 @@ class MessageService:
                 role=ChatMessageRole.ASSISTANT,
                 dedupe_key=f"run:{job.run_id}:generator:{next_generator_turn_number}",
             )
+            if reviewer_decision is not None and reviewer_decision.is_complete:
+                if self._maybe_start_due_summary(
+                    session=session,
+                    run_id=job.run_id,
+                    trigger_source=AgentTriggerSource.REVIEWER,
+                    finalizing=True,
+                ):
+                    return
+                self._complete_agent_run(
+                    session=session,
+                    run_id=job.run_id,
+                    completed_turn_index=reviewer_turns,
+                )
+                return
+
             if reviewer_prompt and generator_turns < generator.max_turns:
                 if generator_follow_up is None:
                     self._continue_generator_from_reviewer(
@@ -1525,6 +1554,46 @@ class MessageService:
                 run_id=job.run_id,
                 completed_turn_index=reviewer_turns,
             )
+
+    def _parse_reviewer_decision(self, response: str) -> ReviewerDecision | None:
+        payload = self._parse_json_object_response(response)
+        if payload is None:
+            return None
+
+        raw_status = payload.get("status")
+        status = str(raw_status).strip().lower() if raw_status is not None else ""
+        if status not in {"continue", "complete"}:
+            return None
+
+        prompt = str(payload.get("prompt") or "").strip()
+        summary = str(payload.get("summary") or payload.get("reason") or "").strip()
+        if status == "continue" and not prompt:
+            return None
+        return ReviewerDecision(status=status, prompt=prompt, summary=summary)
+
+    def _parse_json_object_response(self, response: str) -> dict[str, object] | None:
+        normalized = response.strip()
+        if normalized.startswith("```"):
+            lines = normalized.splitlines()
+            if lines and lines[0].strip().startswith("```"):
+                lines = lines[1:]
+            if lines and lines[-1].strip() == "```":
+                lines = lines[:-1]
+            normalized = "\n".join(lines).strip()
+
+        try:
+            payload = json.loads(normalized)
+        except json.JSONDecodeError:
+            start = normalized.find("{")
+            end = normalized.rfind("}")
+            if start < 0 or end <= start:
+                return None
+            try:
+                payload = json.loads(normalized[start : end + 1])
+            except json.JSONDecodeError:
+                return None
+
+        return payload if isinstance(payload, dict) else None
 
     def _maybe_continue_supervisor_chain(
         self,
@@ -2629,6 +2698,11 @@ class MessageService:
             if reviewer_message is None or not reviewer_message.content.strip():
                 return None
             reviewer_prompt = reviewer_message.content.strip()
+            reviewer_decision = self._parse_reviewer_decision(reviewer_prompt)
+            if reviewer_decision is not None:
+                if reviewer_decision.is_complete:
+                    return None
+                reviewer_prompt = reviewer_decision.prompt
             return FollowUpContext(
                 display_message=reviewer_prompt,
                 execution_message=self._build_generator_execution_message(
@@ -3079,7 +3153,13 @@ class MessageService:
             f"{reviewer_prompt}\n\n"
             "Generator Codex latest answer:\n"
             f"{primary_response}\n\n"
-            "Return only the next prompt that should be sent back to the generator Codex."
+            "Return only a JSON object with this shape:\n"
+            '{"status":"continue","prompt":"<next prompt for the generator Codex>"}\n'
+            "or:\n"
+            '{"status":"complete","summary":"<why no further generator work is needed>"}\n'
+            "Use status=continue when more implementation, fixes, tests, or validation "
+            "should be sent back to the generator. Use status=complete only when the "
+            "generator should not run again."
         )
 
     def _build_summary_execution_message(

@@ -36,6 +36,8 @@ class ChatController extends ChangeNotifier {
   final Map<String, int> _pollFailures = <String, int>{};
   final Map<String, JobStatusResponse> _jobSnapshots =
       <String, JobStatusResponse>{};
+  final Map<String, _DeferredRunNotification> _deferredRunNotifications =
+      <String, _DeferredRunNotification>{};
   final Map<String, WebSocketChannel> _jobChannels =
       <String, WebSocketChannel>{};
   final Map<int, _OutgoingUploadTicket> _outgoingUploads =
@@ -219,6 +221,7 @@ class ChatController extends ChangeNotifier {
       ..clear()
       ..addAll(sessions);
     _errorText = null;
+    _flushDeferredRunNotifications();
     notifyListeners();
   }
 
@@ -415,6 +418,7 @@ class ChatController extends ChangeNotifier {
       _trackPendingJobsFromSession(_currentSession);
       await _maybeImportGeneratedAgentProfiles(_currentSession);
       _errorText = null;
+      _flushDeferredRunNotifications();
       notifyListeners();
     } catch (error) {
       _errorText = '$error';
@@ -935,6 +939,7 @@ class ChatController extends ChangeNotifier {
     _trackPendingJobsFromSession(_currentSession);
     await _maybeImportGeneratedAgentProfiles(_currentSession);
     _errorText = null;
+    _flushDeferredRunNotifications();
     notifyListeners();
   }
 
@@ -1039,6 +1044,7 @@ class ChatController extends ChangeNotifier {
         agentType: message.agentType,
         agentLabel: message.agentLabel,
         providerSessionId: message.providerSessionId,
+        runId: message.runId,
         phase: message.jobPhase,
         latestActivity: message.jobLatestActivity,
         updatedAt: message.updatedAt,
@@ -1239,8 +1245,42 @@ class ChatController extends ChangeNotifier {
       return;
     }
 
+    final runId = _runIdForJob(snapshot);
+    if (runId != null && _isRunStillActive(snapshot.sessionId, runId)) {
+      _deferredRunNotifications[runId] = _DeferredRunNotification(
+        runId: runId,
+        snapshot: snapshot,
+      );
+      return;
+    }
+
+    if (runId != null && _wasRunMultiAgent(snapshot.sessionId, runId)) {
+      final notification = _buildRunTerminalNotification(snapshot, runId);
+      unawaited(_notificationService.showChatCompleted(notification));
+      return;
+    }
+
     final notification = _buildTerminalNotification(snapshot);
     unawaited(_notificationService.showChatCompleted(notification));
+  }
+
+  void _flushDeferredRunNotifications() {
+    if (_deferredRunNotifications.isEmpty) {
+      return;
+    }
+
+    for (final entry in _deferredRunNotifications.entries.toList()) {
+      final deferred = entry.value;
+      if (_isRunStillActive(deferred.snapshot.sessionId, deferred.runId)) {
+        continue;
+      }
+      _deferredRunNotifications.remove(entry.key);
+      final notification = _buildRunTerminalNotification(
+        deferred.snapshot,
+        deferred.runId,
+      );
+      unawaited(_notificationService.showChatCompleted(notification));
+    }
   }
 
   ChatCompletedNotification _buildTerminalNotification(
@@ -1259,6 +1299,21 @@ class ChatController extends ChangeNotifier {
         session,
         sessionSummary,
       ),
+    );
+  }
+
+  ChatCompletedNotification _buildRunTerminalNotification(
+    JobStatusResponse snapshot,
+    String runId,
+  ) {
+    final session = _sessionDetailForId(snapshot.sessionId);
+    final sessionTitle = _resolveSessionTitle(snapshot.sessionId, session);
+    final workspaceName = _resolveWorkspaceName(snapshot.sessionId, session);
+    return buildRunCompletedNotification(
+      snapshot: snapshot,
+      runId: runId,
+      workspaceName: workspaceName,
+      sessionTitle: sessionTitle,
     );
   }
 
@@ -1339,6 +1394,104 @@ class ChatController extends ChangeNotifier {
   @visibleForTesting
   void applyJobSnapshotForTesting(JobStatusResponse snapshot) {
     _applyJobSnapshot(snapshot);
+  }
+
+  String? _runIdForJob(JobStatusResponse snapshot) {
+    if (snapshot.runId != null && snapshot.runId!.trim().isNotEmpty) {
+      return snapshot.runId;
+    }
+
+    final currentSession = _sessionDetailForId(snapshot.sessionId);
+    if (currentSession != null) {
+      for (final message in currentSession.messages) {
+        if (message.jobId == snapshot.jobId &&
+            message.runId != null &&
+            message.runId!.trim().isNotEmpty) {
+          return message.runId;
+        }
+      }
+
+      for (final run in <CurrentRunExecution?>[
+        currentSession.currentRun,
+        ...currentSession.recentRuns,
+      ]) {
+        if (run == null) {
+          continue;
+        }
+        if (run.stages.any((stage) => stage.jobId == snapshot.jobId)) {
+          return run.runId;
+        }
+      }
+    }
+
+    return null;
+  }
+
+  bool _isRunStillActive(String sessionId, String runId) {
+    final currentSession = _sessionDetailForId(sessionId);
+    if (currentSession != null) {
+      if (currentSession.activeAgentRunId == runId) {
+        return true;
+      }
+      final currentRun = currentSession.currentRun;
+      if (currentRun != null &&
+          currentRun.runId == runId &&
+          currentRun.isActive) {
+        return true;
+      }
+      return false;
+    }
+
+    final summary = _sessionSummaryForId(sessionId);
+    return summary?.activeAgentRunId == runId;
+  }
+
+  bool _wasRunMultiAgent(String sessionId, String runId) {
+    final currentSession = _sessionDetailForId(sessionId);
+    if (currentSession != null) {
+      final run = _runExecutionForId(currentSession, runId);
+      if (run != null && run.participantAgentIds.length > 1) {
+        return true;
+      }
+
+      final participantIds = currentSession.messages
+          .where((message) => message.runId == runId)
+          .map((message) => message.agentId)
+          .where((agentId) => agentId != AgentId.user)
+          .toSet();
+      if (participantIds.length > 1) {
+        return true;
+      }
+    }
+
+    final summary = _sessionSummaryForId(sessionId);
+    final configuration = currentSession?.agentConfiguration ??
+        summary?.agentConfiguration ??
+        kDefaultAgentConfiguration;
+    final normalized = configuration;
+    return normalized.preset != AgentPreset.solo &&
+        normalized.agents.any((agent) =>
+            agent.agentId != AgentId.generator &&
+            agent.agentId != AgentId.user &&
+            agent.enabled &&
+            agent.maxTurns > 0);
+  }
+
+  CurrentRunExecution? _runExecutionForId(
+    SessionDetail session,
+    String runId,
+  ) {
+    final currentRun = session.currentRun;
+    if (currentRun != null && currentRun.runId == runId) {
+      return currentRun;
+    }
+
+    for (final run in session.recentRuns) {
+      if (run.runId == runId) {
+        return run;
+      }
+    }
+    return null;
   }
 
   void _setLoading(bool value) {
@@ -1674,4 +1827,14 @@ class _OutgoingUploadTicket {
 
   final String sessionId;
   final OutgoingUploadKind kind;
+}
+
+class _DeferredRunNotification {
+  const _DeferredRunNotification({
+    required this.runId,
+    required this.snapshot,
+  });
+
+  final String runId;
+  final JobStatusResponse snapshot;
 }

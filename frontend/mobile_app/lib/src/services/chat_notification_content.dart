@@ -33,6 +33,37 @@ ChatCompletedNotification buildChatCompletedNotification({
   );
 }
 
+ChatCompletedNotification buildRunCompletedNotification({
+  required JobStatusResponse snapshot,
+  required String runId,
+  required String workspaceName,
+  required String sessionTitle,
+}) {
+  final normalizedWorkspaceName =
+      _normalizeOptionalText(workspaceName) ?? 'Codex Remote';
+  final normalizedSessionTitle = _normalizeOptionalText(sessionTitle) ?? 'Chat';
+
+  return ChatCompletedNotification(
+    id: runId.hashCode,
+    title: normalizedWorkspaceName,
+    body: [
+      _runStatusLine(snapshot.status),
+      normalizedSessionTitle,
+      _notificationPreview(snapshot),
+    ].join('\n'),
+    channel: ChatNotificationChannel.generic,
+    summary: 'Codex run - $normalizedSessionTitle',
+  );
+}
+
+String _runStatusLine(String status) {
+  return switch (status) {
+    'failed' => 'Codex run failed',
+    'cancelled' => 'Codex run cancelled',
+    _ => 'Codex run complete',
+  };
+}
+
 String resolveNotificationAgentLabel(
   JobStatusResponse snapshot, {
   String? configuredAgentLabel,
