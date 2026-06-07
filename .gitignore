@@ -4,6 +4,7 @@
 .venv/
 .pytest_cache/
 __pycache__/
+:memory:
 *.pyc
 *.pyo
 *.pyd

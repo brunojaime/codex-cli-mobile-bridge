@@ -4255,38 +4255,39 @@ def test_api_returns_structured_sqlite_database_errors(
 ) -> None:
     import sqlite3
 
-    settings = Settings(
-        codex_command="python3 tests/fixtures/fake_codex_session.py",
-        codex_use_exec=True,
-        projects_root="..",
-        chat_store_backend="sqlite",
-        chat_store_path=":memory:",
-        execution_timeout_seconds=10,
-        poll_interval_seconds=0,
-        audio_transcription_backend="auto",
-    )
-    app = create_app(settings)
-    container = app.dependency_overrides[get_container]()
-    monkeypatch.setattr(
-        container.message_service._repository,
-        "get_session",
-        lambda _session_id: (_ for _ in ()).throw(
-            sqlite3.DatabaseError("database disk image is malformed")
-        ),
-    )
-    client = TestClient(app, raise_server_exceptions=False)
-    try:
-        response = client.get("/sessions/any-session")
-        assert response.status_code == 500
-        assert response.json() == {
-            "detail": {
-                "error": "sqlite_database_error",
-                "code": "sqlite_database_error",
-                "message": "database disk image is malformed",
+    with TemporaryDirectory() as temp_dir:
+        settings = Settings(
+            codex_command="python3 tests/fixtures/fake_codex_session.py",
+            codex_use_exec=True,
+            projects_root="..",
+            chat_store_backend="sqlite",
+            chat_store_path=str(Path(temp_dir) / "chat_store.sqlite3"),
+            execution_timeout_seconds=10,
+            poll_interval_seconds=0,
+            audio_transcription_backend="auto",
+        )
+        app = create_app(settings)
+        container = app.dependency_overrides[get_container]()
+        monkeypatch.setattr(
+            container.message_service._repository,
+            "get_session",
+            lambda _session_id: (_ for _ in ()).throw(
+                sqlite3.DatabaseError("database disk image is malformed")
+            ),
+        )
+        client = TestClient(app, raise_server_exceptions=False)
+        try:
+            response = client.get("/sessions/any-session")
+            assert response.status_code == 500
+            assert response.json() == {
+                "detail": {
+                    "error": "sqlite_database_error",
+                    "code": "sqlite_database_error",
+                    "message": "database disk image is malformed",
+                }
             }
-        }
-    finally:
-        client.close()
+        finally:
+            client.close()
 
 
 def test_app_starts_in_degraded_mode_when_sqlite_store_fails_to_open(
