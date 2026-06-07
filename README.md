@@ -79,6 +79,20 @@ uv run python codex-skills/mcp-app-builder/scripts/scaffold_mcp_app.py my-app \
 
 Current limitation: the mobile frontend supports MCP app discovery, preview, install, and run selection, but it does not yet host full inline `io.modelcontextprotocol/ui` iframe apps.
 
+## Repo Skills
+
+This repo also includes Codex skills under `codex-skills/`.
+
+- `codex-mobile-bridge-ubuntu-setup`: install, validate, run, and expose this repo on a fresh Ubuntu/Linux machine, including backend startup and Tailscale setup.
+- `mcp-app-builder`: scaffold repo-local MCP apps.
+- `codex-mobile-android-release`: publish or update the Android APK release.
+
+For a quick portability check on a second machine, run:
+
+```bash
+codex-skills/codex-mobile-bridge-ubuntu-setup/scripts/doctor.sh
+```
+
 ## Design Review
 
 - Figma board: https://www.figma.com/design/qmN9KrBZgqhvwOjGKyMjPG?node-id=3-2
@@ -470,7 +484,7 @@ Ubuntu / Debian example:
 
 ```bash
 sudo apt update
-sudo apt install -y python3 python3-venv ffmpeg curl
+sudo apt install -y python3 python3-venv ffmpeg curl git
 curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
@@ -508,6 +522,14 @@ If `.venv` already exists, do not recreate it unless you want a fresh environmen
 source .venv/bin/activate
 uv pip install -e '.[dev]'
 ```
+
+After configuring `.env` and installing dependencies, run the repo-local setup doctor:
+
+```bash
+codex-skills/codex-mobile-bridge-ubuntu-setup/scripts/doctor.sh
+```
+
+Use `--require-backend` after starting the backend when you want the doctor to fail if `/health` is not reachable.
 
 ### 4. Start The Backend
 

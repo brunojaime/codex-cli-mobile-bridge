@@ -1,0 +1,4 @@
+interface:
+  display_name: "Ubuntu Bridge Setup"
+  short_description: "Install backend and Tailscale on Ubuntu"
+  default_prompt: "Use $codex-mobile-bridge-ubuntu-setup to prepare this repo on a fresh Ubuntu machine."
