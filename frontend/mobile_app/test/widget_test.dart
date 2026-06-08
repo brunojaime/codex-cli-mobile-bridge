@@ -122,10 +122,16 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('2 feedback'), findsOneWidget);
+    await tester.tap(find.text('Ambientando Calendar'));
+    await tester.pumpAndSettle();
+    expect(
+      find.widgetWithText(FilledButton, 'Feedback queue (2)'),
+      findsOneWidget,
+    );
     await tester
         .tap(find.byTooltip('Project actions for Ambientando Calendar'));
     await tester.pumpAndSettle();
-    expect(find.text('Feedback queue (2)'), findsOneWidget);
+    expect(find.text('Feedback queue (2)'), findsWidgets);
     expect(
       find.byTooltip('Project actions for Other Project'),
       findsOneWidget,
@@ -187,10 +193,9 @@ void main() {
 
       await tester.tap(find.byTooltip('Projects'));
       await tester.pumpAndSettle();
-      await tester
-          .tap(find.byTooltip('Project actions for Ambientando Calendar'));
+      await tester.tap(find.text('Ambientando Calendar'));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Feedback queue (2)'));
+      await tester.tap(find.widgetWithText(FilledButton, 'Feedback queue (2)'));
       await tester.pumpAndSettle();
 
       expect(find.text('Generator only'), findsNothing);

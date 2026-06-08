@@ -3136,6 +3136,14 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             ),
             children: visibleSessions.isEmpty
                 ? <Widget>[
+                    if (feedbackCount > 0)
+                      _ProjectFeedbackQueueButton(
+                        count: feedbackCount,
+                        onPressed: () async {
+                          Navigator.of(context).pop();
+                          await _openFeedbackQueueSheet(workspace: workspace);
+                        },
+                      ),
                     Padding(
                       padding: EdgeInsets.fromLTRB(24, 0, 24, 16),
                       child: Align(
@@ -3150,6 +3158,14 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                     ),
                   ]
                 : <Widget>[
+                    if (feedbackCount > 0)
+                      _ProjectFeedbackQueueButton(
+                        count: feedbackCount,
+                        onPressed: () async {
+                          Navigator.of(context).pop();
+                          await _openFeedbackQueueSheet(workspace: workspace);
+                        },
+                      ),
                     ...visibleSessions.map(
                       (session) => Padding(
                         padding: const EdgeInsets.only(left: 10, right: 10),
@@ -3826,6 +3842,31 @@ class _ProjectStatusPill extends StatelessWidget {
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ProjectFeedbackQueueButton extends StatelessWidget {
+  const _ProjectFeedbackQueueButton({
+    required this.count,
+    required this.onPressed,
+  });
+
+  final int count;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: FilledButton.icon(
+          onPressed: onPressed,
+          icon: const Icon(Icons.feedback_outlined),
+          label: Text('Feedback queue ($count)'),
         ),
       ),
     );
