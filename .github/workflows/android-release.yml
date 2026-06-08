@@ -68,7 +68,14 @@ jobs:
 
       - name: Build Android APK
         working-directory: frontend/mobile_app
-        run: flutter build apk --release
+        env:
+          API_BASE_URL: ${{ vars.API_BASE_URL }}
+        run: |
+          args=()
+          if [[ -n "$API_BASE_URL" ]]; then
+            args+=(--dart-define=API_BASE_URL="$API_BASE_URL")
+          fi
+          flutter build apk --release "${args[@]}"
 
       - name: Prepare release artifacts
         shell: bash

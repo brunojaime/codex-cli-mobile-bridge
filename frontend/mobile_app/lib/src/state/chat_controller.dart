@@ -600,6 +600,14 @@ class ChatController extends ChangeNotifier {
     }
   }
 
+  Future<void> registerAcceptedExternalJob(JobStatusResponse accepted) async {
+    _errorText = null;
+    await _registerAcceptedJob(
+      accepted,
+      originSessionId: _selectedSessionId,
+    );
+  }
+
   Future<bool> sendAudioMessage(
     XFile audioFile, {
     String? language,

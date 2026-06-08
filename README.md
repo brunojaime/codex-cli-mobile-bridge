@@ -713,6 +713,22 @@ Notes:
 - Real devices should use a reachable backend URL, such as a LAN IP, Tailscale URL, or tunnel URL
 - Android and iOS will request microphone permission the first time you record a voice note
 
+## Ambientando Feedback Queue
+
+Ambientando Calendar can send marked screenshots and comments directly into this
+bridge over Tailscale. Build Ambientando with:
+
+```sh
+--dart-define=DEVELOPER_FEEDBACK_TEMPLATE_ENABLED=true
+--dart-define=CODEX_FEEDBACK_BRIDGE_URL=http://batata-default-string.tail0302c4.ts.net
+```
+
+The backend stores pending feedback at `FEEDBACK_QUEUE_PATH`, screenshots in
+`FEEDBACK_IMAGE_DIR`, and optional audio in `FEEDBACK_AUDIO_DIR`. In the Codex
+mobile app, open `Feedback queue`, review the marked screenshot/comment, then
+tap `Start Codex chat` to send the screenshot and note into the current Codex
+session.
+
 ## Multi-Server Support
 
 The mobile app can store multiple backend servers and switch between them.

@@ -16,6 +16,7 @@ import '../models/agent_configuration.dart';
 import '../models/agent_profile.dart';
 import '../models/codex_tooling.dart';
 import '../models/server_capabilities.dart';
+import '../models/feedback_queue_item.dart';
 import '../models/server_health.dart';
 import '../models/server_profile.dart';
 import '../models/session_detail.dart';
@@ -48,6 +49,7 @@ enum _AppBarOverflowAction {
   conversationContext,
   summaryView,
   codexTools,
+  feedbackQueue,
   saveCurrentAgent,
   replyMode,
   servers,
@@ -2029,6 +2031,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
               label: 'Codex tools',
             ),
             _buildAppBarOverflowMenuItem(
+              action: _AppBarOverflowAction.feedbackQueue,
+              icon: Icons.feedback_outlined,
+              label: 'Feedback queue',
+            ),
+            _buildAppBarOverflowMenuItem(
               action: _AppBarOverflowAction.saveCurrentAgent,
               icon: Icons.bookmark_add_outlined,
               label: 'Save current agent',
@@ -2098,6 +2105,13 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           ],
         ),
         tooltip: 'Codex tools',
+      ),
+      IconButton(
+        onPressed: () async {
+          await _openFeedbackQueueSheet();
+        },
+        icon: const Icon(Icons.feedback_outlined),
+        tooltip: 'Feedback queue',
       ),
       IconButton(
         onPressed: () async {
@@ -2186,6 +2200,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       case _AppBarOverflowAction.codexTools:
         await _openCodexToolsSheet();
         return;
+      case _AppBarOverflowAction.feedbackQueue:
+        await _openFeedbackQueueSheet();
+        return;
       case _AppBarOverflowAction.saveCurrentAgent:
         await _openSaveCurrentAgentProfile();
         return;
@@ -2199,6 +2216,209 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         await _openWorkspacePicker();
         return;
     }
+  }
+
+  Future<void> _openFeedbackQueueSheet() async {
+    final client = ApiClient(
+      baseUrl: _activeServer?.baseUrl ?? widget.initialApiBaseUrl,
+    );
+    List<FeedbackQueueItem> items;
+    try {
+      items = await client.listFeedbackQueue(includeImages: true);
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Feedback queue unavailable.\n$error')),
+      );
+      return;
+    }
+    if (!mounted) return;
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setSheetState) {
+            Future<void> reload() async {
+              final refreshed =
+                  await client.listFeedbackQueue(includeImages: true);
+              if (context.mounted) {
+                setSheetState(() => items = refreshed);
+              }
+            }
+
+            return SafeArea(
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxHeight: MediaQuery.sizeOf(context).height * 0.86,
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: <Widget>[
+                      Row(
+                        children: <Widget>[
+                          const Expanded(
+                            child: Text(
+                              'Feedback queue',
+                              style: TextStyle(
+                                fontSize: 20,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                          IconButton(
+                            tooltip: 'Refresh',
+                            onPressed: () => unawaited(reload()),
+                            icon: const Icon(Icons.refresh),
+                          ),
+                          IconButton(
+                            tooltip: 'Close',
+                            onPressed: () => Navigator.of(context).pop(),
+                            icon: const Icon(Icons.close),
+                          ),
+                        ],
+                      ),
+                      if (items.isEmpty)
+                        const Padding(
+                          padding: EdgeInsets.symmetric(vertical: 28),
+                          child: Text('No feedback is pending.'),
+                        )
+                      else ...<Widget>[
+                        Align(
+                          alignment: Alignment.centerRight,
+                          child: TextButton.icon(
+                            onPressed: () async {
+                              await client.clearFeedbackQueue();
+                              await reload();
+                            },
+                            icon: const Icon(Icons.delete_sweep_outlined),
+                            label: const Text('Clear all'),
+                          ),
+                        ),
+                        Flexible(
+                          child: ListView.separated(
+                            shrinkWrap: true,
+                            itemCount: items.length,
+                            separatorBuilder: (_, __) =>
+                                const SizedBox(height: 12),
+                            itemBuilder: (context, index) {
+                              final item = items[index];
+                              final imageBytes = item.screenshotBytes;
+                              return Card(
+                                margin: EdgeInsets.zero,
+                                child: Padding(
+                                  padding: const EdgeInsets.all(12),
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.stretch,
+                                    children: <Widget>[
+                                      if (imageBytes != null)
+                                        ClipRRect(
+                                          borderRadius:
+                                              BorderRadius.circular(8),
+                                          child: Image.memory(
+                                            imageBytes,
+                                            height: 180,
+                                            fit: BoxFit.cover,
+                                          ),
+                                        ),
+                                      const SizedBox(height: 10),
+                                      Text(
+                                        item.comment,
+                                        style: const TextStyle(
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        '${item.sourceApp} · ${item.status}'
+                                        '${item.hasScreenshot ? ' · image' : ''}'
+                                        '${item.hasAudio ? ' · audio' : ''}',
+                                      ),
+                                      const SizedBox(height: 10),
+                                      Row(
+                                        children: <Widget>[
+                                          Expanded(
+                                            child: FilledButton.icon(
+                                              onPressed: item.hasScreenshot
+                                                  ? () async {
+                                                      final accepted = await client
+                                                          .startFeedbackQueueSession(
+                                                        item.id,
+                                                        sessionId:
+                                                            _chatController
+                                                                .currentSession
+                                                                ?.id,
+                                                        workspacePath:
+                                                            _chatController
+                                                                .currentSession
+                                                                ?.workspacePath,
+                                                        codexRunOptions:
+                                                            _currentComposerDraft()
+                                                                .codexRunOptions,
+                                                      );
+                                                      await _chatController
+                                                          .registerAcceptedExternalJob(
+                                                        accepted,
+                                                      );
+                                                      await reload();
+                                                      if (!context.mounted) {
+                                                        return;
+                                                      }
+                                                      ScaffoldMessenger.of(
+                                                        context,
+                                                      ).showSnackBar(
+                                                        const SnackBar(
+                                                          content: Text(
+                                                            'Feedback sent to Codex.',
+                                                          ),
+                                                        ),
+                                                      );
+                                                    }
+                                                  : null,
+                                              icon:
+                                                  const Icon(Icons.play_arrow),
+                                              label: const Text(
+                                                'Start Codex chat',
+                                              ),
+                                            ),
+                                          ),
+                                          IconButton(
+                                            tooltip: 'Delete',
+                                            onPressed: () async {
+                                              await client
+                                                  .deleteFeedbackQueueItem(
+                                                item.id,
+                                              );
+                                              await reload();
+                                            },
+                                            icon: const Icon(
+                                              Icons.delete_outline,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
   }
 
   int _codexSelectionCount(CodexRunOptions options) {

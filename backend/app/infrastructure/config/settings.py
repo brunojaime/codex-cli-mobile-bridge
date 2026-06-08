@@ -34,6 +34,9 @@ class Settings(BaseSettings):
     projects_root: str = str(Path.cwd().parent)
     chat_store_backend: Literal["sqlite", "memory"] = "sqlite"
     chat_store_path: str = str(Path.cwd() / ".data" / "chat_store.sqlite3")
+    feedback_queue_path: str = str(Path.cwd() / ".data" / "feedback_queue.json")
+    feedback_image_dir: str = str(Path.cwd() / ".data" / "feedback_images")
+    feedback_audio_dir: str = str(Path.cwd() / ".data" / "feedback_audio")
     tailscale_socket: str | None = None
     execution_timeout_seconds: int = 0
     lambda_endpoint: str = "http://localhost:9000"

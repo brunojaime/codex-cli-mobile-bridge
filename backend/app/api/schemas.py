@@ -63,6 +63,51 @@ class MessageRequest(BaseModel):
     codex_options: "CodexRunOptionsRequest | None" = None
 
 
+class FeedbackPointRequest(BaseModel):
+    x: float
+    y: float
+
+
+class FeedbackQueueItemRequest(BaseModel):
+    id: str | None = Field(default=None, max_length=160)
+    sourceApp: str = Field(default="ambientando-calendar", max_length=120)
+    comment: str = Field(..., min_length=1, max_length=10000)
+    createdAt: str | None = None
+    screenshotMimeType: str = Field(default="image/png", max_length=80)
+    screenshotPngBase64: str | None = None
+    selectionPoints: list[FeedbackPointRequest] = Field(default_factory=list)
+    selectionBounds: dict[str, float] = Field(default_factory=dict)
+    audioMimeType: str | None = Field(default=None, max_length=80)
+    audioDurationMs: int | None = None
+    audioByteLength: int | None = None
+    audioBase64: str | None = None
+
+
+class FeedbackQueueItemResponse(BaseModel):
+    id: str
+    source_app: str
+    comment: str
+    created_at: str
+    status: str
+    screenshot_mime_type: str
+    has_screenshot: bool
+    screenshot_png_base64: str | None = None
+    selection_points: list[dict[str, float]] = Field(default_factory=list)
+    selection_bounds: dict[str, float] = Field(default_factory=dict)
+    audio_mime_type: str | None = None
+    audio_duration_ms: int | None = None
+    audio_byte_length: int | None = None
+    has_audio: bool = False
+    audio_base64: str | None = None
+
+
+class FeedbackQueueStartRequest(BaseModel):
+    message: str | None = Field(default=None, max_length=10000)
+    session_id: str | None = None
+    workspace_path: str | None = None
+    codex_options: "CodexRunOptionsRequest | None" = None
+
+
 class CodexRunOptionsRequest(BaseModel):
     profile: str | None = Field(default=None, max_length=120)
     search_enabled: bool = False

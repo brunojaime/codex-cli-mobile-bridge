@@ -4,6 +4,7 @@ from dataclasses import dataclass
 import sqlite3
 
 from backend.app.application.services.message_service import MessageService
+from backend.app.application.services.feedback_queue_service import FeedbackQueueService
 from backend.app.domain.repositories.chat_repository import (
     ChatRepository,
     PersistenceDiagnosticIssue,
@@ -38,6 +39,7 @@ from backend.app.infrastructure.transcription.openai_transcriber import OpenAIAu
 class AppContainer:
     settings: Settings
     message_service: MessageService
+    feedback_queue_service: FeedbackQueueService
     job_stream_hub: JobStreamHub
     audio_transcriber: AudioTranscriber
     speech_synthesizer: SpeechSynthesizer
@@ -71,9 +73,15 @@ def build_container(settings: Settings | None = None) -> AppContainer:
     job_stream_hub = JobStreamHub(
         poll_interval_seconds=resolved_settings.poll_interval_seconds,
     )
+    feedback_queue_service = FeedbackQueueService(
+        queue_path=resolved_settings.feedback_queue_path,
+        image_dir=resolved_settings.feedback_image_dir,
+        audio_dir=resolved_settings.feedback_audio_dir,
+    )
     return AppContainer(
         settings=resolved_settings,
         message_service=message_service,
+        feedback_queue_service=feedback_queue_service,
         job_stream_hub=job_stream_hub,
         audio_transcriber=audio_transcriber,
         speech_synthesizer=speech_synthesizer,

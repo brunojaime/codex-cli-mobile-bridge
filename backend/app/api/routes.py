@@ -31,6 +31,9 @@ from backend.app.api.schemas import (
     CodexToolingResponse,
     CreateSessionRequest,
     DocumentMessageAcceptedResponse,
+    FeedbackQueueItemRequest,
+    FeedbackQueueItemResponse,
+    FeedbackQueueStartRequest,
     HealthResponse,
     ImageMessageAcceptedResponse,
     JobResponse,
@@ -205,6 +208,147 @@ async def post_message(
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return MessageAcceptedResponse.from_domain(job)
+
+
+def _feedback_item_response(
+    item,
+    *,
+    include_image: bool = False,
+) -> FeedbackQueueItemResponse:
+    return FeedbackQueueItemResponse.model_validate(
+        item.to_dict(include_image=include_image)
+    )
+
+
+@router.get("/feedback-queue", response_model=list[FeedbackQueueItemResponse])
+async def list_feedback_queue(
+    include_images: bool = False,
+    container: AppContainer = Depends(get_container),
+) -> list[FeedbackQueueItemResponse]:
+    items = await run_in_threadpool(
+        container.feedback_queue_service.list_items,
+        include_images=include_images,
+    )
+    return [
+        _feedback_item_response(item, include_image=include_images)
+        for item in items
+    ]
+
+
+@router.post(
+    "/feedback-queue",
+    response_model=FeedbackQueueItemResponse,
+    status_code=201,
+)
+async def create_feedback_queue_item(
+    payload: FeedbackQueueItemRequest,
+    container: AppContainer = Depends(get_container),
+) -> FeedbackQueueItemResponse:
+    try:
+        item = await run_in_threadpool(
+            container.feedback_queue_service.create_item,
+            payload.model_dump(by_alias=False, exclude_none=True),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return _feedback_item_response(item, include_image=True)
+
+
+@router.delete("/feedback-queue/{item_id}", status_code=204)
+async def delete_feedback_queue_item(
+    item_id: str,
+    container: AppContainer = Depends(get_container),
+) -> Response:
+    try:
+        await run_in_threadpool(container.feedback_queue_service.delete_item, item_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Feedback item not found.") from exc
+    return Response(status_code=204)
+
+
+@router.delete("/feedback-queue", status_code=204)
+async def clear_feedback_queue(
+    container: AppContainer = Depends(get_container),
+) -> Response:
+    await run_in_threadpool(container.feedback_queue_service.clear)
+    return Response(status_code=204)
+
+
+@router.post(
+    "/feedback-queue/{item_id}/start-session",
+    response_model=ImageMessageAcceptedResponse,
+    status_code=202,
+)
+async def start_feedback_queue_session(
+    item_id: str,
+    payload: FeedbackQueueStartRequest,
+    container: AppContainer = Depends(get_container),
+) -> ImageMessageAcceptedResponse:
+    try:
+        item = await run_in_threadpool(
+            container.feedback_queue_service.get_item,
+            item_id,
+            include_image=False,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Feedback item not found.") from exc
+
+    if item.screenshot_file is None:
+        raise HTTPException(status_code=422, detail="Feedback item has no screenshot.")
+    source_image_path = Path(item.screenshot_file)
+    if not source_image_path.exists():
+        raise HTTPException(status_code=422, detail="Feedback screenshot is missing.")
+    with NamedTemporaryFile(delete=False, suffix=".png") as temp_image:
+        temp_image.write(source_image_path.read_bytes())
+        temp_image_path = Path(temp_image.name)
+
+    codex_options = await _validate_codex_options(
+        payload.codex_options.to_domain()
+        if payload.codex_options is not None
+        else None,
+        container=container,
+    )
+    audio_note = ""
+    if item.audio_mime_type or item.audio_duration_ms or item.audio_byte_length:
+        audio_note = (
+            "\nAudio attached: "
+            f"{item.audio_mime_type or 'unknown type'}, "
+            f"{item.audio_duration_ms or 0} ms, "
+            f"{item.audio_byte_length or 0} bytes."
+        )
+    message = payload.message or (
+        "Use this Ambientando Calendar feedback screenshot and note to make "
+        "the requested UI/app change.\n\n"
+        f"Feedback: {item.comment}\n"
+        f"Selection bounds: {item.selection_bounds}"
+        f"{audio_note}"
+    )
+    should_cleanup_temp_image = True
+    try:
+        submission = await run_in_threadpool(
+            container.message_service.submit_image_message,
+            str(temp_image_path),
+            filename=f"{item.id}.png",
+            content_type=item.screenshot_mime_type,
+            message=message,
+            session_id=payload.session_id,
+            workspace_path=payload.workspace_path,
+            codex_options=codex_options,
+        )
+        should_cleanup_temp_image = False
+        await run_in_threadpool(container.feedback_queue_service.mark_submitted, item_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except UnsupportedDocumentError as exc:
+        raise HTTPException(status_code=415, detail=str(exc)) from exc
+    finally:
+        if should_cleanup_temp_image:
+            temp_image_path.unlink(missing_ok=True)
+
+    return ImageMessageAcceptedResponse.from_domain(
+        submission.job,
+        attached_image_name=submission.attached_image_name,
+    )
 
 
 @router.get("/codex/tooling", response_model=CodexToolingResponse)

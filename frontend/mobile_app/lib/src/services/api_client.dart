@@ -8,6 +8,7 @@ import '../models/agent_configuration.dart';
 import '../models/agent_profile.dart';
 import '../models/chat_message.dart';
 import '../models/codex_tooling.dart';
+import '../models/feedback_queue_item.dart';
 import '../models/server_capabilities.dart';
 import '../models/session_detail.dart';
 import '../models/chat_session_summary.dart';
@@ -500,6 +501,70 @@ class ApiClient {
 
     final payload = jsonDecode(response.body) as Map<String, dynamic>;
     return JobStatusResponse.fromJson(payload);
+  }
+
+  Future<List<FeedbackQueueItem>> listFeedbackQueue({
+    bool includeImages = false,
+  }) async {
+    final uri = Uri.parse('$baseUrl/feedback-queue').replace(
+      queryParameters: <String, String>{
+        if (includeImages) 'include_images': 'true',
+      },
+    );
+    final response = await _client.get(uri);
+
+    if (response.statusCode != 200) {
+      throw Exception('Failed to list feedback queue: ${response.body}');
+    }
+
+    final payload = jsonDecode(response.body) as List<dynamic>;
+    return payload
+        .map((item) => FeedbackQueueItem.fromJson(item as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<void> deleteFeedbackQueueItem(String id) async {
+    final response =
+        await _client.delete(Uri.parse('$baseUrl/feedback-queue/$id'));
+    if (response.statusCode != 204) {
+      throw Exception('Failed to delete feedback item: ${response.body}');
+    }
+  }
+
+  Future<void> clearFeedbackQueue() async {
+    final response = await _client.delete(Uri.parse('$baseUrl/feedback-queue'));
+    if (response.statusCode != 204) {
+      throw Exception('Failed to clear feedback queue: ${response.body}');
+    }
+  }
+
+  Future<JobStatusResponse> startFeedbackQueueSession(
+    String id, {
+    String? message,
+    String? sessionId,
+    String? workspacePath,
+    CodexRunOptions? codexRunOptions,
+  }) async {
+    final response = await _client.post(
+      Uri.parse('$baseUrl/feedback-queue/$id/start-session'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode(<String, dynamic>{
+        if (message != null && message.trim().isNotEmpty)
+          'message': message.trim(),
+        if (sessionId != null) 'session_id': sessionId,
+        if (workspacePath != null) 'workspace_path': workspacePath,
+        if (codexRunOptions != null && !codexRunOptions.isEmpty)
+          'codex_options': codexRunOptions.toJson(),
+      }),
+    );
+
+    if (response.statusCode != 202) {
+      throw Exception('Failed to start feedback session: ${response.body}');
+    }
+
+    return JobStatusResponse.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
   }
 
   Future<JobStatusResponse> sendDocumentMessage(

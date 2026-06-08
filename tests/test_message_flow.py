@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import base64
 import threading
 import time
 from datetime import datetime, timedelta, timezone
@@ -584,6 +585,23 @@ def build_image_client() -> TestClient:
         execution_timeout_seconds=10,
         poll_interval_seconds=0,
         audio_transcription_backend="auto",
+    )
+    app = create_app(settings)
+    return TestClient(app)
+
+
+def build_feedback_queue_client(data_dir: Path) -> TestClient:
+    settings = Settings(
+        codex_command="python3 tests/fixtures/fake_codex_session.py",
+        codex_use_exec=True,
+        projects_root="..",
+        chat_store_backend="memory",
+        execution_timeout_seconds=10,
+        poll_interval_seconds=0,
+        audio_transcription_backend="auto",
+        feedback_queue_path=str(data_dir / "feedback_queue.json"),
+        feedback_image_dir=str(data_dir / "feedback_images"),
+        feedback_audio_dir=str(data_dir / "feedback_audio"),
     )
     app = create_app(settings)
     return TestClient(app)
@@ -6132,6 +6150,76 @@ def test_image_message_flow_accepts_image_uploads() -> None:
     assert "What does this show?" in job["response"]
     assert "[images: " in job["response"]
     assert "diagram.png" in job["response"]
+
+
+def test_feedback_queue_stores_and_deletes_items(tmp_path: Path) -> None:
+    client = build_feedback_queue_client(tmp_path)
+
+    create_response = client.post(
+        "/feedback-queue",
+        json={
+            "id": "feedback-1",
+            "sourceApp": "ambientando-calendar",
+            "comment": "Make this button bigger",
+            "screenshotPngBase64": base64.b64encode(b"fake png").decode("ascii"),
+            "selectionPoints": [{"x": 1, "y": 2}, {"x": 3, "y": 4}],
+            "selectionBounds": {"left": 1, "top": 2, "width": 2, "height": 2},
+            "audioMimeType": "audio/webm",
+            "audioDurationMs": 1200,
+            "audioByteLength": 3,
+            "audioBase64": base64.b64encode(b"\x01\x02\x03").decode("ascii"),
+        },
+    )
+
+    assert create_response.status_code == 201
+    created = create_response.json()
+    assert created["id"] == "feedback-1"
+    assert created["source_app"] == "ambientando-calendar"
+    assert created["has_screenshot"] is True
+    assert created["screenshot_png_base64"] == base64.b64encode(b"fake png").decode("ascii")
+    assert created["has_audio"] is True
+    assert created["audio_mime_type"] == "audio/webm"
+    assert created["audio_duration_ms"] == 1200
+    assert created["audio_byte_length"] == 3
+    assert created["audio_base64"] == base64.b64encode(b"\x01\x02\x03").decode("ascii")
+
+    list_response = client.get("/feedback-queue?include_images=true")
+    assert list_response.status_code == 200
+    items = list_response.json()
+    assert len(items) == 1
+    assert items[0]["comment"] == "Make this button bigger"
+    assert items[0]["audio_base64"] == base64.b64encode(b"\x01\x02\x03").decode("ascii")
+
+    delete_response = client.delete("/feedback-queue/feedback-1")
+    assert delete_response.status_code == 204
+    assert client.get("/feedback-queue").json() == []
+    assert not any((tmp_path / "feedback_images").glob("*"))
+    assert not any((tmp_path / "feedback_audio").glob("*"))
+
+
+def test_feedback_queue_item_can_start_codex_image_session(tmp_path: Path) -> None:
+    client = build_feedback_queue_client(tmp_path)
+    client.post(
+        "/feedback-queue",
+        json={
+            "id": "feedback-start",
+            "sourceApp": "ambientando-calendar",
+            "comment": "Remove this card",
+            "screenshotPngBase64": base64.b64encode(b"fake png").decode("ascii"),
+            "selectionBounds": {"left": 10, "top": 20, "width": 30, "height": 40},
+        },
+    )
+
+    start_response = client.post("/feedback-queue/feedback-start/start-session", json={})
+
+    assert start_response.status_code == 202
+    payload = start_response.json()
+    assert payload["attached_image_name"] == "feedback-start.png"
+    job = wait_for_job(client, payload["job_id"])
+    assert job["status"] == "completed"
+    assert "Remove this card" in job["message"]
+    assert "feedback-start.png" in job["response"]
+    assert client.get("/feedback-queue").json()[0]["status"] == "submitted"
 
 
 def test_document_message_flow_rejects_image_uploads() -> None:
