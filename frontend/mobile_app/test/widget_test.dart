@@ -60,6 +60,29 @@ void main() {
     expect(find.byIcon(Icons.download_for_offline_outlined), findsNothing);
   });
 
+  testWidgets('surfaces pending feedback count in the app bar', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ChatScreen(
+          initialApiBaseUrl: 'http://localhost:8000',
+          notificationService: const NoopChatNotificationService(),
+          enableServerBootstrap: false,
+          feedbackQueueCountLoaderOverride: (_) async => 2,
+        ),
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pump();
+
+    expect(find.textContaining('2 feedback pending'), findsOneWidget);
+    expect(find.byIcon(Icons.feedback_outlined), findsOneWidget);
+    expect(find.text('2'), findsOneWidget);
+  });
+
   testWidgets('renders assistant options as quick actions', (tester) async {
     await tester.pumpWidget(
       MaterialApp(

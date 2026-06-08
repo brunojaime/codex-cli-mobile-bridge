@@ -78,6 +78,7 @@ class ChatScreen extends StatefulWidget {
     this.initialSidebarWorkspaces = const <Workspace>[],
     this.initialCodexTooling,
     this.codexMcpAppInstallerOverride,
+    this.feedbackQueueCountLoaderOverride,
   });
 
   final String initialApiBaseUrl;
@@ -89,6 +90,7 @@ class ChatScreen extends StatefulWidget {
   final CodexToolingSnapshot? initialCodexTooling;
   final Future<CodexToolingSnapshot?> Function(CodexMcpApp app)?
       codexMcpAppInstallerOverride;
+  final Future<int> Function(String baseUrl)? feedbackQueueCountLoaderOverride;
 
   @override
   State<ChatScreen> createState() => _ChatScreenState();
@@ -122,6 +124,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   bool _isUpdatingFilteredMessagesView = false;
   String? _filteredMessagesViewErrorText;
   _ChatBodyView _chatBodyView = _ChatBodyView.conversation;
+  int _feedbackQueueCount = 0;
+  bool _isRefreshingFeedbackQueueCount = false;
   static const double _compactAppBarBreakpoint = 640;
 
   @override
@@ -148,6 +152,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         _initializeServerProfiles();
       });
     }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(_refreshFeedbackQueueCount());
+    });
   }
 
   @override
@@ -167,6 +174,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       _chatController.handleAppResumed();
+      unawaited(_refreshFeedbackQueueCount());
     }
   }
 
@@ -1589,6 +1597,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         });
       }
       _replyPlaybackService.setCapabilities(capabilities);
+      unawaited(_refreshFeedbackQueueCount());
       didConnect = true;
     } catch (error) {
       _replyPlaybackService.setCapabilities(null);
@@ -1608,6 +1617,26 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         ..dispose();
     }
     return didConnect;
+  }
+
+  Future<void> _refreshFeedbackQueueCount() async {
+    if (_isRefreshingFeedbackQueueCount) return;
+    _isRefreshingFeedbackQueueCount = true;
+    final baseUrl = _activeServer?.baseUrl ?? widget.initialApiBaseUrl;
+    try {
+      final countLoader = widget.feedbackQueueCountLoaderOverride;
+      final count = countLoader != null
+          ? await countLoader(baseUrl)
+          : (await ApiClient(baseUrl: baseUrl).listFeedbackQueue()).length;
+      if (mounted) {
+        setState(() => _feedbackQueueCount = count);
+      }
+    } catch (_) {
+      // Feedback should stay opportunistic; connection errors are surfaced
+      // when the user opens the queue.
+    } finally {
+      _isRefreshingFeedbackQueueCount = false;
+    }
   }
 
   Future<void> _refreshCodexTooling({bool showLoading = false}) async {
@@ -1944,6 +1973,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           ? 'Server: ${_activeServer!.name}'
           : 'Commands execute on your local machine',
     ];
+    if (_feedbackQueueCount > 0) {
+      segments.add('$_feedbackQueueCount feedback pending');
+    }
     final currentSession = _chatController.currentSession;
     if (currentSession != null) {
       segments.add(currentSession.workspaceName);
@@ -2005,7 +2037,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       primaryActions.add(
         PopupMenuButton<_AppBarOverflowAction>(
           tooltip: 'More actions',
-          icon: const Icon(Icons.more_vert),
+          icon: _buildFeedbackBadgedIcon(Icons.more_vert),
           onSelected: (action) {
             unawaited(_handleAppBarOverflowAction(action));
           },
@@ -2033,7 +2065,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             _buildAppBarOverflowMenuItem(
               action: _AppBarOverflowAction.feedbackQueue,
               icon: Icons.feedback_outlined,
-              label: 'Feedback queue',
+              label: _feedbackQueueCount > 0
+                  ? 'Feedback queue ($_feedbackQueueCount)'
+                  : 'Feedback queue',
             ),
             _buildAppBarOverflowMenuItem(
               action: _AppBarOverflowAction.saveCurrentAgent,
@@ -2110,7 +2144,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         onPressed: () async {
           await _openFeedbackQueueSheet();
         },
-        icon: const Icon(Icons.feedback_outlined),
+        icon: _buildFeedbackBadgedIcon(Icons.feedback_outlined),
         tooltip: 'Feedback queue',
       ),
       IconButton(
@@ -2174,6 +2208,27 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     );
   }
 
+  Widget _buildFeedbackBadgedIcon(IconData icon) {
+    return Stack(
+      clipBehavior: Clip.none,
+      children: <Widget>[
+        Icon(icon),
+        if (_feedbackQueueCount > 0)
+          Positioned(
+            right: -8,
+            top: -8,
+            child: _MenuStatusBadge(
+              label: _feedbackQueueCount > 99
+                  ? '99+'
+                  : _feedbackQueueCount.toString(),
+              backgroundColor: const Color(0xFFFF6B6B),
+              foregroundColor: Colors.white,
+            ),
+          ),
+      ],
+    );
+  }
+
   Future<void> _handleAppBarOverflowAction(_AppBarOverflowAction action) async {
     switch (action) {
       case _AppBarOverflowAction.conversationContext:
@@ -2225,6 +2280,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     List<FeedbackQueueItem> items;
     try {
       items = await client.listFeedbackQueue(includeImages: true);
+      if (mounted) {
+        setState(() => _feedbackQueueCount = items.length);
+      }
     } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -2243,6 +2301,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             Future<void> reload() async {
               final refreshed =
                   await client.listFeedbackQueue(includeImages: true);
+              if (mounted) {
+                setState(() => _feedbackQueueCount = refreshed.length);
+              }
               if (context.mounted) {
                 setSheetState(() => items = refreshed);
               }
