@@ -139,6 +139,61 @@ void main() {
     expect(find.text('Feedback queue (1)'), findsNothing);
   });
 
+  testWidgets('hides project feedback action when no queue items match', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    final items = <FeedbackQueueItem>[
+      _feedbackItem(
+        id: 'feedback-unrelated',
+        sourceApp: 'smart-nienfos',
+        comment: 'Otro proyecto',
+      ),
+      _feedbackItem(
+        id: 'feedback-missing-source',
+        sourceApp: '',
+        comment: 'Sin source app',
+      ),
+    ];
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ChatScreen(
+          initialApiBaseUrl: 'http://localhost:8000',
+          notificationService: const NoopChatNotificationService(),
+          enableServerBootstrap: false,
+          initialSidebarWorkspaces: const <Workspace>[
+            Workspace(
+              name: 'Ambientando Calendar',
+              path: '/workspace/ambientando-calendar',
+            ),
+          ],
+          feedbackQueueListLoaderOverride: (_, {required includeImages}) async {
+            return items;
+          },
+        ),
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pump();
+
+    await tester.tap(find.byTooltip('Projects'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Ambientando Calendar'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('feedback'), findsNothing);
+    expect(
+      find.widgetWithText(FilledButton, 'Feedback queue (1)'),
+      findsNothing,
+    );
+
+    await tester
+        .tap(find.byTooltip('Project actions for Ambientando Calendar'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Feedback queue'), findsNothing);
+  });
+
   testWidgets(
     'feedback queue stages only selected project items in the composer',
     (tester) async {
