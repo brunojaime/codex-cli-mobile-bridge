@@ -67,11 +67,28 @@ void main() {
     tester,
   ) async {
     SharedPreferences.setMockInitialValues(<String, Object>{});
-    final item = _feedbackItem(
-      id: 'feedback-1',
-      sourceApp: 'ambientando-calendar',
-      comment: 'Cambiar este bloque',
-    );
+    final items = <FeedbackQueueItem>[
+      _feedbackItem(
+        id: 'feedback-name',
+        sourceApp: 'ambientando-calendar',
+        comment: 'Matches by normalized project name',
+      ),
+      _feedbackItem(
+        id: 'feedback-path',
+        sourceApp: 'Ambientando Calendar',
+        comment: 'Matches by normalized path/name variant',
+      ),
+      _feedbackItem(
+        id: 'feedback-unrelated',
+        sourceApp: 'otra-app',
+        comment: 'No debe aparecer en Ambientando',
+      ),
+      _feedbackItem(
+        id: 'feedback-unknown',
+        sourceApp: '',
+        comment: 'No debe matchear sin source app',
+      ),
+    ];
 
     await tester.pumpWidget(
       MaterialApp(
@@ -84,9 +101,13 @@ void main() {
               name: 'Ambientando Calendar',
               path: '/workspace/ambientando-calendar',
             ),
+            Workspace(
+              name: 'Other Project',
+              path: '/workspace/other-project',
+            ),
           ],
           feedbackQueueListLoaderOverride: (_, {required includeImages}) async {
-            return <FeedbackQueueItem>[item];
+            return items;
           },
         ),
       ),
@@ -100,75 +121,100 @@ void main() {
     await tester.tap(find.byTooltip('Projects'));
     await tester.pumpAndSettle();
 
-    expect(find.text('1 feedback'), findsOneWidget);
+    expect(find.text('2 feedback'), findsOneWidget);
     await tester
         .tap(find.byTooltip('Project actions for Ambientando Calendar'));
     await tester.pumpAndSettle();
-    expect(find.text('Feedback queue (1)'), findsOneWidget);
+    expect(find.text('Feedback queue (2)'), findsOneWidget);
+    expect(
+      find.byTooltip('Project actions for Other Project'),
+      findsOneWidget,
+    );
+    expect(find.text('Feedback queue (1)'), findsNothing);
   });
 
-  testWidgets('feedback queue stages selected project items in the composer', (
-    tester,
-  ) async {
-    SharedPreferences.setMockInitialValues(<String, Object>{});
-    final fakeApiClient = _FakeApiClient();
-    final controller = ChatController(
-      apiClient: fakeApiClient,
-      notificationService: const NoopChatNotificationService(),
-    );
-    final item = _feedbackItem(
-      id: 'feedback-1',
-      sourceApp: 'ambientando-calendar',
-      comment: 'Cambiar este bloque',
-    );
+  testWidgets(
+    'feedback queue stages only selected project items in the composer',
+    (tester) async {
+      SharedPreferences.setMockInitialValues(<String, Object>{});
+      final fakeApiClient = _FakeApiClient();
+      final controller = ChatController(
+        apiClient: fakeApiClient,
+        notificationService: const NoopChatNotificationService(),
+      );
+      final selectedItem = _feedbackItem(
+        id: 'feedback-selected',
+        sourceApp: 'ambientando-calendar',
+        comment: 'Cambiar este bloque',
+      );
+      final uncheckedItem = _feedbackItem(
+        id: 'feedback-unchecked',
+        sourceApp: 'ambientando-calendar',
+        comment: 'No incluir este comentario',
+      );
+      final unrelatedItem = _feedbackItem(
+        id: 'feedback-other',
+        sourceApp: 'other-project',
+        comment: 'No incluir otro proyecto',
+      );
 
-    await tester.pumpWidget(
-      MaterialApp(
-        home: ChatScreen(
-          initialApiBaseUrl: 'http://localhost:8000',
-          notificationService: const NoopChatNotificationService(),
-          controllerOverride: controller,
-          enableServerBootstrap: false,
-          initialSidebarWorkspaces: const <Workspace>[
-            Workspace(
-              name: 'Ambientando Calendar',
-              path: '/workspace/ambientando-calendar',
-            ),
-          ],
-          feedbackQueueListLoaderOverride: (_, {required includeImages}) async {
-            return <FeedbackQueueItem>[item];
-          },
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ChatScreen(
+            initialApiBaseUrl: 'http://localhost:8000',
+            notificationService: const NoopChatNotificationService(),
+            controllerOverride: controller,
+            enableServerBootstrap: false,
+            initialSidebarWorkspaces: const <Workspace>[
+              Workspace(
+                name: 'Ambientando Calendar',
+                path: '/workspace/ambientando-calendar',
+              ),
+            ],
+            feedbackQueueListLoaderOverride: (_,
+                {required includeImages}) async {
+              return <FeedbackQueueItem>[
+                selectedItem,
+                uncheckedItem,
+                unrelatedItem,
+              ];
+            },
+          ),
         ),
-      ),
-    );
-    await tester.pump(const Duration(milliseconds: 100));
-    await tester.pump();
+      );
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump();
 
-    await tester.tap(find.byTooltip('Projects'));
-    await tester.pumpAndSettle();
-    await tester
-        .tap(find.byTooltip('Project actions for Ambientando Calendar'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Feedback queue (1)'));
-    await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('Projects'));
+      await tester.pumpAndSettle();
+      await tester
+          .tap(find.byTooltip('Project actions for Ambientando Calendar'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Feedback queue (2)'));
+      await tester.pumpAndSettle();
 
-    expect(find.text('Generator only'), findsNothing);
-    expect(find.text('Generator + Reviewer'), findsNothing);
-    expect(find.text('Select all'), findsOneWidget);
-    await tester.tap(find.text('Select all'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Next'));
-    await tester.pumpAndSettle();
+      expect(find.text('Generator only'), findsNothing);
+      expect(find.text('Generator + Reviewer'), findsNothing);
+      expect(find.text('Select all'), findsOneWidget);
+      await tester
+          .tap(find.widgetWithText(CheckboxListTile, 'Cambiar este bloque'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Next'));
+      await tester.pumpAndSettle();
 
-    expect(controller.currentSession?.workspacePath,
-        '/workspace/ambientando-calendar');
-    expect(find.textContaining('Feedback queue for Ambientando Calendar'),
-        findsOneWidget);
-    expect(find.textContaining('Cambiar este bloque'), findsOneWidget);
-    expect(find.text('1 selected'), findsOneWidget);
+      expect(controller.currentSession?.workspacePath,
+          '/workspace/ambientando-calendar');
+      expect(find.textContaining('Feedback queue for Ambientando Calendar'),
+          findsOneWidget);
+      expect(find.textContaining('Cambiar este bloque'), findsOneWidget);
+      expect(find.text('feedback-1-feedback-selected.png'), findsOneWidget);
+      expect(find.textContaining('No incluir este comentario'), findsNothing);
+      expect(find.textContaining('No incluir otro proyecto'), findsNothing);
+      expect(find.text('1 selected'), findsOneWidget);
 
-    controller.dispose();
-  });
+      controller.dispose();
+    },
+  );
 
   testWidgets('renders assistant options as quick actions', (tester) async {
     await tester.pumpWidget(
