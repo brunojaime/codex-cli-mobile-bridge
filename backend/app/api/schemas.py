@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -105,6 +105,7 @@ class FeedbackQueueStartRequest(BaseModel):
     message: str | None = Field(default=None, max_length=10000)
     session_id: str | None = None
     workspace_path: str | None = None
+    target_mode: Literal["generator_only", "generator_reviewer"] = "generator_only"
     codex_options: "CodexRunOptionsRequest | None" = None
 
 

@@ -7,6 +7,7 @@ import 'package:codex_mobile_frontend/src/models/agent_profile.dart';
 import 'package:codex_mobile_frontend/src/models/chat_message.dart';
 import 'package:codex_mobile_frontend/src/models/chat_session_summary.dart';
 import 'package:codex_mobile_frontend/src/models/codex_tooling.dart';
+import 'package:codex_mobile_frontend/src/models/feedback_queue_item.dart';
 import 'package:codex_mobile_frontend/src/models/job_status_response.dart';
 import 'package:codex_mobile_frontend/src/models/session_detail.dart';
 import 'package:codex_mobile_frontend/src/screens/chat_screen.dart';
@@ -81,6 +82,71 @@ void main() {
     expect(find.textContaining('2 feedback pending'), findsOneWidget);
     expect(find.byIcon(Icons.feedback_outlined), findsOneWidget);
     expect(find.text('2'), findsOneWidget);
+  });
+
+  testWidgets('feedback queue start uses the selected target mode', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    FeedbackQueueTargetMode? startedMode;
+    const transparentPng =
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=';
+    final item = FeedbackQueueItem(
+      id: 'feedback-1',
+      sourceApp: 'ambientando-calendar',
+      comment: 'Cambiar este bloque',
+      createdAt: DateTime.utc(2026, 6, 8),
+      status: 'pending',
+      hasScreenshot: true,
+      screenshotPngBase64: transparentPng,
+      selectionPoints: const <Map<String, double>>[],
+      selectionBounds: const <String, double>{},
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ChatScreen(
+          initialApiBaseUrl: 'http://localhost:8000',
+          notificationService: const NoopChatNotificationService(),
+          enableServerBootstrap: false,
+          feedbackQueueCountLoaderOverride: (_) async => 1,
+          feedbackQueueListLoaderOverride: (_, {required includeImages}) async {
+            return <FeedbackQueueItem>[item];
+          },
+          feedbackQueueStartOverride: (
+            _,
+            __, {
+            sessionId,
+            workspacePath,
+            required targetMode,
+            codexRunOptions,
+          }) async {
+            startedMode = targetMode;
+            return const JobStatusResponse(
+              jobId: 'job-1',
+              sessionId: 'session-1',
+              status: 'pending',
+              elapsedSeconds: 0,
+            );
+          },
+          acceptedExternalJobRegistrarOverride: (_) async {},
+        ),
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pump();
+
+    await tester.tap(find.byIcon(Icons.feedback_outlined));
+    await tester.pumpAndSettle();
+    expect(find.text('Generator only'), findsOneWidget);
+    expect(find.text('Generator + Reviewer'), findsOneWidget);
+
+    await tester.tap(find.text('Generator + Reviewer'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Start Codex chat'));
+    await tester.pumpAndSettle();
+
+    expect(startedMode, FeedbackQueueTargetMode.generatorReviewer);
   });
 
   testWidgets('renders assistant options as quick actions', (tester) async {

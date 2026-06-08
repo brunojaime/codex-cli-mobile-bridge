@@ -6217,9 +6217,59 @@ def test_feedback_queue_item_can_start_codex_image_session(tmp_path: Path) -> No
     assert payload["attached_image_name"] == "feedback-start.png"
     job = wait_for_job(client, payload["job_id"])
     assert job["status"] == "completed"
+    assert "Run target: Generator only." in job["message"]
     assert "Remove this card" in job["message"]
     assert "feedback-start.png" in job["response"]
     assert client.get("/feedback-queue").json()[0]["status"] == "submitted"
+
+
+def test_feedback_queue_start_session_accepts_explicit_reviewer_target(
+    tmp_path: Path,
+) -> None:
+    client = build_feedback_queue_client(tmp_path)
+    client.post(
+        "/feedback-queue",
+        json={
+            "id": "feedback-reviewer",
+            "sourceApp": "ambientando-calendar",
+            "comment": "Check this flow with reviewer",
+            "screenshotPngBase64": base64.b64encode(b"fake png").decode("ascii"),
+            "selectionBounds": {"left": 10, "top": 20, "width": 30, "height": 40},
+        },
+    )
+
+    start_response = client.post(
+        "/feedback-queue/feedback-reviewer/start-session",
+        json={"target_mode": "generator_reviewer"},
+    )
+
+    assert start_response.status_code == 202
+    job = wait_for_job(client, start_response.json()["job_id"])
+    assert job["status"] == "completed"
+    assert "Run target: Generator + Reviewer." in job["message"]
+    assert "Check this flow with reviewer" in job["message"]
+
+
+def test_feedback_queue_start_session_rejects_invalid_target_mode(
+    tmp_path: Path,
+) -> None:
+    client = build_feedback_queue_client(tmp_path)
+    client.post(
+        "/feedback-queue",
+        json={
+            "id": "feedback-invalid-target",
+            "sourceApp": "ambientando-calendar",
+            "comment": "Invalid target",
+            "screenshotPngBase64": base64.b64encode(b"fake png").decode("ascii"),
+        },
+    )
+
+    start_response = client.post(
+        "/feedback-queue/feedback-invalid-target/start-session",
+        json={"target_mode": "reviewer_only"},
+    )
+
+    assert start_response.status_code == 422
 
 
 def test_document_message_flow_rejects_image_uploads() -> None:

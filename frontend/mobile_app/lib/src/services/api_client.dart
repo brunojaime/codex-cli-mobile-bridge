@@ -543,6 +543,7 @@ class ApiClient {
     String? message,
     String? sessionId,
     String? workspacePath,
+    FeedbackQueueTargetMode targetMode = FeedbackQueueTargetMode.generatorOnly,
     CodexRunOptions? codexRunOptions,
   }) async {
     final response = await _client.post(
@@ -553,6 +554,7 @@ class ApiClient {
           'message': message.trim(),
         if (sessionId != null) 'session_id': sessionId,
         if (workspacePath != null) 'workspace_path': workspacePath,
+        'target_mode': targetMode.apiValue,
         if (codexRunOptions != null && !codexRunOptions.isEmpty)
           'codex_options': codexRunOptions.toJson(),
       }),

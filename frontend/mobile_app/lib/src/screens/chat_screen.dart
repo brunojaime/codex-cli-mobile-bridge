@@ -17,6 +17,7 @@ import '../models/agent_profile.dart';
 import '../models/codex_tooling.dart';
 import '../models/server_capabilities.dart';
 import '../models/feedback_queue_item.dart';
+import '../models/job_status_response.dart';
 import '../models/server_health.dart';
 import '../models/server_profile.dart';
 import '../models/session_detail.dart';
@@ -79,6 +80,9 @@ class ChatScreen extends StatefulWidget {
     this.initialCodexTooling,
     this.codexMcpAppInstallerOverride,
     this.feedbackQueueCountLoaderOverride,
+    this.feedbackQueueListLoaderOverride,
+    this.feedbackQueueStartOverride,
+    this.acceptedExternalJobRegistrarOverride,
   });
 
   final String initialApiBaseUrl;
@@ -91,6 +95,20 @@ class ChatScreen extends StatefulWidget {
   final Future<CodexToolingSnapshot?> Function(CodexMcpApp app)?
       codexMcpAppInstallerOverride;
   final Future<int> Function(String baseUrl)? feedbackQueueCountLoaderOverride;
+  final Future<List<FeedbackQueueItem>> Function(
+    String baseUrl, {
+    required bool includeImages,
+  })? feedbackQueueListLoaderOverride;
+  final Future<JobStatusResponse> Function(
+    String baseUrl,
+    String id, {
+    String? sessionId,
+    String? workspacePath,
+    required FeedbackQueueTargetMode targetMode,
+    CodexRunOptions? codexRunOptions,
+  })? feedbackQueueStartOverride;
+  final Future<void> Function(JobStatusResponse accepted)?
+      acceptedExternalJobRegistrarOverride;
 
   @override
   State<ChatScreen> createState() => _ChatScreenState();
@@ -1639,6 +1657,54 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     }
   }
 
+  Future<List<FeedbackQueueItem>> _listFeedbackQueue({
+    required bool includeImages,
+  }) {
+    final baseUrl = _activeServer?.baseUrl ?? widget.initialApiBaseUrl;
+    final override = widget.feedbackQueueListLoaderOverride;
+    if (override != null) {
+      return override(baseUrl, includeImages: includeImages);
+    }
+    return ApiClient(baseUrl: baseUrl).listFeedbackQueue(
+      includeImages: includeImages,
+    );
+  }
+
+  Future<JobStatusResponse> _startFeedbackQueueSession(
+    String id, {
+    required FeedbackQueueTargetMode targetMode,
+  }) {
+    final baseUrl = _activeServer?.baseUrl ?? widget.initialApiBaseUrl;
+    final override = widget.feedbackQueueStartOverride;
+    if (override != null) {
+      return override(
+        baseUrl,
+        id,
+        sessionId: _chatController.currentSession?.id,
+        workspacePath: _chatController.currentSession?.workspacePath,
+        targetMode: targetMode,
+        codexRunOptions: _currentComposerDraft().codexRunOptions,
+      );
+    }
+    return ApiClient(baseUrl: baseUrl).startFeedbackQueueSession(
+      id,
+      sessionId: _chatController.currentSession?.id,
+      workspacePath: _chatController.currentSession?.workspacePath,
+      targetMode: targetMode,
+      codexRunOptions: _currentComposerDraft().codexRunOptions,
+    );
+  }
+
+  FeedbackQueueTargetMode _defaultFeedbackQueueTargetMode() {
+    final reviewer = _chatController.currentSession?.agentConfiguration.byId(
+      AgentId.reviewer,
+    );
+    if (reviewer != null && reviewer.enabled && reviewer.maxTurns > 0) {
+      return FeedbackQueueTargetMode.generatorReviewer;
+    }
+    return FeedbackQueueTargetMode.generatorOnly;
+  }
+
   Future<void> _refreshCodexTooling({bool showLoading = false}) async {
     final activeServer = _activeServer;
     if (activeServer == null) {
@@ -2279,7 +2345,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     );
     List<FeedbackQueueItem> items;
     try {
-      items = await client.listFeedbackQueue(includeImages: true);
+      items = await _listFeedbackQueue(includeImages: true);
       if (mounted) {
         setState(() => _feedbackQueueCount = items.length);
       }
@@ -2292,6 +2358,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     }
     if (!mounted) return;
 
+    final targetModes = <String, FeedbackQueueTargetMode>{
+      for (final item in items) item.id: _defaultFeedbackQueueTargetMode(),
+    };
+
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -2299,8 +2369,13 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         return StatefulBuilder(
           builder: (context, setSheetState) {
             Future<void> reload() async {
-              final refreshed =
-                  await client.listFeedbackQueue(includeImages: true);
+              final refreshed = await _listFeedbackQueue(includeImages: true);
+              for (final item in refreshed) {
+                targetModes.putIfAbsent(
+                  item.id,
+                  _defaultFeedbackQueueTargetMode,
+                );
+              }
               if (mounted) {
                 setState(() => _feedbackQueueCount = refreshed.length);
               }
@@ -2369,6 +2444,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                             itemBuilder: (context, index) {
                               final item = items[index];
                               final imageBytes = item.screenshotBytes;
+                              final targetMode = targetModes[item.id] ??
+                                  _defaultFeedbackQueueTargetMode();
                               return Card(
                                 margin: EdgeInsets.zero,
                                 child: Padding(
@@ -2401,31 +2478,51 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                         '${item.hasAudio ? ' · audio' : ''}',
                                       ),
                                       const SizedBox(height: 10),
+                                      SegmentedButton<FeedbackQueueTargetMode>(
+                                        showSelectedIcon: false,
+                                        segments: FeedbackQueueTargetMode.values
+                                            .map(
+                                              (mode) => ButtonSegment<
+                                                  FeedbackQueueTargetMode>(
+                                                value: mode,
+                                                label: Text(mode.label),
+                                              ),
+                                            )
+                                            .toList(growable: false),
+                                        selected: <FeedbackQueueTargetMode>{
+                                          targetMode,
+                                        },
+                                        onSelectionChanged: (selection) {
+                                          setSheetState(() {
+                                            targetModes[item.id] =
+                                                selection.first;
+                                          });
+                                        },
+                                      ),
+                                      const SizedBox(height: 10),
                                       Row(
                                         children: <Widget>[
                                           Expanded(
                                             child: FilledButton.icon(
                                               onPressed: item.hasScreenshot
                                                   ? () async {
-                                                      final accepted = await client
-                                                          .startFeedbackQueueSession(
+                                                      final accepted =
+                                                          await _startFeedbackQueueSession(
                                                         item.id,
-                                                        sessionId:
-                                                            _chatController
-                                                                .currentSession
-                                                                ?.id,
-                                                        workspacePath:
-                                                            _chatController
-                                                                .currentSession
-                                                                ?.workspacePath,
-                                                        codexRunOptions:
-                                                            _currentComposerDraft()
-                                                                .codexRunOptions,
+                                                        targetMode: targetMode,
                                                       );
-                                                      await _chatController
-                                                          .registerAcceptedExternalJob(
-                                                        accepted,
-                                                      );
+                                                      final registrar = widget
+                                                          .acceptedExternalJobRegistrarOverride;
+                                                      if (registrar != null) {
+                                                        await registrar(
+                                                          accepted,
+                                                        );
+                                                      } else {
+                                                        await _chatController
+                                                            .registerAcceptedExternalJob(
+                                                          accepted,
+                                                        );
+                                                      }
                                                       await reload();
                                                       if (!context.mounted) {
                                                         return;

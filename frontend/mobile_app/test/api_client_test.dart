@@ -1,5 +1,6 @@
 import 'package:codex_mobile_frontend/src/models/chat_session_summary.dart';
 import 'package:codex_mobile_frontend/src/models/codex_tooling.dart';
+import 'package:codex_mobile_frontend/src/models/feedback_queue_item.dart';
 import 'package:codex_mobile_frontend/src/models/session_detail.dart';
 import 'package:codex_mobile_frontend/src/services/api_client.dart';
 import 'package:codex_mobile_frontend/src/services/chat_notification_service.dart';
@@ -36,6 +37,27 @@ void main() {
         skillIds: <String>['skill-creator'],
         mcpServerIds: <String>['github'],
       ),
+    );
+  });
+
+  test('startFeedbackQueueSession includes explicit target mode', () async {
+    final client = ApiClient(
+      baseUrl: 'http://localhost:8000',
+      client: MockClient((request) async {
+        expect(request.method, 'POST');
+        expect(request.url.path, '/feedback-queue/feedback-1/start-session');
+        expect(request.body, contains('"target_mode":"generator_reviewer"'));
+        return http.Response(
+          '{"job_id":"job-1","session_id":"session-1","status":"pending","elapsed_seconds":0}',
+          202,
+          headers: <String, String>{'content-type': 'application/json'},
+        );
+      }),
+    );
+
+    await client.startFeedbackQueueSession(
+      'feedback-1',
+      targetMode: FeedbackQueueTargetMode.generatorReviewer,
     );
   });
 

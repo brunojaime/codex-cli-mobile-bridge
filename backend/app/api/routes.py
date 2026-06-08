@@ -316,9 +316,17 @@ async def start_feedback_queue_session(
             f"{item.audio_duration_ms or 0} ms, "
             f"{item.audio_byte_length or 0} bytes."
         )
+    target_instruction = (
+        "Generator only. Run the implementation generator for this feedback; "
+        "do not run a reviewer unless the user asks later."
+        if payload.target_mode == "generator_only"
+        else "Generator + Reviewer. Run the implementation generator for this "
+        "feedback and then run the reviewer on the generator result."
+    )
     message = payload.message or (
         "Use this Ambientando Calendar feedback screenshot and note to make "
         "the requested UI/app change.\n\n"
+        f"Run target: {target_instruction}\n"
         f"Feedback: {item.comment}\n"
         f"Selection bounds: {item.selection_bounds}"
         f"{audio_note}"

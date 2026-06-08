@@ -1,6 +1,21 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
+enum FeedbackQueueTargetMode {
+  generatorOnly,
+  generatorReviewer;
+
+  String get apiValue => switch (this) {
+        FeedbackQueueTargetMode.generatorOnly => 'generator_only',
+        FeedbackQueueTargetMode.generatorReviewer => 'generator_reviewer',
+      };
+
+  String get label => switch (this) {
+        FeedbackQueueTargetMode.generatorOnly => 'Generator only',
+        FeedbackQueueTargetMode.generatorReviewer => 'Generator + Reviewer',
+      };
+}
+
 class FeedbackQueueItem {
   const FeedbackQueueItem({
     required this.id,
