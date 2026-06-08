@@ -267,10 +267,105 @@ void main() {
       expect(find.textContaining('Feedback queue for Ambientando Calendar'),
           findsOneWidget);
       expect(find.textContaining('Cambiar este bloque'), findsOneWidget);
+      expect(
+        find.textContaining(
+          'The attached screenshot contains the user\'s drawn mark. Treat the marked area as the primary target of this feedback, and use the associated comment to understand the requested change.',
+        ),
+        findsOneWidget,
+      );
+      expect(find.textContaining('- source: ambientando-calendar'),
+          findsOneWidget);
+      expect(find.textContaining('- selection points: 2'), findsOneWidget);
       expect(find.text('feedback-1-feedback-selected.png'), findsOneWidget);
       expect(find.textContaining('No incluir este comentario'), findsNothing);
       expect(find.textContaining('No incluir otro proyecto'), findsNothing);
       expect(find.text('1 selected'), findsOneWidget);
+
+      controller.dispose();
+    },
+  );
+
+  testWidgets(
+    'feedback queue stages selected screenshots in order with marked-area context',
+    (tester) async {
+      SharedPreferences.setMockInitialValues(<String, Object>{});
+      final controller = ChatController(
+        apiClient: _FakeApiClient(),
+        notificationService: const NoopChatNotificationService(),
+      );
+      final firstItem = _feedbackItem(
+        id: 'feedback-first',
+        sourceApp: 'ambientando-calendar',
+        comment: 'Primer comentario',
+      );
+      final secondItem = _feedbackItem(
+        id: 'feedback-second',
+        sourceApp: 'ambientando-calendar',
+        comment: 'Segundo comentario',
+      );
+      final unrelatedItem = _feedbackItem(
+        id: 'feedback-other',
+        sourceApp: 'smart-nienfos',
+        comment: 'Comentario de otro proyecto',
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ChatScreen(
+            initialApiBaseUrl: 'http://localhost:8000',
+            notificationService: const NoopChatNotificationService(),
+            controllerOverride: controller,
+            enableServerBootstrap: false,
+            initialSidebarWorkspaces: const <Workspace>[
+              Workspace(
+                name: 'Ambientando Calendar',
+                path: '/workspace/ambientando-calendar',
+              ),
+            ],
+            feedbackQueueListLoaderOverride: (_,
+                {required includeImages}) async {
+              return <FeedbackQueueItem>[
+                firstItem,
+                secondItem,
+                unrelatedItem,
+              ];
+            },
+          ),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump();
+
+      await tester.tap(find.byTooltip('Projects'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Ambientando Calendar'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, 'Feedback queue (2)'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Select all'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Next'));
+      await tester.pumpAndSettle();
+
+      final composerText = _composerTextContaining(
+        tester,
+        'Feedback queue for Ambientando Calendar',
+      );
+      const markedAreaInstruction =
+          'The attached screenshot contains the user\'s drawn mark. Treat the marked area as the primary target of this feedback, and use the associated comment to understand the requested change.';
+      expect(_occurrences(composerText, markedAreaInstruction), 2);
+      expect(composerText, contains('1. Primer comentario'));
+      expect(composerText, contains('2. Segundo comentario'));
+      expect(composerText, contains('- source: ambientando-calendar'));
+      expect(composerText,
+          contains('- image attachment: feedback-1-feedback-first.png'));
+      expect(composerText,
+          contains('- image attachment: feedback-2-feedback-second.png'));
+      expect(composerText, isNot(contains('Comentario de otro proyecto')));
+      expect(find.text('feedback-1-feedback-first.png'), findsOneWidget);
+      expect(find.text('feedback-2-feedback-second.png'), findsOneWidget);
+      expect(find.textContaining('feedback-other'), findsNothing);
 
       controller.dispose();
     },
@@ -1642,6 +1737,22 @@ Built the draft.
 
     controller.dispose();
   });
+}
+
+String _composerTextContaining(WidgetTester tester, String needle) {
+  for (final editable in tester.widgetList<EditableText>(
+    find.byType(EditableText),
+  )) {
+    final text = editable.controller.text;
+    if (text.contains(needle)) {
+      return text;
+    }
+  }
+  throw StateError('No composer text contained "$needle".');
+}
+
+int _occurrences(String value, String needle) {
+  return RegExp(RegExp.escape(needle)).allMatches(value).length;
 }
 
 FeedbackQueueItem _feedbackItem({

@@ -2583,7 +2583,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             '- created: ${item.createdAt?.toIso8601String() ?? 'unknown'}')
         ..writeln('- selection bounds: ${item.selectionBounds}')
         ..writeln('- selection points: ${item.selectionPoints.length}')
-        ..writeln('- image attachment: feedback-${index + 1}-${item.id}.png');
+        ..writeln('- image attachment: feedback-${index + 1}-${item.id}.png')
+        ..writeln(
+          '- instruction: The attached screenshot contains the user\'s drawn mark. Treat the marked area as the primary target of this feedback, and use the associated comment to understand the requested change.',
+        );
       if (item.hasAudio ||
           item.audioMimeType != null ||
           item.audioDurationMs != null ||
