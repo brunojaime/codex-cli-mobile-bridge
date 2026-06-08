@@ -2446,6 +2446,12 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                               final imageBytes = item.screenshotBytes;
                               final targetMode = targetModes[item.id] ??
                                   _defaultFeedbackQueueTargetMode();
+                              final startLabel = switch (targetMode) {
+                                FeedbackQueueTargetMode.generatorOnly =>
+                                  'Start generator',
+                                FeedbackQueueTargetMode.generatorReviewer =>
+                                  'Start generator + reviewer',
+                              };
                               return Card(
                                 margin: EdgeInsets.zero,
                                 child: Padding(
@@ -2506,10 +2512,15 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                             child: FilledButton.icon(
                                               onPressed: item.hasScreenshot
                                                   ? () async {
+                                                      final selectedTargetMode =
+                                                          targetModes[
+                                                                  item.id] ??
+                                                              _defaultFeedbackQueueTargetMode();
                                                       final accepted =
                                                           await _startFeedbackQueueSession(
                                                         item.id,
-                                                        targetMode: targetMode,
+                                                        targetMode:
+                                                            selectedTargetMode,
                                                       );
                                                       final registrar = widget
                                                           .acceptedExternalJobRegistrarOverride;
@@ -2540,9 +2551,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                                   : null,
                                               icon:
                                                   const Icon(Icons.play_arrow),
-                                              label: const Text(
-                                                'Start Codex chat',
-                                              ),
+                                              label: Text(startLabel),
                                             ),
                                           ),
                                           IconButton(

@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import AliasChoices, BaseModel, Field, model_validator
 
 from backend.app.domain.entities.agent_configuration import (
     AgentConfiguration,
@@ -105,7 +105,10 @@ class FeedbackQueueStartRequest(BaseModel):
     message: str | None = Field(default=None, max_length=10000)
     session_id: str | None = None
     workspace_path: str | None = None
-    target_mode: Literal["generator_only", "generator_reviewer"] = "generator_only"
+    target_mode: Literal["generator_only", "generator_reviewer"] = Field(
+        default="generator_only",
+        validation_alias=AliasChoices("target_mode", "targetMode"),
+    )
     codex_options: "CodexRunOptionsRequest | None" = None
 
 

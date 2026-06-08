@@ -6250,6 +6250,38 @@ def test_feedback_queue_start_session_accepts_explicit_reviewer_target(
     assert "Check this flow with reviewer" in job["message"]
 
 
+def test_feedback_queue_start_session_accepts_camel_case_target_mode(
+    tmp_path: Path,
+) -> None:
+    client = build_feedback_queue_client(tmp_path)
+    client.post(
+        "/feedback-queue",
+        json={
+            "id": "feedback-camel-target",
+            "sourceApp": "ambientando-calendar",
+            "comment": "Target mode smoke",
+            "screenshotPngBase64": base64.b64encode(b"fake png").decode("ascii"),
+            "selectionBounds": {"left": 1, "top": 2, "width": 3, "height": 4},
+        },
+    )
+
+    start_response = client.post(
+        "/feedback-queue/feedback-camel-target/start-session",
+        json={"targetMode": "generator_reviewer"},
+    )
+
+    assert start_response.status_code == 202
+    job = wait_for_job(client, start_response.json()["job_id"])
+    assert job["status"] == "completed"
+    assert "Run target: Generator + Reviewer." in job["message"]
+    assert "Target mode smoke" in job["message"]
+    expected_bounds = (
+        "Selection bounds: {'left': 1.0, 'top': 2.0, "
+        "'width': 3.0, 'height': 4.0}"
+    )
+    assert expected_bounds in job["message"]
+
+
 def test_feedback_queue_start_session_rejects_invalid_target_mode(
     tmp_path: Path,
 ) -> None:

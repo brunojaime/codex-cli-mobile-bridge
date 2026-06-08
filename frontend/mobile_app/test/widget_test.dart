@@ -140,10 +140,12 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Generator only'), findsOneWidget);
     expect(find.text('Generator + Reviewer'), findsOneWidget);
+    expect(find.text('Start generator'), findsOneWidget);
 
     await tester.tap(find.text('Generator + Reviewer'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Start Codex chat'));
+    expect(find.text('Start generator + reviewer'), findsOneWidget);
+    await tester.tap(find.text('Start generator + reviewer'));
     await tester.pumpAndSettle();
 
     expect(startedMode, FeedbackQueueTargetMode.generatorReviewer);
