@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:cross_file/cross_file.dart';
 import 'package:http/http.dart' as http;
+import 'package:http_parser/http_parser.dart';
 
 import '../models/job_status_response.dart';
 import '../models/agent_configuration.dart';
@@ -722,10 +723,32 @@ class ApiClient {
     String field,
     XFile file,
   ) async {
+    final mimeType = file.mimeType?.trim();
+    final filename = _filenameFromXFile(file);
     return http.MultipartFile.fromBytes(
       field,
       await file.readAsBytes(),
-      filename: file.name,
+      filename: filename,
+      contentType: mimeType == null || mimeType.isEmpty
+          ? null
+          : MediaType.parse(mimeType),
     );
+  }
+
+  String? _filenameFromXFile(XFile file) {
+    final name = file.name.trim();
+    if (name.isNotEmpty) {
+      return name;
+    }
+    final path = file.path.trim();
+    if (path.isEmpty) {
+      return null;
+    }
+    final normalized = path.replaceAll('\\', '/');
+    final segments = normalized
+        .split('/')
+        .where((segment) => segment.trim().isNotEmpty)
+        .toList();
+    return segments.isEmpty ? null : segments.last;
   }
 }

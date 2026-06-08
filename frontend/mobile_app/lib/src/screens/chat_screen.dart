@@ -2516,6 +2516,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             bytes,
             name: name,
             mimeType: item.screenshotMimeType,
+            path: name,
           ),
           name: name,
           kind: _AttachmentDraftKind.image,
