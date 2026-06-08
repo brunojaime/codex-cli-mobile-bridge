@@ -17,7 +17,6 @@ import '../models/agent_profile.dart';
 import '../models/codex_tooling.dart';
 import '../models/server_capabilities.dart';
 import '../models/feedback_queue_item.dart';
-import '../models/job_status_response.dart';
 import '../models/server_health.dart';
 import '../models/server_profile.dart';
 import '../models/session_detail.dart';
@@ -50,7 +49,6 @@ enum _AppBarOverflowAction {
   conversationContext,
   summaryView,
   codexTools,
-  feedbackQueue,
   saveCurrentAgent,
   replyMode,
   servers,
@@ -59,6 +57,7 @@ enum _AppBarOverflowAction {
 
 enum _PinnedWorkspaceAction {
   newChat,
+  feedbackQueue,
   remove,
 }
 
@@ -81,8 +80,6 @@ class ChatScreen extends StatefulWidget {
     this.codexMcpAppInstallerOverride,
     this.feedbackQueueCountLoaderOverride,
     this.feedbackQueueListLoaderOverride,
-    this.feedbackQueueStartOverride,
-    this.acceptedExternalJobRegistrarOverride,
   });
 
   final String initialApiBaseUrl;
@@ -99,17 +96,6 @@ class ChatScreen extends StatefulWidget {
     String baseUrl, {
     required bool includeImages,
   })? feedbackQueueListLoaderOverride;
-  final Future<JobStatusResponse> Function(
-    String baseUrl,
-    String id, {
-    String? sessionId,
-    String? workspacePath,
-    required FeedbackQueueTargetMode targetMode,
-    CodexRunOptions? codexRunOptions,
-  })? feedbackQueueStartOverride;
-  final Future<void> Function(JobStatusResponse accepted)?
-      acceptedExternalJobRegistrarOverride;
-
   @override
   State<ChatScreen> createState() => _ChatScreenState();
 }
@@ -142,7 +128,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   bool _isUpdatingFilteredMessagesView = false;
   String? _filteredMessagesViewErrorText;
   _ChatBodyView _chatBodyView = _ChatBodyView.conversation;
-  int _feedbackQueueCount = 0;
+  List<FeedbackQueueItem> _feedbackQueuePreviewItems = <FeedbackQueueItem>[];
   bool _isRefreshingFeedbackQueueCount = false;
   static const double _compactAppBarBreakpoint = 640;
 
@@ -1643,11 +1629,21 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     final baseUrl = _activeServer?.baseUrl ?? widget.initialApiBaseUrl;
     try {
       final countLoader = widget.feedbackQueueCountLoaderOverride;
-      final count = countLoader != null
-          ? await countLoader(baseUrl)
-          : (await ApiClient(baseUrl: baseUrl).listFeedbackQueue()).length;
+      final listLoader = widget.feedbackQueueListLoaderOverride;
+      final previewItems = listLoader != null
+          ? await listLoader(baseUrl, includeImages: false)
+          : countLoader == null
+              ? await ApiClient(baseUrl: baseUrl).listFeedbackQueue()
+              : null;
+      if (previewItems == null) {
+        await countLoader!(baseUrl);
+      }
       if (mounted) {
-        setState(() => _feedbackQueueCount = count);
+        setState(() {
+          if (previewItems != null) {
+            _feedbackQueuePreviewItems = previewItems;
+          }
+        });
       }
     } catch (_) {
       // Feedback should stay opportunistic; connection errors are surfaced
@@ -1668,41 +1664,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     return ApiClient(baseUrl: baseUrl).listFeedbackQueue(
       includeImages: includeImages,
     );
-  }
-
-  Future<JobStatusResponse> _startFeedbackQueueSession(
-    String id, {
-    required FeedbackQueueTargetMode targetMode,
-  }) {
-    final baseUrl = _activeServer?.baseUrl ?? widget.initialApiBaseUrl;
-    final override = widget.feedbackQueueStartOverride;
-    if (override != null) {
-      return override(
-        baseUrl,
-        id,
-        sessionId: _chatController.currentSession?.id,
-        workspacePath: _chatController.currentSession?.workspacePath,
-        targetMode: targetMode,
-        codexRunOptions: _currentComposerDraft().codexRunOptions,
-      );
-    }
-    return ApiClient(baseUrl: baseUrl).startFeedbackQueueSession(
-      id,
-      sessionId: _chatController.currentSession?.id,
-      workspacePath: _chatController.currentSession?.workspacePath,
-      targetMode: targetMode,
-      codexRunOptions: _currentComposerDraft().codexRunOptions,
-    );
-  }
-
-  FeedbackQueueTargetMode _defaultFeedbackQueueTargetMode() {
-    final reviewer = _chatController.currentSession?.agentConfiguration.byId(
-      AgentId.reviewer,
-    );
-    if (reviewer != null && reviewer.enabled && reviewer.maxTurns > 0) {
-      return FeedbackQueueTargetMode.generatorReviewer;
-    }
-    return FeedbackQueueTargetMode.generatorOnly;
   }
 
   Future<void> _refreshCodexTooling({bool showLoading = false}) async {
@@ -2039,9 +2000,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           ? 'Server: ${_activeServer!.name}'
           : 'Commands execute on your local machine',
     ];
-    if (_feedbackQueueCount > 0) {
-      segments.add('$_feedbackQueueCount feedback pending');
-    }
     final currentSession = _chatController.currentSession;
     if (currentSession != null) {
       segments.add(currentSession.workspaceName);
@@ -2103,7 +2061,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       primaryActions.add(
         PopupMenuButton<_AppBarOverflowAction>(
           tooltip: 'More actions',
-          icon: _buildFeedbackBadgedIcon(Icons.more_vert),
+          icon: const Icon(Icons.more_vert),
           onSelected: (action) {
             unawaited(_handleAppBarOverflowAction(action));
           },
@@ -2127,13 +2085,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
               action: _AppBarOverflowAction.codexTools,
               icon: Icons.tune_rounded,
               label: 'Codex tools',
-            ),
-            _buildAppBarOverflowMenuItem(
-              action: _AppBarOverflowAction.feedbackQueue,
-              icon: Icons.feedback_outlined,
-              label: _feedbackQueueCount > 0
-                  ? 'Feedback queue ($_feedbackQueueCount)'
-                  : 'Feedback queue',
             ),
             _buildAppBarOverflowMenuItem(
               action: _AppBarOverflowAction.saveCurrentAgent,
@@ -2208,13 +2159,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       ),
       IconButton(
         onPressed: () async {
-          await _openFeedbackQueueSheet();
-        },
-        icon: _buildFeedbackBadgedIcon(Icons.feedback_outlined),
-        tooltip: 'Feedback queue',
-      ),
-      IconButton(
-        onPressed: () async {
           await _openSaveCurrentAgentProfile();
         },
         icon: const Icon(Icons.bookmark_add_outlined),
@@ -2274,27 +2218,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     );
   }
 
-  Widget _buildFeedbackBadgedIcon(IconData icon) {
-    return Stack(
-      clipBehavior: Clip.none,
-      children: <Widget>[
-        Icon(icon),
-        if (_feedbackQueueCount > 0)
-          Positioned(
-            right: -8,
-            top: -8,
-            child: _MenuStatusBadge(
-              label: _feedbackQueueCount > 99
-                  ? '99+'
-                  : _feedbackQueueCount.toString(),
-              backgroundColor: const Color(0xFFFF6B6B),
-              foregroundColor: Colors.white,
-            ),
-          ),
-      ],
-    );
-  }
-
   Future<void> _handleAppBarOverflowAction(_AppBarOverflowAction action) async {
     switch (action) {
       case _AppBarOverflowAction.conversationContext:
@@ -2321,9 +2244,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       case _AppBarOverflowAction.codexTools:
         await _openCodexToolsSheet();
         return;
-      case _AppBarOverflowAction.feedbackQueue:
-        await _openFeedbackQueueSheet();
-        return;
       case _AppBarOverflowAction.saveCurrentAgent:
         await _openSaveCurrentAgentProfile();
         return;
@@ -2339,15 +2259,18 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     }
   }
 
-  Future<void> _openFeedbackQueueSheet() async {
+  Future<void> _openFeedbackQueueSheet({required Workspace workspace}) async {
     final client = ApiClient(
       baseUrl: _activeServer?.baseUrl ?? widget.initialApiBaseUrl,
     );
     List<FeedbackQueueItem> items;
     try {
-      items = await _listFeedbackQueue(includeImages: true);
+      final allItems = await _listFeedbackQueue(includeImages: true);
+      items = _feedbackItemsForWorkspace(allItems, workspace);
       if (mounted) {
-        setState(() => _feedbackQueueCount = items.length);
+        setState(() {
+          _feedbackQueuePreviewItems = allItems;
+        });
       }
     } catch (error) {
       if (!mounted) return;
@@ -2358,9 +2281,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     }
     if (!mounted) return;
 
-    final targetModes = <String, FeedbackQueueTargetMode>{
-      for (final item in items) item.id: _defaultFeedbackQueueTargetMode(),
-    };
+    final selectedIds = <String>{};
 
     await showModalBottomSheet<void>(
       context: context,
@@ -2369,15 +2290,19 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         return StatefulBuilder(
           builder: (context, setSheetState) {
             Future<void> reload() async {
-              final refreshed = await _listFeedbackQueue(includeImages: true);
-              for (final item in refreshed) {
-                targetModes.putIfAbsent(
-                  item.id,
-                  _defaultFeedbackQueueTargetMode,
-                );
-              }
+              final refreshedAll =
+                  await _listFeedbackQueue(includeImages: true);
+              final refreshed = _feedbackItemsForWorkspace(
+                refreshedAll,
+                workspace,
+              );
+              selectedIds.removeWhere(
+                (id) => !refreshed.any((item) => item.id == id),
+              );
               if (mounted) {
-                setState(() => _feedbackQueueCount = refreshed.length);
+                setState(() {
+                  _feedbackQueuePreviewItems = refreshedAll;
+                });
               }
               if (context.mounted) {
                 setSheetState(() => items = refreshed);
@@ -2419,21 +2344,43 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                         ],
                       ),
                       if (items.isEmpty)
-                        const Padding(
-                          padding: EdgeInsets.symmetric(vertical: 28),
-                          child: Text('No feedback is pending.'),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 28),
+                          child: Text(
+                            'No feedback is pending for ${workspace.name}.',
+                          ),
                         )
                       else ...<Widget>[
-                        Align(
-                          alignment: Alignment.centerRight,
-                          child: TextButton.icon(
-                            onPressed: () async {
-                              await client.clearFeedbackQueue();
-                              await reload();
-                            },
-                            icon: const Icon(Icons.delete_sweep_outlined),
-                            label: const Text('Clear all'),
-                          ),
+                        Row(
+                          children: <Widget>[
+                            Expanded(
+                              child: Text(
+                                '${workspace.name} · ${selectedIds.length} selected',
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  color: Color(0xFF8B97B5),
+                                ),
+                              ),
+                            ),
+                            TextButton(
+                              onPressed: () {
+                                setSheetState(() {
+                                  if (selectedIds.length == items.length) {
+                                    selectedIds.clear();
+                                  } else {
+                                    selectedIds
+                                      ..clear()
+                                      ..addAll(items.map((item) => item.id));
+                                  }
+                                });
+                              },
+                              child: Text(
+                                selectedIds.length == items.length
+                                    ? 'Unselect all'
+                                    : 'Select all',
+                              ),
+                            ),
+                          ],
                         ),
                         Flexible(
                           child: ListView.separated(
@@ -2444,14 +2391,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                             itemBuilder: (context, index) {
                               final item = items[index];
                               final imageBytes = item.screenshotBytes;
-                              final targetMode = targetModes[item.id] ??
-                                  _defaultFeedbackQueueTargetMode();
-                              final startLabel = switch (targetMode) {
-                                FeedbackQueueTargetMode.generatorOnly =>
-                                  'Start generator',
-                                FeedbackQueueTargetMode.generatorReviewer =>
-                                  'Start generator + reviewer',
-                              };
+                              final selected = selectedIds.contains(item.id);
                               return Card(
                                 margin: EdgeInsets.zero,
                                 child: Padding(
@@ -2460,6 +2400,30 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                     crossAxisAlignment:
                                         CrossAxisAlignment.stretch,
                                     children: <Widget>[
+                                      CheckboxListTile(
+                                        contentPadding: EdgeInsets.zero,
+                                        value: selected,
+                                        onChanged: (value) {
+                                          setSheetState(() {
+                                            if (value ?? false) {
+                                              selectedIds.add(item.id);
+                                            } else {
+                                              selectedIds.remove(item.id);
+                                            }
+                                          });
+                                        },
+                                        title: Text(
+                                          item.comment,
+                                          style: const TextStyle(
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
+                                        subtitle: Text(
+                                          '${item.sourceApp} · ${item.status}'
+                                          '${item.hasScreenshot ? ' · image' : ''}'
+                                          '${item.hasAudio ? ' · audio' : ''}',
+                                        ),
+                                      ),
                                       if (imageBytes != null)
                                         ClipRRect(
                                           borderRadius:
@@ -2471,103 +2435,21 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                           ),
                                         ),
                                       const SizedBox(height: 10),
-                                      Text(
-                                        item.comment,
-                                        style: const TextStyle(
-                                          fontWeight: FontWeight.w600,
+                                      Align(
+                                        alignment: Alignment.centerRight,
+                                        child: IconButton(
+                                          tooltip: 'Delete',
+                                          onPressed: () async {
+                                            await client
+                                                .deleteFeedbackQueueItem(
+                                              item.id,
+                                            );
+                                            await reload();
+                                          },
+                                          icon: const Icon(
+                                            Icons.delete_outline,
+                                          ),
                                         ),
-                                      ),
-                                      const SizedBox(height: 4),
-                                      Text(
-                                        '${item.sourceApp} · ${item.status}'
-                                        '${item.hasScreenshot ? ' · image' : ''}'
-                                        '${item.hasAudio ? ' · audio' : ''}',
-                                      ),
-                                      const SizedBox(height: 10),
-                                      SegmentedButton<FeedbackQueueTargetMode>(
-                                        showSelectedIcon: false,
-                                        segments: FeedbackQueueTargetMode.values
-                                            .map(
-                                              (mode) => ButtonSegment<
-                                                  FeedbackQueueTargetMode>(
-                                                value: mode,
-                                                label: Text(mode.label),
-                                              ),
-                                            )
-                                            .toList(growable: false),
-                                        selected: <FeedbackQueueTargetMode>{
-                                          targetMode,
-                                        },
-                                        onSelectionChanged: (selection) {
-                                          setSheetState(() {
-                                            targetModes[item.id] =
-                                                selection.first;
-                                          });
-                                        },
-                                      ),
-                                      const SizedBox(height: 10),
-                                      Row(
-                                        children: <Widget>[
-                                          Expanded(
-                                            child: FilledButton.icon(
-                                              onPressed: item.hasScreenshot
-                                                  ? () async {
-                                                      final selectedTargetMode =
-                                                          targetModes[
-                                                                  item.id] ??
-                                                              _defaultFeedbackQueueTargetMode();
-                                                      final accepted =
-                                                          await _startFeedbackQueueSession(
-                                                        item.id,
-                                                        targetMode:
-                                                            selectedTargetMode,
-                                                      );
-                                                      final registrar = widget
-                                                          .acceptedExternalJobRegistrarOverride;
-                                                      if (registrar != null) {
-                                                        await registrar(
-                                                          accepted,
-                                                        );
-                                                      } else {
-                                                        await _chatController
-                                                            .registerAcceptedExternalJob(
-                                                          accepted,
-                                                        );
-                                                      }
-                                                      await reload();
-                                                      if (!context.mounted) {
-                                                        return;
-                                                      }
-                                                      ScaffoldMessenger.of(
-                                                        context,
-                                                      ).showSnackBar(
-                                                        const SnackBar(
-                                                          content: Text(
-                                                            'Feedback sent to Codex.',
-                                                          ),
-                                                        ),
-                                                      );
-                                                    }
-                                                  : null,
-                                              icon:
-                                                  const Icon(Icons.play_arrow),
-                                              label: Text(startLabel),
-                                            ),
-                                          ),
-                                          IconButton(
-                                            tooltip: 'Delete',
-                                            onPressed: () async {
-                                              await client
-                                                  .deleteFeedbackQueueItem(
-                                                item.id,
-                                              );
-                                              await reload();
-                                            },
-                                            icon: const Icon(
-                                              Icons.delete_outline,
-                                            ),
-                                          ),
-                                        ],
                                       ),
                                     ],
                                   ),
@@ -2575,6 +2457,25 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                               );
                             },
                           ),
+                        ),
+                        const SizedBox(height: 12),
+                        FilledButton.icon(
+                          onPressed: selectedIds.isEmpty
+                              ? null
+                              : () async {
+                                  final selectedItems = items
+                                      .where(
+                                        (item) => selectedIds.contains(item.id),
+                                      )
+                                      .toList(growable: false);
+                                  Navigator.of(context).pop();
+                                  await _stageFeedbackItemsForChat(
+                                    workspace,
+                                    selectedItems,
+                                  );
+                                },
+                          icon: const Icon(Icons.arrow_forward),
+                          label: const Text('Next'),
                         ),
                       ],
                     ],
@@ -2586,6 +2487,119 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         );
       },
     );
+  }
+
+  Future<void> _stageFeedbackItemsForChat(
+    Workspace workspace,
+    List<FeedbackQueueItem> items,
+  ) async {
+    if (items.isEmpty) return;
+
+    await _pinWorkspaceToSidebar(workspace);
+    if (_chatController.currentSession?.workspacePath != workspace.path) {
+      await _createNewChatForWorkspace(workspace);
+      if (!mounted) return;
+      if (_chatController.currentSession?.workspacePath != workspace.path) {
+        return;
+      }
+    }
+
+    final attachments = <_PendingAttachmentDraft>[];
+    for (var index = 0; index < items.length; index += 1) {
+      final item = items[index];
+      final bytes = item.screenshotBytes;
+      if (bytes == null) continue;
+      final name = 'feedback-${index + 1}-${item.id}.png';
+      attachments.add(
+        _PendingAttachmentDraft(
+          file: XFile.fromData(
+            bytes,
+            name: name,
+            mimeType: item.screenshotMimeType,
+          ),
+          name: name,
+          kind: _AttachmentDraftKind.image,
+          sizeBytes: bytes.length,
+          previewBytes: bytes,
+        ),
+      );
+    }
+
+    final currentDraft = _currentComposerDraft();
+    final metadata = _buildFeedbackComposerMetadata(workspace, items);
+    final currentText = currentDraft.text.trim();
+    final nextText =
+        currentText.isEmpty ? metadata : '$currentText\n\n$metadata';
+    final nextAttachments = <_PendingAttachmentDraft>[
+      ...currentDraft.attachments,
+      ...attachments,
+    ];
+
+    _textController.value = TextEditingValue(
+      text: nextText,
+      selection: TextSelection.collapsed(offset: nextText.length),
+    );
+    _updateCurrentComposerDraft(
+      _ComposerDraft(
+        text: nextText,
+        attachments: nextAttachments,
+        codexRunOptions: currentDraft.codexRunOptions,
+      ),
+    );
+    _setChatBodyView(_ChatBodyView.conversation);
+    _updateStickToBottom(true);
+
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          items.length == 1
+              ? 'Feedback staged in ${workspace.name}.'
+              : '${items.length} feedback items staged in ${workspace.name}.',
+        ),
+      ),
+    );
+  }
+
+  String _buildFeedbackComposerMetadata(
+    Workspace workspace,
+    List<FeedbackQueueItem> items,
+  ) {
+    final buffer = StringBuffer()
+      ..writeln('Feedback queue for ${workspace.name}')
+      ..writeln('Project path: ${workspace.path}')
+      ..writeln()
+      ..writeln('Selected feedback:');
+    for (var index = 0; index < items.length; index += 1) {
+      final item = items[index];
+      buffer
+        ..writeln()
+        ..writeln('${index + 1}. ${item.comment}')
+        ..writeln('- id: ${item.id}')
+        ..writeln('- source: ${item.sourceApp}')
+        ..writeln('- status: ${item.status}')
+        ..writeln(
+            '- created: ${item.createdAt?.toIso8601String() ?? 'unknown'}')
+        ..writeln('- selection bounds: ${item.selectionBounds}')
+        ..writeln('- selection points: ${item.selectionPoints.length}')
+        ..writeln('- image attachment: feedback-${index + 1}-${item.id}.png');
+      if (item.hasAudio ||
+          item.audioMimeType != null ||
+          item.audioDurationMs != null ||
+          item.audioByteLength != null) {
+        buffer.writeln(
+          '- audio: ${item.audioMimeType ?? 'unknown type'}, '
+          '${item.audioDurationMs ?? 0} ms, '
+          '${item.audioByteLength ?? 0} bytes',
+        );
+      }
+    }
+    buffer
+      ..writeln()
+      ..write(
+        'Use the attached screenshots and the metadata above to decide the next implementation changes.',
+      );
+    return buffer.toString();
   }
 
   int _codexSelectionCount(CodexRunOptions options) {
@@ -2933,6 +2947,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       final unreadChatsCount = visibleSessions
           .where((session) => _unreadCountForSession(session) > 0)
           .length;
+      final feedbackCount = _feedbackCountForWorkspace(workspace);
       final projectCardColor =
           hasSelected ? const Color(0xFF16213C) : const Color(0xFF121A31);
       final projectBorderColor = activeJobCount > 0
@@ -3062,6 +3077,26 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                       ),
                     ),
                   ),
+                if (feedbackCount > 0)
+                  Container(
+                    margin: const EdgeInsets.only(right: 8),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFF6B6B),
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: Text(
+                      '$feedbackCount feedback',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w700,
+                        fontSize: 11,
+                      ),
+                    ),
+                  ),
                 PopupMenuButton<_PinnedWorkspaceAction>(
                   tooltip: 'Project actions for ${workspace.name}',
                   icon: const Icon(Icons.more_horiz_rounded),
@@ -3070,6 +3105,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                       case _PinnedWorkspaceAction.newChat:
                         Navigator.of(context).pop();
                         await _createNewChatForWorkspace(workspace);
+                        return;
+                      case _PinnedWorkspaceAction.feedbackQueue:
+                        Navigator.of(context).pop();
+                        await _openFeedbackQueueSheet(workspace: workspace);
                         return;
                       case _PinnedWorkspaceAction.remove:
                         await _removeWorkspaceFromSidebar(workspace);
@@ -3082,6 +3121,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                       value: _PinnedWorkspaceAction.newChat,
                       child: Text('New chat in ${workspace.name}'),
                     ),
+                    if (feedbackCount > 0)
+                      PopupMenuItem<_PinnedWorkspaceAction>(
+                        value: _PinnedWorkspaceAction.feedbackQueue,
+                        child: Text('Feedback queue ($feedbackCount)'),
+                      ),
                     const PopupMenuItem<_PinnedWorkspaceAction>(
                       value: _PinnedWorkspaceAction.remove,
                       child: Text('Remove project'),
@@ -3152,6 +3196,42 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       return trimmed;
     }
     return parts.last;
+  }
+
+  int _feedbackCountForWorkspace(Workspace workspace) {
+    return _feedbackQueuePreviewItems
+        .where((item) => _feedbackItemMatchesWorkspace(item, workspace))
+        .length;
+  }
+
+  List<FeedbackQueueItem> _feedbackItemsForWorkspace(
+    List<FeedbackQueueItem> items,
+    Workspace workspace,
+  ) {
+    return items
+        .where((item) => _feedbackItemMatchesWorkspace(item, workspace))
+        .toList(growable: false);
+  }
+
+  bool _feedbackItemMatchesWorkspace(
+    FeedbackQueueItem item,
+    Workspace workspace,
+  ) {
+    final source = _normalizeFeedbackSource(item.sourceApp);
+    if (source.isEmpty) return false;
+    return _workspaceFeedbackKeys(workspace).contains(source);
+  }
+
+  Set<String> _workspaceFeedbackKeys(Workspace workspace) {
+    final keys = <String>{
+      _normalizeFeedbackSource(workspace.name),
+      _normalizeFeedbackSource(_fallbackWorkspaceName(workspace.path)),
+    }..remove('');
+    return keys;
+  }
+
+  String _normalizeFeedbackSource(String value) {
+    return value.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '');
   }
 
   void _handleChatControllerChanged() {

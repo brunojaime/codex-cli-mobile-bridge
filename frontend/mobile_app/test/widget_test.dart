@@ -10,6 +10,7 @@ import 'package:codex_mobile_frontend/src/models/codex_tooling.dart';
 import 'package:codex_mobile_frontend/src/models/feedback_queue_item.dart';
 import 'package:codex_mobile_frontend/src/models/job_status_response.dart';
 import 'package:codex_mobile_frontend/src/models/session_detail.dart';
+import 'package:codex_mobile_frontend/src/models/workspace.dart';
 import 'package:codex_mobile_frontend/src/screens/chat_screen.dart';
 import 'package:codex_mobile_frontend/src/services/api_client.dart';
 import 'package:codex_mobile_frontend/src/services/chat_notification_service.dart';
@@ -61,46 +62,15 @@ void main() {
     expect(find.byIcon(Icons.download_for_offline_outlined), findsNothing);
   });
 
-  testWidgets('surfaces pending feedback count in the app bar', (
+  testWidgets('surfaces pending feedback count in the matching project drawer',
+      (
     tester,
   ) async {
     SharedPreferences.setMockInitialValues(<String, Object>{});
-
-    await tester.pumpWidget(
-      MaterialApp(
-        home: ChatScreen(
-          initialApiBaseUrl: 'http://localhost:8000',
-          notificationService: const NoopChatNotificationService(),
-          enableServerBootstrap: false,
-          feedbackQueueCountLoaderOverride: (_) async => 2,
-        ),
-      ),
-    );
-    await tester.pump(const Duration(milliseconds: 100));
-    await tester.pump();
-
-    expect(find.textContaining('2 feedback pending'), findsOneWidget);
-    expect(find.byIcon(Icons.feedback_outlined), findsOneWidget);
-    expect(find.text('2'), findsOneWidget);
-  });
-
-  testWidgets('feedback queue start uses the selected target mode', (
-    tester,
-  ) async {
-    SharedPreferences.setMockInitialValues(<String, Object>{});
-    FeedbackQueueTargetMode? startedMode;
-    const transparentPng =
-        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=';
-    final item = FeedbackQueueItem(
+    final item = _feedbackItem(
       id: 'feedback-1',
       sourceApp: 'ambientando-calendar',
       comment: 'Cambiar este bloque',
-      createdAt: DateTime.utc(2026, 6, 8),
-      status: 'pending',
-      hasScreenshot: true,
-      screenshotPngBase64: transparentPng,
-      selectionPoints: const <Map<String, double>>[],
-      selectionBounds: const <String, double>{},
     );
 
     await tester.pumpWidget(
@@ -109,46 +79,95 @@ void main() {
           initialApiBaseUrl: 'http://localhost:8000',
           notificationService: const NoopChatNotificationService(),
           enableServerBootstrap: false,
-          feedbackQueueCountLoaderOverride: (_) async => 1,
+          initialSidebarWorkspaces: const <Workspace>[
+            Workspace(
+              name: 'Ambientando Calendar',
+              path: '/workspace/ambientando-calendar',
+            ),
+          ],
           feedbackQueueListLoaderOverride: (_, {required includeImages}) async {
             return <FeedbackQueueItem>[item];
           },
-          feedbackQueueStartOverride: (
-            _,
-            __, {
-            sessionId,
-            workspacePath,
-            required targetMode,
-            codexRunOptions,
-          }) async {
-            startedMode = targetMode;
-            return const JobStatusResponse(
-              jobId: 'job-1',
-              sessionId: 'session-1',
-              status: 'pending',
-              elapsedSeconds: 0,
-            );
-          },
-          acceptedExternalJobRegistrarOverride: (_) async {},
         ),
       ),
     );
     await tester.pump(const Duration(milliseconds: 100));
     await tester.pump();
 
-    await tester.tap(find.byIcon(Icons.feedback_outlined));
-    await tester.pumpAndSettle();
-    expect(find.text('Generator only'), findsOneWidget);
-    expect(find.text('Generator + Reviewer'), findsOneWidget);
-    expect(find.text('Start generator'), findsOneWidget);
+    expect(find.textContaining('feedback pending'), findsNothing);
+    expect(find.byIcon(Icons.feedback_outlined), findsNothing);
 
-    await tester.tap(find.text('Generator + Reviewer'));
-    await tester.pumpAndSettle();
-    expect(find.text('Start generator + reviewer'), findsOneWidget);
-    await tester.tap(find.text('Start generator + reviewer'));
+    await tester.tap(find.byTooltip('Projects'));
     await tester.pumpAndSettle();
 
-    expect(startedMode, FeedbackQueueTargetMode.generatorReviewer);
+    expect(find.text('1 feedback'), findsOneWidget);
+    await tester
+        .tap(find.byTooltip('Project actions for Ambientando Calendar'));
+    await tester.pumpAndSettle();
+    expect(find.text('Feedback queue (1)'), findsOneWidget);
+  });
+
+  testWidgets('feedback queue stages selected project items in the composer', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    final fakeApiClient = _FakeApiClient();
+    final controller = ChatController(
+      apiClient: fakeApiClient,
+      notificationService: const NoopChatNotificationService(),
+    );
+    final item = _feedbackItem(
+      id: 'feedback-1',
+      sourceApp: 'ambientando-calendar',
+      comment: 'Cambiar este bloque',
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ChatScreen(
+          initialApiBaseUrl: 'http://localhost:8000',
+          notificationService: const NoopChatNotificationService(),
+          controllerOverride: controller,
+          enableServerBootstrap: false,
+          initialSidebarWorkspaces: const <Workspace>[
+            Workspace(
+              name: 'Ambientando Calendar',
+              path: '/workspace/ambientando-calendar',
+            ),
+          ],
+          feedbackQueueListLoaderOverride: (_, {required includeImages}) async {
+            return <FeedbackQueueItem>[item];
+          },
+        ),
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pump();
+
+    await tester.tap(find.byTooltip('Projects'));
+    await tester.pumpAndSettle();
+    await tester
+        .tap(find.byTooltip('Project actions for Ambientando Calendar'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Feedback queue (1)'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Generator only'), findsNothing);
+    expect(find.text('Generator + Reviewer'), findsNothing);
+    expect(find.text('Select all'), findsOneWidget);
+    await tester.tap(find.text('Select all'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Next'));
+    await tester.pumpAndSettle();
+
+    expect(controller.currentSession?.workspacePath,
+        '/workspace/ambientando-calendar');
+    expect(find.textContaining('Feedback queue for Ambientando Calendar'),
+        findsOneWidget);
+    expect(find.textContaining('Cambiar este bloque'), findsOneWidget);
+    expect(find.text('1 selected'), findsOneWidget);
+
+    controller.dispose();
   });
 
   testWidgets('renders assistant options as quick actions', (tester) async {
@@ -1519,6 +1538,34 @@ Built the draft.
   });
 }
 
+FeedbackQueueItem _feedbackItem({
+  required String id,
+  required String sourceApp,
+  required String comment,
+}) {
+  const transparentPng =
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=';
+  return FeedbackQueueItem(
+    id: id,
+    sourceApp: sourceApp,
+    comment: comment,
+    createdAt: DateTime.utc(2026, 6, 8),
+    status: 'pending',
+    hasScreenshot: true,
+    screenshotPngBase64: transparentPng,
+    selectionPoints: const <Map<String, double>>[
+      <String, double>{'x': 1, 'y': 2},
+      <String, double>{'x': 3, 'y': 4},
+    ],
+    selectionBounds: const <String, double>{
+      'left': 1,
+      'top': 2,
+      'width': 30,
+      'height': 40,
+    },
+  );
+}
+
 class _FakeApiClient extends ApiClient {
   _FakeApiClient({
     this.audioSendDelays = const <String, Duration>{},
@@ -1575,6 +1622,32 @@ class _FakeApiClient extends ApiClient {
   static final DateTime _timestamp = DateTime.utc(2026, 1, 1);
 
   @override
+  Future<SessionDetail> createSession({
+    String? title,
+    String? workspacePath,
+    String? agentProfileId,
+    bool turnSummariesEnabled = false,
+  }) async {
+    final resolvedWorkspacePath = workspacePath ?? '/workspace/a';
+    final session = SessionDetail(
+      id: 'created-session',
+      title: title ?? 'New chat',
+      workspacePath: resolvedWorkspacePath,
+      workspaceName: resolvedWorkspacePath.split('/').last,
+      agentProfileId: agentProfileId ?? 'default',
+      agentProfileName: 'Generator',
+      agentProfileColor: '#55D6BE',
+      agentConfiguration: kDefaultAgentConfiguration,
+      turnSummariesEnabled: turnSummariesEnabled,
+      createdAt: _timestamp,
+      updatedAt: _timestamp,
+      messages: const <ChatMessage>[],
+    );
+    sessionOverrides[session.id] = session;
+    return session;
+  }
+
+  @override
   Future<List<ChatSessionSummary>> listSessions() async {
     return <ChatSessionSummary>[
       ChatSessionSummary(
@@ -1599,6 +1672,18 @@ class _FakeApiClient extends ApiClient {
         createdAt: _timestamp,
         updatedAt: _timestamp,
       ),
+      for (final session in sessionOverrides.values)
+        ChatSessionSummary(
+          id: session.id,
+          title: session.title,
+          workspacePath: session.workspacePath,
+          workspaceName: session.workspaceName,
+          agentProfileId: session.agentProfileId,
+          agentProfileName: session.agentProfileName,
+          agentProfileColor: session.agentProfileColor,
+          createdAt: session.createdAt,
+          updatedAt: session.updatedAt,
+        ),
     ];
   }
 
