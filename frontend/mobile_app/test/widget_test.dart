@@ -424,6 +424,91 @@ void main() {
     expect(find.text('15:42'), findsOneWidget);
   });
 
+  testWidgets('renders user image attachments as visual metadata', (
+    tester,
+  ) async {
+    await _pumpUserChatBubble(
+      tester,
+      'Mira esta foto\n\n'
+      '[Attached files]\n'
+      '- image: scaled_1000215533.jpg',
+    );
+
+    expect(find.text('Mira esta foto'), findsOneWidget);
+    expect(find.text('Image attached'), findsOneWidget);
+    expect(find.textContaining('[Attached files]'), findsNothing);
+    expect(find.textContaining('scaled_1000215533.jpg'), findsNothing);
+    expect(find.byIcon(Icons.image_rounded), findsOneWidget);
+  });
+
+  testWidgets('renders legacy user audio document attachments visually', (
+    tester,
+  ) async {
+    await _pumpUserChatBubble(
+      tester,
+      'Summarize this audio\n\n'
+      '[Attached audio document: PTT-20260322-WA0001.ogg]',
+    );
+
+    expect(find.text('Summarize this audio'), findsOneWidget);
+    expect(find.text('Audio attached'), findsOneWidget);
+    expect(find.textContaining('[Attached audio document'), findsNothing);
+    expect(find.textContaining('PTT-20260322-WA0001.ogg'), findsNothing);
+    expect(find.byIcon(Icons.graphic_eq_rounded), findsOneWidget);
+  });
+
+  testWidgets('renders legacy user text document attachments visually', (
+    tester,
+  ) async {
+    await _pumpUserChatBubble(
+      tester,
+      'Extract action items\n\n'
+      '[Attached text document: notes.txt]',
+    );
+
+    expect(find.text('Extract action items'), findsOneWidget);
+    expect(find.text('Document attached'), findsOneWidget);
+    expect(find.textContaining('[Attached text document'), findsNothing);
+    expect(find.textContaining('notes.txt'), findsNothing);
+  });
+
+  testWidgets('renders multiple user attachments without raw filenames', (
+    tester,
+  ) async {
+    await _pumpUserChatBubble(
+      tester,
+      'Compare everything in this batch\n\n'
+      '[Attached files]\n'
+      '- image: diagram.png\n'
+      '- text: notes.txt\n'
+      '- audio: voice.ogg',
+    );
+
+    expect(find.text('Compare everything in this batch'), findsOneWidget);
+    expect(find.text('3 attachments'), findsOneWidget);
+    expect(find.text('1 image · 1 document · 1 audio file'), findsOneWidget);
+    expect(find.textContaining('[Attached files]'), findsNothing);
+    expect(find.textContaining('diagram.png'), findsNothing);
+    expect(find.textContaining('notes.txt'), findsNothing);
+    expect(find.textContaining('voice.ogg'), findsNothing);
+  });
+
+  testWidgets('renders attachment-only user image metadata as a card', (
+    tester,
+  ) async {
+    await _pumpUserChatBubble(
+      tester,
+      '[Attached files]\n'
+      '- image: scaled_1000215533.jpg',
+    );
+
+    expect(find.text('Image attached'), findsOneWidget);
+    expect(find.byIcon(Icons.image_rounded), findsOneWidget);
+    expect(find.byType(SelectableText), findsNothing);
+    expect(find.textContaining('[Attached files]'), findsNothing);
+    expect(find.textContaining('scaled_1000215533.jpg'), findsNothing);
+  });
+
   testWidgets('renders reasoning and tool activity as status strips', (
     tester,
   ) async {
@@ -2105,6 +2190,26 @@ class _RecordedAudioSend {
   final String? sessionId;
   final String? workspacePath;
   final String filename;
+}
+
+Future<void> _pumpUserChatBubble(WidgetTester tester, String text) async {
+  await tester.pumpWidget(
+    MaterialApp(
+      home: Scaffold(
+        body: ChatBubble(
+          message: ChatMessage(
+            id: 'user-message',
+            text: text,
+            isUser: true,
+            authorType: ChatMessageAuthorType.human,
+            status: ChatMessageStatus.completed,
+            createdAt: DateTime.utc(2026, 1, 1),
+            updatedAt: DateTime.utc(2026, 1, 1),
+          ),
+        ),
+      ),
+    ),
+  );
 }
 
 ChatMessage _message({
