@@ -7869,6 +7869,138 @@ def test_upload_routes_reject_unknown_mcp_server_selection(
     }
 
 
+def test_image_message_response_exposes_safe_attachment_descriptor() -> None:
+    client = build_session_client()
+    session_response = client.post("/sessions", json={"title": "Images"})
+    assert session_response.status_code == 201
+    session_id = session_response.json()["id"]
+
+    upload_response = client.post(
+        "/message/image",
+        data={"session_id": session_id, "message": "Inspect this"},
+        files={"image": ("diagram.png", b"\x89PNG\r\n\x1a\nfake", "image/png")},
+    )
+    assert upload_response.status_code == 202
+    job_id = upload_response.json()["job_id"]
+
+    payload = wait_for_session(
+        client,
+        session_id,
+        predicate=lambda session: len(session["messages"]) >= 2,
+    )
+    user_message = next(
+        message for message in payload["messages"] if message["role"] == "user"
+    )
+    assistant_message = next(
+        message for message in payload["messages"] if message["role"] == "assistant"
+    )
+
+    assert user_message["attachments"] == [
+        {
+            "id": f"{job_id}:image:0",
+            "kind": "image",
+            "job_id": job_id,
+            "index": 0,
+            "download_url": f"/jobs/{job_id}/attachments/0",
+        }
+    ]
+    assert assistant_message["attachments"] == []
+    assert "image_paths" not in json.dumps(user_message)
+
+
+def test_image_attachment_download_serves_persisted_file() -> None:
+    client = build_session_client()
+    upload_response = client.post(
+        "/message/image",
+        data={"message": "Inspect this"},
+        files={"image": ("diagram.png", b"\x89PNG\r\n\x1a\nfake", "image/png")},
+    )
+    assert upload_response.status_code == 202
+    job_id = upload_response.json()["job_id"]
+
+    response = client.get(f"/jobs/{job_id}/attachments/0")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("image/png")
+    assert response.content == b"\x89PNG\r\n\x1a\nfake"
+
+
+def test_image_attachment_download_uses_content_type_for_suffixless_upload() -> None:
+    client = build_session_client()
+    upload_response = client.post(
+        "/message/image",
+        data={"message": "Inspect this"},
+        files={"image": ("capture", b"\x89PNG\r\n\x1a\nfake", "image/png")},
+    )
+    assert upload_response.status_code == 202
+    job_id = upload_response.json()["job_id"]
+
+    response = client.get(f"/jobs/{job_id}/attachments/0")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("image/png")
+    assert response.content == b"\x89PNG\r\n\x1a\nfake"
+
+
+def test_image_attachment_download_returns_404_for_invalid_index() -> None:
+    client = build_session_client()
+    upload_response = client.post(
+        "/message/image",
+        data={"message": "Inspect this"},
+        files={"image": ("diagram.png", b"\x89PNG\r\n\x1a\nfake", "image/png")},
+    )
+    assert upload_response.status_code == 202
+    job_id = upload_response.json()["job_id"]
+
+    response = client.get(f"/jobs/{job_id}/attachments/1")
+
+    assert response.status_code == 404
+
+
+def test_image_attachment_download_rejects_path_outside_retry_asset_root() -> None:
+    client, container = build_session_client_with_container()
+    upload_response = client.post(
+        "/message/image",
+        data={"message": "Inspect this"},
+        files={"image": ("diagram.png", b"\x89PNG\r\n\x1a\nfake", "image/png")},
+    )
+    assert upload_response.status_code == 202
+    job_id = upload_response.json()["job_id"]
+    outside_image = Path(tempfile.gettempdir()) / f"{job_id}-outside.png"
+    outside_image.write_bytes(b"\x89PNG\r\n\x1a\noutside")
+    try:
+        repository = container.message_service._repository
+        stored_job = repository.get_job(job_id)
+        assert stored_job is not None
+        stored_job.image_paths = [str(outside_image)]
+        repository.save_job(stored_job)
+
+        response = client.get(f"/jobs/{job_id}/attachments/0")
+
+        assert response.status_code == 404
+    finally:
+        outside_image.unlink(missing_ok=True)
+
+
+def test_image_attachment_download_returns_404_for_missing_file() -> None:
+    client, container = build_session_client_with_container()
+    upload_response = client.post(
+        "/message/image",
+        data={"message": "Inspect this"},
+        files={"image": ("diagram.png", b"\x89PNG\r\n\x1a\nfake", "image/png")},
+    )
+    assert upload_response.status_code == 202
+    job_id = upload_response.json()["job_id"]
+    stored_job = container.message_service.get_stored_job(job_id)
+    assert stored_job is not None
+    assert stored_job.image_paths
+    Path(stored_job.image_paths[0]).unlink()
+
+    response = client.get(f"/jobs/{job_id}/attachments/0")
+
+    assert response.status_code == 404
+
+
 def test_codex_tooling_endpoint_reports_status_skills_profiles_and_mcp(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

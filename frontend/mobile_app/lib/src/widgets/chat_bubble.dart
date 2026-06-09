@@ -20,6 +20,7 @@ class ChatBubble extends StatelessWidget {
     this.onRetryJob,
     this.onRecoverUnknownSubmission,
     this.onCancelUnknownSubmission,
+    this.attachmentBaseUrl,
   });
 
   final ChatMessage message;
@@ -32,6 +33,7 @@ class ChatBubble extends StatelessWidget {
   final Future<void> Function()? onRetryJob;
   final Future<void> Function()? onRecoverUnknownSubmission;
   final Future<void> Function()? onCancelUnknownSubmission;
+  final String? attachmentBaseUrl;
 
   @override
   Widget build(BuildContext context) {
@@ -81,6 +83,9 @@ class ChatBubble extends StatelessWidget {
     );
     final timestampLabel = formatChatMessageTime(context, message.createdAt);
     final activityPresentation = isUser ? null : _activityPresentation(message);
+    final imageAttachments = message.imageAttachments;
+    final canOpenImageAttachments =
+        attachmentBaseUrl != null && imageAttachments.isNotEmpty;
 
     return Column(
       crossAxisAlignment: alignment,
@@ -199,6 +204,13 @@ class ChatBubble extends StatelessWidget {
                   _UserAttachmentSummaryCard(
                     summary: displayContent.attachmentSummary!,
                     textColor: textColor,
+                    onTap: canOpenImageAttachments
+                        ? () => _openImageAttachmentViewer(
+                              context,
+                              baseUrl: attachmentBaseUrl!,
+                              attachments: imageAttachments,
+                            )
+                        : null,
                   ),
                 ],
                 if ((displayContent.copyText.isNotEmpty ||
@@ -400,14 +412,16 @@ class _UserAttachmentSummaryCard extends StatelessWidget {
   const _UserAttachmentSummaryCard({
     required this.summary,
     required this.textColor,
+    this.onTap,
   });
 
   final _AttachmentDisplaySummary summary;
   final Color textColor;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
+    final card = Container(
       constraints: const BoxConstraints(maxWidth: 320),
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
       decoration: BoxDecoration(
@@ -460,7 +474,189 @@ class _UserAttachmentSummaryCard extends StatelessWidget {
               ],
             ),
           ),
+          if (onTap != null) ...<Widget>[
+            const SizedBox(width: 8),
+            Icon(
+              Icons.open_in_full_rounded,
+              size: 16,
+              color: textColor.withValues(alpha: 0.78),
+            ),
+          ],
         ],
+      ),
+    );
+    if (onTap == null) {
+      return card;
+    }
+    return Semantics(
+      button: true,
+      label: 'Open image attachment',
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: onTap,
+        child: card,
+      ),
+    );
+  }
+}
+
+void _openImageAttachmentViewer(
+  BuildContext context, {
+  required String baseUrl,
+  required List<ChatMessageAttachment> attachments,
+}) {
+  final urls = attachments
+      .map((attachment) =>
+          _resolveAttachmentUrl(baseUrl, attachment.downloadUrl))
+      .toList(growable: false);
+  if (urls.isEmpty) {
+    return;
+  }
+  showDialog<void>(
+    context: context,
+    builder: (context) => _ImageAttachmentViewer(urls: urls),
+  );
+}
+
+Uri _resolveAttachmentUrl(String baseUrl, String downloadUrl) {
+  final attachmentUri = Uri.parse(downloadUrl);
+  if (attachmentUri.hasScheme) {
+    return attachmentUri;
+  }
+  return Uri.parse(baseUrl.trim().replaceAll(RegExp(r'/$'), ''))
+      .resolve(downloadUrl);
+}
+
+class _ImageAttachmentViewer extends StatefulWidget {
+  const _ImageAttachmentViewer({
+    required this.urls,
+  });
+
+  final List<Uri> urls;
+
+  @override
+  State<_ImageAttachmentViewer> createState() => _ImageAttachmentViewerState();
+}
+
+class _ImageAttachmentViewerState extends State<_ImageAttachmentViewer> {
+  late final PageController _pageController;
+  int _currentIndex = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _pageController = PageController();
+  }
+
+  @override
+  void dispose() {
+    _pageController.dispose();
+    super.dispose();
+  }
+
+  void _showImage(int index) {
+    if (index < 0 || index >= widget.urls.length) {
+      return;
+    }
+    _pageController.animateToPage(
+      index,
+      duration: const Duration(milliseconds: 180),
+      curve: Curves.easeOut,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final multiple = widget.urls.length > 1;
+    return Dialog.fullscreen(
+      backgroundColor: const Color(0xFF070B16),
+      child: SafeArea(
+        child: Column(
+          children: <Widget>[
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+              child: Row(
+                children: <Widget>[
+                  IconButton(
+                    tooltip: 'Close',
+                    onPressed: () => Navigator.of(context).pop(),
+                    icon: const Icon(Icons.close_rounded),
+                  ),
+                  const Spacer(),
+                  Text(
+                    '${_currentIndex + 1} / ${widget.urls.length}',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const Spacer(),
+                  const SizedBox(width: 48),
+                ],
+              ),
+            ),
+            Expanded(
+              child: PageView.builder(
+                controller: _pageController,
+                itemCount: widget.urls.length,
+                onPageChanged: (index) {
+                  setState(() {
+                    _currentIndex = index;
+                  });
+                },
+                itemBuilder: (context, index) {
+                  return InteractiveViewer(
+                    minScale: 0.8,
+                    maxScale: 4,
+                    child: Center(
+                      child: Image.network(
+                        widget.urls[index].toString(),
+                        fit: BoxFit.contain,
+                        loadingBuilder: (context, child, loadingProgress) {
+                          if (loadingProgress == null) {
+                            return child;
+                          }
+                          return const CircularProgressIndicator();
+                        },
+                        errorBuilder: (context, error, stackTrace) {
+                          return const Icon(
+                            Icons.broken_image_outlined,
+                            color: Color(0xFFB8C8EA),
+                            size: 56,
+                          );
+                        },
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+            if (multiple)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 18),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: <Widget>[
+                    IconButton.filledTonal(
+                      tooltip: 'Previous image',
+                      onPressed: _currentIndex == 0
+                          ? null
+                          : () => _showImage(_currentIndex - 1),
+                      icon: const Icon(Icons.chevron_left_rounded),
+                    ),
+                    const SizedBox(width: 24),
+                    IconButton.filledTonal(
+                      tooltip: 'Next image',
+                      onPressed: _currentIndex == widget.urls.length - 1
+                          ? null
+                          : () => _showImage(_currentIndex + 1),
+                      icon: const Icon(Icons.chevron_right_rounded),
+                    ),
+                  ],
+                ),
+              ),
+          ],
+        ),
       ),
     );
   }
@@ -931,7 +1127,24 @@ _DisplayMessageContent _displayContentForMessage(ChatMessage message) {
     );
   }
 
-  return _extractUserAttachmentMetadata(message.text);
+  final legacyContent = _extractUserAttachmentMetadata(message.text);
+  if (legacyContent.attachmentSummary != null) {
+    return legacyContent;
+  }
+  final imageAttachmentCount = message.imageAttachments.length;
+  if (imageAttachmentCount > 0) {
+    return _DisplayMessageContent(
+      text: message.text,
+      copyText: message.text.isNotEmpty ? message.text : 'Image attached',
+      attachmentSummary: _AttachmentDisplaySummary(
+        imageCount: imageAttachmentCount,
+        textCount: 0,
+        audioCount: 0,
+        fileCount: 0,
+      ),
+    );
+  }
+  return legacyContent;
 }
 
 _DisplayMessageContent _extractUserAttachmentMetadata(String text) {

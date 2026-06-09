@@ -24,6 +24,34 @@ enum ChatMessageReasonCode {
   followUpTerminalCompletedRun
 }
 
+class ChatMessageAttachment {
+  const ChatMessageAttachment({
+    required this.id,
+    required this.kind,
+    required this.jobId,
+    required this.index,
+    required this.downloadUrl,
+  });
+
+  final String id;
+  final String kind;
+  final String jobId;
+  final int index;
+  final String downloadUrl;
+
+  bool get isImage => kind == 'image';
+
+  factory ChatMessageAttachment.fromJson(Map<String, dynamic> json) {
+    return ChatMessageAttachment(
+      id: json['id'] as String? ?? '',
+      kind: json['kind'] as String? ?? '',
+      jobId: json['job_id'] as String? ?? '',
+      index: json['index'] as int? ?? 0,
+      downloadUrl: json['download_url'] as String? ?? '',
+    );
+  }
+}
+
 class ChatMessage {
   const ChatMessage({
     required this.id,
@@ -52,6 +80,7 @@ class ChatMessage {
     this.completedAt,
     this.summaryTurnStart,
     this.summaryTurnEnd,
+    this.attachments = const <ChatMessageAttachment>[],
   });
 
   final String id;
@@ -80,6 +109,12 @@ class ChatMessage {
   final DateTime? completedAt;
   final int? summaryTurnStart;
   final int? summaryTurnEnd;
+  final List<ChatMessageAttachment> attachments;
+
+  List<ChatMessageAttachment> get imageAttachments => attachments
+      .where((attachment) =>
+          attachment.isImage && attachment.downloadUrl.trim().isNotEmpty)
+      .toList(growable: false);
 
   bool get isPendingLike =>
       status == ChatMessageStatus.reserved ||
@@ -133,6 +168,7 @@ class ChatMessage {
           : null,
       summaryTurnStart: json['summary_turn_start'] as int?,
       summaryTurnEnd: json['summary_turn_end'] as int?,
+      attachments: _attachmentsFromJson(json['attachments']),
     );
   }
 
@@ -162,6 +198,7 @@ class ChatMessage {
     DateTime? completedAt,
     int? summaryTurnStart,
     int? summaryTurnEnd,
+    List<ChatMessageAttachment>? attachments,
   }) {
     return ChatMessage(
       id: id,
@@ -192,8 +229,32 @@ class ChatMessage {
       completedAt: completedAt ?? this.completedAt,
       summaryTurnStart: summaryTurnStart ?? this.summaryTurnStart,
       summaryTurnEnd: summaryTurnEnd ?? this.summaryTurnEnd,
+      attachments: attachments ?? this.attachments,
     );
   }
+}
+
+List<ChatMessageAttachment> _attachmentsFromJson(Object? value) {
+  if (value is! List) {
+    return const <ChatMessageAttachment>[];
+  }
+  final attachments = <ChatMessageAttachment>[];
+  for (final item in value) {
+    if (item is! Map) {
+      continue;
+    }
+    final attachment = ChatMessageAttachment.fromJson(
+      Map<String, dynamic>.from(item),
+    );
+    if (attachment.id.isEmpty ||
+        attachment.kind.isEmpty ||
+        attachment.jobId.isEmpty ||
+        attachment.downloadUrl.isEmpty) {
+      continue;
+    }
+    attachments.add(attachment);
+  }
+  return attachments;
 }
 
 ChatMessageReasonCode? _reasonCodeFromJson(String value) {

@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 import json
+import mimetypes
 from pathlib import Path
 import re
 import shutil
@@ -227,6 +228,12 @@ class AttachmentInput:
     path: str
     filename: str | None = None
     content_type: str | None = None
+
+
+@dataclass(slots=True, frozen=True)
+class JobAttachmentFile:
+    path: Path
+    media_type: str
 
 
 @dataclass(slots=True)
@@ -1158,6 +1165,34 @@ class MessageService:
 
     def get_stored_job(self, job_id: str) -> Job | None:
         return self._repository.get_job(job_id)
+
+    def get_job_image_attachment_file(
+        self,
+        job_id: str,
+        attachment_index: int,
+    ) -> JobAttachmentFile | None:
+        job = self._repository.get_job(job_id)
+        if job is None:
+            return None
+        if attachment_index < 0 or attachment_index >= len(job.image_paths):
+            return None
+
+        image_path = Path(job.image_paths[attachment_index])
+        if not image_path.exists() or not image_path.is_file():
+            return None
+
+        try:
+            retry_asset_root = self._retry_asset_root.resolve(strict=True)
+            resolved_image_path = image_path.resolve(strict=True)
+            resolved_image_path.relative_to(retry_asset_root)
+        except (OSError, ValueError):
+            return None
+
+        media_type, _encoding = mimetypes.guess_type(resolved_image_path.name)
+        return JobAttachmentFile(
+            path=resolved_image_path,
+            media_type=media_type or "application/octet-stream",
+        )
 
     def watch_job(
         self,

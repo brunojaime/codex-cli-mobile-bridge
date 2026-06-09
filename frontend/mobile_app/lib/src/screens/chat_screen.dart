@@ -787,6 +787,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                                         _handleSuggestedReply,
                                                     onLinkTap:
                                                         _handleMessageLinkTap,
+                                                    attachmentBaseUrl:
+                                                        _activeServer?.baseUrl ??
+                                                            widget
+                                                                .initialApiBaseUrl,
                                                     onCancelJob:
                                                         (_activeServerCapabilities
                                                                         ?.supportsJobCancellation ??

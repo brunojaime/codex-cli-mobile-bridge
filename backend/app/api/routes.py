@@ -5,7 +5,7 @@ from tempfile import NamedTemporaryFile
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, WebSocket
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import Response
+from fastapi.responses import FileResponse, Response
 
 from backend.app.api.schemas import (
     AgentConfigurationRequest,
@@ -76,6 +76,16 @@ from backend.app.infrastructure.transcription.base import (
 
 
 router = APIRouter()
+
+_IMAGE_CONTENT_TYPE_SUFFIXES = {
+    "image/bmp": ".bmp",
+    "image/gif": ".gif",
+    "image/jpeg": ".jpg",
+    "image/jpg": ".jpg",
+    "image/png": ".png",
+    "image/tiff": ".tiff",
+    "image/webp": ".webp",
+}
 
 
 def get_container() -> AppContainer:
@@ -1115,6 +1125,26 @@ async def get_response(
     return JobResponse.from_domain(job)
 
 
+@router.get("/jobs/{job_id}/attachments/{attachment_index}")
+async def get_job_attachment(
+    job_id: str,
+    attachment_index: int,
+    service: MessageService = Depends(get_message_service),
+) -> FileResponse:
+    attachment = await run_in_threadpool(
+        service.get_job_image_attachment_file,
+        job_id,
+        attachment_index,
+    )
+    if attachment is None:
+        raise HTTPException(status_code=404, detail="Attachment not found.")
+
+    return FileResponse(
+        attachment.path,
+        media_type=attachment.media_type,
+    )
+
+
 @router.post("/jobs/{job_id}/cancel", response_model=JobResponse)
 async def cancel_job(
     job_id: str,
@@ -1180,7 +1210,7 @@ async def _store_uploaded_file(
     default_filename: str,
     size_limit_label: str,
 ) -> Path:
-    suffix = Path(upload.filename or default_filename).suffix or Path(default_filename).suffix
+    suffix = _safe_upload_suffix(upload, default_filename=default_filename)
     total_bytes = 0
 
     with NamedTemporaryFile(delete=False, suffix=suffix) as temp_file:
@@ -1198,6 +1228,18 @@ async def _store_uploaded_file(
             temp_file.write(chunk)
 
     return Path(temp_file.name)
+
+
+def _safe_upload_suffix(upload: UploadFile, *, default_filename: str) -> str:
+    suffix = Path(upload.filename or "").suffix or Path(default_filename).suffix
+    normalized_content_type = (
+        (upload.content_type or "").split(";", maxsplit=1)[0].strip().lower()
+    )
+    if (not suffix or suffix.lower() == ".bin") and normalized_content_type:
+        image_suffix = _IMAGE_CONTENT_TYPE_SUFFIXES.get(normalized_content_type)
+        if image_suffix is not None:
+            return image_suffix
+    return suffix or ".bin"
 
 
 class _StoredUpload:

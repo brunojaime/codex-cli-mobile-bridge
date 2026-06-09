@@ -696,6 +696,7 @@ class ChatMessageResponse(BaseModel):
     completed_at: datetime | None = None
     summary_turn_start: int | None = None
     summary_turn_end: int | None = None
+    attachments: list["ChatMessageAttachmentResponse"] = Field(default_factory=list)
 
     @classmethod
     def from_domain(
@@ -703,6 +704,7 @@ class ChatMessageResponse(BaseModel):
         message: ChatMessage,
         *,
         job: Job | None = None,
+        expose_attachments: bool = False,
     ) -> "ChatMessageResponse":
         return cls(
             **_summary_turn_range_payload(message),
@@ -731,7 +733,33 @@ class ChatMessageResponse(BaseModel):
             job_elapsed_seconds=job.elapsed_seconds if job else None,
             provider_session_id=job.provider_session_id if job else None,
             completed_at=job.completed_at if job else None,
+            attachments=ChatMessageAttachmentResponse.from_job(job)
+            if expose_attachments
+            else [],
         )
+
+
+class ChatMessageAttachmentResponse(BaseModel):
+    id: str
+    kind: Literal["image"]
+    job_id: str
+    index: int
+    download_url: str
+
+    @classmethod
+    def from_job(cls, job: Job | None) -> list["ChatMessageAttachmentResponse"]:
+        if job is None or not job.image_paths:
+            return []
+        return [
+            cls(
+                id=f"{job.id}:image:{index}",
+                kind="image",
+                job_id=job.id,
+                index=index,
+                download_url=f"/jobs/{job.id}/attachments/{index}",
+            )
+            for index, _path in enumerate(job.image_paths)
+        ]
 
 
 class TurnSummarySourceMessageResponse(BaseModel):
@@ -977,6 +1005,11 @@ class SessionDetailResponse(BaseModel):
             run_configurations_by_id=run_configurations_by_id,
         )
         messages_by_id = {message.id: message for message in messages}
+        jobs_by_user_message_id = {
+            job.user_message_id: job
+            for job in (jobs_by_id or {}).values()
+            if job.user_message_id is not None
+        }
         return cls(
             id=session.id,
             title=session.title,
@@ -1021,7 +1054,12 @@ class SessionDetailResponse(BaseModel):
             messages=[
                 ChatMessageResponse.from_domain(
                     message,
-                    job=jobs_by_id.get(message.job_id) if jobs_by_id and message.job_id else None,
+                    job=(
+                        jobs_by_id.get(message.job_id)
+                        if jobs_by_id and message.job_id
+                        else jobs_by_user_message_id.get(message.id)
+                    ),
+                    expose_attachments=message.id in jobs_by_user_message_id,
                 )
                 for message in messages
             ],

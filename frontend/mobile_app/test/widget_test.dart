@@ -441,6 +441,57 @@ void main() {
     expect(find.byIcon(Icons.image_rounded), findsOneWidget);
   });
 
+  testWidgets('opens image viewer for structured user image attachments', (
+    tester,
+  ) async {
+    await _pumpUserChatBubble(
+      tester,
+      'Mira esta foto\n\n'
+      '[Attached files]\n'
+      '- image: scaled_1000215533.jpg',
+      attachmentBaseUrl: 'http://backend.test',
+      attachments: const <ChatMessageAttachment>[
+        ChatMessageAttachment(
+          id: 'job-1:image:0',
+          kind: 'image',
+          jobId: 'job-1',
+          index: 0,
+          downloadUrl: '/jobs/job-1/attachments/0',
+        ),
+      ],
+    );
+
+    expect(find.text('Mira esta foto'), findsOneWidget);
+    expect(find.text('Image attached'), findsOneWidget);
+    expect(find.textContaining('scaled_1000215533.jpg'), findsNothing);
+    expect(find.byIcon(Icons.open_in_full_rounded), findsOneWidget);
+
+    await tester.tap(find.text('Image attached'));
+    await tester.pump();
+
+    expect(find.text('1 / 1'), findsOneWidget);
+    expect(find.byType(Image), findsOneWidget);
+  });
+
+  testWidgets('legacy user image metadata stays a non-viewer fallback', (
+    tester,
+  ) async {
+    await _pumpUserChatBubble(
+      tester,
+      '[Attached files]\n'
+      '- image: scaled_1000215533.jpg',
+      attachmentBaseUrl: 'http://backend.test',
+    );
+
+    expect(find.text('Image attached'), findsOneWidget);
+    expect(find.byIcon(Icons.open_in_full_rounded), findsNothing);
+
+    await tester.tap(find.text('Image attached'));
+    await tester.pump();
+
+    expect(find.text('1 / 1'), findsNothing);
+  });
+
   testWidgets('renders legacy user audio document attachments visually', (
     tester,
   ) async {
@@ -1151,6 +1202,39 @@ void main() {
     expect(message.recoveryAction, MessageRecoveryAction.retry);
     expect(message.recoveredFromMessageId, isNull);
     expect(message.supersededByMessageId, isNull);
+  });
+
+  test('chat message parsing keeps structured image attachments', () {
+    final message = ChatMessage.fromJson(
+      <String, dynamic>{
+        'id': 'with-attachment',
+        'role': 'user',
+        'content': 'Look',
+        'status': 'completed',
+        'created_at': DateTime.utc(2026, 1, 1).toIso8601String(),
+        'updated_at': DateTime.utc(2026, 1, 1).toIso8601String(),
+        'attachments': <Map<String, dynamic>>[
+          <String, dynamic>{
+            'id': 'job-1:image:0',
+            'kind': 'image',
+            'job_id': 'job-1',
+            'index': 0,
+            'download_url': '/jobs/job-1/attachments/0',
+          },
+        ],
+      },
+    );
+
+    expect(message.attachments, hasLength(1));
+    expect(message.imageAttachments, hasLength(1));
+    expect(message.attachments.single.id, 'job-1:image:0');
+    expect(message.attachments.single.kind, 'image');
+    expect(message.attachments.single.jobId, 'job-1');
+    expect(message.attachments.single.index, 0);
+    expect(
+      message.attachments.single.downloadUrl,
+      '/jobs/job-1/attachments/0',
+    );
   });
 
   test('job status parsing keeps agent metadata for notifications', () {
@@ -2192,7 +2276,12 @@ class _RecordedAudioSend {
   final String filename;
 }
 
-Future<void> _pumpUserChatBubble(WidgetTester tester, String text) async {
+Future<void> _pumpUserChatBubble(
+  WidgetTester tester,
+  String text, {
+  List<ChatMessageAttachment> attachments = const <ChatMessageAttachment>[],
+  String? attachmentBaseUrl,
+}) async {
   await tester.pumpWidget(
     MaterialApp(
       home: Scaffold(
@@ -2205,7 +2294,9 @@ Future<void> _pumpUserChatBubble(WidgetTester tester, String text) async {
             status: ChatMessageStatus.completed,
             createdAt: DateTime.utc(2026, 1, 1),
             updatedAt: DateTime.utc(2026, 1, 1),
+            attachments: attachments,
           ),
+          attachmentBaseUrl: attachmentBaseUrl,
         ),
       ),
     ),
