@@ -2969,7 +2969,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           borderRadius: BorderRadius.circular(20),
           border: Border.all(color: projectBorderColor),
         ),
-        child: Theme(
+        child: Material(
+          type: MaterialType.transparency,
+          child: Theme(
           data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
           child: ExpansionTile(
             key: PageStorageKey<String>('workspace-${workspace.path}'),
@@ -3198,6 +3200,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                       ),
                     ),
                   ],
+          ),
           ),
         ),
       ));
@@ -3480,7 +3483,9 @@ class _SessionTile extends StatelessWidget {
         borderRadius: BorderRadius.circular(16),
         border: Border.all(color: tileBorderColor),
       ),
-      child: ListTile(
+      child: Material(
+        type: MaterialType.transparency,
+        child: ListTile(
         selected: selected,
         selectedTileColor: Colors.transparent,
         shape: RoundedRectangleBorder(
@@ -3650,6 +3655,7 @@ class _SessionTile extends StatelessWidget {
           ],
         ),
         onTap: onTap,
+        ),
       ),
     );
   }
@@ -6175,7 +6181,9 @@ class _AgentStudioSheetState extends State<_AgentStudioSheet> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
           if (showEnabledToggle)
-            SwitchListTile(
+            Material(
+              type: MaterialType.transparency,
+              child: SwitchListTile(
               contentPadding: EdgeInsets.zero,
               value: _enabled[agentId] ?? false,
               title: Text(title),
@@ -6194,15 +6202,19 @@ class _AgentStudioSheetState extends State<_AgentStudioSheet> {
                         }
                       });
                     },
+              ),
             )
           else
-            ListTile(
+            Material(
+              type: MaterialType.transparency,
+              child: ListTile(
               contentPadding: EdgeInsets.zero,
               title: Text(title),
               subtitle: Text(
                 usesRegistrySelection
                     ? '$enabledSubtitle Selection is controlled by the supervisor registry above.'
                     : enabledSubtitle,
+              ),
               ),
             ),
           TextField(
@@ -6359,7 +6371,9 @@ class _AgentStudioSheetState extends State<_AgentStudioSheet> {
               AgentId.scraper => 'Scraper',
               _ => agentIdToJson(agentId),
             };
-            return CheckboxListTile(
+            return Material(
+              type: MaterialType.transparency,
+              child: CheckboxListTile(
               contentPadding: EdgeInsets.zero,
               value: _supervisorMemberIds.contains(agentId),
               title: Text(label),
@@ -6387,6 +6401,7 @@ class _AgentStudioSheetState extends State<_AgentStudioSheet> {
                   }
                 });
               },
+              ),
             );
           }),
         ],
