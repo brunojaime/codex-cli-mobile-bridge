@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import binascii
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 
@@ -31,9 +33,12 @@ from backend.app.api.schemas import (
     CodexToolingResponse,
     CreateSessionRequest,
     DocumentMessageAcceptedResponse,
+    FeedbackBatchStartRequest,
     FeedbackQueueItemRequest,
     FeedbackQueueItemResponse,
     FeedbackQueueStartRequest,
+    FeedbackWorkflowPresetResponse,
+    FeedbackWorkflowPresetsResponse,
     HealthResponse,
     ImageMessageAcceptedResponse,
     JobResponse,
@@ -56,6 +61,7 @@ from backend.app.application.services.message_service import (
     UnsupportedDocumentError,
 )
 from backend.app.domain.entities.chat_message import ChatMessage, ChatMessageStatus
+from backend.app.domain.entities.agent_configuration import AgentId
 from backend.app.domain.entities.job import Job
 from backend.app.container import AppContainer
 from backend.app.infrastructure.codex_tooling import (
@@ -86,6 +92,24 @@ _IMAGE_CONTENT_TYPE_SUFFIXES = {
     "image/tiff": ".tiff",
     "image/webp": ".webp",
 }
+
+_FALLBACK_FEEDBACK_WORKFLOW_PRESETS = (
+    FeedbackWorkflowPresetResponse(
+        id="generator_only",
+        name="Generator only",
+        description="Run one implementation agent for the queued app feedback.",
+        target_mode="generator_only",
+        includes_reviewer=False,
+        default=True,
+    ),
+    FeedbackWorkflowPresetResponse(
+        id="generator_reviewer",
+        name="Generator + Reviewer",
+        description="Run the implementation agent, then review the result.",
+        target_mode="generator_reviewer",
+        includes_reviewer=True,
+    ),
+)
 
 
 def get_container() -> AppContainer:
@@ -233,6 +257,121 @@ def _feedback_item_response(
     )
 
 
+def _feedback_workflow_presets(
+    service: MessageService,
+) -> list[FeedbackWorkflowPresetResponse]:
+    profiles = service.list_agent_profiles()
+    presets: list[FeedbackWorkflowPresetResponse] = []
+    for profile in profiles:
+        configuration = profile.resolved_configuration().normalized()
+        includes_reviewer = configuration.agents[AgentId.REVIEWER].enabled
+        presets.append(
+            FeedbackWorkflowPresetResponse(
+                id=profile.id,
+                name=profile.name,
+                description=profile.description,
+                target_mode=(
+                    "generator_reviewer" if includes_reviewer else "generator_only"
+                ),
+                agent_profile_id=profile.id,
+                includes_reviewer=includes_reviewer,
+                default=profile.id == "default",
+            )
+        )
+    return presets or list(_FALLBACK_FEEDBACK_WORKFLOW_PRESETS)
+
+
+def _feedback_preset_by_id(
+    preset_id: str,
+    *,
+    service: MessageService,
+) -> FeedbackWorkflowPresetResponse | None:
+    normalized_id = preset_id.strip()
+    presets = _feedback_workflow_presets(service)
+    matched_preset = next(
+        (preset for preset in presets if preset.id == normalized_id),
+        None,
+    )
+    if matched_preset is not None:
+        return matched_preset
+    fallback_preset = next(
+        (
+            preset
+            for preset in _FALLBACK_FEEDBACK_WORKFLOW_PRESETS
+            if preset.id == normalized_id
+        ),
+        None,
+    )
+    if fallback_preset is not None:
+        return fallback_preset
+    return None
+
+
+def _feedback_target_instruction(target_mode: str) -> str:
+    if target_mode == "generator_only":
+        return (
+            "Generator only. Run the implementation generator for this feedback; "
+            "do not run a reviewer unless the user asks later."
+        )
+    return (
+        "Generator + Reviewer. Run the implementation generator for this "
+        "feedback and then run the reviewer on the generator result."
+    )
+
+
+def _feedback_release_instruction(*, includes_reviewer: bool) -> str:
+    if includes_reviewer:
+        return (
+            "\nRelease instruction: when the reviewer finishes and approves the "
+            "implementation, publish the required release for the target app. "
+            "Do not publish if review requests changes or validation fails."
+        )
+    return (
+        "\nRelease instruction: after implementation and validation complete, "
+        "publish the required release for the target app. Do not publish if "
+        "validation fails."
+    )
+
+
+def _feedback_audio_note(item) -> str:
+    if item.audio_mime_type or item.audio_duration_ms or item.audio_byte_length:
+        return (
+            "\nAudio attached: "
+            f"{item.audio_mime_type or 'unknown type'}, "
+            f"{item.audio_duration_ms or 0} ms, "
+            f"{item.audio_byte_length or 0} bytes."
+        )
+    return ""
+
+
+def _validate_feedback_base64(value: str, *, field_name: str, item_index: int) -> None:
+    try:
+        base64.b64decode(value, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Feedback batch item {item_index} has invalid {field_name}.",
+        ) from exc
+
+
+@router.get(
+    "/feedback-workflow-presets",
+    response_model=FeedbackWorkflowPresetsResponse,
+)
+async def list_feedback_workflow_presets(
+    service: MessageService = Depends(get_message_service),
+) -> FeedbackWorkflowPresetsResponse:
+    presets = _feedback_workflow_presets(service)
+    default_preset = next(
+        (preset for preset in presets if preset.default),
+        presets[0],
+    )
+    return FeedbackWorkflowPresetsResponse(
+        default_preset_id=default_preset.id,
+        presets=presets,
+    )
+
+
 @router.get("/feedback-queue", response_model=list[FeedbackQueueItemResponse])
 async def list_feedback_queue(
     include_images: bool = False,
@@ -321,21 +460,8 @@ async def start_feedback_queue_session(
         else None,
         container=container,
     )
-    audio_note = ""
-    if item.audio_mime_type or item.audio_duration_ms or item.audio_byte_length:
-        audio_note = (
-            "\nAudio attached: "
-            f"{item.audio_mime_type or 'unknown type'}, "
-            f"{item.audio_duration_ms or 0} ms, "
-            f"{item.audio_byte_length or 0} bytes."
-        )
-    target_instruction = (
-        "Generator only. Run the implementation generator for this feedback; "
-        "do not run a reviewer unless the user asks later."
-        if payload.target_mode == "generator_only"
-        else "Generator + Reviewer. Run the implementation generator for this "
-        "feedback and then run the reviewer on the generator result."
-    )
+    audio_note = _feedback_audio_note(item)
+    target_instruction = _feedback_target_instruction(payload.target_mode)
     source_label = _feedback_source_label(
         source_display_name=item.source_display_name,
         source_app=item.source_app,
@@ -375,6 +501,185 @@ async def start_feedback_queue_session(
         submission.job,
         attached_image_name=submission.attached_image_name,
     )
+
+
+@router.post(
+    "/feedback-batches/start-session",
+    response_model=MessageAcceptedResponse,
+    status_code=202,
+)
+async def start_feedback_batch_session(
+    payload: FeedbackBatchStartRequest,
+    container: AppContainer = Depends(get_container),
+) -> MessageAcceptedResponse:
+    if not payload.items:
+        raise HTTPException(status_code=422, detail="Feedback batch has no items.")
+    preset = _feedback_preset_by_id(
+        payload.workflow_preset_id,
+        service=container.message_service,
+    )
+    if preset is None:
+        raise HTTPException(status_code=422, detail="Unknown feedback workflow preset.")
+
+    item_payloads = []
+    for index, item_request in enumerate(payload.items, start=1):
+        item_payload = item_request.model_dump(by_alias=False, exclude_none=True)
+        if not str(item_payload.get("screenshotPngBase64") or "").strip():
+            raise HTTPException(
+                status_code=422,
+                detail=f"Feedback batch item {index} has no screenshot.",
+            )
+        _validate_feedback_base64(
+            str(item_payload["screenshotPngBase64"]),
+            field_name="screenshotPngBase64",
+            item_index=index,
+        )
+        if str(item_payload.get("audioBase64") or "").strip():
+            _validate_feedback_base64(
+                str(item_payload["audioBase64"]),
+                field_name="audioBase64",
+                item_index=index,
+            )
+        source_app = str(item_payload.get("sourceApp") or "").strip().lower()
+        if not source_app or source_app == "unknown":
+            item_payload["sourceApp"] = payload.sourceApp
+        if (
+            not str(item_payload.get("sourceDisplayName") or "").strip()
+            and payload.sourceDisplayName
+        ):
+            item_payload["sourceDisplayName"] = payload.sourceDisplayName
+        item_payloads.append(item_payload)
+
+    stored_items = []
+    try:
+        for item_payload in item_payloads:
+            stored_items.append(
+                await run_in_threadpool(
+                    container.feedback_queue_service.create_item,
+                    item_payload,
+                )
+            )
+    except ValueError as exc:
+        for item in stored_items:
+            await run_in_threadpool(container.feedback_queue_service.delete_item, item.id)
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    temp_image_paths: list[Path] = []
+    attachments: list[AttachmentInput] = []
+    try:
+        for index, item in enumerate(stored_items, start=1):
+            if item.screenshot_file is None:
+                raise HTTPException(
+                    status_code=422,
+                    detail="Feedback item has no screenshot.",
+                )
+            source_image_path = Path(item.screenshot_file)
+            if not source_image_path.exists():
+                raise HTTPException(
+                    status_code=422,
+                    detail="Feedback screenshot is missing.",
+                )
+            suffix = _IMAGE_CONTENT_TYPE_SUFFIXES.get(item.screenshot_mime_type, ".png")
+            with NamedTemporaryFile(delete=False, suffix=suffix) as temp_image:
+                temp_image.write(source_image_path.read_bytes())
+                temp_image_path = Path(temp_image.name)
+            temp_image_paths.append(temp_image_path)
+            attachments.append(
+                AttachmentInput(
+                    path=str(temp_image_path),
+                    filename=f"{index:02d}-{item.id}{suffix}",
+                    content_type=item.screenshot_mime_type,
+                )
+            )
+    except HTTPException:
+        for temp_image_path in temp_image_paths:
+            temp_image_path.unlink(missing_ok=True)
+        for item in stored_items:
+            await run_in_threadpool(container.feedback_queue_service.delete_item, item.id)
+        raise
+
+    should_keep_stored_items = False
+    should_cleanup_temp_images = True
+    try:
+        codex_options = await _validate_codex_options(
+            payload.codex_options.to_domain()
+            if payload.codex_options is not None
+            else None,
+            container=container,
+        )
+        first_item = stored_items[0]
+        source_label = _feedback_source_label(
+            source_display_name=payload.sourceDisplayName
+            or first_item.source_display_name,
+            source_app=payload.sourceApp or first_item.source_app,
+            workspace_path=payload.workspace_path,
+        )
+        target_session_id = payload.session_id
+        if target_session_id is None and preset.agent_profile_id:
+            try:
+                session = await run_in_threadpool(
+                    container.message_service.create_session,
+                    title=f"{source_label} feedback",
+                    workspace_path=payload.workspace_path,
+                    agent_profile_id=preset.agent_profile_id,
+                    title_is_placeholder=False,
+                )
+            except ValueError as exc:
+                raise HTTPException(status_code=404, detail=str(exc)) from exc
+            target_session_id = session.id
+        item_sections = []
+        for index, item in enumerate(stored_items, start=1):
+            item_sections.append(
+                f"Item {index} ({item.id}):\n"
+                f"Feedback: {item.comment}\n"
+                f"Selection bounds: {item.selection_bounds}"
+                f"{_feedback_audio_note(item)}"
+            )
+        release_note = (
+            _feedback_release_instruction(includes_reviewer=preset.includes_reviewer)
+            if payload.release_when_complete
+            else ""
+        )
+        message = payload.message or (
+            f"Use these {source_label} feedback screenshots and notes as one "
+            "batch to make the requested UI/app changes.\n\n"
+            f"Run target: {_feedback_target_instruction(preset.target_mode)}\n"
+            f"Workflow preset: {preset.name}\n"
+            f"Batch size: {len(stored_items)} feedback items.\n\n"
+            + "\n\n".join(item_sections)
+            + release_note
+        )
+        job = await run_in_threadpool(
+            container.message_service.submit_attachment_message,
+            attachments,
+            message=message,
+            session_id=target_session_id,
+            workspace_path=payload.workspace_path,
+            codex_options=codex_options,
+        )
+        should_cleanup_temp_images = False
+        for item in stored_items:
+            await run_in_threadpool(
+                container.feedback_queue_service.mark_submitted,
+                item.id,
+            )
+        should_keep_stored_items = True
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except UnsupportedDocumentError as exc:
+        raise HTTPException(status_code=415, detail=str(exc)) from exc
+    finally:
+        if should_cleanup_temp_images:
+            for temp_image_path in temp_image_paths:
+                temp_image_path.unlink(missing_ok=True)
+        if not should_keep_stored_items:
+            for item in stored_items:
+                await run_in_threadpool(
+                    container.feedback_queue_service.delete_item,
+                    item.id,
+                )
+
+    return MessageAcceptedResponse.from_domain(job)
 
 
 def _feedback_source_label(

@@ -17,6 +17,8 @@ typedef DeveloperFeedbackRecorderFactory =
 typedef DeveloperFeedbackCopyText = Future<void> Function(String text);
 typedef DeveloperFeedbackBridgeSubmit =
     Future<void> Function(DeveloperFeedbackItem item);
+typedef DeveloperFeedbackBridgeSubmitBatch =
+    Future<void> Function(DeveloperFeedbackBatch batch);
 
 const developerFeedbackTemplateEnabled =
     bool.fromEnvironment('CODEX_FEEDBACK_TEMPLATE_ENABLED') ||
@@ -41,6 +43,13 @@ const developerFeedbackSaveKey = Key('developer-feedback-save');
 const developerFeedbackPendingKey = Key('developer-feedback-pending');
 const developerFeedbackCopyKey = Key('developer-feedback-copy');
 const developerFeedbackClearKey = Key('developer-feedback-clear');
+const developerFeedbackPresetDropdownKey = Key(
+  'developer-feedback-preset-dropdown',
+);
+const developerFeedbackReleaseWhenCompleteKey = Key(
+  'developer-feedback-release-when-complete',
+);
+const developerFeedbackSendBatchKey = Key('developer-feedback-send-batch');
 const developerFeedbackCommentActionKey = Key(
   'developer-feedback-comment-action',
 );
@@ -63,6 +72,7 @@ class DeveloperFeedbackTemplate extends StatefulWidget {
     this.recorderFactory = createDeveloperFeedbackAudioRecorder,
     this.copyText,
     this.bridgeSubmit,
+    this.bridgeSubmitBatch,
     this.httpClient,
     super.key,
   });
@@ -77,6 +87,7 @@ class DeveloperFeedbackTemplate extends StatefulWidget {
   final DeveloperFeedbackRecorderFactory recorderFactory;
   final DeveloperFeedbackCopyText? copyText;
   final DeveloperFeedbackBridgeSubmit? bridgeSubmit;
+  final DeveloperFeedbackBridgeSubmitBatch? bridgeSubmitBatch;
   final http.Client? httpClient;
 
   @override
@@ -96,6 +107,7 @@ class CodexDeveloperFeedbackTemplate extends DeveloperFeedbackTemplate {
     super.recorderFactory,
     super.copyText,
     super.bridgeSubmit,
+    super.bridgeSubmitBatch,
     super.httpClient,
     super.key,
   });
@@ -299,8 +311,7 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
             _drawing = <Offset>[];
             _selectionReady = false;
           });
-          _showMessage('Feedback guardado.');
-          unawaited(_submitFeedbackToBridge(item));
+          _showMessage('Feedback agregado a la cola.');
         },
       ),
     );
@@ -384,35 +395,87 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
     return isTestBinding;
   }
 
-  Future<void> _submitFeedbackToBridge(DeveloperFeedbackItem item) async {
+  Future<_DeveloperFeedbackWorkflowPresets> _loadWorkflowPresets() async {
+    if (widget.bridgeUrl.trim().isEmpty) {
+      return _DeveloperFeedbackWorkflowPresets.fallback();
+    }
+    final baseUrl = widget.bridgeUrl.trim().replaceAll(RegExp(r'/$'), '');
+    final ownsClient = widget.httpClient == null;
+    final client = widget.httpClient ?? http.Client();
+    try {
+      final response = await client.get(
+        Uri.parse('$baseUrl/feedback-workflow-presets'),
+      );
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw Exception('HTTP ${response.statusCode}: ${response.body}');
+      }
+      return _DeveloperFeedbackWorkflowPresets.fromJson(
+        jsonDecode(response.body) as Map<String, Object?>,
+      );
+    } catch (_) {
+      return _DeveloperFeedbackWorkflowPresets.fallback();
+    } finally {
+      if (ownsClient) client.close();
+    }
+  }
+
+  Future<bool> _submitFeedbackBatchToBridge({
+    required String workflowPresetId,
+    required bool releaseWhenComplete,
+  }) async {
+    if (_items.isEmpty) return false;
+    final batch = DeveloperFeedbackBatch(
+      sourceApp: widget.sourceApp,
+      sourceDisplayName: widget.sourceDisplayName,
+      workflowPresetId: workflowPresetId,
+      releaseWhenComplete: releaseWhenComplete,
+      items: List.of(_items),
+    );
+    final customBatchSubmit = widget.bridgeSubmitBatch;
+    if (customBatchSubmit != null) {
+      await customBatchSubmit(batch);
+      setState(_items.clear);
+      _showMessage('Feedback enviado a Codex CLI.');
+      return true;
+    }
     final customSubmit = widget.bridgeSubmit;
     if (customSubmit != null) {
-      await customSubmit(item);
+      for (final item in List<DeveloperFeedbackItem>.of(_items)) {
+        await customSubmit(item);
+      }
+      setState(_items.clear);
       _showMessage('Feedback enviado a Codex CLI.');
-      return;
+      return true;
     }
-    if (widget.bridgeUrl.trim().isEmpty) return;
+    if (widget.bridgeUrl.trim().isEmpty) return false;
     final baseUrl = widget.bridgeUrl.trim().replaceAll(RegExp(r'/$'), '');
     final ownsClient = widget.httpClient == null;
     final client = widget.httpClient ?? http.Client();
     try {
       final response = await client.post(
-        Uri.parse('$baseUrl/feedback-queue'),
+        Uri.parse('$baseUrl/feedback-batches/start-session'),
         headers: const <String, String>{'Content-Type': 'application/json'},
-        body: jsonEncode(item.toBridgeJson()),
+        body: jsonEncode(batch.toBridgeJson()),
       );
       if (response.statusCode < 200 || response.statusCode >= 300) {
         throw Exception('HTTP ${response.statusCode}: ${response.body}');
       }
+      setState(_items.clear);
       _showMessage('Feedback enviado a Codex CLI.');
+      return true;
     } catch (_) {
       _showMessage('Guardado local; no se pudo enviar a Codex CLI.');
+      return false;
     } finally {
       if (ownsClient) client.close();
     }
   }
 
   void _openPendingDialog() {
+    final presetsFuture = _loadWorkflowPresets();
+    var selectedPresetId = '';
+    var releaseWhenComplete = false;
+    var sending = false;
     showDialog<void>(
       context: widget.navigatorKey?.currentContext ?? context,
       builder: (context) => StatefulBuilder(
@@ -425,58 +488,224 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
           final compactActions = MediaQuery.sizeOf(context).width < 420;
           return AlertDialog(
             title: const Text('Cola de feedback'),
+            actionsOverflowDirection: VerticalDirection.down,
+            actionsOverflowAlignment: OverflowBarAlignment.end,
             content: SizedBox(
               width: dialogWidth,
               child: _items.isEmpty
                   ? const Text('No hay feedback pendiente.')
-                  : ListView.separated(
-                      shrinkWrap: true,
-                      itemCount: _items.length,
-                      separatorBuilder: (_, _) => const Divider(height: 20),
-                      itemBuilder: (context, index) {
-                        final item = _items[index];
-                        return ListTile(
-                          contentPadding: EdgeInsets.zero,
-                          title: Text(
-                            item.comment,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
+                  : Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: <Widget>[
+                        ConstrainedBox(
+                          constraints: BoxConstraints(
+                            maxHeight: math.min(
+                              320.0,
+                              MediaQuery.sizeOf(context).height * 0.45,
+                            ),
                           ),
-                          subtitle: Text(
-                            '${item.selectionPoints.length} puntos'
-                            '${item.audio == null ? '' : ' · audio ${item.audio!.durationMs} ms · ${item.audio!.bytes.length} bytes'}',
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                          trailing: IconButton(
-                            tooltip: 'Eliminar',
-                            onPressed: () {
-                              setState(() => _items.remove(item));
-                              setDialogState(() {});
+                          child: ListView.separated(
+                            shrinkWrap: true,
+                            itemCount: _items.length,
+                            separatorBuilder: (_, _) =>
+                                const Divider(height: 20),
+                            itemBuilder: (context, index) {
+                              final item = _items[index];
+                              return Row(
+                                crossAxisAlignment: CrossAxisAlignment.center,
+                                children: <Widget>[
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: <Widget>[
+                                        Text(
+                                          item.comment,
+                                          maxLines: 2,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                        const SizedBox(height: 4),
+                                        Text(
+                                          '${item.selectionPoints.length} puntos'
+                                          '${item.audio == null ? '' : ' · audio ${item.audio!.durationMs} ms · ${item.audio!.bytes.length} bytes'}',
+                                          maxLines: 2,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: Theme.of(
+                                            context,
+                                          ).textTheme.bodySmall,
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  IconButton(
+                                    tooltip: 'Eliminar',
+                                    onPressed: sending
+                                        ? null
+                                        : () {
+                                            setState(() => _items.remove(item));
+                                            setDialogState(() {});
+                                          },
+                                    icon: const Icon(Icons.delete_outline),
+                                  ),
+                                ],
+                              );
                             },
-                            icon: const Icon(Icons.delete_outline),
                           ),
-                        );
-                      },
+                        ),
+                        const SizedBox(height: 16),
+                        FutureBuilder<_DeveloperFeedbackWorkflowPresets>(
+                          future: presetsFuture,
+                          builder: (context, snapshot) {
+                            final presets =
+                                snapshot.data ??
+                                _DeveloperFeedbackWorkflowPresets.fallback();
+                            final presetIds = presets.presets
+                                .map((preset) => preset.id)
+                                .toSet();
+                            final value =
+                                selectedPresetId.isNotEmpty &&
+                                    presetIds.contains(selectedPresetId)
+                                ? selectedPresetId
+                                : presets.defaultPresetId;
+                            return DropdownButtonFormField<String>(
+                              key: developerFeedbackPresetDropdownKey,
+                              initialValue: value,
+                              decoration: const InputDecoration(
+                                labelText: 'Preset',
+                                border: OutlineInputBorder(),
+                              ),
+                              isExpanded: true,
+                              items: presets.presets
+                                  .map(
+                                    (preset) => DropdownMenuItem<String>(
+                                      value: preset.id,
+                                      child: Text(
+                                        preset.name,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ),
+                                  )
+                                  .toList(),
+                              onChanged: sending
+                                  ? null
+                                  : (value) {
+                                      if (value == null) return;
+                                      setDialogState(() {
+                                        selectedPresetId = value;
+                                      });
+                                    },
+                            );
+                          },
+                        ),
+                        Row(
+                          children: <Widget>[
+                            Checkbox(
+                              key: developerFeedbackReleaseWhenCompleteKey,
+                              value: releaseWhenComplete,
+                              onChanged: sending
+                                  ? null
+                                  : (value) {
+                                      setDialogState(() {
+                                        releaseWhenComplete = value ?? false;
+                                      });
+                                    },
+                            ),
+                            Expanded(
+                              child: Text(
+                                compactActions
+                                    ? 'Release al finalizar'
+                                    : 'Generar release al finalizar',
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
                     ),
             ),
             actions: <Widget>[
-              TextButton(
-                key: developerFeedbackClearKey,
-                onPressed: _items.isEmpty
-                    ? null
-                    : () {
-                        setState(_items.clear);
-                        setDialogState(() {});
-                      },
-                child: Text(compactActions ? 'Borrar' : 'Borrar todo'),
-              ),
-              FilledButton.icon(
-                key: developerFeedbackCopyKey,
-                onPressed: _items.isEmpty ? null : _copyExport,
-                icon: const Icon(Icons.copy),
-                label: Text(compactActions ? 'Copiar' : 'Copiar exportación'),
-              ),
+              if (compactActions) ...<Widget>[
+                IconButton(
+                  key: developerFeedbackClearKey,
+                  tooltip: 'Borrar todo',
+                  onPressed: _items.isEmpty || sending
+                      ? null
+                      : () {
+                          setState(_items.clear);
+                          setDialogState(() {});
+                        },
+                  icon: const Icon(Icons.delete_sweep_outlined),
+                ),
+                IconButton.filled(
+                  key: developerFeedbackCopyKey,
+                  tooltip: 'Copiar exportación',
+                  onPressed: _items.isEmpty || sending ? null : _copyExport,
+                  icon: const Icon(Icons.copy),
+                ),
+                IconButton.filled(
+                  key: developerFeedbackSendBatchKey,
+                  tooltip: sending ? 'Enviando' : 'Enviar',
+                  onPressed: _items.isEmpty || sending
+                      ? null
+                      : () async {
+                          setDialogState(() => sending = true);
+                          final presets = await presetsFuture;
+                          final sent = await _submitFeedbackBatchToBridge(
+                            workflowPresetId: selectedPresetId.isEmpty
+                                ? presets.defaultPresetId
+                                : selectedPresetId,
+                            releaseWhenComplete: releaseWhenComplete,
+                          );
+                          if (!context.mounted) return;
+                          if (sent) {
+                            Navigator.of(context).pop();
+                            return;
+                          }
+                          setDialogState(() => sending = false);
+                        },
+                  icon: const Icon(Icons.send),
+                ),
+              ] else ...<Widget>[
+                TextButton(
+                  key: developerFeedbackClearKey,
+                  onPressed: _items.isEmpty || sending
+                      ? null
+                      : () {
+                          setState(_items.clear);
+                          setDialogState(() {});
+                        },
+                  child: const Text('Borrar todo'),
+                ),
+                FilledButton.icon(
+                  key: developerFeedbackCopyKey,
+                  onPressed: _items.isEmpty || sending ? null : _copyExport,
+                  icon: const Icon(Icons.copy),
+                  label: const Text('Copiar exportación'),
+                ),
+                FilledButton.icon(
+                  key: developerFeedbackSendBatchKey,
+                  onPressed: _items.isEmpty || sending
+                      ? null
+                      : () async {
+                          setDialogState(() => sending = true);
+                          final presets = await presetsFuture;
+                          final sent = await _submitFeedbackBatchToBridge(
+                            workflowPresetId: selectedPresetId.isEmpty
+                                ? presets.defaultPresetId
+                                : selectedPresetId,
+                            releaseWhenComplete: releaseWhenComplete,
+                          );
+                          if (!context.mounted) return;
+                          if (sent) {
+                            Navigator.of(context).pop();
+                            return;
+                          }
+                          setDialogState(() => sending = false);
+                        },
+                  icon: const Icon(Icons.send),
+                  label: Text(sending ? 'Enviando' : 'Enviar'),
+                ),
+              ],
             ],
           );
         },
@@ -788,7 +1017,7 @@ class _FeedbackDialogState extends State<_FeedbackDialog> {
     final dialogWidth = math.min(460.0, availableWidth);
     final compactDialog = MediaQuery.sizeOf(context).width < 420;
     return AlertDialog(
-      title: const Text('Enviar feedback'),
+      title: const Text('Guardar feedback'),
       content: SizedBox(
         width: dialogWidth,
         child: Column(
@@ -857,7 +1086,7 @@ class _FeedbackDialogState extends State<_FeedbackDialog> {
                   if (!context.mounted) return;
                   Navigator.of(context).pop();
                 },
-          child: Text(_saving ? 'Enviando' : 'Enviar'),
+          child: Text(_saving ? 'Guardando' : 'Guardar'),
         ),
       ],
     );
@@ -947,6 +1176,103 @@ class _FeedbackDraft {
 
   final String comment;
   final DeveloperFeedbackAudioClip? audio;
+}
+
+class DeveloperFeedbackBatch {
+  const DeveloperFeedbackBatch({
+    required this.sourceApp,
+    required this.sourceDisplayName,
+    required this.workflowPresetId,
+    required this.releaseWhenComplete,
+    required this.items,
+  });
+
+  final String sourceApp;
+  final String sourceDisplayName;
+  final String workflowPresetId;
+  final bool releaseWhenComplete;
+  final List<DeveloperFeedbackItem> items;
+
+  Map<String, Object?> toBridgeJson() {
+    return <String, Object?>{
+      'kind': 'codex.developerFeedbackBatch',
+      'version': 1,
+      'sourceApp': sourceApp,
+      if (sourceDisplayName.trim().isNotEmpty)
+        'sourceDisplayName': sourceDisplayName,
+      'workflowPresetId': workflowPresetId,
+      'releaseWhenComplete': releaseWhenComplete,
+      'items': items.map((item) => item.toBridgeJson()).toList(),
+    };
+  }
+}
+
+class _DeveloperFeedbackWorkflowPreset {
+  const _DeveloperFeedbackWorkflowPreset({
+    required this.id,
+    required this.name,
+  });
+
+  final String id;
+  final String name;
+
+  factory _DeveloperFeedbackWorkflowPreset.fromJson(Map<String, Object?> json) {
+    return _DeveloperFeedbackWorkflowPreset(
+      id: (json['id'] as String?) ?? 'generator_only',
+      name: (json['name'] as String?) ?? 'Generator only',
+    );
+  }
+}
+
+class _DeveloperFeedbackWorkflowPresets {
+  const _DeveloperFeedbackWorkflowPresets({
+    required this.defaultPresetId,
+    required this.presets,
+  });
+
+  final String defaultPresetId;
+  final List<_DeveloperFeedbackWorkflowPreset> presets;
+
+  factory _DeveloperFeedbackWorkflowPresets.fromJson(
+    Map<String, Object?> json,
+  ) {
+    final rawPresets = json['presets'];
+    final presets = rawPresets is List
+        ? rawPresets
+              .whereType<Map>()
+              .map(
+                (raw) => _DeveloperFeedbackWorkflowPreset.fromJson(
+                  raw.cast<String, Object?>(),
+                ),
+              )
+              .toList()
+        : <_DeveloperFeedbackWorkflowPreset>[];
+    if (presets.isEmpty) return _DeveloperFeedbackWorkflowPresets.fallback();
+    final defaultPresetId =
+        (json['default_preset_id'] as String?) ??
+        (json['defaultPresetId'] as String?) ??
+        presets.first.id;
+    return _DeveloperFeedbackWorkflowPresets(
+      defaultPresetId: defaultPresetId,
+      presets: presets,
+    );
+  }
+
+  factory _DeveloperFeedbackWorkflowPresets.fallback() {
+    return const _DeveloperFeedbackWorkflowPresets(
+      defaultPresetId: 'generator_only',
+      presets: <_DeveloperFeedbackWorkflowPreset>[
+        _DeveloperFeedbackWorkflowPreset(
+          id: 'generator_only',
+          name: 'Generator only',
+        ),
+        _DeveloperFeedbackWorkflowPreset(
+          id: 'generator_reviewer',
+          name: 'Generator + Reviewer',
+        ),
+      ],
+    );
+  }
 }
 
 class DeveloperFeedbackItem {

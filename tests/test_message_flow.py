@@ -6279,6 +6279,22 @@ def test_capabilities_exposes_feedback_source_workspace_aliases(
     }
 
 
+def test_feedback_workflow_presets_expose_agent_profiles(tmp_path: Path) -> None:
+    client = build_feedback_queue_client(tmp_path)
+
+    response = client.get("/feedback-workflow-presets")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["default_preset_id"] == "default"
+    default_preset = next(
+        preset for preset in payload["presets"] if preset["id"] == "default"
+    )
+    assert default_preset["name"] == "Generator"
+    assert default_preset["agent_profile_id"] == "default"
+    assert default_preset["target_mode"] == "generator_only"
+
+
 def test_feedback_queue_item_can_start_codex_image_session(tmp_path: Path) -> None:
     client = build_feedback_queue_client(tmp_path)
     client.post(
@@ -6304,6 +6320,150 @@ def test_feedback_queue_item_can_start_codex_image_session(tmp_path: Path) -> No
     assert "Remove this card" in job["message"]
     assert "feedback-start.png" in job["response"]
     assert client.get("/feedback-queue").json()[0]["status"] == "submitted"
+
+
+def test_feedback_batch_start_session_accepts_multiple_items_and_release(
+    tmp_path: Path,
+) -> None:
+    client = build_feedback_queue_client(tmp_path)
+
+    start_response = client.post(
+        "/feedback-batches/start-session",
+        json={
+            "sourceApp": "smart-nienfos",
+            "sourceDisplayName": "Smart Nienfos",
+            "workflowPresetId": "default",
+            "releaseWhenComplete": True,
+            "items": [
+                {
+                    "id": "feedback-batch-1",
+                    "comment": "Fix the first card",
+                    "screenshotPngBase64": base64.b64encode(b"first png").decode(
+                        "ascii"
+                    ),
+                    "selectionBounds": {
+                        "left": 1,
+                        "top": 2,
+                        "width": 3,
+                        "height": 4,
+                    },
+                },
+                {
+                    "id": "feedback-batch-2",
+                    "comment": "Fix the second card",
+                    "screenshotPngBase64": base64.b64encode(b"second png").decode(
+                        "ascii"
+                    ),
+                    "selectionBounds": {
+                        "left": 5,
+                        "top": 6,
+                        "width": 7,
+                        "height": 8,
+                    },
+                    "audioMimeType": "audio/webm",
+                    "audioDurationMs": 800,
+                    "audioByteLength": 2,
+                    "audioBase64": base64.b64encode(b"\x01\x02").decode("ascii"),
+                },
+            ],
+        },
+    )
+
+    assert start_response.status_code == 202
+    payload = start_response.json()
+    job = wait_for_job(client, payload["job_id"])
+    assert job["status"] == "completed"
+    assert "Use these Smart Nienfos feedback screenshots" in job["message"]
+    assert "Workflow preset: Generator" in job["message"]
+    assert "Batch size: 2 feedback items." in job["message"]
+    assert "Fix the first card" in job["message"]
+    assert "Fix the second card" in job["message"]
+    assert "Audio attached: audio/webm, 800 ms, 2 bytes." in job["message"]
+    assert "Release instruction: after implementation and validation complete" in job[
+        "message"
+    ]
+    assert "01-feedback-batch-1.png" in job["response"]
+    assert "02-feedback-batch-2.png" in job["response"]
+    queued = client.get("/feedback-queue").json()
+    assert [item["status"] for item in queued] == ["submitted", "submitted"]
+
+
+@pytest.mark.parametrize(
+    ("workflow_preset_id", "expected_target"),
+    [
+        ("generator_only", "Run target: Generator only."),
+        ("generator_reviewer", "Run target: Generator + Reviewer."),
+    ],
+)
+def test_feedback_batch_start_session_accepts_fallback_preset_aliases(
+    tmp_path: Path,
+    workflow_preset_id: str,
+    expected_target: str,
+) -> None:
+    client = build_feedback_queue_client(tmp_path)
+
+    start_response = client.post(
+        "/feedback-batches/start-session",
+        json={
+            "sourceApp": "fixture-app",
+            "sourceDisplayName": "Fixture App",
+            "workflowPresetId": workflow_preset_id,
+            "items": [
+                {
+                    "id": f"feedback-{workflow_preset_id}",
+                    "comment": "Alias preset smoke",
+                    "screenshotPngBase64": base64.b64encode(b"fake png").decode(
+                        "ascii"
+                    ),
+                }
+            ],
+        },
+    )
+
+    assert start_response.status_code == 202
+    job = wait_for_job(client, start_response.json()["job_id"])
+    assert job["status"] == "completed"
+    assert expected_target in job["message"]
+    expected_preset = (
+        "Generator only"
+        if workflow_preset_id == "generator_only"
+        else "Generator + Reviewer"
+    )
+    assert f"Workflow preset: {expected_preset}" in job["message"]
+    assert client.get("/feedback-queue").json()[0]["status"] == "submitted"
+
+
+def test_feedback_batch_start_session_is_atomic_when_later_item_has_no_screenshot(
+    tmp_path: Path,
+) -> None:
+    client = build_feedback_queue_client(tmp_path)
+
+    start_response = client.post(
+        "/feedback-batches/start-session",
+        json={
+            "sourceApp": "fixture-app",
+            "workflowPresetId": "generator_only",
+            "items": [
+                {
+                    "id": "feedback-valid-before-invalid",
+                    "comment": "Valid first item",
+                    "screenshotPngBase64": base64.b64encode(b"fake png").decode(
+                        "ascii"
+                    ),
+                },
+                {
+                    "id": "feedback-invalid-no-screenshot",
+                    "comment": "Missing screenshot",
+                },
+            ],
+        },
+    )
+
+    assert start_response.status_code == 422
+    assert "has no screenshot" in start_response.json()["detail"]
+    assert client.get("/feedback-queue").json() == []
+    assert not any((tmp_path / "feedback_images").glob("*"))
+    assert not any((tmp_path / "feedback_audio").glob("*"))
 
 
 def test_feedback_queue_start_session_uses_source_display_name_in_prompt(

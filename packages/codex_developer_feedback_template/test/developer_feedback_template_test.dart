@@ -311,46 +311,79 @@ void main() {
     expect(find.text('Cola de feedback'), findsOneWidget);
   });
 
-  testWidgets('sends saved feedback to configured bridge submitter', (
+  testWidgets('sends queued feedback batch to configured bridge submitter', (
     tester,
   ) async {
-    DeveloperFeedbackItem? submitted;
+    DeveloperFeedbackBatch? submitted;
     await tester.pumpWidget(
       _Harness(
         enabled: true,
         sourceApp: 'second-app',
         sourceDisplayName: 'Second App',
-        bridgeSubmit: (item) async => submitted = item,
+        bridgeSubmitBatch: (batch) async => submitted = batch,
       ),
     );
 
     await _saveFeedback(tester, 'Enviar por Tailscale');
+    expect(submitted, isNull);
+    await tester.tap(find.byKey(developerFeedbackPendingKey));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(developerFeedbackReleaseWhenCompleteKey));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(developerFeedbackSendBatchKey));
 
     await tester.pumpAndSettle();
     expect(submitted, isNotNull);
     final bridgeJson = submitted!.toBridgeJson();
-    expect(bridgeJson['kind'], 'codex.developerFeedback');
+    expect(bridgeJson['kind'], 'codex.developerFeedbackBatch');
     expect(bridgeJson['version'], 1);
-    expect(bridgeJson['queue'], 'codexCli');
-    expect(bridgeJson['status'], 'pending');
     expect(bridgeJson['sourceApp'], 'second-app');
     expect(bridgeJson['sourceDisplayName'], 'Second App');
-    expect(bridgeJson['comment'], 'Enviar por Tailscale');
-    expect(bridgeJson['screenshotPngBase64'], isA<String>());
-    expect(bridgeJson['selectionPoints'], isA<List<Object?>>());
-    expect(bridgeJson['selectionBounds'], isA<Map<String, Object?>>());
-    expect(bridgeJson['hasAudio'], isFalse);
+    expect(bridgeJson['workflowPresetId'], 'generator_only');
+    expect(bridgeJson['releaseWhenComplete'], isTrue);
+    final items = bridgeJson['items'] as List<Object?>;
+    final item = items.single as Map<String, Object?>;
+    expect(item['kind'], 'codex.developerFeedback');
+    expect(item['version'], 1);
+    expect(item['queue'], 'codexCli');
+    expect(item['status'], 'pending');
+    expect(item['comment'], 'Enviar por Tailscale');
+    expect(item['screenshotPngBase64'], isA<String>());
+    expect(item['selectionPoints'], isA<List<Object?>>());
+    expect(item['selectionBounds'], isA<Map<String, Object?>>());
+    expect(item['hasAudio'], isFalse);
   });
 
-  testWidgets('bridge submission posts feedback to configured bridge URL', (
+  testWidgets('bridge submission posts queued batch to configured bridge URL', (
     tester,
   ) async {
     Map<String, Object?>? postedJson;
     final client = MockClient((request) async {
+      if (request.url.path == '/feedback-workflow-presets') {
+        return http.Response(
+          jsonEncode(<String, Object?>{
+            'default_preset_id': 'generator_reviewer',
+            'presets': <Map<String, Object?>>[
+              <String, Object?>{
+                'id': 'generator_only',
+                'name': 'Generator only',
+              },
+              <String, Object?>{
+                'id': 'generator_reviewer',
+                'name': 'Generator + Reviewer',
+              },
+            ],
+          }),
+          200,
+        );
+      }
       expect(request.method, 'POST');
-      expect(request.url.toString(), 'http://bridge.local/feedback-queue');
+      expect(
+        request.url.toString(),
+        'http://bridge.local/feedback-batches/start-session',
+      );
       postedJson = jsonDecode(request.body) as Map<String, Object?>;
-      return http.Response('{}', 201);
+      return http.Response('{}', 202);
     });
     await tester.pumpWidget(
       _Harness(
@@ -363,19 +396,30 @@ void main() {
     );
 
     await _saveFeedback(tester, 'Enviar fixture');
+    await tester.tap(find.byKey(developerFeedbackPendingKey));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(developerFeedbackSendBatchKey));
     await tester.pumpAndSettle();
 
     expect(postedJson, isNotNull);
-    expect(postedJson!['kind'], 'codex.developerFeedback');
+    expect(postedJson!['kind'], 'codex.developerFeedbackBatch');
     expect(postedJson!['version'], 1);
-    expect(postedJson!['queue'], 'codexCli');
-    expect(postedJson!['status'], 'pending');
     expect(postedJson!['sourceApp'], 'fixture-app-two');
     expect(postedJson!['sourceDisplayName'], 'Fixture App Two');
-    expect(postedJson!['comment'], 'Enviar fixture');
-    expect(postedJson!['screenshotPngBase64'], isA<String>());
-    expect(postedJson!['selectionBounds'], isA<Map<String, Object?>>());
-    expect(postedJson!['hasAudio'], isFalse);
+    expect(postedJson!['workflowPresetId'], 'generator_reviewer');
+    expect(postedJson!['releaseWhenComplete'], isFalse);
+    final items = postedJson!['items'] as List<Object?>;
+    final item = items.single as Map<String, Object?>;
+    expect(item['kind'], 'codex.developerFeedback');
+    expect(item['version'], 1);
+    expect(item['queue'], 'codexCli');
+    expect(item['status'], 'pending');
+    expect(item['sourceApp'], 'fixture-app-two');
+    expect(item['sourceDisplayName'], 'Fixture App Two');
+    expect(item['comment'], 'Enviar fixture');
+    expect(item['screenshotPngBase64'], isA<String>());
+    expect(item['selectionBounds'], isA<Map<String, Object?>>());
+    expect(item['hasAudio'], isFalse);
   });
 
   testWidgets(
@@ -644,6 +688,34 @@ void main() {
     expect(decoded.containsKey('audioBase64'), isFalse);
   });
 
+  test('bridge JSON keeps generic feedback contract fields', () {
+    final item = DeveloperFeedbackItem(
+      id: 'feedback-bridge',
+      createdAt: DateTime.utc(2026, 6, 7),
+      sourceApp: 'fixture-app',
+      sourceDisplayName: 'Fixture App',
+      comment: 'Enviar a bridge',
+      screenshotPngBase64: 'png',
+      selectionPoints: const <Offset>[Offset(1, 2), Offset(5, 8)],
+      audio: DeveloperFeedbackAudioClip(
+        bytes: Uint8List.fromList(<int>[1, 2]),
+        mimeType: 'audio/webm',
+        durationMs: 300,
+      ),
+    );
+
+    final bridgeJson = item.toBridgeJson();
+
+    expect(bridgeJson['kind'], 'codex.developerFeedback');
+    expect(bridgeJson['version'], 1);
+    expect(bridgeJson['queue'], 'codexCli');
+    expect(bridgeJson['status'], 'pending');
+    expect(bridgeJson['sourceApp'], 'fixture-app');
+    expect(bridgeJson['sourceDisplayName'], 'Fixture App');
+    expect(bridgeJson['hasAudio'], isTrue);
+    expect(bridgeJson['audioBase64'], base64Encode(<int>[1, 2]));
+  });
+
   testWidgets('unsupported audio behavior is graceful', (tester) async {
     await tester.pumpWidget(const _Harness(enabled: true));
     await tester.tap(find.byKey(developerFeedbackSwitchKey));
@@ -776,7 +848,7 @@ class _Harness extends StatelessWidget {
     this.child,
     this.recorderFactory,
     this.copyText,
-    this.bridgeSubmit,
+    this.bridgeSubmitBatch,
     this.httpClient,
   });
 
@@ -787,7 +859,7 @@ class _Harness extends StatelessWidget {
   final Widget? child;
   final DeveloperFeedbackRecorderFactory? recorderFactory;
   final DeveloperFeedbackCopyText? copyText;
-  final DeveloperFeedbackBridgeSubmit? bridgeSubmit;
+  final DeveloperFeedbackBridgeSubmitBatch? bridgeSubmitBatch;
   final http.Client? httpClient;
 
   @override
@@ -807,7 +879,7 @@ class _Harness extends StatelessWidget {
         recorderFactory:
             recorderFactory ?? (() => const _UnsupportedRecorder()),
         copyText: copyText,
-        bridgeSubmit: bridgeSubmit,
+        bridgeSubmitBatch: bridgeSubmitBatch,
         httpClient: httpClient,
         child: Scaffold(body: Center(child: child ?? const Text('App body'))),
       ),

@@ -83,10 +83,12 @@ Current limitation: the mobile frontend supports MCP app discovery, preview, ins
 
 The reusable Flutter template lives in
 `packages/codex_developer_feedback_template`. It captures marked screenshots,
-comments, and optional audio, then posts generic `codex.developerFeedback`
-payloads to the bridge feedback queue. Ambientando Calendar consumes this
-package with explicit `sourceApp`, `sourceDisplayName`, and `bridgeUrl`
-configuration.
+comments, and optional audio into a local in-app queue. The user can collect
+multiple feedback items, choose a Codex workflow preset exposed by the bridge,
+optionally request `releaseWhenComplete`, and send the whole batch to Codex as a
+single run. Apps configure only `sourceApp`, `sourceDisplayName`, and
+`bridgeUrl`; the bridge owns preset discovery, workspace mapping, queue storage,
+and run startup.
 
 ## Repo Skills
 
@@ -735,6 +737,34 @@ into this bridge over Tailscale by wrapping the Flutter app with the reusable
 --dart-define=CODEX_FEEDBACK_BRIDGE_URL=http://batata-default-string.tail0302c4.ts.net
 ```
 
+The v0.2 template stores feedback locally in the app first. Each save adds one
+marked screenshot, comment, bounds payload, and optional audio clip to the local
+draft queue. From that queue the user selects a workflow preset and sends the
+items together. The template loads presets from:
+
+```http
+GET /feedback-workflow-presets
+```
+
+The backend returns Agent Profiles as selectable presets. The response includes
+`default_preset_id` and a `presets` list with ids, names, descriptions, reviewer
+metadata, and optional `agent_profile_id`. If preset loading is unavailable, the
+template falls back to `generator_only` and `generator_reviewer`; the backend
+accepts both as compatibility aliases.
+
+Batch send uses:
+
+```http
+POST /feedback-batches/start-session
+```
+
+The request body is `codex.developerFeedbackBatch` with `sourceApp`,
+`sourceDisplayName`, `workflowPresetId`, `releaseWhenComplete`, and an `items`
+array of generic `codex.developerFeedback` items. The bridge stores the items,
+starts one Codex run with every screenshot attached, and marks the stored items
+as `submitted`. When `releaseWhenComplete` is true, the generated prompt
+includes an explicit release instruction for the selected workflow.
+
 The backend stores pending feedback at `FEEDBACK_QUEUE_PATH`, screenshots in
 `FEEDBACK_IMAGE_DIR`, and optional audio in `FEEDBACK_AUDIO_DIR`. Use
 `FEEDBACK_SOURCE_WORKSPACE_ALIASES` when a stable source app id does not match
@@ -744,9 +774,15 @@ the workspace name or path, for example:
 FEEDBACK_SOURCE_WORKSPACE_ALIASES=ambientando-calendar:/home/me/ambientando-calendar,smart-nienfos:/home/me/smart_nienfos
 ```
 
-In the Codex mobile app, open `Feedback queue`, review the marked
-screenshot/comment, then stage the selected items into the target workspace chat
-or start a Codex run from the item.
+The legacy bridge queue endpoints remain supported:
+
+- `POST /feedback-queue` stores one feedback item.
+- `GET /feedback-queue` lists stored items.
+- `POST /feedback-queue/{item_id}/start-session` starts one run from one queued item.
+
+In the Codex mobile app, `Feedback queue` still supports reviewing stored
+feedback, staging selected items into a workspace chat, or starting a run from a
+single legacy queue item.
 
 ## Multi-Server Support
 

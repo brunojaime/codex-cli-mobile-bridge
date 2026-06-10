@@ -122,6 +122,48 @@ class FeedbackQueueStartRequest(BaseModel):
     codex_options: "CodexRunOptionsRequest | None" = None
 
 
+class FeedbackWorkflowPresetResponse(BaseModel):
+    id: str
+    name: str
+    description: str
+    target_mode: str = "agent_profile"
+    agent_profile_id: str | None = None
+    includes_reviewer: bool = False
+    default: bool = False
+
+
+class FeedbackWorkflowPresetsResponse(BaseModel):
+    default_preset_id: str
+    presets: list[FeedbackWorkflowPresetResponse]
+
+
+class FeedbackBatchStartRequest(BaseModel):
+    sourceApp: str = Field(
+        default="unknown",
+        max_length=120,
+        validation_alias=AliasChoices("sourceApp", "source_app"),
+    )
+    sourceDisplayName: str | None = Field(
+        default=None,
+        max_length=160,
+        validation_alias=AliasChoices("sourceDisplayName", "source_display_name"),
+    )
+    items: list[FeedbackQueueItemRequest] = Field(default_factory=list)
+    workflow_preset_id: str = Field(
+        default="generator_only",
+        max_length=120,
+        validation_alias=AliasChoices("workflow_preset_id", "workflowPresetId"),
+    )
+    release_when_complete: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("release_when_complete", "releaseWhenComplete"),
+    )
+    message: str | None = Field(default=None, max_length=10000)
+    session_id: str | None = None
+    workspace_path: str | None = None
+    codex_options: "CodexRunOptionsRequest | None" = None
+
+
 class CodexRunOptionsRequest(BaseModel):
     profile: str | None = Field(default=None, max_length=120)
     search_enabled: bool = False
@@ -1260,6 +1302,7 @@ class ServerCapabilitiesResponse(BaseModel):
     supports_job_cancellation: bool
     supports_job_retry: bool
     supports_push_job_stream: bool
+    supports_feedback_batches: bool = True
     speech_output_backend: str
     speech_output_voice: str | None = None
     speech_output_response_format: str | None = None
