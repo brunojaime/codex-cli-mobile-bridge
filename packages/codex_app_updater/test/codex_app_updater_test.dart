@@ -140,6 +140,49 @@ void main() {
     expect(installer.launchCount, 0);
   });
 
+  test('download failure maps to failed downloadFailed', () async {
+    final controller = CodexAppUpdaterController(
+      httpClient: MockClient(
+        (_) async =>
+            http.Response(jsonEncode(_updateJson(available: true)), 200),
+      ),
+      downloader: _FailingDownloader(),
+      installerLauncher: _FakeInstallerLauncher(),
+    );
+    addTearDown(controller.dispose);
+
+    await controller.checkForUpdate(_config());
+    final prepared = await controller.downloadAndPrepare(_config());
+
+    expect(prepared, isFalse);
+    expect(controller.status, CodexAppUpdateStatus.failed);
+    expect(
+      controller.failureReason,
+      CodexAppUpdateFailureReason.downloadFailed,
+    );
+  });
+
+  test('up-to-date response cannot be prepared for installation', () async {
+    final controller = CodexAppUpdaterController(
+      httpClient: MockClient(
+        (_) async =>
+            http.Response(jsonEncode(_updateJson(available: false)), 200),
+      ),
+      installerLauncher: _FakeInstallerLauncher(),
+    );
+    addTearDown(controller.dispose);
+
+    await controller.checkForUpdate(_config());
+    final prepared = await controller.downloadAndPrepare(_config());
+
+    expect(prepared, isFalse);
+    expect(controller.status, CodexAppUpdateStatus.failed);
+    expect(
+      controller.failureReason,
+      CodexAppUpdateFailureReason.noCompatibleAsset,
+    );
+  });
+
   test(
     'installer launcher is called only after successful verification',
     () async {
@@ -235,6 +278,17 @@ class _FakeDownloader implements CodexApkDownloader {
     requestedUrl = url;
     onProgress?.call(3, 3);
     return path;
+  }
+}
+
+class _FailingDownloader implements CodexApkDownloader {
+  @override
+  Future<String> download(
+    Uri url, {
+    required String fileName,
+    CodexDownloadProgress? onProgress,
+  }) async {
+    throw const HttpException('download failed');
   }
 }
 

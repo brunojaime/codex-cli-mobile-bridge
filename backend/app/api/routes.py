@@ -70,7 +70,7 @@ from backend.app.application.services.message_service import (
     MessageService,
     UnsupportedDocumentError,
 )
-from backend.app.domain.entities.chat_message import ChatMessage, ChatMessageStatus
+from backend.app.domain.entities.chat_message import ChatMessage
 from backend.app.domain.entities.agent_configuration import AgentId
 from backend.app.domain.entities.job import Job
 from backend.app.container import AppContainer

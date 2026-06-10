@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from fastapi.testclient import TestClient
+import pytest
 
 from backend.app.api.routes import get_container
 from backend.app.application.services.app_update_service import (
@@ -121,6 +122,43 @@ def test_release_without_apk_asset_is_ignored(tmp_path: Path) -> None:
     assert response.json()["available"] is False
 
 
+def test_drafts_prereleases_and_invalid_assets_are_ignored(tmp_path: Path) -> None:
+    client = _build_app_update_client(
+        tmp_path,
+        releases=[
+            _release(
+                "android-v1.0.0-build.50",
+                assets=[_apk_asset("ambientando-calendar-1.0.0-build.50.apk")],
+                draft=True,
+            ),
+            _release(
+                "android-v1.0.0-build.49",
+                assets=[_apk_asset("ambientando-calendar-1.0.0-build.49.apk")],
+                prerelease=True,
+            ),
+            _release(
+                "android-v1.0.0-build.48",
+                assets=[GitHubAsset("wrong-app.apk", "https://example.test/wrong.apk")],
+            ),
+            _release(
+                "android-v1.0.0-build.47",
+                assets=[_apk_asset("ambientando-calendar-1.0.0-build.47.apk")],
+            ),
+        ],
+    )
+
+    response = client.get(
+        "/app-updates/ambientando-calendar",
+        params={"currentVersion": "1.0.0", "currentBuild": 39},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["available"] is True
+    assert payload["latestBuild"] == 47
+    assert payload["releaseTag"] == "android-v1.0.0-build.47"
+
+
 def test_multiple_releases_choose_highest_valid_build(tmp_path: Path) -> None:
     client = _build_app_update_client(
         tmp_path,
@@ -212,6 +250,44 @@ def test_checksum_digest_is_surfaced_when_available(tmp_path: Path) -> None:
     assert response.json()["sha256"] == digest
 
 
+def test_sha256_asset_is_preferred_over_digest(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sha_asset_digest = "b" * 64
+    github_digest = "a" * 64
+    monkeypatch.setattr(
+        "backend.app.application.services.app_update_service.download_checksum_asset",
+        lambda _url: sha_asset_digest,
+    )
+    client = _build_app_update_client(
+        tmp_path,
+        releases=[
+            _release(
+                "android-v1.0.0-build.40",
+                assets=[
+                    _apk_asset(
+                        "ambientando-calendar-1.0.0-build.40.apk",
+                        digest=f"sha256:{github_digest}",
+                    ),
+                    GitHubAsset(
+                        "ambientando-calendar-1.0.0-build.40.apk.sha256",
+                        "https://example.test/app.apk.sha256",
+                    ),
+                ],
+            ),
+        ],
+    )
+
+    response = client.get(
+        "/app-updates/ambientando-calendar",
+        params={"currentVersion": "1.0.0", "currentBuild": 39},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["sha256"] == sha_asset_digest
+
+
 def test_app_updates_lists_configured_apps_without_repo_secrets(tmp_path: Path) -> None:
     client = _build_app_update_client(tmp_path, releases=[])
 
@@ -280,13 +356,15 @@ def _release(
     *,
     assets: list[GitHubAsset],
     body: str | None = None,
+    draft: bool = False,
+    prerelease: bool = False,
 ) -> GitHubRelease:
     return GitHubRelease(
         tag_name=tag_name,
         html_url=f"https://github.com/example/repo/releases/tag/{tag_name}",
         body=body,
-        draft=False,
-        prerelease=False,
+        draft=draft,
+        prerelease=prerelease,
         assets=tuple(assets),
     )
 

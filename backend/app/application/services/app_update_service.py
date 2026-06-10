@@ -346,7 +346,7 @@ def _sha256_for_asset(
             normalized_name.endswith(".sha256")
             and normalized_name.startswith(apk_asset.name.lower())
         ):
-            checksum = _download_checksum_asset(asset.browser_download_url)
+            checksum = download_checksum_asset(asset.browser_download_url)
             if checksum:
                 return checksum
     if apk_asset.digest:
@@ -358,7 +358,7 @@ def _sha256_for_asset(
     return None
 
 
-def _download_checksum_asset(url: str) -> str | None:
+def download_checksum_asset(url: str) -> str | None:
     if not url:
         return None
     try:

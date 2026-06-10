@@ -42,8 +42,15 @@ class CodexAppUpdaterPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
             !context.packageManager.canRequestPackageInstalls()
         ) {
-            openUnknownAppsSettings()
-            result.success("permissionRequired")
+            if (openUnknownAppsSettings()) {
+                result.success("permissionRequired")
+            } else {
+                result.error(
+                    "installerUnavailable",
+                    "Unknown app install settings are unavailable.",
+                    null,
+                )
+            }
             return
         }
         val apkFile = File(apkPath)
@@ -66,8 +73,8 @@ class CodexAppUpdaterPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         }
     }
 
-    private fun openUnknownAppsSettings() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+    private fun openUnknownAppsSettings(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return true
         val intent = Intent(
             Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
             Uri.parse("package:${context.packageName}"),
@@ -76,11 +83,17 @@ class CodexAppUpdaterPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         }
         try {
             context.startActivity(intent)
+            return true
         } catch (_: ActivityNotFoundException) {
             val fallback = Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES).apply {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
-            context.startActivity(fallback)
+            return try {
+                context.startActivity(fallback)
+                true
+            } catch (_: ActivityNotFoundException) {
+                false
+            }
         }
     }
 }

@@ -30,7 +30,6 @@ from backend.app.domain.entities.chat_message import (
 )
 from backend.app.domain.entities.agent_configuration import (
     AgentConfiguration,
-    AgentDisplayMode,
     AgentId,
     AgentPreset,
     AgentTriggerSource,
