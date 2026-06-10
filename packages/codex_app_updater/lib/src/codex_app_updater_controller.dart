@@ -57,6 +57,8 @@ class CodexAppUpdaterController extends ChangeNotifier {
       updateInfo = info;
       if (!info.available) {
         _setStatus(CodexAppUpdateStatus.upToDate);
+      } else if (!info.hasInstallableAsset) {
+        _fail(CodexAppUpdateFailureReason.noCompatibleAsset);
       } else if (info.required) {
         _setStatus(CodexAppUpdateStatus.updateRequired);
       } else {

@@ -223,6 +223,9 @@ class _Actions extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final status = controller.status;
+    if (status == CodexAppUpdateStatus.failed) {
+      return const SizedBox.shrink();
+    }
     final busy =
         status == CodexAppUpdateStatus.downloading ||
         status == CodexAppUpdateStatus.verifying ||

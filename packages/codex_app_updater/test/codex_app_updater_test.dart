@@ -57,6 +57,31 @@ void main() {
     expect(find.byKey(codexAppUpdaterLaterButtonKey), findsOneWidget);
   });
 
+  testWidgets('available response without APK fails without update action', (
+    tester,
+  ) async {
+    final controller = CodexAppUpdaterController(
+      httpClient: MockClient(
+        (_) async => http.Response(
+          jsonEncode(_updateJson(available: true, includeApk: false)),
+          200,
+        ),
+      ),
+    );
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(_Harness(controller: controller));
+    await tester.pump();
+
+    expect(controller.status, CodexAppUpdateStatus.failed);
+    expect(
+      controller.failureReason,
+      CodexAppUpdateFailureReason.noCompatibleAsset,
+    );
+    expect(find.byKey(codexAppUpdaterBannerKey), findsOneWidget);
+    expect(find.byKey(codexAppUpdaterUpdateButtonKey), findsNothing);
+  });
+
   testWidgets('shows required update state when required is true', (
     tester,
   ) async {
@@ -226,6 +251,20 @@ void main() {
     );
   });
 
+  testWidgets('failed bridge check does not show update action', (tester) async {
+    final controller = CodexAppUpdaterController(
+      httpClient: MockClient((_) async => http.Response('nope', 503)),
+    );
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(_Harness(controller: controller));
+    await tester.pump();
+
+    expect(controller.status, CodexAppUpdateStatus.failed);
+    expect(find.byKey(codexAppUpdaterBannerKey), findsOneWidget);
+    expect(find.byKey(codexAppUpdaterUpdateButtonKey), findsNothing);
+  });
+
   test('sourceApp, version, build, and platform are sent to backend', () async {
     Uri? requestedUri;
     final controller = CodexAppUpdaterController(
@@ -315,6 +354,7 @@ Map<String, Object?> _updateJson({
   required bool available,
   bool required = false,
   String? sha256,
+  bool includeApk = true,
 }) => {
   'kind': 'codex.appUpdate',
   'version': 1,
@@ -327,8 +367,10 @@ Map<String, Object?> _updateJson({
   'latestBuild': 40,
   'releaseTag': 'android-v1.0.0-build.40',
   'releaseUrl': 'https://example.test/release',
-  'apkUrl': available ? 'https://example.test/app.apk' : null,
-  'apkAssetName': available ? 'ambientando-calendar-1.0.0-build.40.apk' : null,
+  'apkUrl': available && includeApk ? 'https://example.test/app.apk' : null,
+  'apkAssetName': available && includeApk
+      ? 'ambientando-calendar-1.0.0-build.40.apk'
+      : null,
   'sha256': sha256,
   'sizeBytes': available ? 3 : null,
   'releaseNotes': available ? 'Cambios' : null,
