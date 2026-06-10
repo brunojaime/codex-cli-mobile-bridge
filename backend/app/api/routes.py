@@ -34,6 +34,9 @@ from backend.app.api.schemas import (
     CodexToolingResponse,
     CreateSessionRequest,
     DocumentMessageAcceptedResponse,
+    AppUpdateRegistryItemResponse,
+    AppUpdateRegistryResponse,
+    AppUpdateResponse,
     FeedbackBatchStartRequest,
     FeedbackQueueItemRequest,
     FeedbackQueueItemResponse,
@@ -54,6 +57,12 @@ from backend.app.api.schemas import (
     SpeechRequest,
     TurnSummaryConfigRequest,
     WorkspaceResponse,
+)
+from backend.app.application.services.app_update_service import (
+    AppDisabledError,
+    AppUpdateResult,
+    GitHubReleaseError,
+    UnknownAppError,
 )
 from backend.app.application.services.message_service import (
     AttachmentInput,
@@ -183,6 +192,83 @@ async def capabilities(
             container.settings.feedback_source_workspace_alias_map
         ),
     )
+
+
+@router.get("/app-updates", response_model=AppUpdateRegistryResponse)
+async def list_app_updates(
+    container: AppContainer = Depends(get_container),
+) -> AppUpdateRegistryResponse:
+    return AppUpdateRegistryResponse(
+        apps=[
+            AppUpdateRegistryItemResponse(
+                source_app=config.source_app,
+                display_name=config.display_name,
+                enabled=config.enabled,
+                required_minimum_build=config.required_minimum_build,
+            )
+            for config in container.app_update_service.list_apps()
+        ],
+    )
+
+
+@router.get("/app-updates/{source_app}", response_model=AppUpdateResponse)
+async def get_app_update(
+    source_app: str,
+    platform: str = "android",
+    currentVersion: str | None = None,
+    currentBuild: int | None = None,
+    channel: str = "stable",
+    container: AppContainer = Depends(get_container),
+) -> AppUpdateResponse:
+    try:
+        result = await run_in_threadpool(
+            container.app_update_service.check_update,
+            source_app=source_app,
+            platform=platform,
+            current_version=currentVersion,
+            current_build=currentBuild,
+            channel=channel,
+        )
+    except UnknownAppError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "code": "unknown_source_app",
+                "sourceApp": source_app,
+            },
+        ) from exc
+    except AppDisabledError:
+        result = AppUpdateResult(
+            source_app=source_app,
+            display_name=None,
+            platform=platform,
+            current_version=currentVersion,
+            current_build=currentBuild,
+            latest_version=currentVersion,
+            latest_build=currentBuild,
+            release_tag=None,
+            release_url=None,
+            apk_url=None,
+            apk_asset_name=None,
+            sha256=None,
+            size_bytes=None,
+            release_notes=None,
+            required=False,
+            available=False,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except GitHubReleaseError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail={
+                "code": "github_unavailable",
+                "message": str(exc),
+                "sourceApp": source_app,
+            },
+        ) from exc
+
+    return _app_update_response(result)
 
 
 @router.post("/audio/speech")
@@ -1599,6 +1685,27 @@ async def job_updates(
         websocket,
         job_id=job_id,
         service=container.message_service,
+    )
+
+
+def _app_update_response(result: AppUpdateResult) -> AppUpdateResponse:
+    return AppUpdateResponse(
+        source_app=result.source_app,
+        display_name=result.display_name,
+        platform=result.platform,
+        current_version=result.current_version,
+        current_build=result.current_build,
+        latest_version=result.latest_version,
+        latest_build=result.latest_build,
+        release_tag=result.release_tag,
+        release_url=result.release_url,
+        apk_url=result.apk_url,
+        apk_asset_name=result.apk_asset_name,
+        sha256=result.sha256,
+        size_bytes=result.size_bytes,
+        release_notes=result.release_notes,
+        required=result.required,
+        available=result.available,
     )
 
 

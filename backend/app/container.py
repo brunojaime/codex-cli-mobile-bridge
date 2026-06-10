@@ -3,6 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 import sqlite3
 
+from backend.app.application.services.app_update_service import (
+    AppUpdateRegistry,
+    AppUpdateService,
+    HttpGitHubReleaseClient,
+)
 from backend.app.application.services.message_service import MessageService
 from backend.app.application.services.feedback_queue_service import FeedbackQueueService
 from backend.app.domain.repositories.chat_repository import (
@@ -40,6 +45,7 @@ class AppContainer:
     settings: Settings
     message_service: MessageService
     feedback_queue_service: FeedbackQueueService
+    app_update_service: AppUpdateService
     job_stream_hub: JobStreamHub
     audio_transcriber: AudioTranscriber
     speech_synthesizer: SpeechSynthesizer
@@ -78,10 +84,20 @@ def build_container(settings: Settings | None = None) -> AppContainer:
         image_dir=resolved_settings.feedback_image_dir,
         audio_dir=resolved_settings.feedback_audio_dir,
     )
+    app_update_service = AppUpdateService(
+        registry=AppUpdateRegistry.from_json_file(
+            resolved_settings.app_update_registry_path,
+        ),
+        release_client=HttpGitHubReleaseClient(
+            token=resolved_settings.app_update_github_token,
+            timeout_seconds=resolved_settings.app_update_github_timeout_seconds,
+        ),
+    )
     return AppContainer(
         settings=resolved_settings,
         message_service=message_service,
         feedback_queue_service=feedback_queue_service,
+        app_update_service=app_update_service,
         job_stream_hub=job_stream_hub,
         audio_transcriber=audio_transcriber,
         speech_synthesizer=speech_synthesizer,

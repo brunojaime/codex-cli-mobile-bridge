@@ -68,6 +68,9 @@ class Settings(BaseSettings):
         "Speak naturally with clear pacing, grounded tone, and concise phrasing."
     )
     speech_synthesis_timeout_seconds: int = 120
+    app_update_registry_path: str = str(Path(__file__).with_name("app_updates.json"))
+    app_update_github_token: str | None = None
+    app_update_github_timeout_seconds: float = 10.0
     openai_api_key: str | None = None
     openai_base_url: str = "https://api.openai.com/v1"
 

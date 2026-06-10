@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import AliasChoices, BaseModel, Field, model_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 
 from backend.app.domain.entities.agent_configuration import (
     AgentConfiguration,
@@ -135,6 +135,50 @@ class FeedbackWorkflowPresetResponse(BaseModel):
 class FeedbackWorkflowPresetsResponse(BaseModel):
     default_preset_id: str
     presets: list[FeedbackWorkflowPresetResponse]
+
+
+class AppUpdateRegistryItemResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    source_app: str = Field(alias="sourceApp")
+    display_name: str = Field(alias="displayName")
+    platform: str = "android"
+    enabled: bool
+    required_minimum_build: int | None = Field(
+        default=None,
+        alias="requiredMinimumBuild",
+    )
+
+
+class AppUpdateRegistryResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    kind: str = "codex.appUpdateRegistry"
+    version: int = 1
+    apps: list[AppUpdateRegistryItemResponse]
+
+
+class AppUpdateResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    kind: str = "codex.appUpdate"
+    version: int = 1
+    source_app: str = Field(alias="sourceApp")
+    display_name: str | None = Field(default=None, alias="displayName")
+    platform: str
+    current_version: str | None = Field(default=None, alias="currentVersion")
+    current_build: int | None = Field(default=None, alias="currentBuild")
+    latest_version: str | None = Field(default=None, alias="latestVersion")
+    latest_build: int | None = Field(default=None, alias="latestBuild")
+    release_tag: str | None = Field(default=None, alias="releaseTag")
+    release_url: str | None = Field(default=None, alias="releaseUrl")
+    apk_url: str | None = Field(default=None, alias="apkUrl")
+    apk_asset_name: str | None = Field(default=None, alias="apkAssetName")
+    sha256: str | None = None
+    size_bytes: int | None = Field(default=None, alias="sizeBytes")
+    release_notes: str | None = Field(default=None, alias="releaseNotes")
+    required: bool
+    available: bool
 
 
 class FeedbackBatchStartRequest(BaseModel):

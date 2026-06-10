@@ -1,0 +1,28 @@
+name: codex_app_updater
+description: Reusable Codex Mobile Bridge controlled Android APK updater.
+publish_to: 'none'
+version: 0.1.0
+
+environment:
+  sdk: ^3.11.1
+  flutter: ">=3.35.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  crypto: ^3.0.6
+  http: ^1.2.2
+  path: ^1.9.0
+  path_provider: ^2.1.5
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  plugin:
+    platforms:
+      android:
+        package: com.codex.app_updater
+        pluginClass: CodexAppUpdaterPlugin
