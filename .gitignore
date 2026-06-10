@@ -19,6 +19,7 @@ frontend/mobile_app/.flutter-plugins-dependencies
 frontend/mobile_app/.packages
 frontend/mobile_app/build/
 packages/*/.dart_tool/
+packages/*/.flutter-plugins-dependencies
 packages/*/build/
 frontend/mobile_app/android/local.properties
 frontend/mobile_app/android/key.properties

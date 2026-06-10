@@ -1,7 +1,7 @@
 name: codex_developer_feedback_template
 description: Reusable Codex Mobile Bridge developer feedback template.
 publish_to: 'none'
-version: 0.2.0
+version: 0.2.1
 
 environment:
   sdk: ^3.11.1
@@ -10,6 +10,7 @@ dependencies:
   flutter:
     sdk: flutter
   http: ^1.2.2
+  record: ^6.2.1
   web: ^1.1.1
 
 dev_dependencies:
