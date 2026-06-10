@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -57,7 +58,7 @@ void main() {
     expect(find.byKey(codexAppUpdaterLaterButtonKey), findsOneWidget);
   });
 
-  testWidgets('available response without APK fails without update action', (
+  testWidgets('available response without APK keeps update action for retry', (
     tester,
   ) async {
     final controller = CodexAppUpdaterController(
@@ -79,7 +80,48 @@ void main() {
       CodexAppUpdateFailureReason.noCompatibleAsset,
     );
     expect(find.byKey(codexAppUpdaterBannerKey), findsOneWidget);
-    expect(find.byKey(codexAppUpdaterUpdateButtonKey), findsNothing);
+    expect(find.byKey(codexAppUpdaterUpdateButtonKey), findsOneWidget);
+  });
+
+  test('updateNow rechecks after stale no-APK failure', () async {
+    final apkFile = await _writeTempApk('apk-retry', [1, 2, 3]);
+    final expectedSha = await _sha256(apkFile.path);
+    var requestCount = 0;
+    final downloader = _FakeDownloader(apkFile.path);
+    final installer = _FakeInstallerLauncher();
+    final controller = CodexAppUpdaterController(
+      httpClient: MockClient((_) async {
+        requestCount += 1;
+        if (requestCount == 1) {
+          return http.Response(
+            jsonEncode(_updateJson(available: true, includeApk: false)),
+            200,
+          );
+        }
+        return http.Response(
+          jsonEncode(_updateJson(available: true, sha256: expectedSha)),
+          200,
+        );
+      }),
+      downloader: downloader,
+      installerLauncher: installer,
+    );
+    addTearDown(controller.dispose);
+
+    await controller.checkForUpdate(_config());
+
+    expect(controller.status, CodexAppUpdateStatus.failed);
+    expect(controller.updateInfo?.apkUrl, isNull);
+
+    final updated = await controller.updateNow(_config());
+
+    expect(updated, isTrue);
+    expect(requestCount, 2);
+    expect(controller.updateInfo?.apkUrl, 'https://example.test/app.apk');
+    expect(downloader.downloadCount, 1);
+    expect(downloader.requestedUrl.toString(), 'https://example.test/app.apk');
+    expect(installer.launchCount, 1);
+    expect(controller.status, CodexAppUpdateStatus.installing);
   });
 
   testWidgets('shows required update state when required is true', (
@@ -251,7 +293,9 @@ void main() {
     );
   });
 
-  testWidgets('failed bridge check does not show update action', (tester) async {
+  testWidgets('failed bridge check shows update action for retry', (
+    tester,
+  ) async {
     final controller = CodexAppUpdaterController(
       httpClient: MockClient((_) async => http.Response('nope', 503)),
     );
@@ -262,8 +306,62 @@ void main() {
 
     expect(controller.status, CodexAppUpdateStatus.failed);
     expect(find.byKey(codexAppUpdaterBannerKey), findsOneWidget);
-    expect(find.byKey(codexAppUpdaterUpdateButtonKey), findsNothing);
+    expect(find.byKey(codexAppUpdaterUpdateButtonKey), findsOneWidget);
   });
+
+  test(
+    'double update tap after failure coalesces into one retry flow',
+    () async {
+      final apkFile = await _writeTempApk('apk-coalesce', [4, 5, 6]);
+      final expectedSha = await _sha256(apkFile.path);
+      var requestCount = 0;
+      final retryResponse = Completer<http.Response>();
+      final downloader = _FakeDownloader(apkFile.path);
+      final installer = _FakeInstallerLauncher();
+      final controller = CodexAppUpdaterController(
+        httpClient: MockClient((_) {
+          requestCount += 1;
+          if (requestCount == 1) {
+            return Future.value(
+              http.Response(
+                jsonEncode(_updateJson(available: true, includeApk: false)),
+                200,
+              ),
+            );
+          }
+          return retryResponse.future;
+        }),
+        downloader: downloader,
+        installerLauncher: installer,
+      );
+      addTearDown(controller.dispose);
+
+      await controller.checkForUpdate(_config());
+      expect(controller.status, CodexAppUpdateStatus.failed);
+      expect(controller.updateInfo?.apkUrl, isNull);
+
+      final first = controller.updateNow(_config());
+      final second = controller.updateNow(_config());
+
+      expect(identical(first, second), isTrue);
+      await Future<void>.delayed(Duration.zero);
+      expect(requestCount, 2);
+
+      retryResponse.complete(
+        http.Response(
+          jsonEncode(_updateJson(available: true, sha256: expectedSha)),
+          200,
+        ),
+      );
+
+      expect(await first, isTrue);
+      expect(await second, isTrue);
+      expect(requestCount, 2);
+      expect(downloader.downloadCount, 1);
+      expect(installer.launchCount, 1);
+      expect(controller.updateInfo?.apkUrl, 'https://example.test/app.apk');
+    },
+  );
 
   test('sourceApp, version, build, and platform are sent to backend', () async {
     Uri? requestedUri;
@@ -307,6 +405,7 @@ class _FakeDownloader implements CodexApkDownloader {
 
   final String path;
   Uri? requestedUrl;
+  int downloadCount = 0;
 
   @override
   Future<String> download(
@@ -314,6 +413,7 @@ class _FakeDownloader implements CodexApkDownloader {
     required String fileName,
     CodexDownloadProgress? onProgress,
   }) async {
+    downloadCount += 1;
     requestedUrl = url;
     onProgress?.call(3, 3);
     return path;

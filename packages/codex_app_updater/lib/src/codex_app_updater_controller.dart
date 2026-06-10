@@ -34,13 +34,29 @@ class CodexAppUpdaterController extends ChangeNotifier {
   String? downloadedApkPath;
   int downloadedBytes = 0;
   int? totalBytes;
+  Future<CodexAppUpdateInfo?>? _activeCheck;
+  Future<bool>? _activeUpdate;
 
-  Future<CodexAppUpdateInfo?> checkForUpdate(
+  Future<CodexAppUpdateInfo?> checkForUpdate(CodexAppUpdaterConfig config) {
+    if (_activeCheck != null) return _activeCheck!;
+    if (!config.enabled || config.bridgeUrl.trim().isEmpty) {
+      return Future.value(null);
+    }
+    late final Future<CodexAppUpdateInfo?> check;
+    check = _checkForUpdate(config).whenComplete(() {
+      if (identical(_activeCheck, check)) {
+        _activeCheck = null;
+      }
+    });
+    _activeCheck = check;
+    return check;
+  }
+
+  Future<CodexAppUpdateInfo?> _checkForUpdate(
     CodexAppUpdaterConfig config,
   ) async {
-    if (!config.enabled || config.bridgeUrl.trim().isEmpty) {
-      return null;
-    }
+    _clearPreparedDownload();
+    updateInfo = null;
     _setStatus(CodexAppUpdateStatus.checking);
     try {
       final response = await _httpClient.get(config.updateUri());
@@ -138,7 +154,27 @@ class CodexAppUpdaterController extends ChangeNotifier {
     }
   }
 
-  Future<bool> updateNow(CodexAppUpdaterConfig config) async {
+  Future<bool> updateNow(CodexAppUpdaterConfig config) {
+    if (_activeUpdate != null) return _activeUpdate!;
+    late final Future<bool> update;
+    update = _updateNow(config).whenComplete(() {
+      if (identical(_activeUpdate, update)) {
+        _activeUpdate = null;
+      }
+    });
+    _activeUpdate = update;
+    return update;
+  }
+
+  Future<bool> _updateNow(CodexAppUpdaterConfig config) async {
+    if (_mustRefreshBeforeUpdating) {
+      final info = await checkForUpdate(config);
+      if (info == null || !info.hasInstallableAsset) {
+        return false;
+      }
+    } else if (_isActiveOperation) {
+      return false;
+    }
     final prepared = await downloadAndPrepare(config);
     if (!prepared) return false;
     return installPreparedApk();
@@ -165,5 +201,32 @@ class CodexAppUpdaterController extends ChangeNotifier {
     status = CodexAppUpdateStatus.failed;
     failureReason = reason;
     notifyListeners();
+  }
+
+  bool get _mustRefreshBeforeUpdating {
+    return switch (status) {
+      CodexAppUpdateStatus.idle ||
+      CodexAppUpdateStatus.upToDate ||
+      CodexAppUpdateStatus.dismissed ||
+      CodexAppUpdateStatus.failed => true,
+      _ => false,
+    };
+  }
+
+  bool get _isActiveOperation {
+    return switch (status) {
+      CodexAppUpdateStatus.checking ||
+      CodexAppUpdateStatus.downloading ||
+      CodexAppUpdateStatus.downloaded ||
+      CodexAppUpdateStatus.verifying ||
+      CodexAppUpdateStatus.installing => true,
+      _ => false,
+    };
+  }
+
+  void _clearPreparedDownload() {
+    downloadedApkPath = null;
+    downloadedBytes = 0;
+    totalBytes = null;
   }
 }
