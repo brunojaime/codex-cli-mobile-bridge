@@ -14,6 +14,7 @@ from uuid import uuid4
 class FeedbackQueueItem:
     id: str
     source_app: str
+    source_display_name: str | None
     comment: str
     created_at: str
     status: str = "pending"
@@ -31,10 +32,17 @@ class FeedbackQueueItem:
         return cls(
             id=str(payload["id"]),
             source_app=str(payload.get("source_app") or "unknown"),
+            source_display_name=(
+                str(payload["source_display_name"])
+                if payload.get("source_display_name") is not None
+                else None
+            ),
             comment=str(payload.get("comment") or ""),
             created_at=str(payload.get("created_at") or ""),
             status=str(payload.get("status") or "pending"),
-            screenshot_mime_type=str(payload.get("screenshot_mime_type") or "image/png"),
+            screenshot_mime_type=str(
+                payload.get("screenshot_mime_type") or "image/png"
+            ),
             screenshot_file=(
                 str(payload["screenshot_file"])
                 if payload.get("screenshot_file") is not None
@@ -68,6 +76,7 @@ class FeedbackQueueItem:
         data: dict[str, Any] = {
             "id": self.id,
             "source_app": self.source_app,
+            "source_display_name": self.source_display_name,
             "comment": self.comment,
             "created_at": self.created_at,
             "status": self.status,
@@ -130,7 +139,15 @@ class FeedbackQueueService:
         )
         item = FeedbackQueueItem(
             id=item_id,
-            source_app=str(payload.get("sourceApp") or payload.get("source_app") or "unknown"),
+            source_app=str(
+                payload.get("sourceApp")
+                or payload.get("source_app")
+                or "unknown"
+            ),
+            source_display_name=(
+                payload.get("sourceDisplayName")
+                or payload.get("source_display_name")
+            ),
             comment=str(payload.get("comment") or ""),
             created_at=created_at,
             status="pending",
@@ -146,8 +163,10 @@ class FeedbackQueueService:
             selection_bounds=dict(
                 payload.get("selectionBounds") or payload.get("selection_bounds") or {}
             ),
-            audio_mime_type=payload.get("audioMimeType") or payload.get("audio_mime_type"),
-            audio_duration_ms=payload.get("audioDurationMs") or payload.get("audio_duration_ms"),
+            audio_mime_type=payload.get("audioMimeType")
+            or payload.get("audio_mime_type"),
+            audio_duration_ms=payload.get("audioDurationMs")
+            or payload.get("audio_duration_ms"),
             audio_byte_length=(
                 payload.get("audioByteLength")
                 or payload.get("audio_byte_length")
@@ -167,6 +186,7 @@ class FeedbackQueueService:
                 items[index] = FeedbackQueueItem(
                     id=item.id,
                     source_app=item.source_app,
+                    source_display_name=item.source_display_name,
                     comment=item.comment,
                     created_at=item.created_at,
                     status="submitted",

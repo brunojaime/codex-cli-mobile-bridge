@@ -71,6 +71,7 @@ void main() {
       _feedbackItem(
         id: 'feedback-name',
         sourceApp: 'ambientando-calendar',
+        sourceDisplayName: 'Ambientando Calendar',
         comment: 'Matches by normalized project name',
       ),
       _feedbackItem(
@@ -137,6 +138,65 @@ void main() {
       findsOneWidget,
     );
     expect(find.text('Feedback queue (1)'), findsNothing);
+  });
+
+  testWidgets('feedback source aliases map unrelated source app to workspace', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    final items = <FeedbackQueueItem>[
+      _feedbackItem(
+        id: 'feedback-aliased',
+        sourceApp: 'customer-portal',
+        sourceDisplayName: 'Customer Portal',
+        comment: 'Aliased feedback',
+      ),
+      _feedbackItem(
+        id: 'feedback-unrelated',
+        sourceApp: 'another-source',
+        comment: 'Wrong workspace',
+      ),
+    ];
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ChatScreen(
+          initialApiBaseUrl: 'http://localhost:8000',
+          notificationService: const NoopChatNotificationService(),
+          enableServerBootstrap: false,
+          initialSidebarWorkspaces: const <Workspace>[
+            Workspace(
+              name: 'Smart Nienfos',
+              path: '/workspace/smart_nienfos',
+            ),
+          ],
+          feedbackSourceWorkspaceAliases: const <String, String>{
+            'customer-portal': '/workspace/smart_nienfos',
+          },
+          feedbackQueueListLoaderOverride: (_, {required includeImages}) async {
+            return items;
+          },
+        ),
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pump();
+
+    await tester.tap(find.byTooltip('Projects'));
+    await tester.pumpAndSettle();
+    expect(find.text('1 feedback'), findsOneWidget);
+
+    await tester.tap(find.text('Smart Nienfos'));
+    await tester.pumpAndSettle();
+    expect(
+      find.widgetWithText(FilledButton, 'Feedback queue (1)'),
+      findsOneWidget,
+    );
+    await tester.tap(find.widgetWithText(FilledButton, 'Feedback queue (1)'));
+    await tester.pumpAndSettle();
+    expect(find.text('Aliased feedback'), findsOneWidget);
+    expect(find.textContaining('Customer Portal · pending'), findsOneWidget);
+    expect(find.text('Wrong workspace'), findsNothing);
   });
 
   testWidgets('hides project feedback action when no queue items match', (
@@ -1928,12 +1988,14 @@ FeedbackQueueItem _feedbackItem({
   required String id,
   required String sourceApp,
   required String comment,
+  String? sourceDisplayName,
 }) {
   const transparentPng =
       'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=';
   return FeedbackQueueItem(
     id: id,
     sourceApp: sourceApp,
+    sourceDisplayName: sourceDisplayName,
     comment: comment,
     createdAt: DateTime.utc(2026, 6, 8),
     status: 'pending',

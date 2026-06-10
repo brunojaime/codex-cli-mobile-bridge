@@ -70,7 +70,16 @@ class FeedbackPointRequest(BaseModel):
 
 class FeedbackQueueItemRequest(BaseModel):
     id: str | None = Field(default=None, max_length=160)
-    sourceApp: str = Field(default="ambientando-calendar", max_length=120)
+    sourceApp: str = Field(
+        default="unknown",
+        max_length=120,
+        validation_alias=AliasChoices("sourceApp", "source_app"),
+    )
+    sourceDisplayName: str | None = Field(
+        default=None,
+        max_length=160,
+        validation_alias=AliasChoices("sourceDisplayName", "source_display_name"),
+    )
     comment: str = Field(..., min_length=1, max_length=10000)
     createdAt: str | None = None
     screenshotMimeType: str = Field(default="image/png", max_length=80)
@@ -86,6 +95,7 @@ class FeedbackQueueItemRequest(BaseModel):
 class FeedbackQueueItemResponse(BaseModel):
     id: str
     source_app: str
+    source_display_name: str | None = None
     comment: str
     created_at: str
     status: str
@@ -1257,6 +1267,7 @@ class ServerCapabilitiesResponse(BaseModel):
     image_max_upload_bytes: int
     document_max_upload_bytes: int
     document_text_char_limit: int
+    feedback_source_workspace_aliases: dict[str, str] = Field(default_factory=dict)
 
 
 class SpeechRequest(BaseModel):

@@ -37,6 +37,7 @@ class Settings(BaseSettings):
     feedback_queue_path: str = str(Path.cwd() / ".data" / "feedback_queue.json")
     feedback_image_dir: str = str(Path.cwd() / ".data" / "feedback_images")
     feedback_audio_dir: str = str(Path.cwd() / ".data" / "feedback_audio")
+    feedback_source_workspace_aliases: str = ""
     tailscale_socket: str | None = None
     execution_timeout_seconds: int = 0
     lambda_endpoint: str = "http://localhost:9000"
@@ -69,6 +70,20 @@ class Settings(BaseSettings):
     speech_synthesis_timeout_seconds: int = 120
     openai_api_key: str | None = None
     openai_base_url: str = "https://api.openai.com/v1"
+
+    @property
+    def feedback_source_workspace_alias_map(self) -> dict[str, str]:
+        aliases: dict[str, str] = {}
+        for raw_entry in self.feedback_source_workspace_aliases.split(","):
+            entry = raw_entry.strip()
+            if not entry or ":" not in entry:
+                continue
+            source_app, workspace_path = entry.split(":", 1)
+            source_app = source_app.strip()
+            workspace_path = workspace_path.strip()
+            if source_app and workspace_path:
+                aliases[source_app] = workspace_path
+        return aliases
 
     @computed_field
     @property

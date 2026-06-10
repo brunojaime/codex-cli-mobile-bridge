@@ -20,6 +20,7 @@ class FeedbackQueueItem {
   const FeedbackQueueItem({
     required this.id,
     required this.sourceApp,
+    this.sourceDisplayName,
     required this.comment,
     required this.createdAt,
     required this.status,
@@ -37,6 +38,7 @@ class FeedbackQueueItem {
 
   final String id;
   final String sourceApp;
+  final String? sourceDisplayName;
   final String comment;
   final DateTime? createdAt;
   final String status;
@@ -65,6 +67,7 @@ class FeedbackQueueItem {
     return FeedbackQueueItem(
       id: json['id'] as String? ?? '',
       sourceApp: json['source_app'] as String? ?? 'unknown',
+      sourceDisplayName: json['source_display_name'] as String?,
       comment: json['comment'] as String? ?? '',
       createdAt: DateTime.tryParse(json['created_at'] as String? ?? ''),
       status: json['status'] as String? ?? 'pending',

@@ -590,7 +590,11 @@ def build_image_client() -> TestClient:
     return TestClient(app)
 
 
-def build_feedback_queue_client(data_dir: Path) -> TestClient:
+def build_feedback_queue_client(
+    data_dir: Path,
+    *,
+    feedback_source_workspace_aliases: str = "",
+) -> TestClient:
     settings = Settings(
         codex_command="python3 tests/fixtures/fake_codex_session.py",
         codex_use_exec=True,
@@ -602,6 +606,7 @@ def build_feedback_queue_client(data_dir: Path) -> TestClient:
         feedback_queue_path=str(data_dir / "feedback_queue.json"),
         feedback_image_dir=str(data_dir / "feedback_images"),
         feedback_audio_dir=str(data_dir / "feedback_audio"),
+        feedback_source_workspace_aliases=feedback_source_workspace_aliases,
     )
     app = create_app(settings)
     return TestClient(app)
@@ -6160,6 +6165,7 @@ def test_feedback_queue_stores_and_deletes_items(tmp_path: Path) -> None:
         json={
             "id": "feedback-1",
             "sourceApp": "ambientando-calendar",
+            "sourceDisplayName": "Ambientando Calendar",
             "comment": "Make this button bigger",
             "screenshotPngBase64": base64.b64encode(b"fake png").decode("ascii"),
             "selectionPoints": [{"x": 1, "y": 2}, {"x": 3, "y": 4}],
@@ -6175,26 +6181,102 @@ def test_feedback_queue_stores_and_deletes_items(tmp_path: Path) -> None:
     created = create_response.json()
     assert created["id"] == "feedback-1"
     assert created["source_app"] == "ambientando-calendar"
+    assert created["source_display_name"] == "Ambientando Calendar"
     assert created["has_screenshot"] is True
-    assert created["screenshot_png_base64"] == base64.b64encode(b"fake png").decode("ascii")
+    assert created["screenshot_png_base64"] == base64.b64encode(b"fake png").decode(
+        "ascii"
+    )
     assert created["has_audio"] is True
     assert created["audio_mime_type"] == "audio/webm"
     assert created["audio_duration_ms"] == 1200
     assert created["audio_byte_length"] == 3
-    assert created["audio_base64"] == base64.b64encode(b"\x01\x02\x03").decode("ascii")
+    assert created["audio_base64"] == base64.b64encode(b"\x01\x02\x03").decode(
+        "ascii"
+    )
 
     list_response = client.get("/feedback-queue?include_images=true")
     assert list_response.status_code == 200
     items = list_response.json()
     assert len(items) == 1
     assert items[0]["comment"] == "Make this button bigger"
-    assert items[0]["audio_base64"] == base64.b64encode(b"\x01\x02\x03").decode("ascii")
+    assert items[0]["source_display_name"] == "Ambientando Calendar"
+    assert items[0]["audio_base64"] == base64.b64encode(b"\x01\x02\x03").decode(
+        "ascii"
+    )
 
     delete_response = client.delete("/feedback-queue/feedback-1")
     assert delete_response.status_code == 204
     assert client.get("/feedback-queue").json() == []
     assert not any((tmp_path / "feedback_images").glob("*"))
     assert not any((tmp_path / "feedback_audio").glob("*"))
+
+
+def test_feedback_queue_accepts_generic_source_app_payload(tmp_path: Path) -> None:
+    client = build_feedback_queue_client(tmp_path)
+
+    create_response = client.post(
+        "/feedback-queue",
+        json={
+            "id": "feedback-generic",
+            "kind": "codex.developerFeedback",
+            "version": 1,
+            "queue": "codexCli",
+            "sourceApp": "smart-nienfos",
+            "sourceDisplayName": "Smart Nienfos",
+            "comment": "Align the summary panel",
+            "screenshotPngBase64": base64.b64encode(b"fake png").decode("ascii"),
+            "selectionBounds": {"left": 1, "top": 2, "width": 3, "height": 4},
+        },
+    )
+
+    assert create_response.status_code == 201
+    created = create_response.json()
+    assert created["source_app"] == "smart-nienfos"
+    assert created["source_display_name"] == "Smart Nienfos"
+    assert created["comment"] == "Align the summary panel"
+    assert created["has_screenshot"] is True
+
+
+def test_feedback_queue_legacy_ambientando_payload_defaults_source(
+    tmp_path: Path,
+) -> None:
+    client = build_feedback_queue_client(tmp_path)
+
+    create_response = client.post(
+        "/feedback-queue",
+        json={
+            "id": "feedback-legacy",
+            "sourceApp": "ambientando-calendar",
+            "comment": "Legacy item",
+            "screenshotPngBase64": base64.b64encode(b"fake png").decode("ascii"),
+        },
+    )
+
+    assert create_response.status_code == 201
+    created = create_response.json()
+    assert created["source_app"] == "ambientando-calendar"
+    assert created["source_display_name"] is None
+
+
+def test_capabilities_exposes_feedback_source_workspace_aliases(
+    tmp_path: Path,
+) -> None:
+    client = build_feedback_queue_client(
+        tmp_path,
+        feedback_source_workspace_aliases=(
+            "smart-nienfos:/workspace/smart_nienfos,"
+            "ambientando-calendar:/workspace/ambientando-calendar"
+        ),
+    )
+
+    response = client.get("/capabilities")
+
+    assert response.status_code == 200
+    aliases = response.json()["feedback_source_workspace_aliases"]
+    assert aliases == {
+        "smart-nienfos": "/workspace/smart_nienfos",
+        "ambientando-calendar": "/workspace/ambientando-calendar",
+    }
 
 
 def test_feedback_queue_item_can_start_codex_image_session(tmp_path: Path) -> None:
@@ -6217,10 +6299,39 @@ def test_feedback_queue_item_can_start_codex_image_session(tmp_path: Path) -> No
     assert payload["attached_image_name"] == "feedback-start.png"
     job = wait_for_job(client, payload["job_id"])
     assert job["status"] == "completed"
+    assert "Use this Ambientando Calendar feedback screenshot" in job["message"]
     assert "Run target: Generator only." in job["message"]
     assert "Remove this card" in job["message"]
     assert "feedback-start.png" in job["response"]
     assert client.get("/feedback-queue").json()[0]["status"] == "submitted"
+
+
+def test_feedback_queue_start_session_uses_source_display_name_in_prompt(
+    tmp_path: Path,
+) -> None:
+    client = build_feedback_queue_client(tmp_path)
+    client.post(
+        "/feedback-queue",
+        json={
+            "id": "feedback-display-name",
+            "sourceApp": "smart-nienfos",
+            "sourceDisplayName": "Smart Nienfos",
+            "comment": "Fix this table",
+            "screenshotPngBase64": base64.b64encode(b"fake png").decode("ascii"),
+            "selectionBounds": {"left": 10, "top": 20, "width": 30, "height": 40},
+        },
+    )
+
+    start_response = client.post(
+        "/feedback-queue/feedback-display-name/start-session",
+        json={},
+    )
+
+    assert start_response.status_code == 202
+    job = wait_for_job(client, start_response.json()["job_id"])
+    assert job["status"] == "completed"
+    assert "Use this Smart Nienfos feedback screenshot" in job["message"]
+    assert "Ambientando Calendar" not in job["message"]
 
 
 def test_feedback_queue_start_session_accepts_explicit_reviewer_target(

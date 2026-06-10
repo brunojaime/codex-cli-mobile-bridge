@@ -80,6 +80,7 @@ class ChatScreen extends StatefulWidget {
     this.codexMcpAppInstallerOverride,
     this.feedbackQueueCountLoaderOverride,
     this.feedbackQueueListLoaderOverride,
+    this.feedbackSourceWorkspaceAliases = const <String, String>{},
   });
 
   final String initialApiBaseUrl;
@@ -96,6 +97,7 @@ class ChatScreen extends StatefulWidget {
     String baseUrl, {
     required bool includeImages,
   })? feedbackQueueListLoaderOverride;
+  final Map<String, String> feedbackSourceWorkspaceAliases;
   @override
   State<ChatScreen> createState() => _ChatScreenState();
 }
@@ -788,7 +790,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                                     onLinkTap:
                                                         _handleMessageLinkTap,
                                                     attachmentBaseUrl:
-                                                        _activeServer?.baseUrl ??
+                                                        _activeServer
+                                                                ?.baseUrl ??
                                                             widget
                                                                 .initialApiBaseUrl,
                                                     onCancelJob:
@@ -2423,7 +2426,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                           ),
                                         ),
                                         subtitle: Text(
-                                          '${item.sourceApp} · ${item.status}'
+                                          '${_feedbackItemSourceLabel(item)} · ${item.status}'
                                           '${item.hasScreenshot ? ' · image' : ''}'
                                           '${item.hasAudio ? ' · audio' : ''}',
                                         ),
@@ -2581,7 +2584,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         ..writeln()
         ..writeln('${index + 1}. ${item.comment}')
         ..writeln('- id: ${item.id}')
-        ..writeln('- source: ${item.sourceApp}')
+        ..writeln('- source: ${_feedbackItemSourceLabel(item)}')
+        ..writeln('- source app: ${item.sourceApp}')
         ..writeln('- status: ${item.status}')
         ..writeln(
             '- created: ${item.createdAt?.toIso8601String() ?? 'unknown'}')
@@ -2976,235 +2980,235 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         child: Material(
           type: MaterialType.transparency,
           child: Theme(
-          data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
-          child: ExpansionTile(
-            key: PageStorageKey<String>('workspace-${workspace.path}'),
-            initiallyExpanded: hasSelected,
-            tilePadding:
-                const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-            childrenPadding: const EdgeInsets.only(bottom: 10),
-            iconColor: const Color(0xFF9AA8C8),
-            collapsedIconColor: const Color(0xFF9AA8C8),
-            title: Row(
-              children: <Widget>[
-                Container(
-                  width: 38,
-                  height: 38,
-                  decoration: BoxDecoration(
-                    color: activeJobCount > 0
-                        ? const Color(0x33FFC857)
-                        : outgoingUploadCount > 0
-                            ? const Color(0x223F5EF7)
-                            : const Color(0xFF1B2745),
-                    borderRadius: BorderRadius.circular(12),
+            data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+            child: ExpansionTile(
+              key: PageStorageKey<String>('workspace-${workspace.path}'),
+              initiallyExpanded: hasSelected,
+              tilePadding:
+                  const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+              childrenPadding: const EdgeInsets.only(bottom: 10),
+              iconColor: const Color(0xFF9AA8C8),
+              collapsedIconColor: const Color(0xFF9AA8C8),
+              title: Row(
+                children: <Widget>[
+                  Container(
+                    width: 38,
+                    height: 38,
+                    decoration: BoxDecoration(
+                      color: activeJobCount > 0
+                          ? const Color(0x33FFC857)
+                          : outgoingUploadCount > 0
+                              ? const Color(0x223F5EF7)
+                              : const Color(0xFF1B2745),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    alignment: Alignment.center,
+                    child: Icon(
+                      Icons.folder_rounded,
+                      color: activeJobCount > 0
+                          ? const Color(0xFFFFC857)
+                          : outgoingUploadCount > 0
+                              ? const Color(0xFF8CA8FF)
+                              : unreadChatsCount > 0
+                                  ? const Color(0xFF55D6BE)
+                                  : const Color(0xFF9AA8C8),
+                    ),
                   ),
-                  alignment: Alignment.center,
-                  child: Icon(
-                    Icons.folder_rounded,
-                    color: activeJobCount > 0
-                        ? const Color(0xFFFFC857)
-                        : outgoingUploadCount > 0
-                            ? const Color(0xFF8CA8FF)
-                            : unreadChatsCount > 0
-                                ? const Color(0xFF55D6BE)
-                                : const Color(0xFF9AA8C8),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: <Widget>[
+                        Text(
+                          workspace.name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: activeJobCount > 0
+                                ? const Color(0xFFFFC857)
+                                : outgoingUploadCount > 0
+                                    ? const Color(0xFFDCE5FF)
+                                    : unreadChatsCount > 0
+                                        ? const Color(0xFF55D6BE)
+                                        : const Color(0xFFE7EEF9),
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          archivedOnly
+                              ? '${workspace.path} • ${visibleSessions.length} archived chat${visibleSessions.length == 1 ? '' : 's'}'
+                              : '${workspace.path} • ${visibleSessions.length} chat${visibleSessions.length == 1 ? '' : 's'}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Color(0xFF8B97B5),
+                            fontSize: 12,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        _ProjectStatusPill(
+                          active: hasBackgroundActivity,
+                          label: _formatProjectActivityLabel(
+                            activeJobCount: activeJobCount,
+                            activeChatCount: activeChatCount,
+                            outgoingUploadCount: outgoingUploadCount,
+                            outgoingChatCount: outgoingChatCount,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: <Widget>[
-                      Text(
-                        workspace.name,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
+                  if (hasBackgroundActivity)
+                    Padding(
+                      padding: const EdgeInsets.only(right: 8),
+                      child: Text(
+                        (activeJobCount + outgoingUploadCount).toString(),
                         style: TextStyle(
                           color: activeJobCount > 0
                               ? const Color(0xFFFFC857)
-                              : outgoingUploadCount > 0
-                                  ? const Color(0xFFDCE5FF)
-                                  : unreadChatsCount > 0
-                                      ? const Color(0xFF55D6BE)
-                                      : const Color(0xFFE7EEF9),
+                              : const Color(0xFF8CA8FF),
                           fontWeight: FontWeight.w700,
                         ),
                       ),
-                      const SizedBox(height: 2),
-                      Text(
-                        archivedOnly
-                            ? '${workspace.path} • ${visibleSessions.length} archived chat${visibleSessions.length == 1 ? '' : 's'}'
-                            : '${workspace.path} • ${visibleSessions.length} chat${visibleSessions.length == 1 ? '' : 's'}',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
+                    ),
+                  if (unreadChatsCount > 0)
+                    Container(
+                      margin: const EdgeInsets.only(right: 8),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF55D6BE),
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                      child: Text(
+                        unreadChatsCount.toString(),
                         style: const TextStyle(
-                          color: Color(0xFF8B97B5),
-                          fontSize: 12,
+                          color: Color(0xFF07131D),
+                          fontWeight: FontWeight.w700,
                         ),
                       ),
-                      const SizedBox(height: 6),
-                      _ProjectStatusPill(
-                        active: hasBackgroundActivity,
-                        label: _formatProjectActivityLabel(
-                          activeJobCount: activeJobCount,
-                          activeChatCount: activeChatCount,
-                          outgoingUploadCount: outgoingUploadCount,
-                          outgoingChatCount: outgoingChatCount,
+                    ),
+                  if (feedbackCount > 0)
+                    Container(
+                      margin: const EdgeInsets.only(right: 8),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFFF6B6B),
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                      child: Text(
+                        '$feedbackCount feedback',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w700,
+                          fontSize: 11,
                         ),
+                      ),
+                    ),
+                  PopupMenuButton<_PinnedWorkspaceAction>(
+                    tooltip: 'Project actions for ${workspace.name}',
+                    icon: const Icon(Icons.more_horiz_rounded),
+                    onSelected: (_PinnedWorkspaceAction action) async {
+                      switch (action) {
+                        case _PinnedWorkspaceAction.newChat:
+                          Navigator.of(context).pop();
+                          await _createNewChatForWorkspace(workspace);
+                          return;
+                        case _PinnedWorkspaceAction.feedbackQueue:
+                          Navigator.of(context).pop();
+                          await _openFeedbackQueueSheet(workspace: workspace);
+                          return;
+                        case _PinnedWorkspaceAction.remove:
+                          await _removeWorkspaceFromSidebar(workspace);
+                          return;
+                      }
+                    },
+                    itemBuilder: (context) =>
+                        <PopupMenuEntry<_PinnedWorkspaceAction>>[
+                      PopupMenuItem<_PinnedWorkspaceAction>(
+                        value: _PinnedWorkspaceAction.newChat,
+                        child: Text('New chat in ${workspace.name}'),
+                      ),
+                      if (feedbackCount > 0)
+                        PopupMenuItem<_PinnedWorkspaceAction>(
+                          value: _PinnedWorkspaceAction.feedbackQueue,
+                          child: Text('Feedback queue ($feedbackCount)'),
+                        ),
+                      const PopupMenuItem<_PinnedWorkspaceAction>(
+                        value: _PinnedWorkspaceAction.remove,
+                        child: Text('Remove project'),
                       ),
                     ],
                   ),
-                ),
-                if (hasBackgroundActivity)
-                  Padding(
-                    padding: const EdgeInsets.only(right: 8),
-                    child: Text(
-                      (activeJobCount + outgoingUploadCount).toString(),
-                      style: TextStyle(
-                        color: activeJobCount > 0
-                            ? const Color(0xFFFFC857)
-                            : const Color(0xFF8CA8FF),
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ),
-                if (unreadChatsCount > 0)
-                  Container(
-                    margin: const EdgeInsets.only(right: 8),
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 4,
-                    ),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF55D6BE),
-                      borderRadius: BorderRadius.circular(999),
-                    ),
-                    child: Text(
-                      unreadChatsCount.toString(),
-                      style: const TextStyle(
-                        color: Color(0xFF07131D),
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ),
-                if (feedbackCount > 0)
-                  Container(
-                    margin: const EdgeInsets.only(right: 8),
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 4,
-                    ),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFFF6B6B),
-                      borderRadius: BorderRadius.circular(999),
-                    ),
-                    child: Text(
-                      '$feedbackCount feedback',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.w700,
-                        fontSize: 11,
-                      ),
-                    ),
-                  ),
-                PopupMenuButton<_PinnedWorkspaceAction>(
-                  tooltip: 'Project actions for ${workspace.name}',
-                  icon: const Icon(Icons.more_horiz_rounded),
-                  onSelected: (_PinnedWorkspaceAction action) async {
-                    switch (action) {
-                      case _PinnedWorkspaceAction.newChat:
-                        Navigator.of(context).pop();
-                        await _createNewChatForWorkspace(workspace);
-                        return;
-                      case _PinnedWorkspaceAction.feedbackQueue:
-                        Navigator.of(context).pop();
-                        await _openFeedbackQueueSheet(workspace: workspace);
-                        return;
-                      case _PinnedWorkspaceAction.remove:
-                        await _removeWorkspaceFromSidebar(workspace);
-                        return;
-                    }
-                  },
-                  itemBuilder: (context) =>
-                      <PopupMenuEntry<_PinnedWorkspaceAction>>[
-                    PopupMenuItem<_PinnedWorkspaceAction>(
-                      value: _PinnedWorkspaceAction.newChat,
-                      child: Text('New chat in ${workspace.name}'),
-                    ),
-                    if (feedbackCount > 0)
-                      PopupMenuItem<_PinnedWorkspaceAction>(
-                        value: _PinnedWorkspaceAction.feedbackQueue,
-                        child: Text('Feedback queue ($feedbackCount)'),
-                      ),
-                    const PopupMenuItem<_PinnedWorkspaceAction>(
-                      value: _PinnedWorkspaceAction.remove,
-                      child: Text('Remove project'),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-            children: visibleSessions.isEmpty
-                ? <Widget>[
-                    if (feedbackCount > 0)
-                      _ProjectFeedbackQueueButton(
-                        count: feedbackCount,
-                        onPressed: () async {
-                          Navigator.of(context).pop();
-                          await _openFeedbackQueueSheet(workspace: workspace);
-                        },
-                      ),
-                    Padding(
-                      padding: EdgeInsets.fromLTRB(24, 0, 24, 16),
-                      child: Align(
-                        alignment: Alignment.centerLeft,
-                        child: Text(
-                          archivedOnly
-                              ? 'No archived chats in this project'
-                              : 'No active chats in this project',
-                          style: const TextStyle(color: Color(0xFF8B97B5)),
-                        ),
-                      ),
-                    ),
-                  ]
-                : <Widget>[
-                    if (feedbackCount > 0)
-                      _ProjectFeedbackQueueButton(
-                        count: feedbackCount,
-                        onPressed: () async {
-                          Navigator.of(context).pop();
-                          await _openFeedbackQueueSheet(workspace: workspace);
-                        },
-                      ),
-                    ...visibleSessions.map(
-                      (session) => Padding(
-                        padding: const EdgeInsets.only(left: 10, right: 10),
-                        child: _SessionTile(
-                          activeJobSummary:
-                              _chatController.activeJobSummaryForSession(
-                            session.id,
-                          ),
-                          outgoingUploadSummary: _chatController
-                              .outgoingUploadSummaryForSession(session.id),
-                          session: session,
-                          unreadCount: _unreadCountForSession(session),
-                          selected:
-                              session.id == _chatController.selectedSessionId,
-                          onTap: () async {
+                ],
+              ),
+              children: visibleSessions.isEmpty
+                  ? <Widget>[
+                      if (feedbackCount > 0)
+                        _ProjectFeedbackQueueButton(
+                          count: feedbackCount,
+                          onPressed: () async {
                             Navigator.of(context).pop();
-                            await _chatController.selectSession(session.id);
-                          },
-                          onArchiveToggle: () async {
-                            await _chatController.setSessionArchived(
-                              session.id,
-                              archived: !archivedOnly,
-                            );
+                            await _openFeedbackQueueSheet(workspace: workspace);
                           },
                         ),
+                      Padding(
+                        padding: EdgeInsets.fromLTRB(24, 0, 24, 16),
+                        child: Align(
+                          alignment: Alignment.centerLeft,
+                          child: Text(
+                            archivedOnly
+                                ? 'No archived chats in this project'
+                                : 'No active chats in this project',
+                            style: const TextStyle(color: Color(0xFF8B97B5)),
+                          ),
+                        ),
                       ),
-                    ),
-                  ],
-          ),
+                    ]
+                  : <Widget>[
+                      if (feedbackCount > 0)
+                        _ProjectFeedbackQueueButton(
+                          count: feedbackCount,
+                          onPressed: () async {
+                            Navigator.of(context).pop();
+                            await _openFeedbackQueueSheet(workspace: workspace);
+                          },
+                        ),
+                      ...visibleSessions.map(
+                        (session) => Padding(
+                          padding: const EdgeInsets.only(left: 10, right: 10),
+                          child: _SessionTile(
+                            activeJobSummary:
+                                _chatController.activeJobSummaryForSession(
+                              session.id,
+                            ),
+                            outgoingUploadSummary: _chatController
+                                .outgoingUploadSummaryForSession(session.id),
+                            session: session,
+                            unreadCount: _unreadCountForSession(session),
+                            selected:
+                                session.id == _chatController.selectedSessionId,
+                            onTap: () async {
+                              Navigator.of(context).pop();
+                              await _chatController.selectSession(session.id);
+                            },
+                            onArchiveToggle: () async {
+                              await _chatController.setSessionArchived(
+                                session.id,
+                                archived: !archivedOnly,
+                              );
+                            },
+                          ),
+                        ),
+                      ),
+                    ],
+            ),
           ),
         ),
       ));
@@ -3246,7 +3250,47 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   ) {
     final source = _normalizeFeedbackSource(item.sourceApp);
     if (source.isEmpty) return false;
+    final aliases = _feedbackSourceWorkspaceAliases();
+    final aliasWorkspace = aliases[source];
+    if (aliasWorkspace != null) {
+      return _workspaceMatchesFeedbackAlias(workspace, aliasWorkspace);
+    }
     return _workspaceFeedbackKeys(workspace).contains(source);
+  }
+
+  Map<String, String> _feedbackSourceWorkspaceAliases() {
+    final aliases = <String, String>{};
+    void addAliases(Map<String, String> values) {
+      for (final entry in values.entries) {
+        final source = _normalizeFeedbackSource(entry.key);
+        final workspace = entry.value.trim();
+        if (source.isNotEmpty && workspace.isNotEmpty) {
+          aliases[source] = workspace;
+        }
+      }
+    }
+
+    addAliases(_activeServerCapabilities?.feedbackSourceWorkspaceAliases ??
+        const <String, String>{});
+    addAliases(widget.feedbackSourceWorkspaceAliases);
+    return aliases;
+  }
+
+  bool _workspaceMatchesFeedbackAlias(Workspace workspace, String alias) {
+    final trimmedAlias = alias.trim();
+    if (trimmedAlias == workspace.path) return true;
+    return _normalizeFeedbackSource(trimmedAlias) ==
+            _normalizeFeedbackSource(workspace.path) ||
+        _normalizeFeedbackSource(_fallbackWorkspaceName(trimmedAlias)) ==
+            _normalizeFeedbackSource(_fallbackWorkspaceName(workspace.path)) ||
+        _normalizeFeedbackSource(trimmedAlias) ==
+            _normalizeFeedbackSource(workspace.name);
+  }
+
+  String _feedbackItemSourceLabel(FeedbackQueueItem item) {
+    final displayName = item.sourceDisplayName?.trim();
+    if (displayName != null && displayName.isNotEmpty) return displayName;
+    return item.sourceApp;
   }
 
   Set<String> _workspaceFeedbackKeys(Workspace workspace) {
@@ -3490,175 +3534,179 @@ class _SessionTile extends StatelessWidget {
       child: Material(
         type: MaterialType.transparency,
         child: ListTile(
-        selected: selected,
-        selectedTileColor: Colors.transparent,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
-        ),
-        title: Text(
-          session.title,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: TextStyle(
-            color: session.isArchived ? const Color(0xFFB8C8EA) : titleColor,
-            fontWeight: isActive ? FontWeight.w600 : null,
+          selected: selected,
+          selectedTileColor: Colors.transparent,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
           ),
-        ),
-        subtitle: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: <Widget>[
-            if (conversationProduct?.statusLine.trim().isNotEmpty ==
-                true) ...<Widget>[
+          title: Text(
+            session.title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: session.isArchived ? const Color(0xFFB8C8EA) : titleColor,
+              fontWeight: isActive ? FontWeight.w600 : null,
+            ),
+          ),
+          subtitle: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              if (conversationProduct?.statusLine.trim().isNotEmpty ==
+                  true) ...<Widget>[
+                Text(
+                  conversationProduct!.statusLine,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: session.isArchived
+                        ? const Color(0xFF9FB3D6)
+                        : const Color(0xFF55D6BE),
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 4),
+              ],
               Text(
-                conversationProduct!.statusLine,
-                maxLines: 1,
+                subtitleText,
+                maxLines: 2,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
                   color: session.isArchived
-                      ? const Color(0xFF9FB3D6)
-                      : const Color(0xFF55D6BE),
-                  fontSize: 11,
-                  fontWeight: FontWeight.w700,
+                      ? const Color(0xFF7F8EAF)
+                      : previewColor,
                 ),
               ),
-              const SizedBox(height: 4),
-            ],
-            Text(
-              subtitleText,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color:
-                    session.isArchived ? const Color(0xFF7F8EAF) : previewColor,
-              ),
-            ),
-            if (session.isArchived) ...<Widget>[
-              const SizedBox(height: 6),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF1B2745),
-                  borderRadius: BorderRadius.circular(999),
-                ),
-                child: const Text(
-                  'Archived',
-                  style: TextStyle(
-                    color: Color(0xFF9FB3D6),
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700,
+              if (session.isArchived) ...<Widget>[
+                const SizedBox(height: 6),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF1B2745),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: const Text(
+                    'Archived',
+                    style: TextStyle(
+                      color: Color(0xFF9FB3D6),
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
                 ),
-              ),
-            ],
-            if (activeJobPresentation != null) ...<Widget>[
-              const SizedBox(height: 6),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(
-                  color: activeJobPresentation.backgroundColor,
-                  borderRadius: BorderRadius.circular(999),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: <Widget>[
-                    Container(
-                      width: 8,
-                      height: 8,
-                      decoration: BoxDecoration(
-                        color: activeJobPresentation.foregroundColor,
-                        shape: BoxShape.circle,
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Flexible(
-                      child: Text(
-                        activeJobPresentation.label,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
+              ],
+              if (activeJobPresentation != null) ...<Widget>[
+                const SizedBox(height: 6),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: activeJobPresentation.backgroundColor,
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: <Widget>[
+                      Container(
+                        width: 8,
+                        height: 8,
+                        decoration: BoxDecoration(
                           color: activeJobPresentation.foregroundColor,
-                          fontSize: 11,
-                          fontWeight: FontWeight.w700,
+                          shape: BoxShape.circle,
                         ),
                       ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-            if (isUploading) ...<Widget>[
-              const SizedBox(height: 6),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF15265A),
-                  borderRadius: BorderRadius.circular(999),
-                ),
-                child: Text(
-                  _formatOutgoingUploadLabel(outgoingUploadSummary!),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Color(0xFFB8CCFF),
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ),
-            ],
-          ],
-        ),
-        trailing: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: <Widget>[
-            if (session.hasPendingMessages)
-              const SizedBox(
-                width: 18,
-                height: 18,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              )
-            else if (isUploading)
-              Icon(
-                _outgoingUploadIcon(outgoingUploadSummary!),
-                color: const Color(0xFF8CA8FF),
-              )
-            else if (unreadCount > 0)
-              const Icon(
-                Icons.mark_chat_unread_rounded,
-                color: Color(0xFF55D6BE),
-              ),
-            PopupMenuButton<String>(
-              padding: EdgeInsets.zero,
-              tooltip: session.isArchived ? 'Unarchive chat' : 'Archive chat',
-              onSelected: (value) {
-                if (value == 'toggle-archive') {
-                  onArchiveToggle();
-                }
-              },
-              itemBuilder: (context) => <PopupMenuEntry<String>>[
-                PopupMenuItem<String>(
-                  value: 'toggle-archive',
-                  child: Row(
-                    children: <Widget>[
-                      Icon(
-                        session.isArchived
-                            ? Icons.unarchive_outlined
-                            : Icons.archive_outlined,
-                        size: 18,
+                      const SizedBox(width: 8),
+                      Flexible(
+                        child: Text(
+                          activeJobPresentation.label,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: activeJobPresentation.foregroundColor,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
                       ),
-                      const SizedBox(width: 12),
-                      Text(session.isArchived
-                          ? 'Unarchive chat'
-                          : 'Archive chat'),
                     ],
                   ),
                 ),
               ],
-            ),
-          ],
-        ),
-        onTap: onTap,
+              if (isUploading) ...<Widget>[
+                const SizedBox(height: 6),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF15265A),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Text(
+                    _formatOutgoingUploadLabel(outgoingUploadSummary!),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Color(0xFFB8CCFF),
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ],
+            ],
+          ),
+          trailing: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              if (session.hasPendingMessages)
+                const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              else if (isUploading)
+                Icon(
+                  _outgoingUploadIcon(outgoingUploadSummary!),
+                  color: const Color(0xFF8CA8FF),
+                )
+              else if (unreadCount > 0)
+                const Icon(
+                  Icons.mark_chat_unread_rounded,
+                  color: Color(0xFF55D6BE),
+                ),
+              PopupMenuButton<String>(
+                padding: EdgeInsets.zero,
+                tooltip: session.isArchived ? 'Unarchive chat' : 'Archive chat',
+                onSelected: (value) {
+                  if (value == 'toggle-archive') {
+                    onArchiveToggle();
+                  }
+                },
+                itemBuilder: (context) => <PopupMenuEntry<String>>[
+                  PopupMenuItem<String>(
+                    value: 'toggle-archive',
+                    child: Row(
+                      children: <Widget>[
+                        Icon(
+                          session.isArchived
+                              ? Icons.unarchive_outlined
+                              : Icons.archive_outlined,
+                          size: 18,
+                        ),
+                        const SizedBox(width: 12),
+                        Text(session.isArchived
+                            ? 'Unarchive chat'
+                            : 'Archive chat'),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+          onTap: onTap,
         ),
       ),
     );
@@ -6188,37 +6236,37 @@ class _AgentStudioSheetState extends State<_AgentStudioSheet> {
             Material(
               type: MaterialType.transparency,
               child: SwitchListTile(
-              contentPadding: EdgeInsets.zero,
-              value: _enabled[agentId] ?? false,
-              title: Text(title),
-              subtitle: Text(enabledSubtitle),
-              onChanged: !canToggle
-                  ? null
-                  : (value) {
-                      setState(() {
-                        _enabled[agentId] = value;
-                        if (kSupervisorMemberAgentIds.contains(agentId)) {
-                          if (value) {
-                            _supervisorMemberIds.add(agentId);
-                          } else {
-                            _supervisorMemberIds.remove(agentId);
+                contentPadding: EdgeInsets.zero,
+                value: _enabled[agentId] ?? false,
+                title: Text(title),
+                subtitle: Text(enabledSubtitle),
+                onChanged: !canToggle
+                    ? null
+                    : (value) {
+                        setState(() {
+                          _enabled[agentId] = value;
+                          if (kSupervisorMemberAgentIds.contains(agentId)) {
+                            if (value) {
+                              _supervisorMemberIds.add(agentId);
+                            } else {
+                              _supervisorMemberIds.remove(agentId);
+                            }
                           }
-                        }
-                      });
-                    },
+                        });
+                      },
               ),
             )
           else
             Material(
               type: MaterialType.transparency,
               child: ListTile(
-              contentPadding: EdgeInsets.zero,
-              title: Text(title),
-              subtitle: Text(
-                usesRegistrySelection
-                    ? '$enabledSubtitle Selection is controlled by the supervisor registry above.'
-                    : enabledSubtitle,
-              ),
+                contentPadding: EdgeInsets.zero,
+                title: Text(title),
+                subtitle: Text(
+                  usesRegistrySelection
+                      ? '$enabledSubtitle Selection is controlled by the supervisor registry above.'
+                      : enabledSubtitle,
+                ),
               ),
             ),
           TextField(
@@ -6378,33 +6426,33 @@ class _AgentStudioSheetState extends State<_AgentStudioSheet> {
             return Material(
               type: MaterialType.transparency,
               child: CheckboxListTile(
-              contentPadding: EdgeInsets.zero,
-              value: _supervisorMemberIds.contains(agentId),
-              title: Text(label),
-              subtitle: Text(
-                switch (agentId) {
-                  AgentId.qa =>
-                    'Validation, tests, regressions, and release risk.',
-                  AgentId.ux =>
-                    'Usability, accessibility, flow, and interface quality.',
-                  AgentId.seniorEngineer =>
-                    'Architecture, implementation strategy, and delivery risk.',
-                  AgentId.scraper =>
-                    'Web extraction, parsing strategy, and source constraints.',
-                  _ => '',
+                contentPadding: EdgeInsets.zero,
+                value: _supervisorMemberIds.contains(agentId),
+                title: Text(label),
+                subtitle: Text(
+                  switch (agentId) {
+                    AgentId.qa =>
+                      'Validation, tests, regressions, and release risk.',
+                    AgentId.ux =>
+                      'Usability, accessibility, flow, and interface quality.',
+                    AgentId.seniorEngineer =>
+                      'Architecture, implementation strategy, and delivery risk.',
+                    AgentId.scraper =>
+                      'Web extraction, parsing strategy, and source constraints.',
+                    _ => '',
+                  },
+                ),
+                onChanged: (value) {
+                  setState(() {
+                    if (value ?? false) {
+                      _supervisorMemberIds.add(agentId);
+                      _enabled[agentId] = true;
+                    } else {
+                      _supervisorMemberIds.remove(agentId);
+                      _enabled[agentId] = false;
+                    }
+                  });
                 },
-              ),
-              onChanged: (value) {
-                setState(() {
-                  if (value ?? false) {
-                    _supervisorMemberIds.add(agentId);
-                    _enabled[agentId] = true;
-                  } else {
-                    _supervisorMemberIds.remove(agentId);
-                    _enabled[agentId] = false;
-                  }
-                });
-              },
               ),
             );
           }),

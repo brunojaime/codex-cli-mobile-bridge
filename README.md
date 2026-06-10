@@ -79,6 +79,15 @@ uv run python codex-skills/mcp-app-builder/scripts/scaffold_mcp_app.py my-app \
 
 Current limitation: the mobile frontend supports MCP app discovery, preview, install, and run selection, but it does not yet host full inline `io.modelcontextprotocol/ui` iframe apps.
 
+## Developer Feedback Template
+
+The reusable Flutter template lives in
+`packages/codex_developer_feedback_template`. It captures marked screenshots,
+comments, and optional audio, then posts generic `codex.developerFeedback`
+payloads to the bridge feedback queue. Ambientando Calendar consumes this
+package with explicit `sourceApp`, `sourceDisplayName`, and `bridgeUrl`
+configuration.
+
 ## Repo Skills
 
 This repo also includes Codex skills under `codex-skills/`.
@@ -713,21 +722,31 @@ Notes:
 - Real devices should use a reachable backend URL, such as a LAN IP, Tailscale URL, or tunnel URL
 - Android and iOS will request microphone permission the first time you record a voice note
 
-## Ambientando Feedback Queue
+## Developer Feedback Queue
 
-Ambientando Calendar can send marked screenshots and comments directly into this
-bridge over Tailscale. Build Ambientando with:
+Client apps can send marked screenshots, comments, and optional audio directly
+into this bridge over Tailscale by wrapping the Flutter app with the reusable
+`codex_developer_feedback_template` package:
 
 ```sh
---dart-define=DEVELOPER_FEEDBACK_TEMPLATE_ENABLED=true
+--dart-define=CODEX_FEEDBACK_TEMPLATE_ENABLED=true
+--dart-define=CODEX_FEEDBACK_SOURCE_APP=ambientando-calendar
+--dart-define=CODEX_FEEDBACK_SOURCE_NAME="Ambientando Calendar"
 --dart-define=CODEX_FEEDBACK_BRIDGE_URL=http://batata-default-string.tail0302c4.ts.net
 ```
 
 The backend stores pending feedback at `FEEDBACK_QUEUE_PATH`, screenshots in
-`FEEDBACK_IMAGE_DIR`, and optional audio in `FEEDBACK_AUDIO_DIR`. In the Codex
-mobile app, open `Feedback queue`, review the marked screenshot/comment, then
-tap `Start Codex chat` to send the screenshot and note into the current Codex
-session.
+`FEEDBACK_IMAGE_DIR`, and optional audio in `FEEDBACK_AUDIO_DIR`. Use
+`FEEDBACK_SOURCE_WORKSPACE_ALIASES` when a stable source app id does not match
+the workspace name or path, for example:
+
+```sh
+FEEDBACK_SOURCE_WORKSPACE_ALIASES=ambientando-calendar:/home/me/ambientando-calendar,smart-nienfos:/home/me/smart_nienfos
+```
+
+In the Codex mobile app, open `Feedback queue`, review the marked
+screenshot/comment, then stage the selected items into the target workspace chat
+or start a Codex run from the item.
 
 ## Multi-Server Support
 

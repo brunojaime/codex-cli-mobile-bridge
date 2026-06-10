@@ -153,6 +153,9 @@ async def capabilities(
         image_max_upload_bytes=container.settings.image_max_upload_bytes,
         document_max_upload_bytes=container.settings.document_max_upload_bytes,
         document_text_char_limit=container.settings.document_text_char_limit,
+        feedback_source_workspace_aliases=(
+            container.settings.feedback_source_workspace_alias_map
+        ),
     )
 
 
@@ -333,8 +336,13 @@ async def start_feedback_queue_session(
         else "Generator + Reviewer. Run the implementation generator for this "
         "feedback and then run the reviewer on the generator result."
     )
+    source_label = _feedback_source_label(
+        source_display_name=item.source_display_name,
+        source_app=item.source_app,
+        workspace_path=payload.workspace_path,
+    )
     message = payload.message or (
-        "Use this Ambientando Calendar feedback screenshot and note to make "
+        f"Use this {source_label} feedback screenshot and note to make "
         "the requested UI/app change.\n\n"
         f"Run target: {target_instruction}\n"
         f"Feedback: {item.comment}\n"
@@ -367,6 +375,29 @@ async def start_feedback_queue_session(
         submission.job,
         attached_image_name=submission.attached_image_name,
     )
+
+
+def _feedback_source_label(
+    *,
+    source_display_name: str | None,
+    source_app: str | None,
+    workspace_path: str | None,
+) -> str:
+    display_name = (source_display_name or "").strip()
+    if display_name:
+        return display_name
+    source_value = (source_app or "").strip()
+    if source_value and source_value.lower() != "unknown":
+        return _humanize_feedback_source(source_value)
+    if workspace_path:
+        path_name = Path(workspace_path).name.strip()
+        if path_name:
+            return _humanize_feedback_source(path_name)
+    return "app"
+
+
+def _humanize_feedback_source(value: str) -> str:
+    return " ".join(part.capitalize() for part in value.replace("_", "-").split("-"))
 
 
 @router.get("/codex/tooling", response_model=CodexToolingResponse)
