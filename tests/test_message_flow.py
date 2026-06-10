@@ -76,7 +76,9 @@ def build_test_client() -> TestClient:
 
 def build_session_client(*, projects_root: str = "..") -> TestClient:
     settings = Settings(
-        codex_command="python3 tests/fixtures/fake_codex_session.py",
+        codex_command=(
+            f"python3 {Path('tests/fixtures/fake_codex_session.py').resolve()}"
+        ),
         codex_use_exec=True,
         projects_root=projects_root,
         chat_store_backend="memory",
@@ -123,7 +125,9 @@ def build_app_server_streaming_client() -> TestClient:
 
 def build_session_client_with_container(*, projects_root: str = ".."):
     settings = Settings(
-        codex_command="python3 tests/fixtures/fake_codex_session.py",
+        codex_command=(
+            f"python3 {Path('tests/fixtures/fake_codex_session.py').resolve()}"
+        ),
         codex_use_exec=True,
         projects_root=projects_root,
         chat_store_backend="memory",
@@ -594,11 +598,14 @@ def build_feedback_queue_client(
     data_dir: Path,
     *,
     feedback_source_workspace_aliases: str = "",
+    projects_root: Path | str = "..",
 ) -> TestClient:
     settings = Settings(
-        codex_command="python3 tests/fixtures/fake_codex_session.py",
+        codex_command=(
+            f"python3 {Path('tests/fixtures/fake_codex_session.py').resolve()}"
+        ),
         codex_use_exec=True,
-        projects_root="..",
+        projects_root=str(projects_root),
         chat_store_backend="memory",
         execution_timeout_seconds=10,
         poll_interval_seconds=0,
@@ -6386,6 +6393,86 @@ def test_feedback_batch_start_session_accepts_multiple_items_and_release(
     assert "02-feedback-batch-2.png" in job["response"]
     queued = client.get("/feedback-queue").json()
     assert [item["status"] for item in queued] == ["submitted", "submitted"]
+
+
+def test_feedback_batch_start_session_resolves_workspace_from_source_app(
+    tmp_path: Path,
+) -> None:
+    projects_root = tmp_path / "projects"
+    ambientando_workspace = projects_root / "ambientando-calendar"
+    bridge_workspace = projects_root / "codex-cli-mobile-bridge"
+    ambientando_workspace.mkdir(parents=True)
+    bridge_workspace.mkdir()
+    client = build_feedback_queue_client(tmp_path, projects_root=projects_root)
+
+    start_response = client.post(
+        "/feedback-batches/start-session",
+        json={
+            "sourceApp": "ambientando-calendar",
+            "sourceDisplayName": "Ambientando Calendar",
+            "workflowPresetId": "default",
+            "items": [
+                {
+                    "id": "feedback-ambientando-workspace",
+                    "comment": "Apply this to Ambientando",
+                    "screenshotPngBase64": base64.b64encode(b"fake png").decode(
+                        "ascii"
+                    ),
+                }
+            ],
+        },
+    )
+
+    assert start_response.status_code == 202
+    session_response = client.get(
+        f"/sessions/{start_response.json()['session_id']}"
+    )
+    assert session_response.status_code == 200
+    session = session_response.json()
+    assert session["workspace_name"] == "ambientando-calendar"
+    assert session["workspace_path"] == str(ambientando_workspace)
+
+
+def test_feedback_batch_start_session_resolves_workspace_from_source_alias(
+    tmp_path: Path,
+) -> None:
+    projects_root = tmp_path / "projects"
+    smart_workspace = projects_root / "smart_nienfos"
+    smart_workspace.mkdir(parents=True)
+    client = build_feedback_queue_client(
+        tmp_path,
+        projects_root=projects_root,
+        feedback_source_workspace_aliases=(
+            f"smart-nienfos:{smart_workspace}"
+        ),
+    )
+
+    start_response = client.post(
+        "/feedback-batches/start-session",
+        json={
+            "sourceApp": "smart-nienfos-mobile",
+            "sourceDisplayName": "Smart Nienfos",
+            "workflowPresetId": "default",
+            "items": [
+                {
+                    "id": "feedback-smart-alias",
+                    "comment": "Apply this to Smart Nienfos",
+                    "screenshotPngBase64": base64.b64encode(b"fake png").decode(
+                        "ascii"
+                    ),
+                }
+            ],
+        },
+    )
+
+    assert start_response.status_code == 202
+    session_response = client.get(
+        f"/sessions/{start_response.json()['session_id']}"
+    )
+    assert session_response.status_code == 200
+    session = session_response.json()
+    assert session["workspace_name"] == "smart_nienfos"
+    assert session["workspace_path"] == str(smart_workspace)
 
 
 @pytest.mark.parametrize(

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import re
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 
@@ -110,6 +111,7 @@ _FALLBACK_FEEDBACK_WORKFLOW_PRESETS = (
         includes_reviewer=True,
     ),
 )
+_FEEDBACK_WORKSPACE_KEY_PATTERN = re.compile(r"[^a-z0-9]+")
 
 
 def get_container() -> AppContainer:
@@ -304,6 +306,75 @@ def _feedback_preset_by_id(
     )
     if fallback_preset is not None:
         return fallback_preset
+    return None
+
+
+def _normalize_feedback_workspace_key(value: str | None) -> str:
+    raw_value = (value or "").strip().lower()
+    if not raw_value:
+        return ""
+    parts = [
+        part
+        for part in _FEEDBACK_WORKSPACE_KEY_PATTERN.split(raw_value)
+        if part
+    ]
+    return "-".join(parts)
+
+
+def _feedback_batch_workspace_path(
+    payload: FeedbackBatchStartRequest,
+    *,
+    item_payloads: list[dict],
+    container: AppContainer,
+) -> str | None:
+    explicit_workspace_path = (payload.workspace_path or "").strip()
+    if explicit_workspace_path:
+        return explicit_workspace_path
+
+    candidates = [
+        payload.sourceApp,
+        payload.sourceDisplayName,
+    ]
+    for item_payload in item_payloads:
+        candidates.extend(
+            [
+                item_payload.get("sourceApp"),
+                item_payload.get("source_app"),
+                item_payload.get("sourceDisplayName"),
+                item_payload.get("source_display_name"),
+            ]
+        )
+    candidate_keys = {
+        key
+        for key in (
+            _normalize_feedback_workspace_key(str(candidate))
+            for candidate in candidates
+            if candidate is not None
+        )
+        if key and key != "unknown"
+    }
+    if not candidate_keys:
+        return None
+
+    aliases = {
+        _normalize_feedback_workspace_key(source_app): workspace_path
+        for source_app, workspace_path in (
+            container.settings.feedback_source_workspace_alias_map.items()
+        )
+    }
+    for candidate_key in candidate_keys:
+        workspace_path = aliases.get(candidate_key)
+        if workspace_path:
+            return workspace_path
+
+    for workspace in container.message_service.list_workspaces():
+        workspace_keys = {
+            _normalize_feedback_workspace_key(workspace.name),
+            _normalize_feedback_workspace_key(Path(workspace.path).name),
+        }
+        if candidate_keys & workspace_keys:
+            return workspace.path
+
     return None
 
 
@@ -549,6 +620,11 @@ async def start_feedback_batch_session(
         ):
             item_payload["sourceDisplayName"] = payload.sourceDisplayName
         item_payloads.append(item_payload)
+    workspace_path = _feedback_batch_workspace_path(
+        payload,
+        item_payloads=item_payloads,
+        container=container,
+    )
 
     stored_items = []
     try:
@@ -612,7 +688,7 @@ async def start_feedback_batch_session(
             source_display_name=payload.sourceDisplayName
             or first_item.source_display_name,
             source_app=payload.sourceApp or first_item.source_app,
-            workspace_path=payload.workspace_path,
+            workspace_path=workspace_path,
         )
         target_session_id = payload.session_id
         if target_session_id is None and preset.agent_profile_id:
@@ -620,7 +696,7 @@ async def start_feedback_batch_session(
                 session = await run_in_threadpool(
                     container.message_service.create_session,
                     title=f"{source_label} feedback",
-                    workspace_path=payload.workspace_path,
+                    workspace_path=workspace_path,
                     agent_profile_id=preset.agent_profile_id,
                     title_is_placeholder=False,
                 )
@@ -654,7 +730,7 @@ async def start_feedback_batch_session(
             attachments,
             message=message,
             session_id=target_session_id,
-            workspace_path=payload.workspace_path,
+            workspace_path=workspace_path,
             codex_options=codex_options,
         )
         should_cleanup_temp_images = False
