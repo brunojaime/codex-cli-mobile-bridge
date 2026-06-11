@@ -567,9 +567,9 @@ void main() {
           postedJson = jsonDecode(request.body) as Map<String, Object?>;
           return http.Response(
             jsonEncode(<String, Object?>{
-              'quick_ask_id': 'quick-ask-1',
-              'job_id': 'job-quick-ask',
-              'session_id': 'session-quick-ask',
+              'quickAskId': 'quick-ask-1',
+              'jobId': 'job-quick-ask',
+              'sessionId': 'session-quick-ask',
               'status': 'pending',
               'agent_id': 'generator',
               'agent_type': 'generator',
@@ -580,23 +580,23 @@ void main() {
         if (request.url.path == '/feedback-quick-asks/quick-ask-1') {
           return http.Response(
             jsonEncode(<String, Object?>{
-              'quick_ask_id': 'quick-ask-1',
-              'source_app': 'fixture-app',
+              'quickAskId': 'quick-ask-1',
+              'sourceApp': 'fixture-app',
               'question': 'Why disabled?',
               'status': 'completed',
               'answer': 'The button is likely waiting for a required field.',
               'screenshot_mime_type': 'image/png',
               'has_screenshot': true,
               'selection_points': <Object?>[],
-              'selection_bounds': <String, double>{
+              'selectionBounds': <String, double>{
                 'left': 1,
                 'top': 2,
                 'width': 3,
                 'height': 4,
               },
-              'job_id': 'job-quick-ask',
-              'session_id': 'session-quick-ask',
-              'created_at': '2026-06-11T00:00:00+00:00',
+              'jobId': 'job-quick-ask',
+              'sessionId': 'session-quick-ask',
+              'createdAt': '2026-06-11T00:00:00+00:00',
             }),
             200,
           );
@@ -671,9 +671,9 @@ void main() {
         postedBatch = jsonDecode(request.body) as Map<String, Object?>;
         return http.Response(
           jsonEncode(<String, Object?>{
-            'feedback_batch_id': 'batch-from-quick-ask',
-            'job_id': 'job-from-quick-ask',
-            'session_id': 'session-from-quick-ask',
+            'batchId': 'batch-from-quick-ask',
+            'jobId': 'job-from-quick-ask',
+            'sessionId': 'session-from-quick-ask',
             'status': 'running',
           }),
           202,
@@ -684,23 +684,23 @@ void main() {
         return http.Response(
           jsonEncode(<Map<String, Object?>>[
             <String, Object?>{
-              'quick_ask_id': 'quick-ask-history',
-              'source_app': 'fixture-app',
+              'quickAskId': 'quick-ask-history',
+              'sourceApp': 'fixture-app',
               'question': 'Why is the title clipped?',
               'status': 'completed',
               'answer': 'Use the detail view for the full answer.',
               'screenshot_mime_type': 'image/png',
               'has_screenshot': true,
               'selection_points': <Object?>[],
-              'selection_bounds': <String, double>{
+              'selectionBounds': <String, double>{
                 'left': 12,
                 'top': 20,
                 'width': 80,
                 'height': 24,
               },
-              'job_id': 'job-history',
-              'session_id': 'session-history',
-              'created_at': '2026-06-11T00:00:00+00:00',
+              'jobId': 'job-history',
+              'sessionId': 'session-history',
+              'createdAt': '2026-06-11T00:00:00+00:00',
             },
           ]),
           200,
@@ -709,24 +709,24 @@ void main() {
       if (request.url.path == '/feedback-quick-asks/quick-ask-history') {
         return http.Response(
           jsonEncode(<String, Object?>{
-            'quick_ask_id': 'quick-ask-history',
-            'source_app': 'fixture-app',
+            'quickAskId': 'quick-ask-history',
+            'sourceApp': 'fixture-app',
             'question': 'Why is the title clipped?',
             'status': 'completed',
             'answer': 'The title is clipped because the parent is too narrow.',
             'screenshot_mime_type': 'image/png',
             'has_screenshot': true,
-            'screenshot_png_base64': screenshot,
+            'screenshotPngBase64': screenshot,
             'selection_points': <Object?>[],
-            'selection_bounds': <String, double>{
+            'selectionBounds': <String, double>{
               'left': 12,
               'top': 20,
               'width': 80,
               'height': 24,
             },
-            'job_id': 'job-history',
-            'session_id': 'session-history',
-            'created_at': '2026-06-11T00:00:00+00:00',
+            'jobId': 'job-history',
+            'sessionId': 'session-history',
+            'createdAt': '2026-06-11T00:00:00+00:00',
           }),
           200,
         );
@@ -805,9 +805,9 @@ void main() {
       if (request.url.path == '/feedback-batches/start-session') {
         return http.Response(
           jsonEncode(<String, Object?>{
-            'feedback_batch_id': 'batch-123',
-            'job_id': 'job-123',
-            'session_id': 'session-123',
+            'batchId': 'batch-123',
+            'jobId': 'job-123',
+            'sessionId': 'session-123',
             'status': 'running',
           }),
           202,
@@ -816,16 +816,17 @@ void main() {
       if (request.url.path == '/feedback-batches/batch-123') {
         return http.Response(
           jsonEncode(<String, Object?>{
-            'batch_id': 'batch-123',
-            'job_id': 'job-123',
-            'session_id': 'session-123',
+            'batchId': 'batch-123',
+            'jobId': 'job-123',
+            'sessionId': 'session-123',
             'status': 'completed',
+            'workflowStatus': 'completed',
             'status_detail': 'Done',
-            'workflow_preset_id': 'generator_only',
-            'release_when_complete': false,
-            'item_count': 1,
+            'workflowPresetId': 'generator_only',
+            'releaseWhenComplete': false,
+            'itemCount': 1,
             'item_ids': <String>['feedback-1'],
-            'summary': _summaryText(),
+            'finalSummary': _summaryText(),
             'summary_line_count': 11,
             'created_at': '2026-06-11T00:00:00+00:00',
             'submitted_at': '2026-06-11T00:00:00+00:00',

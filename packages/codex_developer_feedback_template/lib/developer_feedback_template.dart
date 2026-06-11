@@ -563,7 +563,10 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
         throw Exception('HTTP ${response.statusCode}: ${response.body}');
       }
       final accepted = jsonDecode(response.body) as Map<String, Object?>;
-      final quickAskId = (accepted['quick_ask_id'] as String?)?.trim();
+      final quickAskId =
+          ((accepted['quick_ask_id'] as String?) ??
+                  (accepted['quickAskId'] as String?))
+              ?.trim();
       if (quickAskId == null || quickAskId.isEmpty) {
         throw Exception('Missing quick_ask_id');
       }
@@ -2393,23 +2396,42 @@ class _QuickAskRecord {
 
   factory _QuickAskRecord.fromJson(Map<String, Object?> json) {
     return _QuickAskRecord(
-      quickAskId: (json['quick_ask_id'] as String?) ?? 'unknown',
-      sourceApp: (json['source_app'] as String?) ?? '',
-      sourceDisplayName: (json['source_display_name'] as String?) ?? '',
+      quickAskId:
+          (json['quick_ask_id'] as String?) ??
+          (json['quickAskId'] as String?) ??
+          'unknown',
+      sourceApp:
+          (json['source_app'] as String?) ??
+          (json['sourceApp'] as String?) ??
+          '',
+      sourceDisplayName:
+          (json['source_display_name'] as String?) ??
+          (json['sourceDisplayName'] as String?) ??
+          '',
       question: (json['question'] as String?) ?? 'Pregunta sin texto',
       status: (json['status'] as String?) ?? 'pending',
-      createdAt: (json['created_at'] as String?) ?? '',
+      createdAt:
+          (json['created_at'] as String?) ??
+          (json['createdAt'] as String?) ??
+          '',
       selectionBounds:
-          (json['selection_bounds'] as Map?)?.map(
-            (key, value) =>
-                MapEntry(key.toString(), value is num ? value.toDouble() : 0.0),
-          ) ??
+          ((json['selection_bounds'] as Map?) ??
+                  (json['selectionBounds'] as Map?))
+              ?.map(
+                (key, value) => MapEntry(
+                  key.toString(),
+                  value is num ? value.toDouble() : 0.0,
+                ),
+              ) ??
           <String, double>{'left': 0, 'top': 0, 'width': 0, 'height': 0},
       answer: json['answer'] as String?,
-      screenshotPngBase64: json['screenshot_png_base64'] as String?,
-      jobId: json['job_id'] as String?,
-      sessionId: json['session_id'] as String?,
-      runId: json['run_id'] as String?,
+      screenshotPngBase64:
+          (json['screenshot_png_base64'] as String?) ??
+          (json['screenshotPngBase64'] as String?),
+      jobId: (json['job_id'] as String?) ?? (json['jobId'] as String?),
+      sessionId:
+          (json['session_id'] as String?) ?? (json['sessionId'] as String?),
+      runId: (json['run_id'] as String?) ?? (json['runId'] as String?),
     );
   }
 
@@ -2464,9 +2486,11 @@ class _SubmittedFeedbackBatch {
   }
 
   static _SubmittedFeedbackBatch? fromStartResponse(Map<String, Object?> json) {
-    final batchId = json['feedback_batch_id'] as String?;
-    final jobId = json['job_id'] as String?;
-    final sessionId = json['session_id'] as String?;
+    final batchId =
+        (json['feedback_batch_id'] as String?) ?? (json['batchId'] as String?);
+    final jobId = (json['job_id'] as String?) ?? (json['jobId'] as String?);
+    final sessionId =
+        (json['session_id'] as String?) ?? (json['sessionId'] as String?);
     if ((batchId ?? '').trim().isEmpty && (jobId ?? '').trim().isEmpty) {
       return null;
     }
@@ -2482,14 +2506,22 @@ class _SubmittedFeedbackBatch {
     Map<String, Object?> json,
   ) {
     return _SubmittedFeedbackBatch(
-      batchId: json['batch_id'] as String?,
-      jobId: json['job_id'] as String?,
-      sessionId: json['session_id'] as String?,
-      status: (json['status'] as String?) ?? 'pending',
+      batchId: (json['batch_id'] as String?) ?? (json['batchId'] as String?),
+      jobId: (json['job_id'] as String?) ?? (json['jobId'] as String?),
+      sessionId:
+          (json['session_id'] as String?) ?? (json['sessionId'] as String?),
+      status:
+          (json['status'] as String?) ??
+          (json['workflowStatus'] as String?) ??
+          'pending',
       statusDetail: json['status_detail'] as String?,
-      summary: json['summary'] as String?,
+      summary:
+          (json['summary'] as String?) ?? (json['finalSummary'] as String?),
       summaryLineCount: (json['summary_line_count'] as num?)?.toInt() ?? 0,
-      notificationUnread: (json['notification_unread'] as bool?) ?? false,
+      notificationUnread:
+          (json['notification_unread'] as bool?) ??
+          (json['notificationUnread'] as bool?) ??
+          false,
     );
   }
 
