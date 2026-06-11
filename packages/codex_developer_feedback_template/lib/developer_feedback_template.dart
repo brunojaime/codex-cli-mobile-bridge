@@ -106,6 +106,7 @@ const developerFeedbackQuickAskPreviewKey = Key(
 const developerFeedbackQuickAskBoundsKey = Key(
   'developer-feedback-quick-ask-bounds',
 );
+const developerFeedbackQuickAskActKey = Key('developer-feedback-quick-ask-act');
 const developerFeedbackCommentActionKey = Key(
   'developer-feedback-comment-action',
 );
@@ -175,6 +176,7 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
   final List<DeveloperFeedbackItem> _items = <DeveloperFeedbackItem>[];
   final List<_SubmittedFeedbackBatch> _submittedBatches =
       <_SubmittedFeedbackBatch>[];
+  String? _pendingQuickAskId;
   var _unreadNotificationCount = 0;
   var _notificationRefreshScheduled = false;
   var _editMode = false;
@@ -700,6 +702,7 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
       sourceDisplayName: widget.sourceDisplayName,
       workflowPresetId: workflowPresetId,
       releaseWhenComplete: releaseWhenComplete,
+      quickAskId: _pendingQuickAskId,
       items: List.of(_items),
     );
     final customBatchSubmit = widget.bridgeSubmitBatch;
@@ -708,6 +711,7 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
         await customBatchSubmit(batch);
         setState(() {
           _items.clear();
+          _pendingQuickAskId = null;
           _submittedBatches.insert(0, _SubmittedFeedbackBatch.local());
         });
         _showMessage('Feedback enviado a Codex CLI.');
@@ -725,6 +729,7 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
         }
         setState(() {
           _items.clear();
+          _pendingQuickAskId = null;
           _submittedBatches.insert(0, _SubmittedFeedbackBatch.local());
         });
         _showMessage('Feedback enviado a Codex CLI.');
@@ -752,6 +757,7 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
       );
       setState(() {
         _items.clear();
+        _pendingQuickAskId = null;
         if (submittedBatch != null) _submittedBatches.insert(0, submittedBatch);
       });
       _showMessage('Feedback enviado a Codex CLI.');
@@ -851,7 +857,12 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
                                     onPressed: sending
                                         ? null
                                         : () {
-                                            setState(() => _items.remove(item));
+                                            setState(() {
+                                              _items.remove(item);
+                                              if (_items.isEmpty) {
+                                                _pendingQuickAskId = null;
+                                              }
+                                            });
                                             setDialogState(() {});
                                           },
                                     icon: const Icon(Icons.delete_outline),
@@ -940,7 +951,10 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
                   onPressed: _items.isEmpty || sending
                       ? null
                       : () {
-                          setState(_items.clear);
+                          setState(() {
+                            _items.clear();
+                            _pendingQuickAskId = null;
+                          });
                           setDialogState(() {});
                         },
                   icon: const Icon(Icons.delete_sweep_outlined),
@@ -980,7 +994,10 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
                   onPressed: _items.isEmpty || sending
                       ? null
                       : () {
-                          setState(_items.clear);
+                          setState(() {
+                            _items.clear();
+                            _pendingQuickAskId = null;
+                          });
                           setDialogState(() {});
                         },
                   child: const Text('Borrar todo'),
@@ -1452,6 +1469,16 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
               ),
             ),
             actions: <Widget>[
+              if (detail.screenshotPngBase64 != null)
+                FilledButton.icon(
+                  key: developerFeedbackQuickAskActKey,
+                  onPressed: () {
+                    Navigator.of(context).pop();
+                    _actFromQuickAsk(detail);
+                  },
+                  icon: const Icon(Icons.play_arrow),
+                  label: const Text('Actuar'),
+                ),
               TextButton(
                 onPressed: () => Navigator.of(context).pop(),
                 child: const Text('Cerrar'),
@@ -1463,6 +1490,40 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
     } catch (_) {
       _showMessage('No se pudo cargar la pregunta.');
     }
+  }
+
+  void _actFromQuickAsk(_QuickAskRecord detail) {
+    final screenshot = detail.screenshotPngBase64;
+    if (screenshot == null || screenshot.isEmpty) return;
+    final now = DateTime.now().toUtc();
+    final answer = (detail.answer ?? '').trim();
+    final item = DeveloperFeedbackItem(
+      id: 'feedback-${now.microsecondsSinceEpoch}',
+      createdAt: now,
+      sourceApp: detail.sourceApp.isEmpty ? widget.sourceApp : detail.sourceApp,
+      sourceDisplayName: detail.sourceDisplayName.isEmpty
+          ? widget.sourceDisplayName
+          : detail.sourceDisplayName,
+      comment: [
+        'Act from quick ask ${detail.quickAskId}.',
+        'Question: ${detail.question}',
+        if (answer.isNotEmpty) 'Prior quick ask answer: $answer',
+      ].join('\n'),
+      screenshotPngBase64: screenshot,
+      selectionPoints: _pointsFromBounds(detail.selectionBounds),
+      audio: null,
+    );
+    setState(() {
+      _items
+        ..clear()
+        ..add(item);
+      _pendingQuickAskId = detail.quickAskId;
+      _drawing = <Offset>[];
+      _selectionReady = false;
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _openPendingDialog();
+    });
   }
 
   Future<_QuickAskRecord> _loadQuickAskDetail(String quickAskId) async {
@@ -2315,6 +2376,8 @@ Uint8List _decodePreviewImage(String screenshotPngBase64) {
 class _QuickAskRecord {
   const _QuickAskRecord({
     required this.quickAskId,
+    required this.sourceApp,
+    required this.sourceDisplayName,
     required this.question,
     required this.status,
     required this.createdAt,
@@ -2329,6 +2392,8 @@ class _QuickAskRecord {
   factory _QuickAskRecord.fromJson(Map<String, Object?> json) {
     return _QuickAskRecord(
       quickAskId: (json['quick_ask_id'] as String?) ?? 'unknown',
+      sourceApp: (json['source_app'] as String?) ?? '',
+      sourceDisplayName: (json['source_display_name'] as String?) ?? '',
       question: (json['question'] as String?) ?? 'Pregunta sin texto',
       status: (json['status'] as String?) ?? 'pending',
       createdAt: (json['created_at'] as String?) ?? '',
@@ -2347,6 +2412,8 @@ class _QuickAskRecord {
   }
 
   final String quickAskId;
+  final String sourceApp;
+  final String sourceDisplayName;
   final String question;
   final String status;
   final String createdAt;
@@ -2481,6 +2548,7 @@ class DeveloperFeedbackBatch {
     required this.sourceDisplayName,
     required this.workflowPresetId,
     required this.releaseWhenComplete,
+    this.quickAskId,
     required this.items,
   });
 
@@ -2488,6 +2556,7 @@ class DeveloperFeedbackBatch {
   final String sourceDisplayName;
   final String workflowPresetId;
   final bool releaseWhenComplete;
+  final String? quickAskId;
   final List<DeveloperFeedbackItem> items;
 
   Map<String, Object?> toBridgeJson() {
@@ -2499,6 +2568,7 @@ class DeveloperFeedbackBatch {
         'sourceDisplayName': sourceDisplayName,
       'workflowPresetId': workflowPresetId,
       'releaseWhenComplete': releaseWhenComplete,
+      if ((quickAskId ?? '').trim().isNotEmpty) 'quickAskId': quickAskId,
       'items': items.map((item) => item.toBridgeJson()).toList(),
     };
   }
@@ -2673,6 +2743,19 @@ class DeveloperFeedbackItem {
 String _formatSelectionBounds(Map<String, double> bounds) {
   return 'Bounds: x ${bounds['left']!.round()}, y ${bounds['top']!.round()}, '
       '${bounds['width']!.round()} x ${bounds['height']!.round()}';
+}
+
+List<Offset> _pointsFromBounds(Map<String, double> bounds) {
+  final left = bounds['left'] ?? 0;
+  final top = bounds['top'] ?? 0;
+  final width = bounds['width'] ?? 0;
+  final height = bounds['height'] ?? 0;
+  return <Offset>[
+    Offset(left, top),
+    Offset(left + width, top),
+    Offset(left + width, top + height),
+    Offset(left, top + height),
+  ];
 }
 
 String _formatAudioSummary(DeveloperFeedbackAudioClip? audio) {

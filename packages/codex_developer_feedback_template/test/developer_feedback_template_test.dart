@@ -644,9 +644,38 @@ void main() {
     const screenshot =
         'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=';
     final requestedQueries = <Map<String, String>>[];
+    final requestedPaths = <String>[];
+    Map<String, Object?>? postedBatch;
     final client = MockClient((request) async {
+      requestedPaths.add('${request.method} ${request.url.path}');
       if (request.url.path == '/feedback-batches') {
         return http.Response('[]', 200);
+      }
+      if (request.url.path == '/feedback-workflow-presets') {
+        return http.Response(
+          jsonEncode(<String, Object?>{
+            'default_preset_id': 'generator_only',
+            'presets': <Map<String, Object?>>[
+              <String, Object?>{
+                'id': 'generator_only',
+                'name': 'Generator only',
+              },
+            ],
+          }),
+          200,
+        );
+      }
+      if (request.url.path == '/feedback-batches/start-session') {
+        postedBatch = jsonDecode(request.body) as Map<String, Object?>;
+        return http.Response(
+          jsonEncode(<String, Object?>{
+            'feedback_batch_id': 'batch-from-quick-ask',
+            'job_id': 'job-from-quick-ask',
+            'session_id': 'session-from-quick-ask',
+            'status': 'running',
+          }),
+          202,
+        );
       }
       if (request.url.path == '/feedback-quick-asks') {
         requestedQueries.add(request.url.queryParameters);
@@ -728,6 +757,29 @@ void main() {
       findsOneWidget,
     );
     expect(requestedQueries.single['sourceApp'], 'fixture-app');
+    expect(
+      requestedPaths,
+      isNot(contains('POST /feedback-batches/start-session')),
+    );
+
+    await tester.tap(find.byKey(developerFeedbackQuickAskActKey));
+    await tester.pumpAndSettle();
+    expect(find.text('Cola de feedback'), findsOneWidget);
+    await tester.tap(find.byKey(developerFeedbackReleaseWhenCompleteKey));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(developerFeedbackSendBatchKey));
+    await tester.pumpAndSettle();
+
+    expect(postedBatch?['quickAskId'], 'quick-ask-history');
+    expect(postedBatch?['releaseWhenComplete'], isTrue);
+    final items = postedBatch?['items'] as List<Object?>;
+    final item = items.single as Map<String, Object?>;
+    expect(item['comment'], contains('Act from quick ask quick-ask-history.'));
+    expect(item['comment'], contains('Question: Why is the title clipped?'));
+    expect(
+      item['comment'],
+      contains('Prior quick ask answer: The title is clipped'),
+    );
   });
 
   testWidgets('bridge batch status is visible and refreshable', (tester) async {

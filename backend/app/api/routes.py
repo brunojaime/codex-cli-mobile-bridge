@@ -744,6 +744,7 @@ async def _feedback_batch_status_response(
         session_id=record.session_id,
         run_id=job.run_id if job else None,
         workspace_path=record.workspace_path,
+        quick_ask_id=record.quick_ask_id,
         job_status=job.status if job else None,
         summary=summary,
         summary_generated_at=record.summary_generated_at,
@@ -821,6 +822,28 @@ def _build_feedback_final_summary(
             f"12. Final result: workflow {result}.",
             f"13. Remaining risk or next step: {failure if status == 'failed' else 'review the app build before publishing.'}",
         ]
+    )
+
+
+def _quick_ask_implementation_comment(record) -> str:
+    answer = (record.answer or "").strip()
+    lines = [
+        f"Act from quick ask {record.id}.",
+        f"Question: {record.question}",
+    ]
+    if answer:
+        lines.append(f"Prior quick ask answer: {answer}")
+    return "\n".join(lines)
+
+
+def _quick_ask_batch_context(record) -> str:
+    answer = (record.answer or "").strip() or "not answered yet"
+    return (
+        "Quick ask provenance for this implementation batch:\n"
+        f"- Quick ask id: {record.id}\n"
+        f"- Original question: {record.question}\n"
+        f"- Prior answer: {answer}\n"
+        f"- Original selection bounds: {record.selection_bounds}\n\n"
     )
 
 
@@ -996,8 +1019,36 @@ async def start_feedback_batch_session(
     payload: FeedbackBatchStartRequest,
     container: AppContainer = Depends(get_container),
 ) -> MessageAcceptedResponse:
+    quick_ask_record = None
+    if payload.quick_ask_id:
+        try:
+            quick_ask_record = await run_in_threadpool(
+                container.feedback_queue_service.get_quick_ask,
+                payload.quick_ask_id,
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Quick ask not found.") from exc
+    quick_ask_item_payload = None
+    if quick_ask_record is not None and not payload.items:
+        screenshot_base64 = _quick_ask_screenshot_base64(quick_ask_record)
+        if not screenshot_base64:
+            raise HTTPException(
+                status_code=422,
+                detail="Quick ask screenshot is missing.",
+            )
+        quick_ask_item_payload = {
+            "id": f"{quick_ask_record.id}-implementation",
+            "sourceApp": quick_ask_record.source_app,
+            "sourceDisplayName": quick_ask_record.source_display_name,
+            "comment": _quick_ask_implementation_comment(quick_ask_record),
+            "screenshotMimeType": quick_ask_record.screenshot_mime_type,
+            "screenshotPngBase64": screenshot_base64,
+            "selectionPoints": quick_ask_record.selection_points,
+            "selectionBounds": quick_ask_record.selection_bounds,
+        }
     if not payload.items:
-        raise HTTPException(status_code=422, detail="Feedback batch has no items.")
+        if quick_ask_item_payload is None:
+            raise HTTPException(status_code=422, detail="Feedback batch has no items.")
     preset = _feedback_preset_by_id(
         payload.workflow_preset_id,
         service=container.message_service,
@@ -1006,8 +1057,12 @@ async def start_feedback_batch_session(
         raise HTTPException(status_code=422, detail="Unknown feedback workflow preset.")
 
     item_payloads = []
-    for index, item_request in enumerate(payload.items, start=1):
-        item_payload = item_request.model_dump(by_alias=False, exclude_none=True)
+    raw_item_payloads = (
+        [quick_ask_item_payload]
+        if quick_ask_item_payload is not None
+        else [item.model_dump(by_alias=False, exclude_none=True) for item in payload.items]
+    )
+    for index, item_payload in enumerate(raw_item_payloads, start=1):
         if not str(item_payload.get("screenshotPngBase64") or "").strip():
             raise HTTPException(
                 status_code=422,
@@ -1130,12 +1185,18 @@ async def start_feedback_batch_session(
             if payload.release_when_complete
             else ""
         )
+        quick_ask_context = (
+            _quick_ask_batch_context(quick_ask_record)
+            if quick_ask_record is not None
+            else ""
+        )
         message = payload.message or (
             f"Use these {source_label} feedback screenshots and notes as one "
             "batch to make the requested UI/app changes.\n\n"
             f"Run target: {_feedback_target_instruction(preset.target_mode)}\n"
             f"Workflow preset: {preset.name}\n"
             f"Batch size: {len(stored_items)} feedback items.\n\n"
+            f"{quick_ask_context}"
             + "\n\n".join(item_sections)
             + release_note
         )
@@ -1166,6 +1227,7 @@ async def start_feedback_batch_session(
             session_id=job.session_id,
             workspace_path=workspace_path,
             message=message,
+            quick_ask_id=payload.quick_ask_id,
         )
         should_keep_stored_items = True
     except ValueError as exc:

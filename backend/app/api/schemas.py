@@ -204,6 +204,11 @@ class FeedbackBatchStartRequest(BaseModel):
         default=False,
         validation_alias=AliasChoices("release_when_complete", "releaseWhenComplete"),
     )
+    quick_ask_id: str | None = Field(
+        default=None,
+        max_length=160,
+        validation_alias=AliasChoices("quick_ask_id", "quickAskId"),
+    )
     message: str | None = Field(default=None, max_length=10000)
     session_id: str | None = None
     workspace_path: str | None = None
@@ -805,6 +810,7 @@ class FeedbackBatchStatusResponse(BaseModel):
     session_id: str | None = None
     run_id: str | None = None
     workspace_path: str | None = None
+    quick_ask_id: str | None = None
     job_status: JobStatus | None = None
     summary: str | None = None
     summary_generated_at: str | None = None

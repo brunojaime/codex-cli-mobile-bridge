@@ -7163,6 +7163,58 @@ def test_feedback_quick_ask_history_filters_source_and_exposes_screenshot(
     assert detail["session_id"] == first["session_id"]
 
 
+def test_feedback_batch_can_act_from_quick_ask_reference(tmp_path: Path) -> None:
+    client = build_feedback_queue_client(tmp_path)
+    ask_response = client.post(
+        "/feedback-quick-asks/ask",
+        json={
+            "sourceApp": "fixture-app",
+            "sourceDisplayName": "Fixture App",
+            "question": "Why is this title clipped?",
+            "screenshotPngBase64": base64.b64encode(b"quick ask png").decode(
+                "ascii"
+            ),
+            "selectionBounds": {
+                "left": 8,
+                "top": 9,
+                "width": 10,
+                "height": 11,
+            },
+        },
+    )
+    accepted = ask_response.json()
+    wait_for_job(client, accepted["job_id"])
+    client.get(f"/feedback-quick-asks/{accepted['quick_ask_id']}")
+
+    start_response = client.post(
+        "/feedback-batches/start-session",
+        json={
+            "sourceApp": "fixture-app",
+            "sourceDisplayName": "Fixture App",
+            "workflowPresetId": "default",
+            "releaseWhenComplete": True,
+            "quickAskId": accepted["quick_ask_id"],
+        },
+    )
+
+    assert start_response.status_code == 202
+    batch = start_response.json()
+    job = wait_for_job(client, batch["job_id"])
+    assert "Quick ask provenance for this implementation batch:" in job["message"]
+    assert f"- Quick ask id: {accepted['quick_ask_id']}" in job["message"]
+    assert "- Original question: Why is this title clipped?" in job["message"]
+    assert "- Prior answer: " in job["message"]
+    assert "Quick ask about a selected Fixture App screen area." in job["message"]
+    assert "Act from quick ask" in job["message"]
+    assert "Release instruction: after implementation and validation complete" in job[
+        "message"
+    ]
+
+    status = client.get(f"/feedback-batches/{batch['feedback_batch_id']}").json()
+    assert status["quick_ask_id"] == accepted["quick_ask_id"]
+    assert status["item_count"] == 1
+
+
 def test_feedback_batch_start_session_is_atomic_when_later_item_has_no_screenshot(
     tmp_path: Path,
 ) -> None:

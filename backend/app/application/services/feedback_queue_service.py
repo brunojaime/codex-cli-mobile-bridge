@@ -127,6 +127,7 @@ class FeedbackBatchRecord:
     session_id: str | None = None
     workspace_path: str | None = None
     message: str | None = None
+    quick_ask_id: str | None = None
     summary: str | None = None
     summary_generated_at: str | None = None
     notification_created_at: str | None = None
@@ -169,6 +170,11 @@ class FeedbackBatchRecord:
                 if payload.get("message") is not None
                 else None
             ),
+            quick_ask_id=(
+                str(payload["quick_ask_id"])
+                if payload.get("quick_ask_id") is not None
+                else None
+            ),
             summary=(
                 str(payload["summary"])
                 if payload.get("summary") is not None
@@ -207,6 +213,7 @@ class FeedbackBatchRecord:
             "session_id": self.session_id,
             "workspace_path": self.workspace_path,
             "message": self.message,
+            "quick_ask_id": self.quick_ask_id,
             "summary": self.summary,
             "summary_generated_at": self.summary_generated_at,
             "notification_created_at": self.notification_created_at,
@@ -445,6 +452,7 @@ class FeedbackQueueService:
         session_id: str,
         workspace_path: str | None,
         message: str,
+        quick_ask_id: str | None = None,
     ) -> FeedbackBatchRecord:
         now = datetime.now(UTC).isoformat()
         record = FeedbackBatchRecord(
@@ -462,6 +470,7 @@ class FeedbackQueueService:
             session_id=session_id,
             workspace_path=workspace_path,
             message=message,
+            quick_ask_id=quick_ask_id,
             summary=None,
             summary_generated_at=None,
             notification_created_at=None,
@@ -565,6 +574,7 @@ class FeedbackQueueService:
                     session_id=record.session_id,
                     workspace_path=record.workspace_path,
                     message=record.message,
+                    quick_ask_id=record.quick_ask_id,
                     summary=summary,
                     summary_generated_at=now,
                     notification_created_at=record.notification_created_at,
@@ -596,6 +606,7 @@ class FeedbackQueueService:
                     session_id=record.session_id,
                     workspace_path=record.workspace_path,
                     message=record.message,
+                    quick_ask_id=record.quick_ask_id,
                     summary=record.summary,
                     summary_generated_at=record.summary_generated_at,
                     notification_created_at=now,
@@ -630,6 +641,7 @@ class FeedbackQueueService:
                     session_id=record.session_id,
                     workspace_path=record.workspace_path,
                     message=record.message,
+                    quick_ask_id=record.quick_ask_id,
                     summary=record.summary,
                     summary_generated_at=record.summary_generated_at,
                     notification_created_at=record.notification_created_at or now,
