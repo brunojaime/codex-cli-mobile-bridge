@@ -640,6 +640,96 @@ void main() {
     },
   );
 
+  testWidgets('quick ask history shows provenance detail', (tester) async {
+    const screenshot =
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=';
+    final requestedQueries = <Map<String, String>>[];
+    final client = MockClient((request) async {
+      if (request.url.path == '/feedback-batches') {
+        return http.Response('[]', 200);
+      }
+      if (request.url.path == '/feedback-quick-asks') {
+        requestedQueries.add(request.url.queryParameters);
+        return http.Response(
+          jsonEncode(<Map<String, Object?>>[
+            <String, Object?>{
+              'quick_ask_id': 'quick-ask-history',
+              'source_app': 'fixture-app',
+              'question': 'Why is the title clipped?',
+              'status': 'completed',
+              'answer': 'Use the detail view for the full answer.',
+              'screenshot_mime_type': 'image/png',
+              'has_screenshot': true,
+              'selection_points': <Object?>[],
+              'selection_bounds': <String, double>{
+                'left': 12,
+                'top': 20,
+                'width': 80,
+                'height': 24,
+              },
+              'job_id': 'job-history',
+              'session_id': 'session-history',
+              'created_at': '2026-06-11T00:00:00+00:00',
+            },
+          ]),
+          200,
+        );
+      }
+      if (request.url.path == '/feedback-quick-asks/quick-ask-history') {
+        return http.Response(
+          jsonEncode(<String, Object?>{
+            'quick_ask_id': 'quick-ask-history',
+            'source_app': 'fixture-app',
+            'question': 'Why is the title clipped?',
+            'status': 'completed',
+            'answer': 'The title is clipped because the parent is too narrow.',
+            'screenshot_mime_type': 'image/png',
+            'has_screenshot': true,
+            'screenshot_png_base64': screenshot,
+            'selection_points': <Object?>[],
+            'selection_bounds': <String, double>{
+              'left': 12,
+              'top': 20,
+              'width': 80,
+              'height': 24,
+            },
+            'job_id': 'job-history',
+            'session_id': 'session-history',
+            'created_at': '2026-06-11T00:00:00+00:00',
+          }),
+          200,
+        );
+      }
+      return http.Response('not found', 404);
+    });
+
+    await tester.pumpWidget(
+      _Harness(
+        enabled: true,
+        sourceApp: 'fixture-app',
+        bridgeUrl: 'http://bridge.local',
+        httpClient: client,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(developerFeedbackQuickAskHistoryKey));
+    await tester.pumpAndSettle();
+    expect(find.byKey(developerFeedbackQuickAskHistoryItemKey), findsOneWidget);
+    expect(find.text('Why is the title clipped?'), findsOneWidget);
+
+    await tester.tap(find.byKey(developerFeedbackQuickAskHistoryItemKey));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(developerFeedbackQuickAskPreviewKey), findsOneWidget);
+    expect(find.byKey(developerFeedbackQuickAskBoundsKey), findsOneWidget);
+    expect(
+      find.text('The title is clipped because the parent is too narrow.'),
+      findsOneWidget,
+    );
+    expect(requestedQueries.single['sourceApp'], 'fixture-app');
+  });
+
   testWidgets('bridge batch status is visible and refreshable', (tester) async {
     final requestedPaths = <String>[];
     final client = MockClient((request) async {

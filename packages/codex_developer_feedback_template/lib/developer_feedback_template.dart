@@ -94,6 +94,18 @@ const developerFeedbackQuickAskSubmitKey = Key(
 const developerFeedbackQuickAskAnswerKey = Key(
   'developer-feedback-quick-ask-answer',
 );
+const developerFeedbackQuickAskHistoryKey = Key(
+  'developer-feedback-quick-ask-history',
+);
+const developerFeedbackQuickAskHistoryItemKey = Key(
+  'developer-feedback-quick-ask-history-item',
+);
+const developerFeedbackQuickAskPreviewKey = Key(
+  'developer-feedback-quick-ask-preview',
+);
+const developerFeedbackQuickAskBoundsKey = Key(
+  'developer-feedback-quick-ask-bounds',
+);
 const developerFeedbackCommentActionKey = Key(
   'developer-feedback-comment-action',
 );
@@ -241,6 +253,9 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
                   onOpenNotifications: widget.bridgeUrl.trim().isEmpty
                       ? null
                       : _openNotificationCenterDialog,
+                  onOpenQuickAskHistory: widget.bridgeUrl.trim().isEmpty
+                      ? null
+                      : _openQuickAskHistoryDialog,
                 ),
               ),
             ),
@@ -1268,6 +1283,207 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
     }
   }
 
+  void _openQuickAskHistoryDialog() {
+    var initialized = false;
+    var loading = true;
+    var error = false;
+    var records = <_QuickAskRecord>[];
+    showDialog<void>(
+      context: widget.navigatorKey?.currentContext ?? context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          Future<void> loadHistory() async {
+            setDialogState(() {
+              loading = true;
+              error = false;
+            });
+            try {
+              final loaded = await _loadQuickAskHistory();
+              if (!context.mounted) return;
+              setDialogState(() {
+                records = loaded;
+                loading = false;
+              });
+            } catch (_) {
+              if (!context.mounted) return;
+              setDialogState(() {
+                loading = false;
+                error = true;
+              });
+            }
+          }
+
+          if (!initialized) {
+            initialized = true;
+            unawaited(loadHistory());
+          }
+
+          final availableWidth = math.max(
+            0.0,
+            MediaQuery.sizeOf(context).width - 48,
+          );
+          return AlertDialog(
+            title: const Text('Preguntas rápidas'),
+            content: SizedBox(
+              width: math.min(560.0, availableWidth),
+              child: loading
+                  ? const Center(child: CircularProgressIndicator())
+                  : error
+                  ? const Text('No se pudieron cargar las preguntas.')
+                  : records.isEmpty
+                  ? const Text('No hay preguntas rápidas.')
+                  : ListView.separated(
+                      shrinkWrap: true,
+                      itemCount: records.length,
+                      separatorBuilder: (_, _) => const Divider(height: 20),
+                      itemBuilder: (context, index) {
+                        final record = records[index];
+                        return ListTile(
+                          key: developerFeedbackQuickAskHistoryItemKey,
+                          contentPadding: EdgeInsets.zero,
+                          title: Text(
+                            record.question,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          subtitle: Text(
+                            record.historyLabel,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          onTap: () => unawaited(
+                            _openQuickAskDetailDialog(record.quickAskId),
+                          ),
+                        );
+                      },
+                    ),
+            ),
+            actions: <Widget>[
+              IconButton(
+                tooltip: 'Actualizar',
+                onPressed: loading ? null : () => unawaited(loadHistory()),
+                icon: const Icon(Icons.refresh),
+              ),
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('Cerrar'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  Future<List<_QuickAskRecord>> _loadQuickAskHistory() async {
+    final baseUrl = widget.bridgeUrl.trim().replaceAll(RegExp(r'/$'), '');
+    final ownsClient = widget.httpClient == null;
+    final client = widget.httpClient ?? http.Client();
+    try {
+      final uri = Uri.parse('$baseUrl/feedback-quick-asks').replace(
+        queryParameters: <String, String>{'sourceApp': widget.sourceApp},
+      );
+      final response = await client.get(uri);
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw Exception('HTTP ${response.statusCode}: ${response.body}');
+      }
+      final decoded = jsonDecode(response.body) as List<Object?>;
+      return decoded
+          .whereType<Map>()
+          .map((item) => _QuickAskRecord.fromJson(item.cast<String, Object?>()))
+          .toList();
+    } finally {
+      if (ownsClient) client.close();
+    }
+  }
+
+  Future<void> _openQuickAskDetailDialog(String quickAskId) async {
+    try {
+      final detail = await _loadQuickAskDetail(quickAskId);
+      if (!mounted) return;
+      showDialog<void>(
+        context: widget.navigatorKey?.currentContext ?? context,
+        builder: (context) {
+          final availableWidth = math.max(
+            0.0,
+            MediaQuery.sizeOf(context).width - 48,
+          );
+          final screenshot = detail.screenshotPngBase64;
+          return AlertDialog(
+            title: const Text('Detalle de pregunta'),
+            content: SizedBox(
+              width: math.min(560.0, availableWidth),
+              child: SingleChildScrollView(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: <Widget>[
+                    if (screenshot != null)
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(6),
+                        child: Image.memory(
+                          base64Decode(screenshot),
+                          key: developerFeedbackQuickAskPreviewKey,
+                          height: 160,
+                          width: double.infinity,
+                          fit: BoxFit.contain,
+                        ),
+                      ),
+                    const SizedBox(height: 12),
+                    Text(detail.question),
+                    const SizedBox(height: 8),
+                    Text(
+                      _formatSelectionBounds(detail.selectionBounds),
+                      key: developerFeedbackQuickAskBoundsKey,
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                    const SizedBox(height: 8),
+                    SelectableText(
+                      detail.answer ?? 'Sin respuesta todavía.',
+                      key: developerFeedbackQuickAskAnswerKey,
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      detail.historyLabel,
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            actions: <Widget>[
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('Cerrar'),
+              ),
+            ],
+          );
+        },
+      );
+    } catch (_) {
+      _showMessage('No se pudo cargar la pregunta.');
+    }
+  }
+
+  Future<_QuickAskRecord> _loadQuickAskDetail(String quickAskId) async {
+    final baseUrl = widget.bridgeUrl.trim().replaceAll(RegExp(r'/$'), '');
+    final ownsClient = widget.httpClient == null;
+    final client = widget.httpClient ?? http.Client();
+    try {
+      final response = await client.get(
+        Uri.parse('$baseUrl/feedback-quick-asks/$quickAskId'),
+      );
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw Exception('HTTP ${response.statusCode}: ${response.body}');
+      }
+      return _QuickAskRecord.fromJson(
+        jsonDecode(response.body) as Map<String, Object?>,
+      );
+    } finally {
+      if (ownsClient) client.close();
+    }
+  }
+
   void _openNotificationCenterDialog() {
     var initialized = false;
     var loading = true;
@@ -1646,6 +1862,7 @@ class _Toolbar extends StatelessWidget {
     required this.onOpenRuns,
     required this.onOpenHistory,
     required this.onOpenNotifications,
+    required this.onOpenQuickAskHistory,
   });
 
   final bool editMode;
@@ -1659,6 +1876,7 @@ class _Toolbar extends StatelessWidget {
   final VoidCallback? onOpenRuns;
   final VoidCallback? onOpenHistory;
   final VoidCallback? onOpenNotifications;
+  final VoidCallback? onOpenQuickAskHistory;
 
   @override
   Widget build(BuildContext context) {
@@ -1736,6 +1954,12 @@ class _Toolbar extends StatelessWidget {
                 tooltip: 'Historial',
                 onPressed: onOpenHistory,
                 icon: const Icon(Icons.history),
+              ),
+              IconButton(
+                key: developerFeedbackQuickAskHistoryKey,
+                tooltip: 'Preguntas rápidas',
+                onPressed: onOpenQuickAskHistory,
+                icon: const Icon(Icons.manage_search),
               ),
             ],
           ],
@@ -2085,6 +2309,63 @@ Uint8List _decodePreviewImage(String screenshotPngBase64) {
     return base64Decode(screenshotPngBase64);
   } catch (_) {
     return base64Decode(_transparentPngBase64);
+  }
+}
+
+class _QuickAskRecord {
+  const _QuickAskRecord({
+    required this.quickAskId,
+    required this.question,
+    required this.status,
+    required this.createdAt,
+    required this.selectionBounds,
+    this.answer,
+    this.screenshotPngBase64,
+    this.jobId,
+    this.sessionId,
+    this.runId,
+  });
+
+  factory _QuickAskRecord.fromJson(Map<String, Object?> json) {
+    return _QuickAskRecord(
+      quickAskId: (json['quick_ask_id'] as String?) ?? 'unknown',
+      question: (json['question'] as String?) ?? 'Pregunta sin texto',
+      status: (json['status'] as String?) ?? 'pending',
+      createdAt: (json['created_at'] as String?) ?? '',
+      selectionBounds:
+          (json['selection_bounds'] as Map?)?.map(
+            (key, value) =>
+                MapEntry(key.toString(), value is num ? value.toDouble() : 0.0),
+          ) ??
+          <String, double>{'left': 0, 'top': 0, 'width': 0, 'height': 0},
+      answer: json['answer'] as String?,
+      screenshotPngBase64: json['screenshot_png_base64'] as String?,
+      jobId: json['job_id'] as String?,
+      sessionId: json['session_id'] as String?,
+      runId: json['run_id'] as String?,
+    );
+  }
+
+  final String quickAskId;
+  final String question;
+  final String status;
+  final String createdAt;
+  final Map<String, double> selectionBounds;
+  final String? answer;
+  final String? screenshotPngBase64;
+  final String? jobId;
+  final String? sessionId;
+  final String? runId;
+
+  String get historyLabel {
+    final parts = <String>[
+      status,
+      if (createdAt.isNotEmpty) createdAt,
+      if ((jobId ?? '').isNotEmpty) 'job $jobId',
+      if ((sessionId ?? '').isNotEmpty) 'session $sessionId',
+      if ((runId ?? '').isNotEmpty) 'run $runId',
+    ];
+    return parts.join(' · ');
   }
 }
 

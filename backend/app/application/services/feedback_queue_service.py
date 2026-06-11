@@ -340,6 +340,21 @@ class FeedbackQueueService:
             ]
         return sorted(records, key=lambda record: record.submitted_at, reverse=True)
 
+    def list_quick_asks(
+        self,
+        *,
+        source_app: str | None = None,
+    ) -> list[FeedbackQuickAskRecord]:
+        source_app_key = (source_app or "").strip().lower()
+        records = self._load_quick_asks()
+        if source_app_key:
+            records = [
+                record
+                for record in records
+                if record.source_app.strip().lower() == source_app_key
+            ]
+        return sorted(records, key=lambda record: record.created_at, reverse=True)
+
     def get_batch(self, batch_id: str) -> FeedbackBatchRecord:
         for record in self._load_batches():
             if record.id == batch_id:

@@ -7102,6 +7102,67 @@ def test_feedback_quick_ask_rejects_invalid_screenshot_base64(
     assert "invalid screenshotPngBase64" in ask_response.json()["detail"]
 
 
+def test_feedback_quick_ask_history_filters_source_and_exposes_screenshot(
+    tmp_path: Path,
+) -> None:
+    client = build_feedback_queue_client(tmp_path)
+    screenshot_base64 = base64.b64encode(b"quick ask png").decode("ascii")
+
+    first_response = client.post(
+        "/feedback-quick-asks/ask",
+        json={
+            "sourceApp": "fixture-app",
+            "sourceDisplayName": "Fixture App",
+            "question": "What does this status mean?",
+            "screenshotPngBase64": screenshot_base64,
+            "selectionBounds": {
+                "left": 4,
+                "top": 5,
+                "width": 6,
+                "height": 7,
+            },
+        },
+    )
+    second_response = client.post(
+        "/feedback-quick-asks/ask",
+        json={
+            "sourceApp": "other-app",
+            "question": "Other app question?",
+            "screenshotPngBase64": base64.b64encode(b"other png").decode("ascii"),
+        },
+    )
+    first = first_response.json()
+    second = second_response.json()
+    wait_for_job(client, first["job_id"])
+    wait_for_job(client, second["job_id"])
+
+    history_response = client.get("/feedback-quick-asks?sourceApp=fixture-app")
+
+    assert history_response.status_code == 200
+    history = history_response.json()
+    assert [record["quick_ask_id"] for record in history] == [
+        first["quick_ask_id"]
+    ]
+    assert history[0]["source_app"] == "fixture-app"
+    assert history[0]["screenshot_png_base64"] is None
+
+    detail_response = client.get(f"/feedback-quick-asks/{first['quick_ask_id']}")
+
+    assert detail_response.status_code == 200
+    detail = detail_response.json()
+    assert detail["screenshot_png_base64"] == screenshot_base64
+    assert detail["selection_bounds"] == {
+        "left": 4,
+        "top": 5,
+        "width": 6,
+        "height": 7,
+    }
+    assert detail["question"] == "What does this status mean?"
+    assert detail["answer"]
+    assert detail["job_id"] == first["job_id"]
+    assert detail["session_id"] == first["session_id"]
+
+
 def test_feedback_batch_start_session_is_atomic_when_later_item_has_no_screenshot(
     tmp_path: Path,
 ) -> None:

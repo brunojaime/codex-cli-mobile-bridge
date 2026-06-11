@@ -276,6 +276,7 @@ class FeedbackQuickAskResponse(BaseModel):
     answered_at: str | None = None
     screenshot_mime_type: str
     has_screenshot: bool
+    screenshot_png_base64: str | None = None
     selection_points: list[dict[str, float]] = Field(default_factory=list)
     selection_bounds: dict[str, float] = Field(default_factory=dict)
     job_id: str | None = None

@@ -1338,6 +1338,24 @@ async def ask_feedback_quick_question(
 
 
 @router.get(
+    "/feedback-quick-asks",
+    response_model=list[FeedbackQuickAskResponse],
+)
+async def list_feedback_quick_asks(
+    source_app: str | None = Query(default=None, alias="sourceApp"),
+    container: AppContainer = Depends(get_container),
+) -> list[FeedbackQuickAskResponse]:
+    records = await run_in_threadpool(
+        container.feedback_queue_service.list_quick_asks,
+        source_app=source_app,
+    )
+    return [
+        await _feedback_quick_ask_response(record, container=container)
+        for record in records
+    ]
+
+
+@router.get(
     "/feedback-quick-asks/{quick_ask_id}",
     response_model=FeedbackQuickAskResponse,
 )
@@ -1353,7 +1371,11 @@ async def get_feedback_quick_ask(
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Quick ask not found.") from exc
 
-    return await _feedback_quick_ask_response(record, container=container)
+    return await _feedback_quick_ask_response(
+        record,
+        container=container,
+        include_screenshot=True,
+    )
 
 
 def _feedback_quick_ask_prompt(
@@ -1381,6 +1403,7 @@ async def _feedback_quick_ask_response(
     record,
     *,
     container: AppContainer,
+    include_screenshot: bool = False,
 ) -> FeedbackQuickAskResponse:
     job: Job | None = None
     status = "pending"
@@ -1422,6 +1445,9 @@ async def _feedback_quick_ask_response(
         answered_at=answered_at,
         screenshot_mime_type=record.screenshot_mime_type,
         has_screenshot=record.screenshot_file is not None,
+        screenshot_png_base64=_quick_ask_screenshot_base64(record)
+        if include_screenshot
+        else None,
         selection_points=record.selection_points,
         selection_bounds=record.selection_bounds,
         job_id=record.job_id,
@@ -1430,6 +1456,15 @@ async def _feedback_quick_ask_response(
         workspace_path=record.workspace_path,
         created_at=record.created_at,
     )
+
+
+def _quick_ask_screenshot_base64(record) -> str | None:
+    if not record.screenshot_file:
+        return None
+    path = Path(record.screenshot_file)
+    if not path.exists():
+        return None
+    return base64.b64encode(path.read_bytes()).decode("ascii")
 
 
 def _feedback_source_label(
