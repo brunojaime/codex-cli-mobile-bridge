@@ -129,6 +129,8 @@ class FeedbackBatchRecord:
     message: str | None = None
     summary: str | None = None
     summary_generated_at: str | None = None
+    notification_created_at: str | None = None
+    notification_read_at: str | None = None
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "FeedbackBatchRecord":
@@ -177,6 +179,16 @@ class FeedbackBatchRecord:
                 if payload.get("summary_generated_at") is not None
                 else None
             ),
+            notification_created_at=(
+                str(payload["notification_created_at"])
+                if payload.get("notification_created_at") is not None
+                else None
+            ),
+            notification_read_at=(
+                str(payload["notification_read_at"])
+                if payload.get("notification_read_at") is not None
+                else None
+            ),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -197,6 +209,8 @@ class FeedbackBatchRecord:
             "message": self.message,
             "summary": self.summary,
             "summary_generated_at": self.summary_generated_at,
+            "notification_created_at": self.notification_created_at,
+            "notification_read_at": self.notification_read_at,
         }
 
 
@@ -330,6 +344,8 @@ class FeedbackQueueService:
             message=message,
             summary=None,
             summary_generated_at=None,
+            notification_created_at=None,
+            notification_read_at=None,
         )
         records = [
             existing for existing in self._load_batches() if existing.id != record.id
@@ -360,6 +376,39 @@ class FeedbackQueueService:
                     message=record.message,
                     summary=summary,
                     summary_generated_at=now,
+                    notification_created_at=record.notification_created_at,
+                    notification_read_at=record.notification_read_at,
+                )
+                self._save_batches(records)
+                return records[index]
+        raise KeyError(batch_id)
+
+    def ensure_batch_notification(self, batch_id: str) -> FeedbackBatchRecord:
+        now = datetime.now(UTC).isoformat()
+        records = self._load_batches()
+        for index, record in enumerate(records):
+            if record.id == batch_id:
+                if record.notification_created_at:
+                    return record
+                records[index] = FeedbackBatchRecord(
+                    id=record.id,
+                    source_app=record.source_app,
+                    source_display_name=record.source_display_name,
+                    created_at=record.created_at,
+                    submitted_at=record.submitted_at,
+                    status=record.status,
+                    workflow_preset_id=record.workflow_preset_id,
+                    release_when_complete=record.release_when_complete,
+                    item_count=record.item_count,
+                    item_ids=record.item_ids,
+                    job_id=record.job_id,
+                    session_id=record.session_id,
+                    workspace_path=record.workspace_path,
+                    message=record.message,
+                    summary=record.summary,
+                    summary_generated_at=record.summary_generated_at,
+                    notification_created_at=now,
+                    notification_read_at=record.notification_read_at,
                 )
                 self._save_batches(records)
                 return records[index]

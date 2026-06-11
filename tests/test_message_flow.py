@@ -6593,9 +6593,15 @@ def test_feedback_batch_status_response_tracks_completed_job(
     assert status["summary_line_count"] >= 11
     assert "Request: process developer feedback batch" in status["summary"]
     assert status["summary_generated_at"]
+    assert status["notification_created_at"]
+    assert status["notification_unread"] is True
+    assert status["notification_read_at"] is None
 
     persisted_status = client.get(f"/feedback-batches/{batch_id}").json()
     assert persisted_status["summary"] == status["summary"]
+    assert persisted_status["notification_created_at"] == status[
+        "notification_created_at"
+    ]
 
 
 def test_feedback_batch_status_handles_missing_linked_job(
@@ -6663,6 +6669,8 @@ def test_feedback_batch_summary_absent_while_batch_is_active(
     assert payload["status"] == "running"
     assert payload["summary"] is None
     assert payload["summary_line_count"] == 0
+    assert payload["notification_created_at"] is None
+    assert payload["notification_unread"] is False
 
 
 def test_feedback_batch_history_filters_by_source_app(tmp_path: Path) -> None:

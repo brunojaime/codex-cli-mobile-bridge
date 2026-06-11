@@ -704,6 +704,11 @@ async def _feedback_batch_status_response(
             record.id,
             summary,
         )
+    if status in {"completed", "failed"} and not record.notification_created_at:
+        record = await run_in_threadpool(
+            container.feedback_queue_service.ensure_batch_notification,
+            record.id,
+        )
     summary = (record.summary or "").strip() or None
     return FeedbackBatchStatusResponse(
         batch_id=record.id,
@@ -723,6 +728,11 @@ async def _feedback_batch_status_response(
         summary=summary,
         summary_generated_at=record.summary_generated_at,
         summary_line_count=_non_empty_line_count(summary),
+        notification_created_at=record.notification_created_at,
+        notification_read_at=record.notification_read_at,
+        notification_unread=bool(
+            record.notification_created_at and not record.notification_read_at
+        ),
         created_at=record.created_at,
         submitted_at=record.submitted_at,
     )

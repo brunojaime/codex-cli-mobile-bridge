@@ -733,6 +733,9 @@ class FeedbackBatchStatusResponse(BaseModel):
     summary: str | None = None
     summary_generated_at: str | None = None
     summary_line_count: int = 0
+    notification_created_at: str | None = None
+    notification_read_at: str | None = None
+    notification_unread: bool = False
     created_at: str
     submitted_at: str
 
