@@ -38,6 +38,12 @@ const developerFeedbackSourceDisplayName = String.fromEnvironment(
 );
 
 const developerFeedbackToolbarKey = Key('developer-feedback-toolbar');
+const developerFeedbackToolbarCollapseKey = Key(
+  'developer-feedback-toolbar-collapse',
+);
+const developerFeedbackToolbarExpandKey = Key(
+  'developer-feedback-toolbar-expand',
+);
 const developerFeedbackSwitchKey = Key('developer-feedback-switch');
 const developerFeedbackOverlayKey = Key('developer-feedback-overlay');
 const developerFeedbackCommentKey = Key('developer-feedback-comment');
@@ -191,6 +197,7 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
   var _editMode = false;
   var _dialogOpen = false;
   var _selectionReady = false;
+  var _toolbarExpanded = true;
   var _drawing = <Offset>[];
   Offset? _toolbarOffset;
   Size? _toolbarSize;
@@ -241,6 +248,7 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
                 onDragUpdate: (delta) =>
                     _moveToolbar(delta, viewport, safePadding),
                 child: _Toolbar(
+                  expanded: _toolbarExpanded,
                   editMode: _editMode,
                   compact: viewport.width < 360,
                   pendingCount: _items.length,
@@ -254,6 +262,7 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
                       _selectionReady = false;
                     }
                   }),
+                  onExpandedChanged: _setToolbarExpanded,
                   onOpenPending: _items.isEmpty ? null : _openPendingDialog,
                   onOpenRuns: _submittedBatches.isEmpty
                       ? null
@@ -308,8 +317,16 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
   }
 
   Size get _toolbarClampSize {
-    const baseEstimate = Size(176, 48);
-    const pendingEstimate = Size(320, 48);
+    const collapsedEstimate = Size(48, 48);
+    if (!_toolbarExpanded) {
+      final measured = _toolbarSize ?? Size.zero;
+      return Size(
+        math.max(measured.width, collapsedEstimate.width),
+        math.max(measured.height, collapsedEstimate.height),
+      );
+    }
+    const baseEstimate = Size(260, 48);
+    const pendingEstimate = Size(520, 48);
     final measured = _toolbarSize ?? Size.zero;
     final estimate =
         _items.isEmpty &&
@@ -331,6 +348,18 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
         viewport,
         safePadding,
       );
+    });
+  }
+
+  void _setToolbarExpanded(bool expanded) {
+    setState(() {
+      _toolbarExpanded = expanded;
+      _toolbarSize = null;
+      if (!expanded) {
+        _editMode = false;
+        _drawing = <Offset>[];
+        _selectionReady = false;
+      }
     });
   }
 
@@ -2022,6 +2051,7 @@ class _DraggableToolbarShell extends StatelessWidget {
 
 class _Toolbar extends StatelessWidget {
   const _Toolbar({
+    required this.expanded,
     required this.editMode,
     required this.compact,
     required this.pendingCount,
@@ -2029,6 +2059,7 @@ class _Toolbar extends StatelessWidget {
     required this.showHistory,
     required this.unreadNotificationCount,
     required this.onEditModeChanged,
+    required this.onExpandedChanged,
     required this.onOpenPending,
     required this.onOpenRuns,
     required this.onOpenHistory,
@@ -2036,6 +2067,7 @@ class _Toolbar extends StatelessWidget {
     required this.onOpenQuickAskHistory,
   });
 
+  final bool expanded;
   final bool editMode;
   final bool compact;
   final int pendingCount;
@@ -2043,6 +2075,7 @@ class _Toolbar extends StatelessWidget {
   final bool showHistory;
   final int unreadNotificationCount;
   final ValueChanged<bool> onEditModeChanged;
+  final ValueChanged<bool> onExpandedChanged;
   final VoidCallback? onOpenPending;
   final VoidCallback? onOpenRuns;
   final VoidCallback? onOpenHistory;
@@ -2051,21 +2084,61 @@ class _Toolbar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final buttonConstraints = compact
+        ? const BoxConstraints.tightFor(width: 40, height: 40)
+        : null;
+    final buttonPadding = compact ? EdgeInsets.zero : null;
+    final toolbarPadding = compact
+        ? const EdgeInsets.symmetric(horizontal: 4, vertical: 4)
+        : const EdgeInsets.symmetric(horizontal: 10, vertical: 6);
+    final itemSpacing = compact ? 2.0 : 6.0;
+    if (!expanded) {
+      return Material(
+        key: developerFeedbackToolbarKey,
+        color: colorScheme.surface,
+        elevation: 6,
+        borderRadius: BorderRadius.circular(8),
+        child: SizedBox.square(
+          dimension: 48,
+          child: IconButton(
+            key: developerFeedbackToolbarExpandKey,
+            tooltip: 'Expandir feedback',
+            onPressed: () => onExpandedChanged(true),
+            icon: _ToolbarStatusBadge(
+              pendingCount: pendingCount,
+              submittedCount: submittedCount,
+              unreadNotificationCount: unreadNotificationCount,
+              child: const Icon(Icons.bug_report_outlined),
+            ),
+          ),
+        ),
+      );
+    }
+
     return Material(
       key: developerFeedbackToolbarKey,
-      color: Theme.of(context).colorScheme.surface,
+      color: colorScheme.surface,
       elevation: 6,
       borderRadius: BorderRadius.circular(8),
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        padding: toolbarPadding,
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: <Widget>[
+            IconButton(
+              key: developerFeedbackToolbarCollapseKey,
+              constraints: buttonConstraints,
+              padding: buttonPadding,
+              tooltip: 'Contraer feedback',
+              onPressed: () => onExpandedChanged(false),
+              icon: const Icon(Icons.keyboard_arrow_right),
+            ),
             InkWell(
               borderRadius: BorderRadius.circular(6),
               onTap: () => onEditModeChanged(!editMode),
               child: Padding(
-                padding: const EdgeInsets.only(left: 4),
+                padding: EdgeInsets.only(left: compact ? 0 : 4),
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: <Widget>[
@@ -2073,7 +2146,7 @@ class _Toolbar extends StatelessWidget {
                       const Icon(Icons.bug_report_outlined)
                     else
                       const Text('Plantilla'),
-                    const SizedBox(width: 8),
+                    SizedBox(width: compact ? 4 : 8),
                     Switch(
                       key: developerFeedbackSwitchKey,
                       value: editMode,
@@ -2084,9 +2157,11 @@ class _Toolbar extends StatelessWidget {
               ),
             ),
             if (pendingCount > 0) ...<Widget>[
-              const SizedBox(width: 6),
+              SizedBox(width: itemSpacing),
               IconButton(
                 key: developerFeedbackPendingKey,
+                constraints: buttonConstraints,
+                padding: buttonPadding,
                 tooltip: 'Pendientes',
                 onPressed: onOpenPending,
                 icon: Badge.count(
@@ -2096,9 +2171,11 @@ class _Toolbar extends StatelessWidget {
               ),
             ],
             if (submittedCount > 0) ...<Widget>[
-              const SizedBox(width: 6),
+              SizedBox(width: itemSpacing),
               IconButton(
                 key: developerFeedbackRunsKey,
+                constraints: buttonConstraints,
+                padding: buttonPadding,
                 tooltip: 'Runs',
                 onPressed: onOpenRuns,
                 icon: Badge.count(
@@ -2108,9 +2185,11 @@ class _Toolbar extends StatelessWidget {
               ),
             ],
             if (showHistory) ...<Widget>[
-              const SizedBox(width: 6),
+              SizedBox(width: itemSpacing),
               IconButton(
                 key: developerFeedbackNotificationBellKey,
+                constraints: buttonConstraints,
+                padding: buttonPadding,
                 tooltip: 'Notificaciones',
                 onPressed: onOpenNotifications,
                 icon: unreadNotificationCount > 0
@@ -2122,12 +2201,16 @@ class _Toolbar extends StatelessWidget {
               ),
               IconButton(
                 key: developerFeedbackHistoryKey,
+                constraints: buttonConstraints,
+                padding: buttonPadding,
                 tooltip: 'Historial',
                 onPressed: onOpenHistory,
                 icon: const Icon(Icons.history),
               ),
               IconButton(
                 key: developerFeedbackQuickAskHistoryKey,
+                constraints: buttonConstraints,
+                padding: buttonPadding,
                 tooltip: 'Preguntas rápidas',
                 onPressed: onOpenQuickAskHistory,
                 icon: const Icon(Icons.manage_search),
@@ -2137,6 +2220,27 @@ class _Toolbar extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+class _ToolbarStatusBadge extends StatelessWidget {
+  const _ToolbarStatusBadge({
+    required this.pendingCount,
+    required this.submittedCount,
+    required this.unreadNotificationCount,
+    required this.child,
+  });
+
+  final int pendingCount;
+  final int submittedCount;
+  final int unreadNotificationCount;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final count = pendingCount + submittedCount + unreadNotificationCount;
+    if (count <= 0) return child;
+    return Badge.count(count: count, child: child);
   }
 }
 

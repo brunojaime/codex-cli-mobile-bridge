@@ -67,6 +67,49 @@ void main() {
     expect(find.byKey(developerFeedbackOverlayKey), findsOneWidget);
   });
 
+  testWidgets('template toolbar can collapse to a small button and expand', (
+    tester,
+  ) async {
+    const viewport = Size(390, 844);
+    _setViewport(tester, viewport);
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(const _Harness(enabled: true));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(developerFeedbackSwitchKey));
+    await tester.pump();
+    expect(_feedbackSwitchValue(tester), isTrue);
+    expect(find.byKey(developerFeedbackOverlayKey), findsOneWidget);
+
+    await tester.tap(find.byKey(developerFeedbackToolbarCollapseKey));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(developerFeedbackToolbarKey), findsOneWidget);
+    expect(find.byKey(developerFeedbackToolbarExpandKey), findsOneWidget);
+    expect(find.byKey(developerFeedbackSwitchKey), findsNothing);
+    expect(find.byKey(developerFeedbackOverlayKey), findsNothing);
+    _expectToolbarInsideViewport(tester, viewport);
+
+    final collapsed = tester.getSize(find.byKey(developerFeedbackToolbarKey));
+    expect(collapsed.width, lessThanOrEqualTo(56));
+    expect(collapsed.height, lessThanOrEqualTo(56));
+
+    await _dragToolbar(tester, const Offset(-80, 64));
+    _expectToolbarInsideViewport(tester, viewport);
+
+    await tester.tap(find.byKey(developerFeedbackToolbarExpandKey));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(developerFeedbackToolbarExpandKey), findsNothing);
+    expect(find.byKey(developerFeedbackToolbarCollapseKey), findsOneWidget);
+    expect(find.byKey(developerFeedbackSwitchKey), findsOneWidget);
+    expect(_feedbackSwitchValue(tester), isFalse);
+    _expectToolbarInsideViewport(tester, viewport);
+    _expectNoFlutterExceptions(tester);
+  });
+
   testWidgets('template toolbar clamps when dragged past viewport edges', (
     tester,
   ) async {

@@ -1,4 +1,31 @@
 {
+  "codex_developer_feedback_template": {
+    "displayName": "Codex Developer Feedback Template",
+    "dependencyName": "codex_developer_feedback_template",
+    "dependencyRefPrefix": "codex-developer-feedback-template-v",
+    "apps": [
+      {
+        "sourceApp": "ambientando-calendar",
+        "displayName": "Ambientando Calendar",
+        "repo": "brunojaime/ambientando-calendar",
+        "localPath": "../ambientando-calendar",
+        "defaultBranch": "main",
+        "pubspecPath": "frontend/pubspec.yaml",
+        "releaseTagPrefix": "android-local-demo-feedback-v",
+        "releaseWorkflow": "Android Release"
+      },
+      {
+        "sourceApp": "gestion-ludmilo",
+        "displayName": "Gestion Ludmilo",
+        "repo": "brunojaime/Gestion_ludmilo",
+        "localPath": "../Gestion_ludmilo",
+        "defaultBranch": "main",
+        "pubspecPath": "frontend/pubspec.yaml",
+        "releaseTagPrefix": "android-v",
+        "releaseWorkflow": "Android Release"
+      }
+    ]
+  },
   "codex_app_updater": {
     "displayName": "Codex App Updater",
     "dependencyName": "codex_app_updater",
