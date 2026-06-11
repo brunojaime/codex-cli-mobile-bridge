@@ -653,9 +653,15 @@ class MessageAcceptedResponse(BaseModel):
     provider_session_id: str | None = None
     agent_id: AgentId = AgentId.GENERATOR
     agent_type: AgentType = AgentType.GENERATOR
+    feedback_batch_id: str | None = None
 
     @classmethod
-    def from_domain(cls, job: Job) -> "MessageAcceptedResponse":
+    def from_domain(
+        cls,
+        job: Job,
+        *,
+        feedback_batch_id: str | None = None,
+    ) -> "MessageAcceptedResponse":
         return cls(
             job_id=job.id,
             session_id=job.session_id,
@@ -663,6 +669,7 @@ class MessageAcceptedResponse(BaseModel):
             provider_session_id=job.provider_session_id,
             agent_id=job.agent_id,
             agent_type=job.agent_type,
+            feedback_batch_id=feedback_batch_id,
         )
 
 
@@ -706,6 +713,25 @@ class ImageMessageAcceptedResponse(MessageAcceptedResponse):
             agent_type=job.agent_type,
             attached_image_name=attached_image_name,
         )
+
+
+class FeedbackBatchStatusResponse(BaseModel):
+    batch_id: str
+    source_app: str
+    source_display_name: str | None = None
+    status: str
+    status_detail: str | None = None
+    workflow_preset_id: str
+    release_when_complete: bool
+    item_count: int
+    item_ids: list[str] = Field(default_factory=list)
+    job_id: str | None = None
+    session_id: str | None = None
+    run_id: str | None = None
+    workspace_path: str | None = None
+    job_status: JobStatus | None = None
+    created_at: str
+    submitted_at: str
 
 
 class DocumentMessageAcceptedResponse(MessageAcceptedResponse):

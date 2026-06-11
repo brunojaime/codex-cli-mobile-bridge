@@ -39,6 +39,7 @@ from backend.app.api.schemas import (
     AppUpdateRegistryResponse,
     AppUpdateResponse,
     FeedbackBatchStartRequest,
+    FeedbackBatchStatusResponse,
     FeedbackQueueItemRequest,
     FeedbackQueueItemResponse,
     FeedbackQueueStartRequest,
@@ -74,7 +75,7 @@ from backend.app.application.services.message_service import (
 )
 from backend.app.domain.entities.chat_message import ChatMessage
 from backend.app.domain.entities.agent_configuration import AgentId
-from backend.app.domain.entities.job import Job
+from backend.app.domain.entities.job import Job, JobStatus
 from backend.app.container import AppContainer
 from backend.app.infrastructure.codex_tooling import (
     inspect_codex_mcp_server_selection,
@@ -681,6 +682,59 @@ async def _feedback_audio_prompt_note(
     return f"{audio_note}\nAudio transcript: {transcript}"
 
 
+async def _feedback_batch_status_response(
+    record,
+    *,
+    container: AppContainer,
+) -> FeedbackBatchStatusResponse:
+    job = None
+    if record.job_id:
+        job = await run_in_threadpool(container.message_service.get_job, record.job_id)
+
+    status, status_detail = _feedback_batch_status_from_job(record, job)
+    return FeedbackBatchStatusResponse(
+        batch_id=record.id,
+        source_app=record.source_app,
+        source_display_name=record.source_display_name,
+        status=status,
+        status_detail=status_detail,
+        workflow_preset_id=record.workflow_preset_id,
+        release_when_complete=record.release_when_complete,
+        item_count=record.item_count,
+        item_ids=record.item_ids,
+        job_id=record.job_id,
+        session_id=record.session_id,
+        run_id=job.run_id if job else None,
+        workspace_path=record.workspace_path,
+        job_status=job.status if job else None,
+        created_at=record.created_at,
+        submitted_at=record.submitted_at,
+    )
+
+
+def _feedback_batch_status_from_job(record, job: Job | None) -> tuple[str, str | None]:
+    if record.job_id and job is None:
+        return "failed", "Linked job was not found."
+    if job is None:
+        return _normalize_feedback_batch_status(record.status), None
+    if job.status == JobStatus.PENDING:
+        return "pending", job.latest_activity
+    if job.status == JobStatus.RUNNING:
+        return "running", job.latest_activity
+    if job.status == JobStatus.COMPLETED:
+        return "completed", job.latest_activity
+    return "failed", job.error or job.latest_activity
+
+
+def _normalize_feedback_batch_status(status: str) -> str:
+    normalized = (status or "").strip().lower()
+    if normalized in {"pending", "running", "review", "release", "completed", "failed"}:
+        return normalized
+    if normalized in {"submitted", "started"}:
+        return "running"
+    return "pending"
+
+
 def _validate_feedback_base64(value: str, *, field_name: str, item_index: int) -> None:
     try:
         base64.b64decode(value, validate=True)
@@ -1006,6 +1060,20 @@ async def start_feedback_batch_session(
                 container.feedback_queue_service.mark_submitted,
                 item.id,
             )
+        batch_record = await run_in_threadpool(
+            container.feedback_queue_service.create_batch_record,
+            batch_id=None,
+            source_app=payload.sourceApp or first_item.source_app,
+            source_display_name=payload.sourceDisplayName
+            or first_item.source_display_name,
+            workflow_preset_id=payload.workflow_preset_id,
+            release_when_complete=payload.release_when_complete,
+            items=stored_items,
+            job_id=job.id,
+            session_id=job.session_id,
+            workspace_path=workspace_path,
+            message=message,
+        )
         should_keep_stored_items = True
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -1022,7 +1090,29 @@ async def start_feedback_batch_session(
                     item.id,
                 )
 
-    return MessageAcceptedResponse.from_domain(job)
+    return MessageAcceptedResponse.from_domain(
+        job,
+        feedback_batch_id=batch_record.id,
+    )
+
+
+@router.get(
+    "/feedback-batches/{batch_id}",
+    response_model=FeedbackBatchStatusResponse,
+)
+async def get_feedback_batch_status(
+    batch_id: str,
+    container: AppContainer = Depends(get_container),
+) -> FeedbackBatchStatusResponse:
+    try:
+        record = await run_in_threadpool(
+            container.feedback_queue_service.get_batch,
+            batch_id,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Feedback batch not found.") from exc
+
+    return await _feedback_batch_status_response(record, container=container)
 
 
 def _feedback_source_label(

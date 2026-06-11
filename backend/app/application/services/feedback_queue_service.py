@@ -111,6 +111,81 @@ class FeedbackQueueItem:
         return data
 
 
+@dataclass(slots=True)
+class FeedbackBatchRecord:
+    id: str
+    source_app: str
+    source_display_name: str | None
+    created_at: str
+    submitted_at: str
+    status: str
+    workflow_preset_id: str
+    release_when_complete: bool
+    item_count: int
+    item_ids: list[str] = field(default_factory=list)
+    job_id: str | None = None
+    session_id: str | None = None
+    workspace_path: str | None = None
+    message: str | None = None
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "FeedbackBatchRecord":
+        return cls(
+            id=str(payload["id"]),
+            source_app=str(payload.get("source_app") or "unknown"),
+            source_display_name=(
+                str(payload["source_display_name"])
+                if payload.get("source_display_name") is not None
+                else None
+            ),
+            created_at=str(payload.get("created_at") or ""),
+            submitted_at=str(payload.get("submitted_at") or ""),
+            status=str(payload.get("status") or "pending"),
+            workflow_preset_id=str(payload.get("workflow_preset_id") or ""),
+            release_when_complete=bool(payload.get("release_when_complete")),
+            item_count=int(payload.get("item_count") or 0),
+            item_ids=[str(item_id) for item_id in payload.get("item_ids") or []],
+            job_id=(
+                str(payload["job_id"])
+                if payload.get("job_id") is not None
+                else None
+            ),
+            session_id=(
+                str(payload["session_id"])
+                if payload.get("session_id") is not None
+                else None
+            ),
+            workspace_path=(
+                str(payload["workspace_path"])
+                if payload.get("workspace_path") is not None
+                else None
+            ),
+            message=(
+                str(payload["message"])
+                if payload.get("message") is not None
+                else None
+            ),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "source_app": self.source_app,
+            "source_display_name": self.source_display_name,
+            "created_at": self.created_at,
+            "submitted_at": self.submitted_at,
+            "status": self.status,
+            "workflow_preset_id": self.workflow_preset_id,
+            "release_when_complete": self.release_when_complete,
+            "item_count": self.item_count,
+            "item_ids": self.item_ids,
+            "job_id": self.job_id,
+            "session_id": self.session_id,
+            "workspace_path": self.workspace_path,
+            "message": self.message,
+        }
+
+
 class FeedbackQueueService:
     def __init__(self, queue_path: str, image_dir: str, audio_dir: str) -> None:
         self._queue_path = Path(queue_path)
@@ -122,6 +197,27 @@ class FeedbackQueueService:
 
     def list_items(self, *, include_images: bool = False) -> list[FeedbackQueueItem]:
         return self._load_items(include_images=include_images)
+
+    def list_batches(
+        self,
+        *,
+        source_app: str | None = None,
+    ) -> list[FeedbackBatchRecord]:
+        source_app_key = (source_app or "").strip().lower()
+        records = self._load_batches()
+        if source_app_key:
+            records = [
+                record
+                for record in records
+                if record.source_app.strip().lower() == source_app_key
+            ]
+        return sorted(records, key=lambda record: record.submitted_at, reverse=True)
+
+    def get_batch(self, batch_id: str) -> FeedbackBatchRecord:
+        for record in self._load_batches():
+            if record.id == batch_id:
+                return record
+        raise KeyError(batch_id)
 
     def get_item(self, item_id: str, *, include_image: bool = False) -> FeedbackQueueItem:
         for item in self._load_items(include_images=include_image):
@@ -187,6 +283,44 @@ class FeedbackQueueService:
         items.append(item)
         self._save_items(items)
         return item
+
+    def create_batch_record(
+        self,
+        *,
+        batch_id: str | None,
+        source_app: str,
+        source_display_name: str | None,
+        workflow_preset_id: str,
+        release_when_complete: bool,
+        items: list[FeedbackQueueItem],
+        job_id: str,
+        session_id: str,
+        workspace_path: str | None,
+        message: str,
+    ) -> FeedbackBatchRecord:
+        now = datetime.now(UTC).isoformat()
+        record = FeedbackBatchRecord(
+            id=batch_id or f"feedback-batch-{uuid4().hex}",
+            source_app=source_app or "unknown",
+            source_display_name=source_display_name,
+            created_at=now,
+            submitted_at=now,
+            status="running",
+            workflow_preset_id=workflow_preset_id,
+            release_when_complete=release_when_complete,
+            item_count=len(items),
+            item_ids=[item.id for item in items],
+            job_id=job_id,
+            session_id=session_id,
+            workspace_path=workspace_path,
+            message=message,
+        )
+        records = [
+            existing for existing in self._load_batches() if existing.id != record.id
+        ]
+        records.append(record)
+        self._save_batches(records)
+        return record
 
     def set_audio_transcript(
         self,
@@ -294,9 +428,7 @@ class FeedbackQueueService:
         return path
 
     def _load_items(self, *, include_images: bool = False) -> list[FeedbackQueueItem]:
-        if not self._queue_path.exists():
-            return []
-        payload = json.loads(self._queue_path.read_text(encoding="utf-8"))
+        payload = self._load_payload()
         return [
             FeedbackQueueItem.from_dict(item)
             for item in payload.get("items", [])
@@ -304,17 +436,43 @@ class FeedbackQueueService:
         ]
 
     def _save_items(self, items: list[FeedbackQueueItem]) -> None:
-        payload = {
-            "version": 1,
-            "items": [
-                item.to_dict(include_image=False)
-                | {
-                    "screenshot_file": item.screenshot_file,
-                    "audio_file": item.audio_file,
-                }
-                for item in items
-            ],
-        }
+        payload = self._load_payload()
+        payload["version"] = max(int(payload.get("version") or 1), 2)
+        payload["items"] = [
+            item.to_dict(include_image=False)
+            | {
+                "screenshot_file": item.screenshot_file,
+                "audio_file": item.audio_file,
+            }
+            for item in items
+        ]
+        self._save_payload(payload)
+
+    def _load_batches(self) -> list[FeedbackBatchRecord]:
+        payload = self._load_payload()
+        return [
+            FeedbackBatchRecord.from_dict(record)
+            for record in payload.get("batches", [])
+            if isinstance(record, dict)
+        ]
+
+    def _save_batches(self, records: list[FeedbackBatchRecord]) -> None:
+        payload = self._load_payload()
+        payload["version"] = max(int(payload.get("version") or 1), 2)
+        payload["batches"] = [record.to_dict() for record in records]
+        self._save_payload(payload)
+
+    def _load_payload(self) -> dict[str, Any]:
+        if not self._queue_path.exists():
+            return {"version": 2, "items": [], "batches": []}
+        payload = json.loads(self._queue_path.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            return {"version": 2, "items": [], "batches": []}
+        payload.setdefault("items", [])
+        payload.setdefault("batches", [])
+        return payload
+
+    def _save_payload(self, payload: dict[str, Any]) -> None:
         self._queue_path.parent.mkdir(parents=True, exist_ok=True)
         with NamedTemporaryFile(
             "w",

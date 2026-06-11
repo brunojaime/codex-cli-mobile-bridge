@@ -6494,6 +6494,7 @@ def test_feedback_batch_start_session_accepts_multiple_items_and_release(
 
     assert start_response.status_code == 202
     payload = start_response.json()
+    assert payload["feedback_batch_id"]
     job = wait_for_job(client, payload["job_id"])
     assert job["status"] == "completed"
     assert "Use these Smart Nienfos feedback screenshots" in job["message"]
@@ -6509,6 +6510,92 @@ def test_feedback_batch_start_session_accepts_multiple_items_and_release(
     assert "02-feedback-batch-2.png" in job["response"]
     queued = client.get("/feedback-queue").json()
     assert [item["status"] for item in queued] == ["submitted", "submitted"]
+
+
+def test_feedback_batch_status_response_tracks_completed_job(
+    tmp_path: Path,
+) -> None:
+    client = build_feedback_queue_client(tmp_path)
+
+    start_response = client.post(
+        "/feedback-batches/start-session",
+        json={
+            "sourceApp": "fixture-app",
+            "sourceDisplayName": "Fixture App",
+            "workflowPresetId": "default",
+            "items": [
+                {
+                    "id": "feedback-status",
+                    "comment": "Track this batch",
+                    "screenshotPngBase64": base64.b64encode(b"fake png").decode(
+                        "ascii"
+                    ),
+                }
+            ],
+        },
+    )
+
+    assert start_response.status_code == 202
+    accepted = start_response.json()
+    batch_id = accepted["feedback_batch_id"]
+    assert batch_id
+    wait_for_job(client, accepted["job_id"])
+
+    status_response = client.get(f"/feedback-batches/{batch_id}")
+
+    assert status_response.status_code == 200
+    status = status_response.json()
+    assert status["batch_id"] == batch_id
+    assert status["source_app"] == "fixture-app"
+    assert status["source_display_name"] == "Fixture App"
+    assert status["status"] == "completed"
+    assert status["job_status"] == "completed"
+    assert status["job_id"] == accepted["job_id"]
+    assert status["session_id"] == accepted["session_id"]
+    assert status["workflow_preset_id"] == "default"
+    assert status["item_count"] == 1
+    assert status["item_ids"] == ["feedback-status"]
+
+
+def test_feedback_batch_status_handles_missing_linked_job(
+    tmp_path: Path,
+) -> None:
+    queue_path = tmp_path / "feedback_queue.json"
+    queue_path.write_text(
+        json.dumps(
+            {
+                "version": 2,
+                "items": [],
+                "batches": [
+                    {
+                        "id": "feedback-batch-missing-job",
+                        "source_app": "fixture-app",
+                        "source_display_name": "Fixture App",
+                        "created_at": "2026-06-11T00:00:00+00:00",
+                        "submitted_at": "2026-06-11T00:00:00+00:00",
+                        "status": "running",
+                        "workflow_preset_id": "default",
+                        "release_when_complete": False,
+                        "item_count": 1,
+                        "item_ids": ["feedback-missing"],
+                        "job_id": "job-does-not-exist",
+                        "session_id": "session-does-not-exist",
+                        "workspace_path": str(tmp_path),
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    client = build_feedback_queue_client(tmp_path)
+
+    response = client.get("/feedback-batches/feedback-batch-missing-job")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "failed"
+    assert payload["status_detail"] == "Linked job was not found."
+    assert payload["job_status"] is None
 
 
 def test_feedback_batch_start_session_transcribes_audio_items(
