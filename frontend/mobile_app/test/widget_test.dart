@@ -28,6 +28,49 @@ import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
+  test('Codex app updater enablement is Android-only', () {
+    expect(
+      shouldEnableCodexAppUpdater(
+        configuredEnabled: true,
+        isWebOverride: false,
+        platformOverride: TargetPlatform.android,
+      ),
+      isTrue,
+    );
+    expect(
+      shouldEnableCodexAppUpdater(
+        configuredEnabled: false,
+        isWebOverride: false,
+        platformOverride: TargetPlatform.android,
+      ),
+      isFalse,
+    );
+    expect(
+      shouldEnableCodexAppUpdater(
+        configuredEnabled: true,
+        isWebOverride: false,
+        platformOverride: TargetPlatform.iOS,
+      ),
+      isFalse,
+    );
+    expect(
+      shouldEnableCodexAppUpdater(
+        configuredEnabled: true,
+        isWebOverride: false,
+        platformOverride: TargetPlatform.linux,
+      ),
+      isFalse,
+    );
+    expect(
+      shouldEnableCodexAppUpdater(
+        configuredEnabled: true,
+        isWebOverride: true,
+        platformOverride: TargetPlatform.android,
+      ),
+      isFalse,
+    );
+  });
+
   testWidgets('renders Codex Remote shell', (tester) async {
     SharedPreferences.setMockInitialValues(<String, Object>{});
     await tester.pumpWidget(

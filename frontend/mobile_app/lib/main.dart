@@ -31,7 +31,7 @@ Future<void> main() async {
       initialApiBaseUrl: apiBaseUrl,
       currentVersion: packageInfo.version,
       currentBuild: _parseBuildNumber(packageInfo.buildNumber),
-      appUpdaterEnabled: _shouldEnableAppUpdater(),
+      appUpdaterEnabled: shouldEnableCodexAppUpdater(),
       notificationService: notificationService,
     ),
   );
@@ -57,10 +57,15 @@ int _parseBuildNumber(String buildNumber) {
   return int.tryParse(buildNumber.trim()) ?? _fallbackAppBuild;
 }
 
-bool _shouldEnableAppUpdater() {
-  return _configuredAppUpdaterEnabled &&
-      !kIsWeb &&
-      defaultTargetPlatform == TargetPlatform.android;
+@visibleForTesting
+bool shouldEnableCodexAppUpdater({
+  bool configuredEnabled = _configuredAppUpdaterEnabled,
+  bool? isWebOverride,
+  TargetPlatform? platformOverride,
+}) {
+  final isWeb = isWebOverride ?? kIsWeb;
+  final platform = platformOverride ?? defaultTargetPlatform;
+  return configuredEnabled && !isWeb && platform == TargetPlatform.android;
 }
 
 class CodexMobileApp extends StatefulWidget {
