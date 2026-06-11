@@ -589,6 +589,8 @@ void main() {
             'release_when_complete': false,
             'item_count': 1,
             'item_ids': <String>['feedback-1'],
+            'summary': _summaryText(),
+            'summary_line_count': 11,
             'created_at': '2026-06-11T00:00:00+00:00',
             'submitted_at': '2026-06-11T00:00:00+00:00',
           }),
@@ -621,6 +623,10 @@ void main() {
     await tester.tap(find.byKey(developerFeedbackRefreshRunKey));
     await tester.pumpAndSettle();
     expect(find.text('Estado: completed · Done'), findsOneWidget);
+    await tester.tap(find.byKey(developerFeedbackSummaryOpenKey));
+    await tester.pumpAndSettle();
+    expect(find.byKey(developerFeedbackSummaryKey), findsOneWidget);
+    expect(find.textContaining('1. Request'), findsOneWidget);
     expect(requestedPaths, contains('/feedback-batches/batch-123'));
   });
 
@@ -643,6 +649,8 @@ void main() {
               'release_when_complete': false,
               'item_count': 2,
               'item_ids': <String>['one', 'two'],
+              'summary': _summaryText(),
+              'summary_line_count': 11,
               'created_at': '2026-06-11T00:00:00+00:00',
               'submitted_at': '2026-06-11T00:00:00+00:00',
             },
@@ -671,10 +679,14 @@ void main() {
     expect(find.text('Batch batch-history'), findsOneWidget);
     expect(
       find.text(
-        'Estado: completed · Done · job job-history · session session-history',
+        'Estado: completed · Done · job job-history · session session-history · resumen 11 líneas',
       ),
       findsOneWidget,
     );
+    await tester.tap(find.byKey(developerFeedbackSummaryOpenKey));
+    await tester.pumpAndSettle();
+    expect(find.byKey(developerFeedbackSummaryKey), findsOneWidget);
+    expect(find.textContaining('11. Validation'), findsOneWidget);
   });
 
   testWidgets('history shows empty state and supports refresh', (tester) async {
@@ -1076,6 +1088,18 @@ void _expectNoFlutterExceptions(WidgetTester tester) {
     );
   }
   expect(errors, isEmpty);
+}
+
+String _summaryText() {
+  return List<String>.generate(
+    11,
+    (index) =>
+        '${index + 1}. ${index == 0
+            ? 'Request'
+            : index == 10
+            ? 'Validation'
+            : 'Line'}',
+  ).join('\n');
 }
 
 Future<void> _saveFeedback(WidgetTester tester, String comment) async {

@@ -68,6 +68,8 @@ const developerFeedbackHistoryItemKey = Key('developer-feedback-history-item');
 const developerFeedbackHistoryRefreshKey = Key(
   'developer-feedback-history-refresh',
 );
+const developerFeedbackSummaryKey = Key('developer-feedback-summary');
+const developerFeedbackSummaryOpenKey = Key('developer-feedback-summary-open');
 const developerFeedbackCommentActionKey = Key(
   'developer-feedback-comment-action',
 );
@@ -836,6 +838,13 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
                                 ],
                               ),
                             ),
+                            if (batch.hasSummary)
+                              IconButton(
+                                key: developerFeedbackSummaryOpenKey,
+                                tooltip: 'Resumen',
+                                onPressed: () => _openSummaryDialog(batch),
+                                icon: const Icon(Icons.article_outlined),
+                              ),
                             IconButton(
                               key: developerFeedbackRefreshRunKey,
                               tooltip: 'Actualizar',
@@ -976,6 +985,16 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
                               overflow: TextOverflow.ellipsis,
                               style: Theme.of(context).textTheme.bodySmall,
                             ),
+                            if (batch.hasSummary)
+                              Align(
+                                alignment: Alignment.centerLeft,
+                                child: TextButton.icon(
+                                  key: developerFeedbackSummaryOpenKey,
+                                  onPressed: () => _openSummaryDialog(batch),
+                                  icon: const Icon(Icons.article_outlined),
+                                  label: const Text('Resumen'),
+                                ),
+                              ),
                           ],
                         );
                       },
@@ -1023,6 +1042,36 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
     } finally {
       if (ownsClient) client.close();
     }
+  }
+
+  void _openSummaryDialog(_SubmittedFeedbackBatch batch) {
+    showDialog<void>(
+      context: widget.navigatorKey?.currentContext ?? context,
+      builder: (context) {
+        final availableWidth = math.max(
+          0.0,
+          MediaQuery.sizeOf(context).width - 48,
+        );
+        return AlertDialog(
+          title: const Text('Resumen final'),
+          content: SizedBox(
+            width: math.min(560.0, availableWidth),
+            child: SingleChildScrollView(
+              child: Text(
+                batch.summary ?? '',
+                key: developerFeedbackSummaryKey,
+              ),
+            ),
+          ),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Cerrar'),
+            ),
+          ],
+        );
+      },
+    );
   }
 
   Future<void> _copyExport() async {
@@ -1554,6 +1603,8 @@ class _SubmittedFeedbackBatch {
     this.jobId,
     this.sessionId,
     this.statusDetail,
+    this.summary,
+    this.summaryLineCount = 0,
   });
 
   final String? batchId;
@@ -1561,6 +1612,8 @@ class _SubmittedFeedbackBatch {
   final String? sessionId;
   final String status;
   final String? statusDetail;
+  final String? summary;
+  final int summaryLineCount;
 
   factory _SubmittedFeedbackBatch.local() {
     return const _SubmittedFeedbackBatch(status: 'running');
@@ -1590,6 +1643,8 @@ class _SubmittedFeedbackBatch {
       sessionId: json['session_id'] as String?,
       status: (json['status'] as String?) ?? 'pending',
       statusDetail: json['status_detail'] as String?,
+      summary: json['summary'] as String?,
+      summaryLineCount: (json['summary_line_count'] as num?)?.toInt() ?? 0,
     );
   }
 
@@ -1610,8 +1665,14 @@ class _SubmittedFeedbackBatch {
       if ((jobId ?? '').isNotEmpty) 'job $jobId',
       if ((sessionId ?? '').isNotEmpty) 'session $sessionId',
     ].join(' · ');
-    return ids.isEmpty ? statusLabel : '$statusLabel · $ids';
+    final summarySuffix = hasSummary
+        ? ' · resumen ${summaryLineCount} líneas'
+        : '';
+    final base = ids.isEmpty ? statusLabel : '$statusLabel · $ids';
+    return '$base$summarySuffix';
   }
+
+  bool get hasSummary => (summary ?? '').trim().isNotEmpty;
 }
 
 class _FeedbackDraft {
