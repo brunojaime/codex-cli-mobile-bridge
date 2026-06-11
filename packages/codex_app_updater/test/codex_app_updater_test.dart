@@ -538,6 +538,28 @@ void main() {
     expect(requestedUri!.queryParameters['currentBuild'], '39');
     expect(requestedUri!.queryParameters['channel'], 'stable');
   });
+
+  testWidgets('checks again when app resumes', (tester) async {
+    var requestCount = 0;
+    final controller = CodexAppUpdaterController(
+      httpClient: MockClient((_) async {
+        requestCount += 1;
+        return http.Response(jsonEncode(_updateJson(available: false)), 200);
+      }),
+    );
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(_Harness(controller: controller));
+    await tester.pump();
+
+    expect(requestCount, 1);
+
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pump();
+
+    expect(requestCount, 2);
+  });
 }
 
 class _Harness extends StatelessWidget {
