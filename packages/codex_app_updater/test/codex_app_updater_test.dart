@@ -278,6 +278,163 @@ void main() {
     },
   );
 
+  test('download OK and launcher OK moves to installing', () async {
+    final apkFile = await _writeTempApk('apk-launch-ok', [1, 2, 3]);
+    final installer = _FakeInstallerLauncher();
+    final controller = CodexAppUpdaterController(
+      httpClient: MockClient(
+        (_) async =>
+            http.Response(jsonEncode(_updateJson(available: true)), 200),
+      ),
+      downloader: _FakeDownloader(apkFile.path),
+      installerLauncher: installer,
+    );
+    addTearDown(controller.dispose);
+
+    final installed = await controller.updateNow(_config());
+
+    expect(installed, isTrue);
+    expect(installer.launchCount, 1);
+    expect(installer.launchedPath, apkFile.path);
+    expect(controller.status, CodexAppUpdateStatus.installing);
+  });
+
+  test(
+    'download OK and unknown sources permission required is recoverable',
+    () async {
+      final apkFile = await _writeTempApk('apk-permission', [1, 2, 3]);
+      final downloader = _FakeDownloader(apkFile.path);
+      final installer = _FakeInstallerLauncher(
+        results: const [
+          CodexInstallerLaunchResult.unknownSourcesPermissionRequired,
+          CodexInstallerLaunchResult.installerLaunched,
+        ],
+      );
+      final controller = CodexAppUpdaterController(
+        httpClient: MockClient(
+          (_) async =>
+              http.Response(jsonEncode(_updateJson(available: true)), 200),
+        ),
+        downloader: downloader,
+        installerLauncher: installer,
+      );
+      addTearDown(controller.dispose);
+
+      final first = await controller.updateNow(_config());
+
+      expect(first, isFalse);
+      expect(controller.status, CodexAppUpdateStatus.waitingForPermission);
+      expect(
+        controller.failureReason,
+        CodexAppUpdateFailureReason.permissionRequired,
+      );
+      expect(controller.downloadedApkPath, apkFile.path);
+      expect(downloader.downloadCount, 1);
+      expect(installer.launchCount, 1);
+
+      final retry = await controller.updateNow(_config());
+
+      expect(retry, isTrue);
+      expect(controller.status, CodexAppUpdateStatus.installing);
+      expect(downloader.downloadCount, 1);
+      expect(installer.launchCount, 2);
+      expect(installer.launchedPath, apkFile.path);
+    },
+  );
+
+  test('waiting for permission exposes install retry action', () async {
+    final apkFile = await _writeTempApk('apk-permission-ui', [1, 2, 3]);
+    final installer = _FakeInstallerLauncher(
+      results: const [
+        CodexInstallerLaunchResult.unknownSourcesPermissionRequired,
+      ],
+    );
+    final controller = CodexAppUpdaterController(
+      httpClient: MockClient(
+        (_) async =>
+            http.Response(jsonEncode(_updateJson(available: true)), 200),
+      ),
+      downloader: _FakeDownloader(apkFile.path),
+      installerLauncher: installer,
+    );
+    addTearDown(controller.dispose);
+
+    await controller.updateNow(_config());
+
+    expect(controller.status, CodexAppUpdateStatus.waitingForPermission);
+    expect(controller.canRetryInstallPreparedApk, isTrue);
+  });
+
+  test('native launcher failure keeps prepared APK retryable', () async {
+    final apkFile = await _writeTempApk('apk-native-fail', [1, 2, 3]);
+    final downloader = _FakeDownloader(apkFile.path);
+    final installer = _FakeInstallerLauncher(
+      results: const [
+        CodexInstallerLaunchResult.securityException,
+        CodexInstallerLaunchResult.installerLaunched,
+      ],
+    );
+    final controller = CodexAppUpdaterController(
+      httpClient: MockClient(
+        (_) async =>
+            http.Response(jsonEncode(_updateJson(available: true)), 200),
+      ),
+      downloader: downloader,
+      installerLauncher: installer,
+    );
+    addTearDown(controller.dispose);
+
+    final first = await controller.updateNow(_config());
+
+    expect(first, isFalse);
+    expect(controller.status, CodexAppUpdateStatus.failed);
+    expect(
+      controller.failureReason,
+      CodexAppUpdateFailureReason.securityException,
+    );
+    expect(controller.downloadedApkPath, apkFile.path);
+
+    final retry = await controller.updateNow(_config());
+
+    expect(retry, isTrue);
+    expect(controller.status, CodexAppUpdateStatus.installing);
+    expect(downloader.downloadCount, 1);
+    expect(installer.launchCount, 2);
+  });
+
+  test(
+    'double install tap after permission does not launch in parallel',
+    () async {
+      final apkFile = await _writeTempApk('apk-install-coalesce', [1, 2, 3]);
+      final launchCompleter = Completer<CodexInstallerLaunchResult>();
+      final installer = _CompletingInstallerLauncher(launchCompleter.future);
+      final controller = CodexAppUpdaterController(
+        httpClient: MockClient(
+          (_) async =>
+              http.Response(jsonEncode(_updateJson(available: true)), 200),
+        ),
+        downloader: _FakeDownloader(apkFile.path),
+        installerLauncher: installer,
+      );
+      addTearDown(controller.dispose);
+
+      await controller.checkForUpdate(_config());
+      expect(await controller.downloadAndPrepare(_config()), isTrue);
+      final first = controller.updateNow(_config());
+      final second = controller.updateNow(_config());
+
+      expect(identical(first, second), isTrue);
+      await Future<void>.delayed(Duration.zero);
+      expect(installer.launchCount, 1);
+
+      launchCompleter.complete(CodexInstallerLaunchResult.installerLaunched);
+
+      expect(await first, isTrue);
+      expect(await second, isTrue);
+      expect(installer.launchCount, 1);
+    },
+  );
+
   test('bridge unavailable maps to failed bridgeUnavailable', () async {
     final controller = CodexAppUpdaterController(
       httpClient: MockClient((_) async => http.Response('nope', 503)),
@@ -432,6 +589,12 @@ class _FailingDownloader implements CodexApkDownloader {
 }
 
 class _FakeInstallerLauncher implements CodexInstallerLauncher {
+  _FakeInstallerLauncher({List<CodexInstallerLaunchResult>? results})
+    : _results = List<CodexInstallerLaunchResult>.from(
+        results ?? const [CodexInstallerLaunchResult.installerLaunched],
+      );
+
+  final List<CodexInstallerLaunchResult> _results;
   int launchCount = 0;
   String? launchedPath;
 
@@ -439,7 +602,23 @@ class _FakeInstallerLauncher implements CodexInstallerLauncher {
   Future<CodexInstallerLaunchResult> launch(String apkPath) async {
     launchCount += 1;
     launchedPath = apkPath;
-    return CodexInstallerLaunchResult.launched;
+    if (_results.length > 1) {
+      return _results.removeAt(0);
+    }
+    return _results.first;
+  }
+}
+
+class _CompletingInstallerLauncher implements CodexInstallerLauncher {
+  _CompletingInstallerLauncher(this.result);
+
+  final Future<CodexInstallerLaunchResult> result;
+  int launchCount = 0;
+
+  @override
+  Future<CodexInstallerLaunchResult> launch(String apkPath) {
+    launchCount += 1;
+    return result;
   }
 }
 

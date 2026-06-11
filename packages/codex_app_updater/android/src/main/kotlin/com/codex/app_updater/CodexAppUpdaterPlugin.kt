@@ -3,6 +3,7 @@ package com.codex.app_updater
 import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
@@ -36,41 +37,102 @@ class CodexAppUpdaterPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
     private fun launchInstaller(call: MethodCall, result: MethodChannel.Result) {
         val apkPath = call.argument<String>("apkPath")
         if (apkPath.isNullOrBlank()) {
-            result.error("invalidPath", "APK path is required.", null)
+            result.success(launchResult("fileMissing", "APK path is required."))
+            return
+        }
+        val apkFile = File(apkPath)
+        if (!apkFile.exists() || !apkFile.isFile) {
+            result.success(launchResult("fileMissing", "APK file does not exist."))
             return
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
             !context.packageManager.canRequestPackageInstalls()
         ) {
             if (openUnknownAppsSettings()) {
-                result.success("permissionRequired")
+                result.success(
+                    launchResult(
+                        "unknownSourcesPermissionRequired",
+                        "Unknown app install permission is required.",
+                    ),
+                )
             } else {
-                result.error(
-                    "installerUnavailable",
-                    "Unknown app install settings are unavailable.",
-                    null,
+                result.success(
+                    launchResult(
+                        "noActivity",
+                        "Unknown app install settings are unavailable.",
+                    ),
                 )
             }
             return
         }
-        val apkFile = File(apkPath)
-        if (!apkFile.exists()) {
-            result.error("invalidPath", "APK file does not exist.", null)
+        val authority = "${context.packageName}.codex_app_updater.fileprovider"
+        val apkUri: Uri = try {
+            FileProvider.getUriForFile(context, authority, apkFile)
+        } catch (error: IllegalArgumentException) {
+            result.success(
+                launchResult(
+                    "invalidUri",
+                    error.message ?: "APK file is outside configured FileProvider paths.",
+                ),
+            )
+            return
+        } catch (error: SecurityException) {
+            result.success(
+                launchResult(
+                    "securityException",
+                    error.message ?: "Android blocked APK URI creation.",
+                ),
+            )
             return
         }
-        val authority = "${context.packageName}.codex_app_updater.fileprovider"
-        val apkUri: Uri = FileProvider.getUriForFile(context, authority, apkFile)
         val intent = Intent(Intent.ACTION_VIEW).apply {
             setDataAndType(apkUri, "application/vnd.android.package-archive")
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
+        val canHandleInstallIntent = context.packageManager.queryIntentActivities(
+            intent,
+            PackageManager.MATCH_DEFAULT_ONLY,
+        ).isNotEmpty()
+        if (!canHandleInstallIntent) {
+            result.success(launchResult("noActivity", "No Android APK installer found."))
+            return
+        }
         try {
             context.startActivity(intent)
-            result.success("launched")
+            result.success(launchResult("installerLaunched"))
         } catch (_: ActivityNotFoundException) {
-            result.error("installerUnavailable", "No Android APK installer found.", null)
+            result.success(launchResult("noActivity", "No Android APK installer found."))
+        } catch (error: SecurityException) {
+            result.success(
+                launchResult(
+                    "securityException",
+                    error.message ?: "Android blocked APK installer launch.",
+                ),
+            )
+        } catch (error: IllegalArgumentException) {
+            result.success(
+                launchResult(
+                    "invalidUri",
+                    error.message ?: "Invalid APK URI.",
+                ),
+            )
+        } catch (error: RuntimeException) {
+            result.success(
+                launchResult(
+                    "cancelledOrUnknown",
+                    error.message ?: "Android installer launch failed.",
+                ),
+            )
         }
+    }
+
+    private fun launchResult(status: String, message: String? = null): Map<String, String> {
+        val result = mutableMapOf("status" to status)
+        if (!message.isNullOrBlank()) {
+            result["message"] = message
+        }
+        return result
     }
 
     private fun openUnknownAppsSettings(): Boolean {
@@ -94,6 +156,8 @@ class CodexAppUpdaterPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
             } catch (_: ActivityNotFoundException) {
                 false
             }
+        } catch (_: SecurityException) {
+            return false
         }
     }
 }

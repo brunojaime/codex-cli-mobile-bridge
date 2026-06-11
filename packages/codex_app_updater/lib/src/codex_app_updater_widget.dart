@@ -89,6 +89,7 @@ class _CodexAppUpdaterState extends State<CodexAppUpdater> {
       CodexAppUpdateStatus.downloaded ||
       CodexAppUpdateStatus.verifying ||
       CodexAppUpdateStatus.readyToInstall ||
+      CodexAppUpdateStatus.waitingForPermission ||
       CodexAppUpdateStatus.installing ||
       CodexAppUpdateStatus.failed => true,
       _ => false,
@@ -168,6 +169,7 @@ class _CodexAppUpdateBanner extends StatelessWidget {
       CodexAppUpdateStatus.downloaded ||
       CodexAppUpdateStatus.verifying => 'Verificando actualizacion',
       CodexAppUpdateStatus.readyToInstall => 'Lista para instalar',
+      CodexAppUpdateStatus.waitingForPermission => 'Permiso requerido',
       CodexAppUpdateStatus.installing => 'Abriendo instalador',
       CodexAppUpdateStatus.failed => 'No se pudo actualizar',
       _ => 'Actualizacion disponible para $name',
@@ -192,6 +194,12 @@ class _CodexAppUpdateBanner extends StatelessWidget {
           'La verificacion SHA-256 fallo.',
         CodexAppUpdateFailureReason.permissionRequired =>
           'Android requiere permiso para instalar apps desconocidas.',
+        CodexAppUpdateFailureReason.fileMissing =>
+          'El APK descargado ya no esta disponible.',
+        CodexAppUpdateFailureReason.securityException =>
+          'Android bloqueo el instalador por seguridad.',
+        CodexAppUpdateFailureReason.invalidUri =>
+          'No se pudo preparar el APK para Android.',
         CodexAppUpdateFailureReason.installerUnavailable =>
           'No se pudo abrir el instalador Android.',
         _ => 'Ocurrio un error inesperado.',
@@ -201,6 +209,9 @@ class _CodexAppUpdateBanner extends StatelessWidget {
     final current = _versionLabel(info.currentVersion, info.currentBuild);
     final latest = _versionLabel(info.latestVersion, info.latestBuild);
     if (current == null && latest == null) return null;
+    if (status == CodexAppUpdateStatus.waitingForPermission) {
+      return 'Habilita instalar apps desconocidas para esta app y toca Instalar.';
+    }
     if (current == null) return 'Nueva version: $latest';
     if (latest == null) return 'Version instalada: $current';
     return 'Version instalada: $current. Nueva version: $latest.';
@@ -223,6 +234,7 @@ class _Actions extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final status = controller.status;
+    final canInstall = controller.canRetryInstallPreparedApk;
     final busy =
         status == CodexAppUpdateStatus.checking ||
         status == CodexAppUpdateStatus.downloading ||
@@ -246,17 +258,13 @@ class _Actions extends StatelessWidget {
           onPressed: busy
               ? null
               : () {
-                  if (status == CodexAppUpdateStatus.readyToInstall) {
+                  if (canInstall) {
                     controller.installPreparedApk();
                   } else {
                     controller.updateNow(config);
                   }
                 },
-          child: Text(
-            status == CodexAppUpdateStatus.readyToInstall
-                ? 'Instalar'
-                : 'Actualizar',
-          ),
+          child: Text(canInstall ? 'Instalar' : 'Actualizar'),
         ),
       ],
     );

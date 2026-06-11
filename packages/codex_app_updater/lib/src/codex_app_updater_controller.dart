@@ -37,6 +37,8 @@ class CodexAppUpdaterController extends ChangeNotifier {
   Future<CodexAppUpdateInfo?>? _activeCheck;
   Future<bool>? _activeUpdate;
 
+  bool get canRetryInstallPreparedApk => _canInstallPreparedApk;
+
   Future<CodexAppUpdateInfo?> checkForUpdate(CodexAppUpdaterConfig config) {
     if (_activeCheck != null) return _activeCheck!;
     if (!config.enabled || config.bridgeUrl.trim().isEmpty) {
@@ -136,20 +138,33 @@ class CodexAppUpdaterController extends ChangeNotifier {
 
   Future<bool> installPreparedApk() async {
     final apkPath = downloadedApkPath;
-    if (status != CodexAppUpdateStatus.readyToInstall || apkPath == null) {
+    if (!_canInstallPreparedApk || apkPath == null) {
       _fail(CodexAppUpdateFailureReason.noCompatibleAsset);
       return false;
     }
     _setStatus(CodexAppUpdateStatus.installing);
     final result = await _installerLauncher.launch(apkPath);
     switch (result) {
-      case CodexInstallerLaunchResult.launched:
+      case CodexInstallerLaunchResult.installerLaunched:
         return true;
-      case CodexInstallerLaunchResult.permissionRequired:
-        _fail(CodexAppUpdateFailureReason.permissionRequired);
+      case CodexInstallerLaunchResult.unknownSourcesPermissionRequired:
+        _setWaitingForPermission();
         return false;
-      case CodexInstallerLaunchResult.unavailable:
+      case CodexInstallerLaunchResult.noActivity:
         _fail(CodexAppUpdateFailureReason.installerUnavailable);
+        return false;
+      case CodexInstallerLaunchResult.fileMissing:
+        _clearPreparedDownload();
+        _fail(CodexAppUpdateFailureReason.fileMissing);
+        return false;
+      case CodexInstallerLaunchResult.securityException:
+        _fail(CodexAppUpdateFailureReason.securityException);
+        return false;
+      case CodexInstallerLaunchResult.invalidUri:
+        _fail(CodexAppUpdateFailureReason.invalidUri);
+        return false;
+      case CodexInstallerLaunchResult.cancelledOrUnknown:
+        _fail(CodexAppUpdateFailureReason.unknown);
         return false;
     }
   }
@@ -167,6 +182,9 @@ class CodexAppUpdaterController extends ChangeNotifier {
   }
 
   Future<bool> _updateNow(CodexAppUpdaterConfig config) async {
+    if (_canInstallPreparedApk) {
+      return installPreparedApk();
+    }
     if (_mustRefreshBeforeUpdating) {
       final info = await checkForUpdate(config);
       if (info == null || !info.hasInstallableAsset) {
@@ -203,6 +221,12 @@ class CodexAppUpdaterController extends ChangeNotifier {
     notifyListeners();
   }
 
+  void _setWaitingForPermission() {
+    status = CodexAppUpdateStatus.waitingForPermission;
+    failureReason = CodexAppUpdateFailureReason.permissionRequired;
+    notifyListeners();
+  }
+
   bool get _mustRefreshBeforeUpdating {
     return switch (status) {
       CodexAppUpdateStatus.idle ||
@@ -219,7 +243,25 @@ class CodexAppUpdaterController extends ChangeNotifier {
       CodexAppUpdateStatus.downloading ||
       CodexAppUpdateStatus.downloaded ||
       CodexAppUpdateStatus.verifying ||
+      CodexAppUpdateStatus.waitingForPermission ||
       CodexAppUpdateStatus.installing => true,
+      _ => false,
+    };
+  }
+
+  bool get _canInstallPreparedApk {
+    if (downloadedApkPath == null) return false;
+    return switch (status) {
+      CodexAppUpdateStatus.readyToInstall ||
+      CodexAppUpdateStatus.waitingForPermission => true,
+      CodexAppUpdateStatus.failed => switch (failureReason) {
+        CodexAppUpdateFailureReason.permissionRequired ||
+        CodexAppUpdateFailureReason.installerUnavailable ||
+        CodexAppUpdateFailureReason.securityException ||
+        CodexAppUpdateFailureReason.invalidUri ||
+        CodexAppUpdateFailureReason.unknown => true,
+        _ => false,
+      },
       _ => false,
     };
   }

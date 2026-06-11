@@ -1,6 +1,14 @@
 import 'package:flutter/services.dart';
 
-enum CodexInstallerLaunchResult { launched, permissionRequired, unavailable }
+enum CodexInstallerLaunchResult {
+  installerLaunched,
+  unknownSourcesPermissionRequired,
+  noActivity,
+  fileMissing,
+  securityException,
+  invalidUri,
+  cancelledOrUnknown,
+}
 
 abstract class CodexInstallerLauncher {
   Future<CodexInstallerLaunchResult> launch(String apkPath);
@@ -16,21 +24,39 @@ class MethodChannelCodexInstallerLauncher implements CodexInstallerLauncher {
   @override
   Future<CodexInstallerLaunchResult> launch(String apkPath) async {
     try {
-      final result = await _channel.invokeMethod<String>('launchInstaller', {
+      final result = await _channel.invokeMethod<Object?>('launchInstaller', {
         'apkPath': apkPath,
       });
-      return switch (result) {
-        'launched' => CodexInstallerLaunchResult.launched,
-        'permissionRequired' => CodexInstallerLaunchResult.permissionRequired,
-        _ => CodexInstallerLaunchResult.unavailable,
-      };
+      return _launchResultFromPlatform(result);
     } on MissingPluginException {
-      return CodexInstallerLaunchResult.unavailable;
+      return CodexInstallerLaunchResult.noActivity;
     } on PlatformException catch (error) {
-      if (error.code == 'permissionRequired') {
-        return CodexInstallerLaunchResult.permissionRequired;
-      }
-      return CodexInstallerLaunchResult.unavailable;
+      return _launchResultFromCode(error.code);
     }
   }
+}
+
+CodexInstallerLaunchResult _launchResultFromPlatform(Object? value) {
+  if (value is String) {
+    return _launchResultFromCode(value);
+  }
+  if (value is Map) {
+    return _launchResultFromCode(value['status'] as String?);
+  }
+  return CodexInstallerLaunchResult.cancelledOrUnknown;
+}
+
+CodexInstallerLaunchResult _launchResultFromCode(String? code) {
+  return switch (code) {
+    'installerLaunched' ||
+    'launched' => CodexInstallerLaunchResult.installerLaunched,
+    'unknownSourcesPermissionRequired' || 'permissionRequired' =>
+      CodexInstallerLaunchResult.unknownSourcesPermissionRequired,
+    'noActivity' ||
+    'installerUnavailable' => CodexInstallerLaunchResult.noActivity,
+    'fileMissing' || 'invalidPath' => CodexInstallerLaunchResult.fileMissing,
+    'securityException' => CodexInstallerLaunchResult.securityException,
+    'invalidUri' => CodexInstallerLaunchResult.invalidUri,
+    _ => CodexInstallerLaunchResult.cancelledOrUnknown,
+  };
 }

@@ -8,6 +8,7 @@ enum CodexAppUpdateStatus {
   downloaded,
   verifying,
   readyToInstall,
+  waitingForPermission,
   installing,
   dismissed,
   failed,
@@ -20,6 +21,9 @@ enum CodexAppUpdateFailureReason {
   downloadFailed,
   checksumMismatch,
   permissionRequired,
+  fileMissing,
+  securityException,
+  invalidUri,
   installerUnavailable,
   unknown,
 }
