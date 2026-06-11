@@ -478,6 +478,90 @@ void main() {
     },
   );
 
+  testWidgets('failed attachment send keeps composer text and attachments', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    final fakeApiClient = _FakeApiClient(failAttachmentSends: true);
+    final controller = ChatController(
+      apiClient: fakeApiClient,
+      notificationService: const NoopChatNotificationService(),
+    );
+
+    await _pumpChatAndStageSingleFeedbackAttachment(
+      tester,
+      controller: controller,
+      feedbackItem: _feedbackItem(
+        id: 'feedback-retry',
+        sourceApp: 'ambientando-calendar',
+        comment: 'Mantener el draft si falla',
+      ),
+    );
+
+    expect(find.text('1 selected'), findsOneWidget);
+    expect(
+      _composerTextContaining(
+          tester, 'Feedback queue for Ambientando Calendar'),
+      contains('Mantener el draft si falla'),
+    );
+
+    await tester.showKeyboard(find.byType(TextField).last);
+    await tester.testTextInput.receiveAction(TextInputAction.send);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+
+    expect(fakeApiClient.attachmentSends, hasLength(1));
+    expect(find.text('1 selected'), findsOneWidget);
+    expect(
+      _composerTextContaining(
+          tester, 'Feedback queue for Ambientando Calendar'),
+      contains('Mantener el draft si falla'),
+    );
+    controller.dispose();
+  });
+
+  testWidgets('successful attachment send clears composer draft', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    final fakeApiClient = _FakeApiClient();
+    final controller = ChatController(
+      apiClient: fakeApiClient,
+      notificationService: const NoopChatNotificationService(),
+    );
+
+    await _pumpChatAndStageSingleFeedbackAttachment(
+      tester,
+      controller: controller,
+      feedbackItem: _feedbackItem(
+        id: 'feedback-send',
+        sourceApp: 'ambientando-calendar',
+        comment: 'Enviar y limpiar',
+      ),
+    );
+
+    await tester.showKeyboard(find.byType(TextField).last);
+    await tester.testTextInput.receiveAction(TextInputAction.send);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+
+    expect(fakeApiClient.attachmentSends, hasLength(1));
+    expect(fakeApiClient.attachmentSends.single.message,
+        contains('Enviar y limpiar'));
+    expect(fakeApiClient.attachmentSends.single.filenames,
+        <String>['feedback-1-feedback-send.png']);
+    expect(find.text('1 selected'), findsNothing);
+    expect(
+      () => _composerTextContaining(
+        tester,
+        'Feedback queue for Ambientando Calendar',
+      ),
+      throwsStateError,
+    );
+
+    controller.dispose();
+  });
+
   testWidgets('renders assistant options as quick actions', (tester) async {
     await tester.pumpWidget(
       MaterialApp(
@@ -2027,6 +2111,45 @@ String _composerTextContaining(WidgetTester tester, String needle) {
   throw StateError('No composer text contained "$needle".');
 }
 
+Future<void> _pumpChatAndStageSingleFeedbackAttachment(
+  WidgetTester tester, {
+  required ChatController controller,
+  required FeedbackQueueItem feedbackItem,
+}) async {
+  await tester.pumpWidget(
+    MaterialApp(
+      home: ChatScreen(
+        initialApiBaseUrl: 'http://localhost:8000',
+        notificationService: const NoopChatNotificationService(),
+        controllerOverride: controller,
+        enableServerBootstrap: false,
+        initialSidebarWorkspaces: const <Workspace>[
+          Workspace(
+            name: 'Ambientando Calendar',
+            path: '/workspace/ambientando-calendar',
+          ),
+        ],
+        feedbackQueueListLoaderOverride: (_, {required includeImages}) async {
+          return <FeedbackQueueItem>[feedbackItem];
+        },
+      ),
+    ),
+  );
+  await tester.pump(const Duration(milliseconds: 100));
+  await tester.pump();
+
+  await tester.tap(find.byTooltip('Projects'));
+  await tester.pumpAndSettle();
+  await tester.tap(find.text('Ambientando Calendar'));
+  await tester.pumpAndSettle();
+  await tester.tap(find.widgetWithText(FilledButton, 'Feedback queue (1)'));
+  await tester.pumpAndSettle();
+  await tester.tap(find.widgetWithText(CheckboxListTile, feedbackItem.comment));
+  await tester.pumpAndSettle();
+  await tester.tap(find.text('Next'));
+  await tester.pumpAndSettle();
+}
+
 int _occurrences(String value, String needle) {
   return RegExp(RegExp.escape(needle)).allMatches(value).length;
 }
@@ -2064,6 +2187,7 @@ FeedbackQueueItem _feedbackItem({
 class _FakeApiClient extends ApiClient {
   _FakeApiClient({
     this.audioSendDelays = const <String, Duration>{},
+    this.failAttachmentSends = false,
   }) : super(baseUrl: 'http://localhost:8000');
 
   String? lastAudioSessionId;
@@ -2075,7 +2199,10 @@ class _FakeApiClient extends ApiClient {
   String? lastRecoveredMessageId;
   MessageRecoveryAction? lastRecoveryAction;
   final Map<String, Duration> audioSendDelays;
+  final bool failAttachmentSends;
   final List<_RecordedAudioSend> audioSends = <_RecordedAudioSend>[];
+  final List<_RecordedAttachmentSend> attachmentSends =
+      <_RecordedAttachmentSend>[];
   final Map<String, AgentConfiguration> _sessionConfigurations =
       <String, AgentConfiguration>{};
   final Map<String, SessionDetail> sessionOverrides = <String, SessionDetail>{};
@@ -2243,6 +2370,34 @@ class _FakeApiClient extends ApiClient {
   }
 
   @override
+  Future<JobStatusResponse> sendAttachmentsMessage(
+    List<XFile> attachments, {
+    String? message,
+    String? sessionId,
+    String? workspacePath,
+    String? language,
+    CodexRunOptions? codexRunOptions,
+  }) async {
+    attachmentSends.add(
+      _RecordedAttachmentSend(
+        sessionId: sessionId,
+        workspacePath: workspacePath,
+        message: message,
+        filenames: attachments.map((attachment) => attachment.name).toList(),
+      ),
+    );
+    if (failAttachmentSends) {
+      throw Exception('simulated attachment failure');
+    }
+    return JobStatusResponse(
+      jobId: 'job-attachments-${attachmentSends.length}',
+      sessionId: sessionId ?? 'session-a',
+      status: 'pending',
+      elapsedSeconds: 0,
+    );
+  }
+
+  @override
   Future<SessionDetail> updateAutoMode(
     String sessionId, {
     required bool enabled,
@@ -2383,6 +2538,20 @@ class _RecordedAudioSend {
   final String? sessionId;
   final String? workspacePath;
   final String filename;
+}
+
+class _RecordedAttachmentSend {
+  const _RecordedAttachmentSend({
+    required this.sessionId,
+    required this.workspacePath,
+    required this.message,
+    required this.filenames,
+  });
+
+  final String? sessionId;
+  final String? workspacePath;
+  final String? message;
+  final List<String> filenames;
 }
 
 Future<void> _pumpUserChatBubble(

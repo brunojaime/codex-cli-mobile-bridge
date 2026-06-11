@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
+import 'dart:ui' as ui;
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
@@ -895,7 +896,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                   draft: _currentComposerDraft(),
                   onDraftChanged: _updateCurrentComposerDraft,
                   onSend: _handleSend,
-                  onSendAudio: _handleSendAudio,
                   onSendAttachments: _handleSendAttachments,
                   onBeginRecording: _handleBeginRecording,
                   isBusy: _chatController.isLoading &&
@@ -932,26 +932,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         (sessionIdBeforeSend == null ||
             _chatController.selectedSessionId == sessionIdBeforeSend)) {
       _textController.clear();
-      _updateStickToBottom(true);
-      _scrollToBottom();
-    }
-    return didSend;
-  }
-
-  Future<bool> _handleSendAudio(XFile audioFile) async {
-    final sessionIdBeforeSend = _chatController.selectedSessionId;
-    final workspacePathBeforeSend =
-        _chatController.currentSession?.workspacePath;
-    final codexRunOptions = _currentComposerDraft().codexRunOptions;
-    final didSend = await _chatController.sendAudioMessage(
-      audioFile,
-      sessionIdOverride: sessionIdBeforeSend,
-      workspacePathOverride: workspacePathBeforeSend,
-      codexRunOptions: codexRunOptions.isEmpty ? null : codexRunOptions,
-    );
-    if (didSend &&
-        (sessionIdBeforeSend == null ||
-            _chatController.selectedSessionId == sessionIdBeforeSend)) {
       _updateStickToBottom(true);
       _scrollToBottom();
     }
@@ -4635,7 +4615,6 @@ class _Composer extends StatefulWidget {
     required this.draft,
     required this.onDraftChanged,
     required this.onSend,
-    required this.onSendAudio,
     required this.onSendAttachments,
     required this.onBeginRecording,
     required this.isBusy,
@@ -4650,7 +4629,6 @@ class _Composer extends StatefulWidget {
   final _ComposerDraft draft;
   final ValueChanged<_ComposerDraft> onDraftChanged;
   final Future<bool> Function() onSend;
-  final Future<bool> Function(XFile audioFile) onSendAudio;
   final Future<bool> Function(
     List<_PendingAttachmentDraft> attachments, {
     String? prompt,
@@ -4675,6 +4653,7 @@ class _ComposerState extends State<_Composer> {
   Timer? _recordingTicker;
   bool _hasText = false;
   bool _isRecording = false;
+  bool _isSubmittingAttachments = false;
   final List<_PendingAttachmentDraft> _pendingAttachments =
       <_PendingAttachmentDraft>[];
 
@@ -4731,7 +4710,9 @@ class _ComposerState extends State<_Composer> {
   Widget build(BuildContext context) {
     final hasPendingAttachment = _pendingAttachments.isNotEmpty;
     final showMicAction = !_hasText && !_isRecording && !hasPendingAttachment;
-    final isDisabled = widget.isBusy;
+    final showAddVoiceAction =
+        !_isRecording && !showMicAction && widget.voiceEnabled;
+    final isDisabled = widget.isBusy || _isSubmittingAttachments;
     final showAttachmentActions = !_isRecording;
 
     return SafeArea(
@@ -4805,6 +4786,17 @@ class _ComposerState extends State<_Composer> {
                             foregroundColor: const Color(0xFFB6F4E4),
                           ),
                           child: const Icon(Icons.attach_file_rounded),
+                        ),
+                        const SizedBox(width: 10),
+                      ],
+                      if (showAddVoiceAction) ...<Widget>[
+                        FilledButton(
+                          onPressed: isDisabled ? null : _toggleRecording,
+                          style: _actionButtonStyle(
+                            backgroundColor: const Color(0xFF31405F),
+                            foregroundColor: const Color(0xFFE8ECF8),
+                          ),
+                          child: const Icon(Icons.mic_rounded),
                         ),
                         const SizedBox(width: 10),
                       ],
@@ -4891,13 +4883,31 @@ class _ComposerState extends State<_Composer> {
                     child: const Icon(Icons.mic_rounded),
                   )
                 else
-                  FilledButton(
-                    onPressed: isDisabled ? null : _handlePrimaryAction,
-                    style: _actionButtonStyle(
-                      backgroundColor: const Color(0xFF55D6BE),
-                      foregroundColor: const Color(0xFF07131D),
-                    ),
-                    child: const Icon(Icons.arrow_upward_rounded),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: <Widget>[
+                      if (showAddVoiceAction) ...<Widget>[
+                        FilledButton(
+                          onPressed: isDisabled ? null : _toggleRecording,
+                          style: _actionButtonStyle(
+                            backgroundColor: const Color(0xFF31405F),
+                            foregroundColor: const Color(0xFFE8ECF8),
+                            minimumSize: const Size(52, 52),
+                          ),
+                          child: const Icon(Icons.mic_rounded),
+                        ),
+                        const SizedBox(width: 6),
+                      ],
+                      FilledButton(
+                        onPressed: isDisabled ? null : _handlePrimaryAction,
+                        style: _actionButtonStyle(
+                          backgroundColor: const Color(0xFF55D6BE),
+                          foregroundColor: const Color(0xFF07131D),
+                          minimumSize: const Size(52, 52),
+                        ),
+                        child: const Icon(Icons.arrow_upward_rounded),
+                      ),
+                    ],
                   ),
               ],
             );
@@ -4947,7 +4957,7 @@ class _ComposerState extends State<_Composer> {
           focusNode: _composerFocusNode,
           minLines: 1,
           maxLines: 6,
-          enabled: !widget.isBusy,
+          enabled: !widget.isBusy && !_isSubmittingAttachments,
           textInputAction: TextInputAction.send,
           onSubmitted: (_) async {
             await _handlePrimaryAction();
@@ -5074,16 +5084,16 @@ class _ComposerState extends State<_Composer> {
       }
       final attachments = <_PendingAttachmentDraft>[];
       for (final picked in pickedImages) {
-        final previewBytes = await picked.readAsBytes();
-        attachments.add(
-          _PendingAttachmentDraft(
-            file: picked,
-            name: picked.name,
-            kind: _AttachmentDraftKind.image,
-            sizeBytes: await picked.length(),
-            previewBytes: previewBytes,
-          ),
+        final attachment = await _prepareImageAttachmentDraft(
+          file: picked,
+          name: picked.name,
         );
+        if (attachment != null) {
+          attachments.add(attachment);
+        }
+      }
+      if (attachments.isEmpty) {
+        return;
       }
       _appendPendingAttachments(attachments);
     } catch (error) {
@@ -5119,15 +5129,23 @@ class _ComposerState extends State<_Composer> {
           skippedImageCount += 1;
           continue;
         }
+        if (kind == _AttachmentDraftKind.image) {
+          final attachment = await _prepareImageAttachmentDraft(
+            file: xFile,
+            name: file.name,
+            initialBytes: file.bytes,
+          );
+          if (attachment != null) {
+            attachments.add(attachment);
+          }
+          continue;
+        }
         attachments.add(
           _PendingAttachmentDraft(
             file: xFile,
             name: file.name,
             kind: kind,
             sizeBytes: file.size > 0 ? file.size : await xFile.length(),
-            previewBytes: kind == _AttachmentDraftKind.image
-                ? (file.bytes ?? await xFile.readAsBytes())
-                : null,
           ),
         );
       }
@@ -5186,7 +5204,7 @@ class _ComposerState extends State<_Composer> {
   }
 
   Future<void> _startRecording() async {
-    if (_isRecording || widget.isBusy) {
+    if (_isRecording || widget.isBusy || _isSubmittingAttachments) {
       return;
     }
 
@@ -5230,51 +5248,63 @@ class _ComposerState extends State<_Composer> {
     });
 
     if (audioFile == null) {
+      await recorder.dispose();
       return;
     }
 
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Voice note sending in the background.'),
-          duration: Duration(seconds: 1),
-        ),
-      );
-    }
+    final audioDraft = _PendingAttachmentDraft(
+      file: audioFile,
+      name: _audioAttachmentName(audioFile),
+      kind: _AttachmentDraftKind.audio,
+      sizeBytes: await audioFile.length(),
+      cleanup: () async {
+        await recorder.cleanup(audioFile);
+        await recorder.dispose();
+      },
+    );
 
-    _sendAudioInBackground(recorder, audioFile);
+    final didAppend = _appendPendingAttachments(
+      <_PendingAttachmentDraft>[audioDraft],
+    );
+    if (!didAppend) {
+      await audioDraft.cleanup?.call();
+      return;
+    }
+    await _handlePrimaryAction();
   }
 
   Future<void> _handlePrimaryAction() async {
+    if (_isSubmittingAttachments) {
+      return;
+    }
     if (_pendingAttachments.isNotEmpty) {
       final attachments =
           List<_PendingAttachmentDraft>.from(_pendingAttachments);
       final prompt = widget.controller.text.trim();
-      widget.controller.clear();
       if (mounted) {
         setState(() {
-          _pendingAttachments.clear();
+          _isSubmittingAttachments = true;
         });
-      } else {
-        _pendingAttachments.clear();
       }
-      _emitDraftChanged();
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              attachments.length == 1
-                  ? 'Attachment sending in the background.'
-                  : '${attachments.length} attachments sending in the background.',
-            ),
-            duration: const Duration(seconds: 1),
-          ),
-        );
-      }
-      _sendAttachmentsInBackground(
+      final didSend = await _sendPendingAttachments(
         attachments,
         prompt: prompt.isEmpty ? null : prompt,
       );
+      if (!mounted) {
+        return;
+      }
+      if (didSend) {
+        widget.controller.clear();
+        setState(() {
+          _pendingAttachments.clear();
+          _isSubmittingAttachments = false;
+        });
+        _emitDraftChanged();
+      } else {
+        setState(() {
+          _isSubmittingAttachments = false;
+        });
+      }
       return;
     }
 
@@ -5307,6 +5337,7 @@ class _ComposerState extends State<_Composer> {
         (item) => item.identityKey == attachment.identityKey,
       );
     });
+    unawaited(attachment.cleanup?.call());
     _emitDraftChanged();
   }
 
@@ -5314,15 +5345,20 @@ class _ComposerState extends State<_Composer> {
     if (_pendingAttachments.isEmpty) {
       return;
     }
+    final removedAttachments =
+        List<_PendingAttachmentDraft>.from(_pendingAttachments);
     setState(() {
       _pendingAttachments.clear();
     });
+    for (final attachment in removedAttachments) {
+      unawaited(attachment.cleanup?.call());
+    }
     _emitDraftChanged();
   }
 
-  void _appendPendingAttachments(List<_PendingAttachmentDraft> attachments) {
+  bool _appendPendingAttachments(List<_PendingAttachmentDraft> attachments) {
     if (attachments.isEmpty || !mounted) {
-      return;
+      return false;
     }
 
     final existingPaths =
@@ -5337,13 +5373,60 @@ class _ComposerState extends State<_Composer> {
           duration: Duration(seconds: 1),
         ),
       );
-      return;
+      return false;
     }
 
     setState(() {
       _pendingAttachments.addAll(uniqueAttachments);
     });
     _emitDraftChanged();
+    return true;
+  }
+
+  Future<_PendingAttachmentDraft?> _prepareImageAttachmentDraft({
+    required XFile file,
+    required String name,
+    Uint8List? initialBytes,
+  }) async {
+    final originalBytes = initialBytes ?? await file.readAsBytes();
+    if (!mounted) {
+      return null;
+    }
+    final result = await Navigator.of(context).push<_ImageEditorResult>(
+      MaterialPageRoute<_ImageEditorResult>(
+        fullscreenDialog: true,
+        builder: (context) {
+          return _ImageEditorScreen(
+            imageBytes: originalBytes,
+            fileName: name,
+          );
+        },
+      ),
+    );
+    if (!mounted) {
+      return null;
+    }
+    if (result == null) {
+      return null;
+    }
+
+    final selectedBytes = result.bytes ?? originalBytes;
+    final selectedName = result.fileName ?? name;
+    final selectedFile = result.bytes == null
+        ? file
+        : XFile.fromData(
+            selectedBytes,
+            name: selectedName,
+            mimeType: 'image/png',
+            path: selectedName,
+          );
+    return _PendingAttachmentDraft(
+      file: selectedFile,
+      name: selectedName,
+      kind: _AttachmentDraftKind.image,
+      sizeBytes: selectedBytes.length,
+      previewBytes: selectedBytes,
+    );
   }
 
   bool _canAcceptPastedImages() {
@@ -5351,48 +5434,43 @@ class _ComposerState extends State<_Composer> {
         _composerFocusNode.hasFocus &&
         widget.imageAttachmentsEnabled &&
         !widget.isBusy &&
+        !_isSubmittingAttachments &&
         !_isRecording;
   }
 
-  void _sendAudioInBackground(AudioNoteRecorder recorder, XFile audioFile) {
-    unawaited(() async {
-      try {
-        await widget.onSendAudio(audioFile);
-      } finally {
-        await recorder.cleanup(audioFile);
-        await recorder.dispose();
-      }
-    }());
-  }
-
-  void _sendAttachmentsInBackground(
+  Future<bool> _sendPendingAttachments(
     List<_PendingAttachmentDraft> attachments, {
     String? prompt,
-  }) {
-    unawaited(() async {
-      final sanitizedAttachments =
-          _filterDisallowedImageAttachments(attachments);
-      if (sanitizedAttachments.isEmpty) {
-        if (mounted) {
-          _showImageAttachmentsDisabledSnackBar();
-        }
-        return;
+  }) async {
+    final sanitizedAttachments = _filterDisallowedImageAttachments(attachments);
+    if (sanitizedAttachments.isEmpty) {
+      if (mounted) {
+        _showImageAttachmentsDisabledSnackBar();
       }
+      return false;
+    }
+
+    try {
       final didSend = await widget.onSendAttachments(
         sanitizedAttachments,
         prompt: prompt,
       );
+      if (didSend) {
+        for (final attachment in sanitizedAttachments) {
+          await attachment.cleanup?.call();
+        }
+      }
       if (!mounted) {
-        return;
+        return didSend;
       }
       if (!didSend) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Background attachment send failed.'),
+            content: Text('Attachment send failed. Draft kept for retry.'),
             duration: Duration(seconds: 2),
           ),
         );
-        return;
+        return false;
       }
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -5400,7 +5478,19 @@ class _ComposerState extends State<_Composer> {
           duration: Duration(seconds: 1),
         ),
       );
-    }());
+      return true;
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content:
+                Text('Attachment send failed. Draft kept for retry. $error'),
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
+      return false;
+    }
   }
 
   void _resetRecorderForSessionChange() {
@@ -5490,27 +5580,31 @@ class _ComposerState extends State<_Composer> {
       return;
     }
 
-    final attachments = images
-        .map(
-          (image) => _PendingAttachmentDraft(
-            file: XFile.fromData(
-              image.bytes,
-              name: image.fileName,
-              mimeType: image.mimeType,
-            ),
-            name: image.fileName,
-            kind: _AttachmentDraftKind.image,
-            sizeBytes: image.bytes.length,
-            previewBytes: image.bytes,
-          ),
-        )
-        .toList();
+    final attachments = <_PendingAttachmentDraft>[];
+    for (final image in images) {
+      final attachment = await _prepareImageAttachmentDraft(
+        file: XFile.fromData(
+          image.bytes,
+          name: image.fileName,
+          mimeType: image.mimeType,
+          path: image.fileName,
+        ),
+        name: image.fileName,
+        initialBytes: image.bytes,
+      );
+      if (attachment != null) {
+        attachments.add(attachment);
+      }
+    }
 
     if (attachments.isEmpty) {
       return;
     }
 
     _appendPendingAttachments(attachments);
+    if (!mounted) {
+      return;
+    }
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
@@ -5548,6 +5642,9 @@ class _ComposerState extends State<_Composer> {
     if (_pendingAttachments.isEmpty) {
       return 'Send a command to your local Codex CLI';
     }
+    if (_pendingAttachments.length == 1 && _pendingAttachments.first.isAudio) {
+      return 'Add optional instructions for the voice note';
+    }
     if (_pendingAttachments.length == 1 && _pendingAttachments.first.isImage) {
       return 'Add optional instructions for the image';
     }
@@ -5560,6 +5657,9 @@ class _ComposerState extends State<_Composer> {
   }) {
     if (mimeType != null && mimeType.toLowerCase().startsWith('image/')) {
       return _AttachmentDraftKind.image;
+    }
+    if (isAudioAttachmentDraftInput(fileName: fileName, mimeType: mimeType)) {
+      return _AttachmentDraftKind.audio;
     }
     final normalizedName = fileName.toLowerCase();
     if (_looksLikeImagePath(normalizedName)) {
@@ -5579,6 +5679,14 @@ class _ComposerState extends State<_Composer> {
         value.endsWith('.webp');
   }
 
+  String _audioAttachmentName(XFile audioFile) {
+    final name = audioFile.name.trim();
+    if (name.isNotEmpty) {
+      return name;
+    }
+    return 'voice-note.m4a';
+  }
+
   String _formatDuration() {
     final elapsed = _recordingStopwatch?.elapsed ?? Duration.zero;
     final minutes = elapsed.inMinutes.toString().padLeft(2, '0');
@@ -5593,7 +5701,7 @@ class _ComposerState extends State<_Composer> {
   }
 }
 
-enum _AttachmentDraftKind { image, file }
+enum _AttachmentDraftKind { image, audio, file }
 
 enum _AttachmentSourceAction { image, file }
 
@@ -5604,6 +5712,7 @@ class _PendingAttachmentDraft {
     required this.kind,
     this.sizeBytes,
     this.previewBytes,
+    this.cleanup,
   });
 
   final XFile file;
@@ -5611,10 +5720,21 @@ class _PendingAttachmentDraft {
   final _AttachmentDraftKind kind;
   final int? sizeBytes;
   final Uint8List? previewBytes;
+  final Future<void> Function()? cleanup;
 
   bool get isImage => kind == _AttachmentDraftKind.image;
 
-  String get badgeLabel => isImage ? 'Image' : 'File';
+  bool get isAudio => kind == _AttachmentDraftKind.audio;
+
+  String get badgeLabel {
+    if (isImage) {
+      return 'Image';
+    }
+    if (isAudio) {
+      return 'Audio';
+    }
+    return 'File';
+  }
 
   String get identityKey => '${kind.name}:$name:${sizeBytes ?? 0}';
 }
@@ -6653,6 +6773,646 @@ int _normalizeAgentTurns(
   return parsed < 0 ? 0 : parsed;
 }
 
+class _ImageEditorResult {
+  const _ImageEditorResult({
+    required this.bytes,
+    required this.fileName,
+  });
+
+  final Uint8List? bytes;
+  final String? fileName;
+}
+
+enum _ImageEditorMode { crop, draw }
+
+enum _CropDragTarget { move, topLeft, topRight, bottomLeft, bottomRight }
+
+class _ImageEditorScreen extends StatefulWidget {
+  const _ImageEditorScreen({
+    required this.imageBytes,
+    required this.fileName,
+  });
+
+  final Uint8List imageBytes;
+  final String fileName;
+
+  @override
+  State<_ImageEditorScreen> createState() => _ImageEditorScreenState();
+}
+
+class _ImageEditorScreenState extends State<_ImageEditorScreen> {
+  static const double _minCropSize = 0.08;
+  static const List<Color> _palette = <Color>[
+    Color(0xFFFF4D4F),
+    Color(0xFFFFC857),
+    Color(0xFF55D6BE),
+    Color(0xFF66A8FF),
+    Colors.white,
+  ];
+
+  ui.Image? _image;
+  Object? _decodeError;
+  _ImageEditorMode _mode = _ImageEditorMode.crop;
+  Rect _cropRect = const Rect.fromLTWH(0, 0, 1, 1);
+  Color _selectedColor = _palette.first;
+  final List<_ImageAnnotationStroke> _strokes = <_ImageAnnotationStroke>[];
+  _CropDragTarget? _cropDragTarget;
+  Offset? _lastCropDragPoint;
+  bool _isSaving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_decodeImage());
+  }
+
+  Future<void> _decodeImage() async {
+    try {
+      final codec = await ui.instantiateImageCodec(widget.imageBytes);
+      final frame = await codec.getNextFrame();
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _image = frame.image;
+      });
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _decodeError = error;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final image = _image;
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(
+          widget.fileName,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: _isSaving
+                ? null
+                : () => Navigator.of(context).pop(
+                      const _ImageEditorResult(bytes: null, fileName: null),
+                    ),
+            child: const Text('Original'),
+          ),
+          TextButton(
+            onPressed: _isSaving || image == null ? null : _saveEditedImage,
+            child: _isSaving
+                ? const SizedBox.square(
+                    dimension: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Text('Done'),
+          ),
+        ],
+      ),
+      body: SafeArea(
+        child: Column(
+          children: <Widget>[
+            Expanded(
+              child: Center(
+                child: _buildImageStage(image),
+              ),
+            ),
+            _buildTools(),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildImageStage(ui.Image? image) {
+    if (_decodeError != null) {
+      return Padding(
+        padding: const EdgeInsets.all(24),
+        child: Text('Could not open image: $_decodeError'),
+      );
+    }
+    if (image == null) {
+      return const CircularProgressIndicator();
+    }
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final imageAspect = image.width / image.height;
+        var stageWidth = constraints.maxWidth;
+        var stageHeight = stageWidth / imageAspect;
+        if (stageHeight > constraints.maxHeight) {
+          stageHeight = constraints.maxHeight;
+          stageWidth = stageHeight * imageAspect;
+        }
+        final stageSize = Size(stageWidth, stageHeight);
+        return SizedBox(
+          width: stageWidth,
+          height: stageHeight,
+          child: GestureDetector(
+            onPanStart: (details) => _handlePanStart(
+              details.localPosition,
+              stageSize,
+            ),
+            onPanUpdate: (details) => _handlePanUpdate(
+              details.localPosition,
+              details.delta,
+              stageSize,
+            ),
+            onPanEnd: (_) => _handlePanEnd(),
+            child: CustomPaint(
+              painter: _ImageEditorPainter(
+                image: image,
+                cropRect: _cropRect,
+                strokes: _strokes,
+                mode: _mode,
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildTools() {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+      decoration: const BoxDecoration(
+        color: Color(0xFF0D1427),
+        border: Border(top: BorderSide(color: Color(0xFF1F2945))),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          Row(
+            children: <Widget>[
+              Expanded(
+                child: SegmentedButton<_ImageEditorMode>(
+                  segments: const <ButtonSegment<_ImageEditorMode>>[
+                    ButtonSegment<_ImageEditorMode>(
+                      value: _ImageEditorMode.crop,
+                      icon: Icon(Icons.crop_rounded),
+                      label: Text('Crop'),
+                    ),
+                    ButtonSegment<_ImageEditorMode>(
+                      value: _ImageEditorMode.draw,
+                      icon: Icon(Icons.brush_rounded),
+                      label: Text('Draw'),
+                    ),
+                  ],
+                  selected: <_ImageEditorMode>{_mode},
+                  onSelectionChanged: (selection) {
+                    setState(() {
+                      _mode = selection.first;
+                    });
+                  },
+                ),
+              ),
+              const SizedBox(width: 10),
+              IconButton.filledTonal(
+                onPressed: _resetEdits,
+                tooltip: 'Reset edits',
+                icon: const Icon(Icons.restart_alt_rounded),
+              ),
+            ],
+          ),
+          if (_mode == _ImageEditorMode.draw) ...<Widget>[
+            const SizedBox(height: 12),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: _palette.map((color) {
+                final selected = color == _selectedColor;
+                return Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 5),
+                  child: InkResponse(
+                    onTap: () {
+                      setState(() {
+                        _selectedColor = color;
+                      });
+                    },
+                    radius: 22,
+                    child: Container(
+                      width: 34,
+                      height: 34,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: color,
+                        border: Border.all(
+                          color: selected
+                              ? const Color(0xFF55D6BE)
+                              : const Color(0xFF53617F),
+                          width: selected ? 3 : 1,
+                        ),
+                      ),
+                    ),
+                  ),
+                );
+              }).toList(growable: false),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  void _handlePanStart(Offset localPosition, Size stageSize) {
+    if (_mode == _ImageEditorMode.draw) {
+      setState(() {
+        _strokes.add(
+          _ImageAnnotationStroke(
+            color: _selectedColor,
+            strokeWidth: 5,
+            points: <Offset>[_normalizePoint(localPosition, stageSize)],
+          ),
+        );
+      });
+      return;
+    }
+
+    _cropDragTarget = _resolveCropDragTarget(localPosition, stageSize);
+    _lastCropDragPoint = localPosition;
+  }
+
+  void _handlePanUpdate(Offset localPosition, Offset delta, Size stageSize) {
+    if (_mode == _ImageEditorMode.draw) {
+      if (_strokes.isEmpty) {
+        return;
+      }
+      setState(() {
+        _strokes.last.points.add(_normalizePoint(localPosition, stageSize));
+      });
+      return;
+    }
+
+    final target = _cropDragTarget;
+    final previous = _lastCropDragPoint;
+    if (target == null || previous == null) {
+      return;
+    }
+    final normalizedDelta = Offset(
+      delta.dx / stageSize.width,
+      delta.dy / stageSize.height,
+    );
+    setState(() {
+      _cropRect = _updatedCropRect(target, normalizedDelta);
+      _lastCropDragPoint = localPosition;
+    });
+  }
+
+  void _handlePanEnd() {
+    _cropDragTarget = null;
+    _lastCropDragPoint = null;
+  }
+
+  _CropDragTarget _resolveCropDragTarget(Offset point, Size stageSize) {
+    final crop = _cropRectForStage(stageSize);
+    const handleRadius = 32.0;
+    final corners = <_CropDragTarget, Offset>{
+      _CropDragTarget.topLeft: crop.topLeft,
+      _CropDragTarget.topRight: crop.topRight,
+      _CropDragTarget.bottomLeft: crop.bottomLeft,
+      _CropDragTarget.bottomRight: crop.bottomRight,
+    };
+    for (final entry in corners.entries) {
+      if ((entry.value - point).distance <= handleRadius) {
+        return entry.key;
+      }
+    }
+    return _CropDragTarget.move;
+  }
+
+  Rect _updatedCropRect(_CropDragTarget target, Offset delta) {
+    var left = _cropRect.left;
+    var top = _cropRect.top;
+    var right = _cropRect.right;
+    var bottom = _cropRect.bottom;
+
+    switch (target) {
+      case _CropDragTarget.move:
+        final width = _cropRect.width;
+        final height = _cropRect.height;
+        left = (left + delta.dx).clamp(0.0, 1.0 - width);
+        top = (top + delta.dy).clamp(0.0, 1.0 - height);
+        right = left + width;
+        bottom = top + height;
+        break;
+      case _CropDragTarget.topLeft:
+        left = (left + delta.dx).clamp(0.0, right - _minCropSize);
+        top = (top + delta.dy).clamp(0.0, bottom - _minCropSize);
+        break;
+      case _CropDragTarget.topRight:
+        right = (right + delta.dx).clamp(left + _minCropSize, 1.0);
+        top = (top + delta.dy).clamp(0.0, bottom - _minCropSize);
+        break;
+      case _CropDragTarget.bottomLeft:
+        left = (left + delta.dx).clamp(0.0, right - _minCropSize);
+        bottom = (bottom + delta.dy).clamp(top + _minCropSize, 1.0);
+        break;
+      case _CropDragTarget.bottomRight:
+        right = (right + delta.dx).clamp(left + _minCropSize, 1.0);
+        bottom = (bottom + delta.dy).clamp(top + _minCropSize, 1.0);
+        break;
+    }
+
+    return Rect.fromLTRB(left, top, right, bottom);
+  }
+
+  Offset _normalizePoint(Offset point, Size stageSize) {
+    return Offset(
+      (point.dx / stageSize.width).clamp(0.0, 1.0),
+      (point.dy / stageSize.height).clamp(0.0, 1.0),
+    );
+  }
+
+  Rect _cropRectForStage(Size stageSize) {
+    return Rect.fromLTRB(
+      _cropRect.left * stageSize.width,
+      _cropRect.top * stageSize.height,
+      _cropRect.right * stageSize.width,
+      _cropRect.bottom * stageSize.height,
+    );
+  }
+
+  void _resetEdits() {
+    setState(() {
+      _cropRect = const Rect.fromLTWH(0, 0, 1, 1);
+      _strokes.clear();
+      _mode = _ImageEditorMode.crop;
+    });
+  }
+
+  Future<void> _saveEditedImage() async {
+    final image = _image;
+    if (image == null) {
+      return;
+    }
+    setState(() {
+      _isSaving = true;
+    });
+    try {
+      final editedBytes = await _renderEditedImage(
+        image: image,
+        cropRect: _cropRect,
+        strokes: _strokes,
+      );
+      if (!mounted) {
+        return;
+      }
+      Navigator.of(context).pop(
+        _ImageEditorResult(
+          bytes: editedBytes,
+          fileName: _editedImageFileName(widget.fileName),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not save image edit: $error')),
+      );
+      setState(() {
+        _isSaving = false;
+      });
+    }
+  }
+}
+
+class _ImageAnnotationStroke {
+  _ImageAnnotationStroke({
+    required this.color,
+    required this.strokeWidth,
+    required this.points,
+  });
+
+  final Color color;
+  final double strokeWidth;
+  final List<Offset> points;
+}
+
+class _ImageEditorPainter extends CustomPainter {
+  const _ImageEditorPainter({
+    required this.image,
+    required this.cropRect,
+    required this.strokes,
+    required this.mode,
+  });
+
+  final ui.Image image;
+  final Rect cropRect;
+  final List<_ImageAnnotationStroke> strokes;
+  final _ImageEditorMode mode;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final imagePaint = Paint()..filterQuality = FilterQuality.high;
+    canvas.drawImageRect(
+      image,
+      Rect.fromLTWH(0, 0, image.width.toDouble(), image.height.toDouble()),
+      Offset.zero & size,
+      imagePaint,
+    );
+    for (final stroke in strokes) {
+      _paintStroke(canvas, size, stroke);
+    }
+    _paintCropOverlay(canvas, size);
+  }
+
+  void _paintStroke(
+    Canvas canvas,
+    Size size,
+    _ImageAnnotationStroke stroke,
+  ) {
+    if (stroke.points.isEmpty) {
+      return;
+    }
+    final paint = Paint()
+      ..color = stroke.color
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = stroke.strokeWidth;
+    final path = Path()
+      ..moveTo(
+        stroke.points.first.dx * size.width,
+        stroke.points.first.dy * size.height,
+      );
+    for (final point in stroke.points.skip(1)) {
+      path.lineTo(point.dx * size.width, point.dy * size.height);
+    }
+    canvas.drawPath(path, paint);
+  }
+
+  void _paintCropOverlay(Canvas canvas, Size size) {
+    final crop = Rect.fromLTRB(
+      cropRect.left * size.width,
+      cropRect.top * size.height,
+      cropRect.right * size.width,
+      cropRect.bottom * size.height,
+    );
+    final overlayPath = Path()
+      ..addRect(Offset.zero & size)
+      ..addRect(crop)
+      ..fillType = PathFillType.evenOdd;
+    canvas.drawPath(
+      overlayPath,
+      Paint()..color = Colors.black.withValues(alpha: 0.46),
+    );
+    final borderPaint = Paint()
+      ..color =
+          mode == _ImageEditorMode.crop ? const Color(0xFF55D6BE) : Colors.white
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2.2;
+    canvas.drawRect(crop, borderPaint);
+    final handlePaint = Paint()..color = const Color(0xFF55D6BE);
+    for (final corner in <Offset>[
+      crop.topLeft,
+      crop.topRight,
+      crop.bottomLeft,
+      crop.bottomRight,
+    ]) {
+      canvas.drawCircle(corner, 6, handlePaint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _ImageEditorPainter oldDelegate) {
+    return true;
+  }
+}
+
+Future<Uint8List> _renderEditedImage({
+  required ui.Image image,
+  required Rect cropRect,
+  required List<_ImageAnnotationStroke> strokes,
+}) async {
+  final imageWidth = image.width.toDouble();
+  final imageHeight = image.height.toDouble();
+  final sourceRect = Rect.fromLTRB(
+    (cropRect.left * imageWidth).roundToDouble(),
+    (cropRect.top * imageHeight).roundToDouble(),
+    (cropRect.right * imageWidth).roundToDouble(),
+    (cropRect.bottom * imageHeight).roundToDouble(),
+  );
+  final outputWidth = math.max(1, sourceRect.width.round());
+  final outputHeight = math.max(1, sourceRect.height.round());
+  final outputRect = Rect.fromLTWH(
+    0,
+    0,
+    outputWidth.toDouble(),
+    outputHeight.toDouble(),
+  );
+  final recorder = ui.PictureRecorder();
+  final canvas = Canvas(recorder);
+  canvas.drawImageRect(
+    image,
+    sourceRect,
+    outputRect,
+    Paint()..filterQuality = FilterQuality.high,
+  );
+  canvas.clipRect(outputRect);
+  for (final stroke in strokes) {
+    _paintEditedStroke(
+      canvas: canvas,
+      stroke: stroke,
+      imageSize: Size(imageWidth, imageHeight),
+      sourceRect: sourceRect,
+    );
+  }
+  final picture = recorder.endRecording();
+  final outputImage = await picture.toImage(outputWidth, outputHeight);
+  final byteData = await outputImage.toByteData(format: ui.ImageByteFormat.png);
+  if (byteData == null) {
+    throw StateError('PNG encoder returned no bytes.');
+  }
+  return byteData.buffer.asUint8List();
+}
+
+void _paintEditedStroke({
+  required Canvas canvas,
+  required _ImageAnnotationStroke stroke,
+  required Size imageSize,
+  required Rect sourceRect,
+}) {
+  if (stroke.points.isEmpty) {
+    return;
+  }
+  final paint = Paint()
+    ..color = stroke.color
+    ..strokeCap = StrokeCap.round
+    ..strokeJoin = StrokeJoin.round
+    ..style = PaintingStyle.stroke
+    ..strokeWidth =
+        stroke.strokeWidth * (imageSize.shortestSide / 420).clamp(1.0, 5.0);
+  final first = _editedStrokePoint(stroke.points.first, imageSize, sourceRect);
+  final path = Path()..moveTo(first.dx, first.dy);
+  for (final point in stroke.points.skip(1)) {
+    final editedPoint = _editedStrokePoint(point, imageSize, sourceRect);
+    path.lineTo(editedPoint.dx, editedPoint.dy);
+  }
+  canvas.drawPath(path, paint);
+}
+
+Offset _editedStrokePoint(Offset point, Size imageSize, Rect sourceRect) {
+  return Offset(
+    point.dx * imageSize.width - sourceRect.left,
+    point.dy * imageSize.height - sourceRect.top,
+  );
+}
+
+String _editedImageFileName(String fileName) {
+  final trimmed = fileName.trim();
+  if (trimmed.isEmpty) {
+    return 'edited-image.png';
+  }
+  final dotIndex = trimmed.lastIndexOf('.');
+  if (dotIndex <= 0) {
+    return '$trimmed-edited.png';
+  }
+  return '${trimmed.substring(0, dotIndex)}-edited.png';
+}
+
+@visibleForTesting
+bool isAudioAttachmentDraftInput({
+  required String fileName,
+  String? mimeType,
+}) {
+  final normalizedMimeType = (mimeType ?? '').trim().toLowerCase();
+  if (normalizedMimeType.startsWith('audio/')) {
+    return true;
+  }
+  final normalizedName = fileName.trim().toLowerCase();
+  return normalizedName.endsWith('.aac') ||
+      normalizedName.endsWith('.aif') ||
+      normalizedName.endsWith('.aiff') ||
+      normalizedName.endsWith('.amr') ||
+      normalizedName.endsWith('.flac') ||
+      normalizedName.endsWith('.m4a') ||
+      normalizedName.endsWith('.mp3') ||
+      normalizedName.endsWith('.oga') ||
+      normalizedName.endsWith('.ogg') ||
+      normalizedName.endsWith('.opus') ||
+      normalizedName.endsWith('.wav') ||
+      normalizedName.endsWith('.webm');
+}
+
+@visibleForTesting
+Widget buildImageEditorForTest({
+  required Uint8List imageBytes,
+  required String fileName,
+}) {
+  return _ImageEditorScreen(
+    imageBytes: imageBytes,
+    fileName: fileName,
+  );
+}
+
 class _ComposerDraft {
   const _ComposerDraft({
     this.text = '',
@@ -6748,7 +7508,9 @@ class _PendingAttachmentTray extends StatelessWidget {
   Widget build(BuildContext context) {
     final imageCount =
         attachments.where((attachment) => attachment.isImage).length;
-    final fileCount = attachments.length - imageCount;
+    final audioCount =
+        attachments.where((attachment) => attachment.isAudio).length;
+    final fileCount = attachments.length - imageCount - audioCount;
 
     return Container(
       padding: const EdgeInsets.all(10),
@@ -6821,6 +7583,7 @@ class _PendingAttachmentTray extends StatelessWidget {
               _buildAttachmentTraySummary(
                 totalCount: attachments.length,
                 imageCount: imageCount,
+                audioCount: audioCount,
                 fileCount: fileCount,
               ),
               style: const TextStyle(
@@ -6884,10 +7647,14 @@ class _PendingAttachmentRow extends StatelessWidget {
                     label: attachment.badgeLabel,
                     backgroundColor: attachment.isImage
                         ? const Color(0xFF11352E)
-                        : const Color(0xFF1E2944),
+                        : attachment.isAudio
+                            ? const Color(0xFF3B1521)
+                            : const Color(0xFF1E2944),
                     foregroundColor: attachment.isImage
                         ? const Color(0xFF9FF0DC)
-                        : const Color(0xFFB8C8EA),
+                        : attachment.isAudio
+                            ? const Color(0xFFFFB3B3)
+                            : const Color(0xFFB8C8EA),
                   ),
                   if (attachment.sizeBytes != null) ...<Widget>[
                     Text(
@@ -6950,8 +7717,10 @@ class _AttachmentPreview extends StatelessWidget {
       );
     }
 
-    return const _AttachmentFallbackIcon(
-      icon: Icons.insert_drive_file_outlined,
+    return _AttachmentFallbackIcon(
+      icon: attachment.isAudio
+          ? Icons.graphic_eq_rounded
+          : Icons.insert_drive_file_outlined,
     );
   }
 }
@@ -6991,10 +7760,14 @@ String _formatAttachmentSize(int sizeBytes) {
 String _buildAttachmentTraySummary({
   required int totalCount,
   required int imageCount,
+  required int audioCount,
   required int fileCount,
 }) {
   if (totalCount == 1 && imageCount == 1) {
     return 'One image is ready. Add optional instructions or send it as-is.';
+  }
+  if (totalCount == 1 && audioCount == 1) {
+    return 'One voice note is ready. Add optional instructions or send it as-is.';
   }
   if (totalCount == 1 && fileCount == 1) {
     return 'One file is ready. Tell Codex what you want from it.';
@@ -7003,6 +7776,9 @@ String _buildAttachmentTraySummary({
   final parts = <String>[];
   if (imageCount > 0) {
     parts.add('$imageCount image${imageCount == 1 ? '' : 's'}');
+  }
+  if (audioCount > 0) {
+    parts.add('$audioCount voice note${audioCount == 1 ? '' : 's'}');
   }
   if (fileCount > 0) {
     parts.add('$fileCount file${fileCount == 1 ? '' : 's'}');
