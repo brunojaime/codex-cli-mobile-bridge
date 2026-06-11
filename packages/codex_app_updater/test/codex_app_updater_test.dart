@@ -121,7 +121,7 @@ void main() {
     expect(downloader.downloadCount, 1);
     expect(downloader.requestedUrl.toString(), 'https://example.test/app.apk');
     expect(installer.launchCount, 1);
-    expect(controller.status, CodexAppUpdateStatus.installing);
+    expect(controller.status, CodexAppUpdateStatus.dismissed);
   });
 
   testWidgets('shows required update state when required is true', (
@@ -274,11 +274,11 @@ void main() {
       expect(installed, isTrue);
       expect(installer.launchCount, 1);
       expect(installer.launchedPath, apkFile.path);
-      expect(controller.status, CodexAppUpdateStatus.installing);
+      expect(controller.status, CodexAppUpdateStatus.dismissed);
     },
   );
 
-  test('download OK and launcher OK moves to installing', () async {
+  test('download OK and launcher OK dismisses stale update prompt', () async {
     final apkFile = await _writeTempApk('apk-launch-ok', [1, 2, 3]);
     final installer = _FakeInstallerLauncher();
     final controller = CodexAppUpdaterController(
@@ -296,7 +296,7 @@ void main() {
     expect(installed, isTrue);
     expect(installer.launchCount, 1);
     expect(installer.launchedPath, apkFile.path);
-    expect(controller.status, CodexAppUpdateStatus.installing);
+    expect(controller.status, CodexAppUpdateStatus.dismissed);
   });
 
   test(
@@ -335,7 +335,7 @@ void main() {
       final retry = await controller.updateNow(_config());
 
       expect(retry, isTrue);
-      expect(controller.status, CodexAppUpdateStatus.installing);
+      expect(controller.status, CodexAppUpdateStatus.dismissed);
       expect(downloader.downloadCount, 1);
       expect(installer.launchCount, 2);
       expect(installer.launchedPath, apkFile.path);
@@ -397,7 +397,7 @@ void main() {
     final retry = await controller.updateNow(_config());
 
     expect(retry, isTrue);
-    expect(controller.status, CodexAppUpdateStatus.installing);
+    expect(controller.status, CodexAppUpdateStatus.dismissed);
     expect(downloader.downloadCount, 1);
     expect(installer.launchCount, 2);
   });

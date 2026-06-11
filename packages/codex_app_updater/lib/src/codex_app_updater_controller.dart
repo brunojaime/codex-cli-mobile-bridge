@@ -146,6 +146,8 @@ class CodexAppUpdaterController extends ChangeNotifier {
     final result = await _installerLauncher.launch(apkPath);
     switch (result) {
       case CodexInstallerLaunchResult.installerLaunched:
+        _clearPreparedDownload();
+        _setStatus(CodexAppUpdateStatus.dismissed);
         return true;
       case CodexInstallerLaunchResult.unknownSourcesPermissionRequired:
         _setWaitingForPermission();
