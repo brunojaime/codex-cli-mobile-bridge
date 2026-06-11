@@ -698,6 +698,8 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
   }) async {
     if (_items.isEmpty) return false;
     final batch = DeveloperFeedbackBatch(
+      batchId:
+          'feedback-batch-${DateTime.now().toUtc().microsecondsSinceEpoch}',
       sourceApp: widget.sourceApp,
       sourceDisplayName: widget.sourceDisplayName,
       workflowPresetId: workflowPresetId,
@@ -2544,6 +2546,7 @@ class _FeedbackDraft {
 
 class DeveloperFeedbackBatch {
   const DeveloperFeedbackBatch({
+    required this.batchId,
     required this.sourceApp,
     required this.sourceDisplayName,
     required this.workflowPresetId,
@@ -2552,6 +2555,7 @@ class DeveloperFeedbackBatch {
     required this.items,
   });
 
+  final String batchId;
   final String sourceApp;
   final String sourceDisplayName;
   final String workflowPresetId;
@@ -2562,7 +2566,8 @@ class DeveloperFeedbackBatch {
   Map<String, Object?> toBridgeJson() {
     return <String, Object?>{
       'kind': 'codex.developerFeedbackBatch',
-      'version': 1,
+      'version': 3,
+      'batchId': batchId,
       'sourceApp': sourceApp,
       if (sourceDisplayName.trim().isNotEmpty)
         'sourceDisplayName': sourceDisplayName,
@@ -2670,7 +2675,7 @@ class DeveloperFeedbackItem {
     final hasAudioBytes = audio != null && audio!.bytes.isNotEmpty;
     return <String, Object?>{
       'kind': 'codex.developerFeedback',
-      'version': 1,
+      'version': 3,
       'id': id,
       'sourceApp': sourceApp,
       if (sourceDisplayName.trim().isNotEmpty)
@@ -2697,7 +2702,7 @@ class DeveloperFeedbackItem {
     final hasAudioBytes = audio != null && audio!.bytes.isNotEmpty;
     return <String, Object?>{
       'kind': 'codex.developerFeedback',
-      'version': 1,
+      'version': 3,
       'id': id,
       'sourceApp': sourceApp,
       if (sourceDisplayName.trim().isNotEmpty)
@@ -2772,7 +2777,7 @@ class DeveloperFeedbackExport {
   String toJsonText() {
     return const JsonEncoder.withIndent('  ').convert(<String, Object?>{
       'kind': 'codex.developerFeedbackExport',
-      'version': 1,
+      'version': 3,
       'generatedAt': DateTime.now().toUtc().toIso8601String(),
       'items': items.map((item) => item.toJson()).toList(),
     });

@@ -184,6 +184,11 @@ class AppUpdateResponse(BaseModel):
 
 
 class FeedbackBatchStartRequest(BaseModel):
+    batch_id: str | None = Field(
+        default=None,
+        max_length=160,
+        validation_alias=AliasChoices("batch_id", "batchId"),
+    )
     sourceApp: str = Field(
         default="unknown",
         max_length=120,
@@ -245,12 +250,15 @@ class FeedbackQuickAskRequest(BaseModel):
 
 class FeedbackQuickAskAcceptedResponse(BaseModel):
     job_id: str
+    jobId: str | None = None
     session_id: str
+    sessionId: str | None = None
     status: JobStatus
     provider_session_id: str | None = None
     agent_id: AgentId
     agent_type: AgentType
     quick_ask_id: str
+    quickAskId: str | None = None
 
     @classmethod
     def from_domain(
@@ -261,17 +269,21 @@ class FeedbackQuickAskAcceptedResponse(BaseModel):
     ) -> "FeedbackQuickAskAcceptedResponse":
         return cls(
             job_id=job.id,
+            jobId=job.id,
             session_id=job.session_id,
+            sessionId=job.session_id,
             status=job.status,
             provider_session_id=job.provider_session_id,
             agent_id=job.agent_id,
             agent_type=job.agent_type,
             quick_ask_id=quick_ask_id,
+            quickAskId=quick_ask_id,
         )
 
 
 class FeedbackQuickAskResponse(BaseModel):
     quick_ask_id: str
+    quickAskId: str | None = None
     source_app: str
     source_display_name: str | None = None
     question: str
@@ -285,9 +297,13 @@ class FeedbackQuickAskResponse(BaseModel):
     selection_points: list[dict[str, float]] = Field(default_factory=list)
     selection_bounds: dict[str, float] = Field(default_factory=dict)
     job_id: str | None = None
+    jobId: str | None = None
     session_id: str | None = None
+    sessionId: str | None = None
     run_id: str | None = None
+    runId: str | None = None
     workspace_path: str | None = None
+    provenance: dict[str, Any] = Field(default_factory=dict)
     created_at: str
 
 
@@ -729,12 +745,16 @@ class AgentConfigurationResponse(BaseModel):
 
 class MessageAcceptedResponse(BaseModel):
     job_id: str
+    jobId: str | None = None
     session_id: str
+    sessionId: str | None = None
     status: JobStatus
     provider_session_id: str | None = None
     agent_id: AgentId = AgentId.GENERATOR
     agent_type: AgentType = AgentType.GENERATOR
     feedback_batch_id: str | None = None
+    batchId: str | None = None
+    sourceApp: str | None = None
 
     @classmethod
     def from_domain(
@@ -742,15 +762,20 @@ class MessageAcceptedResponse(BaseModel):
         job: Job,
         *,
         feedback_batch_id: str | None = None,
+        source_app: str | None = None,
     ) -> "MessageAcceptedResponse":
         return cls(
             job_id=job.id,
+            jobId=job.id,
             session_id=job.session_id,
+            sessionId=job.session_id,
             status=job.status,
             provider_session_id=job.provider_session_id,
             agent_id=job.agent_id,
             agent_type=job.agent_type,
             feedback_batch_id=feedback_batch_id,
+            batchId=feedback_batch_id,
+            sourceApp=source_app,
         )
 
 
@@ -798,26 +823,37 @@ class ImageMessageAcceptedResponse(MessageAcceptedResponse):
 
 class FeedbackBatchStatusResponse(BaseModel):
     batch_id: str
+    batchId: str | None = None
     source_app: str
     source_display_name: str | None = None
     status: str
+    workflowStatus: str | None = None
     status_detail: str | None = None
     workflow_preset_id: str
+    workflowPresetId: str | None = None
     release_when_complete: bool
+    releaseWhenComplete: bool | None = None
     item_count: int
+    itemCount: int | None = None
     item_ids: list[str] = Field(default_factory=list)
     job_id: str | None = None
+    jobId: str | None = None
     session_id: str | None = None
+    sessionId: str | None = None
     run_id: str | None = None
+    runId: str | None = None
     workspace_path: str | None = None
     quick_ask_id: str | None = None
+    quickAskId: str | None = None
     job_status: JobStatus | None = None
     summary: str | None = None
+    finalSummary: str | None = None
     summary_generated_at: str | None = None
     summary_line_count: int = 0
     notification_created_at: str | None = None
     notification_read_at: str | None = None
     notification_unread: bool = False
+    notificationUnread: bool | None = None
     created_at: str
     submitted_at: str
 

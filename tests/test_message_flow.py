@@ -6488,6 +6488,9 @@ def test_feedback_batch_start_session_accepts_multiple_items_and_release(
     start_response = client.post(
         "/feedback-batches/start-session",
         json={
+            "kind": "codex.developerFeedbackBatch",
+            "version": 3,
+            "batchId": "batch-v03-fixture",
             "sourceApp": "smart-nienfos",
             "sourceDisplayName": "Smart Nienfos",
             "workflowPresetId": "default",
@@ -6530,6 +6533,10 @@ def test_feedback_batch_start_session_accepts_multiple_items_and_release(
     assert start_response.status_code == 202
     payload = start_response.json()
     assert payload["feedback_batch_id"]
+    assert payload["batchId"] == "batch-v03-fixture"
+    assert payload["jobId"] == payload["job_id"]
+    assert payload["sessionId"] == payload["session_id"]
+    assert payload["sourceApp"] == "smart-nienfos"
     job = wait_for_job(client, payload["job_id"])
     assert job["status"] == "completed"
     assert "Use these Smart Nienfos feedback screenshots" in job["message"]
@@ -6581,20 +6588,28 @@ def test_feedback_batch_status_response_tracks_completed_job(
     assert status_response.status_code == 200
     status = status_response.json()
     assert status["batch_id"] == batch_id
+    assert status["batchId"] == batch_id
     assert status["source_app"] == "fixture-app"
     assert status["source_display_name"] == "Fixture App"
     assert status["status"] == "completed"
+    assert status["workflowStatus"] == "completed"
     assert status["job_status"] == "completed"
     assert status["job_id"] == accepted["job_id"]
+    assert status["jobId"] == accepted["job_id"]
     assert status["session_id"] == accepted["session_id"]
+    assert status["sessionId"] == accepted["session_id"]
     assert status["workflow_preset_id"] == "default"
+    assert status["workflowPresetId"] == "default"
     assert status["item_count"] == 1
+    assert status["itemCount"] == 1
     assert status["item_ids"] == ["feedback-status"]
     assert status["summary_line_count"] >= 11
     assert "Request: process developer feedback batch" in status["summary"]
+    assert status["finalSummary"] == status["summary"]
     assert status["summary_generated_at"]
     assert status["notification_created_at"]
     assert status["notification_unread"] is True
+    assert status["notificationUnread"] is True
     assert status["notification_read_at"] is None
 
     persisted_status = client.get(f"/feedback-batches/{batch_id}").json()
@@ -7050,6 +7065,9 @@ def test_feedback_quick_ask_uses_answer_only_prompt_and_persists(
     assert ask_response.status_code == 202
     accepted = ask_response.json()
     assert accepted["quick_ask_id"]
+    assert accepted["quickAskId"] == accepted["quick_ask_id"]
+    assert accepted["jobId"] == accepted["job_id"]
+    assert accepted["sessionId"] == accepted["session_id"]
     job = wait_for_job(client, accepted["job_id"])
     assert job["status"] == "completed"
     assert "Quick ask about a selected Fixture App screen area." in job["message"]
@@ -7066,6 +7084,7 @@ def test_feedback_quick_ask_uses_answer_only_prompt_and_persists(
     assert status_response.status_code == 200
     status = status_response.json()
     assert status["quick_ask_id"] == accepted["quick_ask_id"]
+    assert status["quickAskId"] == accepted["quick_ask_id"]
     assert status["status"] == "completed"
     assert status["answer"]
     assert status["answered_at"]
@@ -7077,6 +7096,9 @@ def test_feedback_quick_ask_uses_answer_only_prompt_and_persists(
         "width": 30,
         "height": 40,
     }
+    assert status["provenance"]["quickAskId"] == accepted["quick_ask_id"]
+    assert status["provenance"]["sourceApp"] == "fixture-app"
+    assert status["provenance"]["selectionBounds"] == status["selection_bounds"]
 
     stored = json.loads((tmp_path / "feedback_queue.json").read_text())
     assert stored["batches"] == []

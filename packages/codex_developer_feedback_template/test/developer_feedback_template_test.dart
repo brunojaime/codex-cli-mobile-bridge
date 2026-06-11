@@ -462,7 +462,8 @@ void main() {
     expect(submitted, isNotNull);
     final bridgeJson = submitted!.toBridgeJson();
     expect(bridgeJson['kind'], 'codex.developerFeedbackBatch');
-    expect(bridgeJson['version'], 1);
+    expect(bridgeJson['version'], 3);
+    expect(bridgeJson['batchId'], isA<String>());
     expect(bridgeJson['sourceApp'], 'second-app');
     expect(bridgeJson['sourceDisplayName'], 'Second App');
     expect(bridgeJson['workflowPresetId'], 'generator_only');
@@ -470,7 +471,7 @@ void main() {
     final items = bridgeJson['items'] as List<Object?>;
     final item = items.single as Map<String, Object?>;
     expect(item['kind'], 'codex.developerFeedback');
-    expect(item['version'], 1);
+    expect(item['version'], 3);
     expect(item['queue'], 'codexCli');
     expect(item['status'], 'pending');
     expect(item['comment'], 'Enviar por Tailscale');
@@ -532,7 +533,8 @@ void main() {
 
     expect(postedJson, isNotNull);
     expect(postedJson!['kind'], 'codex.developerFeedbackBatch');
-    expect(postedJson!['version'], 1);
+    expect(postedJson!['version'], 3);
+    expect(postedJson!['batchId'], isA<String>());
     expect(postedJson!['sourceApp'], 'fixture-app-two');
     expect(postedJson!['sourceDisplayName'], 'Fixture App Two');
     expect(postedJson!['workflowPresetId'], 'generator_reviewer');
@@ -540,7 +542,7 @@ void main() {
     final items = postedJson!['items'] as List<Object?>;
     final item = items.single as Map<String, Object?>;
     expect(item['kind'], 'codex.developerFeedback');
-    expect(item['version'], 1);
+    expect(item['version'], 3);
     expect(item['queue'], 'codexCli');
     expect(item['status'], 'pending');
     expect(item['sourceApp'], 'fixture-app-two');
@@ -1407,7 +1409,7 @@ void main() {
     final bridgeJson = item.toBridgeJson();
 
     expect(bridgeJson['kind'], 'codex.developerFeedback');
-    expect(bridgeJson['version'], 1);
+    expect(bridgeJson['version'], 3);
     expect(bridgeJson['queue'], 'codexCli');
     expect(bridgeJson['status'], 'pending');
     expect(bridgeJson['sourceApp'], 'fixture-app');

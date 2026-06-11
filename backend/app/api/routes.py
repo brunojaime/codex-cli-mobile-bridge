@@ -730,30 +730,42 @@ async def _feedback_batch_status_response(
             record.id,
         )
     summary = (record.summary or "").strip() or None
+    notification_unread = bool(
+        record.notification_created_at and not record.notification_read_at
+    )
     return FeedbackBatchStatusResponse(
         batch_id=record.id,
+        batchId=record.id,
         source_app=record.source_app,
         source_display_name=record.source_display_name,
         status=status,
+        workflowStatus=status,
         status_detail=status_detail,
         workflow_preset_id=record.workflow_preset_id,
+        workflowPresetId=record.workflow_preset_id,
         release_when_complete=record.release_when_complete,
+        releaseWhenComplete=record.release_when_complete,
         item_count=record.item_count,
+        itemCount=record.item_count,
         item_ids=record.item_ids,
         job_id=record.job_id,
+        jobId=record.job_id,
         session_id=record.session_id,
+        sessionId=record.session_id,
         run_id=job.run_id if job else None,
+        runId=job.run_id if job else None,
         workspace_path=record.workspace_path,
         quick_ask_id=record.quick_ask_id,
+        quickAskId=record.quick_ask_id,
         job_status=job.status if job else None,
         summary=summary,
+        finalSummary=summary,
         summary_generated_at=record.summary_generated_at,
         summary_line_count=_non_empty_line_count(summary),
         notification_created_at=record.notification_created_at,
         notification_read_at=record.notification_read_at,
-        notification_unread=bool(
-            record.notification_created_at and not record.notification_read_at
-        ),
+        notification_unread=notification_unread,
+        notificationUnread=notification_unread,
         created_at=record.created_at,
         submitted_at=record.submitted_at,
     )
@@ -1216,7 +1228,7 @@ async def start_feedback_batch_session(
             )
         batch_record = await run_in_threadpool(
             container.feedback_queue_service.create_batch_record,
-            batch_id=None,
+            batch_id=payload.batch_id,
             source_app=payload.sourceApp or first_item.source_app,
             source_display_name=payload.sourceDisplayName
             or first_item.source_display_name,
@@ -1248,6 +1260,7 @@ async def start_feedback_batch_session(
     return MessageAcceptedResponse.from_domain(
         job,
         feedback_batch_id=batch_record.id,
+        source_app=batch_record.source_app,
     )
 
 
@@ -1498,6 +1511,7 @@ async def _feedback_quick_ask_response(
             run_id = job.run_id
     return FeedbackQuickAskResponse(
         quick_ask_id=record.id,
+        quickAskId=record.id,
         source_app=record.source_app,
         source_display_name=record.source_display_name,
         question=record.question,
@@ -1513,9 +1527,23 @@ async def _feedback_quick_ask_response(
         selection_points=record.selection_points,
         selection_bounds=record.selection_bounds,
         job_id=record.job_id,
+        jobId=record.job_id,
         session_id=record.session_id,
+        sessionId=record.session_id,
         run_id=run_id,
+        runId=run_id,
         workspace_path=record.workspace_path,
+        provenance={
+            "quickAskId": record.id,
+            "sourceApp": record.source_app,
+            "sourceDisplayName": record.source_display_name,
+            "selectionPoints": record.selection_points,
+            "selectionBounds": record.selection_bounds,
+            "jobId": record.job_id,
+            "sessionId": record.session_id,
+            "runId": run_id,
+            "createdAt": record.created_at,
+        },
         created_at=record.created_at,
     )
 
