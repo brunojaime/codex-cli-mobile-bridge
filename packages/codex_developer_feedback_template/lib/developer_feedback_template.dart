@@ -60,6 +60,9 @@ const developerFeedbackPreviewBoundsKey = Key(
 const developerFeedbackPreviewAudioKey = Key(
   'developer-feedback-preview-audio',
 );
+const developerFeedbackRunsKey = Key('developer-feedback-runs');
+const developerFeedbackRunStatusKey = Key('developer-feedback-run-status');
+const developerFeedbackRefreshRunKey = Key('developer-feedback-refresh-run');
 const developerFeedbackCommentActionKey = Key(
   'developer-feedback-comment-action',
 );
@@ -127,6 +130,8 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
   final _captureKey = GlobalKey();
   final _toolbarMeasureKey = GlobalKey();
   final List<DeveloperFeedbackItem> _items = <DeveloperFeedbackItem>[];
+  final List<_SubmittedFeedbackBatch> _submittedBatches =
+      <_SubmittedFeedbackBatch>[];
   var _editMode = false;
   var _dialogOpen = false;
   var _selectionReady = false;
@@ -178,6 +183,7 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
                 child: _Toolbar(
                   editMode: _editMode,
                   pendingCount: _items.length,
+                  submittedCount: _submittedBatches.length,
                   onEditModeChanged: (value) => setState(() {
                     _editMode = value;
                     if (!value) {
@@ -186,6 +192,9 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
                     }
                   }),
                   onOpenPending: _items.isEmpty ? null : _openPendingDialog,
+                  onOpenRuns: _submittedBatches.isEmpty
+                      ? null
+                      : _openRunsDialog,
                 ),
               ),
             ),
@@ -230,7 +239,9 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
     const baseEstimate = Size(176, 48);
     const pendingEstimate = Size(320, 48);
     final measured = _toolbarSize ?? Size.zero;
-    final estimate = _items.isEmpty ? baseEstimate : pendingEstimate;
+    final estimate = _items.isEmpty && _submittedBatches.isEmpty
+        ? baseEstimate
+        : pendingEstimate;
     return Size(
       math.max(measured.width, estimate.width),
       math.max(measured.height, estimate.height),
@@ -445,7 +456,10 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
     if (customBatchSubmit != null) {
       try {
         await customBatchSubmit(batch);
-        setState(_items.clear);
+        setState(() {
+          _items.clear();
+          _submittedBatches.insert(0, _SubmittedFeedbackBatch.local());
+        });
         _showMessage('Feedback enviado a Codex CLI.');
         return true;
       } catch (_) {
@@ -459,7 +473,10 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
         for (final item in List<DeveloperFeedbackItem>.of(_items)) {
           await customSubmit(item);
         }
-        setState(_items.clear);
+        setState(() {
+          _items.clear();
+          _submittedBatches.insert(0, _SubmittedFeedbackBatch.local());
+        });
         _showMessage('Feedback enviado a Codex CLI.');
         return true;
       } catch (_) {
@@ -480,7 +497,13 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
       if (response.statusCode < 200 || response.statusCode >= 300) {
         throw Exception('HTTP ${response.statusCode}: ${response.body}');
       }
-      setState(_items.clear);
+      final submittedBatch = _SubmittedFeedbackBatch.fromStartResponse(
+        jsonDecode(response.body) as Map<String, Object?>,
+      );
+      setState(() {
+        _items.clear();
+        if (submittedBatch != null) _submittedBatches.insert(0, submittedBatch);
+      });
       _showMessage('Feedback enviado a Codex CLI.');
       return true;
     } catch (_) {
@@ -749,6 +772,127 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
     );
   }
 
+  void _openRunsDialog() {
+    var refreshing = <String>{};
+    showDialog<void>(
+      context: widget.navigatorKey?.currentContext ?? context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          final availableWidth = math.max(
+            0.0,
+            MediaQuery.sizeOf(context).width - 48,
+          );
+          return AlertDialog(
+            title: const Text('Runs de feedback'),
+            content: SizedBox(
+              width: math.min(560.0, availableWidth),
+              child: _submittedBatches.isEmpty
+                  ? const Text('No hay runs enviados.')
+                  : ListView.separated(
+                      shrinkWrap: true,
+                      itemCount: _submittedBatches.length,
+                      separatorBuilder: (_, _) => const Divider(height: 20),
+                      itemBuilder: (context, index) {
+                        final batch = _submittedBatches[index];
+                        final batchId = batch.batchId;
+                        final canRefresh =
+                            batchId != null &&
+                            widget.bridgeUrl.trim().isNotEmpty &&
+                            !refreshing.contains(batchId);
+                        return Row(
+                          crossAxisAlignment: CrossAxisAlignment.center,
+                          children: <Widget>[
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: <Widget>[
+                                  Text(
+                                    batch.title,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    batch.statusLabel,
+                                    key: developerFeedbackRunStatusKey,
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: Theme.of(
+                                      context,
+                                    ).textTheme.bodySmall,
+                                  ),
+                                ],
+                              ),
+                            ),
+                            IconButton(
+                              key: developerFeedbackRefreshRunKey,
+                              tooltip: 'Actualizar',
+                              onPressed: canRefresh
+                                  ? () async {
+                                      setDialogState(() {
+                                        refreshing = {...refreshing, batchId};
+                                      });
+                                      await _refreshSubmittedBatch(batchId);
+                                      if (!context.mounted) return;
+                                      setDialogState(() {
+                                        refreshing = {...refreshing}
+                                          ..remove(batchId);
+                                      });
+                                    }
+                                  : null,
+                              icon: refreshing.contains(batchId)
+                                  ? const SizedBox.square(
+                                      dimension: 20,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                      ),
+                                    )
+                                  : const Icon(Icons.refresh),
+                            ),
+                          ],
+                        );
+                      },
+                    ),
+            ),
+            actions: <Widget>[
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('Cerrar'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  Future<void> _refreshSubmittedBatch(String batchId) async {
+    final baseUrl = widget.bridgeUrl.trim().replaceAll(RegExp(r'/$'), '');
+    final ownsClient = widget.httpClient == null;
+    final client = widget.httpClient ?? http.Client();
+    try {
+      final response = await client.get(
+        Uri.parse('$baseUrl/feedback-batches/$batchId'),
+      );
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw Exception('HTTP ${response.statusCode}: ${response.body}');
+      }
+      final updated = _SubmittedFeedbackBatch.fromStatusResponse(
+        jsonDecode(response.body) as Map<String, Object?>,
+      );
+      setState(() {
+        final index = _submittedBatches.indexWhere(
+          (batch) => batch.batchId == batchId,
+        );
+        if (index >= 0) _submittedBatches[index] = updated;
+      });
+    } catch (_) {
+      _showMessage('No se pudo actualizar el run.');
+    } finally {
+      if (ownsClient) client.close();
+    }
+  }
+
   Future<void> _copyExport() async {
     final export = DeveloperFeedbackExport(items: List.of(_items)).toJsonText();
     try {
@@ -840,14 +984,18 @@ class _Toolbar extends StatelessWidget {
   const _Toolbar({
     required this.editMode,
     required this.pendingCount,
+    required this.submittedCount,
     required this.onEditModeChanged,
     required this.onOpenPending,
+    required this.onOpenRuns,
   });
 
   final bool editMode;
   final int pendingCount;
+  final int submittedCount;
   final ValueChanged<bool> onEditModeChanged;
   final VoidCallback? onOpenPending;
+  final VoidCallback? onOpenRuns;
 
   @override
   Widget build(BuildContext context) {
@@ -889,6 +1037,18 @@ class _Toolbar extends StatelessWidget {
                 icon: Badge.count(
                   count: pendingCount,
                   child: const Icon(Icons.pending_actions),
+                ),
+              ),
+            ],
+            if (submittedCount > 0) ...<Widget>[
+              const SizedBox(width: 6),
+              IconButton(
+                key: developerFeedbackRunsKey,
+                tooltip: 'Runs',
+                onPressed: onOpenRuns,
+                icon: Badge.count(
+                  count: submittedCount,
+                  child: const Icon(Icons.track_changes),
                 ),
               ),
             ],
@@ -1239,6 +1399,65 @@ Uint8List _decodePreviewImage(String screenshotPngBase64) {
     return base64Decode(screenshotPngBase64);
   } catch (_) {
     return base64Decode(_transparentPngBase64);
+  }
+}
+
+class _SubmittedFeedbackBatch {
+  const _SubmittedFeedbackBatch({
+    required this.status,
+    this.batchId,
+    this.jobId,
+    this.sessionId,
+    this.statusDetail,
+  });
+
+  final String? batchId;
+  final String? jobId;
+  final String? sessionId;
+  final String status;
+  final String? statusDetail;
+
+  factory _SubmittedFeedbackBatch.local() {
+    return const _SubmittedFeedbackBatch(status: 'running');
+  }
+
+  static _SubmittedFeedbackBatch? fromStartResponse(Map<String, Object?> json) {
+    final batchId = json['feedback_batch_id'] as String?;
+    final jobId = json['job_id'] as String?;
+    final sessionId = json['session_id'] as String?;
+    if ((batchId ?? '').trim().isEmpty && (jobId ?? '').trim().isEmpty) {
+      return null;
+    }
+    return _SubmittedFeedbackBatch(
+      batchId: batchId,
+      jobId: jobId,
+      sessionId: sessionId,
+      status: (json['status'] as String?) ?? 'running',
+    );
+  }
+
+  factory _SubmittedFeedbackBatch.fromStatusResponse(
+    Map<String, Object?> json,
+  ) {
+    return _SubmittedFeedbackBatch(
+      batchId: json['batch_id'] as String?,
+      jobId: json['job_id'] as String?,
+      sessionId: json['session_id'] as String?,
+      status: (json['status'] as String?) ?? 'pending',
+      statusDetail: json['status_detail'] as String?,
+    );
+  }
+
+  String get title {
+    if ((batchId ?? '').isNotEmpty) return 'Batch $batchId';
+    if ((jobId ?? '').isNotEmpty) return 'Job $jobId';
+    return 'Run local';
+  }
+
+  String get statusLabel {
+    final detail = (statusDetail ?? '').trim();
+    final base = 'Estado: $status';
+    return detail.isEmpty ? base : '$base · $detail';
   }
 }
 

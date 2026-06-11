@@ -547,6 +547,82 @@ void main() {
     expect(item['hasAudio'], isFalse);
   });
 
+  testWidgets('bridge batch status is visible and refreshable', (tester) async {
+    final requestedPaths = <String>[];
+    final client = MockClient((request) async {
+      requestedPaths.add(request.url.path);
+      if (request.url.path == '/feedback-workflow-presets') {
+        return http.Response(
+          jsonEncode(<String, Object?>{
+            'default_preset_id': 'generator_only',
+            'presets': <Map<String, Object?>>[
+              <String, Object?>{
+                'id': 'generator_only',
+                'name': 'Generator only',
+              },
+            ],
+          }),
+          200,
+        );
+      }
+      if (request.url.path == '/feedback-batches/start-session') {
+        return http.Response(
+          jsonEncode(<String, Object?>{
+            'feedback_batch_id': 'batch-123',
+            'job_id': 'job-123',
+            'session_id': 'session-123',
+            'status': 'running',
+          }),
+          202,
+        );
+      }
+      if (request.url.path == '/feedback-batches/batch-123') {
+        return http.Response(
+          jsonEncode(<String, Object?>{
+            'batch_id': 'batch-123',
+            'job_id': 'job-123',
+            'session_id': 'session-123',
+            'status': 'completed',
+            'status_detail': 'Done',
+            'workflow_preset_id': 'generator_only',
+            'release_when_complete': false,
+            'item_count': 1,
+            'item_ids': <String>['feedback-1'],
+            'created_at': '2026-06-11T00:00:00+00:00',
+            'submitted_at': '2026-06-11T00:00:00+00:00',
+          }),
+          200,
+        );
+      }
+      return http.Response('not found', 404);
+    });
+
+    await tester.pumpWidget(
+      _Harness(
+        enabled: true,
+        bridgeUrl: 'http://bridge.local',
+        httpClient: client,
+      ),
+    );
+
+    await _saveFeedback(tester, 'Enviar y seguir');
+    await tester.tap(find.byKey(developerFeedbackPendingKey));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(developerFeedbackSendBatchKey));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(developerFeedbackRunsKey), findsOneWidget);
+    await tester.tap(find.byKey(developerFeedbackRunsKey));
+    await tester.pumpAndSettle();
+    expect(find.text('Batch batch-123'), findsOneWidget);
+    expect(find.text('Estado: running'), findsOneWidget);
+
+    await tester.tap(find.byKey(developerFeedbackRefreshRunKey));
+    await tester.pumpAndSettle();
+    expect(find.text('Estado: completed · Done'), findsOneWidget);
+    expect(requestedPaths, contains('/feedback-batches/batch-123'));
+  });
+
   testWidgets(
     'feedback dialog accepts text while template mode remains enabled',
     (tester) async {
