@@ -1151,12 +1151,12 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       return const <ChatMessage>[];
     }
     if (_chatBodyView == _ChatBodyView.agentSummaries) {
-      return currentSession.messages
+      return _chatController.messages
           .where((message) => message.agentId == AgentId.summary)
           .toList(growable: false);
     }
     return filterVisibleMessages(
-      currentSession.messages,
+      _chatController.messages,
       displayMode: currentSession.agentConfiguration.displayMode,
     );
   }

@@ -80,7 +80,7 @@ void main() {
         appBuild: 35,
       ),
     );
-    await tester.pump();
+    await tester.pumpAndSettle();
 
     expect(controller.status, CodexAppUpdateStatus.updateAvailable);
     expect(find.byKey(codexAppUpdaterBannerKey), findsOneWidget);
@@ -959,7 +959,7 @@ void main() {
         ),
       ),
     );
-    await tester.pumpAndSettle();
+    await tester.pump();
 
     await tester.tap(find.byIcon(Icons.account_tree_outlined));
     await tester.pumpAndSettle();
@@ -1655,6 +1655,70 @@ void main() {
     controller.dispose();
   });
 
+  test('chat controller exposes optimistic audio message while sending',
+      () async {
+    final fakeApiClient = _FakeApiClient(
+      audioSendDelays: <String, Duration>{
+        'session-a': const Duration(milliseconds: 40),
+      },
+    );
+    final controller = ChatController(
+      apiClient: fakeApiClient,
+      notificationService: const NoopChatNotificationService(),
+    );
+
+    await controller.selectSession('session-a');
+    final sendFuture = controller.sendAudioMessage(
+      XFile.fromData(
+        Uint8List.fromList(const <int>[1, 2, 3]),
+        name: 'voice-note.m4a',
+      ),
+      sessionIdOverride: 'session-a',
+      workspacePathOverride: '/workspace/a',
+    );
+
+    final optimisticMessage = controller.messages.single;
+    expect(optimisticMessage.text, 'Sending voice...');
+    expect(optimisticMessage.isUser, isTrue);
+    expect(optimisticMessage.status, ChatMessageStatus.sending);
+    expect(
+      controller.outgoingUploadSummaryForSession('session-a')?.audioCount,
+      1,
+    );
+
+    expect(await sendFuture, isTrue);
+    expect(controller.messages, isEmpty);
+    expect(controller.outgoingUploadSummaryForSession('session-a'), isNull);
+
+    controller.dispose();
+  });
+
+  test('chat controller removes optimistic audio message on send failure',
+      () async {
+    final fakeApiClient = _FakeApiClient(failAudioSends: true);
+    final controller = ChatController(
+      apiClient: fakeApiClient,
+      notificationService: const NoopChatNotificationService(),
+    );
+
+    await controller.selectSession('session-a');
+    final sendFuture = controller.sendAudioMessage(
+      XFile.fromData(
+        Uint8List.fromList(const <int>[1, 2, 3]),
+        name: 'voice-note.m4a',
+      ),
+      sessionIdOverride: 'session-a',
+      workspacePathOverride: '/workspace/a',
+    );
+
+    expect(controller.messages.single.text, 'Sending voice...');
+    expect(await sendFuture, isFalse);
+    expect(controller.messages, isEmpty);
+    expect(controller.errorText, contains('Failed to send audio message.'));
+
+    controller.dispose();
+  });
+
   test('chat controller keeps overlapping audio sends isolated across chats',
       () async {
     final fakeApiClient = _FakeApiClient(
@@ -1703,6 +1767,62 @@ void main() {
       ],
     );
 
+    controller.dispose();
+  });
+
+  testWidgets('chat screen renders optimistic audio upload in the timeline',
+      (tester) async {
+    tester.view.physicalSize = const Size(1280, 1600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final fakeApiClient = _FakeApiClient(
+      audioSendDelays: <String, Duration>{
+        'session-a': const Duration(milliseconds: 40),
+      },
+    );
+    final controller = ChatController(
+      apiClient: fakeApiClient,
+      notificationService: const NoopChatNotificationService(),
+    );
+
+    await controller.selectSession('session-a');
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ChatScreen(
+          initialApiBaseUrl: 'http://localhost:8000',
+          notificationService: const NoopChatNotificationService(),
+          controllerOverride: controller,
+          enableServerBootstrap: false,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final sendFuture = controller.sendAudioMessage(
+      XFile.fromData(
+        Uint8List.fromList(const <int>[1, 2, 3]),
+        name: 'voice-note.m4a',
+      ),
+      sessionIdOverride: 'session-a',
+      workspacePathOverride: '/workspace/a',
+    );
+    await tester.pump();
+
+    expect(find.text('Sending voice...'), findsOneWidget);
+    expect(find.byType(ChatBubble), findsOneWidget);
+    final bubble = tester.widget<ChatBubble>(find.byType(ChatBubble));
+    expect(bubble.message.isUser, isTrue);
+    expect(bubble.message.status, ChatMessageStatus.sending);
+
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(await sendFuture, isTrue);
+    await tester.pump();
+    expect(find.text('Sending voice...'), findsNothing);
+
+    await tester.pumpWidget(const SizedBox.shrink());
     controller.dispose();
   });
 
@@ -2267,6 +2387,7 @@ FeedbackQueueItem _feedbackItem({
 class _FakeApiClient extends ApiClient {
   _FakeApiClient({
     this.audioSendDelays = const <String, Duration>{},
+    this.failAudioSends = false,
     this.failAttachmentSends = false,
   }) : super(baseUrl: 'http://localhost:8000');
 
@@ -2279,6 +2400,7 @@ class _FakeApiClient extends ApiClient {
   String? lastRecoveredMessageId;
   MessageRecoveryAction? lastRecoveryAction;
   final Map<String, Duration> audioSendDelays;
+  final bool failAudioSends;
   final bool failAttachmentSends;
   final List<_RecordedAudioSend> audioSends = <_RecordedAudioSend>[];
   final List<_RecordedAttachmentSend> attachmentSends =
@@ -2441,6 +2563,9 @@ class _FakeApiClient extends ApiClient {
       ),
     );
     await Future<void>.delayed(audioSendDelays[sessionId] ?? Duration.zero);
+    if (failAudioSends) {
+      throw Exception('simulated audio failure');
+    }
     return JobStatusResponse(
       jobId: 'job-audio-${audioSends.length}',
       sessionId: sessionId ?? 'session-a',
