@@ -823,6 +823,74 @@ void main() {
     _expectToolbarInsideViewport(tester, const Size(320, 480));
   });
 
+  testWidgets('notification center shows sections and marks read', (
+    tester,
+  ) async {
+    final requestedPaths = <String>[];
+    var markedRead = false;
+    final client = MockClient((request) async {
+      requestedPaths.add('${request.method} ${request.url.path}');
+      if (request.url.path == '/feedback-batches') {
+        return http.Response(
+          jsonEncode(<Map<String, Object?>>[
+            _historyBatchJson(
+              'batch-complete',
+              unread: !markedRead,
+              summary: true,
+            ),
+            _historyBatchJson('batch-active', unread: false, status: 'running'),
+            _historyBatchJson('batch-failed', unread: true, status: 'failed'),
+          ]),
+          200,
+        );
+      }
+      if (request.url.path == '/feedback-batches/batch-complete/notification') {
+        markedRead = true;
+        return http.Response(
+          jsonEncode(
+            _historyBatchJson('batch-complete', unread: false, summary: true),
+          ),
+          200,
+        );
+      }
+      return http.Response('not found', 404);
+    });
+
+    await tester.pumpWidget(
+      _Harness(
+        enabled: true,
+        bridgeUrl: 'http://bridge.local',
+        httpClient: client,
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('2'), findsOneWidget);
+
+    await tester.tap(find.byKey(developerFeedbackNotificationBellKey));
+    await tester.pumpAndSettle();
+    expect(find.byKey(developerFeedbackNotificationCenterKey), findsOneWidget);
+    expect(find.text('Terminados'), findsOneWidget);
+    expect(find.text('Activos'), findsOneWidget);
+    expect(find.text('Fallidos'), findsOneWidget);
+    expect(find.text('Batch batch-complete'), findsOneWidget);
+
+    await tester.tap(find.byKey(developerFeedbackSummaryOpenKey).first);
+    await tester.pumpAndSettle();
+    expect(find.byKey(developerFeedbackSummaryKey), findsOneWidget);
+    await tester.tap(find.text('Cerrar').last);
+    await tester.pumpAndSettle();
+
+    await tester.tap(
+      find.byKey(developerFeedbackNotificationMarkReadKey).first,
+    );
+    await tester.pumpAndSettle();
+    expect(markedRead, isTrue);
+    expect(
+      requestedPaths,
+      contains('PATCH /feedback-batches/batch-complete/notification'),
+    );
+  });
+
   testWidgets(
     'feedback dialog accepts text while template mode remains enabled',
     (tester) async {
@@ -1188,18 +1256,25 @@ String _summaryText() {
   ).join('\n');
 }
 
-Map<String, Object?> _historyBatchJson(String batchId, {required bool unread}) {
+Map<String, Object?> _historyBatchJson(
+  String batchId, {
+  required bool unread,
+  String status = 'completed',
+  bool summary = false,
+}) {
   return <String, Object?>{
     'batch_id': batchId,
     'job_id': 'job-$batchId',
     'session_id': 'session-$batchId',
-    'status': 'completed',
+    'status': status,
     'status_detail': 'Done',
     'workflow_preset_id': 'generator_only',
     'release_when_complete': false,
     'item_count': 1,
     'item_ids': <String>['item-$batchId'],
     'notification_unread': unread,
+    if (summary) 'summary': _summaryText(),
+    if (summary) 'summary_line_count': 11,
     'created_at': '2026-06-11T00:00:00+00:00',
     'submitted_at': '2026-06-11T00:00:00+00:00',
   };

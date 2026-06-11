@@ -73,6 +73,15 @@ const developerFeedbackSummaryOpenKey = Key('developer-feedback-summary-open');
 const developerFeedbackNotificationBellKey = Key(
   'developer-feedback-notification-bell',
 );
+const developerFeedbackNotificationCenterKey = Key(
+  'developer-feedback-notification-center',
+);
+const developerFeedbackNotificationItemKey = Key(
+  'developer-feedback-notification-item',
+);
+const developerFeedbackNotificationMarkReadKey = Key(
+  'developer-feedback-notification-mark-read',
+);
 const developerFeedbackCommentActionKey = Key(
   'developer-feedback-comment-action',
 );
@@ -216,7 +225,7 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
                       : _openHistoryDialog,
                   onOpenNotifications: widget.bridgeUrl.trim().isEmpty
                       ? null
-                      : _openHistoryDialog,
+                      : _openNotificationCenterDialog,
                 ),
               ),
             ),
@@ -1058,6 +1067,220 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
     }
   }
 
+  void _openNotificationCenterDialog() {
+    var initialized = false;
+    var loading = true;
+    var error = false;
+    var batches = <_SubmittedFeedbackBatch>[];
+    showDialog<void>(
+      context: widget.navigatorKey?.currentContext ?? context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          Future<void> loadNotifications() async {
+            setDialogState(() {
+              loading = true;
+              error = false;
+            });
+            try {
+              final loaded = await _loadFeedbackHistory();
+              if (!context.mounted) return;
+              setDialogState(() {
+                batches = _sortNotificationCenterBatches(loaded);
+                loading = false;
+              });
+              _setUnreadCountFromBatches(loaded);
+            } catch (_) {
+              if (!context.mounted) return;
+              setDialogState(() {
+                loading = false;
+                error = true;
+              });
+            }
+          }
+
+          if (!initialized) {
+            initialized = true;
+            unawaited(loadNotifications());
+          }
+
+          final availableWidth = math.max(
+            0.0,
+            MediaQuery.sizeOf(context).width - 48,
+          );
+          return AlertDialog(
+            key: developerFeedbackNotificationCenterKey,
+            title: const Text('Notificaciones'),
+            content: SizedBox(
+              width: math.min(560.0, availableWidth),
+              child: loading
+                  ? const Center(child: CircularProgressIndicator())
+                  : error
+                  ? const Text('No se pudieron cargar las notificaciones.')
+                  : batches.isEmpty
+                  ? const Text('No hay notificaciones.')
+                  : ListView(
+                      shrinkWrap: true,
+                      children: <Widget>[
+                        ..._notificationSection(
+                          context,
+                          title: 'Terminados',
+                          batches: batches
+                              .where((batch) => batch.isCompleted)
+                              .toList(),
+                          setDialogState: setDialogState,
+                          allBatches: batches,
+                        ),
+                        ..._notificationSection(
+                          context,
+                          title: 'Activos',
+                          batches: batches
+                              .where((batch) => batch.isActive)
+                              .toList(),
+                          setDialogState: setDialogState,
+                          allBatches: batches,
+                        ),
+                        ..._notificationSection(
+                          context,
+                          title: 'Fallidos',
+                          batches: batches
+                              .where((batch) => batch.isFailed)
+                              .toList(),
+                          setDialogState: setDialogState,
+                          allBatches: batches,
+                        ),
+                      ],
+                    ),
+            ),
+            actions: <Widget>[
+              IconButton(
+                tooltip: 'Actualizar',
+                onPressed: loading
+                    ? null
+                    : () => unawaited(loadNotifications()),
+                icon: const Icon(Icons.refresh),
+              ),
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('Cerrar'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  List<Widget> _notificationSection(
+    BuildContext context, {
+    required String title,
+    required List<_SubmittedFeedbackBatch> batches,
+    required StateSetter setDialogState,
+    required List<_SubmittedFeedbackBatch> allBatches,
+  }) {
+    if (batches.isEmpty) return <Widget>[];
+    return <Widget>[
+      Padding(
+        padding: const EdgeInsets.only(top: 8, bottom: 8),
+        child: Text(title, style: Theme.of(context).textTheme.titleSmall),
+      ),
+      for (final batch in batches)
+        ListTile(
+          key: ValueKey<String>(
+            'developer-feedback-notification-item-${batch.batchId ?? batch.title}',
+          ),
+          contentPadding: EdgeInsets.zero,
+          title: Text(
+            batch.title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+          subtitle: Text(
+            batch.notificationLabel,
+            maxLines: 3,
+            overflow: TextOverflow.ellipsis,
+          ),
+          leading: Icon(
+            batch.isFailed
+                ? Icons.error_outline
+                : batch.isActive
+                ? Icons.timelapse
+                : Icons.check_circle_outline,
+          ),
+          trailing: Wrap(
+            spacing: 4,
+            children: <Widget>[
+              if (batch.hasSummary)
+                IconButton(
+                  key: developerFeedbackSummaryOpenKey,
+                  tooltip: 'Resumen',
+                  onPressed: () => _openSummaryDialog(batch),
+                  icon: const Icon(Icons.article_outlined),
+                ),
+              if (batch.notificationUnread && batch.batchId != null)
+                IconButton(
+                  key: developerFeedbackNotificationMarkReadKey,
+                  tooltip: 'Marcar leído',
+                  onPressed: () async {
+                    final updated = await _markNotificationRead(batch.batchId!);
+                    if (updated == null || !context.mounted) return;
+                    setDialogState(() {
+                      final index = allBatches.indexWhere(
+                        (current) => current.batchId == updated.batchId,
+                      );
+                      if (index >= 0) allBatches[index] = updated;
+                    });
+                    _setUnreadCountFromBatches(allBatches);
+                  },
+                  icon: const Icon(Icons.mark_email_read_outlined),
+                ),
+            ],
+          ),
+        ),
+    ];
+  }
+
+  Future<_SubmittedFeedbackBatch?> _markNotificationRead(String batchId) async {
+    final baseUrl = widget.bridgeUrl.trim().replaceAll(RegExp(r'/$'), '');
+    final ownsClient = widget.httpClient == null;
+    final client = widget.httpClient ?? http.Client();
+    try {
+      final response = await client.patch(
+        Uri.parse('$baseUrl/feedback-batches/$batchId/notification'),
+      );
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw Exception('HTTP ${response.statusCode}: ${response.body}');
+      }
+      return _SubmittedFeedbackBatch.fromStatusResponse(
+        jsonDecode(response.body) as Map<String, Object?>,
+      );
+    } catch (_) {
+      _showMessage('No se pudo marcar la notificación.');
+      return null;
+    } finally {
+      if (ownsClient) client.close();
+    }
+  }
+
+  List<_SubmittedFeedbackBatch> _sortNotificationCenterBatches(
+    List<_SubmittedFeedbackBatch> batches,
+  ) {
+    return List<_SubmittedFeedbackBatch>.of(batches)..sort((a, b) {
+      final unread =
+          (b.notificationUnread ? 1 : 0) - (a.notificationUnread ? 1 : 0);
+      if (unread != 0) return unread;
+      return a.status.compareTo(b.status);
+    });
+  }
+
+  void _setUnreadCountFromBatches(List<_SubmittedFeedbackBatch> batches) {
+    if (!mounted) return;
+    setState(() {
+      _unreadNotificationCount = batches
+          .where((batch) => batch.notificationUnread)
+          .length;
+    });
+  }
+
   void _scheduleNotificationRefresh() {
     if (_notificationRefreshScheduled || widget.bridgeUrl.trim().isEmpty) {
       return;
@@ -1073,11 +1296,7 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
     try {
       final batches = await _loadFeedbackHistory();
       if (!mounted) return;
-      setState(() {
-        _unreadNotificationCount = batches
-            .where((batch) => batch.notificationUnread)
-            .length;
-      });
+      _setUnreadCountFromBatches(batches);
     } catch (_) {
       if (!mounted) return;
       setState(() => _unreadNotificationCount = 0);
@@ -1736,6 +1955,23 @@ class _SubmittedFeedbackBatch {
   }
 
   bool get hasSummary => (summary ?? '').trim().isNotEmpty;
+
+  bool get isCompleted => status == 'completed';
+
+  bool get isFailed => status == 'failed';
+
+  bool get isActive => !isCompleted && !isFailed;
+
+  String get notificationLabel {
+    final parts = <String>[
+      statusLabel,
+      if (notificationUnread) 'no leído',
+      if (hasSummary) 'resumen disponible',
+      if ((jobId ?? '').isNotEmpty) 'job $jobId',
+      if ((sessionId ?? '').isNotEmpty) 'session $sessionId',
+    ];
+    return parts.join(' · ');
+  }
 }
 
 class _FeedbackDraft {
