@@ -623,6 +623,16 @@ Stop it with:
 ./scripts/stop_backend.sh
 ```
 
+Restart it without cutting active Codex jobs:
+
+```bash
+./scripts/safe_restart_backend.sh
+```
+
+The safe restart flow enables backend drain mode, rejects new jobs, waits for
+accepted runs to finish, and then restarts the backend. Use
+`--systemd-user`, `--systemd`, or `--detached` to force a restart strategy.
+
 Important: this only solves closing the terminal. If the computer sleeps, reboots, or shuts down, the backend stops. For true always-on access, run it on a machine that stays on, or install it as a system service.
 
 ### Autostart On Login Or Boot
@@ -656,7 +666,7 @@ Useful commands:
 
 ```bash
 systemctl --user status codex-mobile-bridge-backend.service
-systemctl --user restart codex-mobile-bridge-backend.service
+./scripts/safe_restart_backend.sh --systemd-user
 ```
 
 If `.env` leaves `TAILSCALE_SOCKET=` empty, the installer skips userspace Tailscale units. In that case use the normal system daemon instead:
@@ -691,6 +701,8 @@ sudo systemctl status codex-mobile-bridge-tailscale-serve.service
 The backend exposes:
 
 - `GET /health`
+- `GET /maintenance/drain`
+- `POST /maintenance/drain`
 - `GET /workspaces`
 - `GET /sessions`
 - `POST /sessions`

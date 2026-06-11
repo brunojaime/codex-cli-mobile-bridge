@@ -54,6 +54,7 @@ from backend.app.domain.entities.text_sanitization import (
     sanitize_image_attachment_error_text,
 )
 from backend.app.domain.repositories.chat_repository import PersistenceDiagnosticIssue
+from backend.app.application.services.message_service import BackendDrainStatus
 
 
 class MessageRequest(BaseModel):
@@ -1443,6 +1444,36 @@ class JobResponse(BaseModel):
             created_at=job.created_at,
             updated_at=job.updated_at,
             completed_at=job.completed_at,
+        )
+
+
+class BackendDrainRequest(BaseModel):
+    requested: bool = True
+
+
+class BackendDrainStatusResponse(BaseModel):
+    requested: bool
+    ready_to_restart: bool
+    active_job_count: int
+    active_session_count: int
+    in_flight_message_count: int
+    active_jobs: list[JobResponse]
+    active_session_ids: list[str]
+    in_flight_message_ids: list[str]
+    requested_at: datetime | None = None
+
+    @classmethod
+    def from_domain(cls, status: BackendDrainStatus) -> "BackendDrainStatusResponse":
+        return cls(
+            requested=status.requested,
+            ready_to_restart=status.ready_to_restart,
+            active_job_count=status.active_job_count,
+            active_session_count=status.active_session_count,
+            in_flight_message_count=status.in_flight_message_count,
+            active_jobs=[JobResponse.from_domain(job) for job in status.active_jobs],
+            active_session_ids=status.active_session_ids,
+            in_flight_message_ids=status.in_flight_message_ids,
+            requested_at=status.requested_at,
         )
 
 

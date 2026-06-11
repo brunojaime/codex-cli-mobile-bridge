@@ -49,4 +49,4 @@ Let the app show the real status of each submitted feedback batch.
 
 ## Operational Constraint
 
-Do not restart the Bridge backend while validating live status for active runs. Restart can make in-flight jobs unrecoverable or mark them failed.
+Restart the Bridge backend through `scripts/safe_restart_backend.sh` while validating live status. The safe restart flow enables drain mode, waits for active jobs to finish, and then restarts the backend.

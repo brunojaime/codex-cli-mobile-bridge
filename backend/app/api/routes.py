@@ -21,6 +21,8 @@ from backend.app.api.schemas import (
     ArchiveSessionRequest,
     AudioMessageAcceptedResponse,
     AutoModeConfigRequest,
+    BackendDrainRequest,
+    BackendDrainStatusResponse,
     CodexConfigProfileResponse,
     CodexMcpAppInstallResponse,
     CodexMcpAppPreviewResponse,
@@ -74,6 +76,7 @@ from backend.app.application.services.app_update_service import (
 from backend.app.application.services.message_service import (
     AttachmentInput,
     DocumentProcessingError,
+    MaintenanceModeError,
     MessageService,
     UnsupportedDocumentError,
 )
@@ -199,6 +202,23 @@ async def capabilities(
             container.settings.feedback_source_workspace_alias_map
         ),
     )
+
+
+@router.get("/maintenance/drain", response_model=BackendDrainStatusResponse)
+async def get_backend_drain_status(
+    service: MessageService = Depends(get_message_service),
+) -> BackendDrainStatusResponse:
+    status = await run_in_threadpool(service.backend_drain_status)
+    return BackendDrainStatusResponse.from_domain(status)
+
+
+@router.post("/maintenance/drain", response_model=BackendDrainStatusResponse)
+async def set_backend_drain(
+    payload: BackendDrainRequest,
+    service: MessageService = Depends(get_message_service),
+) -> BackendDrainStatusResponse:
+    status = await run_in_threadpool(service.set_backend_drain, payload.requested)
+    return BackendDrainStatusResponse.from_domain(status)
 
 
 @router.get("/app-updates", response_model=AppUpdateRegistryResponse)
@@ -2328,6 +2348,8 @@ async def recover_message(
         )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except MaintenanceModeError:
+        raise
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
@@ -2399,6 +2421,8 @@ async def retry_job(
         raise HTTPException(status_code=415, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except MaintenanceModeError:
+        raise
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 

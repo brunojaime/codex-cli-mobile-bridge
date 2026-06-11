@@ -89,6 +89,7 @@ class ChatScreen extends StatefulWidget {
     this.feedbackQueueCountLoaderOverride,
     this.feedbackQueueListLoaderOverride,
     this.feedbackSourceWorkspaceAliases = const <String, String>{},
+    this.audioRecorderFactoryOverride,
   });
 
   final String initialApiBaseUrl;
@@ -106,6 +107,9 @@ class ChatScreen extends StatefulWidget {
     required bool includeImages,
   })? feedbackQueueListLoaderOverride;
   final Map<String, String> feedbackSourceWorkspaceAliases;
+  @visibleForTesting
+  final AudioNoteRecorder Function()? audioRecorderFactoryOverride;
+
   @override
   State<ChatScreen> createState() => _ChatScreenState();
 }
@@ -896,8 +900,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                   draft: _currentComposerDraft(),
                   onDraftChanged: _updateCurrentComposerDraft,
                   onSend: _handleSend,
+                  onSendAudio: _handleSendAudio,
                   onSendAttachments: _handleSendAttachments,
                   onBeginRecording: _handleBeginRecording,
+                  audioRecorderFactory: widget.audioRecorderFactoryOverride ??
+                      AudioNoteRecorder.new,
                   isBusy: _chatController.isLoading &&
                       _chatController.currentSession == null,
                   voiceEnabled: _resolvedAudioInputEnabled(),
@@ -949,6 +956,26 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     final didSend = await _chatController.sendAttachmentsMessage(
       attachments.map((attachment) => attachment.file).toList(),
       message: prompt,
+      sessionIdOverride: sessionIdBeforeSend,
+      workspacePathOverride: workspacePathBeforeSend,
+      codexRunOptions: codexRunOptions.isEmpty ? null : codexRunOptions,
+    );
+    if (didSend &&
+        (sessionIdBeforeSend == null ||
+            _chatController.selectedSessionId == sessionIdBeforeSend)) {
+      _updateStickToBottom(true);
+      _scrollToBottom();
+    }
+    return didSend;
+  }
+
+  Future<bool> _handleSendAudio(XFile audioFile) async {
+    final sessionIdBeforeSend = _chatController.selectedSessionId;
+    final workspacePathBeforeSend =
+        _chatController.currentSession?.workspacePath;
+    final codexRunOptions = _currentComposerDraft().codexRunOptions;
+    final didSend = await _chatController.sendAudioMessage(
+      audioFile,
       sessionIdOverride: sessionIdBeforeSend,
       workspacePathOverride: workspacePathBeforeSend,
       codexRunOptions: codexRunOptions.isEmpty ? null : codexRunOptions,
@@ -4615,8 +4642,10 @@ class _Composer extends StatefulWidget {
     required this.draft,
     required this.onDraftChanged,
     required this.onSend,
+    required this.onSendAudio,
     required this.onSendAttachments,
     required this.onBeginRecording,
+    required this.audioRecorderFactory,
     required this.isBusy,
     required this.voiceEnabled,
     required this.imageAttachmentsEnabled,
@@ -4629,11 +4658,13 @@ class _Composer extends StatefulWidget {
   final _ComposerDraft draft;
   final ValueChanged<_ComposerDraft> onDraftChanged;
   final Future<bool> Function() onSend;
+  final Future<bool> Function(XFile audioFile) onSendAudio;
   final Future<bool> Function(
     List<_PendingAttachmentDraft> attachments, {
     String? prompt,
   }) onSendAttachments;
   final Future<void> Function() onBeginRecording;
+  final AudioNoteRecorder Function() audioRecorderFactory;
   final bool isBusy;
   final bool voiceEnabled;
   final bool imageAttachmentsEnabled;
@@ -4660,7 +4691,7 @@ class _ComposerState extends State<_Composer> {
   @override
   void initState() {
     super.initState();
-    _audioRecorder = AudioNoteRecorder();
+    _audioRecorder = widget.audioRecorderFactory();
     _applyDraft(widget.draft, notifyParent: false);
     _hasText = widget.controller.text.trim().isNotEmpty;
     widget.controller.addListener(_handleTextChanged);
@@ -5237,7 +5268,7 @@ class _ComposerState extends State<_Composer> {
     }
 
     final recorder = _audioRecorder;
-    _audioRecorder = AudioNoteRecorder();
+    _audioRecorder = widget.audioRecorderFactory();
     _recordingTicker?.cancel();
     _recordingStopwatch?.stop();
     final audioFile = await recorder.stop();
@@ -5252,25 +5283,26 @@ class _ComposerState extends State<_Composer> {
       return;
     }
 
-    final audioDraft = _PendingAttachmentDraft(
-      file: audioFile,
-      name: _audioAttachmentName(audioFile),
-      kind: _AttachmentDraftKind.audio,
-      sizeBytes: await audioFile.length(),
-      cleanup: () async {
-        await recorder.cleanup(audioFile);
-        await recorder.dispose();
-      },
-    );
-
-    final didAppend = _appendPendingAttachments(
-      <_PendingAttachmentDraft>[audioDraft],
-    );
-    if (!didAppend) {
-      await audioDraft.cleanup?.call();
+    var didSend = false;
+    try {
+      didSend = await widget.onSendAudio(audioFile);
+    } catch (_) {
+      didSend = false;
+    } finally {
+      await recorder.cleanup(audioFile);
+      await recorder.dispose();
+    }
+    if (!mounted) {
       return;
     }
-    await _handlePrimaryAction();
+    if (!didSend) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Voice note send failed.'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+    }
   }
 
   Future<void> _handlePrimaryAction() async {
@@ -5317,7 +5349,7 @@ class _ComposerState extends State<_Composer> {
     }
 
     final recorder = _audioRecorder;
-    _audioRecorder = AudioNoteRecorder();
+    _audioRecorder = widget.audioRecorderFactory();
     _recordingTicker?.cancel();
     _recordingStopwatch?.stop();
     await recorder.cancel();
@@ -5337,7 +5369,6 @@ class _ComposerState extends State<_Composer> {
         (item) => item.identityKey == attachment.identityKey,
       );
     });
-    unawaited(attachment.cleanup?.call());
     _emitDraftChanged();
   }
 
@@ -5345,14 +5376,9 @@ class _ComposerState extends State<_Composer> {
     if (_pendingAttachments.isEmpty) {
       return;
     }
-    final removedAttachments =
-        List<_PendingAttachmentDraft>.from(_pendingAttachments);
     setState(() {
       _pendingAttachments.clear();
     });
-    for (final attachment in removedAttachments) {
-      unawaited(attachment.cleanup?.call());
-    }
     _emitDraftChanged();
   }
 
@@ -5455,11 +5481,6 @@ class _ComposerState extends State<_Composer> {
         sanitizedAttachments,
         prompt: prompt,
       );
-      if (didSend) {
-        for (final attachment in sanitizedAttachments) {
-          await attachment.cleanup?.call();
-        }
-      }
       if (!mounted) {
         return didSend;
       }
@@ -5501,7 +5522,7 @@ class _ComposerState extends State<_Composer> {
     _recordingTicker = null;
     _recordingStopwatch = null;
     _audioRecorder.dispose();
-    _audioRecorder = AudioNoteRecorder();
+    _audioRecorder = widget.audioRecorderFactory();
     if (mounted) {
       setState(() {
         _isRecording = false;
@@ -5679,14 +5700,6 @@ class _ComposerState extends State<_Composer> {
         value.endsWith('.webp');
   }
 
-  String _audioAttachmentName(XFile audioFile) {
-    final name = audioFile.name.trim();
-    if (name.isNotEmpty) {
-      return name;
-    }
-    return 'voice-note.m4a';
-  }
-
   String _formatDuration() {
     final elapsed = _recordingStopwatch?.elapsed ?? Duration.zero;
     final minutes = elapsed.inMinutes.toString().padLeft(2, '0');
@@ -5712,7 +5725,6 @@ class _PendingAttachmentDraft {
     required this.kind,
     this.sizeBytes,
     this.previewBytes,
-    this.cleanup,
   });
 
   final XFile file;
@@ -5720,7 +5732,6 @@ class _PendingAttachmentDraft {
   final _AttachmentDraftKind kind;
   final int? sizeBytes;
   final Uint8List? previewBytes;
-  final Future<void> Function()? cleanup;
 
   bool get isImage => kind == _AttachmentDraftKind.image;
 
@@ -7410,6 +7421,57 @@ Widget buildImageEditorForTest({
   return _ImageEditorScreen(
     imageBytes: imageBytes,
     fileName: fileName,
+  );
+}
+
+@visibleForTesting
+Widget buildComposerVoiceRecordingHarnessForTest({
+  required TextEditingController controller,
+  required AudioNoteRecorder Function() audioRecorderFactory,
+  required Future<bool> Function(XFile audioFile) onSendAudio,
+  required Future<bool> Function(
+    List<XFile> attachments, {
+    String? prompt,
+  }) onSendAttachments,
+  String stagedText = '',
+  bool stageAttachment = false,
+}) {
+  return _Composer(
+    sessionId: 'test-session',
+    controller: controller,
+    draft: _ComposerDraft(
+      text: stagedText,
+      attachments: stageAttachment
+          ? <_PendingAttachmentDraft>[
+              _PendingAttachmentDraft(
+                file: XFile.fromData(
+                  Uint8List.fromList(const <int>[1, 2, 3]),
+                  name: 'staged-note.txt',
+                  mimeType: 'text/plain',
+                ),
+                name: 'staged-note.txt',
+                kind: _AttachmentDraftKind.file,
+                sizeBytes: 3,
+              ),
+            ]
+          : const <_PendingAttachmentDraft>[],
+    ),
+    onDraftChanged: (_) {},
+    onSend: () async => false,
+    onSendAudio: onSendAudio,
+    onSendAttachments: (attachments, {prompt}) {
+      return onSendAttachments(
+        attachments.map((attachment) => attachment.file).toList(),
+        prompt: prompt,
+      );
+    },
+    onBeginRecording: () async {},
+    audioRecorderFactory: audioRecorderFactory,
+    isBusy: false,
+    voiceEnabled: true,
+    imageAttachmentsEnabled: true,
+    fileAttachmentsEnabled: true,
+    voiceStatusText: 'Audio transcription ready.',
   );
 }
 

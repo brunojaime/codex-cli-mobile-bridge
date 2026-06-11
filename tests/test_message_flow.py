@@ -418,6 +418,19 @@ class _WatchedControlledExecutionProvider(_ControlledExecutionProvider):
         return cancelled
 
 
+class _BlockingExecuteProvider(_ControlledExecutionProvider):
+    def __init__(self) -> None:
+        super().__init__()
+        self.execute_entered = threading.Event()
+        self.release_execute = threading.Event()
+
+    def execute(self, *args, **kwargs) -> str:
+        self.execute_entered.set()
+        if not self.release_execute.wait(timeout=2):
+            raise TimeoutError("Timed out waiting to release blocked execute.")
+        return super().execute(*args, **kwargs)
+
+
 class _FakeSpeechSynthesizer(SpeechSynthesizer):
     def __init__(
         self,
@@ -563,6 +576,206 @@ def build_audio_client() -> TestClient:
     )
     app = create_app(settings)
     return TestClient(app)
+
+
+def build_drain_client(
+    *,
+    provider: _ControlledExecutionProvider | None = None,
+    repository: InMemoryChatRepository | None = None,
+) -> tuple[TestClient, object, _ControlledExecutionProvider]:
+    settings = Settings(
+        codex_command="python3 tests/fixtures/fake_codex.py",
+        codex_use_exec=False,
+        projects_root="..",
+        chat_store_backend="memory",
+        execution_timeout_seconds=10,
+        poll_interval_seconds=0,
+        audio_transcription_backend="disabled",
+        speech_synthesis_backend="disabled",
+    )
+    app = create_app(settings)
+    container = app.dependency_overrides[get_container]()
+    provider = provider or _ControlledExecutionProvider()
+    repository = repository or InMemoryChatRepository(projects_root="..")
+    container.message_service = MessageService(
+        repository=repository,
+        execution_provider=provider,
+        default_workspace_path="..",
+        audio_transcriber=DisabledAudioTranscriber(),
+        follow_up_reconcile_interval_seconds=None,
+    )
+    return TestClient(app), container, provider
+
+
+def test_backend_drain_blocks_new_jobs_and_reports_active_jobs() -> None:
+    client, _container, provider = build_drain_client()
+
+    accepted = client.post("/message", json={"message": "Keep working"})
+    assert accepted.status_code == 202
+    job_id = accepted.json()["job_id"]
+
+    drain_response = client.post("/maintenance/drain", json={"requested": True})
+    assert drain_response.status_code == 200
+    drain_payload = drain_response.json()
+    assert drain_payload["requested"] is True
+    assert drain_payload["ready_to_restart"] is False
+    assert drain_payload["active_job_count"] == 1
+    assert drain_payload["active_jobs"][0]["job_id"] == job_id
+
+    blocked = client.post("/message", json={"message": "Start another job"})
+    assert blocked.status_code == 503
+    assert blocked.json()["detail"]["code"] == "backend_drain_active"
+
+    provider.complete_job(job_id, response="Done.")
+    ready_response = client.get("/maintenance/drain")
+    assert ready_response.status_code == 200
+    ready_payload = ready_response.json()
+    assert ready_payload["requested"] is True
+    assert ready_payload["ready_to_restart"] is True
+    assert ready_payload["active_job_count"] == 0
+
+
+def test_backend_drain_can_be_disabled() -> None:
+    client, _container, _provider = build_drain_client()
+
+    enabled = client.post("/maintenance/drain", json={"requested": True})
+    assert enabled.status_code == 200
+
+    disabled = client.post("/maintenance/drain", json={"requested": False})
+    assert disabled.status_code == 200
+    assert disabled.json()["requested"] is False
+
+    accepted = client.post("/message", json={"message": "Run after drain"})
+    assert accepted.status_code == 202
+
+
+def test_backend_drain_waits_for_concurrent_submit_to_be_visible() -> None:
+    provider = _BlockingExecuteProvider()
+    client, _container, _provider = build_drain_client(provider=provider)
+    submit_result: dict[str, object] = {}
+    drain_result: dict[str, object] = {}
+
+    def submit_message() -> None:
+        submit_result["response"] = client.post(
+            "/message",
+            json={"message": "Race with drain"},
+        )
+
+    def request_drain() -> None:
+        drain_result["response"] = client.post(
+            "/maintenance/drain",
+            json={"requested": True},
+        )
+
+    submit_thread = threading.Thread(target=submit_message)
+    submit_thread.start()
+    assert provider.execute_entered.wait(timeout=1)
+
+    drain_thread = threading.Thread(target=request_drain)
+    drain_thread.start()
+    time.sleep(0.05)
+    assert drain_thread.is_alive()
+
+    provider.release_execute.set()
+    submit_thread.join(timeout=2)
+    drain_thread.join(timeout=2)
+
+    submit_response = submit_result["response"]
+    drain_response = drain_result["response"]
+    assert submit_response.status_code == 202
+    assert drain_response.status_code == 200
+    drain_payload = drain_response.json()
+    assert drain_payload["ready_to_restart"] is False
+    assert drain_payload["active_job_count"] == 1
+    assert drain_payload["active_jobs"][0]["job_id"] == submit_response.json()["job_id"]
+
+
+def test_backend_drain_waits_through_reviewer_handoff_until_run_complete() -> None:
+    with TemporaryDirectory() as temp_dir:
+        workspace = Path(temp_dir) / "repo"
+        workspace.mkdir()
+        service, provider, _repository = _build_controlled_message_service(
+            temp_dir,
+            barrier_agent_id=AgentId.REVIEWER,
+        )
+
+        session = service.create_session(workspace_path=str(workspace))
+        configuration = session.agent_configuration.normalized()
+        configuration.preset = AgentPreset.REVIEW
+        configuration.agents[AgentId.GENERATOR].max_turns = 1
+        configuration.agents[AgentId.REVIEWER].enabled = True
+        configuration.agents[AgentId.REVIEWER].max_turns = 1
+        configuration.agents[AgentId.SUMMARY].enabled = False
+        service.update_agent_configuration(session_id=session.id, configuration=configuration)
+
+        initial_job = service.submit_message(
+            "Build the implementation.",
+            session_id=session.id,
+        )
+        provider.complete_job(initial_job.id, response="Initial implementation done.")
+
+        drain_status = service.set_backend_drain(True)
+        assert drain_status.ready_to_restart is False
+        assert drain_status.active_session_ids == [session.id]
+        assert drain_status.active_job_count == 1
+
+        reviewer_job = next(
+            job
+            for job in provider.requests
+            if job["job_id"] != initial_job.id
+        )
+        provider.complete_job(str(reviewer_job["job_id"]), response="Review complete.")
+
+        ready_status = service.backend_drain_status()
+        assert ready_status.ready_to_restart is True
+        assert ready_status.active_job_count == 0
+        assert ready_status.active_session_ids == []
+        assert ready_status.in_flight_message_ids == []
+
+
+def test_backend_drain_rejects_retries() -> None:
+    client, container, provider = build_drain_client()
+
+    accepted = client.post("/message", json={"message": "Retry target"})
+    assert accepted.status_code == 202
+    job_id = accepted.json()["job_id"]
+    provider.complete_job(job_id, response="Done.")
+    completed_job = container.message_service.get_job(job_id)
+    assert completed_job is not None
+    assert completed_job.status == JobStatus.COMPLETED
+
+    drain_response = client.post("/maintenance/drain", json={"requested": True})
+    assert drain_response.status_code == 200
+    retry_response = client.post(f"/jobs/{job_id}/retry")
+    assert retry_response.status_code == 503
+    assert retry_response.json()["detail"]["code"] == "backend_drain_active"
+
+
+def test_backend_drain_reconciles_stale_in_flight_jobs() -> None:
+    repository = InMemoryChatRepository(projects_root="..")
+    first_client, _first_container, _provider = build_drain_client(repository=repository)
+    accepted = first_client.post("/message", json={"message": "Stale job"})
+    assert accepted.status_code == 202
+    job_id = accepted.json()["job_id"]
+    session_id = accepted.json()["session_id"]
+
+    stale_provider = _ControlledExecutionProvider()
+    _second_client, second_container, _ = build_drain_client(
+        provider=stale_provider,
+        repository=repository,
+    )
+
+    drain_status = second_container.message_service.set_backend_drain(True)
+    assert drain_status.ready_to_restart is True
+    assert drain_status.active_job_count == 0
+    assert drain_status.active_session_ids == []
+
+    failed_job = repository.get_job(job_id)
+    failed_session = repository.get_session(session_id)
+    assert failed_job is not None
+    assert failed_job.status == JobStatus.FAILED
+    assert failed_session is not None
+    assert failed_session.active_agent_run_id is None
 
 
 def build_slow_audio_clients() -> tuple[TestClient, TestClient]:

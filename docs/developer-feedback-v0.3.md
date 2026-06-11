@@ -4,7 +4,7 @@ This index tracks the proposed v0.3 work for the reusable Developer Feedback Tem
 
 This is documentation only. Do not implement these features from this file unless the user explicitly asks for implementation.
 
-Important operational constraint: do not restart the Bridge backend while a user has active feedback or Codex runs in progress. Restarting the backend can break in-flight flows, live status, or recovery assumptions. Any validation that needs backend changes must be planned for a safe maintenance window or use isolated test processes.
+Important operational constraint: restart the Bridge backend through `scripts/safe_restart_backend.sh` when feedback or Codex runs may be active. The script enables backend drain mode, blocks new jobs, waits for accepted runs to finish, and only then restarts the backend.
 
 ## Feature Index
 

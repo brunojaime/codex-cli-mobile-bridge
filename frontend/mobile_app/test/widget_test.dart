@@ -14,6 +14,7 @@ import 'package:codex_mobile_frontend/src/models/session_detail.dart';
 import 'package:codex_mobile_frontend/src/models/workspace.dart';
 import 'package:codex_mobile_frontend/src/screens/chat_screen.dart';
 import 'package:codex_mobile_frontend/src/services/api_client.dart';
+import 'package:codex_mobile_frontend/src/services/audio_note_recorder.dart';
 import 'package:codex_mobile_frontend/src/services/chat_notification_service.dart';
 import 'package:codex_mobile_frontend/src/services/text_to_speech_player.dart';
 import 'package:codex_mobile_frontend/src/state/chat_controller.dart';
@@ -560,6 +561,83 @@ void main() {
     );
 
     controller.dispose();
+  });
+
+  testWidgets('recorded voice note sends without flushing staged attachments', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1200, 1600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final textController = TextEditingController();
+    addTearDown(textController.dispose);
+    final audioSends = <String>[];
+    final attachmentSends = <String>[];
+    final recorders = <_FakeAudioNoteRecorder>[];
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Align(
+            alignment: Alignment.bottomCenter,
+            child: buildComposerVoiceRecordingHarnessForTest(
+              controller: textController,
+              stagedText: 'Keep this attachment staged',
+              stageAttachment: true,
+              audioRecorderFactory: () {
+                final recorder = _FakeAudioNoteRecorder(
+                  XFile('voice-note.m4a', name: 'voice-note.m4a'),
+                );
+                recorders.add(recorder);
+                return recorder;
+              },
+              onSendAudio: (audioFile) async {
+                audioSends.add(audioFile.name);
+                return true;
+              },
+              onSendAttachments: (attachments, {prompt}) async {
+                attachmentSends.addAll(
+                  attachments.map((attachment) => attachment.name),
+                );
+                return true;
+              },
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text('1 selected'), findsOneWidget);
+    final micButton = find
+        .ancestor(
+          of: find.byIcon(Icons.mic_rounded),
+          matching: find.byType(FilledButton),
+        )
+        .last;
+    await tester.tap(micButton);
+    await tester.pump();
+    expect(find.text('Recording'), findsOneWidget);
+
+    final voiceSendButton = find
+        .ancestor(
+          of: find.byIcon(Icons.send_rounded),
+          matching: find.byType(FilledButton),
+        )
+        .last;
+    await tester.tap(voiceSendButton);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+
+    expect(audioSends, <String>['voice-note.m4a']);
+    expect(attachmentSends, isEmpty);
+    expect(find.text('1 selected'), findsOneWidget);
+    expect(textController.text, contains('Keep this attachment staged'));
+    expect(recorders.first.started, isTrue);
+    expect(recorders.first.stopped, isTrue);
+    expect(recorders.first.cleaned, isTrue);
+    expect(recorders.first.disposed, isTrue);
   });
 
   testWidgets('renders assistant options as quick actions', (tester) async {
@@ -2115,6 +2193,7 @@ Future<void> _pumpChatAndStageSingleFeedbackAttachment(
   WidgetTester tester, {
   required ChatController controller,
   required FeedbackQueueItem feedbackItem,
+  AudioNoteRecorder Function()? audioRecorderFactory,
 }) async {
   await tester.pumpWidget(
     MaterialApp(
@@ -2123,6 +2202,7 @@ Future<void> _pumpChatAndStageSingleFeedbackAttachment(
         notificationService: const NoopChatNotificationService(),
         controllerOverride: controller,
         enableServerBootstrap: false,
+        audioRecorderFactoryOverride: audioRecorderFactory,
         initialSidebarWorkspaces: const <Workspace>[
           Workspace(
             name: 'Ambientando Calendar',
@@ -2552,6 +2632,40 @@ class _RecordedAttachmentSend {
   final String? workspacePath;
   final String? message;
   final List<String> filenames;
+}
+
+class _FakeAudioNoteRecorder extends AudioNoteRecorder {
+  _FakeAudioNoteRecorder(this.audioFile) : super();
+
+  final XFile audioFile;
+  bool started = false;
+  bool stopped = false;
+  bool cleaned = false;
+  bool disposed = false;
+
+  @override
+  Future<void> start() async {
+    started = true;
+  }
+
+  @override
+  Future<XFile?> stop() async {
+    stopped = true;
+    return audioFile;
+  }
+
+  @override
+  Future<void> cleanup(XFile file) async {
+    cleaned = true;
+  }
+
+  @override
+  Future<void> cancel() async {}
+
+  @override
+  Future<void> dispose() async {
+    disposed = true;
+  }
 }
 
 Future<void> _pumpUserChatBubble(
