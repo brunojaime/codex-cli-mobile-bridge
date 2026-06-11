@@ -291,6 +291,131 @@ void main() {
     expect(find.text('No hay feedback pendiente.'), findsOneWidget);
   });
 
+  testWidgets('queues three feedback captures in order', (tester) async {
+    await tester.pumpWidget(const _Harness(enabled: true));
+    await _saveFeedback(tester, 'Primero');
+    await _saveFeedback(tester, 'Segundo');
+    await _saveFeedback(tester, 'Tercero');
+
+    await tester.tap(find.byKey(developerFeedbackPendingKey));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(developerFeedbackPreviewItemKey), findsNWidgets(3));
+    expect(find.byKey(developerFeedbackPreviewThumbnailKey), findsNWidgets(3));
+    expect(find.text('Primero'), findsOneWidget);
+    expect(find.text('Segundo'), findsOneWidget);
+    expect(find.text('Tercero'), findsOneWidget);
+
+    final previewTexts = tester
+        .widgetList<Text>(
+          find.descendant(
+            of: find.byKey(developerFeedbackPreviewItemKey),
+            matching: find.byType(Text),
+          ),
+        )
+        .map((widget) => widget.data)
+        .whereType<String>()
+        .toList();
+    expect(
+      previewTexts.indexOf('Primero'),
+      lessThan(previewTexts.indexOf('Segundo')),
+    );
+    expect(
+      previewTexts.indexOf('Segundo'),
+      lessThan(previewTexts.indexOf('Tercero')),
+    );
+  });
+
+  testWidgets('deleting one queued item preserves the rest', (tester) async {
+    await tester.pumpWidget(const _Harness(enabled: true));
+    await _saveFeedback(tester, 'Eliminar esta');
+    await _saveFeedback(tester, 'Conservar esta');
+
+    await tester.tap(find.byKey(developerFeedbackPendingKey));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byIcon(Icons.delete_outline).first);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Eliminar esta'), findsNothing);
+    expect(find.text('Conservar esta'), findsOneWidget);
+    expect(find.text('No hay feedback pendiente.'), findsNothing);
+    expect(find.byKey(developerFeedbackPreviewItemKey), findsOneWidget);
+  });
+
+  testWidgets(
+    'preview shows screenshot bounds audio preset and release option',
+    (tester) async {
+      await tester.pumpWidget(
+        _Harness(enabled: true, recorderFactory: () => _SupportedRecorder()),
+      );
+
+      await tester.tap(find.byKey(developerFeedbackSwitchKey));
+      await tester.pump();
+      await _drawFeedbackSelection(tester);
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(developerFeedbackCommentActionKey));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(developerFeedbackCommentKey),
+        'Preview completo',
+      );
+      await tester.tap(find.byKey(const Key('developer-feedback-audio')));
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('developer-feedback-audio')));
+      await tester.pump();
+      await tester.tap(find.byKey(developerFeedbackSaveKey));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(developerFeedbackPendingKey));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(developerFeedbackPreviewThumbnailKey), findsOneWidget);
+      expect(find.text('Preview completo'), findsOneWidget);
+      expect(find.textContaining('Bounds: x'), findsOneWidget);
+      expect(find.text('Audio: 1234 ms, 3 bytes, audio/webm'), findsOneWidget);
+      expect(find.byKey(developerFeedbackPresetDropdownKey), findsOneWidget);
+      expect(
+        tester
+            .widget<Checkbox>(
+              find.byKey(developerFeedbackReleaseWhenCompleteKey),
+            )
+            .value,
+        isFalse,
+      );
+    },
+  );
+
+  testWidgets('failed custom batch send preserves queued preview', (
+    tester,
+  ) async {
+    var attempts = 0;
+    await tester.pumpWidget(
+      _Harness(
+        enabled: true,
+        bridgeSubmitBatch: (_) async {
+          attempts += 1;
+          throw Exception('bridge unavailable');
+        },
+      ),
+    );
+
+    await _saveFeedback(tester, 'Enviar luego');
+    await tester.tap(find.byKey(developerFeedbackPendingKey));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(developerFeedbackSendBatchKey));
+    await tester.pumpAndSettle();
+
+    expect(attempts, 1);
+    expect(find.text('Enviar luego'), findsOneWidget);
+    expect(find.byKey(developerFeedbackPreviewItemKey), findsOneWidget);
+    expect(
+      tester
+          .widget<FilledButton>(find.byKey(developerFeedbackSendBatchKey))
+          .onPressed,
+      isNotNull,
+    );
+  });
+
   testWidgets('copy export fallback is graceful', (tester) async {
     var attempts = 0;
     await tester.pumpWidget(
@@ -488,7 +613,7 @@ void main() {
 
       await tester.tap(find.byKey(developerFeedbackPendingKey));
       await tester.pumpAndSettle();
-      expect(find.textContaining('audio 1234 ms · 3 bytes'), findsOneWidget);
+      expect(find.text('Audio: 1234 ms, 3 bytes, audio/webm'), findsOneWidget);
       await tester.tap(find.byKey(developerFeedbackCopyKey));
       await tester.pumpAndSettle();
 

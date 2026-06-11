@@ -50,6 +50,16 @@ const developerFeedbackReleaseWhenCompleteKey = Key(
   'developer-feedback-release-when-complete',
 );
 const developerFeedbackSendBatchKey = Key('developer-feedback-send-batch');
+const developerFeedbackPreviewItemKey = Key('developer-feedback-preview-item');
+const developerFeedbackPreviewThumbnailKey = Key(
+  'developer-feedback-preview-thumbnail',
+);
+const developerFeedbackPreviewBoundsKey = Key(
+  'developer-feedback-preview-bounds',
+);
+const developerFeedbackPreviewAudioKey = Key(
+  'developer-feedback-preview-audio',
+);
 const developerFeedbackCommentActionKey = Key(
   'developer-feedback-comment-action',
 );
@@ -433,19 +443,29 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
     );
     final customBatchSubmit = widget.bridgeSubmitBatch;
     if (customBatchSubmit != null) {
-      await customBatchSubmit(batch);
-      setState(_items.clear);
-      _showMessage('Feedback enviado a Codex CLI.');
-      return true;
+      try {
+        await customBatchSubmit(batch);
+        setState(_items.clear);
+        _showMessage('Feedback enviado a Codex CLI.');
+        return true;
+      } catch (_) {
+        _showMessage('Guardado local; no se pudo enviar a Codex CLI.');
+        return false;
+      }
     }
     final customSubmit = widget.bridgeSubmit;
     if (customSubmit != null) {
-      for (final item in List<DeveloperFeedbackItem>.of(_items)) {
-        await customSubmit(item);
+      try {
+        for (final item in List<DeveloperFeedbackItem>.of(_items)) {
+          await customSubmit(item);
+        }
+        setState(_items.clear);
+        _showMessage('Feedback enviado a Codex CLI.');
+        return true;
+      } catch (_) {
+        _showMessage('Guardado local; no se pudo enviar a Codex CLI.');
+        return false;
       }
-      setState(_items.clear);
-      _showMessage('Feedback enviado a Codex CLI.');
-      return true;
     }
     if (widget.bridgeUrl.trim().isEmpty) return false;
     final baseUrl = widget.bridgeUrl.trim().replaceAll(RegExp(r'/$'), '');
@@ -512,8 +532,11 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
                             itemBuilder: (context, index) {
                               final item = _items[index];
                               return Row(
-                                crossAxisAlignment: CrossAxisAlignment.center,
+                                key: developerFeedbackPreviewItemKey,
+                                crossAxisAlignment: CrossAxisAlignment.start,
                                 children: <Widget>[
+                                  _FeedbackPreviewThumbnail(item: item),
+                                  const SizedBox(width: 12),
                                   Expanded(
                                     child: Column(
                                       crossAxisAlignment:
@@ -526,8 +549,21 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
                                         ),
                                         const SizedBox(height: 4),
                                         Text(
-                                          '${item.selectionPoints.length} puntos'
-                                          '${item.audio == null ? '' : ' · audio ${item.audio!.durationMs} ms · ${item.audio!.bytes.length} bytes'}',
+                                          _formatSelectionBounds(
+                                            item.selectionBounds,
+                                          ),
+                                          key:
+                                              developerFeedbackPreviewBoundsKey,
+                                          maxLines: 2,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: Theme.of(
+                                            context,
+                                          ).textTheme.bodySmall,
+                                        ),
+                                        const SizedBox(height: 2),
+                                        Text(
+                                          _formatAudioSummary(item.audio),
+                                          key: developerFeedbackPreviewAudioKey,
                                           maxLines: 2,
                                           overflow: TextOverflow.ellipsis,
                                           style: Theme.of(
@@ -1171,6 +1207,41 @@ class _FeedbackDialogState extends State<_FeedbackDialog> {
   }
 }
 
+class _FeedbackPreviewThumbnail extends StatelessWidget {
+  const _FeedbackPreviewThumbnail({required this.item});
+
+  final DeveloperFeedbackItem item;
+
+  @override
+  Widget build(BuildContext context) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(6),
+      child: Image.memory(
+        _decodePreviewImage(item.screenshotPngBase64),
+        key: developerFeedbackPreviewThumbnailKey,
+        width: 72,
+        height: 72,
+        fit: BoxFit.cover,
+        errorBuilder: (context, error, stackTrace) => Container(
+          width: 72,
+          height: 72,
+          color: Theme.of(context).colorScheme.surfaceContainerHighest,
+          alignment: Alignment.center,
+          child: const Icon(Icons.broken_image_outlined),
+        ),
+      ),
+    );
+  }
+}
+
+Uint8List _decodePreviewImage(String screenshotPngBase64) {
+  try {
+    return base64Decode(screenshotPngBase64);
+  } catch (_) {
+    return base64Decode(_transparentPngBase64);
+  }
+}
+
 class _FeedbackDraft {
   const _FeedbackDraft({required this.comment, required this.audio});
 
@@ -1296,6 +1367,8 @@ class DeveloperFeedbackItem {
   final List<Offset> selectionPoints;
   final DeveloperFeedbackAudioClip? audio;
 
+  Map<String, double> get selectionBounds => _selectionBounds(selectionPoints);
+
   Map<String, Object?> toJson() {
     final bounds = _selectionBounds(selectionPoints);
     final hasAudioBytes = audio != null && audio!.bytes.isNotEmpty;
@@ -1342,7 +1415,7 @@ class DeveloperFeedbackItem {
       'selectionPoints': selectionPoints
           .map((point) => <String, double>{'x': point.dx, 'y': point.dy})
           .toList(),
-      'selectionBounds': _selectionBounds(selectionPoints),
+      'selectionBounds': selectionBounds,
       'hasAudio': hasAudioBytes,
       if (audio != null) 'audioMimeType': audio!.mimeType,
       if (audio != null) 'audioDurationMs': audio!.durationMs,
@@ -1369,6 +1442,17 @@ class DeveloperFeedbackItem {
       'height': maxY - minY,
     };
   }
+}
+
+String _formatSelectionBounds(Map<String, double> bounds) {
+  return 'Bounds: x ${bounds['left']!.round()}, y ${bounds['top']!.round()}, '
+      '${bounds['width']!.round()} x ${bounds['height']!.round()}';
+}
+
+String _formatAudioSummary(DeveloperFeedbackAudioClip? audio) {
+  if (audio == null) return 'Audio: sin adjunto';
+  return 'Audio: ${audio.durationMs} ms, ${audio.bytes.length} bytes, '
+      '${audio.mimeType}';
 }
 
 class DeveloperFeedbackExport {
