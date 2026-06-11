@@ -16,5 +16,14 @@
     "latestAssetName": "codex-mobile.apk",
     "requiredMinimumBuild": null,
     "enabled": true
+  },
+  "gestion-ludmilo": {
+    "displayName": "Gestion Ludmilo",
+    "repo": "brunojaime/Gestion_ludmilo",
+    "releaseTagPattern": "android-v*",
+    "apkAssetPattern": "gestion-ludmilo-*.apk",
+    "latestAssetName": "gestion-ludmilo.apk",
+    "requiredMinimumBuild": null,
+    "enabled": true
   }
 }
