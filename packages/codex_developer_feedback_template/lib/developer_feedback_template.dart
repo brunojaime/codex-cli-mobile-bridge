@@ -2085,6 +2085,8 @@ class _Toolbar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final hasOverlay = Overlay.maybeOf(context) != null;
+    String? toolbarTooltip(String value) => hasOverlay ? value : null;
     final buttonConstraints = compact
         ? const BoxConstraints.tightFor(width: 40, height: 40)
         : null;
@@ -2103,7 +2105,7 @@ class _Toolbar extends StatelessWidget {
           dimension: 48,
           child: IconButton(
             key: developerFeedbackToolbarExpandKey,
-            tooltip: 'Expandir feedback',
+            tooltip: toolbarTooltip('Expandir feedback'),
             onPressed: () => onExpandedChanged(true),
             icon: _ToolbarStatusBadge(
               pendingCount: pendingCount,
@@ -2130,7 +2132,7 @@ class _Toolbar extends StatelessWidget {
               key: developerFeedbackToolbarCollapseKey,
               constraints: buttonConstraints,
               padding: buttonPadding,
-              tooltip: 'Contraer feedback',
+              tooltip: toolbarTooltip('Contraer feedback'),
               onPressed: () => onExpandedChanged(false),
               icon: const Icon(Icons.keyboard_arrow_right),
             ),
@@ -2162,7 +2164,7 @@ class _Toolbar extends StatelessWidget {
                 key: developerFeedbackPendingKey,
                 constraints: buttonConstraints,
                 padding: buttonPadding,
-                tooltip: 'Pendientes',
+                tooltip: toolbarTooltip('Pendientes'),
                 onPressed: onOpenPending,
                 icon: Badge.count(
                   count: pendingCount,
@@ -2176,7 +2178,7 @@ class _Toolbar extends StatelessWidget {
                 key: developerFeedbackRunsKey,
                 constraints: buttonConstraints,
                 padding: buttonPadding,
-                tooltip: 'Runs',
+                tooltip: toolbarTooltip('Runs'),
                 onPressed: onOpenRuns,
                 icon: Badge.count(
                   count: submittedCount,
@@ -2190,7 +2192,7 @@ class _Toolbar extends StatelessWidget {
                 key: developerFeedbackNotificationBellKey,
                 constraints: buttonConstraints,
                 padding: buttonPadding,
-                tooltip: 'Notificaciones',
+                tooltip: toolbarTooltip('Notificaciones'),
                 onPressed: onOpenNotifications,
                 icon: unreadNotificationCount > 0
                     ? Badge.count(
@@ -2203,7 +2205,7 @@ class _Toolbar extends StatelessWidget {
                 key: developerFeedbackHistoryKey,
                 constraints: buttonConstraints,
                 padding: buttonPadding,
-                tooltip: 'Historial',
+                tooltip: toolbarTooltip('Historial'),
                 onPressed: onOpenHistory,
                 icon: const Icon(Icons.history),
               ),
@@ -2211,7 +2213,7 @@ class _Toolbar extends StatelessWidget {
                 key: developerFeedbackQuickAskHistoryKey,
                 constraints: buttonConstraints,
                 padding: buttonPadding,
-                tooltip: 'Preguntas rápidas',
+                tooltip: toolbarTooltip('Preguntas rápidas'),
                 onPressed: onOpenQuickAskHistory,
                 icon: const Icon(Icons.manage_search),
               ),

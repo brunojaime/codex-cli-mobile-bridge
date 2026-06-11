@@ -41,6 +41,37 @@ void main() {
     expect(find.byKey(developerFeedbackCopyKey), findsNothing);
   });
 
+  testWidgets('toolbar does not require an overlay ancestor', (tester) async {
+    await tester.pumpWidget(
+      MediaQuery(
+        data: const MediaQueryData(size: Size(390, 844)),
+        child: Directionality(
+          textDirection: TextDirection.ltr,
+          child: Theme(
+            data: ThemeData(),
+            child: const DeveloperFeedbackTemplate(
+              enabled: true,
+              child: SizedBox.expand(child: Text('App body')),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byKey(developerFeedbackToolbarKey), findsOneWidget);
+    _expectNoFlutterExceptions(tester);
+
+    await tester.tap(find.byKey(developerFeedbackToolbarCollapseKey));
+    await tester.pumpAndSettle();
+    expect(find.byKey(developerFeedbackToolbarExpandKey), findsOneWidget);
+    _expectNoFlutterExceptions(tester);
+
+    await tester.tap(find.byKey(developerFeedbackToolbarExpandKey));
+    await tester.pumpAndSettle();
+    expect(find.byKey(developerFeedbackSwitchKey), findsOneWidget);
+    _expectNoFlutterExceptions(tester);
+  });
+
   testWidgets('template toolbar floats and can be dragged', (tester) async {
     _setViewport(tester, const Size(390, 844));
     addTearDown(tester.view.resetPhysicalSize);
