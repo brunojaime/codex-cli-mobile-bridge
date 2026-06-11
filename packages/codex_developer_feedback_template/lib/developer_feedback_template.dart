@@ -82,6 +82,18 @@ const developerFeedbackNotificationItemKey = Key(
 const developerFeedbackNotificationMarkReadKey = Key(
   'developer-feedback-notification-mark-read',
 );
+const developerFeedbackQuickAskActionKey = Key(
+  'developer-feedback-quick-ask-action',
+);
+const developerFeedbackQuickAskQuestionKey = Key(
+  'developer-feedback-quick-ask-question',
+);
+const developerFeedbackQuickAskSubmitKey = Key(
+  'developer-feedback-quick-ask-submit',
+);
+const developerFeedbackQuickAskAnswerKey = Key(
+  'developer-feedback-quick-ask-answer',
+);
 const developerFeedbackCommentActionKey = Key(
   'developer-feedback-comment-action',
 );
@@ -192,6 +204,9 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
                 bottom: safePadding.bottom + 128,
                 child: _SelectionActions(
                   onComment: () => _openFeedbackDialog(List.of(_drawing)),
+                  onQuickAsk: widget.bridgeUrl.trim().isEmpty
+                      ? null
+                      : () => _openQuickAskDialog(List.of(_drawing)),
                   onReset: _resetDrawing,
                 ),
               ),
@@ -376,6 +391,192 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
         _drawing = <Offset>[];
         _selectionReady = false;
       });
+    }
+  }
+
+  Future<void> _openQuickAskDialog(List<Offset> points) async {
+    if (points.isEmpty || widget.bridgeUrl.trim().isEmpty) return;
+    final screenshotPngBase64 = await _captureMarkedScreenshot(points);
+    if (!mounted) return;
+    final controller = TextEditingController();
+    var sending = false;
+    String? answer;
+    String? error;
+    setState(() => _dialogOpen = true);
+    await showDialog<void>(
+      context: widget.navigatorKey?.currentContext ?? context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          return AlertDialog(
+            title: const Text('Pregunta rápida'),
+            content: SizedBox(
+              width: math.min(
+                520.0,
+                math.max(0.0, MediaQuery.sizeOf(context).width - 48),
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: <Widget>[
+                  TextField(
+                    key: developerFeedbackQuickAskQuestionKey,
+                    controller: controller,
+                    enabled: !sending,
+                    minLines: 2,
+                    maxLines: 4,
+                    decoration: const InputDecoration(
+                      labelText: 'Pregunta',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  if (error != null) ...<Widget>[
+                    const SizedBox(height: 12),
+                    Text(
+                      error!,
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.error,
+                      ),
+                    ),
+                  ],
+                  if (answer != null) ...<Widget>[
+                    const SizedBox(height: 12),
+                    SelectableText(
+                      answer!,
+                      key: developerFeedbackQuickAskAnswerKey,
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            actions: <Widget>[
+              TextButton(
+                onPressed: sending ? null : () => Navigator.of(context).pop(),
+                child: const Text('Cerrar'),
+              ),
+              FilledButton.icon(
+                key: developerFeedbackQuickAskSubmitKey,
+                onPressed: sending
+                    ? null
+                    : () async {
+                        final question = controller.text.trim();
+                        if (question.isEmpty) return;
+                        setDialogState(() {
+                          sending = true;
+                          error = null;
+                          answer = null;
+                        });
+                        try {
+                          final result = await _submitQuickAsk(
+                            question: question,
+                            screenshotPngBase64: screenshotPngBase64,
+                            points: points,
+                          );
+                          if (!context.mounted) return;
+                          setDialogState(() {
+                            answer = result;
+                            sending = false;
+                          });
+                        } catch (_) {
+                          if (!context.mounted) return;
+                          setDialogState(() {
+                            error = 'No se pudo responder la pregunta.';
+                            sending = false;
+                          });
+                        }
+                      },
+                icon: sending
+                    ? const SizedBox.square(
+                        dimension: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.help_outline),
+                label: Text(sending ? 'Consultando' : 'Preguntar'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+    controller.dispose();
+    if (mounted) {
+      setState(() {
+        _dialogOpen = false;
+        _drawing = <Offset>[];
+        _selectionReady = false;
+      });
+    }
+  }
+
+  Future<String> _submitQuickAsk({
+    required String question,
+    required String screenshotPngBase64,
+    required List<Offset> points,
+  }) async {
+    final baseUrl = widget.bridgeUrl.trim().replaceAll(RegExp(r'/$'), '');
+    final ownsClient = widget.httpClient == null;
+    final client = widget.httpClient ?? http.Client();
+    final quickAskItem = DeveloperFeedbackItem(
+      id: 'quick-ask',
+      createdAt: DateTime.now().toUtc(),
+      sourceApp: widget.sourceApp,
+      sourceDisplayName: widget.sourceDisplayName,
+      comment: question,
+      screenshotPngBase64: screenshotPngBase64,
+      selectionPoints: points,
+      audio: null,
+    );
+    try {
+      final response = await client.post(
+        Uri.parse('$baseUrl/feedback-quick-asks/ask'),
+        headers: const <String, String>{'Content-Type': 'application/json'},
+        body: jsonEncode(<String, Object?>{
+          'sourceApp': widget.sourceApp,
+          if (widget.sourceDisplayName.trim().isNotEmpty)
+            'sourceDisplayName': widget.sourceDisplayName,
+          'question': question,
+          'screenshotMimeType': 'image/png',
+          'screenshotPngBase64': screenshotPngBase64,
+          'selectionPoints': points
+              .map((point) => <String, double>{'x': point.dx, 'y': point.dy})
+              .toList(),
+          'selectionBounds': quickAskItem.selectionBounds,
+        }),
+      );
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw Exception('HTTP ${response.statusCode}: ${response.body}');
+      }
+      final accepted = jsonDecode(response.body) as Map<String, Object?>;
+      final quickAskId = (accepted['quick_ask_id'] as String?)?.trim();
+      if (quickAskId == null || quickAskId.isEmpty) {
+        throw Exception('Missing quick_ask_id');
+      }
+      for (var attempt = 0; attempt < 20; attempt += 1) {
+        final statusResponse = await client.get(
+          Uri.parse('$baseUrl/feedback-quick-asks/$quickAskId'),
+        );
+        if (statusResponse.statusCode < 200 ||
+            statusResponse.statusCode >= 300) {
+          throw Exception(
+            'HTTP ${statusResponse.statusCode}: ${statusResponse.body}',
+          );
+        }
+        final status = jsonDecode(statusResponse.body) as Map<String, Object?>;
+        final state = (status['status'] as String?)?.trim();
+        if (state == 'completed') {
+          final answer = (status['answer'] as String?)?.trim();
+          if (answer == null || answer.isEmpty) {
+            throw Exception('Quick ask completed without answer');
+          }
+          return answer;
+        }
+        if (state == 'failed') {
+          throw Exception(status['status_detail'] ?? 'Quick ask failed');
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 250));
+      }
+      throw Exception('Quick ask timed out');
+    } finally {
+      if (ownsClient) client.close();
     }
   }
 
@@ -1359,9 +1560,14 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
 }
 
 class _SelectionActions extends StatelessWidget {
-  const _SelectionActions({required this.onComment, required this.onReset});
+  const _SelectionActions({
+    required this.onComment,
+    required this.onQuickAsk,
+    required this.onReset,
+  });
 
   final VoidCallback onComment;
+  final VoidCallback? onQuickAsk;
   final VoidCallback onReset;
 
   @override
@@ -1386,6 +1592,13 @@ class _SelectionActions extends StatelessWidget {
                 icon: const Icon(Icons.refresh),
                 label: const Text('Rehacer'),
               ),
+              if (onQuickAsk != null)
+                FilledButton.icon(
+                  key: developerFeedbackQuickAskActionKey,
+                  onPressed: onQuickAsk,
+                  icon: const Icon(Icons.help_outline),
+                  label: const Text('Preguntar'),
+                ),
               FilledButton.icon(
                 key: developerFeedbackCommentActionKey,
                 onPressed: onComment,

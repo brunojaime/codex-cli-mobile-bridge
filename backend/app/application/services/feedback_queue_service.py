@@ -214,6 +214,105 @@ class FeedbackBatchRecord:
         }
 
 
+@dataclass(slots=True)
+class FeedbackQuickAskRecord:
+    id: str
+    source_app: str
+    source_display_name: str | None
+    created_at: str
+    question: str
+    screenshot_mime_type: str = "image/png"
+    screenshot_file: str | None = None
+    selection_points: list[dict[str, float]] = field(default_factory=list)
+    selection_bounds: dict[str, float] = field(default_factory=dict)
+    job_id: str | None = None
+    session_id: str | None = None
+    workspace_path: str | None = None
+    message: str | None = None
+    answer: str | None = None
+    answered_at: str | None = None
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "FeedbackQuickAskRecord":
+        return cls(
+            id=str(payload["id"]),
+            source_app=str(payload.get("source_app") or "unknown"),
+            source_display_name=(
+                str(payload["source_display_name"])
+                if payload.get("source_display_name") is not None
+                else None
+            ),
+            created_at=str(payload.get("created_at") or ""),
+            question=str(payload.get("question") or ""),
+            screenshot_mime_type=str(
+                payload.get("screenshot_mime_type") or "image/png"
+            ),
+            screenshot_file=(
+                str(payload["screenshot_file"])
+                if payload.get("screenshot_file") is not None
+                else None
+            ),
+            selection_points=list(payload.get("selection_points") or []),
+            selection_bounds=dict(payload.get("selection_bounds") or {}),
+            job_id=(
+                str(payload["job_id"])
+                if payload.get("job_id") is not None
+                else None
+            ),
+            session_id=(
+                str(payload["session_id"])
+                if payload.get("session_id") is not None
+                else None
+            ),
+            workspace_path=(
+                str(payload["workspace_path"])
+                if payload.get("workspace_path") is not None
+                else None
+            ),
+            message=(
+                str(payload["message"])
+                if payload.get("message") is not None
+                else None
+            ),
+            answer=(
+                str(payload["answer"])
+                if payload.get("answer") is not None
+                else None
+            ),
+            answered_at=(
+                str(payload["answered_at"])
+                if payload.get("answered_at") is not None
+                else None
+            ),
+        )
+
+    def to_dict(self, *, include_image: bool = False) -> dict[str, Any]:
+        data: dict[str, Any] = {
+            "id": self.id,
+            "source_app": self.source_app,
+            "source_display_name": self.source_display_name,
+            "created_at": self.created_at,
+            "question": self.question,
+            "screenshot_mime_type": self.screenshot_mime_type,
+            "has_screenshot": self.screenshot_file is not None,
+            "selection_points": self.selection_points,
+            "selection_bounds": self.selection_bounds,
+            "job_id": self.job_id,
+            "session_id": self.session_id,
+            "workspace_path": self.workspace_path,
+            "message": self.message,
+            "answer": self.answer,
+            "answered_at": self.answered_at,
+        }
+        if include_image and self.screenshot_file:
+            path = Path(self.screenshot_file)
+            if path.exists():
+                data["screenshot_png_base64"] = base64.b64encode(
+                    path.read_bytes()
+                ).decode("ascii")
+        return data
+
+
 class FeedbackQueueService:
     def __init__(self, queue_path: str, image_dir: str, audio_dir: str) -> None:
         self._queue_path = Path(queue_path)
@@ -246,6 +345,12 @@ class FeedbackQueueService:
             if record.id == batch_id:
                 return record
         raise KeyError(batch_id)
+
+    def get_quick_ask(self, quick_ask_id: str) -> FeedbackQuickAskRecord:
+        for record in self._load_quick_asks():
+            if record.id == quick_ask_id:
+                return record
+        raise KeyError(quick_ask_id)
 
     def get_item(self, item_id: str, *, include_image: bool = False) -> FeedbackQueueItem:
         for item in self._load_items(include_images=include_image):
@@ -353,6 +458,77 @@ class FeedbackQueueService:
         records.append(record)
         self._save_batches(records)
         return record
+
+    def create_quick_ask_record(
+        self,
+        *,
+        quick_ask_id: str | None,
+        source_app: str,
+        source_display_name: str | None,
+        question: str,
+        screenshot_mime_type: str,
+        screenshot_png_base64: str,
+        selection_points: list[dict[str, float]],
+        selection_bounds: dict[str, float],
+        job_id: str,
+        session_id: str,
+        workspace_path: str | None,
+        message: str,
+    ) -> FeedbackQuickAskRecord:
+        record_id = quick_ask_id or f"feedback-quick-ask-{uuid4().hex}"
+        image_path = self._store_screenshot(record_id, screenshot_png_base64)
+        now = datetime.now(UTC).isoformat()
+        record = FeedbackQuickAskRecord(
+            id=record_id,
+            source_app=source_app or "unknown",
+            source_display_name=source_display_name,
+            created_at=now,
+            question=question,
+            screenshot_mime_type=screenshot_mime_type or "image/png",
+            screenshot_file=str(image_path) if image_path else None,
+            selection_points=selection_points,
+            selection_bounds=selection_bounds,
+            job_id=job_id,
+            session_id=session_id,
+            workspace_path=workspace_path,
+            message=message,
+        )
+        records = [
+            existing for existing in self._load_quick_asks() if existing.id != record.id
+        ]
+        records.append(record)
+        self._save_quick_asks(records)
+        return record
+
+    def set_quick_ask_answer(
+        self,
+        quick_ask_id: str,
+        answer: str | None,
+    ) -> FeedbackQuickAskRecord:
+        now = datetime.now(UTC).isoformat()
+        records = self._load_quick_asks()
+        for index, record in enumerate(records):
+            if record.id == quick_ask_id:
+                records[index] = FeedbackQuickAskRecord(
+                    id=record.id,
+                    source_app=record.source_app,
+                    source_display_name=record.source_display_name,
+                    created_at=record.created_at,
+                    question=record.question,
+                    screenshot_mime_type=record.screenshot_mime_type,
+                    screenshot_file=record.screenshot_file,
+                    selection_points=record.selection_points,
+                    selection_bounds=record.selection_bounds,
+                    job_id=record.job_id,
+                    session_id=record.session_id,
+                    workspace_path=record.workspace_path,
+                    message=record.message,
+                    answer=answer,
+                    answered_at=now if answer else None,
+                )
+                self._save_quick_asks(records)
+                return records[index]
+        raise KeyError(quick_ask_id)
 
     def set_batch_summary(self, batch_id: str, summary: str) -> FeedbackBatchRecord:
         now = datetime.now(UTC).isoformat()
@@ -588,14 +764,33 @@ class FeedbackQueueService:
         payload["batches"] = [record.to_dict() for record in records]
         self._save_payload(payload)
 
+    def _load_quick_asks(self) -> list[FeedbackQuickAskRecord]:
+        payload = self._load_payload()
+        return [
+            FeedbackQuickAskRecord.from_dict(record)
+            for record in payload.get("quick_asks", [])
+            if isinstance(record, dict)
+        ]
+
+    def _save_quick_asks(self, records: list[FeedbackQuickAskRecord]) -> None:
+        payload = self._load_payload()
+        payload["version"] = max(int(payload.get("version") or 1), 2)
+        payload["quick_asks"] = [
+            record.to_dict(include_image=False)
+            | {"screenshot_file": record.screenshot_file}
+            for record in records
+        ]
+        self._save_payload(payload)
+
     def _load_payload(self) -> dict[str, Any]:
         if not self._queue_path.exists():
-            return {"version": 2, "items": [], "batches": []}
+            return {"version": 2, "items": [], "batches": [], "quick_asks": []}
         payload = json.loads(self._queue_path.read_text(encoding="utf-8"))
         if not isinstance(payload, dict):
-            return {"version": 2, "items": [], "batches": []}
+            return {"version": 2, "items": [], "batches": [], "quick_asks": []}
         payload.setdefault("items", [])
         payload.setdefault("batches", [])
+        payload.setdefault("quick_asks", [])
         return payload
 
     def _save_payload(self, payload: dict[str, Any]) -> None:

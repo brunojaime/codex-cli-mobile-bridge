@@ -40,6 +40,9 @@ from backend.app.api.schemas import (
     AppUpdateResponse,
     FeedbackBatchStartRequest,
     FeedbackBatchStatusResponse,
+    FeedbackQuickAskAcceptedResponse,
+    FeedbackQuickAskRequest,
+    FeedbackQuickAskResponse,
     FeedbackQueueItemRequest,
     FeedbackQueueItemResponse,
     FeedbackQueueStartRequest,
@@ -550,13 +553,30 @@ def _feedback_batch_workspace_path(
     item_payloads: list[dict],
     container: AppContainer,
 ) -> str | None:
-    explicit_workspace_path = (payload.workspace_path or "").strip()
+    return _feedback_workspace_path_for_source(
+        source_app=payload.sourceApp,
+        source_display_name=payload.sourceDisplayName,
+        workspace_path=payload.workspace_path,
+        item_payloads=item_payloads,
+        container=container,
+    )
+
+
+def _feedback_workspace_path_for_source(
+    *,
+    source_app: str | None,
+    source_display_name: str | None,
+    workspace_path: str | None,
+    item_payloads: list[dict],
+    container: AppContainer,
+) -> str | None:
+    explicit_workspace_path = (workspace_path or "").strip()
     if explicit_workspace_path:
         return explicit_workspace_path
 
     candidates = [
-        payload.sourceApp,
-        payload.sourceDisplayName,
+        source_app,
+        source_display_name,
     ]
     for item_payload in item_payloads:
         candidates.extend(
@@ -1225,6 +1245,191 @@ async def update_feedback_batch_notification(
         raise HTTPException(status_code=404, detail="Feedback batch not found.") from exc
 
     return await _feedback_batch_status_response(record, container=container)
+
+
+@router.post(
+    "/feedback-quick-asks/ask",
+    response_model=FeedbackQuickAskAcceptedResponse,
+    status_code=202,
+)
+async def ask_feedback_quick_question(
+    payload: FeedbackQuickAskRequest,
+    container: AppContainer = Depends(get_container),
+) -> FeedbackQuickAskAcceptedResponse:
+    _validate_feedback_base64(
+        payload.screenshotPngBase64,
+        field_name="screenshotPngBase64",
+        item_index=1,
+    )
+    workspace_path = _feedback_workspace_path_for_source(
+        source_app=payload.sourceApp,
+        source_display_name=payload.sourceDisplayName,
+        workspace_path=payload.workspace_path,
+        item_payloads=[],
+        container=container,
+    )
+    source_label = _feedback_source_label(
+        source_display_name=payload.sourceDisplayName,
+        source_app=payload.sourceApp,
+        workspace_path=workspace_path,
+    )
+    message = _feedback_quick_ask_prompt(
+        source_label=source_label,
+        question=payload.question,
+        selection_bounds=payload.selectionBounds,
+    )
+    suffix = _IMAGE_CONTENT_TYPE_SUFFIXES.get(payload.screenshotMimeType, ".png")
+    temp_image_path: Path | None = None
+    should_cleanup_temp_image = True
+    try:
+        with NamedTemporaryFile(delete=False, suffix=suffix) as temp_image:
+            temp_image.write(base64.b64decode(payload.screenshotPngBase64))
+            temp_image_path = Path(temp_image.name)
+        codex_options = await _validate_codex_options(
+            payload.codex_options.to_domain()
+            if payload.codex_options is not None
+            else None,
+            container=container,
+        )
+        job = await run_in_threadpool(
+            container.message_service.submit_attachment_message,
+            [
+                AttachmentInput(
+                    path=str(temp_image_path),
+                    filename=f"quick-ask{suffix}",
+                    content_type=payload.screenshotMimeType,
+                )
+            ],
+            message=message,
+            session_id=payload.session_id,
+            workspace_path=workspace_path,
+            codex_options=codex_options,
+        )
+        should_cleanup_temp_image = False
+        record = await run_in_threadpool(
+            container.feedback_queue_service.create_quick_ask_record,
+            quick_ask_id=None,
+            source_app=payload.sourceApp,
+            source_display_name=payload.sourceDisplayName,
+            question=payload.question,
+            screenshot_mime_type=payload.screenshotMimeType,
+            screenshot_png_base64=payload.screenshotPngBase64,
+            selection_points=[
+                point.model_dump() for point in payload.selectionPoints
+            ],
+            selection_bounds=payload.selectionBounds,
+            job_id=job.id,
+            session_id=job.session_id,
+            workspace_path=workspace_path,
+            message=message,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except UnsupportedDocumentError as exc:
+        raise HTTPException(status_code=415, detail=str(exc)) from exc
+    finally:
+        if should_cleanup_temp_image and temp_image_path is not None:
+            temp_image_path.unlink(missing_ok=True)
+
+    return FeedbackQuickAskAcceptedResponse.from_domain(
+        job,
+        quick_ask_id=record.id,
+    )
+
+
+@router.get(
+    "/feedback-quick-asks/{quick_ask_id}",
+    response_model=FeedbackQuickAskResponse,
+)
+async def get_feedback_quick_ask(
+    quick_ask_id: str,
+    container: AppContainer = Depends(get_container),
+) -> FeedbackQuickAskResponse:
+    try:
+        record = await run_in_threadpool(
+            container.feedback_queue_service.get_quick_ask,
+            quick_ask_id,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Quick ask not found.") from exc
+
+    return await _feedback_quick_ask_response(record, container=container)
+
+
+def _feedback_quick_ask_prompt(
+    *,
+    source_label: str,
+    question: str,
+    selection_bounds: dict[str, float],
+) -> str:
+    return (
+        f"Quick ask about a selected {source_label} screen area.\n\n"
+        "Answer-only instructions:\n"
+        "- Do not edit files.\n"
+        "- Do not implement changes.\n"
+        "- Do not run commands or tools that modify files.\n"
+        "- Explain what may be happening.\n"
+        "- Be concise but useful.\n"
+        "- Suggest likely causes.\n"
+        "- Suggest possible next steps without executing them.\n\n"
+        f"Question: {question}\n"
+        f"Selection bounds: {selection_bounds}"
+    )
+
+
+async def _feedback_quick_ask_response(
+    record,
+    *,
+    container: AppContainer,
+) -> FeedbackQuickAskResponse:
+    job: Job | None = None
+    status = "pending"
+    status_detail: str | None = None
+    answer = record.answer
+    answered_at = record.answered_at
+    run_id: str | None = None
+    if record.job_id:
+        job = await run_in_threadpool(container.message_service.get_job, record.job_id)
+        if job is None:
+            status = "failed"
+            status_detail = "Linked job was not found."
+        elif job.status == JobStatus.COMPLETED:
+            status = "completed"
+            answer = job.response or answer
+            run_id = job.run_id
+            if answer and answer != record.answer:
+                record = await run_in_threadpool(
+                    container.feedback_queue_service.set_quick_ask_answer,
+                    record.id,
+                    answer,
+                )
+                answered_at = record.answered_at
+        elif job.status == JobStatus.FAILED:
+            status = "failed"
+            status_detail = job.error or "Quick ask failed."
+            run_id = job.run_id
+        else:
+            status = "running"
+            run_id = job.run_id
+    return FeedbackQuickAskResponse(
+        quick_ask_id=record.id,
+        source_app=record.source_app,
+        source_display_name=record.source_display_name,
+        question=record.question,
+        status=status,
+        status_detail=status_detail,
+        answer=answer,
+        answered_at=answered_at,
+        screenshot_mime_type=record.screenshot_mime_type,
+        has_screenshot=record.screenshot_file is not None,
+        selection_points=record.selection_points,
+        selection_bounds=record.selection_bounds,
+        job_id=record.job_id,
+        session_id=record.session_id,
+        run_id=run_id,
+        workspace_path=record.workspace_path,
+        created_at=record.created_at,
+    )
 
 
 def _feedback_source_label(

@@ -551,6 +551,95 @@ void main() {
     expect(item['hasAudio'], isFalse);
   });
 
+  testWidgets(
+    'quick ask posts selection and displays answer without batch send',
+    (tester) async {
+      final requestedPaths = <String>[];
+      Map<String, Object?>? postedJson;
+      final client = MockClient((request) async {
+        requestedPaths.add('${request.method} ${request.url.path}');
+        if (request.url.path == '/feedback-batches') {
+          return http.Response('[]', 200);
+        }
+        if (request.url.path == '/feedback-quick-asks/ask') {
+          postedJson = jsonDecode(request.body) as Map<String, Object?>;
+          return http.Response(
+            jsonEncode(<String, Object?>{
+              'quick_ask_id': 'quick-ask-1',
+              'job_id': 'job-quick-ask',
+              'session_id': 'session-quick-ask',
+              'status': 'pending',
+              'agent_id': 'generator',
+              'agent_type': 'generator',
+            }),
+            202,
+          );
+        }
+        if (request.url.path == '/feedback-quick-asks/quick-ask-1') {
+          return http.Response(
+            jsonEncode(<String, Object?>{
+              'quick_ask_id': 'quick-ask-1',
+              'source_app': 'fixture-app',
+              'question': 'Why disabled?',
+              'status': 'completed',
+              'answer': 'The button is likely waiting for a required field.',
+              'screenshot_mime_type': 'image/png',
+              'has_screenshot': true,
+              'selection_points': <Object?>[],
+              'selection_bounds': <String, double>{
+                'left': 1,
+                'top': 2,
+                'width': 3,
+                'height': 4,
+              },
+              'job_id': 'job-quick-ask',
+              'session_id': 'session-quick-ask',
+              'created_at': '2026-06-11T00:00:00+00:00',
+            }),
+            200,
+          );
+        }
+        return http.Response('not found', 404);
+      });
+
+      await tester.pumpWidget(
+        _Harness(
+          enabled: true,
+          bridgeUrl: 'http://bridge.local',
+          httpClient: client,
+        ),
+      );
+
+      await tester.tap(find.byKey(developerFeedbackSwitchKey));
+      await tester.pump();
+      await _drawFeedbackSelection(tester);
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(developerFeedbackQuickAskActionKey));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(developerFeedbackQuickAskQuestionKey),
+        'Why disabled?',
+      );
+      await tester.tap(find.byKey(developerFeedbackQuickAskSubmitKey));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.text('The button is likely waiting for a required field.'),
+        findsOneWidget,
+      );
+      expect(postedJson?['question'], 'Why disabled?');
+      expect(postedJson?['screenshotPngBase64'], isA<String>());
+      expect(postedJson?['selectionBounds'], isA<Map<String, Object?>>());
+      expect(requestedPaths, contains('POST /feedback-quick-asks/ask'));
+      expect(requestedPaths, contains('GET /feedback-quick-asks/quick-ask-1'));
+      expect(
+        requestedPaths,
+        isNot(contains('POST /feedback-batches/start-session')),
+      );
+      expect(find.byKey(developerFeedbackPendingKey), findsNothing);
+    },
+  );
+
   testWidgets('bridge batch status is visible and refreshable', (tester) async {
     final requestedPaths = <String>[];
     final client = MockClient((request) async {

@@ -210,6 +210,81 @@ class FeedbackBatchStartRequest(BaseModel):
     codex_options: "CodexRunOptionsRequest | None" = None
 
 
+class FeedbackQuickAskRequest(BaseModel):
+    sourceApp: str = Field(
+        default="unknown",
+        max_length=120,
+        validation_alias=AliasChoices("sourceApp", "source_app"),
+    )
+    sourceDisplayName: str | None = Field(
+        default=None,
+        max_length=160,
+        validation_alias=AliasChoices("sourceDisplayName", "source_display_name"),
+    )
+    question: str = Field(..., min_length=1, max_length=4000)
+    screenshotMimeType: str = Field(
+        default="image/png",
+        max_length=80,
+        validation_alias=AliasChoices("screenshotMimeType", "screenshot_mime_type"),
+    )
+    screenshotPngBase64: str = Field(
+        ...,
+        validation_alias=AliasChoices("screenshotPngBase64", "screenshot_png_base64"),
+    )
+    selectionPoints: list[FeedbackPointRequest] = Field(default_factory=list)
+    selectionBounds: dict[str, float] = Field(default_factory=dict)
+    session_id: str | None = None
+    workspace_path: str | None = None
+    codex_options: "CodexRunOptionsRequest | None" = None
+
+
+class FeedbackQuickAskAcceptedResponse(BaseModel):
+    job_id: str
+    session_id: str
+    status: JobStatus
+    provider_session_id: str | None = None
+    agent_id: AgentId
+    agent_type: AgentType
+    quick_ask_id: str
+
+    @classmethod
+    def from_domain(
+        cls,
+        job: Job,
+        *,
+        quick_ask_id: str,
+    ) -> "FeedbackQuickAskAcceptedResponse":
+        return cls(
+            job_id=job.id,
+            session_id=job.session_id,
+            status=job.status,
+            provider_session_id=job.provider_session_id,
+            agent_id=job.agent_id,
+            agent_type=job.agent_type,
+            quick_ask_id=quick_ask_id,
+        )
+
+
+class FeedbackQuickAskResponse(BaseModel):
+    quick_ask_id: str
+    source_app: str
+    source_display_name: str | None = None
+    question: str
+    status: str
+    status_detail: str | None = None
+    answer: str | None = None
+    answered_at: str | None = None
+    screenshot_mime_type: str
+    has_screenshot: bool
+    selection_points: list[dict[str, float]] = Field(default_factory=list)
+    selection_bounds: dict[str, float] = Field(default_factory=dict)
+    job_id: str | None = None
+    session_id: str | None = None
+    run_id: str | None = None
+    workspace_path: str | None = None
+    created_at: str
+
+
 class CodexRunOptionsRequest(BaseModel):
     profile: str | None = Field(default=None, max_length=120)
     search_enabled: bool = False

@@ -7024,6 +7024,84 @@ def test_feedback_batch_start_session_accepts_fallback_preset_aliases(
     assert client.get("/feedback-queue").json()[0]["status"] == "submitted"
 
 
+def test_feedback_quick_ask_uses_answer_only_prompt_and_persists(
+    tmp_path: Path,
+) -> None:
+    client = build_feedback_queue_client(tmp_path)
+
+    ask_response = client.post(
+        "/feedback-quick-asks/ask",
+        json={
+            "sourceApp": "fixture-app",
+            "sourceDisplayName": "Fixture App",
+            "question": "Why is this button disabled?",
+            "screenshotPngBase64": base64.b64encode(b"quick png").decode(
+                "ascii"
+            ),
+            "selectionBounds": {
+                "left": 10,
+                "top": 20,
+                "width": 30,
+                "height": 40,
+            },
+        },
+    )
+
+    assert ask_response.status_code == 202
+    accepted = ask_response.json()
+    assert accepted["quick_ask_id"]
+    job = wait_for_job(client, accepted["job_id"])
+    assert job["status"] == "completed"
+    assert "Quick ask about a selected Fixture App screen area." in job["message"]
+    assert "Answer-only instructions:" in job["message"]
+    assert "Do not edit files." in job["message"]
+    assert "Do not implement changes." in job["message"]
+    assert "Why is this button disabled?" in job["message"]
+    assert "Selection bounds: {'left': 10.0, 'top': 20.0" in job["message"]
+
+    status_response = client.get(
+        f"/feedback-quick-asks/{accepted['quick_ask_id']}"
+    )
+
+    assert status_response.status_code == 200
+    status = status_response.json()
+    assert status["quick_ask_id"] == accepted["quick_ask_id"]
+    assert status["status"] == "completed"
+    assert status["answer"]
+    assert status["answered_at"]
+    assert status["source_app"] == "fixture-app"
+    assert status["has_screenshot"] is True
+    assert status["selection_bounds"] == {
+        "left": 10,
+        "top": 20,
+        "width": 30,
+        "height": 40,
+    }
+
+    stored = json.loads((tmp_path / "feedback_queue.json").read_text())
+    assert stored["batches"] == []
+    assert len(stored["quick_asks"]) == 1
+    assert stored["quick_asks"][0]["answer"] == status["answer"]
+
+
+def test_feedback_quick_ask_rejects_invalid_screenshot_base64(
+    tmp_path: Path,
+) -> None:
+    client = build_feedback_queue_client(tmp_path)
+
+    ask_response = client.post(
+        "/feedback-quick-asks/ask",
+        json={
+            "sourceApp": "fixture-app",
+            "question": "What is this?",
+            "screenshotPngBase64": "not-base64!",
+        },
+    )
+
+    assert ask_response.status_code == 422
+    assert "invalid screenshotPngBase64" in ask_response.json()["detail"]
+
+
 def test_feedback_batch_start_session_is_atomic_when_later_item_has_no_screenshot(
     tmp_path: Path,
 ) -> None:
