@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:codex_app_updater/codex_app_updater.dart';
 import 'package:codex_mobile_frontend/main.dart';
 import 'package:codex_mobile_frontend/src/models/agent_configuration.dart';
 import 'package:codex_mobile_frontend/src/models/agent_profile.dart';
@@ -38,6 +39,52 @@ void main() {
     expect(find.byIcon(Icons.mic_rounded), findsOneWidget);
     expect(find.byIcon(Icons.upload_file_outlined), findsNothing);
     expect(find.byIcon(Icons.download_for_offline_outlined), findsNothing);
+  });
+
+  testWidgets('app updater uses shared banner when enabled', (tester) async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    final controller = CodexAppUpdaterController(
+      httpClient: MockClient(
+        (_) async => http.Response(
+          jsonEncode({
+            'kind': 'codex.appUpdate',
+            'version': 1,
+            'sourceApp': 'codex-mobile',
+            'displayName': 'Codex Mobile Bridge',
+            'platform': 'android',
+            'currentVersion': '1.0.0',
+            'currentBuild': 35,
+            'latestVersion': '1.0.0',
+            'latestBuild': 36,
+            'releaseTag': 'android-v1.0.0-build.36',
+            'releaseUrl': 'https://example.test/release',
+            'apkUrl': 'https://example.test/codex-mobile.apk',
+            'apkAssetName': 'codex-mobile.apk',
+            'required': false,
+            'available': true,
+          }),
+          200,
+        ),
+      ),
+    );
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(
+      CodexMobileApp(
+        initialApiBaseUrl: 'http://localhost:8000',
+        appUpdaterController: controller,
+        appUpdaterBridgeUrl: 'https://bridge.test',
+        appUpdaterEnabled: true,
+        appVersion: '1.0.0',
+        appBuild: 35,
+      ),
+    );
+    await tester.pump();
+
+    expect(controller.status, CodexAppUpdateStatus.updateAvailable);
+    expect(find.byKey(codexAppUpdaterBannerKey), findsOneWidget);
+    expect(find.text('Actualización disponible'), findsOneWidget);
+    expect(find.byKey(codexAppUpdaterUpdateButtonKey), findsOneWidget);
   });
 
   testWidgets('collapses secondary app bar actions on narrow screens', (
