@@ -26,6 +26,7 @@ class FeedbackQueueItem:
     audio_duration_ms: int | None = None
     audio_byte_length: int | None = None
     audio_file: str | None = None
+    audio_transcript: str | None = None
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "FeedbackQueueItem":
@@ -70,6 +71,11 @@ class FeedbackQueueItem:
                 if payload.get("audio_file") is not None
                 else None
             ),
+            audio_transcript=(
+                str(payload["audio_transcript"])
+                if payload.get("audio_transcript") is not None
+                else None
+            ),
         )
 
     def to_dict(self, *, include_image: bool = False) -> dict[str, Any]:
@@ -88,6 +94,7 @@ class FeedbackQueueItem:
             "audio_duration_ms": self.audio_duration_ms,
             "audio_byte_length": self.audio_byte_length,
             "has_audio": self.audio_file is not None or bool(self.audio_byte_length),
+            "audio_transcript": self.audio_transcript,
         }
         if include_image and self.screenshot_file:
             path = Path(self.screenshot_file)
@@ -173,11 +180,42 @@ class FeedbackQueueService:
                 or (audio_path.stat().st_size if audio_path else None)
             ),
             audio_file=str(audio_path) if audio_path else None,
+            audio_transcript=payload.get("audioTranscript")
+            or payload.get("audio_transcript"),
         )
         items = [existing for existing in self._load_items() if existing.id != item.id]
         items.append(item)
         self._save_items(items)
         return item
+
+    def set_audio_transcript(
+        self,
+        item_id: str,
+        transcript: str | None,
+    ) -> FeedbackQueueItem:
+        items = self._load_items()
+        for index, item in enumerate(items):
+            if item.id == item_id:
+                items[index] = FeedbackQueueItem(
+                    id=item.id,
+                    source_app=item.source_app,
+                    source_display_name=item.source_display_name,
+                    comment=item.comment,
+                    created_at=item.created_at,
+                    status=item.status,
+                    screenshot_mime_type=item.screenshot_mime_type,
+                    screenshot_file=item.screenshot_file,
+                    selection_points=item.selection_points,
+                    selection_bounds=item.selection_bounds,
+                    audio_mime_type=item.audio_mime_type,
+                    audio_duration_ms=item.audio_duration_ms,
+                    audio_byte_length=item.audio_byte_length,
+                    audio_file=item.audio_file,
+                    audio_transcript=transcript,
+                )
+                self._save_items(items)
+                return items[index]
+        raise KeyError(item_id)
 
     def mark_submitted(self, item_id: str) -> FeedbackQueueItem:
         items = self._load_items()
@@ -198,6 +236,7 @@ class FeedbackQueueService:
                     audio_duration_ms=item.audio_duration_ms,
                     audio_byte_length=item.audio_byte_length,
                     audio_file=item.audio_file,
+                    audio_transcript=item.audio_transcript,
                 )
                 self._save_items(items)
                 return items[index]

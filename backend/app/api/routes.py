@@ -637,6 +637,50 @@ def _feedback_audio_note(item) -> str:
     return ""
 
 
+async def _feedback_audio_prompt_note(
+    item,
+    *,
+    container: AppContainer,
+) -> str:
+    audio_note = _feedback_audio_note(item)
+    if not item.audio_file:
+        return audio_note
+
+    try:
+        transcript = (
+            await run_in_threadpool(
+                container.audio_transcriber.transcribe,
+                Path(item.audio_file),
+                filename=Path(item.audio_file).name,
+                content_type=item.audio_mime_type,
+            )
+        ).strip()
+    except AudioTranscriptionUnavailableError:
+        return (
+            f"{audio_note}\nAudio transcript unavailable; "
+            "using audio metadata only."
+        )
+    except AudioTranscriptionError as exc:
+        return (
+            f"{audio_note}\nAudio transcript failed: {exc}; "
+            "using audio metadata only."
+        )
+
+    if not transcript:
+        return (
+            f"{audio_note}\nAudio transcript unavailable; "
+            "transcriber returned empty text."
+        )
+
+    await run_in_threadpool(
+        container.feedback_queue_service.set_audio_transcript,
+        item.id,
+        transcript,
+    )
+    item.audio_transcript = transcript
+    return f"{audio_note}\nAudio transcript: {transcript}"
+
+
 def _validate_feedback_base64(value: str, *, field_name: str, item_index: int) -> None:
     try:
         base64.b64decode(value, validate=True)
@@ -927,11 +971,12 @@ async def start_feedback_batch_session(
             target_session_id = session.id
         item_sections = []
         for index, item in enumerate(stored_items, start=1):
+            audio_note = await _feedback_audio_prompt_note(item, container=container)
             item_sections.append(
                 f"Item {index} ({item.id}):\n"
                 f"Feedback: {item.comment}\n"
                 f"Selection bounds: {item.selection_bounds}"
-                f"{_feedback_audio_note(item)}"
+                f"{audio_note}"
             )
         release_note = (
             _feedback_release_instruction(includes_reviewer=preset.includes_reviewer)

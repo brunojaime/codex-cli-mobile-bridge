@@ -70,6 +70,7 @@ def build_test_client() -> TestClient:
         execution_timeout_seconds=10,
         poll_interval_seconds=0,
         audio_transcription_backend="auto",
+        speech_synthesis_backend="disabled",
     )
     app = create_app(settings)
     return TestClient(app)
@@ -600,6 +601,8 @@ def build_feedback_queue_client(
     *,
     feedback_source_workspace_aliases: str = "",
     projects_root: Path | str = "..",
+    audio_transcription_backend: str = "auto",
+    audio_transcription_command: str = "",
 ) -> TestClient:
     settings = Settings(
         codex_command=(
@@ -610,7 +613,8 @@ def build_feedback_queue_client(
         chat_store_backend="memory",
         execution_timeout_seconds=10,
         poll_interval_seconds=0,
-        audio_transcription_backend="auto",
+        audio_transcription_backend=audio_transcription_backend,
+        audio_transcription_command=audio_transcription_command,
         feedback_queue_path=str(data_dir / "feedback_queue.json"),
         feedback_image_dir=str(data_dir / "feedback_images"),
         feedback_audio_dir=str(data_dir / "feedback_audio"),
@@ -6505,6 +6509,122 @@ def test_feedback_batch_start_session_accepts_multiple_items_and_release(
     assert "02-feedback-batch-2.png" in job["response"]
     queued = client.get("/feedback-queue").json()
     assert [item["status"] for item in queued] == ["submitted", "submitted"]
+
+
+def test_feedback_batch_start_session_transcribes_audio_items(
+    tmp_path: Path,
+) -> None:
+    client = build_feedback_queue_client(
+        tmp_path,
+        audio_transcription_backend="command",
+        audio_transcription_command=(
+            "python3 tests/fixtures/fake_transcriber.py {filename} {file}"
+        ),
+    )
+
+    start_response = client.post(
+        "/feedback-batches/start-session",
+        json={
+            "sourceApp": "fixture-app",
+            "workflowPresetId": "default",
+            "items": [
+                {
+                    "id": "feedback-transcribed-audio",
+                    "comment": "Use the spoken detail",
+                    "screenshotPngBase64": base64.b64encode(b"fake png").decode(
+                        "ascii"
+                    ),
+                    "audioMimeType": "audio/webm",
+                    "audioDurationMs": 900,
+                    "audioByteLength": 2,
+                    "audioBase64": base64.b64encode(b"\x01\x02").decode("ascii"),
+                }
+            ],
+        },
+    )
+
+    assert start_response.status_code == 202
+    job = wait_for_job(client, start_response.json()["job_id"])
+    assert job["status"] == "completed"
+    assert "Audio attached: audio/webm, 900 ms, 2 bytes." in job["message"]
+    assert (
+        "Audio transcript: Transcribed audio from feedback-transcribed-audio.webm"
+        in job["message"]
+    )
+    queued = client.get("/feedback-queue").json()
+    assert queued[0]["audio_transcript"] == (
+        "Transcribed audio from feedback-transcribed-audio.webm"
+    )
+
+
+def test_feedback_batch_start_session_keeps_audio_metadata_when_transcriber_disabled(
+    tmp_path: Path,
+) -> None:
+    client = build_feedback_queue_client(
+        tmp_path,
+        audio_transcription_backend="disabled",
+    )
+
+    start_response = client.post(
+        "/feedback-batches/start-session",
+        json={
+            "sourceApp": "fixture-app",
+            "workflowPresetId": "default",
+            "items": [
+                {
+                    "id": "feedback-disabled-transcriber",
+                    "comment": "Use metadata if transcript is unavailable",
+                    "screenshotPngBase64": base64.b64encode(b"fake png").decode(
+                        "ascii"
+                    ),
+                    "audioMimeType": "audio/webm",
+                    "audioDurationMs": 1100,
+                    "audioByteLength": 3,
+                    "audioBase64": base64.b64encode(b"\x01\x02\x03").decode(
+                        "ascii"
+                    ),
+                }
+            ],
+        },
+    )
+
+    assert start_response.status_code == 202
+    job = wait_for_job(client, start_response.json()["job_id"])
+    assert job["status"] == "completed"
+    assert "Audio attached: audio/webm, 1100 ms, 3 bytes." in job["message"]
+    assert "Audio transcript unavailable; using audio metadata only." in job[
+        "message"
+    ]
+    queued = client.get("/feedback-queue").json()
+    assert queued[0]["audio_transcript"] is None
+
+
+def test_feedback_batch_start_session_rejects_invalid_audio_base64(
+    tmp_path: Path,
+) -> None:
+    client = build_feedback_queue_client(tmp_path)
+
+    start_response = client.post(
+        "/feedback-batches/start-session",
+        json={
+            "sourceApp": "fixture-app",
+            "workflowPresetId": "default",
+            "items": [
+                {
+                    "id": "feedback-invalid-audio",
+                    "comment": "Invalid audio",
+                    "screenshotPngBase64": base64.b64encode(b"fake png").decode(
+                        "ascii"
+                    ),
+                    "audioBase64": "not-base64!",
+                }
+            ],
+        },
+    )
+
+    assert start_response.status_code == 422
+    assert "invalid audioBase64" in start_response.json()["detail"]
+    assert client.get("/feedback-queue").json() == []
 
 
 def test_feedback_batch_start_session_resolves_workspace_from_source_app(

@@ -90,6 +90,7 @@ class FeedbackQueueItemRequest(BaseModel):
     audioDurationMs: int | None = None
     audioByteLength: int | None = None
     audioBase64: str | None = None
+    audioTranscript: str | None = Field(default=None, max_length=20000)
 
 
 class FeedbackQueueItemResponse(BaseModel):
@@ -109,6 +110,7 @@ class FeedbackQueueItemResponse(BaseModel):
     audio_byte_length: int | None = None
     has_audio: bool = False
     audio_base64: str | None = None
+    audio_transcript: str | None = None
 
 
 class FeedbackQueueStartRequest(BaseModel):
