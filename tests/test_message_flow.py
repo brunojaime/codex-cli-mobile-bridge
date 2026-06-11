@@ -6508,6 +6508,10 @@ def test_feedback_batch_start_session_accepts_multiple_items_and_release(
                         "width": 3,
                         "height": 4,
                     },
+                    "contextMetadata": {
+                        "screenName": "order-detail",
+                        "orderId": "order-1",
+                    },
                 },
                 {
                     "id": "feedback-batch-2",
@@ -6544,6 +6548,9 @@ def test_feedback_batch_start_session_accepts_multiple_items_and_release(
     assert "Batch size: 2 feedback items." in job["message"]
     assert "Fix the first card" in job["message"]
     assert "Fix the second card" in job["message"]
+    assert "Screen/context metadata: {'screenName': 'order-detail'" in job[
+        "message"
+    ]
     assert "Audio attached: audio/webm, 800 ms, 2 bytes." in job["message"]
     assert "Release instruction: after implementation and validation complete" in job[
         "message"
@@ -7059,6 +7066,10 @@ def test_feedback_quick_ask_uses_answer_only_prompt_and_persists(
                 "width": 30,
                 "height": 40,
             },
+            "contextMetadata": {
+                "screenName": "order-detail",
+                "orderId": "order-123",
+            },
         },
     )
 
@@ -7076,6 +7087,9 @@ def test_feedback_quick_ask_uses_answer_only_prompt_and_persists(
     assert "Do not implement changes." in job["message"]
     assert "Why is this button disabled?" in job["message"]
     assert "Selection bounds: {'left': 10.0, 'top': 20.0" in job["message"]
+    assert "Screen/context metadata: {'screenName': 'order-detail'" in job[
+        "message"
+    ]
 
     status_response = client.get(
         f"/feedback-quick-asks/{accepted['quick_ask_id']}"
@@ -7099,11 +7113,17 @@ def test_feedback_quick_ask_uses_answer_only_prompt_and_persists(
     assert status["provenance"]["quickAskId"] == accepted["quick_ask_id"]
     assert status["provenance"]["sourceApp"] == "fixture-app"
     assert status["provenance"]["selectionBounds"] == status["selection_bounds"]
+    assert status["context_metadata"] == {
+        "screenName": "order-detail",
+        "orderId": "order-123",
+    }
+    assert status["provenance"]["contextMetadata"] == status["context_metadata"]
 
     stored = json.loads((tmp_path / "feedback_queue.json").read_text())
     assert stored["batches"] == []
     assert len(stored["quick_asks"]) == 1
     assert stored["quick_asks"][0]["answer"] == status["answer"]
+    assert stored["quick_asks"][0]["context_metadata"] == status["context_metadata"]
 
 
 def test_feedback_quick_ask_rejects_invalid_screenshot_base64(
@@ -7202,6 +7222,7 @@ def test_feedback_batch_can_act_from_quick_ask_reference(tmp_path: Path) -> None
                 "width": 10,
                 "height": 11,
             },
+            "contextMetadata": {"screenName": "order-detail"},
         },
     )
     accepted = ask_response.json()
@@ -7226,6 +7247,9 @@ def test_feedback_batch_can_act_from_quick_ask_reference(tmp_path: Path) -> None
     assert f"- Quick ask id: {accepted['quick_ask_id']}" in job["message"]
     assert "- Original question: Why is this title clipped?" in job["message"]
     assert "- Prior answer: " in job["message"]
+    assert "- Original screen/context metadata: {'screenName': 'order-detail'}" in job[
+        "message"
+    ]
     assert "Quick ask about a selected Fixture App screen area." in job["message"]
     assert "Act from quick ask" in job["message"]
     assert "Release instruction: after implementation and validation complete" in job[

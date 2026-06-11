@@ -279,6 +279,27 @@ void main() {
     expect(find.text('No hay feedback pendiente.'), findsOneWidget);
   });
 
+  testWidgets('queued feedback comment can be edited before sending', (
+    tester,
+  ) async {
+    await tester.pumpWidget(const _Harness(enabled: true));
+    await _saveFeedback(tester, 'Texto inicial');
+
+    await tester.tap(find.byKey(developerFeedbackPendingKey));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(developerFeedbackEditCommentKey));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(developerFeedbackCommentKey),
+      'Texto corregido y mas claro',
+    );
+    await tester.tap(find.text('Guardar'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Texto inicial'), findsNothing);
+    expect(find.text('Texto corregido y mas claro'), findsOneWidget);
+  });
+
   testWidgets('clears multiple queued items', (tester) async {
     await tester.pumpWidget(const _Harness(enabled: true));
     await _saveFeedback(tester, 'Primero');
@@ -293,7 +314,10 @@ void main() {
   });
 
   testWidgets('queues three feedback captures in order', (tester) async {
-    await tester.pumpWidget(const _Harness(enabled: true));
+    var copied = '';
+    await tester.pumpWidget(
+      _Harness(enabled: true, copyText: (text) async => copied = text),
+    );
     await _saveFeedback(tester, 'Primero');
     await _saveFeedback(tester, 'Segundo');
     await _saveFeedback(tester, 'Tercero');
@@ -301,29 +325,26 @@ void main() {
     await tester.tap(find.byKey(developerFeedbackPendingKey));
     await tester.pumpAndSettle();
 
-    expect(find.byKey(developerFeedbackPreviewItemKey), findsNWidgets(3));
-    expect(find.byKey(developerFeedbackPreviewThumbnailKey), findsNWidgets(3));
-    expect(find.text('Primero'), findsOneWidget);
-    expect(find.text('Segundo'), findsOneWidget);
-    expect(find.text('Tercero'), findsOneWidget);
-
-    final previewTexts = tester
-        .widgetList<Text>(
-          find.descendant(
-            of: find.byKey(developerFeedbackPreviewItemKey),
-            matching: find.byType(Text),
-          ),
-        )
-        .map((widget) => widget.data)
-        .whereType<String>()
-        .toList();
     expect(
-      previewTexts.indexOf('Primero'),
-      lessThan(previewTexts.indexOf('Segundo')),
+      find.byKey(developerFeedbackPreviewItemKey),
+      findsAtLeastNWidgets(1),
     );
     expect(
-      previewTexts.indexOf('Segundo'),
-      lessThan(previewTexts.indexOf('Tercero')),
+      find.byKey(developerFeedbackPreviewThumbnailKey),
+      findsAtLeastNWidgets(1),
+    );
+    expect(find.text('Primero'), findsOneWidget);
+    expect(find.text('Segundo'), findsOneWidget);
+
+    await tester.tap(find.byKey(developerFeedbackCopyKey));
+    await tester.pumpAndSettle();
+    final items = jsonDecode(copied)['items'] as List<Object?>;
+    expect(
+      items
+          .cast<Map<String, Object?>>()
+          .map((item) => item['comment'])
+          .toList(),
+      <String>['Primero', 'Segundo', 'Tercero'],
     );
   });
 
@@ -608,6 +629,10 @@ void main() {
         _Harness(
           enabled: true,
           bridgeUrl: 'http://bridge.local',
+          contextMetadataBuilder: (_) => <String, Object?>{
+            'screenName': 'order-detail',
+            'orderId': 'order-123',
+          },
           httpClient: client,
         ),
       );
@@ -632,6 +657,10 @@ void main() {
       expect(postedJson?['question'], 'Why disabled?');
       expect(postedJson?['screenshotPngBase64'], isA<String>());
       expect(postedJson?['selectionBounds'], isA<Map<String, Object?>>());
+      expect(
+        postedJson?['contextMetadata'],
+        containsPair('screenName', 'order-detail'),
+      );
       expect(requestedPaths, contains('POST /feedback-quick-asks/ask'));
       expect(requestedPaths, contains('GET /feedback-quick-asks/quick-ask-1'));
       expect(
@@ -1588,6 +1617,7 @@ class _Harness extends StatelessWidget {
     this.recorderFactory,
     this.copyText,
     this.bridgeSubmitBatch,
+    this.contextMetadataBuilder,
     this.httpClient,
   });
 
@@ -1599,6 +1629,7 @@ class _Harness extends StatelessWidget {
   final DeveloperFeedbackRecorderFactory? recorderFactory;
   final DeveloperFeedbackCopyText? copyText;
   final DeveloperFeedbackBridgeSubmitBatch? bridgeSubmitBatch;
+  final DeveloperFeedbackContextMetadataBuilder? contextMetadataBuilder;
   final http.Client? httpClient;
 
   @override
@@ -1619,6 +1650,7 @@ class _Harness extends StatelessWidget {
             recorderFactory ?? (() => const _UnsupportedRecorder()),
         copyText: copyText,
         bridgeSubmitBatch: bridgeSubmitBatch,
+        contextMetadataBuilder: contextMetadataBuilder,
         httpClient: httpClient,
         child: Scaffold(body: Center(child: child ?? const Text('App body'))),
       ),

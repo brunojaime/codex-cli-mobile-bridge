@@ -6,6 +6,7 @@ import re
 from collections.abc import Iterator
 from pathlib import Path
 from tempfile import NamedTemporaryFile
+from typing import Any
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile, WebSocket
 from fastapi.concurrency import run_in_threadpool
@@ -658,6 +659,12 @@ def _feedback_audio_note(item) -> str:
     return ""
 
 
+def _feedback_context_note(context_metadata: dict[str, Any] | None) -> str:
+    if not context_metadata:
+        return ""
+    return f"\nScreen/context metadata: {context_metadata}"
+
+
 async def _feedback_audio_prompt_note(
     item,
     *,
@@ -855,7 +862,8 @@ def _quick_ask_batch_context(record) -> str:
         f"- Quick ask id: {record.id}\n"
         f"- Original question: {record.question}\n"
         f"- Prior answer: {answer}\n"
-        f"- Original selection bounds: {record.selection_bounds}\n\n"
+        f"- Original selection bounds: {record.selection_bounds}\n"
+        f"- Original screen/context metadata: {record.context_metadata}\n\n"
     )
 
 
@@ -992,6 +1000,7 @@ async def start_feedback_queue_session(
         f"Run target: {target_instruction}\n"
         f"Feedback: {item.comment}\n"
         f"Selection bounds: {item.selection_bounds}"
+        f"{_feedback_context_note(item.context_metadata)}"
         f"{audio_note}"
     )
     should_cleanup_temp_image = True
@@ -1057,6 +1066,7 @@ async def start_feedback_batch_session(
             "screenshotPngBase64": screenshot_base64,
             "selectionPoints": quick_ask_record.selection_points,
             "selectionBounds": quick_ask_record.selection_bounds,
+            "contextMetadata": quick_ask_record.context_metadata,
         }
     if not payload.items:
         if quick_ask_item_payload is None:
@@ -1190,6 +1200,7 @@ async def start_feedback_batch_session(
                 f"Item {index} ({item.id}):\n"
                 f"Feedback: {item.comment}\n"
                 f"Selection bounds: {item.selection_bounds}"
+                f"{_feedback_context_note(item.context_metadata)}"
                 f"{audio_note}"
             )
         release_note = (
@@ -1352,6 +1363,7 @@ async def ask_feedback_quick_question(
         source_label=source_label,
         question=payload.question,
         selection_bounds=payload.selectionBounds,
+        context_metadata=payload.contextMetadata,
     )
     suffix = _IMAGE_CONTENT_TYPE_SUFFIXES.get(payload.screenshotMimeType, ".png")
     temp_image_path: Path | None = None
@@ -1393,6 +1405,7 @@ async def ask_feedback_quick_question(
                 point.model_dump() for point in payload.selectionPoints
             ],
             selection_bounds=payload.selectionBounds,
+            context_metadata=payload.contextMetadata,
             job_id=job.id,
             session_id=job.session_id,
             workspace_path=workspace_path,
@@ -1458,6 +1471,7 @@ def _feedback_quick_ask_prompt(
     source_label: str,
     question: str,
     selection_bounds: dict[str, float],
+    context_metadata: dict[str, Any],
 ) -> str:
     return (
         f"Quick ask about a selected {source_label} screen area.\n\n"
@@ -1471,6 +1485,7 @@ def _feedback_quick_ask_prompt(
         "- Suggest possible next steps without executing them.\n\n"
         f"Question: {question}\n"
         f"Selection bounds: {selection_bounds}"
+        f"{_feedback_context_note(context_metadata)}"
     )
 
 
@@ -1526,6 +1541,7 @@ async def _feedback_quick_ask_response(
         else None,
         selection_points=record.selection_points,
         selection_bounds=record.selection_bounds,
+        context_metadata=record.context_metadata,
         job_id=record.job_id,
         jobId=record.job_id,
         session_id=record.session_id,
@@ -1539,6 +1555,7 @@ async def _feedback_quick_ask_response(
             "sourceDisplayName": record.source_display_name,
             "selectionPoints": record.selection_points,
             "selectionBounds": record.selection_bounds,
+            "contextMetadata": record.context_metadata,
             "jobId": record.job_id,
             "sessionId": record.session_id,
             "runId": run_id,

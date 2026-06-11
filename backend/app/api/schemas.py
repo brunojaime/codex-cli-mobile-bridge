@@ -86,6 +86,10 @@ class FeedbackQueueItemRequest(BaseModel):
     screenshotPngBase64: str | None = None
     selectionPoints: list[FeedbackPointRequest] = Field(default_factory=list)
     selectionBounds: dict[str, float] = Field(default_factory=dict)
+    contextMetadata: dict[str, Any] = Field(
+        default_factory=dict,
+        validation_alias=AliasChoices("contextMetadata", "context_metadata"),
+    )
     audioMimeType: str | None = Field(default=None, max_length=80)
     audioDurationMs: int | None = None
     audioByteLength: int | None = None
@@ -105,6 +109,7 @@ class FeedbackQueueItemResponse(BaseModel):
     screenshot_png_base64: str | None = None
     selection_points: list[dict[str, float]] = Field(default_factory=list)
     selection_bounds: dict[str, float] = Field(default_factory=dict)
+    context_metadata: dict[str, Any] = Field(default_factory=dict)
     audio_mime_type: str | None = None
     audio_duration_ms: int | None = None
     audio_byte_length: int | None = None
@@ -243,6 +248,10 @@ class FeedbackQuickAskRequest(BaseModel):
     )
     selectionPoints: list[FeedbackPointRequest] = Field(default_factory=list)
     selectionBounds: dict[str, float] = Field(default_factory=dict)
+    contextMetadata: dict[str, Any] = Field(
+        default_factory=dict,
+        validation_alias=AliasChoices("contextMetadata", "context_metadata"),
+    )
     session_id: str | None = None
     workspace_path: str | None = None
     codex_options: "CodexRunOptionsRequest | None" = None
@@ -296,6 +305,7 @@ class FeedbackQuickAskResponse(BaseModel):
     screenshot_png_base64: str | None = None
     selection_points: list[dict[str, float]] = Field(default_factory=list)
     selection_bounds: dict[str, float] = Field(default_factory=dict)
+    context_metadata: dict[str, Any] = Field(default_factory=dict)
     job_id: str | None = None
     jobId: str | None = None
     session_id: str | None = None

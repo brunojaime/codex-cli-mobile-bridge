@@ -22,6 +22,7 @@ class FeedbackQueueItem:
     screenshot_file: str | None = None
     selection_points: list[dict[str, float]] = field(default_factory=list)
     selection_bounds: dict[str, float] = field(default_factory=dict)
+    context_metadata: dict[str, Any] = field(default_factory=dict)
     audio_mime_type: str | None = None
     audio_duration_ms: int | None = None
     audio_byte_length: int | None = None
@@ -51,6 +52,7 @@ class FeedbackQueueItem:
             ),
             selection_points=list(payload.get("selection_points") or []),
             selection_bounds=dict(payload.get("selection_bounds") or {}),
+            context_metadata=dict(payload.get("context_metadata") or {}),
             audio_mime_type=(
                 str(payload["audio_mime_type"])
                 if payload.get("audio_mime_type") is not None
@@ -90,6 +92,7 @@ class FeedbackQueueItem:
             "has_screenshot": self.screenshot_file is not None,
             "selection_points": self.selection_points,
             "selection_bounds": self.selection_bounds,
+            "context_metadata": self.context_metadata,
             "audio_mime_type": self.audio_mime_type,
             "audio_duration_ms": self.audio_duration_ms,
             "audio_byte_length": self.audio_byte_length,
@@ -232,6 +235,7 @@ class FeedbackQuickAskRecord:
     screenshot_file: str | None = None
     selection_points: list[dict[str, float]] = field(default_factory=list)
     selection_bounds: dict[str, float] = field(default_factory=dict)
+    context_metadata: dict[str, Any] = field(default_factory=dict)
     job_id: str | None = None
     session_id: str | None = None
     workspace_path: str | None = None
@@ -261,6 +265,7 @@ class FeedbackQuickAskRecord:
             ),
             selection_points=list(payload.get("selection_points") or []),
             selection_bounds=dict(payload.get("selection_bounds") or {}),
+            context_metadata=dict(payload.get("context_metadata") or {}),
             job_id=(
                 str(payload["job_id"])
                 if payload.get("job_id") is not None
@@ -304,6 +309,7 @@ class FeedbackQuickAskRecord:
             "has_screenshot": self.screenshot_file is not None,
             "selection_points": self.selection_points,
             "selection_bounds": self.selection_bounds,
+            "context_metadata": self.context_metadata,
             "job_id": self.job_id,
             "session_id": self.session_id,
             "workspace_path": self.workspace_path,
@@ -421,6 +427,9 @@ class FeedbackQueueService:
             selection_bounds=dict(
                 payload.get("selectionBounds") or payload.get("selection_bounds") or {}
             ),
+            context_metadata=dict(
+                payload.get("contextMetadata") or payload.get("context_metadata") or {}
+            ),
             audio_mime_type=payload.get("audioMimeType")
             or payload.get("audio_mime_type"),
             audio_duration_ms=payload.get("audioDurationMs")
@@ -494,6 +503,7 @@ class FeedbackQueueService:
         screenshot_png_base64: str,
         selection_points: list[dict[str, float]],
         selection_bounds: dict[str, float],
+        context_metadata: dict[str, Any],
         job_id: str,
         session_id: str,
         workspace_path: str | None,
@@ -512,6 +522,7 @@ class FeedbackQueueService:
             screenshot_file=str(image_path) if image_path else None,
             selection_points=selection_points,
             selection_bounds=selection_bounds,
+            context_metadata=context_metadata,
             job_id=job_id,
             session_id=session_id,
             workspace_path=workspace_path,
@@ -543,6 +554,7 @@ class FeedbackQueueService:
                     screenshot_file=record.screenshot_file,
                     selection_points=record.selection_points,
                     selection_bounds=record.selection_bounds,
+                    context_metadata=record.context_metadata,
                     job_id=record.job_id,
                     session_id=record.session_id,
                     workspace_path=record.workspace_path,
@@ -670,6 +682,7 @@ class FeedbackQueueService:
                     screenshot_file=item.screenshot_file,
                     selection_points=item.selection_points,
                     selection_bounds=item.selection_bounds,
+                    context_metadata=item.context_metadata,
                     audio_mime_type=item.audio_mime_type,
                     audio_duration_ms=item.audio_duration_ms,
                     audio_byte_length=item.audio_byte_length,
@@ -695,6 +708,7 @@ class FeedbackQueueService:
                     screenshot_file=item.screenshot_file,
                     selection_points=item.selection_points,
                     selection_bounds=item.selection_bounds,
+                    context_metadata=item.context_metadata,
                     audio_mime_type=item.audio_mime_type,
                     audio_duration_ms=item.audio_duration_ms,
                     audio_byte_length=item.audio_byte_length,

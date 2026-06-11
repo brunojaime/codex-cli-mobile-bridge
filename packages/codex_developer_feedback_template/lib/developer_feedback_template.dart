@@ -19,6 +19,8 @@ typedef DeveloperFeedbackBridgeSubmit =
     Future<void> Function(DeveloperFeedbackItem item);
 typedef DeveloperFeedbackBridgeSubmitBatch =
     Future<void> Function(DeveloperFeedbackBatch batch);
+typedef DeveloperFeedbackContextMetadataBuilder =
+    Map<String, Object?> Function(BuildContext context);
 
 const developerFeedbackTemplateEnabled =
     bool.fromEnvironment('CODEX_FEEDBACK_TEMPLATE_ENABLED') ||
@@ -51,6 +53,10 @@ const developerFeedbackReleaseWhenCompleteKey = Key(
 );
 const developerFeedbackSendBatchKey = Key('developer-feedback-send-batch');
 const developerFeedbackPreviewItemKey = Key('developer-feedback-preview-item');
+const developerFeedbackPreviewCommentKey = Key(
+  'developer-feedback-preview-comment',
+);
+const developerFeedbackEditCommentKey = Key('developer-feedback-edit-comment');
 const developerFeedbackPreviewThumbnailKey = Key(
   'developer-feedback-preview-thumbnail',
 );
@@ -130,6 +136,7 @@ class DeveloperFeedbackTemplate extends StatefulWidget {
     this.copyText,
     this.bridgeSubmit,
     this.bridgeSubmitBatch,
+    this.contextMetadataBuilder,
     this.httpClient,
     super.key,
   });
@@ -145,6 +152,7 @@ class DeveloperFeedbackTemplate extends StatefulWidget {
   final DeveloperFeedbackCopyText? copyText;
   final DeveloperFeedbackBridgeSubmit? bridgeSubmit;
   final DeveloperFeedbackBridgeSubmitBatch? bridgeSubmitBatch;
+  final DeveloperFeedbackContextMetadataBuilder? contextMetadataBuilder;
   final http.Client? httpClient;
 
   @override
@@ -165,6 +173,7 @@ class CodexDeveloperFeedbackTemplate extends DeveloperFeedbackTemplate {
     super.copyText,
     super.bridgeSubmit,
     super.bridgeSubmitBatch,
+    super.contextMetadataBuilder,
     super.httpClient,
     super.key,
   });
@@ -392,6 +401,7 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
             screenshotPngBase64: screenshotPngBase64,
             selectionPoints: points,
             audio: draft.audio,
+            contextMetadata: _currentContextMetadata(),
           );
           setState(() {
             _items.add(item);
@@ -493,6 +503,13 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
                             answer = result;
                             sending = false;
                           });
+                        } on _QuickAskPendingException {
+                          if (!context.mounted) return;
+                          setDialogState(() {
+                            error =
+                                'La pregunta quedo enviada. Abrí Preguntas rápidas para ver la respuesta.';
+                            sending = false;
+                          });
                         } catch (_) {
                           if (!context.mounted) return;
                           setDialogState(() {
@@ -541,6 +558,7 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
       screenshotPngBase64: screenshotPngBase64,
       selectionPoints: points,
       audio: null,
+      contextMetadata: _currentContextMetadata(),
     );
     try {
       final response = await client.post(
@@ -557,6 +575,7 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
               .map((point) => <String, double>{'x': point.dx, 'y': point.dy})
               .toList(),
           'selectionBounds': quickAskItem.selectionBounds,
+          'contextMetadata': quickAskItem.contextMetadata,
         }),
       );
       if (response.statusCode < 200 || response.statusCode >= 300) {
@@ -570,7 +589,7 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
       if (quickAskId == null || quickAskId.isEmpty) {
         throw Exception('Missing quick_ask_id');
       }
-      for (var attempt = 0; attempt < 20; attempt += 1) {
+      for (var attempt = 0; attempt < 120; attempt += 1) {
         final statusResponse = await client.get(
           Uri.parse('$baseUrl/feedback-quick-asks/$quickAskId'),
         );
@@ -594,10 +613,29 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
         }
         await Future<void>.delayed(const Duration(milliseconds: 250));
       }
-      throw Exception('Quick ask timed out');
+      throw _QuickAskPendingException(quickAskId);
     } finally {
       if (ownsClient) client.close();
     }
+  }
+
+  Map<String, Object?> _currentContextMetadata() {
+    final contextForMetadata = widget.navigatorKey?.currentContext ?? context;
+    final media = MediaQuery.maybeOf(contextForMetadata);
+    final route = ModalRoute.of(contextForMetadata);
+    final metadata = <String, Object?>{
+      if ((route?.settings.name ?? '').trim().isNotEmpty)
+        'routeName': route!.settings.name,
+      if (media != null) ...<String, Object?>{
+        'screenWidth': media.size.width,
+        'screenHeight': media.size.height,
+        'devicePixelRatio': media.devicePixelRatio,
+        'orientation': media.orientation.name,
+      },
+    };
+    final extra = widget.contextMetadataBuilder?.call(contextForMetadata);
+    if (extra != null) metadata.addAll(extra);
+    return _jsonSafeMetadata(metadata);
   }
 
   Future<String> _captureMarkedScreenshot(List<Offset> points) async {
@@ -804,75 +842,118 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
                         ConstrainedBox(
                           constraints: BoxConstraints(
                             maxHeight: math.min(
-                              320.0,
-                              MediaQuery.sizeOf(context).height * 0.45,
+                              240.0,
+                              MediaQuery.sizeOf(context).height * 0.32,
                             ),
                           ),
                           child: ListView.separated(
                             shrinkWrap: true,
+                            cacheExtent: 1000,
                             itemCount: _items.length,
                             separatorBuilder: (_, _) =>
                                 const Divider(height: 20),
                             itemBuilder: (context, index) {
                               final item = _items[index];
-                              return Row(
+                              return Container(
                                 key: developerFeedbackPreviewItemKey,
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: <Widget>[
-                                  _FeedbackPreviewThumbnail(item: item),
-                                  const SizedBox(width: 12),
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: <Widget>[
-                                        Text(
-                                          item.comment,
-                                          maxLines: 2,
-                                          overflow: TextOverflow.ellipsis,
-                                        ),
-                                        const SizedBox(height: 4),
-                                        Text(
-                                          _formatSelectionBounds(
-                                            item.selectionBounds,
+                                padding: const EdgeInsets.all(10),
+                                decoration: BoxDecoration(
+                                  border: Border.all(
+                                    color: Theme.of(
+                                      context,
+                                    ).colorScheme.outlineVariant,
+                                  ),
+                                  borderRadius: BorderRadius.circular(8),
+                                  color: Theme.of(
+                                    context,
+                                  ).colorScheme.surfaceContainerHighest,
+                                ),
+                                child: Row(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: <Widget>[
+                                    _FeedbackPreviewThumbnail(item: item),
+                                    const SizedBox(width: 12),
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: <Widget>[
+                                          SelectableText(
+                                            item.comment,
+                                            key:
+                                                developerFeedbackPreviewCommentKey,
+                                            maxLines: 4,
+                                            style: Theme.of(
+                                              context,
+                                            ).textTheme.bodyMedium,
                                           ),
-                                          key:
-                                              developerFeedbackPreviewBoundsKey,
-                                          maxLines: 2,
-                                          overflow: TextOverflow.ellipsis,
-                                          style: Theme.of(
-                                            context,
-                                          ).textTheme.bodySmall,
+                                          const SizedBox(height: 8),
+                                          Wrap(
+                                            spacing: 8,
+                                            runSpacing: 4,
+                                            children: <Widget>[
+                                              _PreviewMetaChip(
+                                                key:
+                                                    developerFeedbackPreviewBoundsKey,
+                                                icon: Icons.crop_free,
+                                                label: _formatSelectionBounds(
+                                                  item.selectionBounds,
+                                                ),
+                                              ),
+                                              _PreviewMetaChip(
+                                                key:
+                                                    developerFeedbackPreviewAudioKey,
+                                                icon: item.audio == null
+                                                    ? Icons.mic_off_outlined
+                                                    : Icons.mic_none_outlined,
+                                                label: _formatAudioSummary(
+                                                  item.audio,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                    Column(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: <Widget>[
+                                        IconButton(
+                                          key: developerFeedbackEditCommentKey,
+                                          tooltip: 'Editar comentario',
+                                          onPressed: sending
+                                              ? null
+                                              : () async {
+                                                  await _editQueuedComment(
+                                                    item,
+                                                  );
+                                                  if (context.mounted) {
+                                                    setDialogState(() {});
+                                                  }
+                                                },
+                                          icon: const Icon(Icons.edit_outlined),
                                         ),
-                                        const SizedBox(height: 2),
-                                        Text(
-                                          _formatAudioSummary(item.audio),
-                                          key: developerFeedbackPreviewAudioKey,
-                                          maxLines: 2,
-                                          overflow: TextOverflow.ellipsis,
-                                          style: Theme.of(
-                                            context,
-                                          ).textTheme.bodySmall,
+                                        IconButton(
+                                          tooltip: 'Eliminar',
+                                          onPressed: sending
+                                              ? null
+                                              : () {
+                                                  setState(() {
+                                                    _items.remove(item);
+                                                    if (_items.isEmpty) {
+                                                      _pendingQuickAskId = null;
+                                                    }
+                                                  });
+                                                  setDialogState(() {});
+                                                },
+                                          icon: const Icon(
+                                            Icons.delete_outline,
+                                          ),
                                         ),
                                       ],
                                     ),
-                                  ),
-                                  IconButton(
-                                    tooltip: 'Eliminar',
-                                    onPressed: sending
-                                        ? null
-                                        : () {
-                                            setState(() {
-                                              _items.remove(item);
-                                              if (_items.isEmpty) {
-                                                _pendingQuickAskId = null;
-                                              }
-                                            });
-                                            setDialogState(() {});
-                                          },
-                                    icon: const Icon(Icons.delete_outline),
-                                  ),
-                                ],
+                                  ],
+                                ),
                               );
                             },
                           ),
@@ -1042,6 +1123,19 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
         },
       ),
     );
+  }
+
+  Future<void> _editQueuedComment(DeveloperFeedbackItem item) async {
+    final updated = await showDialog<String>(
+      context: widget.navigatorKey?.currentContext ?? context,
+      builder: (context) =>
+          _EditFeedbackCommentDialog(initialComment: item.comment),
+    );
+    if (updated == null || updated == item.comment || !mounted) return;
+    setState(() {
+      final index = _items.indexWhere((candidate) => candidate.id == item.id);
+      if (index != -1) _items[index] = item.copyWith(comment: updated);
+    });
   }
 
   void _openRunsDialog() {
@@ -2343,6 +2437,60 @@ class _FeedbackDialogState extends State<_FeedbackDialog> {
   }
 }
 
+class _EditFeedbackCommentDialog extends StatefulWidget {
+  const _EditFeedbackCommentDialog({required this.initialComment});
+
+  final String initialComment;
+
+  @override
+  State<_EditFeedbackCommentDialog> createState() =>
+      _EditFeedbackCommentDialogState();
+}
+
+class _EditFeedbackCommentDialogState
+    extends State<_EditFeedbackCommentDialog> {
+  late final TextEditingController _controller = TextEditingController(
+    text: widget.initialComment,
+  );
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Editar comentario'),
+      content: TextField(
+        key: developerFeedbackCommentKey,
+        controller: _controller,
+        minLines: 3,
+        maxLines: 8,
+        decoration: const InputDecoration(
+          labelText: 'Comentario',
+          border: OutlineInputBorder(),
+        ),
+      ),
+      actions: <Widget>[
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancelar'),
+        ),
+        FilledButton(
+          onPressed: () {
+            final value = _controller.text.trim();
+            if (value.isEmpty) return;
+            Navigator.of(context).pop(value);
+          },
+          child: const Text('Guardar'),
+        ),
+      ],
+    );
+  }
+}
+
 class _FeedbackPreviewThumbnail extends StatelessWidget {
   const _FeedbackPreviewThumbnail({required this.item});
 
@@ -2365,6 +2513,40 @@ class _FeedbackPreviewThumbnail extends StatelessWidget {
           alignment: Alignment.center,
           child: const Icon(Icons.broken_image_outlined),
         ),
+      ),
+    );
+  }
+}
+
+class _PreviewMetaChip extends StatelessWidget {
+  const _PreviewMetaChip({required this.icon, required this.label, super.key});
+
+  final IconData icon;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(6),
+        color: theme.colorScheme.surface,
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          Icon(icon, size: 14, color: theme.colorScheme.onSurfaceVariant),
+          const SizedBox(width: 4),
+          Flexible(
+            child: Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: theme.textTheme.labelSmall,
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -2689,6 +2871,7 @@ class DeveloperFeedbackItem {
     required this.screenshotPngBase64,
     required this.selectionPoints,
     required this.audio,
+    this.contextMetadata = const <String, Object?>{},
   });
 
   final String id;
@@ -2699,8 +2882,26 @@ class DeveloperFeedbackItem {
   final String screenshotPngBase64;
   final List<Offset> selectionPoints;
   final DeveloperFeedbackAudioClip? audio;
+  final Map<String, Object?> contextMetadata;
 
   Map<String, double> get selectionBounds => _selectionBounds(selectionPoints);
+
+  DeveloperFeedbackItem copyWith({
+    String? comment,
+    Map<String, Object?>? contextMetadata,
+  }) {
+    return DeveloperFeedbackItem(
+      id: id,
+      createdAt: createdAt,
+      sourceApp: sourceApp,
+      sourceDisplayName: sourceDisplayName,
+      comment: comment ?? this.comment,
+      screenshotPngBase64: screenshotPngBase64,
+      selectionPoints: selectionPoints,
+      audio: audio,
+      contextMetadata: contextMetadata ?? this.contextMetadata,
+    );
+  }
 
   Map<String, Object?> toJson() {
     final bounds = _selectionBounds(selectionPoints);
@@ -2722,6 +2923,7 @@ class DeveloperFeedbackItem {
           .map((point) => <String, double>{'x': point.dx, 'y': point.dy})
           .toList(),
       'selectionBounds': bounds,
+      if (contextMetadata.isNotEmpty) 'contextMetadata': contextMetadata,
       'hasAudio': hasAudioBytes,
       if (audio != null) 'audioMimeType': audio!.mimeType,
       if (audio != null) 'audioDurationMs': audio!.durationMs,
@@ -2749,6 +2951,7 @@ class DeveloperFeedbackItem {
           .map((point) => <String, double>{'x': point.dx, 'y': point.dy})
           .toList(),
       'selectionBounds': selectionBounds,
+      if (contextMetadata.isNotEmpty) 'contextMetadata': contextMetadata,
       'hasAudio': hasAudioBytes,
       if (audio != null) 'audioMimeType': audio!.mimeType,
       if (audio != null) 'audioDurationMs': audio!.durationMs,
@@ -2799,6 +3002,47 @@ String _formatAudioSummary(DeveloperFeedbackAudioClip? audio) {
   if (audio == null) return 'Audio: sin adjunto';
   return 'Audio: ${audio.durationMs} ms, ${audio.bytes.length} bytes, '
       '${audio.mimeType}';
+}
+
+Map<String, Object?> _jsonSafeMetadata(Map<String, Object?> metadata) {
+  final result = <String, Object?>{};
+  for (final entry in metadata.entries) {
+    final key = entry.key.trim();
+    if (key.isEmpty) continue;
+    final value = _jsonSafeValue(entry.value);
+    if (value != null) result[key] = value;
+  }
+  return result;
+}
+
+Object? _jsonSafeValue(Object? value) {
+  if (value == null || value is String || value is num || value is bool) {
+    return value;
+  }
+  if (value is DateTime) return value.toIso8601String();
+  if (value is Iterable) {
+    return value
+        .map(_jsonSafeValue)
+        .where((item) => item != null)
+        .toList(growable: false);
+  }
+  if (value is Map) {
+    final result = <String, Object?>{};
+    for (final entry in value.entries) {
+      final key = entry.key?.toString().trim() ?? '';
+      if (key.isEmpty) continue;
+      final safeValue = _jsonSafeValue(entry.value);
+      if (safeValue != null) result[key] = safeValue;
+    }
+    return result;
+  }
+  return value.toString();
+}
+
+class _QuickAskPendingException implements Exception {
+  const _QuickAskPendingException(this.quickAskId);
+
+  final String quickAskId;
 }
 
 class DeveloperFeedbackExport {
