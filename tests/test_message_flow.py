@@ -6673,6 +6673,38 @@ def test_feedback_batch_summary_absent_while_batch_is_active(
     assert payload["notification_unread"] is False
 
 
+def test_feedback_batch_notification_can_be_marked_read(tmp_path: Path) -> None:
+    client = build_feedback_queue_client(tmp_path)
+    start_response = client.post(
+        "/feedback-batches/start-session",
+        json={
+            "sourceApp": "fixture-app",
+            "workflowPresetId": "default",
+            "items": [
+                {
+                    "id": "feedback-notification-read",
+                    "comment": "Mark this read",
+                    "screenshotPngBase64": base64.b64encode(b"fake png").decode(
+                        "ascii"
+                    ),
+                }
+            ],
+        },
+    )
+    accepted = start_response.json()
+    batch_id = accepted["feedback_batch_id"]
+    wait_for_job(client, accepted["job_id"])
+    status = client.get(f"/feedback-batches/{batch_id}").json()
+    assert status["notification_unread"] is True
+
+    read_response = client.patch(f"/feedback-batches/{batch_id}/notification")
+
+    assert read_response.status_code == 200
+    read_payload = read_response.json()
+    assert read_payload["notification_unread"] is False
+    assert read_payload["notification_read_at"]
+
+
 def test_feedback_batch_history_filters_by_source_app(tmp_path: Path) -> None:
     _write_feedback_batch_history(
         tmp_path,

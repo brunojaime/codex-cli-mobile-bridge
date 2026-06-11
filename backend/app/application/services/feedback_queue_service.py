@@ -414,6 +414,40 @@ class FeedbackQueueService:
                 return records[index]
         raise KeyError(batch_id)
 
+    def mark_batch_notification_read(
+        self,
+        batch_id: str,
+        *,
+        read: bool = True,
+    ) -> FeedbackBatchRecord:
+        now = datetime.now(UTC).isoformat()
+        records = self._load_batches()
+        for index, record in enumerate(records):
+            if record.id == batch_id:
+                records[index] = FeedbackBatchRecord(
+                    id=record.id,
+                    source_app=record.source_app,
+                    source_display_name=record.source_display_name,
+                    created_at=record.created_at,
+                    submitted_at=record.submitted_at,
+                    status=record.status,
+                    workflow_preset_id=record.workflow_preset_id,
+                    release_when_complete=record.release_when_complete,
+                    item_count=record.item_count,
+                    item_ids=record.item_ids,
+                    job_id=record.job_id,
+                    session_id=record.session_id,
+                    workspace_path=record.workspace_path,
+                    message=record.message,
+                    summary=record.summary,
+                    summary_generated_at=record.summary_generated_at,
+                    notification_created_at=record.notification_created_at or now,
+                    notification_read_at=now if read else None,
+                )
+                self._save_batches(records)
+                return records[index]
+        raise KeyError(batch_id)
+
     def set_audio_transcript(
         self,
         item_id: str,

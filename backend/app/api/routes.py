@@ -1206,6 +1206,27 @@ async def get_feedback_batch_status(
     return await _feedback_batch_status_response(record, container=container)
 
 
+@router.patch(
+    "/feedback-batches/{batch_id}/notification",
+    response_model=FeedbackBatchStatusResponse,
+)
+async def update_feedback_batch_notification(
+    batch_id: str,
+    read: bool = True,
+    container: AppContainer = Depends(get_container),
+) -> FeedbackBatchStatusResponse:
+    try:
+        record = await run_in_threadpool(
+            container.feedback_queue_service.mark_batch_notification_read,
+            batch_id,
+            read=read,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Feedback batch not found.") from exc
+
+    return await _feedback_batch_status_response(record, container=container)
+
+
 def _feedback_source_label(
     *,
     source_display_name: str | None,
