@@ -28,7 +28,31 @@ import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
-  test('Codex app updater enablement is Android-only', () {
+  test('Codex app updater defaults on for Android only', () {
+    expect(
+      shouldEnableCodexAppUpdater(
+        isWebOverride: false,
+        platformOverride: TargetPlatform.android,
+      ),
+      isTrue,
+    );
+    expect(
+      shouldEnableCodexAppUpdater(
+        isWebOverride: false,
+        platformOverride: TargetPlatform.iOS,
+      ),
+      isFalse,
+    );
+    expect(
+      shouldEnableCodexAppUpdater(
+        isWebOverride: true,
+        platformOverride: TargetPlatform.android,
+      ),
+      isFalse,
+    );
+  });
+
+  test('Codex app updater honors explicit Android enablement define', () {
     expect(
       shouldEnableCodexAppUpdater(
         configuredEnabled: true,
@@ -45,17 +69,20 @@ void main() {
       ),
       isFalse,
     );
+  });
+
+  test('Codex app updater stays off outside Android even when enabled', () {
     expect(
       shouldEnableCodexAppUpdater(
         configuredEnabled: true,
         isWebOverride: false,
-        platformOverride: TargetPlatform.iOS,
+        platformOverride: TargetPlatform.linux,
       ),
       isFalse,
     );
     expect(
       shouldEnableCodexAppUpdater(
-        configuredEnabled: true,
+        configuredEnabled: false,
         isWebOverride: false,
         platformOverride: TargetPlatform.linux,
       ),
