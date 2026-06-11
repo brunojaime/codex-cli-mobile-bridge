@@ -6590,6 +6590,12 @@ def test_feedback_batch_status_response_tracks_completed_job(
     assert status["workflow_preset_id"] == "default"
     assert status["item_count"] == 1
     assert status["item_ids"] == ["feedback-status"]
+    assert status["summary_line_count"] >= 11
+    assert "Request: process developer feedback batch" in status["summary"]
+    assert status["summary_generated_at"]
+
+    persisted_status = client.get(f"/feedback-batches/{batch_id}").json()
+    assert persisted_status["summary"] == status["summary"]
 
 
 def test_feedback_batch_status_handles_missing_linked_job(
@@ -6631,6 +6637,32 @@ def test_feedback_batch_status_handles_missing_linked_job(
     assert payload["status"] == "failed"
     assert payload["status_detail"] == "Linked job was not found."
     assert payload["job_status"] is None
+    assert payload["summary_line_count"] >= 11
+
+
+def test_feedback_batch_summary_absent_while_batch_is_active(
+    tmp_path: Path,
+) -> None:
+    _write_feedback_batch_history(
+        tmp_path,
+        [
+            {
+                "id": "batch-running",
+                "source_app": "fixture-app",
+                "status": "running",
+                "submitted_at": "2026-06-11T02:00:00+00:00",
+            }
+        ],
+    )
+    client = build_feedback_queue_client(tmp_path)
+
+    response = client.get("/feedback-batches/batch-running")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "running"
+    assert payload["summary"] is None
+    assert payload["summary_line_count"] == 0
 
 
 def test_feedback_batch_history_filters_by_source_app(tmp_path: Path) -> None:

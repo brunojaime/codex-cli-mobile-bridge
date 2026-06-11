@@ -127,6 +127,8 @@ class FeedbackBatchRecord:
     session_id: str | None = None
     workspace_path: str | None = None
     message: str | None = None
+    summary: str | None = None
+    summary_generated_at: str | None = None
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "FeedbackBatchRecord":
@@ -165,6 +167,16 @@ class FeedbackBatchRecord:
                 if payload.get("message") is not None
                 else None
             ),
+            summary=(
+                str(payload["summary"])
+                if payload.get("summary") is not None
+                else None
+            ),
+            summary_generated_at=(
+                str(payload["summary_generated_at"])
+                if payload.get("summary_generated_at") is not None
+                else None
+            ),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -183,6 +195,8 @@ class FeedbackBatchRecord:
             "session_id": self.session_id,
             "workspace_path": self.workspace_path,
             "message": self.message,
+            "summary": self.summary,
+            "summary_generated_at": self.summary_generated_at,
         }
 
 
@@ -314,6 +328,8 @@ class FeedbackQueueService:
             session_id=session_id,
             workspace_path=workspace_path,
             message=message,
+            summary=None,
+            summary_generated_at=None,
         )
         records = [
             existing for existing in self._load_batches() if existing.id != record.id
@@ -321,6 +337,33 @@ class FeedbackQueueService:
         records.append(record)
         self._save_batches(records)
         return record
+
+    def set_batch_summary(self, batch_id: str, summary: str) -> FeedbackBatchRecord:
+        now = datetime.now(UTC).isoformat()
+        records = self._load_batches()
+        for index, record in enumerate(records):
+            if record.id == batch_id:
+                records[index] = FeedbackBatchRecord(
+                    id=record.id,
+                    source_app=record.source_app,
+                    source_display_name=record.source_display_name,
+                    created_at=record.created_at,
+                    submitted_at=record.submitted_at,
+                    status=record.status,
+                    workflow_preset_id=record.workflow_preset_id,
+                    release_when_complete=record.release_when_complete,
+                    item_count=record.item_count,
+                    item_ids=record.item_ids,
+                    job_id=record.job_id,
+                    session_id=record.session_id,
+                    workspace_path=record.workspace_path,
+                    message=record.message,
+                    summary=summary,
+                    summary_generated_at=now,
+                )
+                self._save_batches(records)
+                return records[index]
+        raise KeyError(batch_id)
 
     def set_audio_transcript(
         self,

@@ -692,6 +692,19 @@ async def _feedback_batch_status_response(
         job = await run_in_threadpool(container.message_service.get_job, record.job_id)
 
     status, status_detail = _feedback_batch_status_from_job(record, job)
+    if status in {"completed", "failed"} and not (record.summary or "").strip():
+        summary = _build_feedback_final_summary(
+            record,
+            job=job,
+            status=status,
+            status_detail=status_detail,
+        )
+        record = await run_in_threadpool(
+            container.feedback_queue_service.set_batch_summary,
+            record.id,
+            summary,
+        )
+    summary = (record.summary or "").strip() or None
     return FeedbackBatchStatusResponse(
         batch_id=record.id,
         source_app=record.source_app,
@@ -707,6 +720,9 @@ async def _feedback_batch_status_response(
         run_id=job.run_id if job else None,
         workspace_path=record.workspace_path,
         job_status=job.status if job else None,
+        summary=summary,
+        summary_generated_at=record.summary_generated_at,
+        summary_line_count=_non_empty_line_count(summary),
         created_at=record.created_at,
         submitted_at=record.submitted_at,
     )
@@ -733,6 +749,53 @@ def _normalize_feedback_batch_status(status: str) -> str:
     if normalized in {"submitted", "started"}:
         return "running"
     return "pending"
+
+
+def _build_feedback_final_summary(
+    record,
+    *,
+    job: Job | None,
+    status: str,
+    status_detail: str | None,
+) -> str:
+    result = "completed successfully" if status == "completed" else "failed"
+    reviewer = (
+        "Reviewer was requested by the selected workflow."
+        if "reviewer" in record.workflow_preset_id
+        else "Reviewer was not requested by the selected workflow."
+    )
+    release = (
+        "Release was requested after validation."
+        if record.release_when_complete
+        else "Release was not requested for this batch."
+    )
+    validation = (
+        "Validation details should be read from the completed Codex response."
+        if job and job.response
+        else "Validation details were not reported by a completed response."
+    )
+    failure = status_detail or (job.error if job else None) or "No failure detail."
+    return "\n".join(
+        [
+            f"1. Request: process developer feedback batch {record.id}.",
+            f"2. Source app: {record.source_app}.",
+            f"3. Source display name: {record.source_display_name or 'not provided'}.",
+            f"4. Screenshots/comments used: {record.item_count} item(s).",
+            f"5. Feedback item ids: {', '.join(record.item_ids) or 'none recorded'}.",
+            "6. Selected areas and bounds are recorded in the batch prompt.",
+            f"7. Workflow preset: {record.workflow_preset_id}.",
+            f"8. Reviewer: {reviewer}",
+            f"9. Release: {release}",
+            "10. Implementation: see the linked Codex job response for changed areas.",
+            f"11. Validation: {validation}",
+            f"12. Final result: workflow {result}.",
+            f"13. Remaining risk or next step: {failure if status == 'failed' else 'review the app build before publishing.'}",
+        ]
+    )
+
+
+def _non_empty_line_count(value: str | None) -> int:
+    return len([line for line in (value or "").splitlines() if line.strip()])
 
 
 def _validate_feedback_base64(value: str, *, field_name: str, item_index: int) -> None:

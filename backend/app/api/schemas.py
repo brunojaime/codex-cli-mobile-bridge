@@ -730,6 +730,9 @@ class FeedbackBatchStatusResponse(BaseModel):
     run_id: str | None = None
     workspace_path: str | None = None
     job_status: JobStatus | None = None
+    summary: str | None = None
+    summary_generated_at: str | None = None
+    summary_line_count: int = 0
     created_at: str
     submitted_at: str
 
