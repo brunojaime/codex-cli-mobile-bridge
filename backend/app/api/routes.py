@@ -6,7 +6,7 @@ import re
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, WebSocket
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, WebSocket
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, Response
 
@@ -213,6 +213,7 @@ async def list_app_updates(
 
 @router.get("/app-updates/{source_app}", response_model=AppUpdateResponse)
 async def get_app_update(
+    request: Request,
     source_app: str,
     platform: str = "android",
     currentVersion: str | None = None,
@@ -268,7 +269,69 @@ async def get_app_update(
             },
         ) from exc
 
-    return _app_update_response(result)
+    apk_url = None
+    if result.available and result.release_tag and result.apk_asset_name:
+        apk_url = str(
+            request.url_for(
+                "download_app_update_apk",
+                source_app=result.source_app,
+                release_tag=result.release_tag,
+                asset_name=result.apk_asset_name,
+            ),
+        )
+    return _app_update_response(result, apk_url=apk_url)
+
+
+@router.get("/app-updates/{source_app}/apk/{release_tag}/{asset_name}")
+async def download_app_update_apk(
+    source_app: str,
+    release_tag: str,
+    asset_name: str,
+    container: AppContainer = Depends(get_container),
+) -> Response:
+    try:
+        content, asset = await run_in_threadpool(
+            container.app_update_service.download_apk_asset,
+            source_app=source_app,
+            release_tag=release_tag,
+            asset_name=asset_name,
+        )
+    except UnknownAppError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "code": "apk_asset_not_found",
+                "sourceApp": source_app,
+                "releaseTag": release_tag,
+                "assetName": asset_name,
+            },
+        ) from exc
+    except AppDisabledError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "code": "unknown_source_app",
+                "sourceApp": source_app,
+            },
+        ) from exc
+    except GitHubReleaseError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail={
+                "code": "github_unavailable",
+                "message": str(exc),
+                "sourceApp": source_app,
+            },
+        ) from exc
+
+    return Response(
+        content=content,
+        media_type="application/vnd.android.package-archive",
+        headers={
+            "Content-Disposition": f'attachment; filename="{asset.name}"',
+            "Content-Length": str(len(content)),
+        },
+    )
 
 
 @router.post("/audio/speech")
@@ -1688,7 +1751,11 @@ async def job_updates(
     )
 
 
-def _app_update_response(result: AppUpdateResult) -> AppUpdateResponse:
+def _app_update_response(
+    result: AppUpdateResult,
+    *,
+    apk_url: str | None = None,
+) -> AppUpdateResponse:
     return AppUpdateResponse(
         source_app=result.source_app,
         display_name=result.display_name,
@@ -1699,7 +1766,7 @@ def _app_update_response(result: AppUpdateResult) -> AppUpdateResponse:
         latest_build=result.latest_build,
         release_tag=result.release_tag,
         release_url=result.release_url,
-        apk_url=result.apk_url,
+        apk_url=apk_url if apk_url is not None else result.apk_url,
         apk_asset_name=result.apk_asset_name,
         sha256=result.sha256,
         size_bytes=result.size_bytes,

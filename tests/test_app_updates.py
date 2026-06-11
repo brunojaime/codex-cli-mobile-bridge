@@ -45,6 +45,10 @@ def test_known_app_with_newer_release_returns_update(tmp_path: Path) -> None:
     assert payload["required"] is False
     assert payload["latestVersion"] == "1.0.0"
     assert payload["latestBuild"] == 40
+    assert payload["apkUrl"] == (
+        "http://testserver/app-updates/ambientando-calendar/apk/"
+        "android-v1.0.0-build.40/ambientando-calendar-1.0.0-build.40.apk"
+    )
     assert payload["apkAssetName"] == "ambientando-calendar-1.0.0-build.40.apk"
     assert payload["releaseNotes"] == "Cambios disponibles."
 
@@ -301,10 +305,91 @@ def test_app_updates_lists_configured_apps_without_repo_secrets(tmp_path: Path) 
     assert "github" not in json.dumps(payload).lower()
 
 
+def test_app_update_apk_url_is_bridge_proxy_not_github(tmp_path: Path) -> None:
+    client = _build_app_update_client(
+        tmp_path,
+        releases=[
+            _release(
+                "android-v1.0.0-build.40",
+                assets=[
+                    _apk_asset("ambientando-calendar-1.0.0-build.40.apk"),
+                ],
+            ),
+        ],
+    )
+
+    response = client.get(
+        "/app-updates/ambientando-calendar",
+        params={"currentVersion": "1.0.0", "currentBuild": 39},
+    )
+
+    assert response.status_code == 200
+    apk_url = response.json()["apkUrl"]
+    assert apk_url.startswith("http://testserver/app-updates/")
+    assert "github.com" not in apk_url
+
+
+def test_app_update_apk_proxy_downloads_private_asset(tmp_path: Path) -> None:
+    asset = _apk_asset("ambientando-calendar-1.0.0-build.40.apk")
+    github_client = _FakeGitHubReleaseClient(
+        [
+            _release(
+                "android-v1.0.0-build.40",
+                assets=[asset],
+            ),
+        ],
+        asset_content=b"PK\x03\x04fake apk",
+    )
+    client = _build_app_update_client(
+        tmp_path,
+        releases=github_client,
+    )
+
+    response = client.get(
+        "/app-updates/ambientando-calendar/apk/"
+        "android-v1.0.0-build.40/ambientando-calendar-1.0.0-build.40.apk",
+    )
+
+    assert response.status_code == 200
+    assert response.content == b"PK\x03\x04fake apk"
+    assert response.headers["content-type"] == "application/vnd.android.package-archive"
+    assert github_client.downloaded_assets == [asset]
+
+
+def test_app_update_apk_proxy_rejects_non_apk_asset(tmp_path: Path) -> None:
+    client = _build_app_update_client(
+        tmp_path,
+        releases=_FakeGitHubReleaseClient(
+            [
+                _release(
+                    "android-v1.0.0-build.40",
+                    assets=[_apk_asset("ambientando-calendar-1.0.0-build.40.apk")],
+                ),
+            ],
+            asset_content=b"not an apk",
+        ),
+    )
+
+    response = client.get(
+        "/app-updates/ambientando-calendar/apk/"
+        "android-v1.0.0-build.40/ambientando-calendar-1.0.0-build.40.apk",
+    )
+
+    assert response.status_code == 502
+    assert response.json()["detail"]["code"] == "github_unavailable"
+
+
 class _FakeGitHubReleaseClient:
-    def __init__(self, releases: list[GitHubRelease] | GitHubReleaseError) -> None:
+    def __init__(
+        self,
+        releases: list[GitHubRelease] | GitHubReleaseError,
+        *,
+        asset_content: bytes = b"PK\x03\x04fake apk",
+    ) -> None:
         self._releases = releases
+        self._asset_content = asset_content
         self.requested_repos: list[str] = []
+        self.downloaded_assets: list[GitHubAsset] = []
 
     def list_releases(self, repo: str) -> list[GitHubRelease]:
         self.requested_repos.append(repo)
@@ -312,11 +397,16 @@ class _FakeGitHubReleaseClient:
             raise self._releases
         return self._releases
 
+    def download_asset(self, repo: str, asset: GitHubAsset) -> bytes:
+        self.requested_repos.append(repo)
+        self.downloaded_assets.append(asset)
+        return self._asset_content
+
 
 def _build_app_update_client(
     tmp_path: Path,
     *,
-    releases: list[GitHubRelease] | GitHubReleaseError,
+    releases: list[GitHubRelease] | GitHubReleaseError | _FakeGitHubReleaseClient,
     enabled: bool = True,
     required_minimum_build: int | None = None,
 ) -> TestClient:
@@ -344,9 +434,14 @@ def _build_app_update_client(
     )
     app = create_app(settings)
     container = app.dependency_overrides[get_container]()
+    release_client = (
+        releases
+        if isinstance(releases, _FakeGitHubReleaseClient)
+        else _FakeGitHubReleaseClient(releases)
+    )
     container.app_update_service = AppUpdateService(
         registry=AppUpdateRegistry.from_json_file(registry_path),
-        release_client=_FakeGitHubReleaseClient(releases),
+        release_client=release_client,
     )
     return TestClient(app)
 
