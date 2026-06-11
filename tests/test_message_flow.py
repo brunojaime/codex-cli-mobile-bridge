@@ -624,6 +624,41 @@ def build_feedback_queue_client(
     return TestClient(app)
 
 
+def _write_feedback_batch_history(
+    data_dir: Path,
+    batches: list[dict],
+) -> None:
+    normalized_batches = []
+    for batch in batches:
+        normalized_batches.append(
+            {
+                "id": batch["id"],
+                "source_app": batch.get("source_app", "fixture-app"),
+                "source_display_name": batch.get("source_display_name"),
+                "created_at": batch.get(
+                    "created_at",
+                    batch.get("submitted_at", "2026-06-11T00:00:00+00:00"),
+                ),
+                "submitted_at": batch.get(
+                    "submitted_at",
+                    "2026-06-11T00:00:00+00:00",
+                ),
+                "status": batch.get("status", "completed"),
+                "workflow_preset_id": batch.get("workflow_preset_id", "default"),
+                "release_when_complete": batch.get("release_when_complete", False),
+                "item_count": batch.get("item_count", 1),
+                "item_ids": batch.get("item_ids", [f"{batch['id']}-item"]),
+                "job_id": batch.get("job_id"),
+                "session_id": batch.get("session_id"),
+                "workspace_path": batch.get("workspace_path"),
+            }
+        )
+    (data_dir / "feedback_queue.json").write_text(
+        json.dumps({"version": 2, "items": [], "batches": normalized_batches}),
+        encoding="utf-8",
+    )
+
+
 def build_multi_attachment_client() -> TestClient:
     settings = Settings(
         codex_command="python3 tests/fixtures/fake_codex_session.py",
@@ -6596,6 +6631,84 @@ def test_feedback_batch_status_handles_missing_linked_job(
     assert payload["status"] == "failed"
     assert payload["status_detail"] == "Linked job was not found."
     assert payload["job_status"] is None
+
+
+def test_feedback_batch_history_filters_by_source_app(tmp_path: Path) -> None:
+    _write_feedback_batch_history(
+        tmp_path,
+        [
+            {
+                "id": "batch-a",
+                "source_app": "fixture-app",
+                "submitted_at": "2026-06-11T02:00:00+00:00",
+            },
+            {
+                "id": "batch-b",
+                "source_app": "other-app",
+                "submitted_at": "2026-06-11T03:00:00+00:00",
+            },
+        ],
+    )
+    client = build_feedback_queue_client(tmp_path)
+
+    response = client.get("/feedback-batches?sourceApp=fixture-app")
+
+    assert response.status_code == 200
+    batches = response.json()
+    assert [batch["batch_id"] for batch in batches] == ["batch-a"]
+    assert batches[0]["source_app"] == "fixture-app"
+
+
+def test_feedback_batch_history_empty_for_unknown_source_app(tmp_path: Path) -> None:
+    _write_feedback_batch_history(
+        tmp_path,
+        [
+            {
+                "id": "batch-a",
+                "source_app": "fixture-app",
+                "submitted_at": "2026-06-11T02:00:00+00:00",
+            }
+        ],
+    )
+    client = build_feedback_queue_client(tmp_path)
+
+    response = client.get("/feedback-batches?sourceApp=missing-app")
+
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+def test_feedback_batch_history_returns_newest_first(tmp_path: Path) -> None:
+    _write_feedback_batch_history(
+        tmp_path,
+        [
+            {
+                "id": "batch-old",
+                "source_app": "fixture-app",
+                "submitted_at": "2026-06-11T01:00:00+00:00",
+            },
+            {
+                "id": "batch-new",
+                "source_app": "fixture-app",
+                "submitted_at": "2026-06-11T03:00:00+00:00",
+            },
+            {
+                "id": "batch-mid",
+                "source_app": "fixture-app",
+                "submitted_at": "2026-06-11T02:00:00+00:00",
+            },
+        ],
+    )
+    client = build_feedback_queue_client(tmp_path)
+
+    response = client.get("/feedback-batches?sourceApp=fixture-app")
+
+    assert response.status_code == 200
+    assert [batch["batch_id"] for batch in response.json()] == [
+        "batch-new",
+        "batch-mid",
+        "batch-old",
+    ]
 
 
 def test_feedback_batch_start_session_transcribes_audio_items(

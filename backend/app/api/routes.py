@@ -7,7 +7,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, WebSocket
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile, WebSocket
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, Response, StreamingResponse
 
@@ -1094,6 +1094,24 @@ async def start_feedback_batch_session(
         job,
         feedback_batch_id=batch_record.id,
     )
+
+
+@router.get(
+    "/feedback-batches",
+    response_model=list[FeedbackBatchStatusResponse],
+)
+async def list_feedback_batches(
+    source_app: str | None = Query(default=None, alias="sourceApp"),
+    container: AppContainer = Depends(get_container),
+) -> list[FeedbackBatchStatusResponse]:
+    records = await run_in_threadpool(
+        container.feedback_queue_service.list_batches,
+        source_app=source_app,
+    )
+    return [
+        await _feedback_batch_status_response(record, container=container)
+        for record in records
+    ]
 
 
 @router.get(
