@@ -3,12 +3,13 @@ from __future__ import annotations
 import base64
 import binascii
 import re
+from collections.abc import Iterator
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, WebSocket
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, Response, StreamingResponse
 
 from backend.app.api.schemas import (
     AgentConfigurationRequest,
@@ -60,6 +61,7 @@ from backend.app.api.schemas import (
 )
 from backend.app.application.services.app_update_service import (
     AppDisabledError,
+    AppUpdateAssetNotFoundError,
     AppUpdateResult,
     GitHubReleaseError,
     UnknownAppError,
@@ -264,7 +266,7 @@ async def get_app_update(
             status_code=502,
             detail={
                 "code": "github_unavailable",
-                "message": str(exc),
+                "message": "GitHub release metadata is unavailable.",
                 "sourceApp": source_app,
             },
         ) from exc
@@ -277,26 +279,30 @@ async def get_app_update(
                 source_app=result.source_app,
                 release_tag=result.release_tag,
                 asset_name=result.apk_asset_name,
-            ),
+            ).include_query_params(platform=platform, channel=channel),
         )
     return _app_update_response(result, apk_url=apk_url)
 
 
-@router.get("/app-updates/{source_app}/apk/{release_tag}/{asset_name}")
-async def download_app_update_apk(
+@router.head("/app-updates/{source_app}/apk/{release_tag}/{asset_name}")
+async def head_app_update_apk(
     source_app: str,
     release_tag: str,
     asset_name: str,
+    platform: str = "android",
+    channel: str = "stable",
     container: AppContainer = Depends(get_container),
 ) -> Response:
     try:
-        content, asset = await run_in_threadpool(
-            container.app_update_service.download_apk_asset,
+        _, asset = await run_in_threadpool(
+            container.app_update_service.resolve_apk_asset,
             source_app=source_app,
             release_tag=release_tag,
             asset_name=asset_name,
+            platform=platform,
+            channel=channel,
         )
-    except UnknownAppError as exc:
+    except AppUpdateAssetNotFoundError as exc:
         raise HTTPException(
             status_code=404,
             detail={
@@ -306,6 +312,71 @@ async def download_app_update_apk(
                 "assetName": asset_name,
             },
         ) from exc
+    except UnknownAppError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "code": "unknown_source_app",
+                "sourceApp": source_app,
+            },
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except AppDisabledError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "code": "unknown_source_app",
+                "sourceApp": source_app,
+            },
+        ) from exc
+
+    return Response(
+        media_type="application/vnd.android.package-archive",
+        headers=_apk_download_headers(asset.name, content_length=asset.size),
+    )
+
+
+@router.get("/app-updates/{source_app}/apk/{release_tag}/{asset_name}")
+async def download_app_update_apk(
+    source_app: str,
+    release_tag: str,
+    asset_name: str,
+    platform: str = "android",
+    channel: str = "stable",
+    container: AppContainer = Depends(get_container),
+) -> Response:
+    try:
+        asset, stream = await run_in_threadpool(
+            container.app_update_service.open_apk_asset_stream,
+            source_app=source_app,
+            release_tag=release_tag,
+            asset_name=asset_name,
+            platform=platform,
+            channel=channel,
+        )
+        iterator = stream.iter_bytes()
+        initial_chunks = await run_in_threadpool(_prime_apk_stream, iterator)
+    except AppUpdateAssetNotFoundError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "code": "apk_asset_not_found",
+                "sourceApp": source_app,
+                "releaseTag": release_tag,
+                "assetName": asset_name,
+            },
+        ) from exc
+    except UnknownAppError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "code": "unknown_source_app",
+                "sourceApp": source_app,
+            },
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     except AppDisabledError as exc:
         raise HTTPException(
             status_code=404,
@@ -315,22 +386,24 @@ async def download_app_update_apk(
             },
         ) from exc
     except GitHubReleaseError as exc:
+        if "stream" in locals():
+            stream.close()
         raise HTTPException(
             status_code=502,
             detail={
                 "code": "github_unavailable",
-                "message": str(exc),
+                "message": "GitHub release asset is unavailable.",
                 "sourceApp": source_app,
             },
         ) from exc
 
-    return Response(
-        content=content,
+    return StreamingResponse(
+        _stream_apk_body(initial_chunks, iterator, stream),
         media_type="application/vnd.android.package-archive",
-        headers={
-            "Content-Disposition": f'attachment; filename="{asset.name}"',
-            "Content-Length": str(len(content)),
-        },
+        headers=_apk_download_headers(
+            asset.name,
+            content_length=stream.content_length or asset.size,
+        ),
     )
 
 
@@ -1774,6 +1847,47 @@ def _app_update_response(
         required=result.required,
         available=result.available,
     )
+
+
+def _apk_download_headers(
+    file_name: str,
+    *,
+    content_length: int | None,
+) -> dict[str, str]:
+    headers = {
+        "Content-Disposition": f'attachment; filename="{file_name}"',
+        "Cache-Control": "private, max-age=300",
+    }
+    if content_length is not None:
+        headers["Content-Length"] = str(content_length)
+    return headers
+
+
+def _prime_apk_stream(iterator: Iterator[bytes]) -> list[bytes]:
+    chunks: list[bytes] = []
+    sample = b""
+    for chunk in iterator:
+        if not chunk:
+            continue
+        chunks.append(chunk)
+        sample += chunk
+        if len(sample) >= 4:
+            break
+    if not sample.startswith(b"PK\x03\x04"):
+        raise GitHubReleaseError("Downloaded asset is not an APK archive.")
+    return chunks
+
+
+def _stream_apk_body(
+    initial_chunks: list[bytes],
+    iterator: Iterator[bytes],
+    stream,
+) -> Iterator[bytes]:
+    try:
+        yield from initial_chunks
+        yield from iterator
+    finally:
+        stream.close()
 
 
 async def _store_uploaded_audio(

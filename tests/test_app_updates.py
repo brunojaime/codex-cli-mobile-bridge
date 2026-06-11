@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -48,6 +49,7 @@ def test_known_app_with_newer_release_returns_update(tmp_path: Path) -> None:
     assert payload["apkUrl"] == (
         "http://testserver/app-updates/ambientando-calendar/apk/"
         "android-v1.0.0-build.40/ambientando-calendar-1.0.0-build.40.apk"
+        "?platform=android&channel=stable"
     )
     assert payload["apkAssetName"] == "ambientando-calendar-1.0.0-build.40.apk"
     assert payload["releaseNotes"] == "Cambios disponibles."
@@ -331,6 +333,7 @@ def test_app_update_apk_url_is_bridge_proxy_not_github(tmp_path: Path) -> None:
 
 def test_app_update_apk_proxy_downloads_private_asset(tmp_path: Path) -> None:
     asset = _apk_asset("ambientando-calendar-1.0.0-build.40.apk")
+    content = b"PK\x03\x04fake apk"
     github_client = _FakeGitHubReleaseClient(
         [
             _release(
@@ -338,7 +341,7 @@ def test_app_update_apk_proxy_downloads_private_asset(tmp_path: Path) -> None:
                 assets=[asset],
             ),
         ],
-        asset_content=b"PK\x03\x04fake apk",
+        asset_content=content,
     )
     client = _build_app_update_client(
         tmp_path,
@@ -351,9 +354,48 @@ def test_app_update_apk_proxy_downloads_private_asset(tmp_path: Path) -> None:
     )
 
     assert response.status_code == 200
-    assert response.content == b"PK\x03\x04fake apk"
+    assert response.content == content
+    assert (
+        hashlib.sha256(response.content).hexdigest()
+        == hashlib.sha256(
+            content,
+        ).hexdigest()
+    )
     assert response.headers["content-type"] == "application/vnd.android.package-archive"
-    assert github_client.downloaded_assets == [asset]
+    assert response.headers["content-disposition"] == (
+        'attachment; filename="ambientando-calendar-1.0.0-build.40.apk"'
+    )
+    assert response.headers["cache-control"] == "private, max-age=300"
+    assert response.headers["content-length"] == str(len(content))
+    assert github_client.streamed_assets == [asset]
+
+
+def test_app_update_apk_proxy_head_returns_metadata_only(tmp_path: Path) -> None:
+    asset = _apk_asset("ambientando-calendar-1.0.0-build.40.apk")
+    github_client = _FakeGitHubReleaseClient(
+        [
+            _release(
+                "android-v1.0.0-build.40",
+                assets=[asset],
+            ),
+        ],
+    )
+    client = _build_app_update_client(
+        tmp_path,
+        releases=github_client,
+    )
+
+    response = client.head(
+        "/app-updates/ambientando-calendar/apk/"
+        "android-v1.0.0-build.40/ambientando-calendar-1.0.0-build.40.apk",
+    )
+
+    assert response.status_code == 200
+    assert response.content == b""
+    assert response.headers["content-type"] == "application/vnd.android.package-archive"
+    assert response.headers["content-length"] == "12345"
+    assert response.headers["cache-control"] == "private, max-age=300"
+    assert github_client.streamed_assets == []
 
 
 def test_app_update_apk_proxy_rejects_non_apk_asset(tmp_path: Path) -> None:
@@ -379,17 +421,196 @@ def test_app_update_apk_proxy_rejects_non_apk_asset(tmp_path: Path) -> None:
     assert response.json()["detail"]["code"] == "github_unavailable"
 
 
+@pytest.mark.parametrize(
+    "asset_name",
+    [
+        "missing.apk",
+        "..\\secret.apk",
+        "..",
+        "ambientando-calendar.txt",
+    ],
+)
+def test_app_update_apk_proxy_rejects_invalid_asset_names(
+    tmp_path: Path,
+    asset_name: str,
+) -> None:
+    github_client = _FakeGitHubReleaseClient(
+        [
+            _release(
+                "android-v1.0.0-build.40",
+                assets=[_apk_asset("ambientando-calendar-1.0.0-build.40.apk")],
+            ),
+        ],
+    )
+    client = _build_app_update_client(tmp_path, releases=github_client)
+
+    response = client.get(
+        f"/app-updates/ambientando-calendar/apk/android-v1.0.0-build.40/{asset_name}",
+    )
+
+    assert response.status_code == 404
+    detail = response.json()["detail"]
+    if isinstance(detail, dict):
+        assert detail["code"] == "apk_asset_not_found"
+    assert github_client.streamed_assets == []
+
+
+def test_app_update_apk_proxy_rejects_unknown_app(tmp_path: Path) -> None:
+    client = _build_app_update_client(tmp_path, releases=[])
+
+    response = client.get(
+        "/app-updates/unknown-app/apk/android-v1.0.0-build.40/demo.apk",
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"]["code"] == "unknown_source_app"
+
+
+def test_app_update_apk_proxy_rejects_release_without_apk(tmp_path: Path) -> None:
+    github_client = _FakeGitHubReleaseClient(
+        [
+            _release(
+                "android-v1.0.0-build.40",
+                assets=[GitHubAsset("notes.txt", "https://example.test/notes.txt")],
+            ),
+        ],
+    )
+    client = _build_app_update_client(tmp_path, releases=github_client)
+
+    response = client.get(
+        "/app-updates/ambientando-calendar/apk/"
+        "android-v1.0.0-build.40/ambientando-calendar-1.0.0-build.40.apk",
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"]["code"] == "apk_asset_not_found"
+    assert github_client.streamed_assets == []
+
+
+@pytest.mark.parametrize(
+    "params",
+    [
+        {"platform": "ios"},
+        {"channel": "nightly"},
+    ],
+)
+def test_app_update_apk_proxy_rejects_invalid_platform_or_channel(
+    tmp_path: Path,
+    params: dict[str, str],
+) -> None:
+    client = _build_app_update_client(
+        tmp_path,
+        releases=[
+            _release(
+                "android-v1.0.0-build.40",
+                assets=[_apk_asset("ambientando-calendar-1.0.0-build.40.apk")],
+            ),
+        ],
+    )
+
+    response = client.get(
+        "/app-updates/ambientando-calendar/apk/"
+        "android-v1.0.0-build.40/ambientando-calendar-1.0.0-build.40.apk",
+        params=params,
+    )
+
+    assert response.status_code == 422
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        GitHubReleaseError("GitHub 401 token SECRET_TOKEN"),
+        GitHubReleaseError("GitHub 404 token SECRET_TOKEN"),
+        GitHubReleaseError("Timeout token SECRET_TOKEN"),
+    ],
+)
+def test_app_update_apk_proxy_sanitizes_github_errors(
+    tmp_path: Path,
+    error: GitHubReleaseError,
+) -> None:
+    client = _build_app_update_client(
+        tmp_path,
+        releases=_FakeGitHubReleaseClient(
+            [
+                _release(
+                    "android-v1.0.0-build.40",
+                    assets=[_apk_asset("ambientando-calendar-1.0.0-build.40.apk")],
+                ),
+            ],
+            stream_error=error,
+        ),
+    )
+
+    response = client.get(
+        "/app-updates/ambientando-calendar/apk/"
+        "android-v1.0.0-build.40/ambientando-calendar-1.0.0-build.40.apk",
+    )
+
+    body = response.text
+    assert response.status_code == 502
+    assert response.json()["detail"]["code"] == "github_unavailable"
+    assert "SECRET_TOKEN" not in body
+    assert "GitHub 401" not in body
+    assert "GitHub 404" not in body
+    assert "Timeout" not in body
+
+
+def test_app_update_metadata_sanitizes_github_errors(tmp_path: Path) -> None:
+    client = _build_app_update_client(
+        tmp_path,
+        releases=GitHubReleaseError("metadata failed token SECRET_TOKEN"),
+    )
+
+    response = client.get("/app-updates/ambientando-calendar")
+
+    body = response.text
+    assert response.status_code == 502
+    assert response.json()["detail"]["code"] == "github_unavailable"
+    assert "SECRET_TOKEN" not in body
+    assert "metadata failed" not in body
+
+
+def test_app_update_apk_proxy_double_request_uses_same_configured_asset(
+    tmp_path: Path,
+) -> None:
+    asset = _apk_asset("ambientando-calendar-1.0.0-build.40.apk")
+    github_client = _FakeGitHubReleaseClient(
+        [
+            _release(
+                "android-v1.0.0-build.40",
+                assets=[asset],
+            ),
+        ],
+    )
+    client = _build_app_update_client(tmp_path, releases=github_client)
+    url = (
+        "/app-updates/ambientando-calendar/apk/"
+        "android-v1.0.0-build.40/ambientando-calendar-1.0.0-build.40.apk"
+    )
+
+    first = client.get(url)
+    second = client.get(url)
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert first.content == second.content
+    assert github_client.streamed_assets == [asset, asset]
+
+
 class _FakeGitHubReleaseClient:
     def __init__(
         self,
         releases: list[GitHubRelease] | GitHubReleaseError,
         *,
         asset_content: bytes = b"PK\x03\x04fake apk",
+        stream_error: GitHubReleaseError | None = None,
     ) -> None:
         self._releases = releases
         self._asset_content = asset_content
+        self._stream_error = stream_error
         self.requested_repos: list[str] = []
-        self.downloaded_assets: list[GitHubAsset] = []
+        self.streamed_assets: list[GitHubAsset] = []
 
     def list_releases(self, repo: str) -> list[GitHubRelease]:
         self.requested_repos.append(repo)
@@ -397,10 +618,32 @@ class _FakeGitHubReleaseClient:
             raise self._releases
         return self._releases
 
-    def download_asset(self, repo: str, asset: GitHubAsset) -> bytes:
+    def open_asset_stream(
+        self, repo: str, asset: GitHubAsset
+    ) -> "_FakeGitHubAssetStream":
         self.requested_repos.append(repo)
-        self.downloaded_assets.append(asset)
-        return self._asset_content
+        if self._stream_error is not None:
+            raise self._stream_error
+        self.streamed_assets.append(asset)
+        return _FakeGitHubAssetStream(self._asset_content)
+
+
+class _FakeGitHubAssetStream:
+    def __init__(self, content: bytes) -> None:
+        self._content = content
+        self.closed = False
+
+    @property
+    def content_length(self) -> int:
+        return len(self._content)
+
+    def iter_bytes(self):
+        midpoint = max(1, len(self._content) // 2)
+        yield self._content[:midpoint]
+        yield self._content[midpoint:]
+
+    def close(self) -> None:
+        self.closed = True
 
 
 def _build_app_update_client(

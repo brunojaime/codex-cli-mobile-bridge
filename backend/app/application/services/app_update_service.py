@@ -6,6 +6,7 @@ import hashlib
 import json
 import re
 from pathlib import Path
+from collections.abc import Iterator
 from typing import Any, Protocol
 
 import httpx
@@ -74,10 +75,25 @@ class AppDisabledError(ValueError):
     pass
 
 
+class AppUpdateAssetNotFoundError(ValueError):
+    pass
+
+
 class GitHubReleaseClient(Protocol):
     def list_releases(self, repo: str) -> list[GitHubRelease]: ...
 
-    def download_asset(self, repo: str, asset: GitHubAsset) -> bytes: ...
+    def open_asset_stream(
+        self, repo: str, asset: GitHubAsset
+    ) -> "GitHubAssetStream": ...
+
+
+class GitHubAssetStream(Protocol):
+    @property
+    def content_length(self) -> int | None: ...
+
+    def iter_bytes(self) -> Iterator[bytes]: ...
+
+    def close(self) -> None: ...
 
 
 class HttpGitHubReleaseClient:
@@ -107,22 +123,16 @@ class HttpGitHubReleaseClient:
             raise GitHubReleaseError("GitHub releases response was not a list.")
         return [_release_from_json(item) for item in payload]
 
-    def download_asset(self, repo: str, asset: GitHubAsset) -> bytes:
+    def open_asset_stream(self, repo: str, asset: GitHubAsset) -> GitHubAssetStream:
         del repo
         url = asset.api_url or asset.browser_download_url
         if not url:
             raise GitHubReleaseError("GitHub release asset has no download URL.")
-        try:
-            response = httpx.get(
-                url,
-                follow_redirects=True,
-                headers=self._headers(accept="application/octet-stream"),
-                timeout=self._timeout_seconds,
-            )
-            response.raise_for_status()
-        except httpx.HTTPError as exc:
-            raise GitHubReleaseError(str(exc)) from exc
-        return response.content
+        return _HttpGitHubAssetStream(
+            url=url,
+            headers=self._headers(accept="application/octet-stream"),
+            timeout_seconds=self._timeout_seconds,
+        ).open()
 
     def _headers(self, *, accept: str) -> dict[str, str]:
         headers = {
@@ -133,6 +143,62 @@ class HttpGitHubReleaseClient:
         if self._token:
             headers["Authorization"] = f"Bearer {self._token}"
         return headers
+
+
+class _HttpGitHubAssetStream:
+    def __init__(
+        self,
+        *,
+        url: str,
+        headers: dict[str, str],
+        timeout_seconds: float,
+    ) -> None:
+        self._url = url
+        self._headers = headers
+        self._timeout_seconds = timeout_seconds
+        self._context: Any | None = None
+        self._response: httpx.Response | None = None
+
+    def open(self) -> "_HttpGitHubAssetStream":
+        self._context = httpx.stream(
+            "GET",
+            self._url,
+            follow_redirects=True,
+            headers=self._headers,
+            timeout=self._timeout_seconds,
+        )
+        try:
+            self._response = self._context.__enter__()
+            self._response.raise_for_status()
+        except httpx.HTTPError as exc:
+            self.close()
+            raise GitHubReleaseError(str(exc)) from exc
+        return self
+
+    @property
+    def content_length(self) -> int | None:
+        response = self._response
+        if response is None:
+            return None
+        value = response.headers.get("content-length")
+        if value is None:
+            return None
+        try:
+            return int(value)
+        except ValueError:
+            return None
+
+    def iter_bytes(self) -> Iterator[bytes]:
+        response = self._response
+        if response is None:
+            return iter(())
+        return response.iter_bytes()
+
+    def close(self) -> None:
+        if self._context is not None:
+            self._context.__exit__(None, None, None)
+            self._context = None
+        self._response = None
 
 
 class AppUpdateRegistry:
@@ -204,6 +270,7 @@ class AppUpdateService:
     ) -> AppUpdateResult:
         if platform != "android":
             raise ValueError("Only android app updates are currently supported.")
+        _validate_channel(channel)
 
         config = self._registry.get(source_app)
         latest = self._latest_valid_release(config, channel=channel)
@@ -245,30 +312,56 @@ class AppUpdateService:
             available=available,
         )
 
-    def download_apk_asset(
+    def resolve_apk_asset(
         self,
         *,
         source_app: str,
         release_tag: str,
         asset_name: str,
-    ) -> tuple[bytes, GitHubAsset]:
+        platform: str = "android",
+        channel: str = "stable",
+    ) -> tuple[AppUpdateConfig, GitHubAsset]:
+        if platform != "android":
+            raise ValueError("Only android app updates are currently supported.")
+        _validate_channel(channel)
+        if not _is_safe_asset_name(asset_name):
+            raise AppUpdateAssetNotFoundError(
+                f"{source_app}:{release_tag}:{asset_name}"
+            )
         config = self._registry.get(source_app)
         for release in self._release_client.list_releases(config.repo):
             if release.tag_name != release_tag:
                 continue
-            if release.draft or not fnmatch.fnmatch(
-                release.tag_name,
-                config.release_tag_pattern,
+            if (
+                release.draft
+                or not _release_allowed_for_channel(release, channel)
+                or not fnmatch.fnmatch(release.tag_name, config.release_tag_pattern)
             ):
                 break
             asset = _find_downloadable_apk_asset(release.assets, config, asset_name)
             if asset is None:
                 break
-            content = self._release_client.download_asset(config.repo, asset)
-            if not content.startswith(b"PK\x03\x04"):
-                raise GitHubReleaseError("Downloaded asset is not an APK archive.")
-            return content, asset
-        raise UnknownAppError(f"{source_app}:{release_tag}:{asset_name}")
+            return config, asset
+        raise AppUpdateAssetNotFoundError(f"{source_app}:{release_tag}:{asset_name}")
+
+    def open_apk_asset_stream(
+        self,
+        *,
+        source_app: str,
+        release_tag: str,
+        asset_name: str,
+        platform: str = "android",
+        channel: str = "stable",
+    ) -> tuple[GitHubAsset, GitHubAssetStream]:
+        config, asset = self.resolve_apk_asset(
+            source_app=source_app,
+            release_tag=release_tag,
+            asset_name=asset_name,
+            platform=platform,
+            channel=channel,
+        )
+        stream = self._release_client.open_asset_stream(config.repo, asset)
+        return asset, stream
 
     def _latest_valid_release(
         self,
@@ -283,7 +376,7 @@ class AppUpdateService:
         for release in releases:
             if release.draft:
                 continue
-            if channel == "stable" and release.prerelease:
+            if not _release_allowed_for_channel(release, channel):
                 continue
             if not fnmatch.fnmatch(release.tag_name, config.release_tag_pattern):
                 continue
@@ -374,6 +467,30 @@ def _select_apk_asset(
         if fnmatch.fnmatch(asset.name, config.apk_asset_pattern):
             return asset
     return None
+
+
+def _validate_channel(channel: str) -> None:
+    if channel not in {"stable", "prerelease", "all"}:
+        raise ValueError("Unsupported app update channel.")
+
+
+def _release_allowed_for_channel(release: GitHubRelease, channel: str) -> bool:
+    _validate_channel(channel)
+    if channel == "stable":
+        return not release.prerelease
+    if channel == "prerelease":
+        return release.prerelease
+    return True
+
+
+def _is_safe_asset_name(asset_name: str) -> bool:
+    if not asset_name or asset_name in {".", ".."}:
+        return False
+    if "/" in asset_name or "\\" in asset_name:
+        return False
+    if asset_name != Path(asset_name).name:
+        return False
+    return asset_name.endswith(".apk")
 
 
 def _find_downloadable_apk_asset(

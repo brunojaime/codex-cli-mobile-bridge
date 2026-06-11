@@ -101,6 +101,8 @@ Add these endpoints:
 ```http
 GET /app-updates
 GET /app-updates/{sourceApp}
+GET /app-updates/{sourceApp}/apk/{releaseTag}/{assetName}
+HEAD /app-updates/{sourceApp}/apk/{releaseTag}/{assetName}
 ```
 
 `GET /app-updates/{sourceApp}` accepts optional query params:
@@ -127,7 +129,7 @@ Example response when update exists:
   "latestBuild": 39,
   "releaseTag": "android-local-demo-feedback-v1.0.0-build.39",
   "releaseUrl": "https://github.com/brunojaime/ambientando-calendar/releases/tag/android-local-demo-feedback-v1.0.0-build.39",
-  "apkUrl": "https://github.com/brunojaime/ambientando-calendar/releases/download/android-local-demo-feedback-v1.0.0-build.39/ambientando-calendar-1.0.0-build.39.apk",
+  "apkUrl": "http://bridge.example/app-updates/ambientando-calendar/apk/android-local-demo-feedback-v1.0.0-build.39/ambientando-calendar.apk",
   "apkAssetName": "ambientando-calendar-1.0.0-build.39.apk",
   "sha256": "expected-sha256",
   "sizeBytes": 54670545,
@@ -170,6 +172,18 @@ Example response when current app is up to date:
 9. Compare latest build with `currentBuild`.
 10. Return update metadata.
 
+For private GitHub repositories, `apkUrl` must point back to the Bridge APK proxy endpoint, not to `browser_download_url` on GitHub. The Bridge uses its configured GitHub token server-side to stream the selected release asset to the app. This keeps Flutter apps decoupled from GitHub authentication and avoids exposing private repository URLs or tokens to devices.
+
+The APK proxy must:
+
+- Re-resolve the configured `sourceApp`, release tag, channel, platform, and asset name before serving bytes.
+- Serve only APK assets that match the registry policy (`latestAssetName` or `apkAssetPattern`).
+- Reject path traversal, unknown apps, missing assets, drafts, prereleases on `stable`, invalid platform/channel, and non-APK content.
+- Stream APK bytes instead of buffering the whole file in memory.
+- Return `Content-Type: application/vnd.android.package-archive`, `Content-Disposition`, `Content-Length` when known, and a short private `Cache-Control`.
+- Support `HEAD` for metadata checks without downloading the GitHub asset.
+- Never include `APP_UPDATE_GITHUB_TOKEN` in response bodies, URLs, headers, or logs.
+
 ### Backend Tests
 
 Add tests for:
@@ -184,6 +198,10 @@ Add tests for:
 - GitHub failure returns stable error response.
 - Checksum is surfaced when available.
 - `/app-updates` lists configured apps without leaking secrets.
+- `/app-updates/{sourceApp}` returns a Bridge APK proxy URL, not a direct GitHub asset URL.
+- APK proxy streams bytes for a configured asset and supports `HEAD`.
+- APK proxy rejects unknown apps, invalid asset names, path traversal, releases without APKs, invalid platform/channel, and GitHub download failures.
+- APK proxy responses and error bodies never leak the GitHub token.
 
 ## Flutter Reusable Package Scope
 
