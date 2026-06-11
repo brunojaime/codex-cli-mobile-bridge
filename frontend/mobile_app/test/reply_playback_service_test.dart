@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:codex_mobile_frontend/src/models/chat_message.dart';
 import 'package:codex_mobile_frontend/src/models/server_capabilities.dart';
 import 'package:codex_mobile_frontend/src/models/session_detail.dart';
@@ -157,6 +159,48 @@ void main() {
     expect(providerPlayer.spokenTexts, <String>['Only once']);
   });
 
+  test('does not start duplicate playback while a reply is still pending',
+      () async {
+    final providerSpeakHold = Completer<void>();
+    final providerPlayer = _FakeReplySpeechPlayer(
+      holdSpeakUntil: providerSpeakHold.future,
+    );
+    final service = ReplyPlaybackService(
+      fallbackPlayer: _FakeReplySpeechPlayer(),
+      providerPlayerFactory: (_) => providerPlayer,
+    );
+    final session = _buildSession(
+      messages: <ChatMessage>[
+        _assistantMessage(id: 'assistant-1', text: 'Only while pending once'),
+      ],
+    );
+
+    await service.setServer(ApiClient(baseUrl: 'http://localhost:8000'));
+    service.setCapabilities(_speechEnabledCapabilities());
+
+    final firstSpeak = service.maybeSpeakLatestAssistantReply(
+      enabled: true,
+      session: session,
+    );
+    final duplicateSpeak = service.maybeSpeakLatestAssistantReply(
+      enabled: true,
+      session: session,
+    );
+    await Future<void>.delayed(Duration.zero);
+
+    expect(providerPlayer.spokenTexts, <String>['Only while pending once']);
+
+    providerSpeakHold.complete();
+    await Future.wait(<Future<void>>[firstSpeak, duplicateSpeak]);
+
+    await service.maybeSpeakLatestAssistantReply(
+      enabled: true,
+      session: session,
+    );
+
+    expect(providerPlayer.spokenTexts, <String>['Only while pending once']);
+  });
+
   test('stops provider and fallback playback when recording begins', () async {
     final fallbackPlayer = _FakeReplySpeechPlayer();
     final providerPlayer = _FakeReplySpeechPlayer();
@@ -269,9 +313,13 @@ ServerCapabilities _speechEnabledCapabilities() {
 }
 
 class _FakeReplySpeechPlayer implements ReplySpeechPlayer {
-  _FakeReplySpeechPlayer({this.speakResult = true});
+  _FakeReplySpeechPlayer({
+    this.speakResult = true,
+    this.holdSpeakUntil,
+  });
 
   final bool speakResult;
+  final Future<void>? holdSpeakUntil;
   final List<String> spokenTexts = <String>[];
   final List<double> playbackSpeeds = <double>[];
   int stopCount = 0;
@@ -285,6 +333,7 @@ class _FakeReplySpeechPlayer implements ReplySpeechPlayer {
   @override
   Future<bool> speak(String rawText) async {
     spokenTexts.add(rawText);
+    await holdSpeakUntil;
     return speakResult;
   }
 

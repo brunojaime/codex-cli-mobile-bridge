@@ -17,6 +17,7 @@ class ReplyPlaybackService {
   final ReplySpeechPlayer _fallbackPlayer;
   final ReplySpeechPlayer Function(ApiClient apiClient) _providerPlayerFactory;
   final Map<String, String> _spokenAssistantMessageIds = <String, String>{};
+  final Map<String, String> _speakingAssistantMessageIds = <String, String>{};
   ReplySpeechPlayer? _providerPlayer;
   bool _supportsProviderSpeech = false;
   double _playbackSpeed = 1.0;
@@ -30,6 +31,7 @@ class ReplyPlaybackService {
     // Session and message ids are scoped to a server; avoid carrying
     // duplicate-suppression state across server switches.
     _spokenAssistantMessageIds.clear();
+    _speakingAssistantMessageIds.clear();
     await existingProviderPlayer?.dispose();
   }
 
@@ -66,10 +68,21 @@ class ReplyPlaybackService {
     if (_spokenAssistantMessageIds[session.id] == latestReply.id) {
       return;
     }
+    if (_speakingAssistantMessageIds[session.id] == latestReply.id) {
+      return;
+    }
 
-    final didSpeak = await _speakWithBestAvailablePlayer(latestReply.text);
-    if (didSpeak) {
-      _spokenAssistantMessageIds[session.id] = latestReply.id;
+    _speakingAssistantMessageIds[session.id] = latestReply.id;
+    try {
+      final didSpeak = await _speakWithBestAvailablePlayer(latestReply.text);
+      if (didSpeak &&
+          _speakingAssistantMessageIds[session.id] == latestReply.id) {
+        _spokenAssistantMessageIds[session.id] = latestReply.id;
+      }
+    } finally {
+      if (_speakingAssistantMessageIds[session.id] == latestReply.id) {
+        _speakingAssistantMessageIds.remove(session.id);
+      }
     }
   }
 
