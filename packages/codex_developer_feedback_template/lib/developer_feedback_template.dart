@@ -63,6 +63,11 @@ const developerFeedbackPreviewAudioKey = Key(
 const developerFeedbackRunsKey = Key('developer-feedback-runs');
 const developerFeedbackRunStatusKey = Key('developer-feedback-run-status');
 const developerFeedbackRefreshRunKey = Key('developer-feedback-refresh-run');
+const developerFeedbackHistoryKey = Key('developer-feedback-history');
+const developerFeedbackHistoryItemKey = Key('developer-feedback-history-item');
+const developerFeedbackHistoryRefreshKey = Key(
+  'developer-feedback-history-refresh',
+);
 const developerFeedbackCommentActionKey = Key(
   'developer-feedback-comment-action',
 );
@@ -184,6 +189,7 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
                   editMode: _editMode,
                   pendingCount: _items.length,
                   submittedCount: _submittedBatches.length,
+                  showHistory: widget.bridgeUrl.trim().isNotEmpty,
                   onEditModeChanged: (value) => setState(() {
                     _editMode = value;
                     if (!value) {
@@ -195,6 +201,9 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
                   onOpenRuns: _submittedBatches.isEmpty
                       ? null
                       : _openRunsDialog,
+                  onOpenHistory: widget.bridgeUrl.trim().isEmpty
+                      ? null
+                      : _openHistoryDialog,
                 ),
               ),
             ),
@@ -239,7 +248,10 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
     const baseEstimate = Size(176, 48);
     const pendingEstimate = Size(320, 48);
     final measured = _toolbarSize ?? Size.zero;
-    final estimate = _items.isEmpty && _submittedBatches.isEmpty
+    final estimate =
+        _items.isEmpty &&
+            _submittedBatches.isEmpty &&
+            widget.bridgeUrl.trim().isEmpty
         ? baseEstimate
         : pendingEstimate;
     return Size(
@@ -893,6 +905,126 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
     }
   }
 
+  void _openHistoryDialog() {
+    var initialized = false;
+    var loading = true;
+    var error = false;
+    var batches = <_SubmittedFeedbackBatch>[];
+    showDialog<void>(
+      context: widget.navigatorKey?.currentContext ?? context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          Future<void> loadHistory() async {
+            setDialogState(() {
+              loading = true;
+              error = false;
+            });
+            try {
+              final loaded = await _loadFeedbackHistory();
+              if (!context.mounted) return;
+              setDialogState(() {
+                batches = loaded;
+                loading = false;
+              });
+            } catch (_) {
+              if (!context.mounted) return;
+              setDialogState(() {
+                loading = false;
+                error = true;
+              });
+            }
+          }
+
+          if (!initialized) {
+            initialized = true;
+            unawaited(loadHistory());
+          }
+
+          final availableWidth = math.max(
+            0.0,
+            MediaQuery.sizeOf(context).width - 48,
+          );
+          return AlertDialog(
+            title: const Text('Historial de feedback'),
+            content: SizedBox(
+              width: math.min(560.0, availableWidth),
+              child: loading
+                  ? const Center(child: CircularProgressIndicator())
+                  : error
+                  ? const Text('No se pudo cargar el historial.')
+                  : batches.isEmpty
+                  ? const Text('No hay feedback enviado.')
+                  : ListView.separated(
+                      shrinkWrap: true,
+                      itemCount: batches.length,
+                      separatorBuilder: (_, _) => const Divider(height: 20),
+                      itemBuilder: (context, index) {
+                        final batch = batches[index];
+                        return Column(
+                          key: developerFeedbackHistoryItemKey,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: <Widget>[
+                            Text(
+                              batch.title,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              batch.historyLabel,
+                              maxLines: 3,
+                              overflow: TextOverflow.ellipsis,
+                              style: Theme.of(context).textTheme.bodySmall,
+                            ),
+                          ],
+                        );
+                      },
+                    ),
+            ),
+            actions: <Widget>[
+              IconButton(
+                key: developerFeedbackHistoryRefreshKey,
+                tooltip: 'Actualizar',
+                onPressed: loading ? null : () => unawaited(loadHistory()),
+                icon: const Icon(Icons.refresh),
+              ),
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('Cerrar'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  Future<List<_SubmittedFeedbackBatch>> _loadFeedbackHistory() async {
+    final baseUrl = widget.bridgeUrl.trim().replaceAll(RegExp(r'/$'), '');
+    final ownsClient = widget.httpClient == null;
+    final client = widget.httpClient ?? http.Client();
+    try {
+      final uri = Uri.parse('$baseUrl/feedback-batches').replace(
+        queryParameters: <String, String>{'sourceApp': widget.sourceApp},
+      );
+      final response = await client.get(uri);
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw Exception('HTTP ${response.statusCode}: ${response.body}');
+      }
+      final decoded = jsonDecode(response.body) as List<Object?>;
+      return decoded
+          .whereType<Map>()
+          .map(
+            (item) => _SubmittedFeedbackBatch.fromStatusResponse(
+              item.cast<String, Object?>(),
+            ),
+          )
+          .toList();
+    } finally {
+      if (ownsClient) client.close();
+    }
+  }
+
   Future<void> _copyExport() async {
     final export = DeveloperFeedbackExport(items: List.of(_items)).toJsonText();
     try {
@@ -985,17 +1117,21 @@ class _Toolbar extends StatelessWidget {
     required this.editMode,
     required this.pendingCount,
     required this.submittedCount,
+    required this.showHistory,
     required this.onEditModeChanged,
     required this.onOpenPending,
     required this.onOpenRuns,
+    required this.onOpenHistory,
   });
 
   final bool editMode;
   final int pendingCount;
   final int submittedCount;
+  final bool showHistory;
   final ValueChanged<bool> onEditModeChanged;
   final VoidCallback? onOpenPending;
   final VoidCallback? onOpenRuns;
+  final VoidCallback? onOpenHistory;
 
   @override
   Widget build(BuildContext context) {
@@ -1050,6 +1186,15 @@ class _Toolbar extends StatelessWidget {
                   count: submittedCount,
                   child: const Icon(Icons.track_changes),
                 ),
+              ),
+            ],
+            if (showHistory) ...<Widget>[
+              const SizedBox(width: 6),
+              IconButton(
+                key: developerFeedbackHistoryKey,
+                tooltip: 'Historial',
+                onPressed: onOpenHistory,
+                icon: const Icon(Icons.history),
               ),
             ],
           ],
@@ -1458,6 +1603,14 @@ class _SubmittedFeedbackBatch {
     final detail = (statusDetail ?? '').trim();
     final base = 'Estado: $status';
     return detail.isEmpty ? base : '$base · $detail';
+  }
+
+  String get historyLabel {
+    final ids = <String>[
+      if ((jobId ?? '').isNotEmpty) 'job $jobId',
+      if ((sessionId ?? '').isNotEmpty) 'session $sessionId',
+    ].join(' · ');
+    return ids.isEmpty ? statusLabel : '$statusLabel · $ids';
   }
 }
 

@@ -29,6 +29,7 @@ void main() {
     await tester.pump();
     expect(taps, 1);
     expect(find.byKey(developerFeedbackToolbarKey), findsNothing);
+    expect(find.byKey(developerFeedbackHistoryKey), findsNothing);
   });
 
   testWidgets('enabled template starts without pending export UI', (
@@ -621,6 +622,107 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Estado: completed · Done'), findsOneWidget);
     expect(requestedPaths, contains('/feedback-batches/batch-123'));
+  });
+
+  testWidgets('history lists batches for the configured source app', (
+    tester,
+  ) async {
+    Uri? historyUri;
+    final client = MockClient((request) async {
+      if (request.url.path == '/feedback-batches') {
+        historyUri = request.url;
+        return http.Response(
+          jsonEncode(<Map<String, Object?>>[
+            <String, Object?>{
+              'batch_id': 'batch-history',
+              'job_id': 'job-history',
+              'session_id': 'session-history',
+              'status': 'completed',
+              'status_detail': 'Done',
+              'workflow_preset_id': 'generator_only',
+              'release_when_complete': false,
+              'item_count': 2,
+              'item_ids': <String>['one', 'two'],
+              'created_at': '2026-06-11T00:00:00+00:00',
+              'submitted_at': '2026-06-11T00:00:00+00:00',
+            },
+          ]),
+          200,
+        );
+      }
+      return http.Response('not found', 404);
+    });
+
+    await tester.pumpWidget(
+      _Harness(
+        enabled: true,
+        sourceApp: 'history-app',
+        bridgeUrl: 'http://bridge.local',
+        httpClient: client,
+      ),
+    );
+
+    expect(find.byKey(developerFeedbackHistoryKey), findsOneWidget);
+    await tester.tap(find.byKey(developerFeedbackHistoryKey));
+    await tester.pumpAndSettle();
+
+    expect(historyUri?.queryParameters['sourceApp'], 'history-app');
+    expect(find.byKey(developerFeedbackHistoryItemKey), findsOneWidget);
+    expect(find.text('Batch batch-history'), findsOneWidget);
+    expect(
+      find.text(
+        'Estado: completed · Done · job job-history · session session-history',
+      ),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('history shows empty state and supports refresh', (tester) async {
+    var calls = 0;
+    final client = MockClient((request) async {
+      if (request.url.path == '/feedback-batches') {
+        calls += 1;
+        return http.Response('[]', 200);
+      }
+      return http.Response('not found', 404);
+    });
+
+    await tester.pumpWidget(
+      _Harness(
+        enabled: true,
+        bridgeUrl: 'http://bridge.local',
+        httpClient: client,
+      ),
+    );
+
+    await tester.tap(find.byKey(developerFeedbackHistoryKey));
+    await tester.pumpAndSettle();
+    expect(find.text('No hay feedback enviado.'), findsOneWidget);
+
+    await tester.tap(find.byKey(developerFeedbackHistoryRefreshKey));
+    await tester.pumpAndSettle();
+    expect(calls, 2);
+    expect(find.text('No hay feedback enviado.'), findsOneWidget);
+  });
+
+  testWidgets('history shows unavailable state when bridge fails', (
+    tester,
+  ) async {
+    final client = MockClient((request) async {
+      return http.Response('unavailable', 503);
+    });
+
+    await tester.pumpWidget(
+      _Harness(
+        enabled: true,
+        bridgeUrl: 'http://bridge.local',
+        httpClient: client,
+      ),
+    );
+
+    await tester.tap(find.byKey(developerFeedbackHistoryKey));
+    await tester.pumpAndSettle();
+    expect(find.text('No se pudo cargar el historial.'), findsOneWidget);
   });
 
   testWidgets(
