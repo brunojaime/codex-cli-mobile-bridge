@@ -429,6 +429,7 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
     var sending = false;
     String? answer;
     String? error;
+    String? notice;
     setState(() => _dialogOpen = true);
     await showDialog<void>(
       context: widget.navigatorKey?.currentContext ?? context,
@@ -472,6 +473,15 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
                       key: developerFeedbackQuickAskAnswerKey,
                     ),
                   ],
+                  if (notice != null) ...<Widget>[
+                    const SizedBox(height: 12),
+                    Text(
+                      notice!,
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.primary,
+                      ),
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -490,6 +500,7 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
                         setDialogState(() {
                           sending = true;
                           error = null;
+                          notice = null;
                           answer = null;
                         });
                         try {
@@ -506,7 +517,7 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
                         } on _QuickAskPendingException {
                           if (!context.mounted) return;
                           setDialogState(() {
-                            error =
+                            notice =
                                 'La pregunta quedo enviada. Abrí Preguntas rápidas para ver la respuesta.';
                             sending = false;
                           });

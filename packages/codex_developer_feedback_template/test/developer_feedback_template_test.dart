@@ -671,6 +671,125 @@ void main() {
     },
   );
 
+  testWidgets('quick ask timeout remains recoverable from history', (
+    tester,
+  ) async {
+    var quickAskPolls = 0;
+    final client = MockClient((request) async {
+      if (request.url.path == '/feedback-batches') {
+        return http.Response('[]', 200);
+      }
+      if (request.url.path == '/feedback-quick-asks/ask') {
+        return http.Response(
+          jsonEncode(<String, Object?>{
+            'quickAskId': 'quick-ask-timeout',
+            'jobId': 'job-quick-ask-timeout',
+            'sessionId': 'session-quick-ask-timeout',
+            'status': 'pending',
+            'agent_id': 'generator',
+            'agent_type': 'generator',
+          }),
+          202,
+        );
+      }
+      if (request.url.path == '/feedback-quick-asks/quick-ask-timeout') {
+        quickAskPolls += 1;
+        final completed = quickAskPolls > 120;
+        return http.Response(
+          jsonEncode(<String, Object?>{
+            'quickAskId': 'quick-ask-timeout',
+            'sourceApp': 'fixture-app',
+            'question': 'Where am I standing?',
+            'status': completed ? 'completed' : 'running',
+            if (completed) 'answer': 'Recovered answer from history.',
+            'screenshot_mime_type': 'image/png',
+            'has_screenshot': true,
+            'selection_points': <Object?>[],
+            'selectionBounds': <String, double>{
+              'left': 1,
+              'top': 2,
+              'width': 3,
+              'height': 4,
+            },
+            'jobId': 'job-quick-ask-timeout',
+            'sessionId': 'session-quick-ask-timeout',
+            'createdAt': '2026-06-11T00:00:00+00:00',
+          }),
+          200,
+        );
+      }
+      if (request.url.path == '/feedback-quick-asks') {
+        return http.Response(
+          jsonEncode(<Map<String, Object?>>[
+            <String, Object?>{
+              'quickAskId': 'quick-ask-timeout',
+              'sourceApp': 'fixture-app',
+              'question': 'Where am I standing?',
+              'status': 'completed',
+              'answer': 'Recovered answer from history.',
+              'screenshot_mime_type': 'image/png',
+              'has_screenshot': true,
+              'selection_points': <Object?>[],
+              'selectionBounds': <String, double>{
+                'left': 1,
+                'top': 2,
+                'width': 3,
+                'height': 4,
+              },
+              'jobId': 'job-quick-ask-timeout',
+              'sessionId': 'session-quick-ask-timeout',
+              'createdAt': '2026-06-11T00:00:00+00:00',
+            },
+          ]),
+          200,
+        );
+      }
+      return http.Response('not found', 404);
+    });
+
+    await tester.pumpWidget(
+      _Harness(
+        enabled: true,
+        bridgeUrl: 'http://bridge.local',
+        httpClient: client,
+      ),
+    );
+
+    await tester.tap(find.byKey(developerFeedbackSwitchKey));
+    await tester.pump();
+    await _drawFeedbackSelection(tester);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(developerFeedbackQuickAskActionKey));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(developerFeedbackQuickAskQuestionKey),
+      'Where am I standing?',
+    );
+    await tester.tap(find.byKey(developerFeedbackQuickAskSubmitKey));
+    await tester.pump();
+    for (var tick = 0; tick < 125; tick += 1) {
+      await tester.pump(const Duration(milliseconds: 250));
+    }
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text(
+        'La pregunta quedo enviada. Abrí Preguntas rápidas para ver la respuesta.',
+      ),
+      findsOneWidget,
+    );
+    expect(find.text('No se pudo responder la pregunta.'), findsNothing);
+
+    await tester.tap(find.text('Cerrar').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(developerFeedbackQuickAskHistoryKey));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(developerFeedbackQuickAskHistoryItemKey));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Recovered answer from history.'), findsOneWidget);
+  });
+
   testWidgets('quick ask history shows provenance detail', (tester) async {
     const screenshot =
         'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=';
