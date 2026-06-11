@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:codex_app_updater/codex_app_updater.dart';
 import 'package:codex_mobile_frontend/main.dart';
 import 'package:codex_mobile_frontend/src/models/agent_configuration.dart';
 import 'package:codex_mobile_frontend/src/models/agent_profile.dart';
@@ -38,6 +39,67 @@ void main() {
     expect(find.byIcon(Icons.mic_rounded), findsOneWidget);
     expect(find.byIcon(Icons.upload_file_outlined), findsNothing);
     expect(find.byIcon(Icons.download_for_offline_outlined), findsNothing);
+  });
+
+  testWidgets('uses Bridge-controlled updater for Codex Mobile APKs', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    final requestedUris = <Uri>[];
+    final controller = CodexAppUpdaterController(
+      httpClient: MockClient((request) async {
+        requestedUris.add(request.url);
+        return http.Response(
+          jsonEncode({
+            'kind': 'codex.appUpdate',
+            'version': 1,
+            'sourceApp': 'codex-mobile',
+            'displayName': 'Codex Mobile',
+            'platform': 'android',
+            'currentVersion': '1.2.3',
+            'currentBuild': 33,
+            'latestVersion': '1.2.4',
+            'latestBuild': 34,
+            'releaseTag': 'android-v1.2.4-build.34',
+            'apkUrl':
+                'http://bridge.test/app-updates/codex-mobile/apk/android-v1.2.4-build.34/codex-mobile.apk',
+            'apkAssetName': 'codex-mobile.apk',
+            'sha256': null,
+            'sizeBytes': 123,
+            'releaseNotes': 'Nueva APK disponible.',
+            'required': false,
+            'available': true,
+          }),
+          200,
+        );
+      }),
+    );
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(
+      CodexMobileApp(
+        initialApiBaseUrl: 'http://bridge.test',
+        currentVersion: '1.2.3',
+        currentBuild: 33,
+        appUpdaterEnabled: true,
+        appUpdaterController: controller,
+      ),
+    );
+    await tester.pump();
+
+    expect(requestedUris, hasLength(1));
+    final uri = requestedUris.single;
+    expect(uri.path, '/app-updates/codex-mobile');
+    expect(uri.queryParameters['platform'], 'android');
+    expect(uri.queryParameters['currentVersion'], '1.2.3');
+    expect(uri.queryParameters['currentBuild'], '33');
+    expect(uri.queryParameters['channel'], 'stable');
+    expect(controller.updateInfo?.apkUrl, startsWith('http://bridge.test/'));
+    expect(
+        controller.updateInfo?.apkUrl, contains('/app-updates/codex-mobile/'));
+    expect(controller.updateInfo?.apkUrl, isNot(contains('github.com')));
+    expect(find.byKey(codexAppUpdaterBannerKey), findsOneWidget);
+    expect(find.byKey(codexAppUpdaterUpdateButtonKey), findsOneWidget);
   });
 
   testWidgets('collapses secondary app bar actions on narrow screens', (

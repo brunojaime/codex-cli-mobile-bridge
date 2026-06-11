@@ -88,6 +88,7 @@ class ChatScreen extends StatefulWidget {
     this.feedbackQueueCountLoaderOverride,
     this.feedbackQueueListLoaderOverride,
     this.feedbackSourceWorkspaceAliases = const <String, String>{},
+    this.onActiveServerBaseUrlChanged,
   });
 
   final String initialApiBaseUrl;
@@ -105,6 +106,7 @@ class ChatScreen extends StatefulWidget {
     required bool includeImages,
   })? feedbackQueueListLoaderOverride;
   final Map<String, String> feedbackSourceWorkspaceAliases;
+  final ValueChanged<String>? onActiveServerBaseUrlChanged;
   @override
   State<ChatScreen> createState() => _ChatScreenState();
 }
@@ -1592,6 +1594,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       _audioReplyPlaybackSpeed = audioReplyPlaybackSpeed;
       _isLoadingCodexTooling = true;
     });
+    widget.onActiveServerBaseUrlChanged?.call(profile.baseUrl);
     _lastObservedSessionId = null;
     _updateStickToBottom(true);
     await _serverProfileStore.saveActiveProfileId(profile.id);
