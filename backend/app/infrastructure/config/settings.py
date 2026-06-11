@@ -60,7 +60,7 @@ class Settings(BaseSettings):
     audio_transcription_local_model: str = "small"
     audio_transcription_local_compute_type: str = "int8"
     audio_transcription_local_device: str = "auto"
-    speech_synthesis_backend: Literal["disabled", "openai"] = "disabled"
+    speech_synthesis_backend: Literal["disabled", "openai", "kokoro"] = "disabled"
     speech_synthesis_model: str = "gpt-4o-mini-tts"
     speech_synthesis_voice: str = "cedar"
     speech_synthesis_response_format: str = "mp3"
@@ -68,6 +68,11 @@ class Settings(BaseSettings):
         "Speak naturally with clear pacing, grounded tone, and concise phrasing."
     )
     speech_synthesis_timeout_seconds: int = 120
+    speech_synthesis_kokoro_lang_code: str = "e"
+    speech_synthesis_kokoro_voice: str = "ef_dora"
+    speech_synthesis_kokoro_speed: float = Field(default=1.0, ge=0.5, le=2.0)
+    speech_synthesis_kokoro_split_pattern: str = r"\n+"
+    speech_synthesis_kokoro_sample_rate: int = 24_000
     app_update_registry_path: str = str(Path(__file__).with_name("app_updates.json"))
     app_update_github_token: str | None = None
     app_update_github_timeout_seconds: float = 10.0

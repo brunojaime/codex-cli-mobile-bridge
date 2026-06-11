@@ -42,6 +42,13 @@ const String _defaultAutoReviewerPrompt =
     'improves the implementation with more code, tighter validation, missing '
     'tests, edge cases, cleanup, or follow-up work. Reply only with that next '
     'prompt.';
+const List<double> _audioReplyPlaybackSpeeds = <double>[
+  1.0,
+  1.25,
+  1.5,
+  1.75,
+  2.0,
+];
 const Key kChatScreenBodyScrollViewKey =
     ValueKey<String>('chat-screen-body-scroll-view');
 
@@ -121,6 +128,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   bool _showArchivedChatsInSidebar = false;
   bool _stickToBottom = true;
   bool _audioRepliesEnabled = false;
+  double _audioReplyPlaybackSpeed = 1.0;
   bool _isLoadingCodexTooling = false;
   bool _isOpeningWorkspacePicker = false;
   String? _lastObservedSessionId;
@@ -1508,6 +1516,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     final sidebarExpanded = await _serverProfileStore.loadSidebarExpanded();
     final audioRepliesEnabled = await _serverProfileStore
         .loadAudioRepliesEnabled(widget.initialApiBaseUrl);
+    final audioReplyPlaybackSpeed = await _serverProfileStore
+        .loadAudioReplyPlaybackSpeed(widget.initialApiBaseUrl);
     final resolvedActiveProfile = profiles.firstWhere(
       (profile) => profile.id == activeProfileId,
       orElse: () => profiles.first,
@@ -1519,7 +1529,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       _activeServerHealth = null;
       _sidebarExpanded = sidebarExpanded;
       _audioRepliesEnabled = audioRepliesEnabled;
+      _audioReplyPlaybackSpeed = audioReplyPlaybackSpeed;
     });
+    await _replyPlaybackService.setPlaybackSpeed(audioReplyPlaybackSpeed);
 
     final didConnect =
         await _switchToServer(resolvedActiveProfile, initialize: true);
@@ -1559,10 +1571,13 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     );
     final audioRepliesEnabled =
         await _serverProfileStore.loadAudioRepliesEnabled(profile.baseUrl);
+    final audioReplyPlaybackSpeed =
+        await _serverProfileStore.loadAudioReplyPlaybackSpeed(profile.baseUrl);
     nextController.addListener(_handleChatControllerChanged);
 
     final previousController = _chatController;
     await _replyPlaybackService.setServer(client);
+    await _replyPlaybackService.setPlaybackSpeed(audioReplyPlaybackSpeed);
     setState(() {
       _chatController = nextController;
       _activeServer = profile;
@@ -1574,6 +1589,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       _serverErrorText = null;
       _codexToolingErrorText = null;
       _audioRepliesEnabled = audioRepliesEnabled;
+      _audioReplyPlaybackSpeed = audioReplyPlaybackSpeed;
       _isLoadingCodexTooling = true;
     });
     _lastObservedSessionId = null;
@@ -1850,47 +1866,91 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _openReplyModePicker() async {
-    final nextValue = await showModalBottomSheet<bool>(
+    await showModalBottomSheet<void>(
       context: context,
       backgroundColor: const Color(0xFF101931),
       builder: (context) {
-        return SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: <Widget>[
-              const ListTile(
-                title: Text('Reply mode'),
-                subtitle: Text(
-                  'Choose whether assistant replies stay as text or are spoken aloud',
-                ),
+        var sheetAudioRepliesEnabled = _audioRepliesEnabled;
+        var sheetPlaybackSpeed = _audioReplyPlaybackSpeed;
+        return StatefulBuilder(
+          builder: (context, setSheetState) {
+            return SafeArea(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  const ListTile(
+                    title: Text('Reply mode'),
+                    subtitle: Text(
+                      'Choose whether assistant replies stay as text or are spoken aloud',
+                    ),
+                  ),
+                  ListTile(
+                    leading: Icon(
+                      sheetAudioRepliesEnabled
+                          ? Icons.radio_button_unchecked_rounded
+                          : Icons.radio_button_checked_rounded,
+                    ),
+                    title: const Text('Text replies'),
+                    subtitle: const Text('Keep assistant responses silent'),
+                    onTap: () async {
+                      await _setAudioRepliesEnabled(false);
+                      setSheetState(() {
+                        sheetAudioRepliesEnabled = false;
+                      });
+                    },
+                  ),
+                  ListTile(
+                    leading: Icon(
+                      sheetAudioRepliesEnabled
+                          ? Icons.radio_button_checked_rounded
+                          : Icons.radio_button_unchecked_rounded,
+                    ),
+                    title: const Text('Audio replies'),
+                    subtitle: Text(
+                      'Speak assistant responses at ${_formatPlaybackSpeed(sheetPlaybackSpeed)}',
+                    ),
+                    onTap: () async {
+                      await _setAudioRepliesEnabled(true);
+                      setSheetState(() {
+                        sheetAudioRepliesEnabled = true;
+                      });
+                    },
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 4, 16, 20),
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: _audioReplyPlaybackSpeeds.map((speed) {
+                          final selected =
+                              (sheetPlaybackSpeed - speed).abs() < 0.01;
+                          return ChoiceChip(
+                            label: Text(_formatPlaybackSpeed(speed)),
+                            selected: selected,
+                            onSelected: (_) async {
+                              await _setAudioReplyPlaybackSpeed(speed);
+                              setSheetState(() {
+                                sheetPlaybackSpeed = speed;
+                              });
+                            },
+                          );
+                        }).toList(),
+                      ),
+                    ),
+                  ),
+                ],
               ),
-              ListTile(
-                leading: Icon(
-                  _audioRepliesEnabled
-                      ? Icons.radio_button_unchecked_rounded
-                      : Icons.radio_button_checked_rounded,
-                ),
-                title: const Text('Text replies'),
-                subtitle: const Text('Keep assistant responses silent'),
-                onTap: () => Navigator.of(context).pop(false),
-              ),
-              ListTile(
-                leading: Icon(
-                  _audioRepliesEnabled
-                      ? Icons.radio_button_checked_rounded
-                      : Icons.radio_button_unchecked_rounded,
-                ),
-                title: const Text('Audio replies'),
-                subtitle: const Text('Speak assistant responses automatically'),
-                onTap: () => Navigator.of(context).pop(true),
-              ),
-            ],
-          ),
+            );
+          },
         );
       },
     );
+  }
 
-    if (nextValue == null || nextValue == _audioRepliesEnabled) {
+  Future<void> _setAudioRepliesEnabled(bool nextValue) async {
+    if (nextValue == _audioRepliesEnabled) {
       return;
     }
 
@@ -1912,6 +1972,42 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     setState(() {
       _audioRepliesEnabled = nextValue;
     });
+  }
+
+  Future<void> _setAudioReplyPlaybackSpeed(double speed) async {
+    final normalizedSpeed = _normalizeAudioReplyPlaybackSpeed(speed);
+    if ((normalizedSpeed - _audioReplyPlaybackSpeed).abs() < 0.01) {
+      return;
+    }
+
+    final activeBaseUrl = _activeServer?.baseUrl ?? widget.initialApiBaseUrl;
+    await _serverProfileStore.saveAudioReplyPlaybackSpeed(
+      activeBaseUrl,
+      normalizedSpeed,
+    );
+    await _replyPlaybackService.setPlaybackSpeed(normalizedSpeed);
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      _audioReplyPlaybackSpeed = normalizedSpeed;
+    });
+  }
+
+  double _normalizeAudioReplyPlaybackSpeed(double speed) {
+    return _audioReplyPlaybackSpeeds.reduce((closest, candidate) {
+      final closestDistance = (closest - speed).abs();
+      final candidateDistance = (candidate - speed).abs();
+      return candidateDistance < closestDistance ? candidate : closest;
+    });
+  }
+
+  String _formatPlaybackSpeed(double speed) {
+    if (speed == speed.roundToDouble()) {
+      return '${speed.toInt()}x';
+    }
+    return '${speed.toStringAsFixed(2).replaceFirst(RegExp(r'0$'), '')}x';
   }
 
   Future<void> _handleBeginRecording() async {
@@ -2104,7 +2200,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                   ? Icons.volume_up_rounded
                   : Icons.volume_mute_rounded,
               label: _audioRepliesEnabled
-                  ? 'Audio replies enabled'
+                  ? 'Audio replies ${_formatPlaybackSpeed(_audioReplyPlaybackSpeed)}'
                   : 'Text replies enabled',
             ),
             _buildAppBarOverflowMenuItem(
@@ -2181,7 +2277,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
               : Icons.volume_mute_rounded,
         ),
         tooltip: _audioRepliesEnabled
-            ? 'Audio replies enabled'
+            ? 'Audio replies enabled at ${_formatPlaybackSpeed(_audioReplyPlaybackSpeed)}'
             : 'Text replies enabled',
       ),
       IconButton(

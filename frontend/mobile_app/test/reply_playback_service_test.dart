@@ -175,6 +175,43 @@ void main() {
     expect(fallbackPlayer.stopCount, fallbackStopsBeforeRecording + 1);
   });
 
+  test('applies playback speed to provider and fallback players', () async {
+    final fallbackPlayer = _FakeReplySpeechPlayer();
+    final providerPlayer = _FakeReplySpeechPlayer();
+    final service = ReplyPlaybackService(
+      fallbackPlayer: fallbackPlayer,
+      providerPlayerFactory: (_) => providerPlayer,
+    );
+
+    await service.setServer(ApiClient(baseUrl: 'http://localhost:8000'));
+    await service.setPlaybackSpeed(1.5);
+
+    expect(providerPlayer.playbackSpeeds, <double>[1.0, 1.5]);
+    expect(fallbackPlayer.playbackSpeeds, <double>[1.5]);
+  });
+
+  test('carries playback speed to a newly created provider player', () async {
+    final fallbackPlayer = _FakeReplySpeechPlayer();
+    final providerPlayerA = _FakeReplySpeechPlayer();
+    final providerPlayerB = _FakeReplySpeechPlayer();
+    var factoryCalls = 0;
+    final service = ReplyPlaybackService(
+      fallbackPlayer: fallbackPlayer,
+      providerPlayerFactory: (_) {
+        factoryCalls += 1;
+        return factoryCalls == 1 ? providerPlayerA : providerPlayerB;
+      },
+    );
+
+    await service.setPlaybackSpeed(1.75);
+    await service.setServer(ApiClient(baseUrl: 'http://localhost:8000'));
+    await service.setServer(ApiClient(baseUrl: 'http://localhost:9000'));
+
+    expect(providerPlayerA.playbackSpeeds, <double>[1.75]);
+    expect(providerPlayerB.playbackSpeeds, <double>[1.75]);
+    expect(fallbackPlayer.playbackSpeeds, <double>[1.75]);
+  });
+
   test('clears spoken reply history when switching servers', () async {
     final providerPlayerA = _FakeReplySpeechPlayer();
     final providerPlayerB = _FakeReplySpeechPlayer();
@@ -236,6 +273,7 @@ class _FakeReplySpeechPlayer implements ReplySpeechPlayer {
 
   final bool speakResult;
   final List<String> spokenTexts = <String>[];
+  final List<double> playbackSpeeds = <double>[];
   int stopCount = 0;
   int disposeCount = 0;
 
@@ -248,6 +286,11 @@ class _FakeReplySpeechPlayer implements ReplySpeechPlayer {
   Future<bool> speak(String rawText) async {
     spokenTexts.add(rawText);
     return speakResult;
+  }
+
+  @override
+  Future<void> setPlaybackSpeed(double speed) async {
+    playbackSpeeds.add(speed);
   }
 
   @override

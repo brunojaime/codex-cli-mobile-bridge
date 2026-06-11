@@ -28,6 +28,9 @@ from backend.app.infrastructure.speech.base import SpeechSynthesizer
 from backend.app.infrastructure.speech.disabled_synthesizer import (
     DisabledSpeechSynthesizer,
 )
+from backend.app.infrastructure.speech.kokoro_synthesizer import (
+    KokoroSpeechSynthesizer,
+)
 from backend.app.infrastructure.speech.openai_synthesizer import (
     OpenAISpeechSynthesizer,
 )
@@ -212,6 +215,16 @@ def _build_speech_synthesizer(settings: Settings) -> SpeechSynthesizer:
             instructions=settings.speech_synthesis_instructions,
             base_url=settings.openai_base_url,
             timeout_seconds=settings.speech_synthesis_timeout_seconds,
+        )
+
+    if settings.speech_synthesis_backend == "kokoro":
+        return KokoroSpeechSynthesizer(
+            lang_code=settings.speech_synthesis_kokoro_lang_code,
+            voice=settings.speech_synthesis_kokoro_voice,
+            speed=settings.speech_synthesis_kokoro_speed,
+            split_pattern=settings.speech_synthesis_kokoro_split_pattern,
+            sample_rate=settings.speech_synthesis_kokoro_sample_rate,
+            response_format=settings.speech_synthesis_response_format,
         )
 
     return DisabledSpeechSynthesizer()

@@ -47,6 +47,7 @@ from backend.app.infrastructure.execution.local_provider import LocalExecutionPr
 from backend.app.infrastructure.codex_tooling import discover_codex_skills, sync_repo_skills
 from backend.app.infrastructure.persistence.in_memory_chat_repository import InMemoryChatRepository
 from backend.app.infrastructure.persistence.sqlite_chat_repository import SqliteChatRepository
+from backend.app.infrastructure.speech import kokoro_synthesizer
 from backend.app.infrastructure.speech.base import (
     SpeechSynthesizer,
     SpeechSynthesizerStatus,
@@ -5850,6 +5851,7 @@ def test_health_and_capabilities_report_openai_speech_not_ready_without_api_key(
         poll_interval_seconds=0,
         audio_transcription_backend="disabled",
         speech_synthesis_backend="openai",
+        speech_synthesis_response_format="mp3",
     )
     app = create_app(settings)
     client = TestClient(app)
@@ -5865,6 +5867,116 @@ def test_health_and_capabilities_report_openai_speech_not_ready_without_api_key(
     assert capabilities_response.json()["speech_output_backend"] == "openai"
     assert capabilities_response.json()["speech_output_voice"] == "cedar"
     assert capabilities_response.json()["speech_output_response_format"] == "mp3"
+
+
+def test_health_and_capabilities_report_kokoro_speech_ready(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(kokoro_synthesizer, "_missing_dependencies", lambda: [])
+    settings = Settings(
+        codex_command="python3 tests/fixtures/fake_codex.py",
+        codex_use_exec=False,
+        projects_root="..",
+        chat_store_backend="memory",
+        execution_timeout_seconds=10,
+        poll_interval_seconds=0,
+        audio_transcription_backend="disabled",
+        speech_synthesis_backend="kokoro",
+        speech_synthesis_kokoro_lang_code="e",
+        speech_synthesis_kokoro_voice="ef_dora",
+    )
+    app = create_app(settings)
+    client = TestClient(app)
+
+    health_response = client.get("/health")
+    capabilities_response = client.get("/capabilities")
+
+    assert health_response.status_code == 200
+    assert capabilities_response.status_code == 200
+    assert health_response.json()["speech_synthesis_backend"] == "kokoro"
+    assert health_response.json()["speech_synthesis_ready"] is True
+    assert health_response.json()["speech_synthesis_voice"] == "ef_dora"
+    assert health_response.json()["speech_synthesis_response_format"] == "wav"
+    assert capabilities_response.json()["supports_speech_output"] is True
+    assert capabilities_response.json()["speech_output_backend"] == "kokoro"
+    assert capabilities_response.json()["speech_output_voice"] == "ef_dora"
+
+
+def test_kokoro_speech_not_ready_disables_capabilities_and_speech_endpoint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        kokoro_synthesizer,
+        "_missing_dependencies",
+        lambda: ["espeak-ng/espeak"],
+    )
+    settings = Settings(
+        codex_command="python3 tests/fixtures/fake_codex.py",
+        codex_use_exec=False,
+        projects_root="..",
+        chat_store_backend="memory",
+        execution_timeout_seconds=10,
+        poll_interval_seconds=0,
+        audio_transcription_backend="disabled",
+        speech_synthesis_backend="kokoro",
+    )
+    app = create_app(settings)
+    client = TestClient(app)
+
+    capabilities_response = client.get("/capabilities")
+    speech_response = client.post("/audio/speech", json={"text": "Hola."})
+
+    assert capabilities_response.status_code == 200
+    assert capabilities_response.json()["supports_speech_output"] is False
+    assert capabilities_response.json()["speech_output_backend"] == "kokoro"
+    assert capabilities_response.json()["speech_output_voice"] == "ef_dora"
+    assert speech_response.status_code == 503
+    assert "espeak-ng/espeak" in speech_response.json()["detail"]
+
+
+def test_audio_speech_endpoint_returns_422_when_kokoro_encoding_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = build_test_client()
+    container = client.app.dependency_overrides[get_container]()
+    monkeypatch.setattr(kokoro_synthesizer, "_missing_dependencies", lambda: [])
+
+    def fake_load_pipeline(self):
+        def fake_pipeline(
+            text: str,
+            *,
+            voice: str,
+            speed: float,
+            split_pattern: str,
+        ):
+            return [("graphemes", "phonemes", ["bad-audio"])]
+
+        return fake_pipeline
+
+    def fail_encoding(audio_segments, response_format, sample_rate):
+        raise RuntimeError("bad audio data")
+
+    monkeypatch.setattr(
+        kokoro_synthesizer.KokoroSpeechSynthesizer,
+        "_load_pipeline",
+        fake_load_pipeline,
+    )
+    monkeypatch.setattr(kokoro_synthesizer, "_encode_audio", fail_encoding)
+    container.speech_synthesizer = kokoro_synthesizer.KokoroSpeechSynthesizer(
+        lang_code="e",
+        voice="ef_dora",
+        speed=1.0,
+        split_pattern=r"\n+",
+        sample_rate=24_000,
+        response_format="wav",
+    )
+
+    response = client.post("/audio/speech", json={"text": "Hola."})
+
+    assert response.status_code == 422
+    assert response.json() == {
+        "detail": "Kokoro audio encoding failed: bad audio data"
+    }
 
 
 def test_audio_speech_endpoint_returns_provider_audio() -> None:

@@ -19,16 +19,24 @@ class ReplyPlaybackService {
   final Map<String, String> _spokenAssistantMessageIds = <String, String>{};
   ReplySpeechPlayer? _providerPlayer;
   bool _supportsProviderSpeech = false;
+  double _playbackSpeed = 1.0;
 
   Future<void> setServer(ApiClient apiClient) async {
     await stop();
     final existingProviderPlayer = _providerPlayer;
     _providerPlayer = _providerPlayerFactory(apiClient);
+    await _providerPlayer?.setPlaybackSpeed(_playbackSpeed);
     _supportsProviderSpeech = false;
     // Session and message ids are scoped to a server; avoid carrying
     // duplicate-suppression state across server switches.
     _spokenAssistantMessageIds.clear();
     await existingProviderPlayer?.dispose();
+  }
+
+  Future<void> setPlaybackSpeed(double speed) async {
+    _playbackSpeed = speed.clamp(1.0, 2.0).toDouble();
+    await _providerPlayer?.setPlaybackSpeed(_playbackSpeed);
+    await _fallbackPlayer.setPlaybackSpeed(_playbackSpeed);
   }
 
   void setCapabilities(ServerCapabilities? capabilities) {

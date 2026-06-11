@@ -10,6 +10,22 @@ String sanitizeTextForSpeech(String text) {
 class TextToSpeechPlayer implements reply_speech.ReplySpeechPlayer {
   final FlutterTts _tts = FlutterTts();
   bool _configured = false;
+  double _playbackSpeed = 1.0;
+
+  @override
+  Future<void> setPlaybackSpeed(double speed) async {
+    _playbackSpeed = speed.clamp(1.0, 2.0).toDouble();
+    if (!_configured) {
+      return;
+    }
+    try {
+      await _tts.setSpeechRate(_speechRateForPlaybackSpeed(_playbackSpeed));
+    } on MissingPluginException {
+      return;
+    } catch (_) {
+      return;
+    }
+  }
 
   @override
   Future<bool> speak(String rawText) async {
@@ -51,9 +67,13 @@ class TextToSpeechPlayer implements reply_speech.ReplySpeechPlayer {
       return;
     }
 
-    await _tts.setSpeechRate(0.45);
+    await _tts.setSpeechRate(_speechRateForPlaybackSpeed(_playbackSpeed));
     await _tts.setPitch(1.0);
     await _tts.setVolume(1.0);
     _configured = true;
   }
+}
+
+double _speechRateForPlaybackSpeed(double playbackSpeed) {
+  return (0.45 * playbackSpeed).clamp(0.1, 1.0);
 }

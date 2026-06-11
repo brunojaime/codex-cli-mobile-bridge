@@ -160,4 +160,35 @@ class ServerProfileStore {
   String _audioRepliesEnabledKey(String serverBaseUrl) {
     return 'audio_replies_enabled::$serverBaseUrl';
   }
+
+  Future<double> loadAudioReplyPlaybackSpeed(String serverBaseUrl) async {
+    final preferences = await SharedPreferences.getInstance();
+    return _normalizeAudioReplyPlaybackSpeed(
+      preferences.getDouble(_audioReplyPlaybackSpeedKey(serverBaseUrl)) ?? 1.0,
+    );
+  }
+
+  Future<void> saveAudioReplyPlaybackSpeed(
+    String serverBaseUrl,
+    double speed,
+  ) async {
+    final preferences = await SharedPreferences.getInstance();
+    await preferences.setDouble(
+      _audioReplyPlaybackSpeedKey(serverBaseUrl),
+      _normalizeAudioReplyPlaybackSpeed(speed),
+    );
+  }
+
+  String _audioReplyPlaybackSpeedKey(String serverBaseUrl) {
+    return 'audio_reply_playback_speed::$serverBaseUrl';
+  }
+}
+
+double _normalizeAudioReplyPlaybackSpeed(double speed) {
+  const supportedSpeeds = <double>[1.0, 1.25, 1.5, 1.75, 2.0];
+  return supportedSpeeds.reduce((closest, candidate) {
+    final closestDistance = (closest - speed).abs();
+    final candidateDistance = (candidate - speed).abs();
+    return candidateDistance < closestDistance ? candidate : closest;
+  });
 }

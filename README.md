@@ -160,6 +160,10 @@ Important variables:
 - `AUDIO_TRANSCRIPTION_COMMAND=/absolute/path/to/your/transcriber-wrapper {file}`
 - `AUDIO_TRANSCRIPTION_MODEL=whisper-1` for OpenAI-only transcription
 - `AUDIO_TRANSCRIPTION_LOCAL_MODEL=small`
+- `SPEECH_SYNTHESIS_BACKEND=disabled|openai|kokoro`
+- `SPEECH_SYNTHESIS_KOKORO_LANG_CODE=e`
+- `SPEECH_SYNTHESIS_KOKORO_VOICE=ef_dora`
+- `SPEECH_SYNTHESIS_RESPONSE_FORMAT=wav`
 - `OPENAI_API_KEY=...`
 
 Two values matter most for a fresh machine:
@@ -220,6 +224,16 @@ Voice-note transcription options:
 - `AUDIO_TRANSCRIPTION_MODEL` only matters for `openai`. It does not affect local `faster-whisper`.
 - `AUDIO_TRANSCRIPTION_BACKEND=faster_whisper` forces the local model path and avoids any external API call.
 - `AUDIO_TRANSCRIPTION_BACKEND=disabled` turns the feature off explicitly.
+
+Audio reply synthesis options:
+
+- `SPEECH_SYNTHESIS_BACKEND=kokoro` enables local open-source reply audio with Kokoro-82M.
+- Install the optional speech dependencies with `uv pip install -e '.[speech]'`.
+- Install `espeak-ng` on the backend host; Kokoro uses it for grapheme-to-phoneme handling.
+- The default Kokoro settings target Spanish replies: `SPEECH_SYNTHESIS_KOKORO_LANG_CODE=e` and `SPEECH_SYNTHESIS_KOKORO_VOICE=ef_dora`.
+- For English replies, use `SPEECH_SYNTHESIS_KOKORO_LANG_CODE=a` and a voice such as `af_heart`.
+- Kokoro returns local audio as `wav` by default. The mobile app can then play audio replies at `1x`, `1.25x`, `1.5x`, `1.75x`, or `2x`.
+- `SPEECH_SYNTHESIS_BACKEND=openai` still works for hosted OpenAI TTS if `OPENAI_API_KEY` is configured.
 
 ## Git HTTPS Snap Fix
 
