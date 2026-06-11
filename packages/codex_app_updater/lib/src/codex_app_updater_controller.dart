@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
@@ -36,21 +37,36 @@ class CodexAppUpdaterController extends ChangeNotifier {
   int? totalBytes;
   Future<CodexAppUpdateInfo?>? _activeCheck;
   Future<bool>? _activeUpdate;
+  String? _activeCheckUri;
+  CodexAppUpdaterConfig? _pendingCheckConfig;
 
   bool get canRetryInstallPreparedApk => _canInstallPreparedApk;
 
   Future<CodexAppUpdateInfo?> checkForUpdate(CodexAppUpdaterConfig config) {
-    if (_activeCheck != null) return _activeCheck!;
     if (!config.enabled || config.bridgeUrl.trim().isEmpty) {
       return Future.value(null);
+    }
+    final requestUri = config.updateUri().toString();
+    if (_activeCheck != null) {
+      if (_activeCheckUri != requestUri) {
+        _pendingCheckConfig = config;
+      }
+      return _activeCheck!;
     }
     late final Future<CodexAppUpdateInfo?> check;
     check = _checkForUpdate(config).whenComplete(() {
       if (identical(_activeCheck, check)) {
         _activeCheck = null;
+        _activeCheckUri = null;
+        final pendingConfig = _pendingCheckConfig;
+        _pendingCheckConfig = null;
+        if (pendingConfig != null) {
+          unawaited(checkForUpdate(pendingConfig));
+        }
       }
     });
     _activeCheck = check;
+    _activeCheckUri = requestUri;
     return check;
   }
 
@@ -73,7 +89,7 @@ class CodexAppUpdaterController extends ChangeNotifier {
       }
       final info = CodexAppUpdateInfo.fromJson(decoded);
       updateInfo = info;
-      if (!info.available) {
+      if (!info.available || !_isNewerThanCurrent(config, info)) {
         _setStatus(CodexAppUpdateStatus.upToDate);
       } else if (!info.hasInstallableAsset) {
         _fail(CodexAppUpdateFailureReason.noCompatibleAsset);
@@ -272,5 +288,16 @@ class CodexAppUpdaterController extends ChangeNotifier {
     downloadedApkPath = null;
     downloadedBytes = 0;
     totalBytes = null;
+  }
+
+  bool _isNewerThanCurrent(
+    CodexAppUpdaterConfig config,
+    CodexAppUpdateInfo info,
+  ) {
+    final latestBuild = info.latestBuild;
+    if (latestBuild != null) {
+      return latestBuild > config.currentBuild;
+    }
+    return true;
   }
 }

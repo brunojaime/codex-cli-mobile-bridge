@@ -108,71 +108,111 @@ class _CodexAppUpdateBanner extends StatelessWidget {
     final info = controller.updateInfo;
     final theme = Theme.of(context);
     final status = controller.status;
-    final title = _titleFor(status, info);
-    final subtitle = _subtitleFor(status, info, controller.failureReason);
-    return Material(
-      key: codexAppUpdaterBannerKey,
-      color: theme.colorScheme.surface,
-      elevation: 8,
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 720),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Icon(
-                status == CodexAppUpdateStatus.failed
-                    ? Icons.error_outline
-                    : Icons.system_update_alt,
-                color: status == CodexAppUpdateStatus.failed
-                    ? theme.colorScheme.error
-                    : theme.colorScheme.primary,
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(title, style: theme.textTheme.titleSmall),
-                    if (subtitle != null) ...[
-                      const SizedBox(height: 4),
-                      Text(subtitle, style: theme.textTheme.bodySmall),
-                    ],
-                    if ((info?.releaseNotes ?? '').isNotEmpty) ...[
-                      const SizedBox(height: 6),
-                      Text(
-                        info!.releaseNotes!,
-                        maxLines: 3,
-                        overflow: TextOverflow.ellipsis,
-                        style: theme.textTheme.bodySmall,
-                      ),
-                    ],
-                  ],
+    final title = _titleFor(status);
+    final subtitle = _subtitleFor(
+      status,
+      info,
+      controller.failureReason,
+      controller,
+    );
+    final isError = status == CodexAppUpdateStatus.failed;
+    final isBusy = _isBusy(status);
+    final accentColor = isError
+        ? theme.colorScheme.error
+        : theme.colorScheme.primary;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+      child: Material(
+        key: codexAppUpdaterBannerKey,
+        color: theme.colorScheme.surface,
+        elevation: 10,
+        shadowColor: theme.colorScheme.shadow.withValues(alpha: 0.18),
+        borderRadius: BorderRadius.circular(8),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 560),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                Container(
+                  width: 34,
+                  height: 34,
+                  decoration: BoxDecoration(
+                    color: accentColor.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Icon(
+                    isError
+                        ? Icons.error_outline
+                        : isBusy
+                        ? Icons.downloading_rounded
+                        : Icons.system_update_alt_rounded,
+                    color: accentColor,
+                    size: 20,
+                  ),
                 ),
-              ),
-              const SizedBox(width: 12),
-              _Actions(controller: controller, config: config),
-            ],
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      if (subtitle != null) ...[
+                        const SizedBox(height: 3),
+                        Text(
+                          subtitle,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: theme.colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ],
+                      if (isBusy) ...[
+                        const SizedBox(height: 8),
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(999),
+                          child: LinearProgressIndicator(
+                            minHeight: 3,
+                            value: _downloadProgress(controller),
+                            backgroundColor: accentColor.withValues(
+                              alpha: 0.14,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+                _Actions(controller: controller, config: config),
+              ],
+            ),
           ),
         ),
       ),
     );
   }
 
-  String _titleFor(CodexAppUpdateStatus status, CodexAppUpdateInfo? info) {
-    final name = info?.displayName ?? info?.sourceApp ?? 'App';
+  String _titleFor(CodexAppUpdateStatus status) {
     return switch (status) {
-      CodexAppUpdateStatus.updateRequired => 'Actualizacion requerida',
-      CodexAppUpdateStatus.downloading => 'Descargando actualizacion',
+      CodexAppUpdateStatus.updateRequired => 'Actualización requerida',
+      CodexAppUpdateStatus.downloading => 'Descargando actualización',
       CodexAppUpdateStatus.downloaded ||
-      CodexAppUpdateStatus.verifying => 'Verificando actualizacion',
+      CodexAppUpdateStatus.verifying => 'Verificando actualización',
       CodexAppUpdateStatus.readyToInstall => 'Lista para instalar',
       CodexAppUpdateStatus.waitingForPermission => 'Permiso requerido',
-      CodexAppUpdateStatus.installing => 'Abriendo instalador',
+      CodexAppUpdateStatus.installing => 'Instalador listo',
       CodexAppUpdateStatus.failed => 'No se pudo actualizar',
-      _ => 'Actualizacion disponible para $name',
+      _ => 'Actualización disponible',
     };
   }
 
@@ -180,41 +220,53 @@ class _CodexAppUpdateBanner extends StatelessWidget {
     CodexAppUpdateStatus status,
     CodexAppUpdateInfo? info,
     CodexAppUpdateFailureReason? failure,
+    CodexAppUpdaterController controller,
   ) {
     if (status == CodexAppUpdateStatus.failed) {
       return switch (failure) {
         CodexAppUpdateFailureReason.bridgeUnavailable =>
-          'El Bridge no esta disponible.',
+          'No pudimos consultar la nueva versión.',
         CodexAppUpdateFailureReason.invalidResponse =>
-          'El Bridge devolvio una respuesta invalida.',
+          'La información de actualización no se pudo leer.',
         CodexAppUpdateFailureReason.noCompatibleAsset =>
-          'No hay un APK compatible para instalar.',
-        CodexAppUpdateFailureReason.downloadFailed => 'La descarga fallo.',
+          'No hay una versión compatible para este dispositivo.',
+        CodexAppUpdateFailureReason.downloadFailed =>
+          'La descarga no se completó.',
         CodexAppUpdateFailureReason.checksumMismatch =>
-          'La verificacion SHA-256 fallo.',
+          'La descarga no pasó la verificación.',
         CodexAppUpdateFailureReason.permissionRequired =>
-          'Android requiere permiso para instalar apps desconocidas.',
+          'Android necesita permiso para continuar.',
         CodexAppUpdateFailureReason.fileMissing =>
-          'El APK descargado ya no esta disponible.',
+          'La descarga ya no está disponible.',
         CodexAppUpdateFailureReason.securityException =>
-          'Android bloqueo el instalador por seguridad.',
+          'Android bloqueó el instalador.',
         CodexAppUpdateFailureReason.invalidUri =>
-          'No se pudo preparar el APK para Android.',
+          'No se pudo preparar la instalación.',
         CodexAppUpdateFailureReason.installerUnavailable =>
-          'No se pudo abrir el instalador Android.',
-        _ => 'Ocurrio un error inesperado.',
+          'No se pudo abrir el instalador.',
+        _ => 'Intentemos nuevamente en un momento.',
       };
     }
     if (info == null) return null;
-    final current = _versionLabel(info.currentVersion, info.currentBuild);
     final latest = _versionLabel(info.latestVersion, info.latestBuild);
-    if (current == null && latest == null) return null;
     if (status == CodexAppUpdateStatus.waitingForPermission) {
-      return 'Habilita instalar apps desconocidas para esta app y toca Instalar.';
+      return 'Habilitá el permiso y tocá Instalar para seguir.';
     }
-    if (current == null) return 'Nueva version: $latest';
-    if (latest == null) return 'Version instalada: $current';
-    return 'Version instalada: $current. Nueva version: $latest.';
+    if (status == CodexAppUpdateStatus.downloading) {
+      return _downloadLabel(controller);
+    }
+    if (status == CodexAppUpdateStatus.downloaded ||
+        status == CodexAppUpdateStatus.verifying) {
+      return 'Estamos preparando todo para instalar.';
+    }
+    if (status == CodexAppUpdateStatus.readyToInstall) {
+      return 'La descarga ya está lista.';
+    }
+    if (status == CodexAppUpdateStatus.installing) {
+      return 'Seguí los pasos de Android para terminar.';
+    }
+    if (latest == null) return 'Hay una nueva versión lista para instalar.';
+    return 'Versión $latest lista para instalar.';
   }
 
   String? _versionLabel(String? version, int? build) {
@@ -222,6 +274,42 @@ class _CodexAppUpdateBanner extends StatelessWidget {
     if (build == null) return version;
     if (version == null || version.isEmpty) return 'build $build';
     return '$version ($build)';
+  }
+
+  bool _isBusy(CodexAppUpdateStatus status) {
+    return switch (status) {
+      CodexAppUpdateStatus.downloading ||
+      CodexAppUpdateStatus.downloaded ||
+      CodexAppUpdateStatus.verifying ||
+      CodexAppUpdateStatus.installing => true,
+      _ => false,
+    };
+  }
+
+  double? _downloadProgress(CodexAppUpdaterController controller) {
+    final total = controller.totalBytes;
+    if (controller.status != CodexAppUpdateStatus.downloading ||
+        total == null ||
+        total <= 0) {
+      return null;
+    }
+    return (controller.downloadedBytes / total).clamp(0, 1).toDouble();
+  }
+
+  String _downloadLabel(CodexAppUpdaterController controller) {
+    final total = controller.totalBytes;
+    if (total == null || total <= 0) return 'Preparando la descarga...';
+    return 'Descargando ${_formatBytes(controller.downloadedBytes)} de ${_formatBytes(total)}.';
+  }
+
+  String _formatBytes(int bytes) {
+    if (bytes >= 1024 * 1024) {
+      return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+    }
+    if (bytes >= 1024) {
+      return '${(bytes / 1024).toStringAsFixed(0)} KB';
+    }
+    return '$bytes B';
   }
 }
 
@@ -238,9 +326,13 @@ class _Actions extends StatelessWidget {
     final busy =
         status == CodexAppUpdateStatus.checking ||
         status == CodexAppUpdateStatus.downloading ||
+        status == CodexAppUpdateStatus.downloaded ||
         status == CodexAppUpdateStatus.verifying ||
         status == CodexAppUpdateStatus.installing;
     final info = controller.updateInfo;
+    if (busy) {
+      return const SizedBox.shrink();
+    }
     return Wrap(
       spacing: 8,
       runSpacing: 8,
@@ -251,7 +343,7 @@ class _Actions extends StatelessWidget {
           TextButton(
             key: codexAppUpdaterLaterButtonKey,
             onPressed: controller.dismiss,
-            child: const Text('Mas tarde'),
+            child: const Text('Luego'),
           ),
         FilledButton(
           key: codexAppUpdaterUpdateButtonKey,
