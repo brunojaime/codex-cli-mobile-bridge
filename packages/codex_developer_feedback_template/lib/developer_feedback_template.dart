@@ -70,6 +70,9 @@ const developerFeedbackHistoryRefreshKey = Key(
 );
 const developerFeedbackSummaryKey = Key('developer-feedback-summary');
 const developerFeedbackSummaryOpenKey = Key('developer-feedback-summary-open');
+const developerFeedbackNotificationBellKey = Key(
+  'developer-feedback-notification-bell',
+);
 const developerFeedbackCommentActionKey = Key(
   'developer-feedback-comment-action',
 );
@@ -139,6 +142,8 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
   final List<DeveloperFeedbackItem> _items = <DeveloperFeedbackItem>[];
   final List<_SubmittedFeedbackBatch> _submittedBatches =
       <_SubmittedFeedbackBatch>[];
+  var _unreadNotificationCount = 0;
+  var _notificationRefreshScheduled = false;
   var _editMode = false;
   var _dialogOpen = false;
   var _selectionReady = false;
@@ -149,6 +154,7 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
   @override
   Widget build(BuildContext context) {
     if (!widget.enabled) return widget.child;
+    _scheduleNotificationRefresh();
     final safePadding = MediaQuery.paddingOf(context);
 
     return LayoutBuilder(
@@ -189,9 +195,11 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
                     _moveToolbar(delta, viewport, safePadding),
                 child: _Toolbar(
                   editMode: _editMode,
+                  compact: viewport.width < 360,
                   pendingCount: _items.length,
                   submittedCount: _submittedBatches.length,
                   showHistory: widget.bridgeUrl.trim().isNotEmpty,
+                  unreadNotificationCount: _unreadNotificationCount,
                   onEditModeChanged: (value) => setState(() {
                     _editMode = value;
                     if (!value) {
@@ -204,6 +212,9 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
                       ? null
                       : _openRunsDialog,
                   onOpenHistory: widget.bridgeUrl.trim().isEmpty
+                      ? null
+                      : _openHistoryDialog,
+                  onOpenNotifications: widget.bridgeUrl.trim().isEmpty
                       ? null
                       : _openHistoryDialog,
                 ),
@@ -906,6 +917,9 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
           (batch) => batch.batchId == batchId,
         );
         if (index >= 0) _submittedBatches[index] = updated;
+        if (updated.notificationUnread && _unreadNotificationCount == 0) {
+          _unreadNotificationCount = 1;
+        }
       });
     } catch (_) {
       _showMessage('No se pudo actualizar el run.');
@@ -1044,6 +1058,32 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
     }
   }
 
+  void _scheduleNotificationRefresh() {
+    if (_notificationRefreshScheduled || widget.bridgeUrl.trim().isEmpty) {
+      return;
+    }
+    _notificationRefreshScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      unawaited(_refreshNotificationCount());
+    });
+  }
+
+  Future<void> _refreshNotificationCount() async {
+    try {
+      final batches = await _loadFeedbackHistory();
+      if (!mounted) return;
+      setState(() {
+        _unreadNotificationCount = batches
+            .where((batch) => batch.notificationUnread)
+            .length;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _unreadNotificationCount = 0);
+    }
+  }
+
   void _openSummaryDialog(_SubmittedFeedbackBatch batch) {
     showDialog<void>(
       context: widget.navigatorKey?.currentContext ?? context,
@@ -1164,23 +1204,29 @@ class _DraggableToolbarShell extends StatelessWidget {
 class _Toolbar extends StatelessWidget {
   const _Toolbar({
     required this.editMode,
+    required this.compact,
     required this.pendingCount,
     required this.submittedCount,
     required this.showHistory,
+    required this.unreadNotificationCount,
     required this.onEditModeChanged,
     required this.onOpenPending,
     required this.onOpenRuns,
     required this.onOpenHistory,
+    required this.onOpenNotifications,
   });
 
   final bool editMode;
+  final bool compact;
   final int pendingCount;
   final int submittedCount;
   final bool showHistory;
+  final int unreadNotificationCount;
   final ValueChanged<bool> onEditModeChanged;
   final VoidCallback? onOpenPending;
   final VoidCallback? onOpenRuns;
   final VoidCallback? onOpenHistory;
+  final VoidCallback? onOpenNotifications;
 
   @override
   Widget build(BuildContext context) {
@@ -1202,7 +1248,10 @@ class _Toolbar extends StatelessWidget {
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: <Widget>[
-                    const Text('Plantilla'),
+                    if (compact)
+                      const Icon(Icons.bug_report_outlined)
+                    else
+                      const Text('Plantilla'),
                     const SizedBox(width: 8),
                     Switch(
                       key: developerFeedbackSwitchKey,
@@ -1239,6 +1288,17 @@ class _Toolbar extends StatelessWidget {
             ],
             if (showHistory) ...<Widget>[
               const SizedBox(width: 6),
+              IconButton(
+                key: developerFeedbackNotificationBellKey,
+                tooltip: 'Notificaciones',
+                onPressed: onOpenNotifications,
+                icon: unreadNotificationCount > 0
+                    ? Badge.count(
+                        count: unreadNotificationCount,
+                        child: const Icon(Icons.notifications_outlined),
+                      )
+                    : const Icon(Icons.notifications_none),
+              ),
               IconButton(
                 key: developerFeedbackHistoryKey,
                 tooltip: 'Historial',
@@ -1605,6 +1665,7 @@ class _SubmittedFeedbackBatch {
     this.statusDetail,
     this.summary,
     this.summaryLineCount = 0,
+    this.notificationUnread = false,
   });
 
   final String? batchId;
@@ -1614,6 +1675,7 @@ class _SubmittedFeedbackBatch {
   final String? statusDetail;
   final String? summary;
   final int summaryLineCount;
+  final bool notificationUnread;
 
   factory _SubmittedFeedbackBatch.local() {
     return const _SubmittedFeedbackBatch(status: 'running');
@@ -1645,6 +1707,7 @@ class _SubmittedFeedbackBatch {
       statusDetail: json['status_detail'] as String?,
       summary: json['summary'] as String?,
       summaryLineCount: (json['summary_line_count'] as num?)?.toInt() ?? 0,
+      notificationUnread: (json['notification_unread'] as bool?) ?? false,
     );
   }
 

@@ -485,6 +485,9 @@ void main() {
   ) async {
     Map<String, Object?>? postedJson;
     final client = MockClient((request) async {
+      if (request.url.path == '/feedback-batches') {
+        return http.Response('[]', 200);
+      }
       if (request.url.path == '/feedback-workflow-presets') {
         return http.Response(
           jsonEncode(<String, Object?>{
@@ -713,7 +716,7 @@ void main() {
 
     await tester.tap(find.byKey(developerFeedbackHistoryRefreshKey));
     await tester.pumpAndSettle();
-    expect(calls, 2);
+    expect(calls, 3);
     expect(find.text('No hay feedback enviado.'), findsOneWidget);
   });
 
@@ -735,6 +738,89 @@ void main() {
     await tester.tap(find.byKey(developerFeedbackHistoryKey));
     await tester.pumpAndSettle();
     expect(find.text('No se pudo cargar el historial.'), findsOneWidget);
+  });
+
+  testWidgets('notification bell shows without badge at zero unread', (
+    tester,
+  ) async {
+    final client = MockClient((request) async {
+      if (request.url.path == '/feedback-batches') {
+        return http.Response('[]', 200);
+      }
+      return http.Response('not found', 404);
+    });
+
+    await tester.pumpWidget(
+      _Harness(
+        enabled: true,
+        bridgeUrl: 'http://bridge.local',
+        httpClient: client,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(developerFeedbackNotificationBellKey), findsOneWidget);
+    expect(find.byIcon(Icons.notifications_none), findsOneWidget);
+    expect(find.text('0'), findsNothing);
+  });
+
+  testWidgets('notification bell badge shows unread count', (tester) async {
+    final client = MockClient((request) async {
+      if (request.url.path == '/feedback-batches') {
+        return http.Response(
+          jsonEncode(<Map<String, Object?>>[
+            _historyBatchJson('batch-1', unread: true),
+            _historyBatchJson('batch-2', unread: true),
+            _historyBatchJson('batch-3', unread: false),
+          ]),
+          200,
+        );
+      }
+      return http.Response('not found', 404);
+    });
+
+    await tester.pumpWidget(
+      _Harness(
+        enabled: true,
+        bridgeUrl: 'http://bridge.local',
+        httpClient: client,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(developerFeedbackNotificationBellKey), findsOneWidget);
+    expect(find.text('2'), findsOneWidget);
+  });
+
+  testWidgets('notification bell remains inside compact viewport', (
+    tester,
+  ) async {
+    _setViewport(tester, const Size(320, 480));
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final client = MockClient((request) async {
+      if (request.url.path == '/feedback-batches') {
+        return http.Response(
+          jsonEncode(<Map<String, Object?>>[
+            _historyBatchJson('batch-compact', unread: true),
+          ]),
+          200,
+        );
+      }
+      return http.Response('not found', 404);
+    });
+
+    await tester.pumpWidget(
+      _Harness(
+        enabled: true,
+        bridgeUrl: 'http://bridge.local',
+        httpClient: client,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(developerFeedbackNotificationBellKey), findsOneWidget);
+    _expectToolbarInsideViewport(tester, const Size(320, 480));
   });
 
   testWidgets(
@@ -1100,6 +1186,23 @@ String _summaryText() {
             ? 'Validation'
             : 'Line'}',
   ).join('\n');
+}
+
+Map<String, Object?> _historyBatchJson(String batchId, {required bool unread}) {
+  return <String, Object?>{
+    'batch_id': batchId,
+    'job_id': 'job-$batchId',
+    'session_id': 'session-$batchId',
+    'status': 'completed',
+    'status_detail': 'Done',
+    'workflow_preset_id': 'generator_only',
+    'release_when_complete': false,
+    'item_count': 1,
+    'item_ids': <String>['item-$batchId'],
+    'notification_unread': unread,
+    'created_at': '2026-06-11T00:00:00+00:00',
+    'submitted_at': '2026-06-11T00:00:00+00:00',
+  };
 }
 
 Future<void> _saveFeedback(WidgetTester tester, String comment) async {
