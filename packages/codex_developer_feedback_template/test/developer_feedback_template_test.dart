@@ -649,7 +649,7 @@ void main() {
   });
 
   testWidgets(
-    'quick ask posts selection and displays answer without batch send',
+    'quick ask posts selection asynchronously and stores answer in history',
     (tester) async {
       final requestedPaths = <String>[];
       Map<String, Object?>? postedJson;
@@ -721,12 +721,19 @@ void main() {
         find.byKey(developerFeedbackQuickAskQuestionKey),
         'Why disabled?',
       );
-      await tester.tap(find.byKey(developerFeedbackQuickAskSubmitKey));
+      tester.testTextInput.hide();
+      await tester.pump();
+      tester.state<NavigatorState>(find.byType(Navigator)).pop('Why disabled?');
       await tester.pumpAndSettle();
 
+      expect(find.byKey(developerFeedbackQuickAskQuestionKey), findsNothing);
+      expect(
+        find.text('Pregunta enviada. Te aviso cuando tenga respuesta.'),
+        findsOneWidget,
+      );
       expect(
         find.text('The button is likely waiting for a required field.'),
-        findsOneWidget,
+        findsNothing,
       );
       expect(postedJson?['question'], 'Why disabled?');
       expect(postedJson?['screenshotPngBase64'], isA<String>());
@@ -742,6 +749,21 @@ void main() {
         isNot(contains('POST /feedback-batches/start-session')),
       );
       expect(find.byKey(developerFeedbackPendingKey), findsNothing);
+
+      await tester.pump(const Duration(seconds: 4));
+      await tester.tap(find.byKey(developerFeedbackQuickAskHistoryKey));
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(developerFeedbackQuickAskHistoryItemKey),
+        findsOneWidget,
+      );
+
+      await tester.tap(find.byKey(developerFeedbackQuickAskHistoryItemKey));
+      await tester.pumpAndSettle();
+      expect(
+        find.text('The button is likely waiting for a required field.'),
+        findsOneWidget,
+      );
     },
   );
 
@@ -768,7 +790,7 @@ void main() {
       }
       if (request.url.path == '/feedback-quick-asks/quick-ask-timeout') {
         quickAskPolls += 1;
-        final completed = quickAskPolls > 120;
+        final completed = quickAskPolls > 1;
         return http.Response(
           jsonEncode(<String, Object?>{
             'quickAskId': 'quick-ask-timeout',
@@ -839,23 +861,20 @@ void main() {
       find.byKey(developerFeedbackQuickAskQuestionKey),
       'Where am I standing?',
     );
-    await tester.tap(find.byKey(developerFeedbackQuickAskSubmitKey));
+    tester.testTextInput.hide();
     await tester.pump();
-    for (var tick = 0; tick < 125; tick += 1) {
-      await tester.pump(const Duration(milliseconds: 250));
-    }
+    tester
+        .state<NavigatorState>(find.byType(Navigator))
+        .pop('Where am I standing?');
     await tester.pumpAndSettle();
 
     expect(
-      find.text(
-        'La pregunta quedo enviada. Abrí Preguntas rápidas para ver la respuesta.',
-      ),
+      find.text('Pregunta enviada. Te aviso cuando tenga respuesta.'),
       findsOneWidget,
     );
     expect(find.text('No se pudo responder la pregunta.'), findsNothing);
 
-    await tester.tap(find.text('Cerrar').last);
-    await tester.pumpAndSettle();
+    await tester.pump(const Duration(seconds: 4));
     await tester.tap(find.byKey(developerFeedbackQuickAskHistoryKey));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(developerFeedbackQuickAskHistoryItemKey));

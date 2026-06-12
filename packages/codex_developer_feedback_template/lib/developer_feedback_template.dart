@@ -191,8 +191,11 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
   final List<DeveloperFeedbackItem> _items = <DeveloperFeedbackItem>[];
   final List<_SubmittedFeedbackBatch> _submittedBatches =
       <_SubmittedFeedbackBatch>[];
+  final List<_QuickAskRecord> _localQuickAsks = <_QuickAskRecord>[];
+  final Set<String> _quickAskPollingIds = <String>{};
   String? _pendingQuickAskId;
   var _unreadNotificationCount = 0;
+  var _unreadQuickAskCount = 0;
   var _notificationRefreshScheduled = false;
   var _editMode = false;
   var _dialogOpen = false;
@@ -255,6 +258,7 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
                   submittedCount: _submittedBatches.length,
                   showHistory: widget.bridgeUrl.trim().isNotEmpty,
                   unreadNotificationCount: _unreadNotificationCount,
+                  quickAskActivityCount: _quickAskActivityCount,
                   onEditModeChanged: (value) => setState(() {
                     _editMode = value;
                     if (!value) {
@@ -284,6 +288,15 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
       },
     );
   }
+
+  int get _quickAskActivityCount =>
+      _unreadQuickAskCount +
+      _localQuickAsks.where((record) => record.isActive).length;
+
+  BuildContext get _modalContext =>
+      widget.navigatorKey?.currentState?.overlay?.context ??
+      widget.navigatorKey?.currentContext ??
+      context;
 
   Offset _effectiveToolbarOffset(Size viewport, EdgeInsets safePadding) {
     final current = _toolbarOffset;
@@ -454,125 +467,22 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
     if (points.isEmpty || widget.bridgeUrl.trim().isEmpty) return;
     final screenshotPngBase64 = await _captureMarkedScreenshot(points);
     if (!mounted) return;
-    final controller = TextEditingController();
-    var sending = false;
-    String? answer;
-    String? error;
-    String? notice;
     setState(() => _dialogOpen = true);
-    await showDialog<void>(
-      context: widget.navigatorKey?.currentContext ?? context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setDialogState) {
-          return AlertDialog(
-            title: const Text('Pregunta rápida'),
-            content: SizedBox(
-              width: math.min(
-                520.0,
-                math.max(0.0, MediaQuery.sizeOf(context).width - 48),
-              ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: <Widget>[
-                  TextField(
-                    key: developerFeedbackQuickAskQuestionKey,
-                    controller: controller,
-                    enabled: !sending,
-                    minLines: 2,
-                    maxLines: 4,
-                    decoration: const InputDecoration(
-                      labelText: 'Pregunta',
-                      border: OutlineInputBorder(),
-                    ),
-                  ),
-                  if (error != null) ...<Widget>[
-                    const SizedBox(height: 12),
-                    Text(
-                      error!,
-                      style: TextStyle(
-                        color: Theme.of(context).colorScheme.error,
-                      ),
-                    ),
-                  ],
-                  if (answer != null) ...<Widget>[
-                    const SizedBox(height: 12),
-                    SelectableText(
-                      answer!,
-                      key: developerFeedbackQuickAskAnswerKey,
-                    ),
-                  ],
-                  if (notice != null) ...<Widget>[
-                    const SizedBox(height: 12),
-                    Text(
-                      notice!,
-                      style: TextStyle(
-                        color: Theme.of(context).colorScheme.primary,
-                      ),
-                    ),
-                  ],
-                ],
-              ),
-            ),
-            actions: <Widget>[
-              TextButton(
-                onPressed: sending ? null : () => Navigator.of(context).pop(),
-                child: const Text('Cerrar'),
-              ),
-              FilledButton.icon(
-                key: developerFeedbackQuickAskSubmitKey,
-                onPressed: sending
-                    ? null
-                    : () async {
-                        final question = controller.text.trim();
-                        if (question.isEmpty) return;
-                        setDialogState(() {
-                          sending = true;
-                          error = null;
-                          notice = null;
-                          answer = null;
-                        });
-                        try {
-                          final result = await _submitQuickAsk(
-                            question: question,
-                            screenshotPngBase64: screenshotPngBase64,
-                            points: points,
-                          );
-                          if (!context.mounted) return;
-                          setDialogState(() {
-                            answer = result;
-                            sending = false;
-                          });
-                        } on _QuickAskPendingException {
-                          if (!context.mounted) return;
-                          setDialogState(() {
-                            notice =
-                                'La pregunta quedo enviada. Abrí Preguntas rápidas para ver la respuesta.';
-                            sending = false;
-                          });
-                        } catch (_) {
-                          if (!context.mounted) return;
-                          setDialogState(() {
-                            error = 'No se pudo responder la pregunta.';
-                            sending = false;
-                          });
-                        }
-                      },
-                icon: sending
-                    ? const SizedBox.square(
-                        dimension: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.help_outline),
-                label: Text(sending ? 'Consultando' : 'Preguntar'),
-              ),
-            ],
-          );
-        },
+    final question = await showDialog<String>(
+      context: _modalContext,
+      builder: (dialogContext) => _QuickAskQuestionDialog(
+        onCancel: () => Navigator.of(dialogContext).pop(),
+        onSubmit: (question) => Navigator.of(dialogContext).pop(question),
       ),
     );
-    controller.dispose();
     if (mounted) {
+      if (question != null && question.trim().isNotEmpty) {
+        _queueQuickAsk(
+          question: question.trim(),
+          screenshotPngBase64: screenshotPngBase64,
+          points: points,
+        );
+      }
       setState(() {
         _dialogOpen = false;
         _drawing = <Offset>[];
@@ -581,7 +491,37 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
     }
   }
 
-  Future<String> _submitQuickAsk({
+  void _queueQuickAsk({
+    required String question,
+    required String screenshotPngBase64,
+    required List<Offset> points,
+  }) {
+    final now = DateTime.now().toUtc();
+    final localId = 'quick-ask-local-${now.microsecondsSinceEpoch}';
+    final localRecord = _QuickAskRecord(
+      quickAskId: localId,
+      sourceApp: widget.sourceApp,
+      sourceDisplayName: widget.sourceDisplayName,
+      question: question,
+      status: 'queued',
+      createdAt: now.toIso8601String(),
+      selectionBounds: _selectionBoundsFromPoints(points),
+      screenshotPngBase64: screenshotPngBase64,
+    );
+    setState(() => _localQuickAsks.insert(0, localRecord));
+    _showMessage('Pregunta enviada. Te aviso cuando tenga respuesta.');
+    unawaited(
+      _submitQuickAskInBackground(
+        localId: localId,
+        question: question,
+        screenshotPngBase64: screenshotPngBase64,
+        points: points,
+      ),
+    );
+  }
+
+  Future<void> _submitQuickAskInBackground({
+    required String localId,
     required String question,
     required String screenshotPngBase64,
     required List<Offset> points,
@@ -590,7 +530,7 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
     final ownsClient = widget.httpClient == null;
     final client = widget.httpClient ?? http.Client();
     final quickAskItem = DeveloperFeedbackItem(
-      id: 'quick-ask',
+      id: localId,
       createdAt: DateTime.now().toUtc(),
       sourceApp: widget.sourceApp,
       sourceDisplayName: widget.sourceDisplayName,
@@ -600,6 +540,7 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
       audio: null,
       contextMetadata: _currentContextMetadata(),
     );
+    var currentId = localId;
     try {
       final response = await client.post(
         Uri.parse('$baseUrl/feedback-quick-asks/ask'),
@@ -629,7 +570,56 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
       if (quickAskId == null || quickAskId.isEmpty) {
         throw Exception('Missing quick_ask_id');
       }
-      for (var attempt = 0; attempt < 120; attempt += 1) {
+      currentId = quickAskId;
+      final acceptedRecord = _QuickAskRecord.fromJson(<String, Object?>{
+        ...accepted,
+        'quickAskId': quickAskId,
+        'sourceApp': widget.sourceApp,
+        if (widget.sourceDisplayName.trim().isNotEmpty)
+          'sourceDisplayName': widget.sourceDisplayName,
+        'question': question,
+        'status': (accepted['status'] as String?) ?? 'running',
+        'createdAt': quickAskItem.createdAt.toIso8601String(),
+        'selectionBounds': quickAskItem.selectionBounds,
+        'screenshotPngBase64': screenshotPngBase64,
+      });
+      _replaceQuickAskRecord(localId, acceptedRecord);
+      await _pollQuickAskUntilDone(
+        client: client,
+        baseUrl: baseUrl,
+        quickAskId: quickAskId,
+        fallback: acceptedRecord,
+      );
+    } catch (_) {
+      _replaceQuickAskRecord(
+        currentId,
+        _quickAskById(currentId)?.copyWith(status: 'failed') ??
+            _QuickAskRecord(
+              quickAskId: currentId,
+              sourceApp: widget.sourceApp,
+              sourceDisplayName: widget.sourceDisplayName,
+              question: question,
+              status: 'failed',
+              createdAt: quickAskItem.createdAt.toIso8601String(),
+              selectionBounds: quickAskItem.selectionBounds,
+              screenshotPngBase64: screenshotPngBase64,
+            ),
+      );
+      _notifyQuickAskReady('No se pudo enviar la pregunta rápida.');
+    } finally {
+      if (ownsClient) client.close();
+    }
+  }
+
+  Future<void> _pollQuickAskUntilDone({
+    required http.Client client,
+    required String baseUrl,
+    required String quickAskId,
+    required _QuickAskRecord fallback,
+  }) async {
+    if (!_quickAskPollingIds.add(quickAskId)) return;
+    try {
+      for (var attempt = 0; attempt < 150; attempt += 1) {
         final statusResponse = await client.get(
           Uri.parse('$baseUrl/feedback-quick-asks/$quickAskId'),
         );
@@ -640,23 +630,59 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
           );
         }
         final status = jsonDecode(statusResponse.body) as Map<String, Object?>;
-        final state = (status['status'] as String?)?.trim();
-        if (state == 'completed') {
-          final answer = (status['answer'] as String?)?.trim();
-          if (answer == null || answer.isEmpty) {
-            throw Exception('Quick ask completed without answer');
-          }
-          return answer;
+        final detail = _QuickAskRecord.fromJson(status).mergedWith(fallback);
+        _upsertQuickAskRecord(detail);
+        if (detail.isCompleted) {
+          _notifyQuickAskReady('Respuesta lista en Preguntas rápidas.');
+          return;
         }
-        if (state == 'failed') {
+        if (detail.isFailed) {
           throw Exception(status['status_detail'] ?? 'Quick ask failed');
         }
-        await Future<void>.delayed(const Duration(milliseconds: 250));
+        await Future<void>.delayed(const Duration(seconds: 2));
       }
-      throw _QuickAskPendingException(quickAskId);
+      _upsertQuickAskRecord(fallback.copyWith(status: 'running'));
     } finally {
-      if (ownsClient) client.close();
+      _quickAskPollingIds.remove(quickAskId);
     }
+  }
+
+  void _replaceQuickAskRecord(String previousId, _QuickAskRecord record) {
+    if (!mounted) return;
+    setState(() {
+      _localQuickAsks.removeWhere(
+        (candidate) => candidate.quickAskId == previousId,
+      );
+      _localQuickAsks.insert(0, record);
+    });
+  }
+
+  void _upsertQuickAskRecord(_QuickAskRecord record) {
+    if (!mounted) return;
+    setState(() {
+      final index = _localQuickAsks.indexWhere(
+        (candidate) => candidate.quickAskId == record.quickAskId,
+      );
+      if (index == -1) {
+        _localQuickAsks.insert(0, record);
+      } else {
+        _localQuickAsks[index] = record;
+      }
+    });
+  }
+
+  _QuickAskRecord? _quickAskById(String quickAskId) {
+    for (final record in _localQuickAsks) {
+      if (record.quickAskId == quickAskId) return record;
+    }
+    return null;
+  }
+
+  void _notifyQuickAskReady(String message) {
+    if (mounted) {
+      setState(() => _unreadQuickAskCount += 1);
+    }
+    _showMessage(message);
   }
 
   Map<String, Object?> _currentContextMetadata() {
@@ -1440,6 +1466,9 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
   }
 
   void _openQuickAskHistoryDialog() {
+    if (_unreadQuickAskCount > 0) {
+      setState(() => _unreadQuickAskCount = 0);
+    }
     var initialized = false;
     var loading = true;
     var error = false;
@@ -1457,14 +1486,16 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
               final loaded = await _loadQuickAskHistory();
               if (!context.mounted) return;
               setDialogState(() {
-                records = loaded;
+                records = _mergeQuickAskRecords(loaded);
                 loading = false;
               });
             } catch (_) {
               if (!context.mounted) return;
+              final localRecords = _sortQuickAskRecords(_localQuickAsks);
               setDialogState(() {
                 loading = false;
-                error = true;
+                records = localRecords;
+                error = localRecords.isEmpty;
               });
             }
           }
@@ -1474,14 +1505,15 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
             unawaited(loadHistory());
           }
 
-          final availableWidth = math.max(
-            0.0,
-            MediaQuery.sizeOf(context).width - 48,
+          final contentConstraints = _dialogContentConstraints(
+            context,
+            maxWidth: 620,
           );
           return AlertDialog(
             title: const Text('Preguntas rápidas'),
             content: SizedBox(
-              width: math.min(560.0, availableWidth),
+              width: contentConstraints.maxWidth,
+              height: contentConstraints.maxHeight,
               child: loading
                   ? const Center(child: CircularProgressIndicator())
                   : error
@@ -1489,24 +1521,13 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
                   : records.isEmpty
                   ? const Text('No hay preguntas rápidas.')
                   : ListView.separated(
-                      shrinkWrap: true,
                       itemCount: records.length,
-                      separatorBuilder: (_, _) => const Divider(height: 20),
+                      separatorBuilder: (_, _) => const SizedBox(height: 8),
                       itemBuilder: (context, index) {
                         final record = records[index];
-                        return ListTile(
+                        return _QuickAskHistoryTile(
                           key: developerFeedbackQuickAskHistoryItemKey,
-                          contentPadding: EdgeInsets.zero,
-                          title: Text(
-                            record.question,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                          subtitle: Text(
-                            record.historyLabel,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                          ),
+                          record: record,
                           onTap: () => unawaited(
                             _openQuickAskDetailDialog(record.quickAskId),
                           ),
@@ -1553,22 +1574,38 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
     }
   }
 
+  List<_QuickAskRecord> _mergeQuickAskRecords(List<_QuickAskRecord> remote) {
+    final byId = <String, _QuickAskRecord>{};
+    for (final record in _localQuickAsks) {
+      byId[record.quickAskId] = record;
+    }
+    for (final record in remote) {
+      byId[record.quickAskId] = record.mergedWith(byId[record.quickAskId]);
+    }
+    return _sortQuickAskRecords(byId.values);
+  }
+
   Future<void> _openQuickAskDetailDialog(String quickAskId) async {
     try {
-      final detail = await _loadQuickAskDetail(quickAskId);
+      final localDetail = _quickAskById(quickAskId);
+      final detail = quickAskId.startsWith('quick-ask-local-')
+          ? localDetail
+          : (await _loadQuickAskDetail(quickAskId)).mergedWith(localDetail);
+      if (detail == null) return;
       if (!mounted) return;
       showDialog<void>(
         context: widget.navigatorKey?.currentContext ?? context,
         builder: (context) {
-          final availableWidth = math.max(
-            0.0,
-            MediaQuery.sizeOf(context).width - 48,
+          final contentConstraints = _dialogContentConstraints(
+            context,
+            maxWidth: 620,
           );
           final screenshot = detail.screenshotPngBase64;
           return AlertDialog(
             title: const Text('Detalle de pregunta'),
             content: SizedBox(
-              width: math.min(560.0, availableWidth),
+              width: contentConstraints.maxWidth,
+              height: contentConstraints.maxHeight,
               child: SingleChildScrollView(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -1586,22 +1623,46 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
                         ),
                       ),
                     const SizedBox(height: 12),
-                    Text(detail.question),
-                    const SizedBox(height: 8),
-                    Text(
-                      _formatSelectionBounds(detail.selectionBounds),
-                      key: developerFeedbackQuickAskBoundsKey,
-                      style: Theme.of(context).textTheme.bodySmall,
+                    _DetailBlock(
+                      label: 'Pregunta',
+                      child: SelectableText(detail.question),
                     ),
-                    const SizedBox(height: 8),
-                    SelectableText(
-                      detail.answer ?? 'Sin respuesta todavía.',
-                      key: developerFeedbackQuickAskAnswerKey,
+                    const SizedBox(height: 12),
+                    _DetailBlock(
+                      label: 'Estado',
+                      child: Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: <Widget>[
+                          _StatusChip(
+                            icon: detail.statusIcon,
+                            label: detail.statusLabel,
+                          ),
+                          _PreviewMetaChip(
+                            key: developerFeedbackQuickAskBoundsKey,
+                            icon: Icons.crop_free,
+                            label: _formatSelectionBounds(
+                              detail.selectionBounds,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
-                    const SizedBox(height: 8),
-                    Text(
-                      detail.historyLabel,
-                      style: Theme.of(context).textTheme.bodySmall,
+                    const SizedBox(height: 12),
+                    _DetailBlock(
+                      label: 'Respuesta',
+                      child: SelectableText(
+                        detail.answer ?? 'Sin respuesta todavía.',
+                        key: developerFeedbackQuickAskAnswerKey,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    _DetailBlock(
+                      label: 'Referencia',
+                      child: Text(
+                        detail.historyLabel,
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
                     ),
                   ],
                 ),
@@ -2058,6 +2119,7 @@ class _Toolbar extends StatelessWidget {
     required this.submittedCount,
     required this.showHistory,
     required this.unreadNotificationCount,
+    required this.quickAskActivityCount,
     required this.onEditModeChanged,
     required this.onExpandedChanged,
     required this.onOpenPending,
@@ -2074,6 +2136,7 @@ class _Toolbar extends StatelessWidget {
   final int submittedCount;
   final bool showHistory;
   final int unreadNotificationCount;
+  final int quickAskActivityCount;
   final ValueChanged<bool> onEditModeChanged;
   final ValueChanged<bool> onExpandedChanged;
   final VoidCallback? onOpenPending;
@@ -2111,6 +2174,7 @@ class _Toolbar extends StatelessWidget {
               pendingCount: pendingCount,
               submittedCount: submittedCount,
               unreadNotificationCount: unreadNotificationCount,
+              quickAskActivityCount: quickAskActivityCount,
               child: const Icon(Icons.bug_report_outlined),
             ),
           ),
@@ -2215,7 +2279,12 @@ class _Toolbar extends StatelessWidget {
                 padding: buttonPadding,
                 tooltip: toolbarTooltip('Preguntas rápidas'),
                 onPressed: onOpenQuickAskHistory,
-                icon: const Icon(Icons.manage_search),
+                icon: quickAskActivityCount > 0
+                    ? Badge.count(
+                        count: quickAskActivityCount,
+                        child: const Icon(Icons.manage_search),
+                      )
+                    : const Icon(Icons.manage_search),
               ),
             ],
           ],
@@ -2230,17 +2299,23 @@ class _ToolbarStatusBadge extends StatelessWidget {
     required this.pendingCount,
     required this.submittedCount,
     required this.unreadNotificationCount,
+    required this.quickAskActivityCount,
     required this.child,
   });
 
   final int pendingCount;
   final int submittedCount;
   final int unreadNotificationCount;
+  final int quickAskActivityCount;
   final Widget child;
 
   @override
   Widget build(BuildContext context) {
-    final count = pendingCount + submittedCount + unreadNotificationCount;
+    final count =
+        pendingCount +
+        submittedCount +
+        unreadNotificationCount +
+        quickAskActivityCount;
     if (count <= 0) return child;
     return Badge.count(count: count, child: child);
   }
@@ -2669,6 +2744,191 @@ class _PreviewMetaChip extends StatelessWidget {
   }
 }
 
+class _StatusChip extends StatelessWidget {
+  const _StatusChip({required this.icon, required this.label});
+
+  final IconData icon;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(6),
+        color: theme.colorScheme.secondaryContainer,
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          Icon(icon, size: 16, color: theme.colorScheme.onSecondaryContainer),
+          const SizedBox(width: 6),
+          Text(
+            label,
+            style: theme.textTheme.labelMedium?.copyWith(
+              color: theme.colorScheme.onSecondaryContainer,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _DetailBlock extends StatelessWidget {
+  const _DetailBlock({required this.label, required this.child});
+
+  final String label;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Text(label, style: Theme.of(context).textTheme.labelLarge),
+        const SizedBox(height: 6),
+        child,
+      ],
+    );
+  }
+}
+
+class _QuickAskHistoryTile extends StatelessWidget {
+  const _QuickAskHistoryTile({
+    required this.record,
+    required this.onTap,
+    super.key,
+  });
+
+  final _QuickAskRecord record;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Material(
+      color: theme.colorScheme.surfaceContainerHighest,
+      borderRadius: BorderRadius.circular(8),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(8),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Padding(
+                    padding: const EdgeInsets.only(top: 2),
+                    child: Icon(record.statusIcon, size: 20),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      record.question,
+                      maxLines: 3,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.bodyLarge,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  const Icon(Icons.chevron_right, size: 20),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                runSpacing: 6,
+                children: <Widget>[
+                  _StatusChip(
+                    icon: record.statusIcon,
+                    label: record.statusLabel,
+                  ),
+                  if (record.createdAtLabel.isNotEmpty)
+                    _PreviewMetaChip(
+                      icon: Icons.schedule,
+                      label: record.createdAtLabel,
+                    ),
+                  if ((record.jobId ?? '').isNotEmpty)
+                    _PreviewMetaChip(
+                      icon: Icons.work_outline,
+                      label: 'job ${record.jobId}',
+                    ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _QuickAskQuestionDialog extends StatefulWidget {
+  const _QuickAskQuestionDialog({
+    required this.onCancel,
+    required this.onSubmit,
+  });
+
+  final VoidCallback onCancel;
+  final ValueChanged<String> onSubmit;
+
+  @override
+  State<_QuickAskQuestionDialog> createState() =>
+      _QuickAskQuestionDialogState();
+}
+
+class _QuickAskQuestionDialogState extends State<_QuickAskQuestionDialog> {
+  final _controller = TextEditingController();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final contentConstraints = _dialogContentConstraints(
+      context,
+      maxWidth: 520,
+    );
+    return AlertDialog(
+      title: const Text('Pregunta rápida'),
+      content: SizedBox(
+        width: contentConstraints.maxWidth,
+        child: TextField(
+          key: developerFeedbackQuickAskQuestionKey,
+          controller: _controller,
+          minLines: 3,
+          maxLines: 5,
+          decoration: const InputDecoration(
+            labelText: 'Pregunta',
+            border: OutlineInputBorder(),
+          ),
+        ),
+      ),
+      actions: <Widget>[
+        TextButton(onPressed: widget.onCancel, child: const Text('Cerrar')),
+        FilledButton.icon(
+          key: developerFeedbackQuickAskSubmitKey,
+          onPressed: () {
+            final question = _controller.text.trim();
+            if (question.isEmpty) return;
+            widget.onSubmit(question);
+          },
+          icon: const Icon(Icons.help_outline),
+          label: const Text('Enviar'),
+        ),
+      ],
+    );
+  }
+}
+
 Uint8List _decodePreviewImage(String screenshotPngBase64) {
   try {
     return base64Decode(screenshotPngBase64);
@@ -2747,10 +3007,89 @@ class _QuickAskRecord {
   final String? sessionId;
   final String? runId;
 
+  _QuickAskRecord copyWith({
+    String? quickAskId,
+    String? sourceApp,
+    String? sourceDisplayName,
+    String? question,
+    String? status,
+    String? createdAt,
+    Map<String, double>? selectionBounds,
+    String? answer,
+    String? screenshotPngBase64,
+    String? jobId,
+    String? sessionId,
+    String? runId,
+  }) {
+    return _QuickAskRecord(
+      quickAskId: quickAskId ?? this.quickAskId,
+      sourceApp: sourceApp ?? this.sourceApp,
+      sourceDisplayName: sourceDisplayName ?? this.sourceDisplayName,
+      question: question ?? this.question,
+      status: status ?? this.status,
+      createdAt: createdAt ?? this.createdAt,
+      selectionBounds: selectionBounds ?? this.selectionBounds,
+      answer: answer ?? this.answer,
+      screenshotPngBase64: screenshotPngBase64 ?? this.screenshotPngBase64,
+      jobId: jobId ?? this.jobId,
+      sessionId: sessionId ?? this.sessionId,
+      runId: runId ?? this.runId,
+    );
+  }
+
+  _QuickAskRecord mergedWith(_QuickAskRecord? fallback) {
+    if (fallback == null) return this;
+    return _QuickAskRecord(
+      quickAskId: quickAskId == 'unknown' ? fallback.quickAskId : quickAskId,
+      sourceApp: sourceApp.isEmpty ? fallback.sourceApp : sourceApp,
+      sourceDisplayName: sourceDisplayName.isEmpty
+          ? fallback.sourceDisplayName
+          : sourceDisplayName,
+      question: question == 'Pregunta sin texto' ? fallback.question : question,
+      status: status,
+      createdAt: createdAt.isEmpty ? fallback.createdAt : createdAt,
+      selectionBounds: _selectionBoundsIsEmpty(selectionBounds)
+          ? fallback.selectionBounds
+          : selectionBounds,
+      answer: (answer ?? '').isEmpty ? fallback.answer : answer,
+      screenshotPngBase64: (screenshotPngBase64 ?? '').isEmpty
+          ? fallback.screenshotPngBase64
+          : screenshotPngBase64,
+      jobId: (jobId ?? '').isEmpty ? fallback.jobId : jobId,
+      sessionId: (sessionId ?? '').isEmpty ? fallback.sessionId : sessionId,
+      runId: (runId ?? '').isEmpty ? fallback.runId : runId,
+    );
+  }
+
+  bool get isCompleted => status == 'completed';
+
+  bool get isFailed => status == 'failed';
+
+  bool get isActive => !isCompleted && !isFailed;
+
+  String get statusLabel {
+    return switch (status) {
+      'completed' => 'Completada',
+      'failed' => 'Fallida',
+      'queued' => 'Enviando',
+      'pending' || 'running' => 'En curso',
+      _ => status,
+    };
+  }
+
+  IconData get statusIcon {
+    if (isCompleted) return Icons.check_circle_outline;
+    if (isFailed) return Icons.error_outline;
+    if (status == 'queued') return Icons.outbox_outlined;
+    return Icons.timelapse;
+  }
+
+  String get createdAtLabel => _formatIsoDateTime(createdAt);
+
   String get historyLabel {
     final parts = <String>[
-      status,
-      if (createdAt.isNotEmpty) createdAt,
+      statusLabel,
+      if (createdAtLabel.isNotEmpty) createdAtLabel,
       if ((jobId ?? '').isNotEmpty) 'job $jobId',
       if ((sessionId ?? '').isNotEmpty) 'session $sessionId',
       if ((runId ?? '').isNotEmpty) 'run $runId',
@@ -3102,6 +3441,67 @@ String _formatSelectionBounds(Map<String, double> bounds) {
       '${bounds['width']!.round()} x ${bounds['height']!.round()}';
 }
 
+BoxConstraints _dialogContentConstraints(
+  BuildContext context, {
+  double maxWidth = 560,
+  double maxHeightFactor = 0.66,
+}) {
+  final size = MediaQuery.sizeOf(context);
+  return BoxConstraints(
+    maxWidth: math.min(maxWidth, math.max(0.0, size.width - 48)),
+    maxHeight: math.max(160.0, size.height * maxHeightFactor),
+  );
+}
+
+Map<String, double> _selectionBoundsFromPoints(List<Offset> points) {
+  if (points.isEmpty) {
+    return <String, double>{'left': 0, 'top': 0, 'width': 0, 'height': 0};
+  }
+  var minX = points.first.dx;
+  var maxX = points.first.dx;
+  var minY = points.first.dy;
+  var maxY = points.first.dy;
+  for (final point in points.skip(1)) {
+    minX = math.min(minX, point.dx);
+    maxX = math.max(maxX, point.dx);
+    minY = math.min(minY, point.dy);
+    maxY = math.max(maxY, point.dy);
+  }
+  return <String, double>{
+    'left': minX,
+    'top': minY,
+    'width': maxX - minX,
+    'height': maxY - minY,
+  };
+}
+
+bool _selectionBoundsIsEmpty(Map<String, double> bounds) {
+  return (bounds['left'] ?? 0) == 0 &&
+      (bounds['top'] ?? 0) == 0 &&
+      (bounds['width'] ?? 0) == 0 &&
+      (bounds['height'] ?? 0) == 0;
+}
+
+List<_QuickAskRecord> _sortQuickAskRecords(Iterable<_QuickAskRecord> records) {
+  return List<_QuickAskRecord>.of(records)..sort((a, b) {
+    final aTime = DateTime.tryParse(a.createdAt);
+    final bTime = DateTime.tryParse(b.createdAt);
+    if (aTime != null && bTime != null) return bTime.compareTo(aTime);
+    if (aTime != null) return -1;
+    if (bTime != null) return 1;
+    return b.quickAskId.compareTo(a.quickAskId);
+  });
+}
+
+String _formatIsoDateTime(String value) {
+  final parsed = DateTime.tryParse(value);
+  if (parsed == null) return value;
+  final local = parsed.toLocal();
+  String twoDigits(int number) => number.toString().padLeft(2, '0');
+  return '${local.year}-${twoDigits(local.month)}-${twoDigits(local.day)} '
+      '${twoDigits(local.hour)}:${twoDigits(local.minute)}';
+}
+
 List<Offset> _pointsFromBounds(Map<String, double> bounds) {
   final left = bounds['left'] ?? 0;
   final top = bounds['top'] ?? 0;
@@ -3154,12 +3554,6 @@ Object? _jsonSafeValue(Object? value) {
     return result;
   }
   return value.toString();
-}
-
-class _QuickAskPendingException implements Exception {
-  const _QuickAskPendingException(this.quickAskId);
-
-  final String quickAskId;
 }
 
 class DeveloperFeedbackExport {
