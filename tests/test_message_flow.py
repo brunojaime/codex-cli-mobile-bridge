@@ -6436,15 +6436,23 @@ def test_audio_messages_from_different_sessions_stay_isolated_under_overlap() ->
     second_job = wait_for_job(second_client, accepted_responses["second"].json()["job_id"])
     assert first_job["session_id"] == first_session_id
     assert second_job["session_id"] == second_session_id
-    assert first_job["message"] == "Transcribed audio from voice-a.m4a"
-    assert second_job["message"] == "Transcribed audio from voice-b.m4a"
+    assert first_job["message"] == (
+        "[Sent via audio]\n\nTranscribed audio from voice-a.m4a"
+    )
+    assert second_job["message"] == (
+        "[Sent via audio]\n\nTranscribed audio from voice-b.m4a"
+    )
 
     first_payload = first_client.get(f"/sessions/{first_session_id}").json()
     second_payload = second_client.get(f"/sessions/{second_session_id}").json()
     assert len(first_payload["messages"]) == 2
     assert len(second_payload["messages"]) == 2
-    assert first_payload["messages"][0]["content"] == "Transcribed audio from voice-a.m4a"
-    assert second_payload["messages"][0]["content"] == "Transcribed audio from voice-b.m4a"
+    assert first_payload["messages"][0]["content"] == (
+        "[Sent via audio]\n\nTranscribed audio from voice-a.m4a"
+    )
+    assert second_payload["messages"][0]["content"] == (
+        "[Sent via audio]\n\nTranscribed audio from voice-b.m4a"
+    )
 
 
 def test_document_message_flow_transcribes_audio_documents() -> None:
