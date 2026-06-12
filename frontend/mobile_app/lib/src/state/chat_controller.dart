@@ -631,6 +631,7 @@ class ChatController extends ChangeNotifier {
 
   Future<bool> sendAudioMessage(
     XFile audioFile, {
+    String? message,
     String? language,
     String? sessionIdOverride,
     String? workspacePathOverride,
@@ -656,6 +657,7 @@ class ChatController extends ChangeNotifier {
         audioFile,
         sessionId: originSessionId,
         workspacePath: originWorkspacePath,
+        message: message,
         language: language,
         codexRunOptions: codexRunOptions,
       );

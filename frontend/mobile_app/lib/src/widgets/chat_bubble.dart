@@ -213,6 +213,12 @@ class ChatBubble extends StatelessWidget {
                         : null,
                   ),
                 ],
+                if (displayContent.sentViaAudio) ...[
+                  if (displayContent.text.isNotEmpty ||
+                      displayContent.attachmentSummary != null)
+                    const SizedBox(height: 8),
+                  _SentViaAudioMarker(textColor: textColor),
+                ],
                 if ((displayContent.copyText.isNotEmpty ||
                         (!isUser &&
                             onCancelJob != null &&
@@ -495,6 +501,33 @@ class _UserAttachmentSummaryCard extends StatelessWidget {
         behavior: HitTestBehavior.opaque,
         onTap: onTap,
         child: card,
+      ),
+    );
+  }
+}
+
+class _SentViaAudioMarker extends StatelessWidget {
+  const _SentViaAudioMarker({required this.textColor});
+
+  final Color textColor;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+      decoration: BoxDecoration(
+        color: textColor.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: textColor.withValues(alpha: 0.16)),
+      ),
+      child: Text(
+        'Sent via audio',
+        style: TextStyle(
+          color: textColor.withValues(alpha: 0.78),
+          fontSize: 11,
+          fontWeight: FontWeight.w700,
+          height: 1.1,
+        ),
       ),
     );
   }
@@ -1050,11 +1083,13 @@ class _DisplayMessageContent {
     required this.text,
     required this.copyText,
     this.attachmentSummary,
+    this.sentViaAudio = false,
   });
 
   final String text;
   final String copyText;
   final _AttachmentDisplaySummary? attachmentSummary;
+  final bool sentViaAudio;
 }
 
 class _AttachmentDisplaySummary {
@@ -1127,6 +1162,11 @@ _DisplayMessageContent _displayContentForMessage(ChatMessage message) {
     );
   }
 
+  final audioContent = _extractSentViaAudioMarker(message.text);
+  if (audioContent != null) {
+    return audioContent;
+  }
+
   final legacyContent = _extractUserAttachmentMetadata(message.text);
   if (legacyContent.attachmentSummary != null) {
     return legacyContent;
@@ -1145,6 +1185,29 @@ _DisplayMessageContent _displayContentForMessage(ChatMessage message) {
     );
   }
   return legacyContent;
+}
+
+_DisplayMessageContent? _extractSentViaAudioMarker(String text) {
+  final normalizedText = text.replaceAll('\r\n', '\n');
+  final lines = normalizedText.split('\n');
+  final markerIndex =
+      lines.indexWhere((line) => line.trim() == '[Sent via audio]');
+  if (markerIndex == -1) {
+    return null;
+  }
+
+  final before = lines.take(markerIndex).join('\n').trimRight();
+  final after = lines.skip(markerIndex + 1).join('\n').trim();
+  final visibleParts = <String>[
+    if (before.isNotEmpty) before,
+    if (after.isNotEmpty) after,
+  ];
+  final visibleText = visibleParts.join('\n\n');
+  return _DisplayMessageContent(
+    text: visibleText,
+    copyText: visibleText,
+    sentViaAudio: true,
+  );
 }
 
 _DisplayMessageContent _extractUserAttachmentMetadata(String text) {

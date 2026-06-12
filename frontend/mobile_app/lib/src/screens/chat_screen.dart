@@ -970,13 +970,17 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     return didSend;
   }
 
-  Future<bool> _handleSendAudio(XFile audioFile) async {
+  Future<bool> _handleSendAudio(
+    XFile audioFile, {
+    String? message,
+  }) async {
     final sessionIdBeforeSend = _chatController.selectedSessionId;
     final workspacePathBeforeSend =
         _chatController.currentSession?.workspacePath;
     final codexRunOptions = _currentComposerDraft().codexRunOptions;
     final didSend = await _chatController.sendAudioMessage(
       audioFile,
+      message: message,
       sessionIdOverride: sessionIdBeforeSend,
       workspacePathOverride: workspacePathBeforeSend,
       codexRunOptions: codexRunOptions.isEmpty ? null : codexRunOptions,
@@ -4660,7 +4664,7 @@ class _Composer extends StatefulWidget {
   final _ComposerDraft draft;
   final ValueChanged<_ComposerDraft> onDraftChanged;
   final Future<bool> Function() onSend;
-  final Future<bool> Function(XFile audioFile) onSendAudio;
+  final Future<bool> Function(XFile audioFile, {String? message}) onSendAudio;
   final Future<bool> Function(
     List<_PendingAttachmentDraft> attachments, {
     String? prompt,
@@ -5287,7 +5291,8 @@ class _ComposerState extends State<_Composer> {
     }
 
     final prompt = widget.controller.text.trim();
-    final sendWithPrompt = _pendingAttachments.isEmpty && prompt.isNotEmpty;
+    final message =
+        _pendingAttachments.isEmpty && prompt.isNotEmpty ? prompt : null;
     if (mounted) {
       setState(() {
         _isSubmittingAttachments = true;
@@ -5296,22 +5301,7 @@ class _ComposerState extends State<_Composer> {
 
     var didSend = false;
     try {
-      if (sendWithPrompt) {
-        didSend = await widget.onSendAttachments(
-          <_PendingAttachmentDraft>[
-            _PendingAttachmentDraft(
-              file: audioFile,
-              name: audioFile.name.trim().isEmpty
-                  ? 'voice-note.m4a'
-                  : audioFile.name,
-              kind: _AttachmentDraftKind.audio,
-            ),
-          ],
-          prompt: prompt,
-        );
-      } else {
-        didSend = await widget.onSendAudio(audioFile);
-      }
+      didSend = await widget.onSendAudio(audioFile, message: message);
     } catch (_) {
       didSend = false;
     } finally {
@@ -5325,7 +5315,7 @@ class _ComposerState extends State<_Composer> {
       _isSubmittingAttachments = false;
     });
     if (didSend) {
-      if (sendWithPrompt) {
+      if (message != null) {
         widget.controller.clear();
         _emitDraftChanged();
       }
@@ -7462,7 +7452,8 @@ Widget buildImageEditorForTest({
 Widget buildComposerVoiceRecordingHarnessForTest({
   required TextEditingController controller,
   required AudioNoteRecorder Function() audioRecorderFactory,
-  required Future<bool> Function(XFile audioFile) onSendAudio,
+  required Future<bool> Function(XFile audioFile, {String? message})
+      onSendAudio,
   required Future<bool> Function(
     List<XFile> attachments, {
     String? prompt,

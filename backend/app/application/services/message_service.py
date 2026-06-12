@@ -829,6 +829,7 @@ class MessageService:
         *,
         filename: str | None = None,
         content_type: str | None = None,
+        message: str | None = None,
         session_id: str | None = None,
         workspace_path: str | None = None,
         language: str | None = None,
@@ -843,13 +844,44 @@ class MessageService:
         if not transcript:
             raise AudioTranscriptionError("Transcription returned an empty prompt.")
 
+        display_message = self._build_audio_display_message(
+            message=message,
+            transcript=transcript,
+        )
+        execution_message = self._build_audio_execution_message(
+            message=message,
+            transcript=transcript,
+        )
         job = self.submit_message(
-            transcript,
+            display_message,
             session_id=session_id,
             workspace_path=workspace_path,
+            execution_message=execution_message,
             codex_options=codex_options,
         )
         return AudioSubmission(job=job, transcript=transcript)
+
+    def _build_audio_display_message(
+        self,
+        *,
+        message: str | None,
+        transcript: str,
+    ) -> str:
+        parts = [
+            part
+            for part in ((message or "").strip(), "[Sent via audio]", transcript)
+            if part
+        ]
+        return "\n\n".join(parts)
+
+    def _build_audio_execution_message(
+        self,
+        *,
+        message: str | None,
+        transcript: str,
+    ) -> str:
+        parts = [part for part in ((message or "").strip(), transcript) if part]
+        return "\n\n".join(parts)
 
     def submit_document_message(
         self,

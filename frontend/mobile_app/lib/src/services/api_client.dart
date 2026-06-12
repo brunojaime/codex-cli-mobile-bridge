@@ -430,6 +430,7 @@ class ApiClient {
     XFile audioFile, {
     String? sessionId,
     String? workspacePath,
+    String? message,
     String? language,
     CodexRunOptions? codexRunOptions,
   }) async {
@@ -442,6 +443,10 @@ class ApiClient {
     }
     if (workspacePath != null) {
       request.fields['workspace_path'] = workspacePath;
+    }
+    final trimmedMessage = message?.trim();
+    if (trimmedMessage != null && trimmedMessage.isNotEmpty) {
+      request.fields['message'] = trimmedMessage;
     }
     if (language != null) {
       request.fields['language'] = language;

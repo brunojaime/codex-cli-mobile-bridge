@@ -6285,8 +6285,37 @@ def test_audio_message_flow_transcribes_then_submits_prompt() -> None:
     payload = wait_for_job(client, job_id)
 
     assert payload["status"] == "completed"
-    assert payload["message"] == "Transcribed audio from voice-note.m4a"
+    assert payload["message"] == (
+        "[Sent via audio]\n\nTranscribed audio from voice-note.m4a"
+    )
     assert payload["response"] == "Codex response: Transcribed audio from voice-note.m4a"
+
+
+def test_audio_message_flow_combines_typed_message_with_transcript() -> None:
+    client = build_audio_client()
+
+    create_response = client.post(
+        "/message/audio",
+        data={"message": "Use this context"},
+        files={"audio": ("voice-note.m4a", b"fake audio bytes", "audio/mp4")},
+    )
+
+    assert create_response.status_code == 202
+    assert create_response.json()["transcript"] == "Transcribed audio from voice-note.m4a"
+
+    job_id = create_response.json()["job_id"]
+    payload = wait_for_job(client, job_id)
+
+    assert payload["status"] == "completed"
+    assert payload["message"] == (
+        "Use this context\n\n"
+        "[Sent via audio]\n\n"
+        "Transcribed audio from voice-note.m4a"
+    )
+    assert payload["response"] == (
+        "Codex response: Use this context\n"
+        "Transcribed audio from voice-note.m4a"
+    )
 
 
 def test_audio_message_flow_accepts_whatsapp_style_audio_uploads() -> None:
@@ -6304,7 +6333,9 @@ def test_audio_message_flow_accepts_whatsapp_style_audio_uploads() -> None:
     payload = wait_for_job(client, job_id)
 
     assert payload["status"] == "completed"
-    assert payload["message"] == "Transcribed audio from PTT-20260322-WA0001.ogg"
+    assert payload["message"] == (
+        "[Sent via audio]\n\nTranscribed audio from PTT-20260322-WA0001.ogg"
+    )
     assert payload["response"] == "Codex response: Transcribed audio from PTT-20260322-WA0001.ogg"
 
 
