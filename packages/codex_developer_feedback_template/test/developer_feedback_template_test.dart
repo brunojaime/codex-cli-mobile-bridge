@@ -767,7 +767,7 @@ void main() {
     },
   );
 
-  testWidgets('quick ask timeout remains recoverable from history', (
+  testWidgets('quick ask running state remains recoverable from history', (
     tester,
   ) async {
     var quickAskPolls = 0;
@@ -882,6 +882,134 @@ void main() {
 
     expect(find.text('Recovered answer from history.'), findsOneWidget);
   });
+
+  testWidgets('quick ask polling stops after wrapper unmounts', (tester) async {
+    var getCount = 0;
+    final client = MockClient((request) async {
+      if (request.url.path == '/feedback-batches') {
+        return http.Response('[]', 200);
+      }
+      if (request.url.path == '/feedback-quick-asks/ask') {
+        return http.Response(
+          jsonEncode(<String, Object?>{
+            'quickAskId': 'quick-ask-running',
+            'jobId': 'job-quick-ask-running',
+            'sessionId': 'session-quick-ask-running',
+            'status': 'pending',
+          }),
+          202,
+        );
+      }
+      if (request.url.path == '/feedback-quick-asks/quick-ask-running') {
+        getCount += 1;
+        return http.Response(
+          jsonEncode(<String, Object?>{
+            'quickAskId': 'quick-ask-running',
+            'sourceApp': 'fixture-app',
+            'question': 'Keep polling?',
+            'status': 'running',
+            'selectionBounds': <String, double>{
+              'left': 1,
+              'top': 2,
+              'width': 3,
+              'height': 4,
+            },
+            'createdAt': '2026-06-11T00:00:00+00:00',
+          }),
+          200,
+        );
+      }
+      return http.Response('not found', 404);
+    });
+
+    await tester.pumpWidget(
+      _Harness(
+        enabled: true,
+        bridgeUrl: 'http://bridge.local',
+        httpClient: client,
+      ),
+    );
+
+    await _openQuickAskDialog(tester, 'Keep polling?');
+    await tester.pumpAndSettle();
+    expect(getCount, 1);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpAndSettle();
+    await tester.pump(const Duration(seconds: 3));
+
+    expect(getCount, 1);
+    _expectNoFlutterExceptions(tester);
+  });
+
+  testWidgets(
+    'quick ask does not start polling when unmounted after accepted POST',
+    (tester) async {
+      var postRequested = false;
+      var getCount = 0;
+      final postCompleter = Completer<http.Response>();
+      final client = MockClient((request) async {
+        if (request.url.path == '/feedback-batches') {
+          return http.Response('[]', 200);
+        }
+        if (request.url.path == '/feedback-quick-asks/ask') {
+          postRequested = true;
+          return postCompleter.future;
+        }
+        if (request.url.path == '/feedback-quick-asks/quick-ask-accepted') {
+          getCount += 1;
+          return http.Response(
+            jsonEncode(<String, Object?>{
+              'quickAskId': 'quick-ask-accepted',
+              'sourceApp': 'fixture-app',
+              'question': 'Poll later?',
+              'status': 'running',
+              'selectionBounds': <String, double>{
+                'left': 1,
+                'top': 2,
+                'width': 3,
+                'height': 4,
+              },
+              'createdAt': '2026-06-11T00:00:00+00:00',
+            }),
+            200,
+          );
+        }
+        return http.Response('not found', 404);
+      });
+
+      await tester.pumpWidget(
+        _Harness(
+          enabled: true,
+          bridgeUrl: 'http://bridge.local',
+          httpClient: client,
+        ),
+      );
+
+      await _openQuickAskDialog(tester, 'Poll later?');
+      await tester.pump();
+      expect(postRequested, isTrue);
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+      postCompleter.complete(
+        http.Response(
+          jsonEncode(<String, Object?>{
+            'quickAskId': 'quick-ask-accepted',
+            'jobId': 'job-quick-ask-accepted',
+            'sessionId': 'session-quick-ask-accepted',
+            'status': 'pending',
+          }),
+          202,
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 3));
+
+      expect(getCount, 0);
+      _expectNoFlutterExceptions(tester);
+    },
+  );
 
   testWidgets('quick ask history shows provenance detail', (tester) async {
     const screenshot =
@@ -1778,6 +1906,25 @@ Future<void> _openFeedbackDialog(WidgetTester tester) async {
   await _drawFeedbackSelection(tester);
   await tester.pumpAndSettle();
   await tester.tap(find.byKey(developerFeedbackCommentActionKey));
+  await tester.pumpAndSettle();
+}
+
+Future<void> _openQuickAskDialog(WidgetTester tester, String question) async {
+  if (find.byKey(developerFeedbackOverlayKey).evaluate().isEmpty) {
+    await tester.tap(find.byKey(developerFeedbackSwitchKey));
+    await tester.pump();
+  }
+  await _drawFeedbackSelection(tester);
+  await tester.pumpAndSettle();
+  await tester.tap(find.byKey(developerFeedbackQuickAskActionKey));
+  await tester.pumpAndSettle();
+  await tester.enterText(
+    find.byKey(developerFeedbackQuickAskQuestionKey),
+    question,
+  );
+  tester.testTextInput.hide();
+  await tester.pump();
+  tester.state<NavigatorState>(find.byType(Navigator)).pop(question);
   await tester.pumpAndSettle();
 }
 

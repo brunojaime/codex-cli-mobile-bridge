@@ -196,6 +196,7 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
   String? _pendingQuickAskId;
   var _unreadNotificationCount = 0;
   var _unreadQuickAskCount = 0;
+  var _quickAskGeneration = 0;
   var _notificationRefreshScheduled = false;
   var _editMode = false;
   var _dialogOpen = false;
@@ -204,6 +205,27 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
   var _drawing = <Offset>[];
   Offset? _toolbarOffset;
   Size? _toolbarSize;
+
+  @override
+  void didUpdateWidget(covariant DeveloperFeedbackTemplate oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final disabled = oldWidget.enabled && !widget.enabled;
+    final contextChanged =
+        oldWidget.bridgeUrl.trim() != widget.bridgeUrl.trim() ||
+        oldWidget.sourceApp != widget.sourceApp ||
+        oldWidget.sourceDisplayName != widget.sourceDisplayName ||
+        oldWidget.httpClient != widget.httpClient ||
+        oldWidget.contextMetadataBuilder != widget.contextMetadataBuilder;
+    if (disabled || contextChanged) {
+      _cancelQuickAskBackgroundWork();
+    }
+  }
+
+  @override
+  void dispose() {
+    _cancelQuickAskBackgroundWork();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -297,6 +319,18 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
       widget.navigatorKey?.currentState?.overlay?.context ??
       widget.navigatorKey?.currentContext ??
       context;
+
+  bool _isQuickAskWorkActive(int generation) {
+    return mounted &&
+        widget.enabled &&
+        generation == _quickAskGeneration &&
+        widget.bridgeUrl.trim().isNotEmpty;
+  }
+
+  void _cancelQuickAskBackgroundWork() {
+    _quickAskGeneration += 1;
+    _quickAskPollingIds.clear();
+  }
 
   Offset _effectiveToolbarOffset(Size viewport, EdgeInsets safePadding) {
     final current = _toolbarOffset;
@@ -510,8 +544,10 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
     );
     setState(() => _localQuickAsks.insert(0, localRecord));
     _showMessage('Pregunta enviada. Te aviso cuando tenga respuesta.');
+    final generation = _quickAskGeneration;
     unawaited(
       _submitQuickAskInBackground(
+        generation: generation,
         localId: localId,
         question: question,
         screenshotPngBase64: screenshotPngBase64,
@@ -521,6 +557,7 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
   }
 
   Future<void> _submitQuickAskInBackground({
+    required int generation,
     required String localId,
     required String question,
     required String screenshotPngBase64,
@@ -542,6 +579,7 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
     );
     var currentId = localId;
     try {
+      if (!_isQuickAskWorkActive(generation)) return;
       final response = await client.post(
         Uri.parse('$baseUrl/feedback-quick-asks/ask'),
         headers: const <String, String>{'Content-Type': 'application/json'},
@@ -559,6 +597,7 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
           'contextMetadata': quickAskItem.contextMetadata,
         }),
       );
+      if (!_isQuickAskWorkActive(generation)) return;
       if (response.statusCode < 200 || response.statusCode >= 300) {
         throw Exception('HTTP ${response.statusCode}: ${response.body}');
       }
@@ -584,13 +623,16 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
         'screenshotPngBase64': screenshotPngBase64,
       });
       _replaceQuickAskRecord(localId, acceptedRecord);
+      if (!_isQuickAskWorkActive(generation)) return;
       await _pollQuickAskUntilDone(
+        generation: generation,
         client: client,
         baseUrl: baseUrl,
         quickAskId: quickAskId,
         fallback: acceptedRecord,
       );
     } catch (_) {
+      if (!_isQuickAskWorkActive(generation)) return;
       _replaceQuickAskRecord(
         currentId,
         _quickAskById(currentId)?.copyWith(status: 'failed') ??
@@ -612,17 +654,21 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
   }
 
   Future<void> _pollQuickAskUntilDone({
+    required int generation,
     required http.Client client,
     required String baseUrl,
     required String quickAskId,
     required _QuickAskRecord fallback,
   }) async {
+    if (!_isQuickAskWorkActive(generation)) return;
     if (!_quickAskPollingIds.add(quickAskId)) return;
     try {
       for (var attempt = 0; attempt < 150; attempt += 1) {
+        if (!_isQuickAskWorkActive(generation)) return;
         final statusResponse = await client.get(
           Uri.parse('$baseUrl/feedback-quick-asks/$quickAskId'),
         );
+        if (!_isQuickAskWorkActive(generation)) return;
         if (statusResponse.statusCode < 200 ||
             statusResponse.statusCode >= 300) {
           throw Exception(
@@ -640,10 +686,13 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
           throw Exception(status['status_detail'] ?? 'Quick ask failed');
         }
         await Future<void>.delayed(const Duration(seconds: 2));
+        if (!_isQuickAskWorkActive(generation)) return;
       }
       _upsertQuickAskRecord(fallback.copyWith(status: 'running'));
     } finally {
-      _quickAskPollingIds.remove(quickAskId);
+      if (generation == _quickAskGeneration) {
+        _quickAskPollingIds.remove(quickAskId);
+      }
     }
   }
 
@@ -679,9 +728,8 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
   }
 
   void _notifyQuickAskReady(String message) {
-    if (mounted) {
-      setState(() => _unreadQuickAskCount += 1);
-    }
+    if (!mounted || !widget.enabled) return;
+    setState(() => _unreadQuickAskCount += 1);
     _showMessage(message);
   }
 
