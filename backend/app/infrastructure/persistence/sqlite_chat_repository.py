@@ -114,6 +114,26 @@ class SqliteChatRepository(ChatRepository):
             ).fetchone()
         return self._job_from_row(row) if row is not None else None
 
+    def list_jobs(self, *, statuses: set[JobStatus] | None = None) -> list[Job]:
+        with self._lock, self._connect() as connection:
+            if statuses is None:
+                rows = connection.execute(
+                    "SELECT * FROM jobs ORDER BY updated_at DESC, id DESC",
+                ).fetchall()
+            elif not statuses:
+                return []
+            else:
+                placeholders = ", ".join("?" for _ in statuses)
+                rows = connection.execute(
+                    f"""
+                    SELECT * FROM jobs
+                    WHERE status IN ({placeholders})
+                    ORDER BY updated_at DESC, id DESC
+                    """,
+                    tuple(status.value for status in statuses),
+                ).fetchall()
+        return [self._job_from_row(row) for row in rows]
+
     def save_session(self, session: ChatSession) -> None:
         with self._lock, self._connect() as connection:
             self._write_session(connection, session)

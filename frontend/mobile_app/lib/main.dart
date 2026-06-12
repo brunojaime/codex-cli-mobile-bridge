@@ -16,7 +16,7 @@ const _configuredAppUpdaterEnabled = bool.fromEnvironment(
 );
 const _codexMobileSourceApp = 'codex-mobile';
 const _fallbackAppVersion = '1.0.0';
-const _fallbackAppBuild = 33;
+const _fallbackAppBuild = 41;
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();

@@ -14,6 +14,7 @@ import 'package:codex_mobile_frontend/src/models/session_detail.dart';
 import 'package:codex_mobile_frontend/src/models/workspace.dart';
 import 'package:codex_mobile_frontend/src/screens/chat_screen.dart';
 import 'package:codex_mobile_frontend/src/services/api_client.dart';
+import 'package:codex_mobile_frontend/src/services/audio_note_recorder.dart';
 import 'package:codex_mobile_frontend/src/services/chat_notification_service.dart';
 import 'package:codex_mobile_frontend/src/services/text_to_speech_player.dart';
 import 'package:codex_mobile_frontend/src/state/chat_controller.dart';
@@ -563,6 +564,246 @@ void main() {
     },
   );
 
+  testWidgets('failed attachment send keeps composer text and attachments', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    final fakeApiClient = _FakeApiClient(failAttachmentSends: true);
+    final controller = ChatController(
+      apiClient: fakeApiClient,
+      notificationService: const NoopChatNotificationService(),
+    );
+
+    await _pumpChatAndStageSingleFeedbackAttachment(
+      tester,
+      controller: controller,
+      feedbackItem: _feedbackItem(
+        id: 'feedback-retry',
+        sourceApp: 'ambientando-calendar',
+        comment: 'Mantener el draft si falla',
+      ),
+    );
+
+    expect(find.text('1 selected'), findsOneWidget);
+    expect(
+      _composerTextContaining(
+          tester, 'Feedback queue for Ambientando Calendar'),
+      contains('Mantener el draft si falla'),
+    );
+
+    await tester.showKeyboard(find.byType(TextField).last);
+    await tester.testTextInput.receiveAction(TextInputAction.send);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+
+    expect(fakeApiClient.attachmentSends, hasLength(1));
+    expect(find.text('1 selected'), findsOneWidget);
+    expect(
+      _composerTextContaining(
+          tester, 'Feedback queue for Ambientando Calendar'),
+      contains('Mantener el draft si falla'),
+    );
+    controller.dispose();
+  });
+
+  testWidgets('successful attachment send clears composer draft', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    final fakeApiClient = _FakeApiClient();
+    final controller = ChatController(
+      apiClient: fakeApiClient,
+      notificationService: const NoopChatNotificationService(),
+    );
+
+    await _pumpChatAndStageSingleFeedbackAttachment(
+      tester,
+      controller: controller,
+      feedbackItem: _feedbackItem(
+        id: 'feedback-send',
+        sourceApp: 'ambientando-calendar',
+        comment: 'Enviar y limpiar',
+      ),
+    );
+
+    await tester.showKeyboard(find.byType(TextField).last);
+    await tester.testTextInput.receiveAction(TextInputAction.send);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+
+    expect(fakeApiClient.attachmentSends, hasLength(1));
+    expect(fakeApiClient.attachmentSends.single.message,
+        contains('Enviar y limpiar'));
+    expect(fakeApiClient.attachmentSends.single.filenames,
+        <String>['feedback-1-feedback-send.png']);
+    expect(find.text('1 selected'), findsNothing);
+    expect(
+      () => _composerTextContaining(
+        tester,
+        'Feedback queue for Ambientando Calendar',
+      ),
+      throwsStateError,
+    );
+
+    controller.dispose();
+  });
+
+  testWidgets('recorded voice note sends without flushing staged attachments', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1200, 1600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final textController = TextEditingController();
+    addTearDown(textController.dispose);
+    final audioSends = <String>[];
+    final attachmentSends = <String>[];
+    final attachmentPrompts = <String?>[];
+    final recorders = <_FakeAudioNoteRecorder>[];
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Align(
+            alignment: Alignment.bottomCenter,
+            child: buildComposerVoiceRecordingHarnessForTest(
+              controller: textController,
+              stagedText: 'Keep this attachment staged',
+              stageAttachment: true,
+              audioRecorderFactory: () {
+                final recorder = _FakeAudioNoteRecorder(
+                  XFile('voice-note.m4a', name: 'voice-note.m4a'),
+                );
+                recorders.add(recorder);
+                return recorder;
+              },
+              onSendAudio: (audioFile) async {
+                audioSends.add(audioFile.name);
+                return true;
+              },
+              onSendAttachments: (attachments, {prompt}) async {
+                attachmentSends.addAll(
+                  attachments.map((attachment) => attachment.name),
+                );
+                attachmentPrompts.add(prompt);
+                return true;
+              },
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text('1 selected'), findsOneWidget);
+    final micButton = find
+        .ancestor(
+          of: find.byIcon(Icons.mic_rounded),
+          matching: find.byType(FilledButton),
+        )
+        .last;
+    await tester.tap(micButton);
+    await tester.pump();
+    expect(find.text('Recording'), findsOneWidget);
+
+    final voiceSendButton = find
+        .ancestor(
+          of: find.byIcon(Icons.send_rounded),
+          matching: find.byType(FilledButton),
+        )
+        .last;
+    await tester.tap(voiceSendButton);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+
+    expect(audioSends, <String>['voice-note.m4a']);
+    expect(attachmentSends, isEmpty);
+    expect(find.text('1 selected'), findsOneWidget);
+    expect(textController.text, contains('Keep this attachment staged'));
+    expect(recorders.first.started, isTrue);
+    expect(recorders.first.stopped, isTrue);
+    expect(recorders.first.cleaned, isTrue);
+    expect(recorders.first.disposed, isTrue);
+  });
+
+  testWidgets('recorded voice note sends with composer text immediately', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1200, 1600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final textController = TextEditingController();
+    addTearDown(textController.dispose);
+    final audioSends = <String>[];
+    final attachmentSends = <String>[];
+    final attachmentPrompts = <String?>[];
+    final recorders = <_FakeAudioNoteRecorder>[];
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Align(
+            alignment: Alignment.bottomCenter,
+            child: buildComposerVoiceRecordingHarnessForTest(
+              controller: textController,
+              stagedText: 'Explain this voice note',
+              audioRecorderFactory: () {
+                final recorder = _FakeAudioNoteRecorder(
+                  XFile('voice-note.m4a', name: 'voice-note.m4a'),
+                );
+                recorders.add(recorder);
+                return recorder;
+              },
+              onSendAudio: (audioFile) async {
+                audioSends.add(audioFile.name);
+                return true;
+              },
+              onSendAttachments: (attachments, {prompt}) async {
+                attachmentSends.addAll(
+                  attachments.map((attachment) => attachment.name),
+                );
+                attachmentPrompts.add(prompt);
+                return true;
+              },
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text('Explain this voice note'), findsOneWidget);
+    final micButton = find
+        .ancestor(
+          of: find.byIcon(Icons.mic_rounded),
+          matching: find.byType(FilledButton),
+        )
+        .last;
+    await tester.tap(micButton);
+    await tester.pump();
+    expect(find.text('Recording'), findsOneWidget);
+
+    final voiceSendButton = find
+        .ancestor(
+          of: find.byIcon(Icons.send_rounded),
+          matching: find.byType(FilledButton),
+        )
+        .last;
+    await tester.tap(voiceSendButton);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+
+    expect(audioSends, isEmpty);
+    expect(attachmentSends, hasLength(1));
+    expect(attachmentSends, contains('voice-note.m4a'));
+    expect(attachmentPrompts, <String?>['Explain this voice note']);
+    expect(textController.text, isEmpty);
+    expect(recorders.first.cleaned, isTrue);
+    expect(recorders.first.disposed, isTrue);
+  });
+
   testWidgets('renders assistant options as quick actions', (tester) async {
     await tester.pumpWidget(
       MaterialApp(
@@ -882,7 +1123,7 @@ void main() {
         ),
       ),
     );
-    await tester.pumpAndSettle();
+    await tester.pump();
 
     await tester.tap(find.byIcon(Icons.account_tree_outlined));
     await tester.pumpAndSettle();
@@ -1578,6 +1819,70 @@ void main() {
     controller.dispose();
   });
 
+  test('chat controller exposes optimistic audio message while sending',
+      () async {
+    final fakeApiClient = _FakeApiClient(
+      audioSendDelays: <String, Duration>{
+        'session-a': const Duration(milliseconds: 40),
+      },
+    );
+    final controller = ChatController(
+      apiClient: fakeApiClient,
+      notificationService: const NoopChatNotificationService(),
+    );
+
+    await controller.selectSession('session-a');
+    final sendFuture = controller.sendAudioMessage(
+      XFile.fromData(
+        Uint8List.fromList(const <int>[1, 2, 3]),
+        name: 'voice-note.m4a',
+      ),
+      sessionIdOverride: 'session-a',
+      workspacePathOverride: '/workspace/a',
+    );
+
+    final optimisticMessage = controller.messages.single;
+    expect(optimisticMessage.text, 'Sending voice...');
+    expect(optimisticMessage.isUser, isTrue);
+    expect(optimisticMessage.status, ChatMessageStatus.sending);
+    expect(
+      controller.outgoingUploadSummaryForSession('session-a')?.audioCount,
+      1,
+    );
+
+    expect(await sendFuture, isTrue);
+    expect(controller.messages, isEmpty);
+    expect(controller.outgoingUploadSummaryForSession('session-a'), isNull);
+
+    controller.dispose();
+  });
+
+  test('chat controller removes optimistic audio message on send failure',
+      () async {
+    final fakeApiClient = _FakeApiClient(failAudioSends: true);
+    final controller = ChatController(
+      apiClient: fakeApiClient,
+      notificationService: const NoopChatNotificationService(),
+    );
+
+    await controller.selectSession('session-a');
+    final sendFuture = controller.sendAudioMessage(
+      XFile.fromData(
+        Uint8List.fromList(const <int>[1, 2, 3]),
+        name: 'voice-note.m4a',
+      ),
+      sessionIdOverride: 'session-a',
+      workspacePathOverride: '/workspace/a',
+    );
+
+    expect(controller.messages.single.text, 'Sending voice...');
+    expect(await sendFuture, isFalse);
+    expect(controller.messages, isEmpty);
+    expect(controller.errorText, contains('Failed to send audio message.'));
+
+    controller.dispose();
+  });
+
   test('chat controller keeps overlapping audio sends isolated across chats',
       () async {
     final fakeApiClient = _FakeApiClient(
@@ -1626,6 +1931,62 @@ void main() {
       ],
     );
 
+    controller.dispose();
+  });
+
+  testWidgets('chat screen renders optimistic audio upload in the timeline',
+      (tester) async {
+    tester.view.physicalSize = const Size(1280, 1600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final fakeApiClient = _FakeApiClient(
+      audioSendDelays: <String, Duration>{
+        'session-a': const Duration(milliseconds: 40),
+      },
+    );
+    final controller = ChatController(
+      apiClient: fakeApiClient,
+      notificationService: const NoopChatNotificationService(),
+    );
+
+    await controller.selectSession('session-a');
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ChatScreen(
+          initialApiBaseUrl: 'http://localhost:8000',
+          notificationService: const NoopChatNotificationService(),
+          controllerOverride: controller,
+          enableServerBootstrap: false,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final sendFuture = controller.sendAudioMessage(
+      XFile.fromData(
+        Uint8List.fromList(const <int>[1, 2, 3]),
+        name: 'voice-note.m4a',
+      ),
+      sessionIdOverride: 'session-a',
+      workspacePathOverride: '/workspace/a',
+    );
+    await tester.pump();
+
+    expect(find.text('Sending voice...'), findsOneWidget);
+    expect(find.byType(ChatBubble), findsOneWidget);
+    final bubble = tester.widget<ChatBubble>(find.byType(ChatBubble));
+    expect(bubble.message.isUser, isTrue);
+    expect(bubble.message.status, ChatMessageStatus.sending);
+
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(await sendFuture, isTrue);
+    await tester.pump();
+    expect(find.text('Sending voice...'), findsNothing);
+
+    await tester.pumpWidget(const SizedBox.shrink());
     controller.dispose();
   });
 
@@ -2112,6 +2473,47 @@ String _composerTextContaining(WidgetTester tester, String needle) {
   throw StateError('No composer text contained "$needle".');
 }
 
+Future<void> _pumpChatAndStageSingleFeedbackAttachment(
+  WidgetTester tester, {
+  required ChatController controller,
+  required FeedbackQueueItem feedbackItem,
+  AudioNoteRecorder Function()? audioRecorderFactory,
+}) async {
+  await tester.pumpWidget(
+    MaterialApp(
+      home: ChatScreen(
+        initialApiBaseUrl: 'http://localhost:8000',
+        notificationService: const NoopChatNotificationService(),
+        controllerOverride: controller,
+        enableServerBootstrap: false,
+        audioRecorderFactoryOverride: audioRecorderFactory,
+        initialSidebarWorkspaces: const <Workspace>[
+          Workspace(
+            name: 'Ambientando Calendar',
+            path: '/workspace/ambientando-calendar',
+          ),
+        ],
+        feedbackQueueListLoaderOverride: (_, {required includeImages}) async {
+          return <FeedbackQueueItem>[feedbackItem];
+        },
+      ),
+    ),
+  );
+  await tester.pump(const Duration(milliseconds: 100));
+  await tester.pump();
+
+  await tester.tap(find.byTooltip('Projects'));
+  await tester.pumpAndSettle();
+  await tester.tap(find.text('Ambientando Calendar'));
+  await tester.pumpAndSettle();
+  await tester.tap(find.widgetWithText(FilledButton, 'Feedback queue (1)'));
+  await tester.pumpAndSettle();
+  await tester.tap(find.widgetWithText(CheckboxListTile, feedbackItem.comment));
+  await tester.pumpAndSettle();
+  await tester.tap(find.text('Next'));
+  await tester.pumpAndSettle();
+}
+
 int _occurrences(String value, String needle) {
   return RegExp(RegExp.escape(needle)).allMatches(value).length;
 }
@@ -2149,6 +2551,8 @@ FeedbackQueueItem _feedbackItem({
 class _FakeApiClient extends ApiClient {
   _FakeApiClient({
     this.audioSendDelays = const <String, Duration>{},
+    this.failAudioSends = false,
+    this.failAttachmentSends = false,
   }) : super(baseUrl: 'http://localhost:8000');
 
   String? lastAudioSessionId;
@@ -2160,7 +2564,11 @@ class _FakeApiClient extends ApiClient {
   String? lastRecoveredMessageId;
   MessageRecoveryAction? lastRecoveryAction;
   final Map<String, Duration> audioSendDelays;
+  final bool failAudioSends;
+  final bool failAttachmentSends;
   final List<_RecordedAudioSend> audioSends = <_RecordedAudioSend>[];
+  final List<_RecordedAttachmentSend> attachmentSends =
+      <_RecordedAttachmentSend>[];
   final Map<String, AgentConfiguration> _sessionConfigurations =
       <String, AgentConfiguration>{};
   final Map<String, SessionDetail> sessionOverrides = <String, SessionDetail>{};
@@ -2319,8 +2727,39 @@ class _FakeApiClient extends ApiClient {
       ),
     );
     await Future<void>.delayed(audioSendDelays[sessionId] ?? Duration.zero);
+    if (failAudioSends) {
+      throw Exception('simulated audio failure');
+    }
     return JobStatusResponse(
       jobId: 'job-audio-${audioSends.length}',
+      sessionId: sessionId ?? 'session-a',
+      status: 'pending',
+      elapsedSeconds: 0,
+    );
+  }
+
+  @override
+  Future<JobStatusResponse> sendAttachmentsMessage(
+    List<XFile> attachments, {
+    String? message,
+    String? sessionId,
+    String? workspacePath,
+    String? language,
+    CodexRunOptions? codexRunOptions,
+  }) async {
+    attachmentSends.add(
+      _RecordedAttachmentSend(
+        sessionId: sessionId,
+        workspacePath: workspacePath,
+        message: message,
+        filenames: attachments.map((attachment) => attachment.name).toList(),
+      ),
+    );
+    if (failAttachmentSends) {
+      throw Exception('simulated attachment failure');
+    }
+    return JobStatusResponse(
+      jobId: 'job-attachments-${attachmentSends.length}',
       sessionId: sessionId ?? 'session-a',
       status: 'pending',
       elapsedSeconds: 0,
@@ -2468,6 +2907,54 @@ class _RecordedAudioSend {
   final String? sessionId;
   final String? workspacePath;
   final String filename;
+}
+
+class _RecordedAttachmentSend {
+  const _RecordedAttachmentSend({
+    required this.sessionId,
+    required this.workspacePath,
+    required this.message,
+    required this.filenames,
+  });
+
+  final String? sessionId;
+  final String? workspacePath;
+  final String? message;
+  final List<String> filenames;
+}
+
+class _FakeAudioNoteRecorder extends AudioNoteRecorder {
+  _FakeAudioNoteRecorder(this.audioFile) : super();
+
+  final XFile audioFile;
+  bool started = false;
+  bool stopped = false;
+  bool cleaned = false;
+  bool disposed = false;
+
+  @override
+  Future<void> start() async {
+    started = true;
+  }
+
+  @override
+  Future<XFile?> stop() async {
+    stopped = true;
+    return audioFile;
+  }
+
+  @override
+  Future<void> cleanup(XFile file) async {
+    cleaned = true;
+  }
+
+  @override
+  Future<void> cancel() async {}
+
+  @override
+  Future<void> dispose() async {
+    disposed = true;
+  }
 }
 
 Future<void> _pumpUserChatBubble(

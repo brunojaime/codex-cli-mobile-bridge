@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime
 import json
 import mimetypes
 from pathlib import Path
@@ -50,7 +51,7 @@ from backend.app.domain.entities.chat_session import ChatSession
 from backend.app.domain.entities.chat_turn_summary import ChatTurnSummary
 from backend.app.domain.entities.chat_turn_summary import ChatTurnSummarySourceMessage
 from backend.app.domain.entities.codex_options import CodexRunOptions
-from backend.app.domain.entities.job import Job, JobConversationKind, JobStatus
+from backend.app.domain.entities.job import Job, JobConversationKind, JobStatus, utc_now
 from backend.app.domain.entities.text_sanitization import (
     sanitize_image_attachment_error_text,
 )
@@ -156,6 +157,47 @@ _SUBMISSION_UNKNOWN_SUPERSEDED_REASON = (
     "A newer user turn superseded this follow-up after provider submission was attempted, "
     "so automatic recovery stopped to avoid duplicate execution."
 )
+_ACTIVE_JOB_STATUSES = {JobStatus.PENDING, JobStatus.RUNNING}
+_IN_FLIGHT_MESSAGE_STATUSES = {
+    ChatMessageStatus.RESERVED,
+    ChatMessageStatus.SUBMISSION_PENDING,
+    ChatMessageStatus.PENDING,
+}
+
+
+class MaintenanceModeError(RuntimeError):
+    pass
+
+
+@dataclass(slots=True)
+class BackendDrainStatus:
+    requested: bool
+    active_jobs: list[Job]
+    active_session_ids: list[str]
+    in_flight_message_ids: list[str]
+    requested_at: datetime | None = None
+
+    @property
+    def active_job_count(self) -> int:
+        return len(self.active_jobs)
+
+    @property
+    def ready_to_restart(self) -> bool:
+        return (
+            self.requested
+            and self.active_job_count == 0
+            and not self.active_session_ids
+            and not self.in_flight_message_ids
+        )
+
+    @property
+    def active_session_count(self) -> int:
+        return len(self.active_session_ids)
+
+    @property
+    def in_flight_message_count(self) -> int:
+        return len(self.in_flight_message_ids)
+
 
 class DocumentProcessingError(RuntimeError):
     pass
@@ -265,6 +307,9 @@ class MessageService:
         self._job_monitor_unsubscribes: dict[str, Callable[[], None] | None] = {}
         self._terminal_job_lock_guard = threading.RLock()
         self._terminal_job_locks: dict[str, _TerminalJobLockEntry] = {}
+        self._maintenance_lock = threading.RLock()
+        self._drain_requested = False
+        self._drain_requested_at: datetime | None = None
         self._follow_up_recovery_guard = threading.RLock()
         self._follow_up_reconcile_interval_seconds = (
             follow_up_reconcile_interval_seconds
@@ -420,6 +465,71 @@ class MessageService:
 
     def persistence_startup_issue(self) -> PersistenceDiagnosticIssue | None:
         return self._repository.startup_issue()
+
+    def set_backend_drain(self, requested: bool) -> BackendDrainStatus:
+        with self._maintenance_lock:
+            self._drain_requested = requested
+            self._drain_requested_at = utc_now() if requested else None
+        return self.backend_drain_status()
+
+    def backend_drain_status(self) -> BackendDrainStatus:
+        with self._maintenance_lock:
+            requested = self._drain_requested
+            requested_at = self._drain_requested_at
+            active_jobs, active_session_ids, in_flight_message_ids = (
+                self._drain_blocking_work()
+            )
+        return BackendDrainStatus(
+            requested=requested,
+            requested_at=requested_at,
+            active_jobs=active_jobs,
+            active_session_ids=active_session_ids,
+            in_flight_message_ids=in_flight_message_ids,
+        )
+
+    def _ensure_accepting_new_jobs(self) -> None:
+        with self._maintenance_lock:
+            self._ensure_accepting_new_jobs_locked()
+
+    def _ensure_accepting_new_jobs_locked(self) -> None:
+        if self._drain_requested:
+            raise MaintenanceModeError(
+                "Backend drain is active; new Codex jobs are temporarily disabled."
+            )
+
+    def _drain_blocking_work(self) -> tuple[list[Job], list[str], list[str]]:
+        self._reconcile_jobs_for_drain()
+        sessions = self._repository.list_sessions()
+        for session in sessions:
+            self._reconcile_reserved_follow_ups(session)
+
+        active_jobs: list[Job] = []
+        for stored_job in self._repository.list_jobs(statuses=_ACTIVE_JOB_STATUSES):
+            job = self.get_job(stored_job.id) or stored_job
+            if not job.status.is_terminal:
+                active_jobs.append(job)
+
+        refreshed_sessions = self._repository.list_sessions()
+        active_session_ids = [
+            session.id
+            for session in refreshed_sessions
+            if session.active_agent_run_id is not None
+        ]
+        in_flight_message_ids: list[str] = []
+        for session in refreshed_sessions:
+            for message in self._repository.list_messages(session.id):
+                if message.status in _IN_FLIGHT_MESSAGE_STATUSES:
+                    in_flight_message_ids.append(message.id)
+
+        return active_jobs, active_session_ids, in_flight_message_ids
+
+    def _reconcile_jobs_for_drain(self) -> None:
+        for job in self._repository.list_jobs(statuses=_ACTIVE_JOB_STATUSES):
+            self.get_job(job.id)
+
+        for job in self._repository.list_jobs():
+            if job.status.is_terminal and not job.auto_chain_processed:
+                self._sync_terminal_job_side_effects(job.id)
 
     def get_session(self, session_id: str) -> ChatSession | None:
         return self._repository.get_session(session_id)
@@ -592,6 +702,7 @@ class MessageService:
         run_id: str | None = None,
         conversation_kind: JobConversationKind = JobConversationKind.PRIMARY,
     ) -> Job:
+        self._ensure_accepting_new_jobs()
         session = self._resolve_session(
             message=message,
             session_id=session_id,
@@ -673,37 +784,39 @@ class MessageService:
             status=ChatMessageStatus.PENDING,
         )
 
-        job = self._start_job(
-            session=session,
-            display_message=message,
-            execution_message=execution_message or message,
-            image_paths=image_paths,
-            cleanup_paths=cleanup_paths,
-            user_message_id=user_message.id,
-            assistant_message_id=assistant_message.id,
-            provider_session_id=self._provider_session_id_for_agent(
-                session,
-                entry_agent_id,
-            ),
-            model=self._model_for_agent(session, entry_agent_id),
-            codex_options=normalized_codex_options,
-            serial_key=self._serial_key_for_agent(session.id, entry_agent_id),
-            conversation_kind=conversation_kind,
-            agent_id=entry_agent_id,
-            agent_type=entry_agent_definition.agent_type,
-            trigger_source=trigger_source,
-            run_id=resolved_run_id,
-        )
-        assistant_message.sync(job_id=job.id)
-        session.touch()
+        with self._maintenance_lock:
+            self._ensure_accepting_new_jobs_locked()
+            job = self._start_job(
+                session=session,
+                display_message=message,
+                execution_message=execution_message or message,
+                image_paths=image_paths,
+                cleanup_paths=cleanup_paths,
+                user_message_id=user_message.id,
+                assistant_message_id=assistant_message.id,
+                provider_session_id=self._provider_session_id_for_agent(
+                    session,
+                    entry_agent_id,
+                ),
+                model=self._model_for_agent(session, entry_agent_id),
+                codex_options=normalized_codex_options,
+                serial_key=self._serial_key_for_agent(session.id, entry_agent_id),
+                conversation_kind=conversation_kind,
+                agent_id=entry_agent_id,
+                agent_type=entry_agent_definition.agent_type,
+                trigger_source=trigger_source,
+                run_id=resolved_run_id,
+            )
+            assistant_message.sync(job_id=job.id)
+            session.touch()
 
-        self._repository.save_turn(
-            session,
-            messages=[user_message, assistant_message],
-            job=job,
-            agent_run=agent_run,
-        )
-        self._register_background_job_watch(job.id)
+            self._repository.save_turn(
+                session,
+                messages=[user_message, assistant_message],
+                job=job,
+                agent_run=agent_run,
+            )
+            self._register_background_job_watch(job.id)
         self._maybe_finalize_session_title(session.id)
         return job
 
@@ -977,6 +1090,7 @@ class MessageService:
         return cancelled_job or job
 
     def retry_job(self, job_id: str) -> Job:
+        self._ensure_accepting_new_jobs()
         original_job = self.get_job(job_id)
         if original_job is None:
             raise ValueError(f"Job {job_id} was not found.")
@@ -993,45 +1107,47 @@ class MessageService:
         if assistant_message is None:
             raise RuntimeError("This job cannot be retried because its assistant turn was not found.")
 
-        retried_job = self._start_job(
-            session=session,
-            display_message=original_job.message,
-            execution_message=original_job.execution_message or original_job.message,
-            image_paths=original_job.image_paths,
-            cleanup_paths=None,
-            user_message_id=original_job.user_message_id,
-            assistant_message_id=assistant_message.id,
-            provider_session_id=self._provider_session_id_for_agent(
+        with self._maintenance_lock:
+            self._ensure_accepting_new_jobs_locked()
+            retried_job = self._start_job(
+                session=session,
+                display_message=original_job.message,
+                execution_message=original_job.execution_message or original_job.message,
+                image_paths=original_job.image_paths,
+                cleanup_paths=None,
+                user_message_id=original_job.user_message_id,
+                assistant_message_id=assistant_message.id,
+                provider_session_id=self._provider_session_id_for_agent(
+                    session,
+                    original_job.agent_id,
+                ),
+                model=self._model_for_agent(session, original_job.agent_id),
+                codex_options=None,
+                serial_key=self._serial_key_for_agent(
+                    session.id,
+                    original_job.agent_id,
+                ),
+                conversation_kind=original_job.conversation_kind,
+                agent_id=original_job.agent_id,
+                agent_type=original_job.agent_type,
+                trigger_source=original_job.trigger_source,
+                run_id=original_job.run_id,
+            )
+
+            assistant_message.sync(
+                content="",
+                status=ChatMessageStatus.PENDING,
+                job_id=retried_job.id,
+                agent_label=assistant_message.agent_label,
+            )
+            session.touch()
+
+            self._repository.save_turn(
                 session,
-                original_job.agent_id,
-            ),
-            model=self._model_for_agent(session, original_job.agent_id),
-            codex_options=None,
-            serial_key=self._serial_key_for_agent(
-                session.id,
-                original_job.agent_id,
-            ),
-            conversation_kind=original_job.conversation_kind,
-            agent_id=original_job.agent_id,
-            agent_type=original_job.agent_type,
-            trigger_source=original_job.trigger_source,
-            run_id=original_job.run_id,
-        )
-
-        assistant_message.sync(
-            content="",
-            status=ChatMessageStatus.PENDING,
-            job_id=retried_job.id,
-            agent_label=assistant_message.agent_label,
-        )
-        session.touch()
-
-        self._repository.save_turn(
-            session,
-            messages=[assistant_message],
-            job=retried_job,
-        )
-        self._register_background_job_watch(retried_job.id)
+                messages=[assistant_message],
+                job=retried_job,
+            )
+            self._register_background_job_watch(retried_job.id)
         return retried_job
 
     def recover_submission_unknown_message(
@@ -1067,6 +1183,8 @@ class MessageService:
             )
             return self._repository.get_session(session_id) or session
 
+        self._ensure_accepting_new_jobs()
+
         if session.active_agent_run_id not in {None, message.run_id}:
             raise RuntimeError("Finish the current active run before retrying this uncertain follow-up.")
 
@@ -1095,38 +1213,40 @@ class MessageService:
             recovered_from_message_id=message.id,
             recovery_action=MessageRecoveryAction.RETRY,
         )
-        retry_message = self._repository.reserve_message(retry_message)
-        if retry_message.job_id is not None:
-            raise RuntimeError("The manual retry was already created.")
+        with self._maintenance_lock:
+            self._ensure_accepting_new_jobs_locked()
+            retry_message = self._repository.reserve_message(retry_message)
+            if retry_message.job_id is not None:
+                raise RuntimeError("The manual retry was already created.")
 
-        message.sync(
-            status=ChatMessageStatus.CANCELLED,
-            reason_code=ChatMessageReasonCode.MANUAL_RETRY_REQUESTED,
-            recovery_action=MessageRecoveryAction.RETRY,
-            superseded_by_message_id=retry_message.id,
-            content=self._append_recovery_note(
-                message.content,
-                f"Operator retried this uncertain follow-up as message {retry_message.id}.",
-            ),
-        )
-        session.active_agent_run_id = message.run_id
-        session.touch()
-        self._repository.save_turn(
-            session,
-            messages=[message, retry_message],
-        )
-        self._launch_reserved_follow_up(
-            session=session,
-            message=retry_message,
-            display_message=context.display_message,
-            execution_message=context.execution_message,
-            user_message_id=context.user_message_id,
-            conversation_kind=context.conversation_kind,
-            agent_id=context.agent_id,
-            agent_type=context.agent_type,
-            trigger_source=context.trigger_source,
-            run_id=message.run_id or "",
-        )
+            message.sync(
+                status=ChatMessageStatus.CANCELLED,
+                reason_code=ChatMessageReasonCode.MANUAL_RETRY_REQUESTED,
+                recovery_action=MessageRecoveryAction.RETRY,
+                superseded_by_message_id=retry_message.id,
+                content=self._append_recovery_note(
+                    message.content,
+                    f"Operator retried this uncertain follow-up as message {retry_message.id}.",
+                ),
+            )
+            session.active_agent_run_id = message.run_id
+            session.touch()
+            self._repository.save_turn(
+                session,
+                messages=[message, retry_message],
+            )
+            self._launch_reserved_follow_up(
+                session=session,
+                message=retry_message,
+                display_message=context.display_message,
+                execution_message=context.execution_message,
+                user_message_id=context.user_message_id,
+                conversation_kind=context.conversation_kind,
+                agent_id=context.agent_id,
+                agent_type=context.agent_type,
+                trigger_source=context.trigger_source,
+                run_id=message.run_id or "",
+            )
         return self._repository.get_session(session_id) or session
 
     def get_job(self, job_id: str) -> Job | None:

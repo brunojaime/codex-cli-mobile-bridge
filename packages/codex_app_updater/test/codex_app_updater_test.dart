@@ -38,6 +38,30 @@ void main() {
     expect(find.byKey(codexAppUpdaterBannerKey), findsNothing);
   });
 
+  testWidgets('stale available response for installed build stays hidden', (
+    tester,
+  ) async {
+    final controller = CodexAppUpdaterController(
+      httpClient: MockClient(
+        (_) async => http.Response(
+          jsonEncode(
+            _updateJson(available: true, currentBuild: 55, latestBuild: 55),
+          ),
+          200,
+        ),
+      ),
+    );
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(
+      _Harness(controller: controller, config: _config(currentBuild: 55)),
+    );
+    await tester.pump();
+
+    expect(controller.status, CodexAppUpdateStatus.upToDate);
+    expect(find.byKey(codexAppUpdaterBannerKey), findsNothing);
+  });
+
   testWidgets('shows optional update action when available is true', (
     tester,
   ) async {
@@ -56,6 +80,33 @@ void main() {
     expect(find.byKey(codexAppUpdaterBannerKey), findsOneWidget);
     expect(find.byKey(codexAppUpdaterUpdateButtonKey), findsOneWidget);
     expect(find.byKey(codexAppUpdaterLaterButtonKey), findsOneWidget);
+  });
+
+  testWidgets('available update hides raw release notes and current version', (
+    tester,
+  ) async {
+    const releaseNotes =
+        '**Full Changelog**: https://github.com/example/app/compare/old...new';
+    final controller = CodexAppUpdaterController(
+      httpClient: MockClient(
+        (_) async => http.Response(
+          jsonEncode(_updateJson(available: true, releaseNotes: releaseNotes)),
+          200,
+        ),
+      ),
+    );
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(_Harness(controller: controller));
+    await tester.pump();
+
+    expect(controller.status, CodexAppUpdateStatus.updateAvailable);
+    expect(find.byKey(codexAppUpdaterBannerKey), findsOneWidget);
+    expect(find.textContaining('Full Changelog'), findsNothing);
+    expect(find.textContaining('github.com/example/app'), findsNothing);
+    expect(find.textContaining('Versión instalada'), findsNothing);
+    expect(find.textContaining('Version instalada'), findsNothing);
+    expect(find.textContaining('1.0.0 (39)'), findsNothing);
   });
 
   testWidgets('available response without APK keeps update action for retry', (
@@ -121,7 +172,7 @@ void main() {
     expect(downloader.downloadCount, 1);
     expect(downloader.requestedUrl.toString(), 'https://example.test/app.apk');
     expect(installer.launchCount, 1);
-    expect(controller.status, CodexAppUpdateStatus.installing);
+    expect(controller.status, CodexAppUpdateStatus.dismissed);
   });
 
   testWidgets('shows required update state when required is true', (
@@ -141,8 +192,49 @@ void main() {
     await tester.pump();
 
     expect(controller.status, CodexAppUpdateStatus.updateRequired);
-    expect(find.text('Actualizacion requerida'), findsOneWidget);
+    expect(find.text('Actualización requerida'), findsOneWidget);
     expect(find.byKey(codexAppUpdaterLaterButtonKey), findsNothing);
+  });
+
+  test('config change while check is active rechecks newest build', () async {
+    final firstResponse = Completer<http.Response>();
+    final requestedBuilds = <String?>[];
+    final controller = CodexAppUpdaterController(
+      httpClient: MockClient((request) {
+        requestedBuilds.add(request.url.queryParameters['currentBuild']);
+        if (requestedBuilds.length == 1) {
+          return firstResponse.future;
+        }
+        return Future.value(
+          http.Response(
+            jsonEncode(
+              _updateJson(available: true, currentBuild: 55, latestBuild: 55),
+            ),
+            200,
+          ),
+        );
+      }),
+    );
+    addTearDown(controller.dispose);
+
+    final firstCheck = controller.checkForUpdate(_config(currentBuild: 50));
+    controller.checkForUpdate(_config(currentBuild: 55));
+
+    firstResponse.complete(
+      http.Response(
+        jsonEncode(
+          _updateJson(available: true, currentBuild: 50, latestBuild: 55),
+        ),
+        200,
+      ),
+    );
+    await firstCheck;
+    for (var tick = 0; tick < 10 && requestedBuilds.length < 2; tick += 1) {
+      await Future<void>.delayed(Duration.zero);
+    }
+
+    expect(requestedBuilds, <String?>['50', '55']);
+    expect(controller.status, CodexAppUpdateStatus.upToDate);
   });
 
   test('download status transitions to ready when checksum passes', () async {
@@ -274,11 +366,11 @@ void main() {
       expect(installed, isTrue);
       expect(installer.launchCount, 1);
       expect(installer.launchedPath, apkFile.path);
-      expect(controller.status, CodexAppUpdateStatus.installing);
+      expect(controller.status, CodexAppUpdateStatus.dismissed);
     },
   );
 
-  test('download OK and launcher OK moves to installing', () async {
+  test('download OK and launcher OK dismisses stale update prompt', () async {
     final apkFile = await _writeTempApk('apk-launch-ok', [1, 2, 3]);
     final installer = _FakeInstallerLauncher();
     final controller = CodexAppUpdaterController(
@@ -296,7 +388,7 @@ void main() {
     expect(installed, isTrue);
     expect(installer.launchCount, 1);
     expect(installer.launchedPath, apkFile.path);
-    expect(controller.status, CodexAppUpdateStatus.installing);
+    expect(controller.status, CodexAppUpdateStatus.dismissed);
   });
 
   test(
@@ -335,7 +427,7 @@ void main() {
       final retry = await controller.updateNow(_config());
 
       expect(retry, isTrue);
-      expect(controller.status, CodexAppUpdateStatus.installing);
+      expect(controller.status, CodexAppUpdateStatus.dismissed);
       expect(downloader.downloadCount, 1);
       expect(installer.launchCount, 2);
       expect(installer.launchedPath, apkFile.path);
@@ -397,7 +489,7 @@ void main() {
     final retry = await controller.updateNow(_config());
 
     expect(retry, isTrue);
-    expect(controller.status, CodexAppUpdateStatus.installing);
+    expect(controller.status, CodexAppUpdateStatus.dismissed);
     expect(downloader.downloadCount, 1);
     expect(installer.launchCount, 2);
   });
@@ -563,15 +655,16 @@ void main() {
 }
 
 class _Harness extends StatelessWidget {
-  const _Harness({required this.controller});
+  const _Harness({required this.controller, this.config = _defaultConfig});
 
   final CodexAppUpdaterController controller;
+  final CodexAppUpdaterConfig config;
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       home: CodexAppUpdater(
-        config: _config(),
+        config: config,
         controller: controller,
         child: const Scaffold(body: Text('App')),
       ),
@@ -644,11 +737,18 @@ class _CompletingInstallerLauncher implements CodexInstallerLauncher {
   }
 }
 
-CodexAppUpdaterConfig _config() => const CodexAppUpdaterConfig(
+const _defaultConfig = CodexAppUpdaterConfig(
   sourceApp: 'ambientando-calendar',
   bridgeUrl: 'https://bridge.example.test',
   currentVersion: '1.0.0',
   currentBuild: 39,
+);
+
+CodexAppUpdaterConfig _config({int currentBuild = 39}) => CodexAppUpdaterConfig(
+  sourceApp: 'ambientando-calendar',
+  bridgeUrl: 'https://bridge.example.test',
+  currentVersion: '1.0.0',
+  currentBuild: currentBuild,
 );
 
 Map<String, Object?> _updateJson({
@@ -656,6 +756,9 @@ Map<String, Object?> _updateJson({
   bool required = false,
   String? sha256,
   bool includeApk = true,
+  int currentBuild = 39,
+  int latestBuild = 40,
+  String? releaseNotes,
 }) => {
   'kind': 'codex.appUpdate',
   'version': 1,
@@ -663,18 +766,18 @@ Map<String, Object?> _updateJson({
   'displayName': 'Ambientando Calendar',
   'platform': 'android',
   'currentVersion': '1.0.0',
-  'currentBuild': 39,
+  'currentBuild': currentBuild,
   'latestVersion': '1.0.0',
-  'latestBuild': 40,
-  'releaseTag': 'android-v1.0.0-build.40',
+  'latestBuild': latestBuild,
+  'releaseTag': 'android-v1.0.0-build.$latestBuild',
   'releaseUrl': 'https://example.test/release',
   'apkUrl': available && includeApk ? 'https://example.test/app.apk' : null,
   'apkAssetName': available && includeApk
-      ? 'ambientando-calendar-1.0.0-build.40.apk'
+      ? 'ambientando-calendar-1.0.0-build.$latestBuild.apk'
       : null,
   'sha256': sha256,
   'sizeBytes': available ? 3 : null,
-  'releaseNotes': available ? 'Cambios' : null,
+  'releaseNotes': available ? releaseNotes ?? 'Cambios' : null,
   'required': required,
   'available': available,
 };

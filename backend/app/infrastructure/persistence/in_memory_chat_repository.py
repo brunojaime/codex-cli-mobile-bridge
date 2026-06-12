@@ -9,7 +9,7 @@ from backend.app.domain.entities.agent_profile import AgentProfile, builtin_agen
 from backend.app.domain.entities.chat_message import ChatMessage
 from backend.app.domain.entities.chat_session import ChatSession
 from backend.app.domain.entities.chat_turn_summary import ChatTurnSummary
-from backend.app.domain.entities.job import Job
+from backend.app.domain.entities.job import Job, JobStatus
 from backend.app.domain.entities.workspace import Workspace
 from backend.app.domain.repositories.chat_repository import (
     ChatRepository,
@@ -67,6 +67,13 @@ class InMemoryChatRepository(ChatRepository):
     def get_job(self, job_id: str) -> Job | None:
         with self._lock:
             return self._jobs.get(job_id)
+
+    def list_jobs(self, *, statuses: set[JobStatus] | None = None) -> list[Job]:
+        with self._lock:
+            jobs = list(self._jobs.values())
+        if statuses is not None:
+            jobs = [job for job in jobs if job.status in statuses]
+        return sorted(jobs, key=lambda job: (job.updated_at, job.id), reverse=True)
 
     def save_session(self, session: ChatSession) -> None:
         normalized_configuration = session.agent_configuration.normalized()
