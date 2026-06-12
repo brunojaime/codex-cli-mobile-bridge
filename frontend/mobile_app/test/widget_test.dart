@@ -1,14 +1,17 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:codex_app_updater/codex_app_updater.dart';
 import 'package:codex_mobile_frontend/main.dart';
 import 'package:codex_mobile_frontend/src/models/agent_configuration.dart';
 import 'package:codex_mobile_frontend/src/models/agent_profile.dart';
 import 'package:codex_mobile_frontend/src/models/chat_message.dart';
 import 'package:codex_mobile_frontend/src/models/chat_session_summary.dart';
 import 'package:codex_mobile_frontend/src/models/codex_tooling.dart';
+import 'package:codex_mobile_frontend/src/models/feedback_queue_item.dart';
 import 'package:codex_mobile_frontend/src/models/job_status_response.dart';
 import 'package:codex_mobile_frontend/src/models/session_detail.dart';
+import 'package:codex_mobile_frontend/src/models/workspace.dart';
 import 'package:codex_mobile_frontend/src/screens/chat_screen.dart';
 import 'package:codex_mobile_frontend/src/services/api_client.dart';
 import 'package:codex_mobile_frontend/src/services/chat_notification_service.dart';
@@ -25,6 +28,76 @@ import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
+  test('Codex app updater defaults on for Android only', () {
+    expect(
+      shouldEnableCodexAppUpdater(
+        isWebOverride: false,
+        platformOverride: TargetPlatform.android,
+      ),
+      isTrue,
+    );
+    expect(
+      shouldEnableCodexAppUpdater(
+        isWebOverride: false,
+        platformOverride: TargetPlatform.iOS,
+      ),
+      isFalse,
+    );
+    expect(
+      shouldEnableCodexAppUpdater(
+        isWebOverride: true,
+        platformOverride: TargetPlatform.android,
+      ),
+      isFalse,
+    );
+  });
+
+  test('Codex app updater honors explicit Android enablement define', () {
+    expect(
+      shouldEnableCodexAppUpdater(
+        configuredEnabled: true,
+        isWebOverride: false,
+        platformOverride: TargetPlatform.android,
+      ),
+      isTrue,
+    );
+    expect(
+      shouldEnableCodexAppUpdater(
+        configuredEnabled: false,
+        isWebOverride: false,
+        platformOverride: TargetPlatform.android,
+      ),
+      isFalse,
+    );
+  });
+
+  test('Codex app updater stays off outside Android even when enabled', () {
+    expect(
+      shouldEnableCodexAppUpdater(
+        configuredEnabled: true,
+        isWebOverride: false,
+        platformOverride: TargetPlatform.linux,
+      ),
+      isFalse,
+    );
+    expect(
+      shouldEnableCodexAppUpdater(
+        configuredEnabled: false,
+        isWebOverride: false,
+        platformOverride: TargetPlatform.linux,
+      ),
+      isFalse,
+    );
+    expect(
+      shouldEnableCodexAppUpdater(
+        configuredEnabled: true,
+        isWebOverride: true,
+        platformOverride: TargetPlatform.android,
+      ),
+      isFalse,
+    );
+  });
+
   testWidgets('renders Codex Remote shell', (tester) async {
     SharedPreferences.setMockInitialValues(<String, Object>{});
     await tester.pumpWidget(
@@ -36,6 +109,67 @@ void main() {
     expect(find.byIcon(Icons.mic_rounded), findsOneWidget);
     expect(find.byIcon(Icons.upload_file_outlined), findsNothing);
     expect(find.byIcon(Icons.download_for_offline_outlined), findsNothing);
+  });
+
+  testWidgets('uses Bridge-controlled updater for Codex Mobile APKs', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    final requestedUris = <Uri>[];
+    final controller = CodexAppUpdaterController(
+      httpClient: MockClient((request) async {
+        requestedUris.add(request.url);
+        return http.Response(
+          jsonEncode({
+            'kind': 'codex.appUpdate',
+            'version': 1,
+            'sourceApp': 'codex-mobile',
+            'displayName': 'Codex Mobile',
+            'platform': 'android',
+            'currentVersion': '1.2.3',
+            'currentBuild': 33,
+            'latestVersion': '1.2.4',
+            'latestBuild': 34,
+            'releaseTag': 'android-v1.2.4-build.34',
+            'apkUrl':
+                'http://bridge.test/app-updates/codex-mobile/apk/android-v1.2.4-build.34/codex-mobile.apk',
+            'apkAssetName': 'codex-mobile.apk',
+            'sha256': null,
+            'sizeBytes': 123,
+            'releaseNotes': 'Nueva APK disponible.',
+            'required': false,
+            'available': true,
+          }),
+          200,
+        );
+      }),
+    );
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(
+      CodexMobileApp(
+        initialApiBaseUrl: 'http://bridge.test',
+        currentVersion: '1.2.3',
+        currentBuild: 33,
+        appUpdaterEnabled: true,
+        appUpdaterController: controller,
+      ),
+    );
+    await tester.pump();
+
+    expect(requestedUris, hasLength(1));
+    final uri = requestedUris.single;
+    expect(uri.path, '/app-updates/codex-mobile');
+    expect(uri.queryParameters['platform'], 'android');
+    expect(uri.queryParameters['currentVersion'], '1.2.3');
+    expect(uri.queryParameters['currentBuild'], '33');
+    expect(uri.queryParameters['channel'], 'stable');
+    expect(controller.updateInfo?.apkUrl, startsWith('http://bridge.test/'));
+    expect(
+        controller.updateInfo?.apkUrl, contains('/app-updates/codex-mobile/'));
+    expect(controller.updateInfo?.apkUrl, isNot(contains('github.com')));
+    expect(find.byKey(codexAppUpdaterBannerKey), findsOneWidget);
+    expect(find.byKey(codexAppUpdaterUpdateButtonKey), findsOneWidget);
   });
 
   testWidgets('collapses secondary app bar actions on narrow screens', (
@@ -59,6 +193,375 @@ void main() {
     expect(find.byIcon(Icons.upload_file_outlined), findsNothing);
     expect(find.byIcon(Icons.download_for_offline_outlined), findsNothing);
   });
+
+  testWidgets('surfaces pending feedback count in the matching project drawer',
+      (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    final items = <FeedbackQueueItem>[
+      _feedbackItem(
+        id: 'feedback-name',
+        sourceApp: 'ambientando-calendar',
+        sourceDisplayName: 'Ambientando Calendar',
+        comment: 'Matches by normalized project name',
+      ),
+      _feedbackItem(
+        id: 'feedback-path',
+        sourceApp: 'Ambientando Calendar',
+        comment: 'Matches by normalized path/name variant',
+      ),
+      _feedbackItem(
+        id: 'feedback-unrelated',
+        sourceApp: 'otra-app',
+        comment: 'No debe aparecer en Ambientando',
+      ),
+      _feedbackItem(
+        id: 'feedback-unknown',
+        sourceApp: '',
+        comment: 'No debe matchear sin source app',
+      ),
+    ];
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ChatScreen(
+          initialApiBaseUrl: 'http://localhost:8000',
+          notificationService: const NoopChatNotificationService(),
+          enableServerBootstrap: false,
+          initialSidebarWorkspaces: const <Workspace>[
+            Workspace(
+              name: 'Ambientando Calendar',
+              path: '/workspace/ambientando-calendar',
+            ),
+            Workspace(
+              name: 'Other Project',
+              path: '/workspace/other-project',
+            ),
+          ],
+          feedbackQueueListLoaderOverride: (_, {required includeImages}) async {
+            return items;
+          },
+        ),
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pump();
+
+    expect(find.textContaining('feedback pending'), findsNothing);
+    expect(find.byIcon(Icons.feedback_outlined), findsNothing);
+
+    await tester.tap(find.byTooltip('Projects'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('2 feedback'), findsOneWidget);
+    await tester.tap(find.text('Ambientando Calendar'));
+    await tester.pumpAndSettle();
+    expect(
+      find.widgetWithText(FilledButton, 'Feedback queue (2)'),
+      findsOneWidget,
+    );
+    await tester
+        .tap(find.byTooltip('Project actions for Ambientando Calendar'));
+    await tester.pumpAndSettle();
+    expect(find.text('Feedback queue (2)'), findsWidgets);
+    expect(
+      find.byTooltip('Project actions for Other Project'),
+      findsOneWidget,
+    );
+    expect(find.text('Feedback queue (1)'), findsNothing);
+  });
+
+  testWidgets('feedback source aliases map unrelated source app to workspace', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    final items = <FeedbackQueueItem>[
+      _feedbackItem(
+        id: 'feedback-aliased',
+        sourceApp: 'customer-portal',
+        sourceDisplayName: 'Customer Portal',
+        comment: 'Aliased feedback',
+      ),
+      _feedbackItem(
+        id: 'feedback-unrelated',
+        sourceApp: 'another-source',
+        comment: 'Wrong workspace',
+      ),
+    ];
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ChatScreen(
+          initialApiBaseUrl: 'http://localhost:8000',
+          notificationService: const NoopChatNotificationService(),
+          enableServerBootstrap: false,
+          initialSidebarWorkspaces: const <Workspace>[
+            Workspace(
+              name: 'Smart Nienfos',
+              path: '/workspace/smart_nienfos',
+            ),
+          ],
+          feedbackSourceWorkspaceAliases: const <String, String>{
+            'customer-portal': '/workspace/smart_nienfos',
+          },
+          feedbackQueueListLoaderOverride: (_, {required includeImages}) async {
+            return items;
+          },
+        ),
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pump();
+
+    await tester.tap(find.byTooltip('Projects'));
+    await tester.pumpAndSettle();
+    expect(find.text('1 feedback'), findsOneWidget);
+
+    await tester.tap(find.text('Smart Nienfos'));
+    await tester.pumpAndSettle();
+    expect(
+      find.widgetWithText(FilledButton, 'Feedback queue (1)'),
+      findsOneWidget,
+    );
+    await tester.tap(find.widgetWithText(FilledButton, 'Feedback queue (1)'));
+    await tester.pumpAndSettle();
+    expect(find.text('Aliased feedback'), findsOneWidget);
+    expect(find.textContaining('Customer Portal · pending'), findsOneWidget);
+    expect(find.text('Wrong workspace'), findsNothing);
+  });
+
+  testWidgets('hides project feedback action when no queue items match', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    final items = <FeedbackQueueItem>[
+      _feedbackItem(
+        id: 'feedback-unrelated',
+        sourceApp: 'smart-nienfos',
+        comment: 'Otro proyecto',
+      ),
+      _feedbackItem(
+        id: 'feedback-missing-source',
+        sourceApp: '',
+        comment: 'Sin source app',
+      ),
+    ];
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ChatScreen(
+          initialApiBaseUrl: 'http://localhost:8000',
+          notificationService: const NoopChatNotificationService(),
+          enableServerBootstrap: false,
+          initialSidebarWorkspaces: const <Workspace>[
+            Workspace(
+              name: 'Ambientando Calendar',
+              path: '/workspace/ambientando-calendar',
+            ),
+          ],
+          feedbackQueueListLoaderOverride: (_, {required includeImages}) async {
+            return items;
+          },
+        ),
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pump();
+
+    await tester.tap(find.byTooltip('Projects'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Ambientando Calendar'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('feedback'), findsNothing);
+    expect(
+      find.widgetWithText(FilledButton, 'Feedback queue (1)'),
+      findsNothing,
+    );
+
+    await tester
+        .tap(find.byTooltip('Project actions for Ambientando Calendar'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Feedback queue'), findsNothing);
+  });
+
+  testWidgets(
+    'feedback queue stages only selected project items in the composer',
+    (tester) async {
+      SharedPreferences.setMockInitialValues(<String, Object>{});
+      final fakeApiClient = _FakeApiClient();
+      final controller = ChatController(
+        apiClient: fakeApiClient,
+        notificationService: const NoopChatNotificationService(),
+      );
+      final selectedItem = _feedbackItem(
+        id: 'feedback-selected',
+        sourceApp: 'ambientando-calendar',
+        comment: 'Cambiar este bloque',
+      );
+      final uncheckedItem = _feedbackItem(
+        id: 'feedback-unchecked',
+        sourceApp: 'ambientando-calendar',
+        comment: 'No incluir este comentario',
+      );
+      final unrelatedItem = _feedbackItem(
+        id: 'feedback-other',
+        sourceApp: 'other-project',
+        comment: 'No incluir otro proyecto',
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ChatScreen(
+            initialApiBaseUrl: 'http://localhost:8000',
+            notificationService: const NoopChatNotificationService(),
+            controllerOverride: controller,
+            enableServerBootstrap: false,
+            initialSidebarWorkspaces: const <Workspace>[
+              Workspace(
+                name: 'Ambientando Calendar',
+                path: '/workspace/ambientando-calendar',
+              ),
+            ],
+            feedbackQueueListLoaderOverride: (_,
+                {required includeImages}) async {
+              return <FeedbackQueueItem>[
+                selectedItem,
+                uncheckedItem,
+                unrelatedItem,
+              ];
+            },
+          ),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump();
+
+      await tester.tap(find.byTooltip('Projects'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Ambientando Calendar'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, 'Feedback queue (2)'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Generator only'), findsNothing);
+      expect(find.text('Generator + Reviewer'), findsNothing);
+      expect(find.text('Select all'), findsOneWidget);
+      await tester
+          .tap(find.widgetWithText(CheckboxListTile, 'Cambiar este bloque'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Next'));
+      await tester.pumpAndSettle();
+
+      expect(controller.currentSession?.workspacePath,
+          '/workspace/ambientando-calendar');
+      expect(find.textContaining('Feedback queue for Ambientando Calendar'),
+          findsOneWidget);
+      expect(find.textContaining('Cambiar este bloque'), findsOneWidget);
+      expect(
+        find.textContaining(
+          'The attached screenshot contains the user\'s drawn mark. Treat the marked area as the primary target of this feedback, and use the associated comment to understand the requested change.',
+        ),
+        findsOneWidget,
+      );
+      expect(find.textContaining('- source: ambientando-calendar'),
+          findsOneWidget);
+      expect(find.textContaining('- selection points: 2'), findsOneWidget);
+      expect(find.text('feedback-1-feedback-selected.png'), findsOneWidget);
+      expect(find.textContaining('No incluir este comentario'), findsNothing);
+      expect(find.textContaining('No incluir otro proyecto'), findsNothing);
+      expect(find.text('1 selected'), findsOneWidget);
+
+      controller.dispose();
+    },
+  );
+
+  testWidgets(
+    'feedback queue stages selected screenshots in order with marked-area context',
+    (tester) async {
+      SharedPreferences.setMockInitialValues(<String, Object>{});
+      final controller = ChatController(
+        apiClient: _FakeApiClient(),
+        notificationService: const NoopChatNotificationService(),
+      );
+      final firstItem = _feedbackItem(
+        id: 'feedback-first',
+        sourceApp: 'ambientando-calendar',
+        comment: 'Primer comentario',
+      );
+      final secondItem = _feedbackItem(
+        id: 'feedback-second',
+        sourceApp: 'ambientando-calendar',
+        comment: 'Segundo comentario',
+      );
+      final unrelatedItem = _feedbackItem(
+        id: 'feedback-other',
+        sourceApp: 'smart-nienfos',
+        comment: 'Comentario de otro proyecto',
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ChatScreen(
+            initialApiBaseUrl: 'http://localhost:8000',
+            notificationService: const NoopChatNotificationService(),
+            controllerOverride: controller,
+            enableServerBootstrap: false,
+            initialSidebarWorkspaces: const <Workspace>[
+              Workspace(
+                name: 'Ambientando Calendar',
+                path: '/workspace/ambientando-calendar',
+              ),
+            ],
+            feedbackQueueListLoaderOverride: (_,
+                {required includeImages}) async {
+              return <FeedbackQueueItem>[
+                firstItem,
+                secondItem,
+                unrelatedItem,
+              ];
+            },
+          ),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump();
+
+      await tester.tap(find.byTooltip('Projects'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Ambientando Calendar'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, 'Feedback queue (2)'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Select all'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Next'));
+      await tester.pumpAndSettle();
+
+      final composerText = _composerTextContaining(
+        tester,
+        'Feedback queue for Ambientando Calendar',
+      );
+      const markedAreaInstruction =
+          'The attached screenshot contains the user\'s drawn mark. Treat the marked area as the primary target of this feedback, and use the associated comment to understand the requested change.';
+      expect(_occurrences(composerText, markedAreaInstruction), 2);
+      expect(composerText, contains('1. Primer comentario'));
+      expect(composerText, contains('2. Segundo comentario'));
+      expect(composerText, contains('- source: ambientando-calendar'));
+      expect(composerText,
+          contains('- image attachment: feedback-1-feedback-first.png'));
+      expect(composerText,
+          contains('- image attachment: feedback-2-feedback-second.png'));
+      expect(composerText, isNot(contains('Comentario de otro proyecto')));
+      expect(find.text('feedback-1-feedback-first.png'), findsOneWidget);
+      expect(find.text('feedback-2-feedback-second.png'), findsOneWidget);
+      expect(find.textContaining('feedback-other'), findsNothing);
+
+      controller.dispose();
+    },
+  );
 
   testWidgets('renders assistant options as quick actions', (tester) async {
     await tester.pumpWidget(
@@ -111,6 +614,193 @@ void main() {
     );
 
     expect(find.text('15:42'), findsOneWidget);
+  });
+
+  testWidgets('renders user image attachments as visual metadata', (
+    tester,
+  ) async {
+    await _pumpUserChatBubble(
+      tester,
+      'Mira esta foto\n\n'
+      '[Attached files]\n'
+      '- image: scaled_1000215533.jpg',
+    );
+
+    expect(find.text('Mira esta foto'), findsOneWidget);
+    expect(find.text('Image attached'), findsOneWidget);
+    expect(find.textContaining('[Attached files]'), findsNothing);
+    expect(find.textContaining('scaled_1000215533.jpg'), findsNothing);
+    expect(find.byIcon(Icons.image_rounded), findsOneWidget);
+  });
+
+  testWidgets('opens image viewer for structured user image attachments', (
+    tester,
+  ) async {
+    await _pumpUserChatBubble(
+      tester,
+      'Mira esta foto\n\n'
+      '[Attached files]\n'
+      '- image: scaled_1000215533.jpg',
+      attachmentBaseUrl: 'http://backend.test',
+      attachments: const <ChatMessageAttachment>[
+        ChatMessageAttachment(
+          id: 'job-1:image:0',
+          kind: 'image',
+          jobId: 'job-1',
+          index: 0,
+          downloadUrl: '/jobs/job-1/attachments/0',
+        ),
+      ],
+    );
+
+    expect(find.text('Mira esta foto'), findsOneWidget);
+    expect(find.text('Image attached'), findsOneWidget);
+    expect(find.textContaining('scaled_1000215533.jpg'), findsNothing);
+    expect(find.byIcon(Icons.open_in_full_rounded), findsOneWidget);
+
+    await tester.tap(find.text('Image attached'));
+    await tester.pump();
+
+    expect(find.text('1 / 1'), findsOneWidget);
+    expect(find.byType(Image), findsOneWidget);
+  });
+
+  testWidgets('legacy user image metadata stays a non-viewer fallback', (
+    tester,
+  ) async {
+    await _pumpUserChatBubble(
+      tester,
+      '[Attached files]\n'
+      '- image: scaled_1000215533.jpg',
+      attachmentBaseUrl: 'http://backend.test',
+    );
+
+    expect(find.text('Image attached'), findsOneWidget);
+    expect(find.byIcon(Icons.open_in_full_rounded), findsNothing);
+
+    await tester.tap(find.text('Image attached'));
+    await tester.pump();
+
+    expect(find.text('1 / 1'), findsNothing);
+  });
+
+  testWidgets('renders legacy user audio document attachments visually', (
+    tester,
+  ) async {
+    await _pumpUserChatBubble(
+      tester,
+      'Summarize this audio\n\n'
+      '[Attached audio document: PTT-20260322-WA0001.ogg]',
+    );
+
+    expect(find.text('Summarize this audio'), findsOneWidget);
+    expect(find.text('Audio attached'), findsOneWidget);
+    expect(find.textContaining('[Attached audio document'), findsNothing);
+    expect(find.textContaining('PTT-20260322-WA0001.ogg'), findsNothing);
+    expect(find.byIcon(Icons.graphic_eq_rounded), findsOneWidget);
+  });
+
+  testWidgets('renders legacy user text document attachments visually', (
+    tester,
+  ) async {
+    await _pumpUserChatBubble(
+      tester,
+      'Extract action items\n\n'
+      '[Attached text document: notes.txt]',
+    );
+
+    expect(find.text('Extract action items'), findsOneWidget);
+    expect(find.text('Document attached'), findsOneWidget);
+    expect(find.textContaining('[Attached text document'), findsNothing);
+    expect(find.textContaining('notes.txt'), findsNothing);
+  });
+
+  testWidgets('renders multiple user attachments without raw filenames', (
+    tester,
+  ) async {
+    await _pumpUserChatBubble(
+      tester,
+      'Compare everything in this batch\n\n'
+      '[Attached files]\n'
+      '- image: diagram.png\n'
+      '- text: notes.txt\n'
+      '- audio: voice.ogg',
+    );
+
+    expect(find.text('Compare everything in this batch'), findsOneWidget);
+    expect(find.text('3 attachments'), findsOneWidget);
+    expect(find.text('1 image · 1 document · 1 audio file'), findsOneWidget);
+    expect(find.textContaining('[Attached files]'), findsNothing);
+    expect(find.textContaining('diagram.png'), findsNothing);
+    expect(find.textContaining('notes.txt'), findsNothing);
+    expect(find.textContaining('voice.ogg'), findsNothing);
+  });
+
+  testWidgets('renders attachment-only user image metadata as a card', (
+    tester,
+  ) async {
+    await _pumpUserChatBubble(
+      tester,
+      '[Attached files]\n'
+      '- image: scaled_1000215533.jpg',
+    );
+
+    expect(find.text('Image attached'), findsOneWidget);
+    expect(find.byIcon(Icons.image_rounded), findsOneWidget);
+    expect(find.byType(SelectableText), findsNothing);
+    expect(find.textContaining('[Attached files]'), findsNothing);
+    expect(find.textContaining('scaled_1000215533.jpg'), findsNothing);
+  });
+
+  testWidgets('renders reasoning and tool activity as status strips', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Column(
+            children: <Widget>[
+              ChatBubble(
+                message: ChatMessage(
+                  id: 'assistant-reasoning',
+                  text: '',
+                  isUser: false,
+                  authorType: ChatMessageAuthorType.assistant,
+                  status: ChatMessageStatus.pending,
+                  createdAt: DateTime.utc(2026, 1, 1),
+                  updatedAt: DateTime.utc(2026, 1, 1),
+                  jobStatus: 'running',
+                  jobPhase: 'Reasoning',
+                  jobLatestActivity: 'Codex is reasoning.',
+                ),
+              ),
+              ChatBubble(
+                message: ChatMessage(
+                  id: 'assistant-tool',
+                  text: '',
+                  isUser: false,
+                  authorType: ChatMessageAuthorType.assistant,
+                  status: ChatMessageStatus.pending,
+                  createdAt: DateTime.utc(2026, 1, 1),
+                  updatedAt: DateTime.utc(2026, 1, 1),
+                  jobStatus: 'running',
+                  jobPhase: 'Running tools',
+                  jobLatestActivity: 'call-mcp-tool',
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('Reasoning'), findsAtLeastNWidgets(1));
+    expect(find.byIcon(Icons.psychology_alt_outlined), findsOneWidget);
+    expect(find.text('Codex is reasoning.'), findsOneWidget);
+    expect(find.text('Tools'), findsOneWidget);
+    expect(find.byIcon(Icons.extension_rounded), findsOneWidget);
+    expect(find.text('Calling MCP tool.'), findsOneWidget);
+    expect(find.text('call-mcp-tool'), findsNothing);
   });
 
   testWidgets('day separator formatter supports today and yesterday in Spanish',
@@ -704,6 +1394,39 @@ void main() {
     expect(message.recoveryAction, MessageRecoveryAction.retry);
     expect(message.recoveredFromMessageId, isNull);
     expect(message.supersededByMessageId, isNull);
+  });
+
+  test('chat message parsing keeps structured image attachments', () {
+    final message = ChatMessage.fromJson(
+      <String, dynamic>{
+        'id': 'with-attachment',
+        'role': 'user',
+        'content': 'Look',
+        'status': 'completed',
+        'created_at': DateTime.utc(2026, 1, 1).toIso8601String(),
+        'updated_at': DateTime.utc(2026, 1, 1).toIso8601String(),
+        'attachments': <Map<String, dynamic>>[
+          <String, dynamic>{
+            'id': 'job-1:image:0',
+            'kind': 'image',
+            'job_id': 'job-1',
+            'index': 0,
+            'download_url': '/jobs/job-1/attachments/0',
+          },
+        ],
+      },
+    );
+
+    expect(message.attachments, hasLength(1));
+    expect(message.imageAttachments, hasLength(1));
+    expect(message.attachments.single.id, 'job-1:image:0');
+    expect(message.attachments.single.kind, 'image');
+    expect(message.attachments.single.jobId, 'job-1');
+    expect(message.attachments.single.index, 0);
+    expect(
+      message.attachments.single.downloadUrl,
+      '/jobs/job-1/attachments/0',
+    );
   });
 
   test('job status parsing keeps agent metadata for notifications', () {
@@ -1377,6 +2100,52 @@ Built the draft.
   });
 }
 
+String _composerTextContaining(WidgetTester tester, String needle) {
+  for (final editable in tester.widgetList<EditableText>(
+    find.byType(EditableText),
+  )) {
+    final text = editable.controller.text;
+    if (text.contains(needle)) {
+      return text;
+    }
+  }
+  throw StateError('No composer text contained "$needle".');
+}
+
+int _occurrences(String value, String needle) {
+  return RegExp(RegExp.escape(needle)).allMatches(value).length;
+}
+
+FeedbackQueueItem _feedbackItem({
+  required String id,
+  required String sourceApp,
+  required String comment,
+  String? sourceDisplayName,
+}) {
+  const transparentPng =
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=';
+  return FeedbackQueueItem(
+    id: id,
+    sourceApp: sourceApp,
+    sourceDisplayName: sourceDisplayName,
+    comment: comment,
+    createdAt: DateTime.utc(2026, 6, 8),
+    status: 'pending',
+    hasScreenshot: true,
+    screenshotPngBase64: transparentPng,
+    selectionPoints: const <Map<String, double>>[
+      <String, double>{'x': 1, 'y': 2},
+      <String, double>{'x': 3, 'y': 4},
+    ],
+    selectionBounds: const <String, double>{
+      'left': 1,
+      'top': 2,
+      'width': 30,
+      'height': 40,
+    },
+  );
+}
+
 class _FakeApiClient extends ApiClient {
   _FakeApiClient({
     this.audioSendDelays = const <String, Duration>{},
@@ -1433,6 +2202,32 @@ class _FakeApiClient extends ApiClient {
   static final DateTime _timestamp = DateTime.utc(2026, 1, 1);
 
   @override
+  Future<SessionDetail> createSession({
+    String? title,
+    String? workspacePath,
+    String? agentProfileId,
+    bool turnSummariesEnabled = false,
+  }) async {
+    final resolvedWorkspacePath = workspacePath ?? '/workspace/a';
+    final session = SessionDetail(
+      id: 'created-session',
+      title: title ?? 'New chat',
+      workspacePath: resolvedWorkspacePath,
+      workspaceName: resolvedWorkspacePath.split('/').last,
+      agentProfileId: agentProfileId ?? 'default',
+      agentProfileName: 'Generator',
+      agentProfileColor: '#55D6BE',
+      agentConfiguration: kDefaultAgentConfiguration,
+      turnSummariesEnabled: turnSummariesEnabled,
+      createdAt: _timestamp,
+      updatedAt: _timestamp,
+      messages: const <ChatMessage>[],
+    );
+    sessionOverrides[session.id] = session;
+    return session;
+  }
+
+  @override
   Future<List<ChatSessionSummary>> listSessions() async {
     return <ChatSessionSummary>[
       ChatSessionSummary(
@@ -1457,6 +2252,18 @@ class _FakeApiClient extends ApiClient {
         createdAt: _timestamp,
         updatedAt: _timestamp,
       ),
+      for (final session in sessionOverrides.values)
+        ChatSessionSummary(
+          id: session.id,
+          title: session.title,
+          workspacePath: session.workspacePath,
+          workspaceName: session.workspaceName,
+          agentProfileId: session.agentProfileId,
+          agentProfileName: session.agentProfileName,
+          agentProfileColor: session.agentProfileColor,
+          createdAt: session.createdAt,
+          updatedAt: session.updatedAt,
+        ),
     ];
   }
 
@@ -1661,6 +2468,33 @@ class _RecordedAudioSend {
   final String? sessionId;
   final String? workspacePath;
   final String filename;
+}
+
+Future<void> _pumpUserChatBubble(
+  WidgetTester tester,
+  String text, {
+  List<ChatMessageAttachment> attachments = const <ChatMessageAttachment>[],
+  String? attachmentBaseUrl,
+}) async {
+  await tester.pumpWidget(
+    MaterialApp(
+      home: Scaffold(
+        body: ChatBubble(
+          message: ChatMessage(
+            id: 'user-message',
+            text: text,
+            isUser: true,
+            authorType: ChatMessageAuthorType.human,
+            status: ChatMessageStatus.completed,
+            createdAt: DateTime.utc(2026, 1, 1),
+            updatedAt: DateTime.utc(2026, 1, 1),
+            attachments: attachments,
+          ),
+          attachmentBaseUrl: attachmentBaseUrl,
+        ),
+      ),
+    ),
+  );
 }
 
 ChatMessage _message({

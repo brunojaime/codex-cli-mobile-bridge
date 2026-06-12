@@ -1,0 +1,29 @@
+{
+  "ambientando-calendar": {
+    "displayName": "Ambientando Calendar",
+    "repo": "brunojaime/ambientando-calendar",
+    "releaseTagPattern": "android-local-demo-feedback-v*",
+    "apkAssetPattern": "ambientando-calendar-*.apk",
+    "latestAssetName": "ambientando-calendar.apk",
+    "requiredMinimumBuild": null,
+    "enabled": true
+  },
+  "codex-mobile": {
+    "displayName": "Codex Mobile Bridge",
+    "repo": "brunojaime/codex-cli-mobile-bridge",
+    "releaseTagPattern": "android-v*",
+    "apkAssetPattern": "codex-mobile-*.apk",
+    "latestAssetName": "codex-mobile.apk",
+    "requiredMinimumBuild": null,
+    "enabled": true
+  },
+  "gestion-ludmilo": {
+    "displayName": "Gestion Ludmilo",
+    "repo": "brunojaime/Gestion_ludmilo",
+    "releaseTagPattern": "android-v*",
+    "apkAssetPattern": "gestion-ludmilo-*.apk",
+    "latestAssetName": "gestion-ludmilo.apk",
+    "requiredMinimumBuild": null,
+    "enabled": true
+  }
+}

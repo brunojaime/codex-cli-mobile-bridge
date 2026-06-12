@@ -3,7 +3,9 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 import json
+import mimetypes
 from pathlib import Path
+import re
 import shutil
 import tempfile
 import threading
@@ -28,7 +30,6 @@ from backend.app.domain.entities.chat_message import (
 )
 from backend.app.domain.entities.agent_configuration import (
     AgentConfiguration,
-    AgentDisplayMode,
     AgentId,
     AgentPreset,
     AgentTriggerSource,
@@ -66,6 +67,18 @@ from backend.app.infrastructure.transcription.base import AudioTranscriber, Audi
 DocumentKind = Literal["audio", "docx", "image", "text"]
 _TURN_SUMMARY_TRIGGER_MESSAGE_COUNT = 4
 _TURN_SUMMARY_COMPLETION_TIMEOUT_SECONDS = 15.0
+_GITHUB_REPOSITORY_REFERENCE_PATTERN = re.compile(
+    r"https?://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+"
+    r"|(?<![\w./-])[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?![\w./-])",
+    re.IGNORECASE,
+)
+_GITHUB_ACCESS_GUIDANCE = (
+    "Private GitHub repositories may return 404 through unauthenticated web or "
+    "API checks. When inspecting GitHub repositories, first try authenticated "
+    "host tools such as `gh repo view OWNER/REPO`, `gh repo clone OWNER/REPO`, "
+    "or `git ls-remote https://github.com/OWNER/REPO.git` before concluding "
+    "that a repository is missing or inaccessible."
+)
 
 _AUDIO_SUFFIXES = {
     ".aac",
@@ -198,11 +211,28 @@ class SupervisorDecision:
         return self.status == "complete"
 
 
+@dataclass(slots=True, frozen=True)
+class ReviewerDecision:
+    status: str
+    prompt: str
+    summary: str = ""
+
+    @property
+    def is_complete(self) -> bool:
+        return self.status == "complete"
+
+
 @dataclass(slots=True)
 class AttachmentInput:
     path: str
     filename: str | None = None
     content_type: str | None = None
+
+
+@dataclass(slots=True, frozen=True)
+class JobAttachmentFile:
+    path: Path
+    media_type: str
 
 
 @dataclass(slots=True)
@@ -1105,9 +1135,7 @@ class MessageService:
             return None
 
         if job.status.is_terminal:
-            if not job.auto_chain_processed:
-                return self._sync_terminal_job_side_effects(job.id) or job
-            return job
+            return self._sync_terminal_job_side_effects(job.id) or job
 
         if not self._execution_provider.has_job(job_id):
             job.sync(
@@ -1133,6 +1161,37 @@ class MessageService:
             return self._sync_terminal_job_side_effects(job.id) or job
         self._sync_job_side_effects(job)
         return job
+
+    def get_stored_job(self, job_id: str) -> Job | None:
+        return self._repository.get_job(job_id)
+
+    def get_job_image_attachment_file(
+        self,
+        job_id: str,
+        attachment_index: int,
+    ) -> JobAttachmentFile | None:
+        job = self._repository.get_job(job_id)
+        if job is None:
+            return None
+        if attachment_index < 0 or attachment_index >= len(job.image_paths):
+            return None
+
+        image_path = Path(job.image_paths[attachment_index])
+        if not image_path.exists() or not image_path.is_file():
+            return None
+
+        try:
+            retry_asset_root = self._retry_asset_root.resolve(strict=True)
+            resolved_image_path = image_path.resolve(strict=True)
+            resolved_image_path.relative_to(retry_asset_root)
+        except (OSError, ValueError):
+            return None
+
+        media_type, _encoding = mimetypes.guess_type(resolved_image_path.name)
+        return JobAttachmentFile(
+            path=resolved_image_path,
+            media_type=media_type or "application/octet-stream",
+        )
 
     def watch_job(
         self,
@@ -1454,6 +1513,9 @@ class MessageService:
                 run_id=job.run_id,
                 agent_id=AgentId.REVIEWER,
             )
+            reviewer_decision = self._parse_reviewer_decision(reviewer_prompt)
+            if reviewer_decision is not None:
+                reviewer_prompt = reviewer_decision.prompt
             reviewer_message = self._latest_completed_agent_message(
                 session.id,
                 run_id=job.run_id,
@@ -1468,6 +1530,21 @@ class MessageService:
                 role=ChatMessageRole.ASSISTANT,
                 dedupe_key=f"run:{job.run_id}:generator:{next_generator_turn_number}",
             )
+            if reviewer_decision is not None and reviewer_decision.is_complete:
+                if self._maybe_start_due_summary(
+                    session=session,
+                    run_id=job.run_id,
+                    trigger_source=AgentTriggerSource.REVIEWER,
+                    finalizing=True,
+                ):
+                    return
+                self._complete_agent_run(
+                    session=session,
+                    run_id=job.run_id,
+                    completed_turn_index=reviewer_turns,
+                )
+                return
+
             if reviewer_prompt and generator_turns < generator.max_turns:
                 if generator_follow_up is None:
                     self._continue_generator_from_reviewer(
@@ -1511,6 +1588,46 @@ class MessageService:
                 run_id=job.run_id,
                 completed_turn_index=reviewer_turns,
             )
+
+    def _parse_reviewer_decision(self, response: str) -> ReviewerDecision | None:
+        payload = self._parse_json_object_response(response)
+        if payload is None:
+            return None
+
+        raw_status = payload.get("status")
+        status = str(raw_status).strip().lower() if raw_status is not None else ""
+        if status not in {"continue", "complete"}:
+            return None
+
+        prompt = str(payload.get("prompt") or "").strip()
+        summary = str(payload.get("summary") or payload.get("reason") or "").strip()
+        if status == "continue" and not prompt:
+            return None
+        return ReviewerDecision(status=status, prompt=prompt, summary=summary)
+
+    def _parse_json_object_response(self, response: str) -> dict[str, object] | None:
+        normalized = response.strip()
+        if normalized.startswith("```"):
+            lines = normalized.splitlines()
+            if lines and lines[0].strip().startswith("```"):
+                lines = lines[1:]
+            if lines and lines[-1].strip() == "```":
+                lines = lines[:-1]
+            normalized = "\n".join(lines).strip()
+
+        try:
+            payload = json.loads(normalized)
+        except json.JSONDecodeError:
+            start = normalized.find("{")
+            end = normalized.rfind("}")
+            if start < 0 or end <= start:
+                return None
+            try:
+                payload = json.loads(normalized[start : end + 1])
+            except json.JSONDecodeError:
+                return None
+
+        return payload if isinstance(payload, dict) else None
 
     def _maybe_continue_supervisor_chain(
         self,
@@ -2615,6 +2732,11 @@ class MessageService:
             if reviewer_message is None or not reviewer_message.content.strip():
                 return None
             reviewer_prompt = reviewer_message.content.strip()
+            reviewer_decision = self._parse_reviewer_decision(reviewer_prompt)
+            if reviewer_decision is not None:
+                if reviewer_decision.is_complete:
+                    return None
+                reviewer_prompt = reviewer_decision.prompt
             return FollowUpContext(
                 display_message=reviewer_prompt,
                 execution_message=self._build_generator_execution_message(
@@ -2952,23 +3074,24 @@ class MessageService:
         prompt: str,
         codex_options: CodexRunOptions | None,
     ) -> str:
-        if codex_options is None:
-            return prompt
-
-        normalized = codex_options.normalized()
         guidance: list[str] = []
-        if normalized.skill_ids:
-            skills = ", ".join(f"`{skill_id}`" for skill_id in normalized.skill_ids)
-            guidance.append(
-                "Prefer these Codex skills when they are relevant and available: "
-                f"{skills}."
-            )
-        if normalized.mcp_server_ids:
-            servers = ", ".join(f"`{server_id}`" for server_id in normalized.mcp_server_ids)
-            guidance.append(
-                "If external tools are needed, prefer these MCP servers when relevant: "
-                f"{servers}."
-            )
+        if _GITHUB_REPOSITORY_REFERENCE_PATTERN.search(prompt):
+            guidance.append(_GITHUB_ACCESS_GUIDANCE)
+
+        if codex_options is not None:
+            normalized = codex_options.normalized()
+            if normalized.skill_ids:
+                skills = ", ".join(f"`{skill_id}`" for skill_id in normalized.skill_ids)
+                guidance.append(
+                    "Prefer these Codex skills when they are relevant and available: "
+                    f"{skills}."
+                )
+            if normalized.mcp_server_ids:
+                servers = ", ".join(f"`{server_id}`" for server_id in normalized.mcp_server_ids)
+                guidance.append(
+                    "If external tools are needed, prefer these MCP servers when relevant: "
+                    f"{servers}."
+                )
         if not guidance:
             return prompt
         return f"{' '.join(guidance)}\n\n{prompt.strip()}"
@@ -3064,7 +3187,13 @@ class MessageService:
             f"{reviewer_prompt}\n\n"
             "Generator Codex latest answer:\n"
             f"{primary_response}\n\n"
-            "Return only the next prompt that should be sent back to the generator Codex."
+            "Return only a JSON object with this shape:\n"
+            '{"status":"continue","prompt":"<next prompt for the generator Codex>"}\n'
+            "or:\n"
+            '{"status":"complete","summary":"<why no further generator work is needed>"}\n'
+            "Use status=continue when more implementation, fixes, tests, or validation "
+            "should be sent back to the generator. Use status=complete only when the "
+            "generator should not run again."
         )
 
     def _build_summary_execution_message(

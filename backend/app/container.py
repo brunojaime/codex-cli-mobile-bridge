@@ -3,7 +3,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 import sqlite3
 
+from backend.app.application.services.app_update_service import (
+    AppUpdateRegistry,
+    AppUpdateService,
+    HttpGitHubReleaseClient,
+)
 from backend.app.application.services.message_service import MessageService
+from backend.app.application.services.feedback_queue_service import FeedbackQueueService
 from backend.app.domain.repositories.chat_repository import (
     ChatRepository,
     PersistenceDiagnosticIssue,
@@ -22,6 +28,9 @@ from backend.app.infrastructure.speech.base import SpeechSynthesizer
 from backend.app.infrastructure.speech.disabled_synthesizer import (
     DisabledSpeechSynthesizer,
 )
+from backend.app.infrastructure.speech.kokoro_synthesizer import (
+    KokoroSpeechSynthesizer,
+)
 from backend.app.infrastructure.speech.openai_synthesizer import (
     OpenAISpeechSynthesizer,
 )
@@ -38,6 +47,8 @@ from backend.app.infrastructure.transcription.openai_transcriber import OpenAIAu
 class AppContainer:
     settings: Settings
     message_service: MessageService
+    feedback_queue_service: FeedbackQueueService
+    app_update_service: AppUpdateService
     job_stream_hub: JobStreamHub
     audio_transcriber: AudioTranscriber
     speech_synthesizer: SpeechSynthesizer
@@ -71,9 +82,25 @@ def build_container(settings: Settings | None = None) -> AppContainer:
     job_stream_hub = JobStreamHub(
         poll_interval_seconds=resolved_settings.poll_interval_seconds,
     )
+    feedback_queue_service = FeedbackQueueService(
+        queue_path=resolved_settings.feedback_queue_path,
+        image_dir=resolved_settings.feedback_image_dir,
+        audio_dir=resolved_settings.feedback_audio_dir,
+    )
+    app_update_service = AppUpdateService(
+        registry=AppUpdateRegistry.from_json_file(
+            resolved_settings.app_update_registry_path,
+        ),
+        release_client=HttpGitHubReleaseClient(
+            token=resolved_settings.app_update_github_token,
+            timeout_seconds=resolved_settings.app_update_github_timeout_seconds,
+        ),
+    )
     return AppContainer(
         settings=resolved_settings,
         message_service=message_service,
+        feedback_queue_service=feedback_queue_service,
+        app_update_service=app_update_service,
         job_stream_hub=job_stream_hub,
         audio_transcriber=audio_transcriber,
         speech_synthesizer=speech_synthesizer,
@@ -121,8 +148,10 @@ def _build_execution_provider(settings: Settings) -> ExecutionProvider:
     return LocalExecutionProvider(
         command=settings.codex_command,
         use_exec_mode=settings.codex_use_exec,
+        streaming_mode=settings.codex_streaming_mode,
         exec_args=settings.codex_exec_args,
         resume_args=settings.codex_resume_args,
+        default_reasoning_effort=settings.codex_reasoning_effort,
         workdir=settings.codex_workdir,
         timeout_seconds=settings.execution_timeout_seconds,
     )
@@ -186,6 +215,16 @@ def _build_speech_synthesizer(settings: Settings) -> SpeechSynthesizer:
             instructions=settings.speech_synthesis_instructions,
             base_url=settings.openai_base_url,
             timeout_seconds=settings.speech_synthesis_timeout_seconds,
+        )
+
+    if settings.speech_synthesis_backend == "kokoro":
+        return KokoroSpeechSynthesizer(
+            lang_code=settings.speech_synthesis_kokoro_lang_code,
+            voice=settings.speech_synthesis_kokoro_voice,
+            speed=settings.speech_synthesis_kokoro_speed,
+            split_pattern=settings.speech_synthesis_kokoro_split_pattern,
+            sample_rate=settings.speech_synthesis_kokoro_sample_rate,
+            response_format=settings.speech_synthesis_response_format,
         )
 
     return DisabledSpeechSynthesizer()

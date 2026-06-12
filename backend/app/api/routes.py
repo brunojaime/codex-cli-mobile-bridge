@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import base64
+import binascii
+import re
+from collections.abc import Iterator
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, WebSocket
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, WebSocket
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import Response
+from fastapi.responses import FileResponse, Response, StreamingResponse
 
 from backend.app.api.schemas import (
     AgentConfigurationRequest,
@@ -31,6 +35,15 @@ from backend.app.api.schemas import (
     CodexToolingResponse,
     CreateSessionRequest,
     DocumentMessageAcceptedResponse,
+    AppUpdateRegistryItemResponse,
+    AppUpdateRegistryResponse,
+    AppUpdateResponse,
+    FeedbackBatchStartRequest,
+    FeedbackQueueItemRequest,
+    FeedbackQueueItemResponse,
+    FeedbackQueueStartRequest,
+    FeedbackWorkflowPresetResponse,
+    FeedbackWorkflowPresetsResponse,
     HealthResponse,
     ImageMessageAcceptedResponse,
     JobResponse,
@@ -46,13 +59,21 @@ from backend.app.api.schemas import (
     TurnSummaryConfigRequest,
     WorkspaceResponse,
 )
+from backend.app.application.services.app_update_service import (
+    AppDisabledError,
+    AppUpdateAssetNotFoundError,
+    AppUpdateResult,
+    GitHubReleaseError,
+    UnknownAppError,
+)
 from backend.app.application.services.message_service import (
     AttachmentInput,
     DocumentProcessingError,
     MessageService,
     UnsupportedDocumentError,
 )
-from backend.app.domain.entities.chat_message import ChatMessage, ChatMessageStatus
+from backend.app.domain.entities.chat_message import ChatMessage
+from backend.app.domain.entities.agent_configuration import AgentId
 from backend.app.domain.entities.job import Job
 from backend.app.container import AppContainer
 from backend.app.infrastructure.codex_tooling import (
@@ -73,6 +94,35 @@ from backend.app.infrastructure.transcription.base import (
 
 
 router = APIRouter()
+
+_IMAGE_CONTENT_TYPE_SUFFIXES = {
+    "image/bmp": ".bmp",
+    "image/gif": ".gif",
+    "image/jpeg": ".jpg",
+    "image/jpg": ".jpg",
+    "image/png": ".png",
+    "image/tiff": ".tiff",
+    "image/webp": ".webp",
+}
+
+_FALLBACK_FEEDBACK_WORKFLOW_PRESETS = (
+    FeedbackWorkflowPresetResponse(
+        id="generator_only",
+        name="Generator only",
+        description="Run one implementation agent for the queued app feedback.",
+        target_mode="generator_only",
+        includes_reviewer=False,
+        default=True,
+    ),
+    FeedbackWorkflowPresetResponse(
+        id="generator_reviewer",
+        name="Generator + Reviewer",
+        description="Run the implementation agent, then review the result.",
+        target_mode="generator_reviewer",
+        includes_reviewer=True,
+    ),
+)
+_FEEDBACK_WORKSPACE_KEY_PATTERN = re.compile(r"[^a-z0-9]+")
 
 
 def get_container() -> AppContainer:
@@ -140,6 +190,220 @@ async def capabilities(
         image_max_upload_bytes=container.settings.image_max_upload_bytes,
         document_max_upload_bytes=container.settings.document_max_upload_bytes,
         document_text_char_limit=container.settings.document_text_char_limit,
+        feedback_source_workspace_aliases=(
+            container.settings.feedback_source_workspace_alias_map
+        ),
+    )
+
+
+@router.get("/app-updates", response_model=AppUpdateRegistryResponse)
+async def list_app_updates(
+    container: AppContainer = Depends(get_container),
+) -> AppUpdateRegistryResponse:
+    return AppUpdateRegistryResponse(
+        apps=[
+            AppUpdateRegistryItemResponse(
+                source_app=config.source_app,
+                display_name=config.display_name,
+                enabled=config.enabled,
+                required_minimum_build=config.required_minimum_build,
+            )
+            for config in container.app_update_service.list_apps()
+        ],
+    )
+
+
+@router.get("/app-updates/{source_app}", response_model=AppUpdateResponse)
+async def get_app_update(
+    request: Request,
+    source_app: str,
+    platform: str = "android",
+    currentVersion: str | None = None,
+    currentBuild: int | None = None,
+    channel: str = "stable",
+    container: AppContainer = Depends(get_container),
+) -> AppUpdateResponse:
+    try:
+        result = await run_in_threadpool(
+            container.app_update_service.check_update,
+            source_app=source_app,
+            platform=platform,
+            current_version=currentVersion,
+            current_build=currentBuild,
+            channel=channel,
+        )
+    except UnknownAppError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "code": "unknown_source_app",
+                "sourceApp": source_app,
+            },
+        ) from exc
+    except AppDisabledError:
+        result = AppUpdateResult(
+            source_app=source_app,
+            display_name=None,
+            platform=platform,
+            current_version=currentVersion,
+            current_build=currentBuild,
+            latest_version=currentVersion,
+            latest_build=currentBuild,
+            release_tag=None,
+            release_url=None,
+            apk_url=None,
+            apk_asset_name=None,
+            sha256=None,
+            size_bytes=None,
+            release_notes=None,
+            required=False,
+            available=False,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except GitHubReleaseError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail={
+                "code": "github_unavailable",
+                "message": "GitHub release metadata is unavailable.",
+                "sourceApp": source_app,
+            },
+        ) from exc
+
+    apk_url = None
+    if result.available and result.release_tag and result.apk_asset_name:
+        apk_url = str(
+            request.url_for(
+                "download_app_update_apk",
+                source_app=result.source_app,
+                release_tag=result.release_tag,
+                asset_name=result.apk_asset_name,
+            ).include_query_params(platform=platform, channel=channel),
+        )
+    return _app_update_response(result, apk_url=apk_url)
+
+
+@router.head("/app-updates/{source_app}/apk/{release_tag}/{asset_name}")
+async def head_app_update_apk(
+    source_app: str,
+    release_tag: str,
+    asset_name: str,
+    platform: str = "android",
+    channel: str = "stable",
+    container: AppContainer = Depends(get_container),
+) -> Response:
+    try:
+        _, asset = await run_in_threadpool(
+            container.app_update_service.resolve_apk_asset,
+            source_app=source_app,
+            release_tag=release_tag,
+            asset_name=asset_name,
+            platform=platform,
+            channel=channel,
+        )
+    except AppUpdateAssetNotFoundError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "code": "apk_asset_not_found",
+                "sourceApp": source_app,
+                "releaseTag": release_tag,
+                "assetName": asset_name,
+            },
+        ) from exc
+    except UnknownAppError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "code": "unknown_source_app",
+                "sourceApp": source_app,
+            },
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except AppDisabledError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "code": "unknown_source_app",
+                "sourceApp": source_app,
+            },
+        ) from exc
+
+    return Response(
+        media_type="application/vnd.android.package-archive",
+        headers=_apk_download_headers(asset.name, content_length=asset.size),
+    )
+
+
+@router.get("/app-updates/{source_app}/apk/{release_tag}/{asset_name}")
+async def download_app_update_apk(
+    source_app: str,
+    release_tag: str,
+    asset_name: str,
+    platform: str = "android",
+    channel: str = "stable",
+    container: AppContainer = Depends(get_container),
+) -> Response:
+    try:
+        asset, stream = await run_in_threadpool(
+            container.app_update_service.open_apk_asset_stream,
+            source_app=source_app,
+            release_tag=release_tag,
+            asset_name=asset_name,
+            platform=platform,
+            channel=channel,
+        )
+        iterator = stream.iter_bytes()
+        initial_chunks = await run_in_threadpool(_prime_apk_stream, iterator)
+    except AppUpdateAssetNotFoundError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "code": "apk_asset_not_found",
+                "sourceApp": source_app,
+                "releaseTag": release_tag,
+                "assetName": asset_name,
+            },
+        ) from exc
+    except UnknownAppError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "code": "unknown_source_app",
+                "sourceApp": source_app,
+            },
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except AppDisabledError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "code": "unknown_source_app",
+                "sourceApp": source_app,
+            },
+        ) from exc
+    except GitHubReleaseError as exc:
+        if "stream" in locals():
+            stream.close()
+        raise HTTPException(
+            status_code=502,
+            detail={
+                "code": "github_unavailable",
+                "message": "GitHub release asset is unavailable.",
+                "sourceApp": source_app,
+            },
+        ) from exc
+
+    return StreamingResponse(
+        _stream_apk_body(initial_chunks, iterator, stream),
+        media_type="application/vnd.android.package-archive",
+        headers=_apk_download_headers(
+            asset.name,
+            content_length=stream.content_length or asset.size,
+        ),
     )
 
 
@@ -205,6 +469,538 @@ async def post_message(
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return MessageAcceptedResponse.from_domain(job)
+
+
+def _feedback_item_response(
+    item,
+    *,
+    include_image: bool = False,
+) -> FeedbackQueueItemResponse:
+    return FeedbackQueueItemResponse.model_validate(
+        item.to_dict(include_image=include_image)
+    )
+
+
+def _feedback_workflow_presets(
+    service: MessageService,
+) -> list[FeedbackWorkflowPresetResponse]:
+    profiles = service.list_agent_profiles()
+    presets: list[FeedbackWorkflowPresetResponse] = []
+    for profile in profiles:
+        configuration = profile.resolved_configuration().normalized()
+        includes_reviewer = configuration.agents[AgentId.REVIEWER].enabled
+        presets.append(
+            FeedbackWorkflowPresetResponse(
+                id=profile.id,
+                name=profile.name,
+                description=profile.description,
+                target_mode=(
+                    "generator_reviewer" if includes_reviewer else "generator_only"
+                ),
+                agent_profile_id=profile.id,
+                includes_reviewer=includes_reviewer,
+                default=profile.id == "default",
+            )
+        )
+    return presets or list(_FALLBACK_FEEDBACK_WORKFLOW_PRESETS)
+
+
+def _feedback_preset_by_id(
+    preset_id: str,
+    *,
+    service: MessageService,
+) -> FeedbackWorkflowPresetResponse | None:
+    normalized_id = preset_id.strip()
+    presets = _feedback_workflow_presets(service)
+    matched_preset = next(
+        (preset for preset in presets if preset.id == normalized_id),
+        None,
+    )
+    if matched_preset is not None:
+        return matched_preset
+    fallback_preset = next(
+        (
+            preset
+            for preset in _FALLBACK_FEEDBACK_WORKFLOW_PRESETS
+            if preset.id == normalized_id
+        ),
+        None,
+    )
+    if fallback_preset is not None:
+        return fallback_preset
+    return None
+
+
+def _normalize_feedback_workspace_key(value: str | None) -> str:
+    raw_value = (value or "").strip().lower()
+    if not raw_value:
+        return ""
+    parts = [
+        part
+        for part in _FEEDBACK_WORKSPACE_KEY_PATTERN.split(raw_value)
+        if part
+    ]
+    return "-".join(parts)
+
+
+def _feedback_batch_workspace_path(
+    payload: FeedbackBatchStartRequest,
+    *,
+    item_payloads: list[dict],
+    container: AppContainer,
+) -> str | None:
+    explicit_workspace_path = (payload.workspace_path or "").strip()
+    if explicit_workspace_path:
+        return explicit_workspace_path
+
+    candidates = [
+        payload.sourceApp,
+        payload.sourceDisplayName,
+    ]
+    for item_payload in item_payloads:
+        candidates.extend(
+            [
+                item_payload.get("sourceApp"),
+                item_payload.get("source_app"),
+                item_payload.get("sourceDisplayName"),
+                item_payload.get("source_display_name"),
+            ]
+        )
+    candidate_keys = {
+        key
+        for key in (
+            _normalize_feedback_workspace_key(str(candidate))
+            for candidate in candidates
+            if candidate is not None
+        )
+        if key and key != "unknown"
+    }
+    if not candidate_keys:
+        return None
+
+    aliases = {
+        _normalize_feedback_workspace_key(source_app): workspace_path
+        for source_app, workspace_path in (
+            container.settings.feedback_source_workspace_alias_map.items()
+        )
+    }
+    for candidate_key in candidate_keys:
+        workspace_path = aliases.get(candidate_key)
+        if workspace_path:
+            return workspace_path
+
+    for workspace in container.message_service.list_workspaces():
+        workspace_keys = {
+            _normalize_feedback_workspace_key(workspace.name),
+            _normalize_feedback_workspace_key(Path(workspace.path).name),
+        }
+        if candidate_keys & workspace_keys:
+            return workspace.path
+
+    return None
+
+
+def _feedback_target_instruction(target_mode: str) -> str:
+    if target_mode == "generator_only":
+        return (
+            "Generator only. Run the implementation generator for this feedback; "
+            "do not run a reviewer unless the user asks later."
+        )
+    return (
+        "Generator + Reviewer. Run the implementation generator for this "
+        "feedback and then run the reviewer on the generator result."
+    )
+
+
+def _feedback_release_instruction(*, includes_reviewer: bool) -> str:
+    if includes_reviewer:
+        return (
+            "\nRelease instruction: when the reviewer finishes and approves the "
+            "implementation, publish the required release for the target app. "
+            "Do not publish if review requests changes or validation fails."
+        )
+    return (
+        "\nRelease instruction: after implementation and validation complete, "
+        "publish the required release for the target app. Do not publish if "
+        "validation fails."
+    )
+
+
+def _feedback_audio_note(item) -> str:
+    if item.audio_mime_type or item.audio_duration_ms or item.audio_byte_length:
+        return (
+            "\nAudio attached: "
+            f"{item.audio_mime_type or 'unknown type'}, "
+            f"{item.audio_duration_ms or 0} ms, "
+            f"{item.audio_byte_length or 0} bytes."
+        )
+    return ""
+
+
+def _validate_feedback_base64(value: str, *, field_name: str, item_index: int) -> None:
+    try:
+        base64.b64decode(value, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Feedback batch item {item_index} has invalid {field_name}.",
+        ) from exc
+
+
+@router.get(
+    "/feedback-workflow-presets",
+    response_model=FeedbackWorkflowPresetsResponse,
+)
+async def list_feedback_workflow_presets(
+    service: MessageService = Depends(get_message_service),
+) -> FeedbackWorkflowPresetsResponse:
+    presets = _feedback_workflow_presets(service)
+    default_preset = next(
+        (preset for preset in presets if preset.default),
+        presets[0],
+    )
+    return FeedbackWorkflowPresetsResponse(
+        default_preset_id=default_preset.id,
+        presets=presets,
+    )
+
+
+@router.get("/feedback-queue", response_model=list[FeedbackQueueItemResponse])
+async def list_feedback_queue(
+    include_images: bool = False,
+    container: AppContainer = Depends(get_container),
+) -> list[FeedbackQueueItemResponse]:
+    items = await run_in_threadpool(
+        container.feedback_queue_service.list_items,
+        include_images=include_images,
+    )
+    return [
+        _feedback_item_response(item, include_image=include_images)
+        for item in items
+    ]
+
+
+@router.post(
+    "/feedback-queue",
+    response_model=FeedbackQueueItemResponse,
+    status_code=201,
+)
+async def create_feedback_queue_item(
+    payload: FeedbackQueueItemRequest,
+    container: AppContainer = Depends(get_container),
+) -> FeedbackQueueItemResponse:
+    try:
+        item = await run_in_threadpool(
+            container.feedback_queue_service.create_item,
+            payload.model_dump(by_alias=False, exclude_none=True),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return _feedback_item_response(item, include_image=True)
+
+
+@router.delete("/feedback-queue/{item_id}", status_code=204)
+async def delete_feedback_queue_item(
+    item_id: str,
+    container: AppContainer = Depends(get_container),
+) -> Response:
+    try:
+        await run_in_threadpool(container.feedback_queue_service.delete_item, item_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Feedback item not found.") from exc
+    return Response(status_code=204)
+
+
+@router.delete("/feedback-queue", status_code=204)
+async def clear_feedback_queue(
+    container: AppContainer = Depends(get_container),
+) -> Response:
+    await run_in_threadpool(container.feedback_queue_service.clear)
+    return Response(status_code=204)
+
+
+@router.post(
+    "/feedback-queue/{item_id}/start-session",
+    response_model=ImageMessageAcceptedResponse,
+    status_code=202,
+)
+async def start_feedback_queue_session(
+    item_id: str,
+    payload: FeedbackQueueStartRequest,
+    container: AppContainer = Depends(get_container),
+) -> ImageMessageAcceptedResponse:
+    try:
+        item = await run_in_threadpool(
+            container.feedback_queue_service.get_item,
+            item_id,
+            include_image=False,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Feedback item not found.") from exc
+
+    if item.screenshot_file is None:
+        raise HTTPException(status_code=422, detail="Feedback item has no screenshot.")
+    source_image_path = Path(item.screenshot_file)
+    if not source_image_path.exists():
+        raise HTTPException(status_code=422, detail="Feedback screenshot is missing.")
+    with NamedTemporaryFile(delete=False, suffix=".png") as temp_image:
+        temp_image.write(source_image_path.read_bytes())
+        temp_image_path = Path(temp_image.name)
+
+    codex_options = await _validate_codex_options(
+        payload.codex_options.to_domain()
+        if payload.codex_options is not None
+        else None,
+        container=container,
+    )
+    audio_note = _feedback_audio_note(item)
+    target_instruction = _feedback_target_instruction(payload.target_mode)
+    source_label = _feedback_source_label(
+        source_display_name=item.source_display_name,
+        source_app=item.source_app,
+        workspace_path=payload.workspace_path,
+    )
+    message = payload.message or (
+        f"Use this {source_label} feedback screenshot and note to make "
+        "the requested UI/app change.\n\n"
+        f"Run target: {target_instruction}\n"
+        f"Feedback: {item.comment}\n"
+        f"Selection bounds: {item.selection_bounds}"
+        f"{audio_note}"
+    )
+    should_cleanup_temp_image = True
+    try:
+        submission = await run_in_threadpool(
+            container.message_service.submit_image_message,
+            str(temp_image_path),
+            filename=f"{item.id}.png",
+            content_type=item.screenshot_mime_type,
+            message=message,
+            session_id=payload.session_id,
+            workspace_path=payload.workspace_path,
+            codex_options=codex_options,
+        )
+        should_cleanup_temp_image = False
+        await run_in_threadpool(container.feedback_queue_service.mark_submitted, item_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except UnsupportedDocumentError as exc:
+        raise HTTPException(status_code=415, detail=str(exc)) from exc
+    finally:
+        if should_cleanup_temp_image:
+            temp_image_path.unlink(missing_ok=True)
+
+    return ImageMessageAcceptedResponse.from_domain(
+        submission.job,
+        attached_image_name=submission.attached_image_name,
+    )
+
+
+@router.post(
+    "/feedback-batches/start-session",
+    response_model=MessageAcceptedResponse,
+    status_code=202,
+)
+async def start_feedback_batch_session(
+    payload: FeedbackBatchStartRequest,
+    container: AppContainer = Depends(get_container),
+) -> MessageAcceptedResponse:
+    if not payload.items:
+        raise HTTPException(status_code=422, detail="Feedback batch has no items.")
+    preset = _feedback_preset_by_id(
+        payload.workflow_preset_id,
+        service=container.message_service,
+    )
+    if preset is None:
+        raise HTTPException(status_code=422, detail="Unknown feedback workflow preset.")
+
+    item_payloads = []
+    for index, item_request in enumerate(payload.items, start=1):
+        item_payload = item_request.model_dump(by_alias=False, exclude_none=True)
+        if not str(item_payload.get("screenshotPngBase64") or "").strip():
+            raise HTTPException(
+                status_code=422,
+                detail=f"Feedback batch item {index} has no screenshot.",
+            )
+        _validate_feedback_base64(
+            str(item_payload["screenshotPngBase64"]),
+            field_name="screenshotPngBase64",
+            item_index=index,
+        )
+        if str(item_payload.get("audioBase64") or "").strip():
+            _validate_feedback_base64(
+                str(item_payload["audioBase64"]),
+                field_name="audioBase64",
+                item_index=index,
+            )
+        source_app = str(item_payload.get("sourceApp") or "").strip().lower()
+        if not source_app or source_app == "unknown":
+            item_payload["sourceApp"] = payload.sourceApp
+        if (
+            not str(item_payload.get("sourceDisplayName") or "").strip()
+            and payload.sourceDisplayName
+        ):
+            item_payload["sourceDisplayName"] = payload.sourceDisplayName
+        item_payloads.append(item_payload)
+    workspace_path = _feedback_batch_workspace_path(
+        payload,
+        item_payloads=item_payloads,
+        container=container,
+    )
+
+    stored_items = []
+    try:
+        for item_payload in item_payloads:
+            stored_items.append(
+                await run_in_threadpool(
+                    container.feedback_queue_service.create_item,
+                    item_payload,
+                )
+            )
+    except ValueError as exc:
+        for item in stored_items:
+            await run_in_threadpool(container.feedback_queue_service.delete_item, item.id)
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    temp_image_paths: list[Path] = []
+    attachments: list[AttachmentInput] = []
+    try:
+        for index, item in enumerate(stored_items, start=1):
+            if item.screenshot_file is None:
+                raise HTTPException(
+                    status_code=422,
+                    detail="Feedback item has no screenshot.",
+                )
+            source_image_path = Path(item.screenshot_file)
+            if not source_image_path.exists():
+                raise HTTPException(
+                    status_code=422,
+                    detail="Feedback screenshot is missing.",
+                )
+            suffix = _IMAGE_CONTENT_TYPE_SUFFIXES.get(item.screenshot_mime_type, ".png")
+            with NamedTemporaryFile(delete=False, suffix=suffix) as temp_image:
+                temp_image.write(source_image_path.read_bytes())
+                temp_image_path = Path(temp_image.name)
+            temp_image_paths.append(temp_image_path)
+            attachments.append(
+                AttachmentInput(
+                    path=str(temp_image_path),
+                    filename=f"{index:02d}-{item.id}{suffix}",
+                    content_type=item.screenshot_mime_type,
+                )
+            )
+    except HTTPException:
+        for temp_image_path in temp_image_paths:
+            temp_image_path.unlink(missing_ok=True)
+        for item in stored_items:
+            await run_in_threadpool(container.feedback_queue_service.delete_item, item.id)
+        raise
+
+    should_keep_stored_items = False
+    should_cleanup_temp_images = True
+    try:
+        codex_options = await _validate_codex_options(
+            payload.codex_options.to_domain()
+            if payload.codex_options is not None
+            else None,
+            container=container,
+        )
+        first_item = stored_items[0]
+        source_label = _feedback_source_label(
+            source_display_name=payload.sourceDisplayName
+            or first_item.source_display_name,
+            source_app=payload.sourceApp or first_item.source_app,
+            workspace_path=workspace_path,
+        )
+        target_session_id = payload.session_id
+        if target_session_id is None and preset.agent_profile_id:
+            try:
+                session = await run_in_threadpool(
+                    container.message_service.create_session,
+                    title=f"{source_label} feedback",
+                    workspace_path=workspace_path,
+                    agent_profile_id=preset.agent_profile_id,
+                    title_is_placeholder=False,
+                )
+            except ValueError as exc:
+                raise HTTPException(status_code=404, detail=str(exc)) from exc
+            target_session_id = session.id
+        item_sections = []
+        for index, item in enumerate(stored_items, start=1):
+            item_sections.append(
+                f"Item {index} ({item.id}):\n"
+                f"Feedback: {item.comment}\n"
+                f"Selection bounds: {item.selection_bounds}"
+                f"{_feedback_audio_note(item)}"
+            )
+        release_note = (
+            _feedback_release_instruction(includes_reviewer=preset.includes_reviewer)
+            if payload.release_when_complete
+            else ""
+        )
+        message = payload.message or (
+            f"Use these {source_label} feedback screenshots and notes as one "
+            "batch to make the requested UI/app changes.\n\n"
+            f"Run target: {_feedback_target_instruction(preset.target_mode)}\n"
+            f"Workflow preset: {preset.name}\n"
+            f"Batch size: {len(stored_items)} feedback items.\n\n"
+            + "\n\n".join(item_sections)
+            + release_note
+        )
+        job = await run_in_threadpool(
+            container.message_service.submit_attachment_message,
+            attachments,
+            message=message,
+            session_id=target_session_id,
+            workspace_path=workspace_path,
+            codex_options=codex_options,
+        )
+        should_cleanup_temp_images = False
+        for item in stored_items:
+            await run_in_threadpool(
+                container.feedback_queue_service.mark_submitted,
+                item.id,
+            )
+        should_keep_stored_items = True
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except UnsupportedDocumentError as exc:
+        raise HTTPException(status_code=415, detail=str(exc)) from exc
+    finally:
+        if should_cleanup_temp_images:
+            for temp_image_path in temp_image_paths:
+                temp_image_path.unlink(missing_ok=True)
+        if not should_keep_stored_items:
+            for item in stored_items:
+                await run_in_threadpool(
+                    container.feedback_queue_service.delete_item,
+                    item.id,
+                )
+
+    return MessageAcceptedResponse.from_domain(job)
+
+
+def _feedback_source_label(
+    *,
+    source_display_name: str | None,
+    source_app: str | None,
+    workspace_path: str | None,
+) -> str:
+    display_name = (source_display_name or "").strip()
+    if display_name:
+        return display_name
+    source_value = (source_app or "").strip()
+    if source_value and source_value.lower() != "unknown":
+        return _humanize_feedback_source(source_value)
+    if workspace_path:
+        path_name = Path(workspace_path).name.strip()
+        if path_name:
+            return _humanize_feedback_source(path_name)
+    return "app"
+
+
+def _humanize_feedback_source(value: str) -> str:
+    return " ".join(part.capitalize() for part in value.replace("_", "-").split("-"))
 
 
 @router.get("/codex/tooling", response_model=CodexToolingResponse)
@@ -655,14 +1451,25 @@ async def import_agent_profiles(
 def _jobs_by_id_for_messages(
     service: MessageService,
     messages: list[ChatMessage],
+    *,
+    sync_jobs: bool = True,
 ) -> dict[str, Job]:
     jobs_by_id: dict[str, Job] = {}
+    terminal_sync_seen = False
     for message in messages:
         if not message.job_id:
             continue
-        synced_job = service.get_job(message.job_id)
+        synced_job = (
+            service.get_job(message.job_id)
+            if sync_jobs
+            else service.get_stored_job(message.job_id)
+        )
         if synced_job is not None:
             jobs_by_id[message.job_id] = synced_job
+            if synced_job.status.is_terminal:
+                terminal_sync_seen = True
+    if sync_jobs and terminal_sync_seen and messages:
+        messages[:] = service.list_messages(messages[0].session_id)
     return jobs_by_id
 
 
@@ -685,7 +1492,7 @@ async def list_sessions(
 
     for session in sessions:
         messages = service.list_messages(session.id)
-        jobs_by_id = _jobs_by_id_for_messages(service, messages)
+        jobs_by_id = _jobs_by_id_for_messages(service, messages, sync_jobs=False)
         responses.append(
             SessionSummaryResponse.from_domain(
                 session,
@@ -952,6 +1759,26 @@ async def get_response(
     return JobResponse.from_domain(job)
 
 
+@router.get("/jobs/{job_id}/attachments/{attachment_index}")
+async def get_job_attachment(
+    job_id: str,
+    attachment_index: int,
+    service: MessageService = Depends(get_message_service),
+) -> FileResponse:
+    attachment = await run_in_threadpool(
+        service.get_job_image_attachment_file,
+        job_id,
+        attachment_index,
+    )
+    if attachment is None:
+        raise HTTPException(status_code=404, detail="Attachment not found.")
+
+    return FileResponse(
+        attachment.path,
+        media_type=attachment.media_type,
+    )
+
+
 @router.post("/jobs/{job_id}/cancel", response_model=JobResponse)
 async def cancel_job(
     job_id: str,
@@ -997,6 +1824,72 @@ async def job_updates(
     )
 
 
+def _app_update_response(
+    result: AppUpdateResult,
+    *,
+    apk_url: str | None = None,
+) -> AppUpdateResponse:
+    return AppUpdateResponse(
+        source_app=result.source_app,
+        display_name=result.display_name,
+        platform=result.platform,
+        current_version=result.current_version,
+        current_build=result.current_build,
+        latest_version=result.latest_version,
+        latest_build=result.latest_build,
+        release_tag=result.release_tag,
+        release_url=result.release_url,
+        apk_url=apk_url if apk_url is not None else result.apk_url,
+        apk_asset_name=result.apk_asset_name,
+        sha256=result.sha256,
+        size_bytes=result.size_bytes,
+        release_notes=result.release_notes,
+        required=result.required,
+        available=result.available,
+    )
+
+
+def _apk_download_headers(
+    file_name: str,
+    *,
+    content_length: int | None,
+) -> dict[str, str]:
+    headers = {
+        "Content-Disposition": f'attachment; filename="{file_name}"',
+        "Cache-Control": "private, max-age=300",
+    }
+    if content_length is not None:
+        headers["Content-Length"] = str(content_length)
+    return headers
+
+
+def _prime_apk_stream(iterator: Iterator[bytes]) -> list[bytes]:
+    chunks: list[bytes] = []
+    sample = b""
+    for chunk in iterator:
+        if not chunk:
+            continue
+        chunks.append(chunk)
+        sample += chunk
+        if len(sample) >= 4:
+            break
+    if not sample.startswith(b"PK\x03\x04"):
+        raise GitHubReleaseError("Downloaded asset is not an APK archive.")
+    return chunks
+
+
+def _stream_apk_body(
+    initial_chunks: list[bytes],
+    iterator: Iterator[bytes],
+    stream,
+) -> Iterator[bytes]:
+    try:
+        yield from initial_chunks
+        yield from iterator
+    finally:
+        stream.close()
+
+
 async def _store_uploaded_audio(
     audio: UploadFile,
     *,
@@ -1017,7 +1910,7 @@ async def _store_uploaded_file(
     default_filename: str,
     size_limit_label: str,
 ) -> Path:
-    suffix = Path(upload.filename or default_filename).suffix or Path(default_filename).suffix
+    suffix = _safe_upload_suffix(upload, default_filename=default_filename)
     total_bytes = 0
 
     with NamedTemporaryFile(delete=False, suffix=suffix) as temp_file:
@@ -1035,6 +1928,18 @@ async def _store_uploaded_file(
             temp_file.write(chunk)
 
     return Path(temp_file.name)
+
+
+def _safe_upload_suffix(upload: UploadFile, *, default_filename: str) -> str:
+    suffix = Path(upload.filename or "").suffix or Path(default_filename).suffix
+    normalized_content_type = (
+        (upload.content_type or "").split(";", maxsplit=1)[0].strip().lower()
+    )
+    if (not suffix or suffix.lower() == ".bin") and normalized_content_type:
+        image_suffix = _IMAGE_CONTENT_TYPE_SUFFIXES.get(normalized_content_type)
+        if image_suffix is not None:
+            return image_suffix
+    return suffix or ".bin"
 
 
 class _StoredUpload:

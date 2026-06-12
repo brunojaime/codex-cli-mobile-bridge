@@ -1,9 +1,13 @@
+import 'dart:typed_data';
+
 import 'package:codex_mobile_frontend/src/models/chat_session_summary.dart';
 import 'package:codex_mobile_frontend/src/models/codex_tooling.dart';
+import 'package:codex_mobile_frontend/src/models/feedback_queue_item.dart';
 import 'package:codex_mobile_frontend/src/models/session_detail.dart';
 import 'package:codex_mobile_frontend/src/services/api_client.dart';
 import 'package:codex_mobile_frontend/src/services/chat_notification_service.dart';
 import 'package:codex_mobile_frontend/src/state/chat_controller.dart';
+import 'package:cross_file/cross_file.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -36,6 +40,60 @@ void main() {
         skillIds: <String>['skill-creator'],
         mcpServerIds: <String>['github'],
       ),
+    );
+  });
+
+  test('startFeedbackQueueSession includes explicit target mode', () async {
+    final client = ApiClient(
+      baseUrl: 'http://localhost:8000',
+      client: MockClient((request) async {
+        expect(request.method, 'POST');
+        expect(request.url.path, '/feedback-queue/feedback-1/start-session');
+        expect(request.body, contains('"target_mode":"generator_reviewer"'));
+        return http.Response(
+          '{"job_id":"job-1","session_id":"session-1","status":"pending","elapsed_seconds":0}',
+          202,
+          headers: <String, String>{'content-type': 'application/json'},
+        );
+      }),
+    );
+
+    await client.startFeedbackQueueSession(
+      'feedback-1',
+      targetMode: FeedbackQueueTargetMode.generatorReviewer,
+    );
+  });
+
+  test('sendAttachmentsMessage preserves image content type', () async {
+    final client = ApiClient(
+      baseUrl: 'http://localhost:8000',
+      client: MockClient((request) async {
+        expect(request.method, 'POST');
+        expect(request.url.path, '/message/attachments');
+        expect(
+            request.headers['content-type'], contains('multipart/form-data'));
+        final body = String.fromCharCodes(request.bodyBytes).toLowerCase();
+        expect(body, contains('name="attachments"'));
+        expect(body, contains('filename="feedback-1.png"'));
+        expect(body, contains('content-type: image/png'));
+        return http.Response(
+          '{"job_id":"job-1","session_id":"session-1","status":"pending","elapsed_seconds":0}',
+          202,
+          headers: <String, String>{'content-type': 'application/json'},
+        );
+      }),
+    );
+
+    await client.sendAttachmentsMessage(
+      <XFile>[
+        XFile.fromData(
+          Uint8List.fromList(<int>[137, 80, 78, 71]),
+          name: 'feedback-1.png',
+          mimeType: 'image/png',
+          path: 'feedback-1.png',
+        ),
+      ],
+      message: 'Use this screenshot',
     );
   });
 

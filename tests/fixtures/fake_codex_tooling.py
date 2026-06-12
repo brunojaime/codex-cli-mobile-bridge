@@ -104,6 +104,10 @@ def main() -> int:
         print("Logged in using ChatGPT")
         return 0
     if args == ["mcp", "list"]:
+        if os.environ.get("FAKE_CODEX_MCP_LIST_TABLE", "").strip():
+            print(
+                "Name             Command  Args                                                                                                   Env                  Cwd  Status   Auth       "
+            )
         for server in _load_servers().values():
             summary = server.get("summary")
             if isinstance(summary, str):

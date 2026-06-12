@@ -20,6 +20,7 @@ class ChatBubble extends StatelessWidget {
     this.onRetryJob,
     this.onRecoverUnknownSubmission,
     this.onCancelUnknownSubmission,
+    this.attachmentBaseUrl,
   });
 
   final ChatMessage message;
@@ -32,6 +33,7 @@ class ChatBubble extends StatelessWidget {
   final Future<void> Function()? onRetryJob;
   final Future<void> Function()? onRecoverUnknownSubmission;
   final Future<void> Function()? onCancelUnknownSubmission;
+  final String? attachmentBaseUrl;
 
   @override
   Widget build(BuildContext context) {
@@ -39,10 +41,11 @@ class ChatBubble extends StatelessWidget {
     final isReviewerCodex = message.isReviewerCodex;
     final isSummaryAgent = message.agentId == AgentId.summary;
     final isGeneratorAgent = message.agentId == AgentId.generator && !isUser;
+    final displayContent = _displayContentForMessage(message);
     final screenWidth = MediaQuery.sizeOf(context).width;
     final useWideWebLayout = kIsWeb && screenWidth >= 900;
     final shouldPreferWideBubble =
-        message.text.length >= 120 || message.text.contains('\n');
+        displayContent.text.length >= 120 || displayContent.text.contains('\n');
     final maxBubbleWidth = switch ((screenWidth, isUser)) {
       (>= 1600, true) => 980.0,
       (>= 1600, false) => 1280.0,
@@ -79,6 +82,10 @@ class ChatBubble extends StatelessWidget {
       bottomRight: Radius.circular(isUser ? 6 : 18),
     );
     final timestampLabel = formatChatMessageTime(context, message.createdAt);
+    final activityPresentation = isUser ? null : _activityPresentation(message);
+    final imageAttachments = message.imageAttachments;
+    final canOpenImageAttachments =
+        attachmentBaseUrl != null && imageAttachments.isNotEmpty;
 
     return Column(
       crossAxisAlignment: alignment,
@@ -148,15 +155,10 @@ class ChatBubble extends StatelessWidget {
                 ),
                 const SizedBox(height: 10),
               ],
-              if (message.jobLatestActivity != null &&
-                  message.jobLatestActivity!.isNotEmpty) ...[
-                Text(
-                  message.jobLatestActivity!,
-                  style: TextStyle(
-                    color: textColor.withValues(alpha: 0.72),
-                    fontSize: 12,
-                    height: 1.4,
-                  ),
+              if (activityPresentation != null) ...[
+                _ActivityStatusStrip(
+                  presentation: activityPresentation,
+                  textColor: textColor,
                 ),
                 const SizedBox(height: 10),
               ],
@@ -168,9 +170,9 @@ class ChatBubble extends StatelessWidget {
                   textAlign: isUser ? TextAlign.right : TextAlign.left,
                 )
               else ...<Widget>[
-                if (message.text.isNotEmpty)
+                if (displayContent.text.isNotEmpty)
                   RichMessageContent(
-                    text: message.text,
+                    text: displayContent.text,
                     textColor: textColor,
                     onOptionSelected:
                         isUser || isReviewerCodex ? null : onOptionSelected,
@@ -196,7 +198,22 @@ class ChatBubble extends StatelessWidget {
                       fontSize: 14,
                     ),
                   ),
-                if ((message.text.isNotEmpty ||
+                if (displayContent.attachmentSummary != null) ...[
+                  if (displayContent.text.isNotEmpty)
+                    const SizedBox(height: 12),
+                  _UserAttachmentSummaryCard(
+                    summary: displayContent.attachmentSummary!,
+                    textColor: textColor,
+                    onTap: canOpenImageAttachments
+                        ? () => _openImageAttachmentViewer(
+                              context,
+                              baseUrl: attachmentBaseUrl!,
+                              attachments: imageAttachments,
+                            )
+                        : null,
+                  ),
+                ],
+                if ((displayContent.copyText.isNotEmpty ||
                         (!isUser &&
                             onCancelJob != null &&
                             _canCancel(message)) ||
@@ -212,13 +229,13 @@ class ChatBubble extends StatelessWidget {
                   Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      if (message.text.isNotEmpty) ...[
+                      if (displayContent.copyText.isNotEmpty) ...[
                         _MessageAction(
                           icon: Icons.copy_rounded,
                           label: 'Copy',
                           onTap: () async {
                             await Clipboard.setData(
-                              ClipboardData(text: message.text),
+                              ClipboardData(text: displayContent.copyText),
                             );
                           },
                         ),
@@ -391,6 +408,260 @@ class _CollapsedMessagePreview extends StatelessWidget {
   }
 }
 
+class _UserAttachmentSummaryCard extends StatelessWidget {
+  const _UserAttachmentSummaryCard({
+    required this.summary,
+    required this.textColor,
+    this.onTap,
+  });
+
+  final _AttachmentDisplaySummary summary;
+  final Color textColor;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final card = Container(
+      constraints: const BoxConstraints(maxWidth: 320),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: textColor.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: textColor.withValues(alpha: 0.16)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          Container(
+            width: 30,
+            height: 30,
+            decoration: BoxDecoration(
+              color: textColor.withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            alignment: Alignment.center,
+            child: Icon(summary.icon, size: 18, color: textColor),
+          ),
+          const SizedBox(width: 10),
+          Flexible(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                Text(
+                  summary.title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: textColor,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                if (summary.detail != null) ...[
+                  const SizedBox(height: 1),
+                  Text(
+                    summary.detail!,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: textColor.withValues(alpha: 0.72),
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          if (onTap != null) ...<Widget>[
+            const SizedBox(width: 8),
+            Icon(
+              Icons.open_in_full_rounded,
+              size: 16,
+              color: textColor.withValues(alpha: 0.78),
+            ),
+          ],
+        ],
+      ),
+    );
+    if (onTap == null) {
+      return card;
+    }
+    return Semantics(
+      button: true,
+      label: 'Open image attachment',
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: onTap,
+        child: card,
+      ),
+    );
+  }
+}
+
+void _openImageAttachmentViewer(
+  BuildContext context, {
+  required String baseUrl,
+  required List<ChatMessageAttachment> attachments,
+}) {
+  final urls = attachments
+      .map((attachment) =>
+          _resolveAttachmentUrl(baseUrl, attachment.downloadUrl))
+      .toList(growable: false);
+  if (urls.isEmpty) {
+    return;
+  }
+  showDialog<void>(
+    context: context,
+    builder: (context) => _ImageAttachmentViewer(urls: urls),
+  );
+}
+
+Uri _resolveAttachmentUrl(String baseUrl, String downloadUrl) {
+  final attachmentUri = Uri.parse(downloadUrl);
+  if (attachmentUri.hasScheme) {
+    return attachmentUri;
+  }
+  return Uri.parse(baseUrl.trim().replaceAll(RegExp(r'/$'), ''))
+      .resolve(downloadUrl);
+}
+
+class _ImageAttachmentViewer extends StatefulWidget {
+  const _ImageAttachmentViewer({
+    required this.urls,
+  });
+
+  final List<Uri> urls;
+
+  @override
+  State<_ImageAttachmentViewer> createState() => _ImageAttachmentViewerState();
+}
+
+class _ImageAttachmentViewerState extends State<_ImageAttachmentViewer> {
+  late final PageController _pageController;
+  int _currentIndex = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _pageController = PageController();
+  }
+
+  @override
+  void dispose() {
+    _pageController.dispose();
+    super.dispose();
+  }
+
+  void _showImage(int index) {
+    if (index < 0 || index >= widget.urls.length) {
+      return;
+    }
+    _pageController.animateToPage(
+      index,
+      duration: const Duration(milliseconds: 180),
+      curve: Curves.easeOut,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final multiple = widget.urls.length > 1;
+    return Dialog.fullscreen(
+      backgroundColor: const Color(0xFF070B16),
+      child: SafeArea(
+        child: Column(
+          children: <Widget>[
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+              child: Row(
+                children: <Widget>[
+                  IconButton(
+                    tooltip: 'Close',
+                    onPressed: () => Navigator.of(context).pop(),
+                    icon: const Icon(Icons.close_rounded),
+                  ),
+                  const Spacer(),
+                  Text(
+                    '${_currentIndex + 1} / ${widget.urls.length}',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const Spacer(),
+                  const SizedBox(width: 48),
+                ],
+              ),
+            ),
+            Expanded(
+              child: PageView.builder(
+                controller: _pageController,
+                itemCount: widget.urls.length,
+                onPageChanged: (index) {
+                  setState(() {
+                    _currentIndex = index;
+                  });
+                },
+                itemBuilder: (context, index) {
+                  return InteractiveViewer(
+                    minScale: 0.8,
+                    maxScale: 4,
+                    child: Center(
+                      child: Image.network(
+                        widget.urls[index].toString(),
+                        fit: BoxFit.contain,
+                        loadingBuilder: (context, child, loadingProgress) {
+                          if (loadingProgress == null) {
+                            return child;
+                          }
+                          return const CircularProgressIndicator();
+                        },
+                        errorBuilder: (context, error, stackTrace) {
+                          return const Icon(
+                            Icons.broken_image_outlined,
+                            color: Color(0xFFB8C8EA),
+                            size: 56,
+                          );
+                        },
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+            if (multiple)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 18),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: <Widget>[
+                    IconButton.filledTonal(
+                      tooltip: 'Previous image',
+                      onPressed: _currentIndex == 0
+                          ? null
+                          : () => _showImage(_currentIndex - 1),
+                      icon: const Icon(Icons.chevron_left_rounded),
+                    ),
+                    const SizedBox(width: 24),
+                    IconButton.filledTonal(
+                      tooltip: 'Next image',
+                      onPressed: _currentIndex == widget.urls.length - 1
+                          ? null
+                          : () => _showImage(_currentIndex + 1),
+                      icon: const Icon(Icons.chevron_right_rounded),
+                    ),
+                  ],
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _ReviewerHeader extends StatelessWidget {
   const _ReviewerHeader({
     required this.message,
@@ -503,6 +774,82 @@ class _AssistantHeader extends StatelessWidget {
   }
 }
 
+class _ActivityStatusPresentation {
+  const _ActivityStatusPresentation({
+    required this.label,
+    required this.detail,
+    required this.icon,
+    required this.color,
+  });
+
+  final String label;
+  final String detail;
+  final IconData icon;
+  final Color color;
+}
+
+class _ActivityStatusStrip extends StatelessWidget {
+  const _ActivityStatusStrip({
+    required this.presentation,
+    required this.textColor,
+  });
+
+  final _ActivityStatusPresentation presentation;
+  final Color textColor;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0F1730).withValues(alpha: 0.64),
+        borderRadius: BorderRadius.circular(10),
+        border: Border(
+          left: BorderSide(color: presentation.color, width: 3),
+        ),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Icon(
+            presentation.icon,
+            color: presentation.color,
+            size: 17,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Text(
+                  presentation.label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: presentation.color,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  presentation.detail,
+                  style: TextStyle(
+                    color: textColor.withValues(alpha: 0.82),
+                    fontSize: 12,
+                    height: 1.35,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 Color _agentHeaderColor(AgentId agentId) {
   return switch (agentId) {
     AgentId.summary => const Color(0xFFAED3FF),
@@ -514,6 +861,68 @@ Color _agentHeaderColor(AgentId agentId) {
     AgentId.scraper => const Color(0xFF7FD5C7),
     _ => const Color(0xFF7CF2D4),
   };
+}
+
+_ActivityStatusPresentation? _activityPresentation(ChatMessage message) {
+  final rawDetail = message.jobLatestActivity?.trim();
+  if (rawDetail == null || rawDetail.isEmpty) {
+    return null;
+  }
+  final detail = _cleanActivityDetail(rawDetail);
+  final phase = (message.jobPhase ?? '').toLowerCase();
+  final combined = '$phase ${rawDetail.toLowerCase()}';
+
+  if (combined.contains('reason')) {
+    return _ActivityStatusPresentation(
+      label: 'Reasoning',
+      detail: detail,
+      icon: Icons.psychology_alt_outlined,
+      color: const Color(0xFFFFC857),
+    );
+  }
+  if (combined.contains('tool') || combined.contains('mcp')) {
+    return _ActivityStatusPresentation(
+      label: 'Tools',
+      detail: detail,
+      icon: Icons.extension_rounded,
+      color: const Color(0xFF8FEAFF),
+    );
+  }
+  if (combined.contains('draft') || combined.contains('compos')) {
+    return _ActivityStatusPresentation(
+      label: 'Drafting',
+      detail: detail,
+      icon: Icons.edit_note_rounded,
+      color: const Color(0xFF55D6BE),
+    );
+  }
+  if (combined.contains('final')) {
+    return _ActivityStatusPresentation(
+      label: 'Finalizing',
+      detail: detail,
+      icon: Icons.task_alt_rounded,
+      color: const Color(0xFFB8C8EA),
+    );
+  }
+  return _ActivityStatusPresentation(
+    label: 'Activity',
+    detail: detail,
+    icon: Icons.sync_rounded,
+    color: const Color(0xFF9FD3FF),
+  );
+}
+
+String _cleanActivityDetail(String value) {
+  final trimmed = value.trim();
+  if (trimmed == 'call-mcp-tool') {
+    return 'Calling MCP tool.';
+  }
+  if (trimmed == 'mcpToolCall') {
+    return 'Running MCP tool.';
+  }
+  return trimmed
+      .replaceAll('call-mcp-tool', 'MCP tool call')
+      .replaceAll('mcpToolCall', 'MCP tool call');
 }
 
 String _defaultAgentLabel(AgentId agentId) {
@@ -636,10 +1045,220 @@ bool _canCancelUnknownSubmission(ChatMessage message) {
   return _canRecoverUnknownSubmission(message);
 }
 
+class _DisplayMessageContent {
+  const _DisplayMessageContent({
+    required this.text,
+    required this.copyText,
+    this.attachmentSummary,
+  });
+
+  final String text;
+  final String copyText;
+  final _AttachmentDisplaySummary? attachmentSummary;
+}
+
+class _AttachmentDisplaySummary {
+  const _AttachmentDisplaySummary({
+    required this.imageCount,
+    required this.textCount,
+    required this.audioCount,
+    required this.fileCount,
+  });
+
+  final int imageCount;
+  final int textCount;
+  final int audioCount;
+  final int fileCount;
+
+  int get totalCount => imageCount + textCount + audioCount + fileCount;
+
+  IconData get icon {
+    if (totalCount == imageCount) {
+      return Icons.image_rounded;
+    }
+    if (totalCount == audioCount) {
+      return Icons.graphic_eq_rounded;
+    }
+    return Icons.attach_file_rounded;
+  }
+
+  String get title {
+    if (totalCount == 1) {
+      if (imageCount == 1) {
+        return 'Image attached';
+      }
+      if (audioCount == 1) {
+        return 'Audio attached';
+      }
+      if (textCount == 1) {
+        return 'Document attached';
+      }
+      return 'File attached';
+    }
+    return '$totalCount attachments';
+  }
+
+  String? get detail {
+    if (totalCount <= 1) {
+      return null;
+    }
+    final parts = <String>[];
+    if (imageCount > 0) {
+      parts.add('$imageCount image${imageCount == 1 ? '' : 's'}');
+    }
+    if (textCount > 0) {
+      parts.add('$textCount document${textCount == 1 ? '' : 's'}');
+    }
+    if (audioCount > 0) {
+      parts.add('$audioCount audio file${audioCount == 1 ? '' : 's'}');
+    }
+    if (fileCount > 0) {
+      parts.add('$fileCount file${fileCount == 1 ? '' : 's'}');
+    }
+    return parts.join(' · ');
+  }
+}
+
+_DisplayMessageContent _displayContentForMessage(ChatMessage message) {
+  if (!message.isUser) {
+    return _DisplayMessageContent(
+      text: message.text,
+      copyText: message.text,
+    );
+  }
+
+  final legacyContent = _extractUserAttachmentMetadata(message.text);
+  if (legacyContent.attachmentSummary != null) {
+    return legacyContent;
+  }
+  final imageAttachmentCount = message.imageAttachments.length;
+  if (imageAttachmentCount > 0) {
+    return _DisplayMessageContent(
+      text: message.text,
+      copyText: message.text.isNotEmpty ? message.text : 'Image attached',
+      attachmentSummary: _AttachmentDisplaySummary(
+        imageCount: imageAttachmentCount,
+        textCount: 0,
+        audioCount: 0,
+        fileCount: 0,
+      ),
+    );
+  }
+  return legacyContent;
+}
+
+_DisplayMessageContent _extractUserAttachmentMetadata(String text) {
+  final normalizedText = text.replaceAll('\r\n', '\n');
+  final multiAttachmentContent = _extractAttachedFilesBlock(normalizedText) ??
+      _extractSingleDocumentAttachmentBlock(normalizedText);
+  if (multiAttachmentContent != null) {
+    final visibleText = multiAttachmentContent.text.trimRight();
+    final attachmentSummary = multiAttachmentContent.attachmentSummary!;
+    final copyText =
+        visibleText.isNotEmpty ? visibleText : attachmentSummary.title;
+    return _DisplayMessageContent(
+      text: visibleText,
+      copyText: copyText,
+      attachmentSummary: attachmentSummary,
+    );
+  }
+
+  return _DisplayMessageContent(text: text, copyText: text);
+}
+
+_DisplayMessageContent? _extractAttachedFilesBlock(String text) {
+  final lines = text.split('\n');
+  final headerIndex =
+      lines.lastIndexWhere((line) => line.trim() == '[Attached files]');
+  if (headerIndex == -1) {
+    return null;
+  }
+
+  final metadataLines = lines
+      .skip(headerIndex + 1)
+      .where((line) => line.trim().isNotEmpty)
+      .toList(growable: false);
+  if (metadataLines.isEmpty) {
+    return null;
+  }
+
+  final kinds = <String>[];
+  final metadataPattern = RegExp(r'^-\s*([A-Za-z0-9 _-]+):\s+.+$');
+  for (final line in metadataLines) {
+    final match = metadataPattern.firstMatch(line.trim());
+    if (match == null) {
+      return null;
+    }
+    kinds.add(match.group(1)!.trim());
+  }
+
+  return _DisplayMessageContent(
+    text: lines.take(headerIndex).join('\n'),
+    copyText: '',
+    attachmentSummary: _attachmentSummaryFromKinds(kinds),
+  );
+}
+
+_DisplayMessageContent? _extractSingleDocumentAttachmentBlock(String text) {
+  final lines = text.split('\n');
+  final lastContentIndex =
+      lines.lastIndexWhere((line) => line.trim().isNotEmpty);
+  if (lastContentIndex == -1) {
+    return null;
+  }
+
+  final documentPattern =
+      RegExp(r'^\[Attached\s+([A-Za-z0-9 _-]+)\s+document:\s+.+\]$');
+  final match = documentPattern.firstMatch(lines[lastContentIndex].trim());
+  if (match == null) {
+    return null;
+  }
+
+  return _DisplayMessageContent(
+    text: lines.take(lastContentIndex).join('\n'),
+    copyText: '',
+    attachmentSummary: _attachmentSummaryFromKinds([match.group(1)!.trim()]),
+  );
+}
+
+_AttachmentDisplaySummary _attachmentSummaryFromKinds(List<String> kinds) {
+  var imageCount = 0;
+  var textCount = 0;
+  var audioCount = 0;
+  var fileCount = 0;
+
+  for (final kind in kinds) {
+    final normalizedKind = kind.toLowerCase();
+    if (normalizedKind.contains('image')) {
+      imageCount += 1;
+    } else if (normalizedKind.contains('audio')) {
+      audioCount += 1;
+    } else if (normalizedKind.contains('text') ||
+        normalizedKind.contains('document') ||
+        normalizedKind.contains('doc') ||
+        normalizedKind.contains('pdf')) {
+      textCount += 1;
+    } else {
+      fileCount += 1;
+    }
+  }
+
+  return _AttachmentDisplaySummary(
+    imageCount: imageCount,
+    textCount: textCount,
+    audioCount: audioCount,
+    fileCount: fileCount,
+  );
+}
+
 String _collapsedPreviewText(ChatMessage message) {
-  final trimmedText = message.text.trim();
+  final displayContent = _displayContentForMessage(message);
+  final trimmedText = displayContent.text.trim();
   if (trimmedText.isNotEmpty) {
     return trimmedText.replaceAll(RegExp(r'\s+'), ' ');
+  }
+  if (displayContent.attachmentSummary != null) {
+    return displayContent.attachmentSummary!.title;
   }
   final latestActivity = message.jobLatestActivity?.trim();
   if (latestActivity != null && latestActivity.isNotEmpty) {

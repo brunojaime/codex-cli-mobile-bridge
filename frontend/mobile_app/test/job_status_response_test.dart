@@ -14,6 +14,7 @@ void main() {
       'agent_type': 'reviewer',
       'agent_label': 'Audit Bot',
       'response': 'Looks good.',
+      'run_id': 'run-1',
       'updated_at': DateTime.utc(2026, 1, 1).toIso8601String(),
     });
 
@@ -24,6 +25,7 @@ void main() {
     expect(snapshot.agentId, AgentId.reviewer);
     expect(snapshot.agentType, AgentType.reviewer);
     expect(snapshot.agentLabel, 'Audit Bot');
+    expect(snapshot.runId, 'run-1');
     expect(
         snapshot.resolvedNotificationChannel, ChatNotificationChannel.reviewer);
   });
@@ -81,6 +83,7 @@ void main() {
       'agent_id': 'summary',
       'agent_type': 'summary',
       'latest_activity': 'Done',
+      'run_id': 'run-3',
     });
 
     expect(snapshot.toJson(), <String, dynamic>{
@@ -91,6 +94,7 @@ void main() {
       'agent_id': 'summary',
       'agent_type': 'summary',
       'latest_activity': 'Done',
+      'run_id': 'run-3',
     });
   });
 }

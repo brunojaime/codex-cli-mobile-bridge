@@ -1,4 +1,5 @@
 import 'package:codex_mobile_frontend/src/models/agent_configuration.dart';
+import 'package:codex_mobile_frontend/src/models/agent_profile.dart';
 import 'package:codex_mobile_frontend/src/models/chat_message.dart';
 import 'package:codex_mobile_frontend/src/models/chat_session_summary.dart';
 import 'package:codex_mobile_frontend/src/models/conversation_product.dart';
@@ -1016,6 +1017,59 @@ void main() {
       findsOneWidget,
     );
   });
+
+  testWidgets('sidebar shows chats for workspace paths no longer discoverable',
+      (WidgetTester tester) async {
+    final session = _buildSession(
+      title: 'Recovered Chat',
+      workspacePath: '/missing/recovered-project',
+      workspaceName: 'Recovered Project',
+      messages: const <ChatMessage>[],
+    );
+    final apiClient = _ChatScreenOverflowApiClient(
+      session,
+      workspaces: const <Workspace>[
+        Workspace(name: 'Workspace A', path: '/workspace/a'),
+      ],
+    );
+    final controller = ChatController(
+      apiClient: apiClient,
+      notificationService: const NoopChatNotificationService(),
+    );
+    addTearDown(controller.dispose);
+    await controller.refreshAppState();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ChatScreen(
+          initialApiBaseUrl: 'http://localhost:8000',
+          notificationService: const NoopChatNotificationService(),
+          controllerOverride: controller,
+          enableServerBootstrap: false,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    tester.state<ScaffoldState>(find.byType(Scaffold)).openDrawer();
+    await tester.pumpAndSettle();
+
+    final drawer = find.byType(Drawer);
+    expect(
+      find.descendant(
+        of: drawer,
+        matching: find.text('recovered-project', skipOffstage: false),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: drawer,
+        matching: find.text('Recovered Chat', skipOffstage: false),
+      ),
+      findsOneWidget,
+    );
+  });
 }
 
 Finder _chatBodyScrollable() {
@@ -1083,6 +1137,7 @@ class _ChatScreenOverflowApiClient extends ApiClient {
   _ChatScreenOverflowApiClient(
     SessionDetail session, {
     List<SessionDetail> additionalSessions = const <SessionDetail>[],
+    this.workspaces = const <Workspace>[],
     this.onUpdateAgentConfiguration,
     this.lastMessagePreviewBySession = const <String, String?>{},
   })  : _session = session,
@@ -1096,6 +1151,7 @@ class _ChatScreenOverflowApiClient extends ApiClient {
     AgentConfiguration configuration,
   )? onUpdateAgentConfiguration;
   final Map<String, String?> lastMessagePreviewBySession;
+  final List<Workspace> workspaces;
 
   SessionDetail get session => _session;
 
@@ -1129,6 +1185,16 @@ class _ChatScreenOverflowApiClient extends ApiClient {
   @override
   Future<SessionDetail> getSession(String sessionId) async {
     return _sessions.firstWhere((session) => session.id == sessionId);
+  }
+
+  @override
+  Future<List<Workspace>> listWorkspaces() async {
+    return workspaces;
+  }
+
+  @override
+  Future<List<AgentProfile>> listAgentProfiles() async {
+    return const <AgentProfile>[];
   }
 
   @override

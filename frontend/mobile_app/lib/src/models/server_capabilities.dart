@@ -13,6 +13,7 @@ class ServerCapabilities {
     required this.imageMaxUploadBytes,
     required this.documentMaxUploadBytes,
     required this.documentTextCharLimit,
+    this.feedbackSourceWorkspaceAliases = const <String, String>{},
     this.speechOutputVoice,
     this.speechOutputResponseFormat,
   });
@@ -32,6 +33,7 @@ class ServerCapabilities {
   final int imageMaxUploadBytes;
   final int documentMaxUploadBytes;
   final int documentTextCharLimit;
+  final Map<String, String> feedbackSourceWorkspaceAliases;
 
   factory ServerCapabilities.fromJson(Map<String, dynamic> json) {
     return ServerCapabilities(
@@ -54,6 +56,16 @@ class ServerCapabilities {
       imageMaxUploadBytes: json['image_max_upload_bytes'] as int? ?? 0,
       documentMaxUploadBytes: json['document_max_upload_bytes'] as int? ?? 0,
       documentTextCharLimit: json['document_text_char_limit'] as int? ?? 0,
+      feedbackSourceWorkspaceAliases: _stringMapFromJson(
+        json['feedback_source_workspace_aliases'],
+      ),
     );
+  }
+
+  static Map<String, String> _stringMapFromJson(Object? value) {
+    if (value is! Map) return const <String, String>{};
+    return value.map(
+      (key, raw) => MapEntry(key.toString(), raw?.toString() ?? ''),
+    )..removeWhere((key, raw) => key.trim().isEmpty || raw.trim().isEmpty);
   }
 }

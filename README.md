@@ -79,6 +79,31 @@ uv run python codex-skills/mcp-app-builder/scripts/scaffold_mcp_app.py my-app \
 
 Current limitation: the mobile frontend supports MCP app discovery, preview, install, and run selection, but it does not yet host full inline `io.modelcontextprotocol/ui` iframe apps.
 
+## Developer Feedback Template
+
+The reusable Flutter template lives in
+`packages/codex_developer_feedback_template`. It captures marked screenshots,
+comments, and optional audio into a local in-app queue. The user can collect
+multiple feedback items, choose a Codex workflow preset exposed by the bridge,
+optionally request `releaseWhenComplete`, and send the whole batch to Codex as a
+single run. Apps configure only `sourceApp`, `sourceDisplayName`, and
+`bridgeUrl`; the bridge owns preset discovery, workspace mapping, queue storage,
+and run startup.
+
+## Repo Skills
+
+This repo also includes Codex skills under `codex-skills/`.
+
+- `codex-mobile-bridge-ubuntu-setup`: install, validate, run, and expose this repo on a fresh Ubuntu/Linux machine, including backend startup and Tailscale setup.
+- `mcp-app-builder`: scaffold repo-local MCP apps.
+- `codex-mobile-android-release`: publish or update the Android APK release.
+
+For a quick portability check on a second machine, run:
+
+```bash
+codex-skills/codex-mobile-bridge-ubuntu-setup/scripts/doctor.sh
+```
+
 ## Design Review
 
 - Figma board: https://www.figma.com/design/qmN9KrBZgqhvwOjGKyMjPG?node-id=3-2
@@ -135,6 +160,10 @@ Important variables:
 - `AUDIO_TRANSCRIPTION_COMMAND=/absolute/path/to/your/transcriber-wrapper {file}`
 - `AUDIO_TRANSCRIPTION_MODEL=whisper-1` for OpenAI-only transcription
 - `AUDIO_TRANSCRIPTION_LOCAL_MODEL=small`
+- `SPEECH_SYNTHESIS_BACKEND=disabled|openai|kokoro`
+- `SPEECH_SYNTHESIS_KOKORO_LANG_CODE=e`
+- `SPEECH_SYNTHESIS_KOKORO_VOICE=ef_dora`
+- `SPEECH_SYNTHESIS_RESPONSE_FORMAT=wav`
 - `OPENAI_API_KEY=...`
 
 Two values matter most for a fresh machine:
@@ -158,8 +187,10 @@ BACKEND_MODE=local
 SERVER_NAME=work-laptop
 CODEX_COMMAND=codex
 CODEX_USE_EXEC=true
+CODEX_STREAMING_MODE=auto
 CODEX_EXEC_ARGS=--skip-git-repo-check --color never --dangerously-bypass-approvals-and-sandbox
 CODEX_RESUME_ARGS=--skip-git-repo-check --dangerously-bypass-approvals-and-sandbox
+CODEX_REASONING_EFFORT=high
 CODEX_WORKDIR=.
 PROJECTS_ROOT=/home/alice/Documents/Projects
 CHAT_STORE_BACKEND=sqlite
@@ -178,6 +209,8 @@ OPENAI_API_KEY=
 
 The backend uses `codex exec` for new messages and `codex exec resume` for follow-up messages inside the same chat session.
 
+When `CODEX_STREAMING_MODE=auto`, the backend prefers `codex app-server` for normal text turns so it can forward real assistant text deltas over the existing job WebSocket. It falls back to the older `codex exec` path for cases the app-server transport does not handle yet, such as image attachments.
+
 `EXECUTION_TIMEOUT_SECONDS=0` disables the backend execution timeout entirely.
 
 Chat sessions, messages, and job history are stored in SQLite by default. Keep `CHAT_STORE_BACKEND=sqlite` and point `CHAT_STORE_PATH` at a persistent location if you deploy with containers or redeploy often.
@@ -191,6 +224,16 @@ Voice-note transcription options:
 - `AUDIO_TRANSCRIPTION_MODEL` only matters for `openai`. It does not affect local `faster-whisper`.
 - `AUDIO_TRANSCRIPTION_BACKEND=faster_whisper` forces the local model path and avoids any external API call.
 - `AUDIO_TRANSCRIPTION_BACKEND=disabled` turns the feature off explicitly.
+
+Audio reply synthesis options:
+
+- `SPEECH_SYNTHESIS_BACKEND=kokoro` enables local open-source reply audio with Kokoro-82M.
+- Install the optional speech dependencies with `uv pip install -e '.[speech]'`.
+- Install `espeak-ng` on the backend host; Kokoro uses it for grapheme-to-phoneme handling.
+- The default Kokoro settings target Spanish replies: `SPEECH_SYNTHESIS_KOKORO_LANG_CODE=e` and `SPEECH_SYNTHESIS_KOKORO_VOICE=ef_dora`.
+- For English replies, use `SPEECH_SYNTHESIS_KOKORO_LANG_CODE=a` and a voice such as `af_heart`.
+- Kokoro returns local audio as `wav` by default. The mobile app can then play audio replies at `1x`, `1.25x`, `1.5x`, `1.75x`, or `2x`.
+- `SPEECH_SYNTHESIS_BACKEND=openai` still works for hosted OpenAI TTS if `OPENAI_API_KEY` is configured.
 
 ## Git HTTPS Snap Fix
 
@@ -466,7 +509,7 @@ Ubuntu / Debian example:
 
 ```bash
 sudo apt update
-sudo apt install -y python3 python3-venv ffmpeg curl
+sudo apt install -y python3 python3-venv ffmpeg curl git
 curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
@@ -504,6 +547,14 @@ If `.venv` already exists, do not recreate it unless you want a fresh environmen
 source .venv/bin/activate
 uv pip install -e '.[dev]'
 ```
+
+After configuring `.env` and installing dependencies, run the repo-local setup doctor:
+
+```bash
+codex-skills/codex-mobile-bridge-ubuntu-setup/scripts/doctor.sh
+```
+
+Use `--require-backend` after starting the backend when you want the doctor to fail if `/health` is not reachable.
 
 ### 4. Start The Backend
 
@@ -686,6 +737,66 @@ Notes:
 - iOS simulator can typically use `http://localhost:8000`
 - Real devices should use a reachable backend URL, such as a LAN IP, Tailscale URL, or tunnel URL
 - Android and iOS will request microphone permission the first time you record a voice note
+
+## Developer Feedback Queue
+
+Client apps can send marked screenshots, comments, and optional audio directly
+into this bridge over Tailscale by wrapping the Flutter app with the reusable
+`codex_developer_feedback_template` package:
+
+```sh
+--dart-define=CODEX_FEEDBACK_TEMPLATE_ENABLED=true
+--dart-define=CODEX_FEEDBACK_SOURCE_APP=ambientando-calendar
+--dart-define=CODEX_FEEDBACK_SOURCE_NAME="Ambientando Calendar"
+--dart-define=CODEX_FEEDBACK_BRIDGE_URL=http://batata-default-string.tail0302c4.ts.net
+```
+
+The v0.2 template stores feedback locally in the app first. Each save adds one
+marked screenshot, comment, bounds payload, and optional audio clip to the local
+draft queue. From that queue the user selects a workflow preset and sends the
+items together. The template loads presets from:
+
+```http
+GET /feedback-workflow-presets
+```
+
+The backend returns Agent Profiles as selectable presets. The response includes
+`default_preset_id` and a `presets` list with ids, names, descriptions, reviewer
+metadata, and optional `agent_profile_id`. If preset loading is unavailable, the
+template falls back to `generator_only` and `generator_reviewer`; the backend
+accepts both as compatibility aliases.
+
+Batch send uses:
+
+```http
+POST /feedback-batches/start-session
+```
+
+The request body is `codex.developerFeedbackBatch` with `sourceApp`,
+`sourceDisplayName`, `workflowPresetId`, `releaseWhenComplete`, and an `items`
+array of generic `codex.developerFeedback` items. The bridge stores the items,
+starts one Codex run with every screenshot attached, and marks the stored items
+as `submitted`. When `releaseWhenComplete` is true, the generated prompt
+includes an explicit release instruction for the selected workflow.
+
+The backend stores pending feedback at `FEEDBACK_QUEUE_PATH`, screenshots in
+`FEEDBACK_IMAGE_DIR`, and optional audio in `FEEDBACK_AUDIO_DIR`. Use
+`FEEDBACK_SOURCE_WORKSPACE_ALIASES` when a stable source app id does not match
+the workspace name or path, for example:
+
+```sh
+FEEDBACK_SOURCE_WORKSPACE_ALIASES=ambientando-calendar:/home/me/ambientando-calendar,smart-nienfos:/home/me/smart_nienfos
+```
+
+The legacy bridge queue endpoints remain supported:
+
+- `POST /feedback-queue` stores one feedback item.
+- `GET /feedback-queue` lists stored items.
+- `POST /feedback-queue/{item_id}/start-session` starts one run from one queued item.
+
+In the Codex mobile app, `Feedback queue` still supports reviewing stored
+feedback, staging selected items into a workspace chat, or starting a run from a
+single legacy queue item.
 
 ## Multi-Server Support
 

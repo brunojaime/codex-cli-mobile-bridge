@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 
 from backend.app.domain.entities.agent_configuration import (
     AgentConfiguration,
@@ -58,6 +58,151 @@ from backend.app.domain.repositories.chat_repository import PersistenceDiagnosti
 
 class MessageRequest(BaseModel):
     message: str = Field(..., min_length=1, max_length=10000)
+    session_id: str | None = None
+    workspace_path: str | None = None
+    codex_options: "CodexRunOptionsRequest | None" = None
+
+
+class FeedbackPointRequest(BaseModel):
+    x: float
+    y: float
+
+
+class FeedbackQueueItemRequest(BaseModel):
+    id: str | None = Field(default=None, max_length=160)
+    sourceApp: str = Field(
+        default="unknown",
+        max_length=120,
+        validation_alias=AliasChoices("sourceApp", "source_app"),
+    )
+    sourceDisplayName: str | None = Field(
+        default=None,
+        max_length=160,
+        validation_alias=AliasChoices("sourceDisplayName", "source_display_name"),
+    )
+    comment: str = Field(..., min_length=1, max_length=10000)
+    createdAt: str | None = None
+    screenshotMimeType: str = Field(default="image/png", max_length=80)
+    screenshotPngBase64: str | None = None
+    selectionPoints: list[FeedbackPointRequest] = Field(default_factory=list)
+    selectionBounds: dict[str, float] = Field(default_factory=dict)
+    audioMimeType: str | None = Field(default=None, max_length=80)
+    audioDurationMs: int | None = None
+    audioByteLength: int | None = None
+    audioBase64: str | None = None
+
+
+class FeedbackQueueItemResponse(BaseModel):
+    id: str
+    source_app: str
+    source_display_name: str | None = None
+    comment: str
+    created_at: str
+    status: str
+    screenshot_mime_type: str
+    has_screenshot: bool
+    screenshot_png_base64: str | None = None
+    selection_points: list[dict[str, float]] = Field(default_factory=list)
+    selection_bounds: dict[str, float] = Field(default_factory=dict)
+    audio_mime_type: str | None = None
+    audio_duration_ms: int | None = None
+    audio_byte_length: int | None = None
+    has_audio: bool = False
+    audio_base64: str | None = None
+
+
+class FeedbackQueueStartRequest(BaseModel):
+    message: str | None = Field(default=None, max_length=10000)
+    session_id: str | None = None
+    workspace_path: str | None = None
+    target_mode: Literal["generator_only", "generator_reviewer"] = Field(
+        default="generator_only",
+        validation_alias=AliasChoices("target_mode", "targetMode"),
+    )
+    codex_options: "CodexRunOptionsRequest | None" = None
+
+
+class FeedbackWorkflowPresetResponse(BaseModel):
+    id: str
+    name: str
+    description: str
+    target_mode: str = "agent_profile"
+    agent_profile_id: str | None = None
+    includes_reviewer: bool = False
+    default: bool = False
+
+
+class FeedbackWorkflowPresetsResponse(BaseModel):
+    default_preset_id: str
+    presets: list[FeedbackWorkflowPresetResponse]
+
+
+class AppUpdateRegistryItemResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    source_app: str = Field(alias="sourceApp")
+    display_name: str = Field(alias="displayName")
+    platform: str = "android"
+    enabled: bool
+    required_minimum_build: int | None = Field(
+        default=None,
+        alias="requiredMinimumBuild",
+    )
+
+
+class AppUpdateRegistryResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    kind: str = "codex.appUpdateRegistry"
+    version: int = 1
+    apps: list[AppUpdateRegistryItemResponse]
+
+
+class AppUpdateResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    kind: str = "codex.appUpdate"
+    version: int = 1
+    source_app: str = Field(alias="sourceApp")
+    display_name: str | None = Field(default=None, alias="displayName")
+    platform: str
+    current_version: str | None = Field(default=None, alias="currentVersion")
+    current_build: int | None = Field(default=None, alias="currentBuild")
+    latest_version: str | None = Field(default=None, alias="latestVersion")
+    latest_build: int | None = Field(default=None, alias="latestBuild")
+    release_tag: str | None = Field(default=None, alias="releaseTag")
+    release_url: str | None = Field(default=None, alias="releaseUrl")
+    apk_url: str | None = Field(default=None, alias="apkUrl")
+    apk_asset_name: str | None = Field(default=None, alias="apkAssetName")
+    sha256: str | None = None
+    size_bytes: int | None = Field(default=None, alias="sizeBytes")
+    release_notes: str | None = Field(default=None, alias="releaseNotes")
+    required: bool
+    available: bool
+
+
+class FeedbackBatchStartRequest(BaseModel):
+    sourceApp: str = Field(
+        default="unknown",
+        max_length=120,
+        validation_alias=AliasChoices("sourceApp", "source_app"),
+    )
+    sourceDisplayName: str | None = Field(
+        default=None,
+        max_length=160,
+        validation_alias=AliasChoices("sourceDisplayName", "source_display_name"),
+    )
+    items: list[FeedbackQueueItemRequest] = Field(default_factory=list)
+    workflow_preset_id: str = Field(
+        default="generator_only",
+        max_length=120,
+        validation_alias=AliasChoices("workflow_preset_id", "workflowPresetId"),
+    )
+    release_when_complete: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("release_when_complete", "releaseWhenComplete"),
+    )
+    message: str | None = Field(default=None, max_length=10000)
     session_id: str | None = None
     workspace_path: str | None = None
     codex_options: "CodexRunOptionsRequest | None" = None
@@ -647,6 +792,7 @@ class ChatMessageResponse(BaseModel):
     completed_at: datetime | None = None
     summary_turn_start: int | None = None
     summary_turn_end: int | None = None
+    attachments: list["ChatMessageAttachmentResponse"] = Field(default_factory=list)
 
     @classmethod
     def from_domain(
@@ -654,6 +800,7 @@ class ChatMessageResponse(BaseModel):
         message: ChatMessage,
         *,
         job: Job | None = None,
+        expose_attachments: bool = False,
     ) -> "ChatMessageResponse":
         return cls(
             **_summary_turn_range_payload(message),
@@ -682,7 +829,33 @@ class ChatMessageResponse(BaseModel):
             job_elapsed_seconds=job.elapsed_seconds if job else None,
             provider_session_id=job.provider_session_id if job else None,
             completed_at=job.completed_at if job else None,
+            attachments=ChatMessageAttachmentResponse.from_job(job)
+            if expose_attachments
+            else [],
         )
+
+
+class ChatMessageAttachmentResponse(BaseModel):
+    id: str
+    kind: Literal["image"]
+    job_id: str
+    index: int
+    download_url: str
+
+    @classmethod
+    def from_job(cls, job: Job | None) -> list["ChatMessageAttachmentResponse"]:
+        if job is None or not job.image_paths:
+            return []
+        return [
+            cls(
+                id=f"{job.id}:image:{index}",
+                kind="image",
+                job_id=job.id,
+                index=index,
+                download_url=f"/jobs/{job.id}/attachments/{index}",
+            )
+            for index, _path in enumerate(job.image_paths)
+        ]
 
 
 class TurnSummarySourceMessageResponse(BaseModel):
@@ -928,6 +1101,11 @@ class SessionDetailResponse(BaseModel):
             run_configurations_by_id=run_configurations_by_id,
         )
         messages_by_id = {message.id: message for message in messages}
+        jobs_by_user_message_id = {
+            job.user_message_id: job
+            for job in (jobs_by_id or {}).values()
+            if job.user_message_id is not None
+        }
         return cls(
             id=session.id,
             title=session.title,
@@ -972,7 +1150,12 @@ class SessionDetailResponse(BaseModel):
             messages=[
                 ChatMessageResponse.from_domain(
                     message,
-                    job=jobs_by_id.get(message.job_id) if jobs_by_id and message.job_id else None,
+                    job=(
+                        jobs_by_id.get(message.job_id)
+                        if jobs_by_id and message.job_id
+                        else jobs_by_user_message_id.get(message.id)
+                    ),
+                    expose_attachments=message.id in jobs_by_user_message_id,
                 )
                 for message in messages
             ],
@@ -1163,6 +1346,7 @@ class ServerCapabilitiesResponse(BaseModel):
     supports_job_cancellation: bool
     supports_job_retry: bool
     supports_push_job_stream: bool
+    supports_feedback_batches: bool = True
     speech_output_backend: str
     speech_output_voice: str | None = None
     speech_output_response_format: str | None = None
@@ -1170,6 +1354,7 @@ class ServerCapabilitiesResponse(BaseModel):
     image_max_upload_bytes: int
     document_max_upload_bytes: int
     document_text_char_limit: int
+    feedback_source_workspace_aliases: dict[str, str] = Field(default_factory=dict)
 
 
 class SpeechRequest(BaseModel):

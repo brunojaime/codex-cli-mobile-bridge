@@ -16,6 +16,7 @@ import '../models/agent_configuration.dart';
 import '../models/agent_profile.dart';
 import '../models/codex_tooling.dart';
 import '../models/server_capabilities.dart';
+import '../models/feedback_queue_item.dart';
 import '../models/server_health.dart';
 import '../models/server_profile.dart';
 import '../models/session_detail.dart';
@@ -41,6 +42,13 @@ const String _defaultAutoReviewerPrompt =
     'improves the implementation with more code, tighter validation, missing '
     'tests, edge cases, cleanup, or follow-up work. Reply only with that next '
     'prompt.';
+const List<double> _audioReplyPlaybackSpeeds = <double>[
+  1.0,
+  1.25,
+  1.5,
+  1.75,
+  2.0,
+];
 const Key kChatScreenBodyScrollViewKey =
     ValueKey<String>('chat-screen-body-scroll-view');
 
@@ -56,6 +64,7 @@ enum _AppBarOverflowAction {
 
 enum _PinnedWorkspaceAction {
   newChat,
+  feedbackQueue,
   remove,
 }
 
@@ -76,6 +85,10 @@ class ChatScreen extends StatefulWidget {
     this.initialSidebarWorkspaces = const <Workspace>[],
     this.initialCodexTooling,
     this.codexMcpAppInstallerOverride,
+    this.feedbackQueueCountLoaderOverride,
+    this.feedbackQueueListLoaderOverride,
+    this.feedbackSourceWorkspaceAliases = const <String, String>{},
+    this.onActiveServerBaseUrlChanged,
   });
 
   final String initialApiBaseUrl;
@@ -87,7 +100,13 @@ class ChatScreen extends StatefulWidget {
   final CodexToolingSnapshot? initialCodexTooling;
   final Future<CodexToolingSnapshot?> Function(CodexMcpApp app)?
       codexMcpAppInstallerOverride;
-
+  final Future<int> Function(String baseUrl)? feedbackQueueCountLoaderOverride;
+  final Future<List<FeedbackQueueItem>> Function(
+    String baseUrl, {
+    required bool includeImages,
+  })? feedbackQueueListLoaderOverride;
+  final Map<String, String> feedbackSourceWorkspaceAliases;
+  final ValueChanged<String>? onActiveServerBaseUrlChanged;
   @override
   State<ChatScreen> createState() => _ChatScreenState();
 }
@@ -111,6 +130,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   bool _showArchivedChatsInSidebar = false;
   bool _stickToBottom = true;
   bool _audioRepliesEnabled = false;
+  double _audioReplyPlaybackSpeed = 1.0;
   bool _isLoadingCodexTooling = false;
   bool _isOpeningWorkspacePicker = false;
   String? _lastObservedSessionId;
@@ -120,6 +140,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   bool _isUpdatingFilteredMessagesView = false;
   String? _filteredMessagesViewErrorText;
   _ChatBodyView _chatBodyView = _ChatBodyView.conversation;
+  List<FeedbackQueueItem> _feedbackQueuePreviewItems = <FeedbackQueueItem>[];
+  bool _isRefreshingFeedbackQueueCount = false;
   static const double _compactAppBarBreakpoint = 640;
 
   @override
@@ -146,6 +168,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         _initializeServerProfiles();
       });
     }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(_refreshFeedbackQueueCount());
+    });
   }
 
   @override
@@ -165,6 +190,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       _chatController.handleAppResumed();
+      unawaited(_refreshFeedbackQueueCount());
     }
   }
 
@@ -343,25 +369,20 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                     ),
                   ),
                   Expanded(
-                    child: _sidebarWorkspaces.isEmpty
-                        ? const Center(
+                    child: sessionGroups.isEmpty
+                        ? Center(
                             child: Text(
-                              'No projects pinned yet',
-                              style: TextStyle(color: Color(0xFF8B97B5)),
-                            ),
-                          )
-                        : sessionGroups.isEmpty
-                            ? Center(
-                                child: Text(
-                                  _showArchivedChatsInSidebar
+                              _sidebarWorkspaces.isEmpty
+                                  ? 'No projects pinned yet'
+                                  : _showArchivedChatsInSidebar
                                       ? 'No archived chats yet'
                                       : 'No chats yet',
-                                  style: const TextStyle(
-                                    color: Color(0xFF8B97B5),
-                                  ),
-                                ),
-                              )
-                            : ListView(children: sessionGroups),
+                              style: const TextStyle(
+                                color: Color(0xFF8B97B5),
+                              ),
+                            ),
+                          )
+                        : ListView(children: sessionGroups),
                   ),
                 ],
               ),
@@ -379,436 +400,462 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                           children: <Widget>[
                             NotificationListener<ScrollNotification>(
                               onNotification: _handleScrollNotification,
-                              child: CustomScrollView(
-                                key: kChatScreenBodyScrollViewKey,
-                                controller: _scrollController,
-                                slivers: <Widget>[
-                                  if (_chatController.errorText != null)
-                                    SliverToBoxAdapter(
-                                      child: Container(
-                                        width: double.infinity,
-                                        margin: const EdgeInsets.fromLTRB(
-                                          16,
-                                          8,
-                                          16,
-                                          0,
-                                        ),
-                                        padding: const EdgeInsets.all(12),
-                                        decoration: BoxDecoration(
-                                          color: const Color(0xFF3B1521),
-                                          borderRadius:
-                                              BorderRadius.circular(14),
-                                        ),
-                                        child: Text(
-                                          _chatController.errorText!,
-                                          style: const TextStyle(
-                                            color: Colors.white,
+                              child: RefreshIndicator(
+                                onRefresh: () =>
+                                    _chatController.refreshAppState(
+                                  failurePrefix:
+                                      'Failed to refresh chats from the backend.',
+                                ),
+                                child: CustomScrollView(
+                                  key: kChatScreenBodyScrollViewKey,
+                                  controller: _scrollController,
+                                  physics:
+                                      const AlwaysScrollableScrollPhysics(),
+                                  slivers: <Widget>[
+                                    if (_chatController.errorText != null)
+                                      SliverToBoxAdapter(
+                                        child: Container(
+                                          width: double.infinity,
+                                          margin: const EdgeInsets.fromLTRB(
+                                            16,
+                                            8,
+                                            16,
+                                            0,
+                                          ),
+                                          padding: const EdgeInsets.all(12),
+                                          decoration: BoxDecoration(
+                                            color: const Color(0xFF3B1521),
+                                            borderRadius:
+                                                BorderRadius.circular(14),
+                                          ),
+                                          child: Text(
+                                            _chatController.errorText!,
+                                            style: const TextStyle(
+                                              color: Colors.white,
+                                            ),
                                           ),
                                         ),
                                       ),
-                                    ),
-                                  if (_serverErrorText != null)
-                                    SliverToBoxAdapter(
-                                      child: Container(
-                                        width: double.infinity,
-                                        margin: const EdgeInsets.fromLTRB(
-                                          16,
-                                          8,
-                                          16,
-                                          0,
-                                        ),
-                                        padding: const EdgeInsets.all(12),
-                                        decoration: BoxDecoration(
-                                          color: const Color(0xFF362411),
-                                          borderRadius:
-                                              BorderRadius.circular(14),
-                                        ),
-                                        child: Text(
-                                          _serverErrorText!,
-                                          style: const TextStyle(
-                                            color: Colors.white,
+                                    if (_serverErrorText != null)
+                                      SliverToBoxAdapter(
+                                        child: Container(
+                                          width: double.infinity,
+                                          margin: const EdgeInsets.fromLTRB(
+                                            16,
+                                            8,
+                                            16,
+                                            0,
+                                          ),
+                                          padding: const EdgeInsets.all(12),
+                                          decoration: BoxDecoration(
+                                            color: const Color(0xFF362411),
+                                            borderRadius:
+                                                BorderRadius.circular(14),
+                                          ),
+                                          child: Text(
+                                            _serverErrorText!,
+                                            style: const TextStyle(
+                                              color: Colors.white,
+                                            ),
                                           ),
                                         ),
                                       ),
-                                    ),
-                                  if (currentSession != null)
-                                    SliverToBoxAdapter(
-                                      child: ReviewerStatusBanner(
-                                        session: currentSession,
-                                      ),
-                                    ),
-                                  if (currentSession != null)
-                                    SliverPadding(
-                                      padding: const EdgeInsets.fromLTRB(
-                                        16,
-                                        8,
-                                        16,
-                                        0,
-                                      ),
-                                      sliver: SliverToBoxAdapter(
-                                        child: CurrentRunTimelineCard(
+                                    if (currentSession != null)
+                                      SliverToBoxAdapter(
+                                        child: ReviewerStatusBanner(
                                           session: currentSession,
                                         ),
                                       ),
-                                    ),
-                                  if (currentSession != null &&
-                                      (summaryMessageCount > 0 ||
-                                          turnSummaryCount > 0 ||
-                                          currentSession.turnSummariesEnabled ||
-                                          _chatBodyView !=
-                                              _ChatBodyView.conversation))
-                                    SliverToBoxAdapter(
-                                      child: Padding(
+                                    if (currentSession != null)
+                                      SliverPadding(
                                         padding: const EdgeInsets.fromLTRB(
                                           16,
-                                          10,
+                                          8,
                                           16,
                                           0,
                                         ),
-                                        child: Wrap(
-                                          spacing: 10,
-                                          children: <Widget>[
-                                            ChoiceChip(
-                                              label: const Text('Conversation'),
-                                              selected: _chatBodyView ==
-                                                  _ChatBodyView.conversation,
-                                              onSelected: (selected) {
-                                                if (!selected) {
-                                                  return;
-                                                }
-                                                _setChatBodyView(
-                                                  _ChatBodyView.conversation,
-                                                );
-                                              },
-                                              selectedColor:
-                                                  const Color(0xFF55D6BE),
-                                              backgroundColor:
-                                                  const Color(0xFF16213C),
-                                              labelStyle: TextStyle(
-                                                color: _chatBodyView ==
-                                                        _ChatBodyView
-                                                            .conversation
-                                                    ? const Color(0xFF07131D)
-                                                    : const Color(0xFFDCE5FF),
-                                                fontWeight: FontWeight.w700,
-                                              ),
-                                              side: const BorderSide(
-                                                color: Color(0xFF23304F),
-                                              ),
-                                            ),
-                                            ChoiceChip(
-                                              label: Text(
-                                                summaryMessageCount == 1
-                                                    ? 'Agent summary'
-                                                    : 'Agent summaries ($summaryMessageCount)',
-                                              ),
-                                              selected: isShowingAgentSummaries,
-                                              onSelected:
-                                                  summaryMessageCount <= 0
-                                                      ? null
-                                                      : (selected) {
-                                                          if (!selected) {
-                                                            return;
-                                                          }
-                                                          _setChatBodyView(
-                                                            _ChatBodyView
-                                                                .agentSummaries,
-                                                          );
-                                                        },
-                                              selectedColor:
-                                                  const Color(0xFF8CA8FF),
-                                              backgroundColor:
-                                                  const Color(0xFF16213C),
-                                              labelStyle: TextStyle(
-                                                color: isShowingAgentSummaries
-                                                    ? const Color(0xFF07131D)
-                                                    : const Color(0xFFDCE5FF),
-                                                fontWeight: FontWeight.w700,
-                                              ),
-                                              side: const BorderSide(
-                                                color: Color(0xFF23304F),
-                                              ),
-                                            ),
-                                            ChoiceChip(
-                                              label: Text(
-                                                turnSummaryCount == 1
-                                                    ? 'Turn summary'
-                                                    : 'Turn summaries ($turnSummaryCount)',
-                                              ),
-                                              selected: isShowingTurnSummaries,
-                                              onSelected: (turnSummaryCount <=
-                                                          0 &&
-                                                      !currentSession
-                                                          .turnSummariesEnabled)
-                                                  ? null
-                                                  : (selected) {
-                                                      if (!selected) {
-                                                        return;
-                                                      }
-                                                      _setChatBodyView(
-                                                        _ChatBodyView
-                                                            .turnSummaries,
-                                                      );
-                                                    },
-                                              selectedColor:
-                                                  const Color(0xFFFFC857),
-                                              backgroundColor:
-                                                  const Color(0xFF16213C),
-                                              labelStyle: TextStyle(
-                                                color: isShowingTurnSummaries
-                                                    ? const Color(0xFF2A1600)
-                                                    : const Color(0xFFDCE5FF),
-                                                fontWeight: FontWeight.w700,
-                                              ),
-                                              side: const BorderSide(
-                                                color: Color(0xFF23304F),
-                                              ),
-                                            ),
-                                          ],
+                                        sliver: SliverToBoxAdapter(
+                                          child: CurrentRunTimelineCard(
+                                            session: currentSession,
+                                          ),
                                         ),
                                       ),
-                                    ),
-                                  if (isShowingAgentSummaries &&
-                                      currentSession != null)
-                                    SliverToBoxAdapter(
-                                      child: Padding(
-                                        padding: const EdgeInsets.fromLTRB(
-                                          16,
-                                          10,
-                                          16,
-                                          0,
-                                        ),
-                                        child: _SummaryViewBanner(
-                                          summaryCount: summaryMessageCount,
-                                          onShowFullChat: () {
-                                            _setChatBodyView(
-                                              _ChatBodyView.conversation,
-                                            );
-                                          },
-                                        ),
-                                      ),
-                                    ),
-                                  if (isShowingTurnSummaries &&
-                                      currentSession != null)
-                                    SliverToBoxAdapter(
-                                      child: Padding(
-                                        padding: const EdgeInsets.fromLTRB(
-                                          16,
-                                          10,
-                                          16,
-                                          0,
-                                        ),
-                                        child: _TurnSummaryBanner(
-                                          summaryCount: turnSummaryCount,
-                                          enabled: currentSession
-                                              .turnSummariesEnabled,
-                                          onShowFullChat: () {
-                                            _setChatBodyView(
-                                              _ChatBodyView.conversation,
-                                            );
-                                          },
-                                        ),
-                                      ),
-                                    ),
-                                  if (isShowingTurnSummaries &&
-                                      currentSession != null &&
-                                      turnSummaryCount > 0)
-                                    SliverPadding(
-                                      padding: const EdgeInsets.fromLTRB(
-                                        16,
-                                        12,
-                                        16,
-                                        16,
-                                      ),
-                                      sliver: SliverList(
-                                        delegate: SliverChildBuilderDelegate(
-                                          (context, index) {
-                                            final summary = currentSession
-                                                .turnSummaries[index];
-                                            return Padding(
-                                              padding: EdgeInsets.only(
-                                                bottom: index ==
-                                                        currentSession
-                                                                .turnSummaries
-                                                                .length -
-                                                            1
-                                                    ? 0
-                                                    : 12,
-                                              ),
-                                              child: _TurnSummaryCard(
-                                                summary: summary,
-                                              ),
-                                            );
-                                          },
-                                          childCount: currentSession
-                                              .turnSummaries.length,
-                                        ),
-                                      ),
-                                    )
-                                  else if (messages.isEmpty)
-                                    SliverFillRemaining(
-                                      hasScrollBody: false,
-                                      child: isShowingAgentSummaries &&
-                                              currentSession != null
-                                          ? _SummaryMessagesPlaceholder(
-                                              onShowFullChat: () {
-                                                _setChatBodyView(
-                                                  _ChatBodyView.conversation,
-                                                );
-                                              },
-                                            )
-                                          : isShowingTurnSummaries &&
-                                                  currentSession != null
-                                              ? _TurnSummariesPlaceholder(
-                                                  enabled: currentSession
-                                                      .turnSummariesEnabled,
-                                                  onShowFullChat: () {
-                                                    _setChatBodyView(
-                                                      _ChatBodyView
-                                                          .conversation,
-                                                    );
-                                                  },
-                                                )
-                                              : showFilteredMessagesPlaceholder
-                                                  ? _FilteredMessagesPlaceholder(
-                                                      displayMode: currentSession
-                                                          .agentConfiguration
-                                                          .displayMode,
-                                                      isUpdating:
-                                                          _isUpdatingFilteredMessagesView,
-                                                      errorText:
-                                                          _filteredMessagesViewErrorText,
-                                                      onShowAllMessages:
-                                                          _handleShowAllMessages,
-                                                    )
-                                                  : _EmptyState(
-                                                      onCreateChat:
-                                                          _openWorkspacePicker,
-                                                    ),
-                                    )
-                                  else
-                                    SliverPadding(
-                                      padding: const EdgeInsets.fromLTRB(
-                                        16,
-                                        12,
-                                        16,
-                                        16,
-                                      ),
-                                      sliver: SliverList(
-                                        delegate: SliverChildBuilderDelegate(
-                                          (context, index) {
-                                            final entry =
-                                                timelineEntries[index];
-                                            if (entry.separatorDate != null) {
-                                              final separatorDate =
-                                                  entry.separatorDate!;
-                                              return _ChatDaySeparator(
-                                                key: ValueKey<String>(
-                                                  'chat-day-separator-${separatorDate.year}-${separatorDate.month}-${separatorDate.day}',
-                                                ),
+                                    if (currentSession != null &&
+                                        (summaryMessageCount > 0 ||
+                                            turnSummaryCount > 0 ||
+                                            currentSession
+                                                .turnSummariesEnabled ||
+                                            _chatBodyView !=
+                                                _ChatBodyView.conversation))
+                                      SliverToBoxAdapter(
+                                        child: Padding(
+                                          padding: const EdgeInsets.fromLTRB(
+                                            16,
+                                            10,
+                                            16,
+                                            0,
+                                          ),
+                                          child: Wrap(
+                                            spacing: 10,
+                                            children: <Widget>[
+                                              ChoiceChip(
                                                 label:
-                                                    formatChatDaySeparatorLabel(
-                                                  context,
-                                                  separatorDate,
+                                                    const Text('Conversation'),
+                                                selected: _chatBodyView ==
+                                                    _ChatBodyView.conversation,
+                                                onSelected: (selected) {
+                                                  if (!selected) {
+                                                    return;
+                                                  }
+                                                  _setChatBodyView(
+                                                    _ChatBodyView.conversation,
+                                                  );
+                                                },
+                                                selectedColor:
+                                                    const Color(0xFF55D6BE),
+                                                backgroundColor:
+                                                    const Color(0xFF16213C),
+                                                labelStyle: TextStyle(
+                                                  color: _chatBodyView ==
+                                                          _ChatBodyView
+                                                              .conversation
+                                                      ? const Color(0xFF07131D)
+                                                      : const Color(0xFFDCE5FF),
+                                                  fontWeight: FontWeight.w700,
+                                                ),
+                                                side: const BorderSide(
+                                                  color: Color(0xFF23304F),
+                                                ),
+                                              ),
+                                              Tooltip(
+                                                message: 'Show summaries',
+                                                child: ChoiceChip(
+                                                  label: Text(
+                                                    summaryMessageCount == 1
+                                                        ? 'Agent summary'
+                                                        : 'Agent summaries ($summaryMessageCount)',
+                                                  ),
+                                                  selected:
+                                                      isShowingAgentSummaries,
+                                                  onSelected:
+                                                      summaryMessageCount <= 0
+                                                          ? null
+                                                          : (selected) {
+                                                              if (!selected) {
+                                                                return;
+                                                              }
+                                                              _setChatBodyView(
+                                                                _ChatBodyView
+                                                                    .agentSummaries,
+                                                              );
+                                                            },
+                                                  selectedColor:
+                                                      const Color(0xFF8CA8FF),
+                                                  backgroundColor:
+                                                      const Color(0xFF16213C),
+                                                  labelStyle: TextStyle(
+                                                    color:
+                                                        isShowingAgentSummaries
+                                                            ? const Color(
+                                                                0xFF07131D)
+                                                            : const Color(
+                                                                0xFFDCE5FF),
+                                                    fontWeight: FontWeight.w700,
+                                                  ),
+                                                  side: const BorderSide(
+                                                    color: Color(0xFF23304F),
+                                                  ),
+                                                ),
+                                              ),
+                                              ChoiceChip(
+                                                label: Text(
+                                                  turnSummaryCount == 1
+                                                      ? 'Turn summary'
+                                                      : 'Turn summaries ($turnSummaryCount)',
+                                                ),
+                                                selected:
+                                                    isShowingTurnSummaries,
+                                                onSelected: (turnSummaryCount <=
+                                                            0 &&
+                                                        !currentSession
+                                                            .turnSummariesEnabled)
+                                                    ? null
+                                                    : (selected) {
+                                                        if (!selected) {
+                                                          return;
+                                                        }
+                                                        _setChatBodyView(
+                                                          _ChatBodyView
+                                                              .turnSummaries,
+                                                        );
+                                                      },
+                                                selectedColor:
+                                                    const Color(0xFFFFC857),
+                                                backgroundColor:
+                                                    const Color(0xFF16213C),
+                                                labelStyle: TextStyle(
+                                                  color: isShowingTurnSummaries
+                                                      ? const Color(0xFF2A1600)
+                                                      : const Color(0xFFDCE5FF),
+                                                  fontWeight: FontWeight.w700,
+                                                ),
+                                                side: const BorderSide(
+                                                  color: Color(0xFF23304F),
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      ),
+                                    if (isShowingAgentSummaries &&
+                                        currentSession != null)
+                                      SliverToBoxAdapter(
+                                        child: Padding(
+                                          padding: const EdgeInsets.fromLTRB(
+                                            16,
+                                            10,
+                                            16,
+                                            0,
+                                          ),
+                                          child: _SummaryViewBanner(
+                                            summaryCount: summaryMessageCount,
+                                            onShowFullChat: () {
+                                              _setChatBodyView(
+                                                _ChatBodyView.conversation,
+                                              );
+                                            },
+                                          ),
+                                        ),
+                                      ),
+                                    if (isShowingTurnSummaries &&
+                                        currentSession != null)
+                                      SliverToBoxAdapter(
+                                        child: Padding(
+                                          padding: const EdgeInsets.fromLTRB(
+                                            16,
+                                            10,
+                                            16,
+                                            0,
+                                          ),
+                                          child: _TurnSummaryBanner(
+                                            summaryCount: turnSummaryCount,
+                                            enabled: currentSession
+                                                .turnSummariesEnabled,
+                                            onShowFullChat: () {
+                                              _setChatBodyView(
+                                                _ChatBodyView.conversation,
+                                              );
+                                            },
+                                          ),
+                                        ),
+                                      ),
+                                    if (isShowingTurnSummaries &&
+                                        currentSession != null &&
+                                        turnSummaryCount > 0)
+                                      SliverPadding(
+                                        padding: const EdgeInsets.fromLTRB(
+                                          16,
+                                          12,
+                                          16,
+                                          16,
+                                        ),
+                                        sliver: SliverList(
+                                          delegate: SliverChildBuilderDelegate(
+                                            (context, index) {
+                                              final summary = currentSession
+                                                  .turnSummaries[index];
+                                              return Padding(
+                                                padding: EdgeInsets.only(
+                                                  bottom: index ==
+                                                          currentSession
+                                                                  .turnSummaries
+                                                                  .length -
+                                                              1
+                                                      ? 0
+                                                      : 12,
+                                                ),
+                                                child: _TurnSummaryCard(
+                                                  summary: summary,
                                                 ),
                                               );
-                                            }
-                                            final message = entry.message!;
-                                            final nextEntry = index + 1 <
-                                                    timelineEntries.length
-                                                ? timelineEntries[index + 1]
-                                                : null;
-                                            final nextMessage =
-                                                nextEntry?.message;
-                                            final extraBottomSpacing =
-                                                nextMessage != null &&
-                                                        nextMessage.isUser !=
-                                                            message.isUser
-                                                    ? 10.0
-                                                    : 0.0;
-                                            return Align(
-                                              alignment: message.isUser
-                                                  ? Alignment.centerRight
-                                                  : Alignment.centerLeft,
-                                              child: Padding(
-                                                padding: EdgeInsets.only(
-                                                  bottom: extraBottomSpacing,
-                                                ),
-                                                child: ChatBubble(
+                                            },
+                                            childCount: currentSession
+                                                .turnSummaries.length,
+                                          ),
+                                        ),
+                                      )
+                                    else if (messages.isEmpty)
+                                      SliverFillRemaining(
+                                        hasScrollBody: false,
+                                        child: isShowingAgentSummaries &&
+                                                currentSession != null
+                                            ? _SummaryMessagesPlaceholder(
+                                                onShowFullChat: () {
+                                                  _setChatBodyView(
+                                                    _ChatBodyView.conversation,
+                                                  );
+                                                },
+                                              )
+                                            : isShowingTurnSummaries &&
+                                                    currentSession != null
+                                                ? _TurnSummariesPlaceholder(
+                                                    enabled: currentSession
+                                                        .turnSummariesEnabled,
+                                                    onShowFullChat: () {
+                                                      _setChatBodyView(
+                                                        _ChatBodyView
+                                                            .conversation,
+                                                      );
+                                                    },
+                                                  )
+                                                : showFilteredMessagesPlaceholder
+                                                    ? _FilteredMessagesPlaceholder(
+                                                        displayMode: currentSession
+                                                            .agentConfiguration
+                                                            .displayMode,
+                                                        isUpdating:
+                                                            _isUpdatingFilteredMessagesView,
+                                                        errorText:
+                                                            _filteredMessagesViewErrorText,
+                                                        onShowAllMessages:
+                                                            _handleShowAllMessages,
+                                                      )
+                                                    : _EmptyState(
+                                                        onCreateChat:
+                                                            _openWorkspacePicker,
+                                                      ),
+                                      )
+                                    else
+                                      SliverPadding(
+                                        padding: const EdgeInsets.fromLTRB(
+                                          16,
+                                          12,
+                                          16,
+                                          16,
+                                        ),
+                                        sliver: SliverList(
+                                          delegate: SliverChildBuilderDelegate(
+                                            (context, index) {
+                                              final entry =
+                                                  timelineEntries[index];
+                                              if (entry.separatorDate != null) {
+                                                final separatorDate =
+                                                    entry.separatorDate!;
+                                                return _ChatDaySeparator(
                                                   key: ValueKey<String>(
-                                                    'chat-bubble-${message.id}',
+                                                    'chat-day-separator-${separatorDate.year}-${separatorDate.month}-${separatorDate.day}',
                                                   ),
-                                                  message: message,
-                                                  isCollapsed:
-                                                      _isMessageCollapsed(
-                                                    message,
+                                                  label:
+                                                      formatChatDaySeparatorLabel(
+                                                    context,
+                                                    separatorDate,
                                                   ),
-                                                  onToggleCollapsed: () =>
-                                                      _toggleMessageCollapsed(
-                                                    message,
+                                                );
+                                              }
+                                              final message = entry.message!;
+                                              final nextEntry = index + 1 <
+                                                      timelineEntries.length
+                                                  ? timelineEntries[index + 1]
+                                                  : null;
+                                              final nextMessage =
+                                                  nextEntry?.message;
+                                              final extraBottomSpacing =
+                                                  nextMessage != null &&
+                                                          nextMessage.isUser !=
+                                                              message.isUser
+                                                      ? 10.0
+                                                      : 0.0;
+                                              return Align(
+                                                alignment: message.isUser
+                                                    ? Alignment.centerRight
+                                                    : Alignment.centerLeft,
+                                                child: Padding(
+                                                  padding: EdgeInsets.only(
+                                                    bottom: extraBottomSpacing,
                                                   ),
-                                                  generatorColor: _chatController
-                                                              .currentSession !=
-                                                          null
-                                                      ? _colorFromHex(
-                                                          _chatController
-                                                              .currentSession!
-                                                              .agentProfileColor,
-                                                        )
-                                                      : null,
-                                                  onOptionSelected:
-                                                      _handleSuggestedReply,
-                                                  onLinkTap:
-                                                      _handleMessageLinkTap,
-                                                  onCancelJob:
-                                                      (_activeServerCapabilities
-                                                                      ?.supportsJobCancellation ??
-                                                                  false) &&
-                                                              message.jobId !=
-                                                                  null
-                                                          ? () =>
-                                                              _handleCancelJob(
-                                                                message.jobId!,
-                                                              )
-                                                          : null,
-                                                  onRetryJob:
-                                                      (_activeServerCapabilities
-                                                                      ?.supportsJobRetry ??
-                                                                  false) &&
-                                                              message.jobId !=
-                                                                  null
-                                                          ? () =>
-                                                              _handleRetryJob(
-                                                                message.jobId!,
-                                                              )
-                                                          : null,
-                                                  onRecoverUnknownSubmission: message
-                                                              .status ==
-                                                          ChatMessageStatus
-                                                              .submissionUnknown
-                                                      ? () =>
-                                                          _handleRecoverUnknownSubmission(
-                                                            message.id,
+                                                  child: ChatBubble(
+                                                    key: ValueKey<String>(
+                                                      'chat-bubble-${message.id}',
+                                                    ),
+                                                    message: message,
+                                                    isCollapsed:
+                                                        _isMessageCollapsed(
+                                                      message,
+                                                    ),
+                                                    onToggleCollapsed: () =>
+                                                        _toggleMessageCollapsed(
+                                                      message,
+                                                    ),
+                                                    generatorColor: _chatController
+                                                                .currentSession !=
+                                                            null
+                                                        ? _colorFromHex(
+                                                            _chatController
+                                                                .currentSession!
+                                                                .agentProfileColor,
                                                           )
-                                                      : null,
-                                                  onCancelUnknownSubmission: message
-                                                              .status ==
-                                                          ChatMessageStatus
-                                                              .submissionUnknown
-                                                      ? () =>
-                                                          _handleCancelUnknownSubmission(
-                                                            message.id,
-                                                          )
-                                                      : null,
+                                                        : null,
+                                                    onOptionSelected:
+                                                        _handleSuggestedReply,
+                                                    onLinkTap:
+                                                        _handleMessageLinkTap,
+                                                    attachmentBaseUrl:
+                                                        _activeServer
+                                                                ?.baseUrl ??
+                                                            widget
+                                                                .initialApiBaseUrl,
+                                                    onCancelJob:
+                                                        (_activeServerCapabilities
+                                                                        ?.supportsJobCancellation ??
+                                                                    false) &&
+                                                                message.jobId !=
+                                                                    null
+                                                            ? () =>
+                                                                _handleCancelJob(
+                                                                  message
+                                                                      .jobId!,
+                                                                )
+                                                            : null,
+                                                    onRetryJob:
+                                                        (_activeServerCapabilities
+                                                                        ?.supportsJobRetry ??
+                                                                    false) &&
+                                                                message.jobId !=
+                                                                    null
+                                                            ? () =>
+                                                                _handleRetryJob(
+                                                                  message
+                                                                      .jobId!,
+                                                                )
+                                                            : null,
+                                                    onRecoverUnknownSubmission: message
+                                                                .status ==
+                                                            ChatMessageStatus
+                                                                .submissionUnknown
+                                                        ? () =>
+                                                            _handleRecoverUnknownSubmission(
+                                                              message.id,
+                                                            )
+                                                        : null,
+                                                    onCancelUnknownSubmission: message
+                                                                .status ==
+                                                            ChatMessageStatus
+                                                                .submissionUnknown
+                                                        ? () =>
+                                                            _handleCancelUnknownSubmission(
+                                                              message.id,
+                                                            )
+                                                        : null,
+                                                  ),
                                                 ),
-                                              ),
-                                            );
-                                          },
-                                          childCount: timelineEntries.length,
+                                              );
+                                            },
+                                            childCount: timelineEntries.length,
+                                          ),
                                         ),
                                       ),
-                                    ),
-                                ],
+                                  ],
+                                ),
                               ),
                             ),
                             Positioned(
@@ -1471,6 +1518,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     final sidebarExpanded = await _serverProfileStore.loadSidebarExpanded();
     final audioRepliesEnabled = await _serverProfileStore
         .loadAudioRepliesEnabled(widget.initialApiBaseUrl);
+    final audioReplyPlaybackSpeed = await _serverProfileStore
+        .loadAudioReplyPlaybackSpeed(widget.initialApiBaseUrl);
     final resolvedActiveProfile = profiles.firstWhere(
       (profile) => profile.id == activeProfileId,
       orElse: () => profiles.first,
@@ -1482,7 +1531,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       _activeServerHealth = null;
       _sidebarExpanded = sidebarExpanded;
       _audioRepliesEnabled = audioRepliesEnabled;
+      _audioReplyPlaybackSpeed = audioReplyPlaybackSpeed;
     });
+    await _replyPlaybackService.setPlaybackSpeed(audioReplyPlaybackSpeed);
 
     final didConnect =
         await _switchToServer(resolvedActiveProfile, initialize: true);
@@ -1522,10 +1573,13 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     );
     final audioRepliesEnabled =
         await _serverProfileStore.loadAudioRepliesEnabled(profile.baseUrl);
+    final audioReplyPlaybackSpeed =
+        await _serverProfileStore.loadAudioReplyPlaybackSpeed(profile.baseUrl);
     nextController.addListener(_handleChatControllerChanged);
 
     final previousController = _chatController;
     await _replyPlaybackService.setServer(client);
+    await _replyPlaybackService.setPlaybackSpeed(audioReplyPlaybackSpeed);
     setState(() {
       _chatController = nextController;
       _activeServer = profile;
@@ -1537,8 +1591,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       _serverErrorText = null;
       _codexToolingErrorText = null;
       _audioRepliesEnabled = audioRepliesEnabled;
+      _audioReplyPlaybackSpeed = audioReplyPlaybackSpeed;
       _isLoadingCodexTooling = true;
     });
+    widget.onActiveServerBaseUrlChanged?.call(profile.baseUrl);
     _lastObservedSessionId = null;
     _updateStickToBottom(true);
     await _serverProfileStore.saveActiveProfileId(profile.id);
@@ -1571,6 +1627,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         });
       }
       _replyPlaybackService.setCapabilities(capabilities);
+      unawaited(_refreshFeedbackQueueCount());
       didConnect = true;
     } catch (error) {
       _replyPlaybackService.setCapabilities(null);
@@ -1590,6 +1647,49 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         ..dispose();
     }
     return didConnect;
+  }
+
+  Future<void> _refreshFeedbackQueueCount() async {
+    if (_isRefreshingFeedbackQueueCount) return;
+    _isRefreshingFeedbackQueueCount = true;
+    final baseUrl = _activeServer?.baseUrl ?? widget.initialApiBaseUrl;
+    try {
+      final countLoader = widget.feedbackQueueCountLoaderOverride;
+      final listLoader = widget.feedbackQueueListLoaderOverride;
+      final previewItems = listLoader != null
+          ? await listLoader(baseUrl, includeImages: false)
+          : countLoader == null
+              ? await ApiClient(baseUrl: baseUrl).listFeedbackQueue()
+              : null;
+      if (previewItems == null) {
+        await countLoader!(baseUrl);
+      }
+      if (mounted) {
+        setState(() {
+          if (previewItems != null) {
+            _feedbackQueuePreviewItems = previewItems;
+          }
+        });
+      }
+    } catch (_) {
+      // Feedback should stay opportunistic; connection errors are surfaced
+      // when the user opens the queue.
+    } finally {
+      _isRefreshingFeedbackQueueCount = false;
+    }
+  }
+
+  Future<List<FeedbackQueueItem>> _listFeedbackQueue({
+    required bool includeImages,
+  }) {
+    final baseUrl = _activeServer?.baseUrl ?? widget.initialApiBaseUrl;
+    final override = widget.feedbackQueueListLoaderOverride;
+    if (override != null) {
+      return override(baseUrl, includeImages: includeImages);
+    }
+    return ApiClient(baseUrl: baseUrl).listFeedbackQueue(
+      includeImages: includeImages,
+    );
   }
 
   Future<void> _refreshCodexTooling({bool showLoading = false}) async {
@@ -1769,47 +1869,91 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _openReplyModePicker() async {
-    final nextValue = await showModalBottomSheet<bool>(
+    await showModalBottomSheet<void>(
       context: context,
       backgroundColor: const Color(0xFF101931),
       builder: (context) {
-        return SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: <Widget>[
-              const ListTile(
-                title: Text('Reply mode'),
-                subtitle: Text(
-                  'Choose whether assistant replies stay as text or are spoken aloud',
-                ),
+        var sheetAudioRepliesEnabled = _audioRepliesEnabled;
+        var sheetPlaybackSpeed = _audioReplyPlaybackSpeed;
+        return StatefulBuilder(
+          builder: (context, setSheetState) {
+            return SafeArea(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  const ListTile(
+                    title: Text('Reply mode'),
+                    subtitle: Text(
+                      'Choose whether assistant replies stay as text or are spoken aloud',
+                    ),
+                  ),
+                  ListTile(
+                    leading: Icon(
+                      sheetAudioRepliesEnabled
+                          ? Icons.radio_button_unchecked_rounded
+                          : Icons.radio_button_checked_rounded,
+                    ),
+                    title: const Text('Text replies'),
+                    subtitle: const Text('Keep assistant responses silent'),
+                    onTap: () async {
+                      await _setAudioRepliesEnabled(false);
+                      setSheetState(() {
+                        sheetAudioRepliesEnabled = false;
+                      });
+                    },
+                  ),
+                  ListTile(
+                    leading: Icon(
+                      sheetAudioRepliesEnabled
+                          ? Icons.radio_button_checked_rounded
+                          : Icons.radio_button_unchecked_rounded,
+                    ),
+                    title: const Text('Audio replies'),
+                    subtitle: Text(
+                      'Speak assistant responses at ${_formatPlaybackSpeed(sheetPlaybackSpeed)}',
+                    ),
+                    onTap: () async {
+                      await _setAudioRepliesEnabled(true);
+                      setSheetState(() {
+                        sheetAudioRepliesEnabled = true;
+                      });
+                    },
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 4, 16, 20),
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: _audioReplyPlaybackSpeeds.map((speed) {
+                          final selected =
+                              (sheetPlaybackSpeed - speed).abs() < 0.01;
+                          return ChoiceChip(
+                            label: Text(_formatPlaybackSpeed(speed)),
+                            selected: selected,
+                            onSelected: (_) async {
+                              await _setAudioReplyPlaybackSpeed(speed);
+                              setSheetState(() {
+                                sheetPlaybackSpeed = speed;
+                              });
+                            },
+                          );
+                        }).toList(),
+                      ),
+                    ),
+                  ),
+                ],
               ),
-              ListTile(
-                leading: Icon(
-                  _audioRepliesEnabled
-                      ? Icons.radio_button_unchecked_rounded
-                      : Icons.radio_button_checked_rounded,
-                ),
-                title: const Text('Text replies'),
-                subtitle: const Text('Keep assistant responses silent'),
-                onTap: () => Navigator.of(context).pop(false),
-              ),
-              ListTile(
-                leading: Icon(
-                  _audioRepliesEnabled
-                      ? Icons.radio_button_checked_rounded
-                      : Icons.radio_button_unchecked_rounded,
-                ),
-                title: const Text('Audio replies'),
-                subtitle: const Text('Speak assistant responses automatically'),
-                onTap: () => Navigator.of(context).pop(true),
-              ),
-            ],
-          ),
+            );
+          },
         );
       },
     );
+  }
 
-    if (nextValue == null || nextValue == _audioRepliesEnabled) {
+  Future<void> _setAudioRepliesEnabled(bool nextValue) async {
+    if (nextValue == _audioRepliesEnabled) {
       return;
     }
 
@@ -1831,6 +1975,42 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     setState(() {
       _audioRepliesEnabled = nextValue;
     });
+  }
+
+  Future<void> _setAudioReplyPlaybackSpeed(double speed) async {
+    final normalizedSpeed = _normalizeAudioReplyPlaybackSpeed(speed);
+    if ((normalizedSpeed - _audioReplyPlaybackSpeed).abs() < 0.01) {
+      return;
+    }
+
+    final activeBaseUrl = _activeServer?.baseUrl ?? widget.initialApiBaseUrl;
+    await _serverProfileStore.saveAudioReplyPlaybackSpeed(
+      activeBaseUrl,
+      normalizedSpeed,
+    );
+    await _replyPlaybackService.setPlaybackSpeed(normalizedSpeed);
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      _audioReplyPlaybackSpeed = normalizedSpeed;
+    });
+  }
+
+  double _normalizeAudioReplyPlaybackSpeed(double speed) {
+    return _audioReplyPlaybackSpeeds.reduce((closest, candidate) {
+      final closestDistance = (closest - speed).abs();
+      final candidateDistance = (candidate - speed).abs();
+      return candidateDistance < closestDistance ? candidate : closest;
+    });
+  }
+
+  String _formatPlaybackSpeed(double speed) {
+    if (speed == speed.roundToDouble()) {
+      return '${speed.toInt()}x';
+    }
+    return '${speed.toStringAsFixed(2).replaceFirst(RegExp(r'0$'), '')}x';
   }
 
   Future<void> _handleBeginRecording() async {
@@ -2023,7 +2203,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                   ? Icons.volume_up_rounded
                   : Icons.volume_mute_rounded,
               label: _audioRepliesEnabled
-                  ? 'Audio replies enabled'
+                  ? 'Audio replies ${_formatPlaybackSpeed(_audioReplyPlaybackSpeed)}'
                   : 'Text replies enabled',
             ),
             _buildAppBarOverflowMenuItem(
@@ -2100,7 +2280,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
               : Icons.volume_mute_rounded,
         ),
         tooltip: _audioRepliesEnabled
-            ? 'Audio replies enabled'
+            ? 'Audio replies enabled at ${_formatPlaybackSpeed(_audioReplyPlaybackSpeed)}'
             : 'Text replies enabled',
       ),
       IconButton(
@@ -2183,6 +2363,354 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         await _openWorkspacePicker();
         return;
     }
+  }
+
+  Future<void> _openFeedbackQueueSheet({required Workspace workspace}) async {
+    final client = ApiClient(
+      baseUrl: _activeServer?.baseUrl ?? widget.initialApiBaseUrl,
+    );
+    List<FeedbackQueueItem> items;
+    try {
+      final allItems = await _listFeedbackQueue(includeImages: true);
+      items = _feedbackItemsForWorkspace(allItems, workspace);
+      if (mounted) {
+        setState(() {
+          _feedbackQueuePreviewItems = allItems;
+        });
+      }
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Feedback queue unavailable.\n$error')),
+      );
+      return;
+    }
+    if (!mounted) return;
+
+    final selectedIds = <String>{};
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setSheetState) {
+            Future<void> reload() async {
+              final refreshedAll =
+                  await _listFeedbackQueue(includeImages: true);
+              final refreshed = _feedbackItemsForWorkspace(
+                refreshedAll,
+                workspace,
+              );
+              selectedIds.removeWhere(
+                (id) => !refreshed.any((item) => item.id == id),
+              );
+              if (mounted) {
+                setState(() {
+                  _feedbackQueuePreviewItems = refreshedAll;
+                });
+              }
+              if (context.mounted) {
+                setSheetState(() => items = refreshed);
+              }
+            }
+
+            return SafeArea(
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxHeight: MediaQuery.sizeOf(context).height * 0.86,
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: <Widget>[
+                      Row(
+                        children: <Widget>[
+                          const Expanded(
+                            child: Text(
+                              'Feedback queue',
+                              style: TextStyle(
+                                fontSize: 20,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                          IconButton(
+                            tooltip: 'Refresh',
+                            onPressed: () => unawaited(reload()),
+                            icon: const Icon(Icons.refresh),
+                          ),
+                          IconButton(
+                            tooltip: 'Close',
+                            onPressed: () => Navigator.of(context).pop(),
+                            icon: const Icon(Icons.close),
+                          ),
+                        ],
+                      ),
+                      if (items.isEmpty)
+                        Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 28),
+                          child: Text(
+                            'No feedback is pending for ${workspace.name}.',
+                          ),
+                        )
+                      else ...<Widget>[
+                        Row(
+                          children: <Widget>[
+                            Expanded(
+                              child: Text(
+                                '${workspace.name} · ${selectedIds.length} selected',
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  color: Color(0xFF8B97B5),
+                                ),
+                              ),
+                            ),
+                            TextButton(
+                              onPressed: () {
+                                setSheetState(() {
+                                  if (selectedIds.length == items.length) {
+                                    selectedIds.clear();
+                                  } else {
+                                    selectedIds
+                                      ..clear()
+                                      ..addAll(items.map((item) => item.id));
+                                  }
+                                });
+                              },
+                              child: Text(
+                                selectedIds.length == items.length
+                                    ? 'Unselect all'
+                                    : 'Select all',
+                              ),
+                            ),
+                          ],
+                        ),
+                        Flexible(
+                          child: ListView.separated(
+                            shrinkWrap: true,
+                            itemCount: items.length,
+                            separatorBuilder: (_, __) =>
+                                const SizedBox(height: 12),
+                            itemBuilder: (context, index) {
+                              final item = items[index];
+                              final imageBytes = item.screenshotBytes;
+                              final selected = selectedIds.contains(item.id);
+                              return Card(
+                                margin: EdgeInsets.zero,
+                                child: Padding(
+                                  padding: const EdgeInsets.all(12),
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.stretch,
+                                    children: <Widget>[
+                                      CheckboxListTile(
+                                        contentPadding: EdgeInsets.zero,
+                                        value: selected,
+                                        onChanged: (value) {
+                                          setSheetState(() {
+                                            if (value ?? false) {
+                                              selectedIds.add(item.id);
+                                            } else {
+                                              selectedIds.remove(item.id);
+                                            }
+                                          });
+                                        },
+                                        title: Text(
+                                          item.comment,
+                                          style: const TextStyle(
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
+                                        subtitle: Text(
+                                          '${_feedbackItemSourceLabel(item)} · ${item.status}'
+                                          '${item.hasScreenshot ? ' · image' : ''}'
+                                          '${item.hasAudio ? ' · audio' : ''}',
+                                        ),
+                                      ),
+                                      if (imageBytes != null)
+                                        ClipRRect(
+                                          borderRadius:
+                                              BorderRadius.circular(8),
+                                          child: Image.memory(
+                                            imageBytes,
+                                            height: 180,
+                                            fit: BoxFit.cover,
+                                          ),
+                                        ),
+                                      const SizedBox(height: 10),
+                                      Align(
+                                        alignment: Alignment.centerRight,
+                                        child: IconButton(
+                                          tooltip: 'Delete',
+                                          onPressed: () async {
+                                            await client
+                                                .deleteFeedbackQueueItem(
+                                              item.id,
+                                            );
+                                            await reload();
+                                          },
+                                          icon: const Icon(
+                                            Icons.delete_outline,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        FilledButton.icon(
+                          onPressed: selectedIds.isEmpty
+                              ? null
+                              : () async {
+                                  final selectedItems = items
+                                      .where(
+                                        (item) => selectedIds.contains(item.id),
+                                      )
+                                      .toList(growable: false);
+                                  Navigator.of(context).pop();
+                                  await _stageFeedbackItemsForChat(
+                                    workspace,
+                                    selectedItems,
+                                  );
+                                },
+                          icon: const Icon(Icons.arrow_forward),
+                          label: const Text('Next'),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Future<void> _stageFeedbackItemsForChat(
+    Workspace workspace,
+    List<FeedbackQueueItem> items,
+  ) async {
+    if (items.isEmpty) return;
+
+    await _pinWorkspaceToSidebar(workspace);
+    if (_chatController.currentSession?.workspacePath != workspace.path) {
+      await _createNewChatForWorkspace(workspace);
+      if (!mounted) return;
+      if (_chatController.currentSession?.workspacePath != workspace.path) {
+        return;
+      }
+    }
+
+    final attachments = <_PendingAttachmentDraft>[];
+    for (var index = 0; index < items.length; index += 1) {
+      final item = items[index];
+      final bytes = item.screenshotBytes;
+      if (bytes == null) continue;
+      final name = 'feedback-${index + 1}-${item.id}.png';
+      attachments.add(
+        _PendingAttachmentDraft(
+          file: XFile.fromData(
+            bytes,
+            name: name,
+            mimeType: item.screenshotMimeType,
+            path: name,
+          ),
+          name: name,
+          kind: _AttachmentDraftKind.image,
+          sizeBytes: bytes.length,
+          previewBytes: bytes,
+        ),
+      );
+    }
+
+    final currentDraft = _currentComposerDraft();
+    final metadata = _buildFeedbackComposerMetadata(workspace, items);
+    final currentText = currentDraft.text.trim();
+    final nextText =
+        currentText.isEmpty ? metadata : '$currentText\n\n$metadata';
+    final nextAttachments = <_PendingAttachmentDraft>[
+      ...currentDraft.attachments,
+      ...attachments,
+    ];
+
+    _textController.value = TextEditingValue(
+      text: nextText,
+      selection: TextSelection.collapsed(offset: nextText.length),
+    );
+    _updateCurrentComposerDraft(
+      _ComposerDraft(
+        text: nextText,
+        attachments: nextAttachments,
+        codexRunOptions: currentDraft.codexRunOptions,
+      ),
+    );
+    _setChatBodyView(_ChatBodyView.conversation);
+    _updateStickToBottom(true);
+
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          items.length == 1
+              ? 'Feedback staged in ${workspace.name}.'
+              : '${items.length} feedback items staged in ${workspace.name}.',
+        ),
+      ),
+    );
+  }
+
+  String _buildFeedbackComposerMetadata(
+    Workspace workspace,
+    List<FeedbackQueueItem> items,
+  ) {
+    final buffer = StringBuffer()
+      ..writeln('Feedback queue for ${workspace.name}')
+      ..writeln('Project path: ${workspace.path}')
+      ..writeln()
+      ..writeln('Selected feedback:');
+    for (var index = 0; index < items.length; index += 1) {
+      final item = items[index];
+      buffer
+        ..writeln()
+        ..writeln('${index + 1}. ${item.comment}')
+        ..writeln('- id: ${item.id}')
+        ..writeln('- source: ${_feedbackItemSourceLabel(item)}')
+        ..writeln('- source app: ${item.sourceApp}')
+        ..writeln('- status: ${item.status}')
+        ..writeln(
+            '- created: ${item.createdAt?.toIso8601String() ?? 'unknown'}')
+        ..writeln('- selection bounds: ${item.selectionBounds}')
+        ..writeln('- selection points: ${item.selectionPoints.length}')
+        ..writeln('- image attachment: feedback-${index + 1}-${item.id}.png')
+        ..writeln(
+          '- instruction: The attached screenshot contains the user\'s drawn mark. Treat the marked area as the primary target of this feedback, and use the associated comment to understand the requested change.',
+        );
+      if (item.hasAudio ||
+          item.audioMimeType != null ||
+          item.audioDurationMs != null ||
+          item.audioByteLength != null) {
+        buffer.writeln(
+          '- audio: ${item.audioMimeType ?? 'unknown type'}, '
+          '${item.audioDurationMs ?? 0} ms, '
+          '${item.audioByteLength ?? 0} bytes',
+        );
+      }
+    }
+    buffer
+      ..writeln()
+      ..write(
+        'Use the attached screenshots and the metadata above to decide the next implementation changes.',
+      );
+    return buffer.toString();
   }
 
   int _codexSelectionCount(CodexRunOptions options) {
@@ -2462,7 +2990,28 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           .add(session);
     }
 
-    for (final workspace in _sidebarWorkspaces) {
+    final visibleWorkspaces = <Workspace>[..._sidebarWorkspaces];
+    final visibleWorkspacePaths =
+        visibleWorkspaces.map((workspace) => workspace.path).toSet();
+    final knownWorkspacePaths =
+        _chatController.workspaces.map((workspace) => workspace.path).toSet();
+    if (knownWorkspacePaths.isNotEmpty) {
+      for (final workspacePath in groupedSessions.keys) {
+        if (visibleWorkspacePaths.contains(workspacePath) ||
+            knownWorkspacePaths.contains(workspacePath)) {
+          continue;
+        }
+        visibleWorkspacePaths.add(workspacePath);
+        visibleWorkspaces.add(
+          Workspace(
+            name: _fallbackWorkspaceName(workspacePath),
+            path: workspacePath,
+          ),
+        );
+      }
+    }
+
+    for (final workspace in visibleWorkspaces) {
       final sessions =
           groupedSessions[workspace.path] ?? <ChatSessionSummary>[];
       final visibleSessions = sessions
@@ -2509,6 +3058,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       final unreadChatsCount = visibleSessions
           .where((session) => _unreadCountForSession(session) > 0)
           .length;
+      final feedbackCount = _feedbackCountForWorkspace(workspace);
       final projectCardColor =
           hasSelected ? const Color(0xFF16213C) : const Color(0xFF121A31);
       final projectBorderColor = activeJobCount > 0
@@ -2526,196 +3076,332 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           borderRadius: BorderRadius.circular(20),
           border: Border.all(color: projectBorderColor),
         ),
-        child: Theme(
-          data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
-          child: ExpansionTile(
-            key: PageStorageKey<String>('workspace-${workspace.path}'),
-            initiallyExpanded: hasSelected,
-            tilePadding:
-                const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-            childrenPadding: const EdgeInsets.only(bottom: 10),
-            iconColor: const Color(0xFF9AA8C8),
-            collapsedIconColor: const Color(0xFF9AA8C8),
-            title: Row(
-              children: <Widget>[
-                Container(
-                  width: 38,
-                  height: 38,
-                  decoration: BoxDecoration(
-                    color: activeJobCount > 0
-                        ? const Color(0x33FFC857)
-                        : outgoingUploadCount > 0
-                            ? const Color(0x223F5EF7)
-                            : const Color(0xFF1B2745),
-                    borderRadius: BorderRadius.circular(12),
+        child: Material(
+          type: MaterialType.transparency,
+          child: Theme(
+            data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+            child: ExpansionTile(
+              key: PageStorageKey<String>('workspace-${workspace.path}'),
+              initiallyExpanded: hasSelected,
+              tilePadding:
+                  const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+              childrenPadding: const EdgeInsets.only(bottom: 10),
+              iconColor: const Color(0xFF9AA8C8),
+              collapsedIconColor: const Color(0xFF9AA8C8),
+              title: Row(
+                children: <Widget>[
+                  Container(
+                    width: 38,
+                    height: 38,
+                    decoration: BoxDecoration(
+                      color: activeJobCount > 0
+                          ? const Color(0x33FFC857)
+                          : outgoingUploadCount > 0
+                              ? const Color(0x223F5EF7)
+                              : const Color(0xFF1B2745),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    alignment: Alignment.center,
+                    child: Icon(
+                      Icons.folder_rounded,
+                      color: activeJobCount > 0
+                          ? const Color(0xFFFFC857)
+                          : outgoingUploadCount > 0
+                              ? const Color(0xFF8CA8FF)
+                              : unreadChatsCount > 0
+                                  ? const Color(0xFF55D6BE)
+                                  : const Color(0xFF9AA8C8),
+                    ),
                   ),
-                  alignment: Alignment.center,
-                  child: Icon(
-                    Icons.folder_rounded,
-                    color: activeJobCount > 0
-                        ? const Color(0xFFFFC857)
-                        : outgoingUploadCount > 0
-                            ? const Color(0xFF8CA8FF)
-                            : unreadChatsCount > 0
-                                ? const Color(0xFF55D6BE)
-                                : const Color(0xFF9AA8C8),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: <Widget>[
+                        Text(
+                          workspace.name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: activeJobCount > 0
+                                ? const Color(0xFFFFC857)
+                                : outgoingUploadCount > 0
+                                    ? const Color(0xFFDCE5FF)
+                                    : unreadChatsCount > 0
+                                        ? const Color(0xFF55D6BE)
+                                        : const Color(0xFFE7EEF9),
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          archivedOnly
+                              ? '${workspace.path} • ${visibleSessions.length} archived chat${visibleSessions.length == 1 ? '' : 's'}'
+                              : '${workspace.path} • ${visibleSessions.length} chat${visibleSessions.length == 1 ? '' : 's'}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Color(0xFF8B97B5),
+                            fontSize: 12,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        _ProjectStatusPill(
+                          active: hasBackgroundActivity,
+                          label: _formatProjectActivityLabel(
+                            activeJobCount: activeJobCount,
+                            activeChatCount: activeChatCount,
+                            outgoingUploadCount: outgoingUploadCount,
+                            outgoingChatCount: outgoingChatCount,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: <Widget>[
-                      Text(
-                        workspace.name,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
+                  if (hasBackgroundActivity)
+                    Padding(
+                      padding: const EdgeInsets.only(right: 8),
+                      child: Text(
+                        (activeJobCount + outgoingUploadCount).toString(),
                         style: TextStyle(
                           color: activeJobCount > 0
                               ? const Color(0xFFFFC857)
-                              : outgoingUploadCount > 0
-                                  ? const Color(0xFFDCE5FF)
-                                  : unreadChatsCount > 0
-                                      ? const Color(0xFF55D6BE)
-                                      : const Color(0xFFE7EEF9),
+                              : const Color(0xFF8CA8FF),
                           fontWeight: FontWeight.w700,
                         ),
                       ),
-                      const SizedBox(height: 2),
-                      Text(
-                        archivedOnly
-                            ? '${workspace.path} • ${visibleSessions.length} archived chat${visibleSessions.length == 1 ? '' : 's'}'
-                            : '${workspace.path} • ${visibleSessions.length} chat${visibleSessions.length == 1 ? '' : 's'}',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
+                    ),
+                  if (unreadChatsCount > 0)
+                    Container(
+                      margin: const EdgeInsets.only(right: 8),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF55D6BE),
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                      child: Text(
+                        unreadChatsCount.toString(),
                         style: const TextStyle(
-                          color: Color(0xFF8B97B5),
-                          fontSize: 12,
+                          color: Color(0xFF07131D),
+                          fontWeight: FontWeight.w700,
                         ),
                       ),
-                      const SizedBox(height: 6),
-                      _ProjectStatusPill(
-                        active: hasBackgroundActivity,
-                        label: _formatProjectActivityLabel(
-                          activeJobCount: activeJobCount,
-                          activeChatCount: activeChatCount,
-                          outgoingUploadCount: outgoingUploadCount,
-                          outgoingChatCount: outgoingChatCount,
+                    ),
+                  if (feedbackCount > 0)
+                    Container(
+                      margin: const EdgeInsets.only(right: 8),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFFF6B6B),
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                      child: Text(
+                        '$feedbackCount feedback',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w700,
+                          fontSize: 11,
                         ),
+                      ),
+                    ),
+                  PopupMenuButton<_PinnedWorkspaceAction>(
+                    tooltip: 'Project actions for ${workspace.name}',
+                    icon: const Icon(Icons.more_horiz_rounded),
+                    onSelected: (_PinnedWorkspaceAction action) async {
+                      switch (action) {
+                        case _PinnedWorkspaceAction.newChat:
+                          Navigator.of(context).pop();
+                          await _createNewChatForWorkspace(workspace);
+                          return;
+                        case _PinnedWorkspaceAction.feedbackQueue:
+                          Navigator.of(context).pop();
+                          await _openFeedbackQueueSheet(workspace: workspace);
+                          return;
+                        case _PinnedWorkspaceAction.remove:
+                          await _removeWorkspaceFromSidebar(workspace);
+                          return;
+                      }
+                    },
+                    itemBuilder: (context) =>
+                        <PopupMenuEntry<_PinnedWorkspaceAction>>[
+                      PopupMenuItem<_PinnedWorkspaceAction>(
+                        value: _PinnedWorkspaceAction.newChat,
+                        child: Text('New chat in ${workspace.name}'),
+                      ),
+                      if (feedbackCount > 0)
+                        PopupMenuItem<_PinnedWorkspaceAction>(
+                          value: _PinnedWorkspaceAction.feedbackQueue,
+                          child: Text('Feedback queue ($feedbackCount)'),
+                        ),
+                      const PopupMenuItem<_PinnedWorkspaceAction>(
+                        value: _PinnedWorkspaceAction.remove,
+                        child: Text('Remove project'),
                       ),
                     ],
                   ),
-                ),
-                if (hasBackgroundActivity)
-                  Padding(
-                    padding: const EdgeInsets.only(right: 8),
-                    child: Text(
-                      (activeJobCount + outgoingUploadCount).toString(),
-                      style: TextStyle(
-                        color: activeJobCount > 0
-                            ? const Color(0xFFFFC857)
-                            : const Color(0xFF8CA8FF),
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ),
-                if (unreadChatsCount > 0)
-                  Container(
-                    margin: const EdgeInsets.only(right: 8),
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 4,
-                    ),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF55D6BE),
-                      borderRadius: BorderRadius.circular(999),
-                    ),
-                    child: Text(
-                      unreadChatsCount.toString(),
-                      style: const TextStyle(
-                        color: Color(0xFF07131D),
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ),
-                PopupMenuButton<_PinnedWorkspaceAction>(
-                  tooltip: 'Project actions for ${workspace.name}',
-                  icon: const Icon(Icons.more_horiz_rounded),
-                  onSelected: (_PinnedWorkspaceAction action) async {
-                    switch (action) {
-                      case _PinnedWorkspaceAction.newChat:
-                        Navigator.of(context).pop();
-                        await _createNewChatForWorkspace(workspace);
-                        return;
-                      case _PinnedWorkspaceAction.remove:
-                        await _removeWorkspaceFromSidebar(workspace);
-                        return;
-                    }
-                  },
-                  itemBuilder: (context) =>
-                      <PopupMenuEntry<_PinnedWorkspaceAction>>[
-                    PopupMenuItem<_PinnedWorkspaceAction>(
-                      value: _PinnedWorkspaceAction.newChat,
-                      child: Text('New chat in ${workspace.name}'),
-                    ),
-                    const PopupMenuItem<_PinnedWorkspaceAction>(
-                      value: _PinnedWorkspaceAction.remove,
-                      child: Text('Remove project'),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-            children: visibleSessions.isEmpty
-                ? <Widget>[
-                    Padding(
-                      padding: EdgeInsets.fromLTRB(24, 0, 24, 16),
-                      child: Align(
-                        alignment: Alignment.centerLeft,
-                        child: Text(
-                          archivedOnly
-                              ? 'No archived chats in this project'
-                              : 'No active chats in this project',
-                          style: const TextStyle(color: Color(0xFF8B97B5)),
-                        ),
-                      ),
-                    ),
-                  ]
-                : <Widget>[
-                    ...visibleSessions.map(
-                      (session) => Padding(
-                        padding: const EdgeInsets.only(left: 10, right: 10),
-                        child: _SessionTile(
-                          activeJobSummary:
-                              _chatController.activeJobSummaryForSession(
-                            session.id,
-                          ),
-                          outgoingUploadSummary: _chatController
-                              .outgoingUploadSummaryForSession(session.id),
-                          session: session,
-                          unreadCount: _unreadCountForSession(session),
-                          selected:
-                              session.id == _chatController.selectedSessionId,
-                          onTap: () async {
+                ],
+              ),
+              children: visibleSessions.isEmpty
+                  ? <Widget>[
+                      if (feedbackCount > 0)
+                        _ProjectFeedbackQueueButton(
+                          count: feedbackCount,
+                          onPressed: () async {
                             Navigator.of(context).pop();
-                            await _chatController.selectSession(session.id);
-                          },
-                          onArchiveToggle: () async {
-                            await _chatController.setSessionArchived(
-                              session.id,
-                              archived: !archivedOnly,
-                            );
+                            await _openFeedbackQueueSheet(workspace: workspace);
                           },
                         ),
+                      Padding(
+                        padding: EdgeInsets.fromLTRB(24, 0, 24, 16),
+                        child: Align(
+                          alignment: Alignment.centerLeft,
+                          child: Text(
+                            archivedOnly
+                                ? 'No archived chats in this project'
+                                : 'No active chats in this project',
+                            style: const TextStyle(color: Color(0xFF8B97B5)),
+                          ),
+                        ),
                       ),
-                    ),
-                  ],
+                    ]
+                  : <Widget>[
+                      if (feedbackCount > 0)
+                        _ProjectFeedbackQueueButton(
+                          count: feedbackCount,
+                          onPressed: () async {
+                            Navigator.of(context).pop();
+                            await _openFeedbackQueueSheet(workspace: workspace);
+                          },
+                        ),
+                      ...visibleSessions.map(
+                        (session) => Padding(
+                          padding: const EdgeInsets.only(left: 10, right: 10),
+                          child: _SessionTile(
+                            activeJobSummary:
+                                _chatController.activeJobSummaryForSession(
+                              session.id,
+                            ),
+                            outgoingUploadSummary: _chatController
+                                .outgoingUploadSummaryForSession(session.id),
+                            session: session,
+                            unreadCount: _unreadCountForSession(session),
+                            selected:
+                                session.id == _chatController.selectedSessionId,
+                            onTap: () async {
+                              Navigator.of(context).pop();
+                              await _chatController.selectSession(session.id);
+                            },
+                            onArchiveToggle: () async {
+                              await _chatController.setSessionArchived(
+                                session.id,
+                                archived: !archivedOnly,
+                              );
+                            },
+                          ),
+                        ),
+                      ),
+                    ],
+            ),
           ),
         ),
       ));
     }
 
     return sessionGroups;
+  }
+
+  String _fallbackWorkspaceName(String workspacePath) {
+    final trimmed = workspacePath.trim();
+    if (trimmed.isEmpty) {
+      return 'Unknown project';
+    }
+    final parts = trimmed.split('/').where((part) => part.isNotEmpty).toList();
+    if (parts.isEmpty) {
+      return trimmed;
+    }
+    return parts.last;
+  }
+
+  int _feedbackCountForWorkspace(Workspace workspace) {
+    return _feedbackQueuePreviewItems
+        .where((item) => _feedbackItemMatchesWorkspace(item, workspace))
+        .length;
+  }
+
+  List<FeedbackQueueItem> _feedbackItemsForWorkspace(
+    List<FeedbackQueueItem> items,
+    Workspace workspace,
+  ) {
+    return items
+        .where((item) => _feedbackItemMatchesWorkspace(item, workspace))
+        .toList(growable: false);
+  }
+
+  bool _feedbackItemMatchesWorkspace(
+    FeedbackQueueItem item,
+    Workspace workspace,
+  ) {
+    final source = _normalizeFeedbackSource(item.sourceApp);
+    if (source.isEmpty) return false;
+    final aliases = _feedbackSourceWorkspaceAliases();
+    final aliasWorkspace = aliases[source];
+    if (aliasWorkspace != null) {
+      return _workspaceMatchesFeedbackAlias(workspace, aliasWorkspace);
+    }
+    return _workspaceFeedbackKeys(workspace).contains(source);
+  }
+
+  Map<String, String> _feedbackSourceWorkspaceAliases() {
+    final aliases = <String, String>{};
+    void addAliases(Map<String, String> values) {
+      for (final entry in values.entries) {
+        final source = _normalizeFeedbackSource(entry.key);
+        final workspace = entry.value.trim();
+        if (source.isNotEmpty && workspace.isNotEmpty) {
+          aliases[source] = workspace;
+        }
+      }
+    }
+
+    addAliases(_activeServerCapabilities?.feedbackSourceWorkspaceAliases ??
+        const <String, String>{});
+    addAliases(widget.feedbackSourceWorkspaceAliases);
+    return aliases;
+  }
+
+  bool _workspaceMatchesFeedbackAlias(Workspace workspace, String alias) {
+    final trimmedAlias = alias.trim();
+    if (trimmedAlias == workspace.path) return true;
+    return _normalizeFeedbackSource(trimmedAlias) ==
+            _normalizeFeedbackSource(workspace.path) ||
+        _normalizeFeedbackSource(_fallbackWorkspaceName(trimmedAlias)) ==
+            _normalizeFeedbackSource(_fallbackWorkspaceName(workspace.path)) ||
+        _normalizeFeedbackSource(trimmedAlias) ==
+            _normalizeFeedbackSource(workspace.name);
+  }
+
+  String _feedbackItemSourceLabel(FeedbackQueueItem item) {
+    final displayName = item.sourceDisplayName?.trim();
+    if (displayName != null && displayName.isNotEmpty) return displayName;
+    return item.sourceApp;
+  }
+
+  Set<String> _workspaceFeedbackKeys(Workspace workspace) {
+    final keys = <String>{
+      _normalizeFeedbackSource(workspace.name),
+      _normalizeFeedbackSource(_fallbackWorkspaceName(workspace.path)),
+    }..remove('');
+    return keys;
+  }
+
+  String _normalizeFeedbackSource(String value) {
+    return value.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '');
   }
 
   void _handleChatControllerChanged() {
@@ -2944,176 +3630,183 @@ class _SessionTile extends StatelessWidget {
         borderRadius: BorderRadius.circular(16),
         border: Border.all(color: tileBorderColor),
       ),
-      child: ListTile(
-        selected: selected,
-        selectedTileColor: Colors.transparent,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
-        ),
-        title: Text(
-          session.title,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: TextStyle(
-            color: session.isArchived ? const Color(0xFFB8C8EA) : titleColor,
-            fontWeight: isActive ? FontWeight.w600 : null,
+      child: Material(
+        type: MaterialType.transparency,
+        child: ListTile(
+          selected: selected,
+          selectedTileColor: Colors.transparent,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
           ),
-        ),
-        subtitle: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: <Widget>[
-            if (conversationProduct?.statusLine.trim().isNotEmpty ==
-                true) ...<Widget>[
+          title: Text(
+            session.title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: session.isArchived ? const Color(0xFFB8C8EA) : titleColor,
+              fontWeight: isActive ? FontWeight.w600 : null,
+            ),
+          ),
+          subtitle: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              if (conversationProduct?.statusLine.trim().isNotEmpty ==
+                  true) ...<Widget>[
+                Text(
+                  conversationProduct!.statusLine,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: session.isArchived
+                        ? const Color(0xFF9FB3D6)
+                        : const Color(0xFF55D6BE),
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 4),
+              ],
               Text(
-                conversationProduct!.statusLine,
-                maxLines: 1,
+                subtitleText,
+                maxLines: 2,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
                   color: session.isArchived
-                      ? const Color(0xFF9FB3D6)
-                      : const Color(0xFF55D6BE),
-                  fontSize: 11,
-                  fontWeight: FontWeight.w700,
+                      ? const Color(0xFF7F8EAF)
+                      : previewColor,
                 ),
               ),
-              const SizedBox(height: 4),
-            ],
-            Text(
-              subtitleText,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color:
-                    session.isArchived ? const Color(0xFF7F8EAF) : previewColor,
-              ),
-            ),
-            if (session.isArchived) ...<Widget>[
-              const SizedBox(height: 6),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF1B2745),
-                  borderRadius: BorderRadius.circular(999),
-                ),
-                child: const Text(
-                  'Archived',
-                  style: TextStyle(
-                    color: Color(0xFF9FB3D6),
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700,
+              if (session.isArchived) ...<Widget>[
+                const SizedBox(height: 6),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF1B2745),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: const Text(
+                    'Archived',
+                    style: TextStyle(
+                      color: Color(0xFF9FB3D6),
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
                 ),
-              ),
-            ],
-            if (activeJobPresentation != null) ...<Widget>[
-              const SizedBox(height: 6),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(
-                  color: activeJobPresentation.backgroundColor,
-                  borderRadius: BorderRadius.circular(999),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: <Widget>[
-                    Container(
-                      width: 8,
-                      height: 8,
-                      decoration: BoxDecoration(
-                        color: activeJobPresentation.foregroundColor,
-                        shape: BoxShape.circle,
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Flexible(
-                      child: Text(
-                        activeJobPresentation.label,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
+              ],
+              if (activeJobPresentation != null) ...<Widget>[
+                const SizedBox(height: 6),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: activeJobPresentation.backgroundColor,
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: <Widget>[
+                      Container(
+                        width: 8,
+                        height: 8,
+                        decoration: BoxDecoration(
                           color: activeJobPresentation.foregroundColor,
-                          fontSize: 11,
-                          fontWeight: FontWeight.w700,
+                          shape: BoxShape.circle,
                         ),
                       ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-            if (isUploading) ...<Widget>[
-              const SizedBox(height: 6),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF15265A),
-                  borderRadius: BorderRadius.circular(999),
-                ),
-                child: Text(
-                  _formatOutgoingUploadLabel(outgoingUploadSummary!),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Color(0xFFB8CCFF),
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ),
-            ],
-          ],
-        ),
-        trailing: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: <Widget>[
-            if (session.hasPendingMessages)
-              const SizedBox(
-                width: 18,
-                height: 18,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              )
-            else if (isUploading)
-              Icon(
-                _outgoingUploadIcon(outgoingUploadSummary!),
-                color: const Color(0xFF8CA8FF),
-              )
-            else if (unreadCount > 0)
-              const Icon(
-                Icons.mark_chat_unread_rounded,
-                color: Color(0xFF55D6BE),
-              ),
-            PopupMenuButton<String>(
-              padding: EdgeInsets.zero,
-              tooltip: session.isArchived ? 'Unarchive chat' : 'Archive chat',
-              onSelected: (value) {
-                if (value == 'toggle-archive') {
-                  onArchiveToggle();
-                }
-              },
-              itemBuilder: (context) => <PopupMenuEntry<String>>[
-                PopupMenuItem<String>(
-                  value: 'toggle-archive',
-                  child: Row(
-                    children: <Widget>[
-                      Icon(
-                        session.isArchived
-                            ? Icons.unarchive_outlined
-                            : Icons.archive_outlined,
-                        size: 18,
+                      const SizedBox(width: 8),
+                      Flexible(
+                        child: Text(
+                          activeJobPresentation.label,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: activeJobPresentation.foregroundColor,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
                       ),
-                      const SizedBox(width: 12),
-                      Text(session.isArchived
-                          ? 'Unarchive chat'
-                          : 'Archive chat'),
                     ],
                   ),
                 ),
               ],
-            ),
-          ],
+              if (isUploading) ...<Widget>[
+                const SizedBox(height: 6),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF15265A),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Text(
+                    _formatOutgoingUploadLabel(outgoingUploadSummary!),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Color(0xFFB8CCFF),
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ],
+            ],
+          ),
+          trailing: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              if (session.hasPendingMessages)
+                const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              else if (isUploading)
+                Icon(
+                  _outgoingUploadIcon(outgoingUploadSummary!),
+                  color: const Color(0xFF8CA8FF),
+                )
+              else if (unreadCount > 0)
+                const Icon(
+                  Icons.mark_chat_unread_rounded,
+                  color: Color(0xFF55D6BE),
+                ),
+              PopupMenuButton<String>(
+                padding: EdgeInsets.zero,
+                tooltip: session.isArchived ? 'Unarchive chat' : 'Archive chat',
+                onSelected: (value) {
+                  if (value == 'toggle-archive') {
+                    onArchiveToggle();
+                  }
+                },
+                itemBuilder: (context) => <PopupMenuEntry<String>>[
+                  PopupMenuItem<String>(
+                    value: 'toggle-archive',
+                    child: Row(
+                      children: <Widget>[
+                        Icon(
+                          session.isArchived
+                              ? Icons.unarchive_outlined
+                              : Icons.archive_outlined,
+                          size: 18,
+                        ),
+                        const SizedBox(width: 12),
+                        Text(session.isArchived
+                            ? 'Unarchive chat'
+                            : 'Archive chat'),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+          onTap: onTap,
         ),
-        onTap: onTap,
       ),
     );
   }
@@ -3310,6 +4003,31 @@ class _ProjectStatusPill extends StatelessWidget {
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ProjectFeedbackQueueButton extends StatelessWidget {
+  const _ProjectFeedbackQueueButton({
+    required this.count,
+    required this.onPressed,
+  });
+
+  final int count;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: FilledButton.icon(
+          onPressed: onPressed,
+          icon: const Icon(Icons.feedback_outlined),
+          label: Text('Feedback queue ($count)'),
         ),
       ),
     );
@@ -5614,34 +6332,40 @@ class _AgentStudioSheetState extends State<_AgentStudioSheet> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
           if (showEnabledToggle)
-            SwitchListTile(
-              contentPadding: EdgeInsets.zero,
-              value: _enabled[agentId] ?? false,
-              title: Text(title),
-              subtitle: Text(enabledSubtitle),
-              onChanged: !canToggle
-                  ? null
-                  : (value) {
-                      setState(() {
-                        _enabled[agentId] = value;
-                        if (kSupervisorMemberAgentIds.contains(agentId)) {
-                          if (value) {
-                            _supervisorMemberIds.add(agentId);
-                          } else {
-                            _supervisorMemberIds.remove(agentId);
+            Material(
+              type: MaterialType.transparency,
+              child: SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                value: _enabled[agentId] ?? false,
+                title: Text(title),
+                subtitle: Text(enabledSubtitle),
+                onChanged: !canToggle
+                    ? null
+                    : (value) {
+                        setState(() {
+                          _enabled[agentId] = value;
+                          if (kSupervisorMemberAgentIds.contains(agentId)) {
+                            if (value) {
+                              _supervisorMemberIds.add(agentId);
+                            } else {
+                              _supervisorMemberIds.remove(agentId);
+                            }
                           }
-                        }
-                      });
-                    },
+                        });
+                      },
+              ),
             )
           else
-            ListTile(
-              contentPadding: EdgeInsets.zero,
-              title: Text(title),
-              subtitle: Text(
-                usesRegistrySelection
-                    ? '$enabledSubtitle Selection is controlled by the supervisor registry above.'
-                    : enabledSubtitle,
+            Material(
+              type: MaterialType.transparency,
+              child: ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: Text(title),
+                subtitle: Text(
+                  usesRegistrySelection
+                      ? '$enabledSubtitle Selection is controlled by the supervisor registry above.'
+                      : enabledSubtitle,
+                ),
               ),
             ),
           TextField(
@@ -5798,34 +6522,37 @@ class _AgentStudioSheetState extends State<_AgentStudioSheet> {
               AgentId.scraper => 'Scraper',
               _ => agentIdToJson(agentId),
             };
-            return CheckboxListTile(
-              contentPadding: EdgeInsets.zero,
-              value: _supervisorMemberIds.contains(agentId),
-              title: Text(label),
-              subtitle: Text(
-                switch (agentId) {
-                  AgentId.qa =>
-                    'Validation, tests, regressions, and release risk.',
-                  AgentId.ux =>
-                    'Usability, accessibility, flow, and interface quality.',
-                  AgentId.seniorEngineer =>
-                    'Architecture, implementation strategy, and delivery risk.',
-                  AgentId.scraper =>
-                    'Web extraction, parsing strategy, and source constraints.',
-                  _ => '',
+            return Material(
+              type: MaterialType.transparency,
+              child: CheckboxListTile(
+                contentPadding: EdgeInsets.zero,
+                value: _supervisorMemberIds.contains(agentId),
+                title: Text(label),
+                subtitle: Text(
+                  switch (agentId) {
+                    AgentId.qa =>
+                      'Validation, tests, regressions, and release risk.',
+                    AgentId.ux =>
+                      'Usability, accessibility, flow, and interface quality.',
+                    AgentId.seniorEngineer =>
+                      'Architecture, implementation strategy, and delivery risk.',
+                    AgentId.scraper =>
+                      'Web extraction, parsing strategy, and source constraints.',
+                    _ => '',
+                  },
+                ),
+                onChanged: (value) {
+                  setState(() {
+                    if (value ?? false) {
+                      _supervisorMemberIds.add(agentId);
+                      _enabled[agentId] = true;
+                    } else {
+                      _supervisorMemberIds.remove(agentId);
+                      _enabled[agentId] = false;
+                    }
+                  });
                 },
               ),
-              onChanged: (value) {
-                setState(() {
-                  if (value ?? false) {
-                    _supervisorMemberIds.add(agentId);
-                    _enabled[agentId] = true;
-                  } else {
-                    _supervisorMemberIds.remove(agentId);
-                    _enabled[agentId] = false;
-                  }
-                });
-              },
             );
           }),
         ],

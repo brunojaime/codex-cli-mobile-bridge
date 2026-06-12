@@ -2,12 +2,14 @@ import 'dart:convert';
 
 import 'package:cross_file/cross_file.dart';
 import 'package:http/http.dart' as http;
+import 'package:http_parser/http_parser.dart';
 
 import '../models/job_status_response.dart';
 import '../models/agent_configuration.dart';
 import '../models/agent_profile.dart';
 import '../models/chat_message.dart';
 import '../models/codex_tooling.dart';
+import '../models/feedback_queue_item.dart';
 import '../models/server_capabilities.dart';
 import '../models/session_detail.dart';
 import '../models/chat_session_summary.dart';
@@ -502,6 +504,72 @@ class ApiClient {
     return JobStatusResponse.fromJson(payload);
   }
 
+  Future<List<FeedbackQueueItem>> listFeedbackQueue({
+    bool includeImages = false,
+  }) async {
+    final uri = Uri.parse('$baseUrl/feedback-queue').replace(
+      queryParameters: <String, String>{
+        if (includeImages) 'include_images': 'true',
+      },
+    );
+    final response = await _client.get(uri);
+
+    if (response.statusCode != 200) {
+      throw Exception('Failed to list feedback queue: ${response.body}');
+    }
+
+    final payload = jsonDecode(response.body) as List<dynamic>;
+    return payload
+        .map((item) => FeedbackQueueItem.fromJson(item as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<void> deleteFeedbackQueueItem(String id) async {
+    final response =
+        await _client.delete(Uri.parse('$baseUrl/feedback-queue/$id'));
+    if (response.statusCode != 204) {
+      throw Exception('Failed to delete feedback item: ${response.body}');
+    }
+  }
+
+  Future<void> clearFeedbackQueue() async {
+    final response = await _client.delete(Uri.parse('$baseUrl/feedback-queue'));
+    if (response.statusCode != 204) {
+      throw Exception('Failed to clear feedback queue: ${response.body}');
+    }
+  }
+
+  Future<JobStatusResponse> startFeedbackQueueSession(
+    String id, {
+    String? message,
+    String? sessionId,
+    String? workspacePath,
+    FeedbackQueueTargetMode targetMode = FeedbackQueueTargetMode.generatorOnly,
+    CodexRunOptions? codexRunOptions,
+  }) async {
+    final response = await _client.post(
+      Uri.parse('$baseUrl/feedback-queue/$id/start-session'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode(<String, dynamic>{
+        if (message != null && message.trim().isNotEmpty)
+          'message': message.trim(),
+        if (sessionId != null) 'session_id': sessionId,
+        if (workspacePath != null) 'workspace_path': workspacePath,
+        'target_mode': targetMode.apiValue,
+        if (codexRunOptions != null && !codexRunOptions.isEmpty)
+          'codex_options': codexRunOptions.toJson(),
+      }),
+    );
+
+    if (response.statusCode != 202) {
+      throw Exception('Failed to start feedback session: ${response.body}');
+    }
+
+    return JobStatusResponse.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
   Future<JobStatusResponse> sendDocumentMessage(
     XFile documentFile, {
     String? message,
@@ -655,10 +723,32 @@ class ApiClient {
     String field,
     XFile file,
   ) async {
+    final mimeType = file.mimeType?.trim();
+    final filename = _filenameFromXFile(file);
     return http.MultipartFile.fromBytes(
       field,
       await file.readAsBytes(),
-      filename: file.name,
+      filename: filename,
+      contentType: mimeType == null || mimeType.isEmpty
+          ? null
+          : MediaType.parse(mimeType),
     );
+  }
+
+  String? _filenameFromXFile(XFile file) {
+    final name = file.name.trim();
+    if (name.isNotEmpty) {
+      return name;
+    }
+    final path = file.path.trim();
+    if (path.isEmpty) {
+      return null;
+    }
+    final normalized = path.replaceAll('\\', '/');
+    final segments = normalized
+        .split('/')
+        .where((segment) => segment.trim().isNotEmpty)
+        .toList();
+    return segments.isEmpty ? null : segments.last;
   }
 }

@@ -1,0 +1,46 @@
+group = "com.codex.app_updater"
+version = "1.0"
+
+buildscript {
+    ext.kotlin_version = "2.1.0"
+    repositories {
+        google()
+        mavenCentral()
+    }
+    dependencies {
+        classpath("com.android.tools.build:gradle:8.9.1")
+        classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version")
+    }
+}
+
+allprojects {
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+apply plugin: "com.android.library"
+apply plugin: "kotlin-android"
+
+android {
+    namespace = "com.codex.app_updater"
+    compileSdk = 35
+
+    defaultConfig {
+        minSdk = 23
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+
+    kotlinOptions {
+        jvmTarget = JavaVersion.VERSION_17.toString()
+    }
+}
+
+dependencies {
+    implementation("androidx.core:core-ktx:1.13.1")
+}

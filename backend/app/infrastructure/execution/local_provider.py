@@ -2,14 +2,16 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shlex
 import subprocess
 import tempfile
 import threading
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import IO
+from typing import IO, Literal
 from uuid import uuid4
 
 from backend.app.domain.entities.codex_options import CodexRunOptions
@@ -47,15 +49,21 @@ class LocalExecutionProvider(ExecutionProvider):
         *,
         command: str,
         use_exec_mode: bool = True,
+        streaming_mode: Literal["auto", "exec", "app_server"] = "auto",
         exec_args: str = "--skip-git-repo-check --color never",
         resume_args: str = "--skip-git-repo-check",
+        default_reasoning_effort: str | None = None,
         workdir: str | None = None,
         timeout_seconds: int | None = None,
     ) -> None:
         self._command = command
         self._use_exec_mode = use_exec_mode
+        self._streaming_mode = streaming_mode
         self._exec_args = exec_args
         self._resume_args = resume_args
+        self._default_reasoning_effort = (
+            (default_reasoning_effort or "").strip() or None
+        )
         self._workdir = str(Path(workdir).resolve()) if workdir else None
         self._timeout_seconds = timeout_seconds
         self._states: dict[str, _ExecutionState] = {}
@@ -271,6 +279,44 @@ class LocalExecutionProvider(ExecutionProvider):
             latest_activity="Launching the local Codex subprocess.",
             provider_session_id=provider_session_id,
         )
+        if self._should_use_app_server(
+            image_paths=image_paths,
+            codex_options=codex_options,
+        ):
+            self._run_job_with_app_server(
+                job_id,
+                message,
+                cleanup_paths=cleanup_paths,
+                provider_session_id=provider_session_id,
+                model=model,
+                codex_options=codex_options,
+                workdir=workdir,
+            )
+            return
+
+        self._run_job_with_exec(
+            job_id,
+            message,
+            image_paths=image_paths,
+            cleanup_paths=cleanup_paths,
+            provider_session_id=provider_session_id,
+            model=model,
+            codex_options=codex_options,
+            workdir=workdir,
+        )
+
+    def _run_job_with_exec(
+        self,
+        job_id: str,
+        message: str,
+        *,
+        image_paths: list[str] | None = None,
+        cleanup_paths: list[str] | None = None,
+        provider_session_id: str | None = None,
+        model: str | None = None,
+        codex_options: CodexRunOptions | None = None,
+        workdir: str | None = None,
+    ) -> None:
         output_path: str | None = None
         resolved_workdir = workdir or self._workdir
         try:
@@ -402,6 +448,335 @@ class LocalExecutionProvider(ExecutionProvider):
             self._cleanup_output_file(output_path)
             self._cleanup_paths(cleanup_paths)
 
+    def _run_job_with_app_server(
+        self,
+        job_id: str,
+        message: str,
+        *,
+        cleanup_paths: list[str] | None = None,
+        provider_session_id: str | None = None,
+        model: str | None = None,
+        codex_options: CodexRunOptions | None = None,
+        workdir: str | None = None,
+    ) -> None:
+        process: subprocess.Popen[str] | None = None
+        stderr_lines: list[str] = []
+        response_buffer = ""
+        final_response: str | None = None
+        turn_completed = False
+        thread_id = provider_session_id
+        resolved_workdir = workdir or self._workdir
+        final_agent_message_item_ids: set[str] = set()
+        non_final_agent_message_item_ids: set[str] = set()
+
+        def response_buffer_setter(value: str) -> None:
+            nonlocal response_buffer
+            response_buffer = value
+
+        def final_response_setter(value: str | None) -> None:
+            nonlocal final_response
+            final_response = value
+
+        def turn_completed_setter() -> None:
+            nonlocal turn_completed
+            turn_completed = True
+
+        try:
+            if resolved_workdir:
+                sync_repo_skills(
+                    Path.home(),
+                    repo_root=Path(resolved_workdir).resolve(),
+                )
+
+            command_parts = self._build_app_server_command(codex_options=codex_options)
+            process = subprocess.Popen(
+                command_parts,
+                cwd=resolved_workdir,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                bufsize=1,
+            )
+            with self._lock:
+                self._processes[job_id] = process
+
+            stderr_thread = threading.Thread(
+                target=self._consume_stream,
+                args=(job_id, process.stderr, stderr_lines, False),
+                daemon=True,
+            )
+            stderr_thread.start()
+
+            self._app_server_send(
+                process,
+                {
+                    "id": "initialize",
+                    "method": "initialize",
+                    "params": {
+                        "clientInfo": {
+                            "name": "codex-mobile-bridge",
+                            "title": "Codex Mobile Bridge",
+                            "version": "0.1.0",
+                        },
+                        "capabilities": {
+                            "experimentalApi": True,
+                        },
+                    },
+                },
+            )
+            self._await_app_server_response(
+                process,
+                request_id="initialize",
+                job_id=job_id,
+                response_buffer_ref=lambda: response_buffer,
+                set_response_buffer=lambda value: None,
+                set_final_response=lambda value: None,
+                mark_turn_completed=lambda: None,
+                final_agent_message_item_ids=final_agent_message_item_ids,
+                non_final_agent_message_item_ids=non_final_agent_message_item_ids,
+            )
+            self._app_server_send(process, {"method": "initialized"})
+
+            if provider_session_id:
+                self._app_server_send(
+                    process,
+                    {
+                        "id": "thread-resume",
+                        "method": "thread/resume",
+                        "params": {
+                            "threadId": provider_session_id,
+                            "cwd": resolved_workdir,
+                            "approvalPolicy": self._approval_policy_for_app_server(
+                                self._resume_args
+                            ),
+                            "sandbox": self._app_server_thread_sandbox(
+                                self._resume_args
+                            ),
+                        },
+                    },
+                )
+                try:
+                    thread_id = self._await_thread_response(
+                        process,
+                        request_id="thread-resume",
+                        job_id=job_id,
+                        response_buffer_ref=lambda: response_buffer,
+                        set_response_buffer=lambda value: None,
+                        set_final_response=lambda value: None,
+                        mark_turn_completed=lambda: None,
+                        final_agent_message_item_ids=final_agent_message_item_ids,
+                        non_final_agent_message_item_ids=non_final_agent_message_item_ids,
+                    )
+                except _AppServerRequestError:
+                    thread_id = None
+
+            if thread_id is None:
+                self._app_server_send(
+                    process,
+                    {
+                        "id": "thread-start",
+                        "method": "thread/start",
+                        "params": {
+                            "cwd": resolved_workdir,
+                            "model": model,
+                            "approvalPolicy": self._approval_policy_for_app_server(
+                                self._exec_args
+                            ),
+                            "sandbox": self._app_server_thread_sandbox(
+                                self._exec_args
+                            ),
+                            "experimentalRawEvents": False,
+                        },
+                    },
+                )
+                thread_id = self._await_thread_response(
+                    process,
+                    request_id="thread-start",
+                    job_id=job_id,
+                    response_buffer_ref=lambda: response_buffer,
+                    set_response_buffer=lambda value: None,
+                    set_final_response=lambda value: None,
+                    mark_turn_completed=lambda: None,
+                    final_agent_message_item_ids=final_agent_message_item_ids,
+                    non_final_agent_message_item_ids=non_final_agent_message_item_ids,
+                )
+
+            if self._is_cancelled(job_id):
+                return
+
+            self._set_state(
+                job_id,
+                status=JobStatus.RUNNING,
+                provider_session_id=thread_id,
+                phase="Reasoning",
+                latest_activity="Codex started working on the current turn.",
+            )
+
+            reasoning_effort = self._reasoning_effort_for_job(codex_options)
+            self._app_server_send(
+                process,
+                {
+                    "id": "turn-start",
+                    "method": "turn/start",
+                    "params": {
+                        "threadId": thread_id,
+                        "input": [
+                            {
+                                "type": "text",
+                                "text": message,
+                                "text_elements": [],
+                            }
+                        ],
+                        "cwd": resolved_workdir,
+                        "approvalPolicy": self._approval_policy_for_app_server(
+                            self._resume_args if provider_session_id else self._exec_args
+                        ),
+                        "sandboxPolicy": self._app_server_turn_sandbox_policy(
+                            self._resume_args if provider_session_id else self._exec_args,
+                            workdir=resolved_workdir,
+                        ),
+                        "model": model,
+                        "effort": reasoning_effort,
+                    },
+                },
+            )
+            self._await_app_server_response(
+                process,
+                request_id="turn-start",
+                job_id=job_id,
+                response_buffer_ref=lambda: response_buffer,
+                set_response_buffer=lambda value: response_buffer_setter(value),
+                set_final_response=lambda value: final_response_setter(value),
+                mark_turn_completed=lambda: turn_completed_setter(),
+                final_agent_message_item_ids=final_agent_message_item_ids,
+                non_final_agent_message_item_ids=non_final_agent_message_item_ids,
+            )
+
+            if self._timeout_seconds is None or self._timeout_seconds <= 0:
+                self._stream_app_server_notifications(
+                    process,
+                    job_id=job_id,
+                    thread_id=thread_id,
+                    response_buffer_ref=lambda: response_buffer,
+                    set_response_buffer=lambda value: response_buffer_setter(value),
+                    set_final_response=lambda value: final_response_setter(value),
+                    mark_turn_completed=lambda: turn_completed_setter(),
+                    final_agent_message_item_ids=final_agent_message_item_ids,
+                    non_final_agent_message_item_ids=non_final_agent_message_item_ids,
+                )
+            else:
+                self._stream_app_server_notifications(
+                    process,
+                    job_id=job_id,
+                    thread_id=thread_id,
+                    response_buffer_ref=lambda: response_buffer,
+                    set_response_buffer=lambda value: response_buffer_setter(value),
+                    set_final_response=lambda value: final_response_setter(value),
+                    mark_turn_completed=lambda: turn_completed_setter(),
+                    timeout_seconds=self._timeout_seconds,
+                    final_agent_message_item_ids=final_agent_message_item_ids,
+                    non_final_agent_message_item_ids=non_final_agent_message_item_ids,
+                )
+
+            if self._is_cancelled(job_id):
+                return
+
+            completed_response = (
+                final_response
+                or response_buffer.strip()
+                or "Execution completed with no output."
+            )
+            self._set_state(
+                job_id,
+                status=JobStatus.COMPLETED,
+                response=completed_response,
+                provider_session_id=thread_id,
+                phase="Completed",
+                latest_activity="Codex returned a final response.",
+            )
+        except FileNotFoundError as exc:
+            if self._is_cancelled(job_id):
+                return
+            self._set_state(
+                job_id,
+                status=JobStatus.FAILED,
+                error=f"Codex command not found: {exc}",
+                phase="Failed",
+                latest_activity="The configured Codex command was not found.",
+            )
+        except subprocess.TimeoutExpired:
+            if process is not None:
+                process.kill()
+            if self._is_cancelled(job_id):
+                return
+            self._set_state(
+                job_id,
+                status=JobStatus.FAILED,
+                error=f"Execution timed out after {self._timeout_seconds} seconds.",
+                provider_session_id=thread_id,
+                phase="Timed out",
+                latest_activity="The Codex subprocess exceeded the configured timeout.",
+            )
+        except _AppServerRequestError as exc:
+            if self._is_cancelled(job_id):
+                return
+            fallback_error = self._first_non_empty(stderr_lines) or str(exc)
+            self._set_state(
+                job_id,
+                status=JobStatus.FAILED,
+                error=fallback_error,
+                provider_session_id=thread_id,
+                phase="Failed",
+                latest_activity=str(exc),
+            )
+        except Exception as exc:  # pragma: no cover - defensive path
+            if self._is_cancelled(job_id):
+                return
+            fallback_error = self._first_non_empty(stderr_lines) or f"Unexpected execution error: {exc}"
+            self._set_state(
+                job_id,
+                status=JobStatus.FAILED,
+                error=fallback_error,
+                provider_session_id=thread_id,
+                phase="Failed",
+                latest_activity="The local Codex app-server could not be started.",
+            )
+        finally:
+            with self._lock:
+                self._processes.pop(job_id, None)
+            if process is not None and process.poll() is None:
+                try:
+                    process.terminate()
+                    process.wait(timeout=1)
+                except (OSError, subprocess.TimeoutExpired):
+                    try:
+                        process.kill()
+                    except OSError:
+                        pass
+            self._cleanup_paths(cleanup_paths)
+
+    def _should_use_app_server(
+        self,
+        *,
+        image_paths: list[str] | None,
+        codex_options: CodexRunOptions | None,
+    ) -> bool:
+        if not self._use_exec_mode:
+            return False
+        if self._streaming_mode == "exec":
+            return False
+        if image_paths:
+            return False
+        if codex_options is not None and codex_options.normalized().search_enabled:
+            return False
+        if self._streaming_mode == "app_server":
+            return True
+        base_parts = shlex.split(self._command)
+        if not base_parts:
+            return False
+        return Path(base_parts[0]).name == "codex"
+
     def _build_command(
         self,
         message: str,
@@ -414,7 +789,10 @@ class LocalExecutionProvider(ExecutionProvider):
         base_parts = shlex.split(self._command)
         image_args = self._build_image_args(image_paths)
         model_args = ["--model", model] if model else []
-        codex_args = self._build_codex_args(codex_options)
+        codex_args = self._build_codex_args(
+            codex_options,
+            include_default_reasoning_effort=self._use_exec_mode,
+        )
 
         if not self._use_exec_mode:
             return [*base_parts, *model_args, *codex_args, message, *image_args], None
@@ -451,17 +829,60 @@ class LocalExecutionProvider(ExecutionProvider):
             ]
         return exec_parts, output_path
 
-    def _build_codex_args(self, codex_options: CodexRunOptions | None) -> list[str]:
+    def _build_app_server_command(
+        self,
+        *,
+        codex_options: CodexRunOptions | None,
+    ) -> list[str]:
+        return [
+            *shlex.split(self._command),
+            "app-server",
+            "--listen",
+            "stdio://",
+            *self._build_app_server_args(codex_options),
+        ]
+
+    def _build_app_server_args(
+        self,
+        codex_options: CodexRunOptions | None,
+    ) -> list[str]:
         if codex_options is None:
             return []
 
         normalized = codex_options.normalized()
-        codex_args: list[str] = []
+        args: list[str] = []
         if normalized.profile:
-            codex_args.extend(["--profile", normalized.profile])
-        if normalized.search_enabled:
-            codex_args.append("--search")
+            args.extend(["--profile", normalized.profile])
         for override in normalized.config_overrides:
+            args.extend(["-c", override])
+        return args
+
+    def _build_codex_args(
+        self,
+        codex_options: CodexRunOptions | None,
+        *,
+        include_default_reasoning_effort: bool = True,
+    ) -> list[str]:
+        normalized = codex_options.normalized() if codex_options is not None else None
+        codex_args: list[str] = []
+        if normalized is not None and normalized.profile:
+            codex_args.extend(["--profile", normalized.profile])
+        if normalized is not None and normalized.search_enabled:
+            codex_args.append("--search")
+        overrides = list(normalized.config_overrides) if normalized is not None else []
+        if (
+            include_default_reasoning_effort
+            and
+            self._default_reasoning_effort is not None
+            and not any(
+                override.strip().startswith("model_reasoning_effort")
+                for override in overrides
+            )
+        ):
+            overrides.append(
+                f'model_reasoning_effort="{self._default_reasoning_effort}"'
+            )
+        for override in overrides:
             codex_args.extend(["-c", override])
         return codex_args
 
@@ -473,6 +894,527 @@ class LocalExecutionProvider(ExecutionProvider):
         for image_path in image_paths:
             image_args.extend(["-i", image_path])
         return image_args
+
+    def _reasoning_effort_for_job(
+        self,
+        codex_options: CodexRunOptions | None,
+    ) -> str | None:
+        normalized = codex_options.normalized() if codex_options is not None else None
+        overrides = normalized.config_overrides if normalized is not None else ()
+        for override in overrides:
+            key, _, value = override.partition("=")
+            if key.strip() != "model_reasoning_effort":
+                continue
+            return value.strip().strip('"').strip("'") or None
+        return self._default_reasoning_effort
+
+    def _approval_policy_for_app_server(self, args: str) -> str | None:
+        parts = shlex.split(args)
+        if "--dangerously-bypass-approvals-and-sandbox" in parts:
+            return "never"
+        if "--full-auto" in parts:
+            return "on-request"
+        for index, part in enumerate(parts):
+            if part in {"-a", "--ask-for-approval"} and index + 1 < len(parts):
+                return parts[index + 1]
+        return None
+
+    def _sandbox_for_app_server(self, args: str) -> str | None:
+        parts = shlex.split(args)
+        if "--dangerously-bypass-approvals-and-sandbox" in parts:
+            return "danger-full-access"
+        if "--full-auto" in parts:
+            return "workspace-write"
+        for index, part in enumerate(parts):
+            if part in {"-s", "--sandbox"} and index + 1 < len(parts):
+                return parts[index + 1]
+        return None
+
+    def _app_server_thread_sandbox(self, args: str) -> str | None:
+        return self._sandbox_for_app_server(args)
+
+    def _app_server_turn_sandbox_policy(
+        self,
+        args: str,
+        *,
+        workdir: str | None,
+    ) -> dict[str, object] | None:
+        sandbox = self._sandbox_for_app_server(args)
+        if sandbox == "danger-full-access":
+            return {"type": "dangerFullAccess"}
+        if sandbox == "read-only":
+            return {"type": "readOnly", "networkAccess": False}
+        if sandbox == "workspace-write":
+            writable_roots = [str(Path(workdir).resolve())] if workdir else []
+            return {
+                "type": "workspaceWrite",
+                "writableRoots": writable_roots,
+                "networkAccess": False,
+                "excludeTmpdirEnvVar": False,
+                "excludeSlashTmp": False,
+            }
+        return None
+
+    def _app_server_send(
+        self,
+        process: subprocess.Popen[str],
+        payload: dict[str, object],
+    ) -> None:
+        if process.stdin is None:
+            raise _AppServerRequestError("Codex app-server stdin is not available.")
+        process.stdin.write(json.dumps(payload) + "\n")
+        process.stdin.flush()
+
+    def _await_thread_response(
+        self,
+        process: subprocess.Popen[str],
+        *,
+        request_id: str,
+        job_id: str,
+        response_buffer_ref: Callable[[], str],
+        set_response_buffer: Callable[[str], None],
+        set_final_response: Callable[[str | None], None],
+        mark_turn_completed: Callable[[], None],
+        final_agent_message_item_ids: set[str],
+        non_final_agent_message_item_ids: set[str],
+    ) -> str:
+        payload = self._await_app_server_response(
+            process,
+            request_id=request_id,
+            job_id=job_id,
+            response_buffer_ref=response_buffer_ref,
+            set_response_buffer=set_response_buffer,
+            set_final_response=set_final_response,
+            mark_turn_completed=mark_turn_completed,
+            final_agent_message_item_ids=final_agent_message_item_ids,
+            non_final_agent_message_item_ids=non_final_agent_message_item_ids,
+        )
+        result = payload.get("result")
+        if not isinstance(result, dict):
+            raise _AppServerRequestError(f"Codex app-server returned no result for {request_id}.")
+        thread = result.get("thread")
+        if not isinstance(thread, dict):
+            raise _AppServerRequestError(f"Codex app-server returned no thread for {request_id}.")
+        thread_id = thread.get("id")
+        if not isinstance(thread_id, str) or not thread_id.strip():
+            raise _AppServerRequestError(f"Codex app-server returned an invalid thread id for {request_id}.")
+        return thread_id
+
+    def _await_app_server_response(
+        self,
+        process: subprocess.Popen[str],
+        *,
+        request_id: str,
+        job_id: str,
+        response_buffer_ref: Callable[[], str],
+        set_response_buffer: Callable[[str], None],
+        set_final_response: Callable[[str | None], None],
+        mark_turn_completed: Callable[[], None],
+        final_agent_message_item_ids: set[str],
+        non_final_agent_message_item_ids: set[str],
+    ) -> dict[str, object]:
+        while True:
+            payload = self._read_app_server_payload(process)
+            if payload.get("id") == request_id:
+                error = payload.get("error")
+                if isinstance(error, dict):
+                    message = error.get("message")
+                    if isinstance(message, str) and message.strip():
+                        raise _AppServerRequestError(message)
+                    raise _AppServerRequestError(
+                        f"Codex app-server request {request_id} failed."
+                    )
+                return payload
+            self._handle_app_server_payload(
+                job_id,
+                payload,
+                response_buffer_ref=response_buffer_ref,
+                set_response_buffer=set_response_buffer,
+                set_final_response=set_final_response,
+                mark_turn_completed=mark_turn_completed,
+                final_agent_message_item_ids=final_agent_message_item_ids,
+                non_final_agent_message_item_ids=non_final_agent_message_item_ids,
+            )
+
+    def _stream_app_server_notifications(
+        self,
+        process: subprocess.Popen[str],
+        *,
+        job_id: str,
+        thread_id: str,
+        response_buffer_ref: Callable[[], str],
+        set_response_buffer: Callable[[str], None],
+        set_final_response: Callable[[str | None], None],
+        mark_turn_completed: Callable[[], None],
+        final_agent_message_item_ids: set[str],
+        non_final_agent_message_item_ids: set[str],
+        timeout_seconds: int | None = None,
+    ) -> None:
+        deadline = (
+            time.monotonic() + timeout_seconds
+            if timeout_seconds is not None and timeout_seconds > 0
+            else None
+        )
+        while True:
+            remaining_timeout: int | None
+            if deadline is None:
+                remaining_timeout = None
+            else:
+                remaining_seconds = max(0.0, deadline - time.monotonic())
+                if remaining_seconds <= 0:
+                    raise subprocess.TimeoutExpired("codex app-server", timeout_seconds or 0)
+                remaining_timeout = max(1, int(remaining_seconds))
+            payload = self._read_app_server_payload(
+                process,
+                timeout_seconds=remaining_timeout,
+            )
+            if self._handle_app_server_payload(
+                job_id,
+                payload,
+                response_buffer_ref=response_buffer_ref,
+                set_response_buffer=set_response_buffer,
+                set_final_response=set_final_response,
+                mark_turn_completed=mark_turn_completed,
+                final_agent_message_item_ids=final_agent_message_item_ids,
+                non_final_agent_message_item_ids=non_final_agent_message_item_ids,
+            ):
+                return
+
+    def _read_app_server_payload(
+        self,
+        process: subprocess.Popen[str],
+        *,
+        timeout_seconds: int | None = None,
+    ) -> dict[str, object]:
+        if process.stdout is None:
+            raise _AppServerRequestError("Codex app-server stdout is not available.")
+        if timeout_seconds is None or timeout_seconds <= 0:
+            line = process.stdout.readline()
+        else:
+            result: dict[str, str | None] = {"line": None}
+            error: dict[str, BaseException | None] = {"value": None}
+
+            def reader() -> None:
+                try:
+                    result["line"] = process.stdout.readline()
+                except BaseException as exc:  # pragma: no cover - defensive path
+                    error["value"] = exc
+
+            worker = threading.Thread(target=reader, daemon=True)
+            worker.start()
+            worker.join(timeout_seconds)
+            if worker.is_alive():
+                raise subprocess.TimeoutExpired("codex app-server", timeout_seconds)
+            if error["value"] is not None:
+                raise _AppServerRequestError(str(error["value"]))
+            line = result["line"] or ""
+
+        if not line:
+            if process.poll() is not None:
+                raise _AppServerRequestError(
+                    "Codex app-server exited before returning a complete response."
+                )
+            raise _AppServerRequestError(
+                "Codex app-server closed stdout before returning a complete response."
+            )
+
+        payload = self._parse_json_line(line.rstrip())
+        if payload is None:
+            raise _AppServerRequestError("Codex app-server emitted a non-JSON payload.")
+        return payload
+
+    def _handle_app_server_payload(
+        self,
+        job_id: str,
+        payload: dict[str, object],
+        *,
+        response_buffer_ref: Callable[[], str],
+        set_response_buffer: Callable[[str], None],
+        set_final_response: Callable[[str | None], None],
+        mark_turn_completed: Callable[[], None],
+        final_agent_message_item_ids: set[str],
+        non_final_agent_message_item_ids: set[str],
+    ) -> bool:
+        method = payload.get("method")
+        if not isinstance(method, str):
+            return False
+
+        if method in {"item/started", "item/completed"}:
+            self._track_app_server_agent_message_item(
+                payload,
+                final_agent_message_item_ids=final_agent_message_item_ids,
+                non_final_agent_message_item_ids=non_final_agent_message_item_ids,
+            )
+
+        if method in {
+            "codex/event/agent_message_content_delta",
+            "item/agentMessage/delta",
+        }:
+            params = payload.get("params")
+            if not isinstance(params, dict):
+                return False
+            delta: object | None
+            msg = params.get("msg")
+            if isinstance(msg, dict):
+                delta = msg.get("delta")
+            else:
+                delta = params.get("delta")
+            if not isinstance(delta, str) or not delta:
+                return False
+            item_id = params.get("itemId")
+            if isinstance(item_id, str):
+                if item_id in non_final_agent_message_item_ids:
+                    return False
+                if (
+                    final_agent_message_item_ids
+                    and item_id not in final_agent_message_item_ids
+                ):
+                    return False
+            updated_response = response_buffer_ref() + delta
+            set_response_buffer(updated_response)
+            self._set_state(
+                job_id,
+                status=JobStatus.RUNNING,
+                response=updated_response,
+                phase="Drafting reply",
+                latest_activity="Codex is composing the reply.",
+            )
+            return False
+
+        if method in {"item/completed", "codex/event/item_completed"}:
+            final_text = self._extract_app_server_agent_message(
+                payload,
+                final_agent_message_item_ids=final_agent_message_item_ids,
+                non_final_agent_message_item_ids=non_final_agent_message_item_ids,
+            )
+            if final_text is not None:
+                set_final_response(final_text)
+                set_response_buffer(final_text)
+                self._set_state(
+                    job_id,
+                    status=JobStatus.RUNNING,
+                    response=final_text,
+                    phase="Finalizing",
+                    latest_activity="Codex finished the turn and is preparing the final output.",
+                )
+                return False
+
+        if method == "codex/event/agent_message":
+            params = payload.get("params")
+            if isinstance(params, dict):
+                msg = params.get("msg")
+                if isinstance(msg, dict):
+                    message = msg.get("message")
+                    if isinstance(message, str):
+                        set_final_response(message)
+                        set_response_buffer(message)
+                        self._set_state(
+                            job_id,
+                            status=JobStatus.RUNNING,
+                            response=message,
+                            phase="Finalizing",
+                            latest_activity="Codex completed the reply.",
+                        )
+            return False
+
+        phase, latest_activity = self._describe_app_server_event(payload)
+        if phase is not None or latest_activity is not None:
+            self._set_state(
+                job_id,
+                status=JobStatus.RUNNING,
+                phase=phase,
+                latest_activity=latest_activity,
+            )
+
+        if method == "turn/completed":
+            mark_turn_completed()
+            return True
+
+        return False
+
+    def _track_app_server_agent_message_item(
+        self,
+        payload: dict[str, object],
+        *,
+        final_agent_message_item_ids: set[str],
+        non_final_agent_message_item_ids: set[str],
+    ) -> None:
+        item = self._app_server_item(payload)
+        if item is None:
+            return
+        if self._app_server_item_type(item) not in {"agentMessage", "AgentMessage"}:
+            return
+        item_id = item.get("id")
+        if not isinstance(item_id, str) or not item_id:
+            return
+        phase = item.get("phase")
+        if phase == "commentary":
+            non_final_agent_message_item_ids.add(item_id)
+            final_agent_message_item_ids.discard(item_id)
+            return
+        if phase == "final_answer":
+            final_agent_message_item_ids.add(item_id)
+            non_final_agent_message_item_ids.discard(item_id)
+
+    def _extract_app_server_agent_message(
+        self,
+        payload: dict[str, object],
+        *,
+        final_agent_message_item_ids: set[str],
+        non_final_agent_message_item_ids: set[str],
+    ) -> str | None:
+        item = self._app_server_item(payload)
+        if item is None:
+            return None
+        if self._app_server_item_type(item) not in {"agentMessage", "AgentMessage"}:
+            return None
+        item_id = item.get("id")
+        if isinstance(item_id, str):
+            if item_id in non_final_agent_message_item_ids:
+                return None
+            if final_agent_message_item_ids and item_id not in final_agent_message_item_ids:
+                return None
+        phase = item.get("phase")
+        if phase == "commentary":
+            return None
+        text = item.get("text")
+        if isinstance(text, str):
+            return text
+        content = item.get("content")
+        if not isinstance(content, list):
+            return None
+        segments: list[str] = []
+        for entry in content:
+            if not isinstance(entry, dict):
+                continue
+            text_value = entry.get("text")
+            if isinstance(text_value, str):
+                segments.append(text_value)
+        if not segments:
+            return None
+        return "".join(segments)
+
+    def _app_server_item(self, payload: dict[str, object]) -> dict[str, object] | None:
+        params = payload.get("params")
+        if not isinstance(params, dict):
+            return None
+        item = params.get("item")
+        return item if isinstance(item, dict) else None
+
+    def _app_server_item_type(self, item: dict[str, object]) -> str:
+        return str(item.get("type") or "")
+
+    def _describe_app_server_event(
+        self,
+        payload: dict[str, object],
+    ) -> tuple[str | None, str | None]:
+        method = payload.get("method")
+        if not isinstance(method, str):
+            return (None, None)
+        if method == "thread/started":
+            return ("Starting session", "Codex started a new chat session.")
+        if method == "turn/started":
+            return ("Reasoning", "Codex started working on the current turn.")
+        if method == "turn/completed":
+            return (
+                "Finalizing",
+                "Codex finished the turn and is preparing the final output.",
+            )
+        if method in {
+            "item/reasoning/textDelta",
+            "item/reasoning/summaryTextDelta",
+            "item/reasoning/summaryPartAdded",
+        }:
+            return ("Reasoning", "Codex is reasoning.")
+        if method == "item/mcpToolCall/progress":
+            params = payload.get("params")
+            if isinstance(params, dict):
+                message = params.get("message")
+                if isinstance(message, str) and message.strip():
+                    return ("Running tools", message.strip())
+            return ("Running tools", "MCP tool call is running.")
+        if method in {
+            "codex/event/mcp_startup_update",
+            "mcpServer/startupStatus/updated",
+        }:
+            params = payload.get("params")
+            if not isinstance(params, dict):
+                return ("Starting Codex CLI", None)
+            msg = params.get("msg")
+            server = "MCP server"
+            state = "starting"
+            error: str | None = None
+            if isinstance(msg, dict):
+                server = str(msg.get("server") or server)
+                status = msg.get("status")
+                if isinstance(status, dict):
+                    state = str(status.get("state") or state)
+                    raw_error = status.get("error")
+                    if raw_error is not None:
+                        error = str(raw_error)
+            else:
+                server = str(params.get("name") or server)
+                state = str(params.get("status") or state)
+                raw_error = params.get("error")
+                if raw_error is not None:
+                    error = str(raw_error)
+            if state == "failed":
+                return (
+                    "Starting Codex CLI",
+                    f"{server} failed to start: {error or 'unknown error'}",
+                )
+            return ("Starting Codex CLI", f"{server} is {state}.")
+        if method in {"item/started", "item/completed"}:
+            item = self._app_server_item(payload)
+            if item is None:
+                return ("Running Codex", None)
+            item_type = self._app_server_item_type(item)
+            if item_type in {"agentMessage", "AgentMessage"}:
+                if method == "item/completed":
+                    return ("Finalizing", "Codex completed the reply.")
+                return ("Drafting reply", "Codex is composing the reply.")
+            if item_type in {"reasoning", "Reasoning"}:
+                if method == "item/completed":
+                    return ("Reasoning", "Codex finished reasoning.")
+                return ("Reasoning", "Codex is reasoning.")
+            if item_type in {"mcpToolCall", "McpToolCall", "call-mcp-tool"}:
+                tool_name = self._app_server_tool_name(item)
+                label = f"MCP tool `{tool_name}`" if tool_name else "MCP tool"
+                if method == "item/completed":
+                    return ("Running tools", f"Completed {label}.")
+                return ("Running tools", f"Calling {label}.")
+            if item_type in {
+                "dynamicToolCall",
+                "DynamicToolCall",
+                "collabAgentToolCall",
+                "CollabAgentToolCall",
+            }:
+                tool_name = self._app_server_tool_name(item)
+                label = f"tool `{tool_name}`" if tool_name else "tool"
+                if method == "item/completed":
+                    return ("Running tools", f"Completed {label}.")
+                return ("Running tools", f"Calling {label}.")
+            if item_type in {"commandExecution", "CommandExecution"}:
+                if method == "item/completed":
+                    return ("Running command", "Command completed.")
+                return ("Running command", "Running command.")
+            if item_type in {"fileChange", "FileChange"}:
+                if method == "item/completed":
+                    return ("Editing files", "File changes completed.")
+                return ("Editing files", "Applying file changes.")
+            if item_type:
+                human_item = self._humanize(item_type)
+                if method == "item/completed":
+                    return ("Running tools", f"Completed {human_item.lower()}.")
+                return ("Running tools", f"Started {human_item.lower()}.")
+        return (None, None)
+
+    def _app_server_tool_name(self, item: dict[str, object]) -> str | None:
+        for key in ("tool", "name"):
+            value = item.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        return None
 
     def _consume_stream(
         self,
@@ -646,7 +1588,16 @@ class LocalExecutionProvider(ExecutionProvider):
         return ("Running Codex", self._humanize(event_type))
 
     def _humanize(self, value: str) -> str:
-        return value.replace(".", " ").replace("_", " ").strip().capitalize()
+        spaced = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", value)
+        words = (
+            spaced.replace(".", " ")
+            .replace("_", " ")
+            .replace("-", " ")
+            .strip()
+        )
+        if not words:
+            return ""
+        return " ".join(words.split()).capitalize()
 
     def _first_non_empty(self, lines: list[str]) -> str | None:
         for line in lines:
@@ -789,3 +1740,7 @@ class LocalExecutionProvider(ExecutionProvider):
             successor_job_id,
             provider_session_id_override=provider_session_id,
         )
+
+
+class _AppServerRequestError(RuntimeError):
+    pass

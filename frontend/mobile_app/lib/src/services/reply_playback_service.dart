@@ -17,18 +17,28 @@ class ReplyPlaybackService {
   final ReplySpeechPlayer _fallbackPlayer;
   final ReplySpeechPlayer Function(ApiClient apiClient) _providerPlayerFactory;
   final Map<String, String> _spokenAssistantMessageIds = <String, String>{};
+  final Map<String, String> _speakingAssistantMessageIds = <String, String>{};
   ReplySpeechPlayer? _providerPlayer;
   bool _supportsProviderSpeech = false;
+  double _playbackSpeed = 1.0;
 
   Future<void> setServer(ApiClient apiClient) async {
     await stop();
     final existingProviderPlayer = _providerPlayer;
     _providerPlayer = _providerPlayerFactory(apiClient);
+    await _providerPlayer?.setPlaybackSpeed(_playbackSpeed);
     _supportsProviderSpeech = false;
     // Session and message ids are scoped to a server; avoid carrying
     // duplicate-suppression state across server switches.
     _spokenAssistantMessageIds.clear();
+    _speakingAssistantMessageIds.clear();
     await existingProviderPlayer?.dispose();
+  }
+
+  Future<void> setPlaybackSpeed(double speed) async {
+    _playbackSpeed = speed.clamp(1.0, 2.0).toDouble();
+    await _providerPlayer?.setPlaybackSpeed(_playbackSpeed);
+    await _fallbackPlayer.setPlaybackSpeed(_playbackSpeed);
   }
 
   void setCapabilities(ServerCapabilities? capabilities) {
@@ -58,10 +68,21 @@ class ReplyPlaybackService {
     if (_spokenAssistantMessageIds[session.id] == latestReply.id) {
       return;
     }
+    if (_speakingAssistantMessageIds[session.id] == latestReply.id) {
+      return;
+    }
 
-    final didSpeak = await _speakWithBestAvailablePlayer(latestReply.text);
-    if (didSpeak) {
-      _spokenAssistantMessageIds[session.id] = latestReply.id;
+    _speakingAssistantMessageIds[session.id] = latestReply.id;
+    try {
+      final didSpeak = await _speakWithBestAvailablePlayer(latestReply.text);
+      if (didSpeak &&
+          _speakingAssistantMessageIds[session.id] == latestReply.id) {
+        _spokenAssistantMessageIds[session.id] = latestReply.id;
+      }
+    } finally {
+      if (_speakingAssistantMessageIds[session.id] == latestReply.id) {
+        _speakingAssistantMessageIds.remove(session.id);
+      }
     }
   }
 

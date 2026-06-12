@@ -14,6 +14,7 @@ class JobStatusResponse {
     this.response,
     this.error,
     this.providerSessionId,
+    this.runId,
     this.phase,
     this.latestActivity,
     this.updatedAt,
@@ -31,6 +32,7 @@ class JobStatusResponse {
   final String? response;
   final String? error;
   final String? providerSessionId;
+  final String? runId;
   final String? phase;
   final String? latestActivity;
   final DateTime? updatedAt;
@@ -59,6 +61,7 @@ class JobStatusResponse {
       response: _readPayloadText(json['response']),
       error: _readPayloadText(json['error']),
       providerSessionId: _readText(json['provider_session_id']),
+      runId: _readText(json['run_id']),
       phase: _readText(json['phase']),
       latestActivity: _readPayloadText(json['latest_activity']),
       updatedAt: _readDateTime(json['updated_at']),
@@ -78,6 +81,7 @@ class JobStatusResponse {
       if (response != null) 'response': response,
       if (error != null) 'error': error,
       if (providerSessionId != null) 'provider_session_id': providerSessionId,
+      if (runId != null) 'run_id': runId,
       if (phase != null) 'phase': phase,
       if (latestActivity != null) 'latest_activity': latestActivity,
       if (updatedAt != null) 'updated_at': updatedAt!.toIso8601String(),
@@ -97,6 +101,7 @@ class JobStatusResponse {
     String? response,
     String? error,
     String? providerSessionId,
+    String? runId,
     String? phase,
     String? latestActivity,
     DateTime? updatedAt,
@@ -114,6 +119,7 @@ class JobStatusResponse {
       response: response ?? this.response,
       error: error ?? this.error,
       providerSessionId: providerSessionId ?? this.providerSessionId,
+      runId: runId ?? this.runId,
       phase: phase ?? this.phase,
       latestActivity: latestActivity ?? this.latestActivity,
       updatedAt: updatedAt ?? this.updatedAt,

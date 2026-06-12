@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import json
 import os
+import base64
 import threading
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+import tempfile
 from tempfile import TemporaryDirectory
 import zipfile
 
@@ -13,7 +15,8 @@ from fastapi.testclient import TestClient
 import pytest
 
 from backend.app.application.services.message_service import MessageService
-from backend.app.api.routes import get_container
+from backend.app.api.routes import _jobs_by_id_for_messages, get_container
+from backend.app.api.schemas import SessionSummaryResponse
 from backend.app.domain.entities.agent_configuration import (
     AgentConfiguration,
     AgentDisplayMode,
@@ -40,9 +43,11 @@ from backend.app.domain.entities.codex_options import CodexRunOptions
 from backend.app.domain.entities.job import JobConversationKind, JobStatus
 from backend.app.infrastructure import mcp_apps as mcp_apps_infra
 from backend.app.infrastructure.execution.base import ExecutionProvider, ExecutionSnapshot
+from backend.app.infrastructure.execution.local_provider import LocalExecutionProvider
 from backend.app.infrastructure.codex_tooling import discover_codex_skills, sync_repo_skills
 from backend.app.infrastructure.persistence.in_memory_chat_repository import InMemoryChatRepository
 from backend.app.infrastructure.persistence.sqlite_chat_repository import SqliteChatRepository
+from backend.app.infrastructure.speech import kokoro_synthesizer
 from backend.app.infrastructure.speech.base import (
     SpeechSynthesizer,
     SpeechSynthesizerStatus,
@@ -72,7 +77,9 @@ def build_test_client() -> TestClient:
 
 def build_session_client(*, projects_root: str = "..") -> TestClient:
     settings = Settings(
-        codex_command="python3 tests/fixtures/fake_codex_session.py",
+        codex_command=(
+            f"python3 {Path('tests/fixtures/fake_codex_session.py').resolve()}"
+        ),
         codex_use_exec=True,
         projects_root=projects_root,
         chat_store_backend="memory",
@@ -98,9 +105,30 @@ def build_json_only_client() -> TestClient:
     return TestClient(app)
 
 
+def build_app_server_streaming_client() -> TestClient:
+    state_file = Path(tempfile.gettempdir()) / "fake_codex_app_server_threads.json"
+    state_file.unlink(missing_ok=True)
+    settings = Settings(
+        codex_command="python3 tests/fixtures/fake_codex_app_server.py",
+        codex_use_exec=True,
+        codex_streaming_mode="app_server",
+        codex_exec_args="--skip-git-repo-check --color never --dangerously-bypass-approvals-and-sandbox",
+        codex_resume_args="--skip-git-repo-check --dangerously-bypass-approvals-and-sandbox",
+        projects_root="..",
+        chat_store_backend="memory",
+        execution_timeout_seconds=10,
+        poll_interval_seconds=0,
+        audio_transcription_backend="auto",
+    )
+    app = create_app(settings)
+    return TestClient(app)
+
+
 def build_session_client_with_container(*, projects_root: str = ".."):
     settings = Settings(
-        codex_command="python3 tests/fixtures/fake_codex_session.py",
+        codex_command=(
+            f"python3 {Path('tests/fixtures/fake_codex_session.py').resolve()}"
+        ),
         codex_use_exec=True,
         projects_root=projects_root,
         chat_store_backend="memory",
@@ -562,6 +590,31 @@ def build_image_client() -> TestClient:
         execution_timeout_seconds=10,
         poll_interval_seconds=0,
         audio_transcription_backend="auto",
+    )
+    app = create_app(settings)
+    return TestClient(app)
+
+
+def build_feedback_queue_client(
+    data_dir: Path,
+    *,
+    feedback_source_workspace_aliases: str = "",
+    projects_root: Path | str = "..",
+) -> TestClient:
+    settings = Settings(
+        codex_command=(
+            f"python3 {Path('tests/fixtures/fake_codex_session.py').resolve()}"
+        ),
+        codex_use_exec=True,
+        projects_root=str(projects_root),
+        chat_store_backend="memory",
+        execution_timeout_seconds=10,
+        poll_interval_seconds=0,
+        audio_transcription_backend="auto",
+        feedback_queue_path=str(data_dir / "feedback_queue.json"),
+        feedback_image_dir=str(data_dir / "feedback_images"),
+        feedback_audio_dir=str(data_dir / "feedback_audio"),
+        feedback_source_workspace_aliases=feedback_source_workspace_aliases,
     )
     app = create_app(settings)
     return TestClient(app)
@@ -1980,6 +2033,109 @@ def test_sessions_endpoints_include_conversation_product_fields() -> None:
     assert detail_response.json()["conversation_product"] == summary_entry["conversation_product"]
 
 
+def test_session_summary_uses_messages_refreshed_by_terminal_job_sync() -> None:
+    with TemporaryDirectory() as temp_dir:
+        workspace = Path(temp_dir) / "repo"
+        workspace.mkdir()
+        service, provider, repository = _build_controlled_message_service(
+            temp_dir,
+            barrier_agent_id=AgentId.REVIEWER,
+        )
+        session = service.create_session(workspace_path=str(workspace))
+
+        job = service.submit_message("Build the stale pending regression case.", session_id=session.id)
+        stale_messages = repository.list_messages(session.id)
+        assistant_message = next(
+            message for message in stale_messages if message.role == ChatMessageRole.ASSISTANT
+        )
+        assert assistant_message.status == ChatMessageStatus.PENDING
+
+        provider.complete_job(job.id, response="Finished after the first message read.")
+
+        jobs_by_id = _jobs_by_id_for_messages(service, stale_messages)
+        summary = SessionSummaryResponse.from_domain(
+            session,
+            messages=stale_messages,
+            jobs_by_id=jobs_by_id,
+        )
+
+        refreshed_assistant_message = next(
+            message for message in stale_messages if message.role == ChatMessageRole.ASSISTANT
+        )
+        assert refreshed_assistant_message.status == ChatMessageStatus.COMPLETED
+        assert refreshed_assistant_message.content == "Finished after the first message read."
+        assert summary.has_pending_messages is False
+
+
+def test_session_summary_can_use_stored_jobs_without_resyncing_history() -> None:
+    with TemporaryDirectory() as temp_dir:
+        workspace = Path(temp_dir) / "repo"
+        workspace.mkdir()
+        service, provider, repository = _build_controlled_message_service(
+            temp_dir,
+            barrier_agent_id=AgentId.REVIEWER,
+        )
+        session = service.create_session(workspace_path=str(workspace))
+
+        job = service.submit_message("Build the stored history snapshot.", session_id=session.id)
+        stale_messages = repository.list_messages(session.id)
+        provider.complete_job(job.id, response="Finished but not reconciled.")
+
+        jobs_by_id = _jobs_by_id_for_messages(
+            service,
+            stale_messages,
+            sync_jobs=False,
+        )
+
+        assert jobs_by_id[job.id].status == JobStatus.PENDING
+        assert any(
+            message.status == ChatMessageStatus.PENDING
+            and message.job_id == job.id
+            for message in stale_messages
+        )
+
+
+def test_terminal_job_read_repairs_stale_pending_assistant_message() -> None:
+    with TemporaryDirectory() as temp_dir:
+        workspace = Path(temp_dir) / "repo"
+        workspace.mkdir()
+        service, _provider, repository = _build_controlled_message_service(
+            temp_dir,
+            barrier_agent_id=AgentId.REVIEWER,
+        )
+        session = service.create_session(workspace_path=str(workspace))
+
+        job = service.submit_message("Repair a stale terminal job side effect.", session_id=session.id)
+        persisted_job = repository.get_job(job.id)
+        assert persisted_job is not None
+        persisted_job.sync(
+            status=JobStatus.COMPLETED,
+            response="Terminal result that was not copied to the message.",
+            phase="Completed",
+            latest_activity="Codex returned a final response.",
+        )
+        persisted_job.auto_chain_processed = True
+        repository.save_job(persisted_job)
+
+        stale_assistant_message = next(
+            message
+            for message in repository.list_messages(session.id)
+            if message.role == ChatMessageRole.ASSISTANT
+        )
+        assert stale_assistant_message.status == ChatMessageStatus.PENDING
+        assert stale_assistant_message.content == ""
+
+        service.get_job(job.id)
+
+        repaired_assistant_message = next(
+            message
+            for message in repository.list_messages(session.id)
+            if message.role == ChatMessageRole.ASSISTANT
+        )
+        assert repaired_assistant_message.status == ChatMessageStatus.COMPLETED
+        assert repaired_assistant_message.content == "Terminal result that was not copied to the message."
+
+
 def test_session_detail_sanitizes_conversation_product_when_hidden_specialist_replies_exist() -> None:
     client, container = build_session_client_with_container()
     repository = container.message_service._repository
@@ -3068,6 +3224,176 @@ def test_cancelled_reviewer_follow_up_converges_in_background_without_downstream
         assert service._terminal_job_locks == {}
 
 
+def test_reviewer_prompt_triggers_generator_follow_up_in_background_without_polling() -> None:
+    with TemporaryDirectory() as temp_dir:
+        workspace = Path(temp_dir) / "repo"
+        workspace.mkdir()
+        service, provider, repository = _build_watched_controlled_message_service(
+            temp_dir,
+            barrier_agent_id=AgentId.SUPERVISOR,
+        )
+
+        session = service.create_session(workspace_path=str(workspace))
+        configuration = session.agent_configuration.normalized()
+        configuration.preset = AgentPreset.REVIEW
+        configuration.agents[AgentId.GENERATOR].max_turns = 2
+        configuration.agents[AgentId.REVIEWER].enabled = True
+        configuration.agents[AgentId.REVIEWER].max_turns = 1
+        configuration.agents[AgentId.SUMMARY].enabled = False
+        service.update_agent_configuration(session_id=session.id, configuration=configuration)
+
+        initial_job = service.submit_message(
+            "Build the initial implementation.",
+            session_id=session.id,
+        )
+        provider.complete_job(initial_job.id, response="Initial generator response.")
+
+        _, messages, _ = wait_for_repository_session(
+            repository,
+            session.id,
+            predicate=lambda current_session, current_messages, current_jobs: (
+                current_session is not None
+                and any(
+                    message.run_id == initial_job.run_id
+                    and message.agent_id == AgentId.REVIEWER
+                    and message.job_id is not None
+                    for message in current_messages
+                )
+                and current_jobs.get(initial_job.id) is not None
+                and current_jobs[initial_job.id].auto_chain_processed is True
+            ),
+        )
+        reviewer_message = next(
+            message
+            for message in messages
+            if message.run_id == initial_job.run_id and message.agent_id == AgentId.REVIEWER
+        )
+        assert reviewer_message.job_id is not None
+
+        provider.complete_job(
+            reviewer_message.job_id,
+            response="Ask the generator to add regression coverage before shipping.",
+        )
+
+        session, messages, jobs_by_id = wait_for_repository_session(
+            repository,
+            session.id,
+            predicate=lambda current_session, current_messages, current_jobs: (
+                current_session is not None
+                and current_session.active_agent_run_id == initial_job.run_id
+                and any(
+                    message.run_id == initial_job.run_id
+                    and message.agent_id == AgentId.GENERATOR
+                    and message.trigger_source == AgentTriggerSource.REVIEWER
+                    and message.job_id is not None
+                    for message in current_messages
+                )
+                and current_jobs.get(reviewer_message.job_id) is not None
+                and current_jobs[reviewer_message.job_id].auto_chain_processed is True
+                and service._job_monitor_unsubscribes
+            ),
+        )
+        generator_follow_up = next(
+            message
+            for message in messages
+            if message.run_id == initial_job.run_id
+            and message.agent_id == AgentId.GENERATOR
+            and message.trigger_source == AgentTriggerSource.REVIEWER
+        )
+        assert generator_follow_up.job_id is not None
+
+        provider.complete_job(
+            generator_follow_up.job_id,
+            response="Generator added regression coverage.",
+        )
+        session, messages, generator_job = wait_for_background_terminal_convergence(
+            service,
+            repository,
+            session_id=session.id,
+            job_id=generator_follow_up.job_id,
+            expected_status=JobStatus.COMPLETED,
+        )
+
+        assert session.active_agent_run_id is None
+        assert generator_job.auto_chain_processed is True
+        assert any(
+            message.id == generator_follow_up.id
+            and message.status == ChatMessageStatus.COMPLETED
+            and message.content == "Generator added regression coverage."
+            for message in messages
+        )
+        assert jobs_by_id[reviewer_message.job_id].auto_chain_processed is True
+        assert service._job_monitor_unsubscribes == {}
+        assert service._terminal_job_locks == {}
+
+
+def test_local_provider_completes_reviewer_generator_chain_without_frontend_polling() -> None:
+    client, container = build_session_client_with_container()
+
+    try:
+        session_response = client.post("/sessions", json={"title": "Local background chain"})
+        assert session_response.status_code == 201
+        session_id = session_response.json()["id"]
+
+        config_response = client.put(
+            f"/sessions/{session_id}/agents",
+            json=build_agent_configuration_payload(
+                preset="review",
+                summary_enabled=False,
+            ),
+        )
+        assert config_response.status_code == 200
+
+        message_response = client.post(
+            f"/sessions/{session_id}/messages",
+            json={"message": "Build the first version in background."},
+        )
+        assert message_response.status_code == 202
+        initial_job_id = message_response.json()["job_id"]
+
+        service = container.message_service
+        repository = service._repository
+        session, messages, jobs_by_id = wait_for_repository_session(
+            repository,
+            session_id,
+            predicate=lambda current_session, current_messages, current_jobs: (
+                current_session is not None
+                and current_session.active_agent_run_id is None
+                and len(current_messages) >= 4
+                and all(
+                    job is not None
+                    and job.status == JobStatus.COMPLETED
+                    and job.auto_chain_processed is True
+                    for job in current_jobs.values()
+                )
+                and service._job_monitor_unsubscribes == {}
+                and service._terminal_job_locks == {}
+            ),
+            timeout_seconds=10.0,
+        )
+
+        assert session.active_agent_run_id is None
+        assert initial_job_id in jobs_by_id
+        assert [
+            (message.agent_id, message.trigger_source, message.status)
+            for message in messages
+            if message.agent_id != AgentId.USER
+        ] == [
+            (AgentId.GENERATOR, AgentTriggerSource.USER, ChatMessageStatus.COMPLETED),
+            (AgentId.REVIEWER, AgentTriggerSource.GENERATOR, ChatMessageStatus.COMPLETED),
+            (AgentId.GENERATOR, AgentTriggerSource.REVIEWER, ChatMessageStatus.COMPLETED),
+        ]
+
+        final_response = client.get(f"/sessions/{session_id}")
+        assert final_response.status_code == 200
+        final_payload = final_response.json()
+        assert final_payload["active_agent_run_id"] is None
+        assert final_payload["messages"][-1]["agent_id"] == "generator"
+        assert final_payload["messages"][-1]["job_status"] == "completed"
+    finally:
+        client.close()
+
+
 def test_failed_supervisor_specialist_follow_up_converges_in_background() -> None:
     with TemporaryDirectory() as temp_dir:
         workspace = Path(temp_dir) / "repo"
@@ -4130,38 +4456,39 @@ def test_api_returns_structured_sqlite_database_errors(
 ) -> None:
     import sqlite3
 
-    settings = Settings(
-        codex_command="python3 tests/fixtures/fake_codex_session.py",
-        codex_use_exec=True,
-        projects_root="..",
-        chat_store_backend="sqlite",
-        chat_store_path=":memory:",
-        execution_timeout_seconds=10,
-        poll_interval_seconds=0,
-        audio_transcription_backend="auto",
-    )
-    app = create_app(settings)
-    container = app.dependency_overrides[get_container]()
-    monkeypatch.setattr(
-        container.message_service._repository,
-        "get_session",
-        lambda _session_id: (_ for _ in ()).throw(
-            sqlite3.DatabaseError("database disk image is malformed")
-        ),
-    )
-    client = TestClient(app, raise_server_exceptions=False)
-    try:
-        response = client.get("/sessions/any-session")
-        assert response.status_code == 500
-        assert response.json() == {
-            "detail": {
-                "error": "sqlite_database_error",
-                "code": "sqlite_database_error",
-                "message": "database disk image is malformed",
+    with TemporaryDirectory() as temp_dir:
+        settings = Settings(
+            codex_command="python3 tests/fixtures/fake_codex_session.py",
+            codex_use_exec=True,
+            projects_root="..",
+            chat_store_backend="sqlite",
+            chat_store_path=str(Path(temp_dir) / "chat_store.sqlite3"),
+            execution_timeout_seconds=10,
+            poll_interval_seconds=0,
+            audio_transcription_backend="auto",
+        )
+        app = create_app(settings)
+        container = app.dependency_overrides[get_container]()
+        monkeypatch.setattr(
+            container.message_service._repository,
+            "get_session",
+            lambda _session_id: (_ for _ in ()).throw(
+                sqlite3.DatabaseError("database disk image is malformed")
+            ),
+        )
+        client = TestClient(app, raise_server_exceptions=False)
+        try:
+            response = client.get("/sessions/any-session")
+            assert response.status_code == 500
+            assert response.json() == {
+                "detail": {
+                    "error": "sqlite_database_error",
+                    "code": "sqlite_database_error",
+                    "message": "database disk image is malformed",
+                }
             }
-        }
-    finally:
-        client.close()
+        finally:
+            client.close()
 
 
 def test_app_starts_in_degraded_mode_when_sqlite_store_fails_to_open(
@@ -5275,6 +5602,172 @@ def test_exec_mode_falls_back_to_streamed_agent_message_when_output_file_is_empt
     assert payload["response"] == "json-only:hello from streamed json"
 
 
+def test_app_server_streaming_exposes_partial_response_before_completion() -> None:
+    client = build_app_server_streaming_client()
+    message = "this response should stream across multiple chunks"
+
+    create_response = client.post("/message", json={"message": message})
+    assert create_response.status_code == 202
+    job_id = create_response.json()["job_id"]
+
+    deadline = time.monotonic() + 2.0
+    partial_payload: dict | None = None
+    while time.monotonic() < deadline:
+        response = client.get(f"/response/{job_id}")
+        assert response.status_code == 200
+        payload = response.json()
+        if payload["status"] == "running" and payload.get("response"):
+            partial_payload = payload
+            break
+        time.sleep(0.02)
+
+    assert partial_payload is not None
+    assert partial_payload["response"].startswith("turn 1:")
+    assert partial_payload["response"] != f"turn 1: {message}"
+
+    payload = wait_for_job(client, job_id)
+    assert payload["status"] == "completed"
+    assert payload["response"] == f"turn 1: {message}"
+
+
+def test_app_server_streaming_accepts_legacy_delta_events(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("FAKE_CODEX_LEGACY_DELTA", "1")
+    client = build_app_server_streaming_client()
+    message = "legacy delta format"
+
+    create_response = client.post("/message", json={"message": message})
+    assert create_response.status_code == 202
+    job_id = create_response.json()["job_id"]
+
+    deadline = time.monotonic() + 2.0
+    partial_payload: dict | None = None
+    while time.monotonic() < deadline:
+        response = client.get(f"/response/{job_id}")
+        assert response.status_code == 200
+        payload = response.json()
+        if payload["status"] == "running" and payload.get("response"):
+            partial_payload = payload
+            break
+        time.sleep(0.02)
+
+    assert partial_payload is not None
+    assert partial_payload["response"].startswith("turn 1:")
+    assert partial_payload["response"] != f"turn 1: {message}"
+
+    payload = wait_for_job(client, job_id)
+    assert payload["status"] == "completed"
+    assert payload["response"] == f"turn 1: {message}"
+
+
+def test_app_server_streaming_ignores_reasoning_tool_and_commentary_events(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("FAKE_CODEX_TOOL_AND_REASONING_EVENTS", "1")
+    client = build_app_server_streaming_client()
+    message = "keep only the final answer"
+
+    create_response = client.post("/message", json={"message": message})
+    assert create_response.status_code == 202
+    job_id = create_response.json()["job_id"]
+
+    payload = wait_for_job(client, job_id)
+
+    assert payload["status"] == "completed"
+    assert payload["response"] == f"turn 1: {message}"
+    assert "call-mcp-tool" not in payload["response"]
+    assert "internal reasoning" not in payload["response"]
+
+
+def test_app_server_event_descriptions_do_not_expose_raw_tool_item_names() -> None:
+    provider = LocalExecutionProvider(command="codex")
+
+    phase, latest_activity = provider._describe_app_server_event(
+        {
+            "method": "item/started",
+            "params": {
+                "item": {
+                    "type": "mcpToolCall",
+                    "id": "tool-1",
+                    "server": "project-catalog",
+                    "tool": "list_projects",
+                    "status": "inProgress",
+                },
+                "threadId": "thread-1",
+                "turnId": "turn-1",
+            },
+        }
+    )
+    assert phase == "Running tools"
+    assert latest_activity == "Calling MCP tool `list_projects`."
+
+    phase, latest_activity = provider._describe_app_server_event(
+        {
+            "method": "item/started",
+            "params": {
+                "item": {
+                    "type": "call-mcp-tool",
+                    "id": "tool-2",
+                    "status": "inProgress",
+                },
+                "threadId": "thread-1",
+                "turnId": "turn-1",
+            },
+        }
+    )
+    assert phase == "Running tools"
+    assert latest_activity == "Calling MCP tool."
+
+
+def test_app_server_sandbox_payload_preserves_danger_full_access() -> None:
+    provider = LocalExecutionProvider(command="codex")
+    args = "--skip-git-repo-check --dangerously-bypass-approvals-and-sandbox"
+
+    assert provider._app_server_thread_sandbox(args) == "danger-full-access"
+    assert provider._app_server_turn_sandbox_policy(
+        args,
+        workdir="/tmp/codex-workdir",
+    ) == {"type": "dangerFullAccess"}
+
+
+def test_app_server_sandbox_payload_uses_structured_turn_policy() -> None:
+    provider = LocalExecutionProvider(command="codex")
+
+    assert provider._app_server_thread_sandbox("--sandbox workspace-write") == (
+        "workspace-write"
+    )
+    assert provider._app_server_turn_sandbox_policy(
+        "--sandbox workspace-write",
+        workdir="/tmp/codex-workdir",
+    ) == {
+        "type": "workspaceWrite",
+        "writableRoots": ["/tmp/codex-workdir"],
+        "networkAccess": False,
+        "excludeTmpdirEnvVar": False,
+        "excludeSlashTmp": False,
+    }
+
+
+def test_app_server_streaming_resumes_same_thread_for_follow_up_turns() -> None:
+    client = build_app_server_streaming_client()
+
+    first_response = client.post("/message", json={"message": "first turn"})
+    assert first_response.status_code == 202
+    first_job = wait_for_job(client, first_response.json()["job_id"])
+    assert first_job["response"] == "turn 1: first turn"
+
+    second_response = client.post(
+        f"/sessions/{first_job['session_id']}/messages",
+        json={"message": "second turn"},
+    )
+    assert second_response.status_code == 202
+    second_job = wait_for_job(client, second_response.json()["job_id"])
+
+    assert second_job["response"] == "turn 2: second turn"
+    assert second_job["provider_session_id"] == first_job["provider_session_id"]
+
+
 def test_sqlite_chat_store_persists_sessions_across_app_restarts() -> None:
     with TemporaryDirectory() as temp_dir:
         database_path = Path(temp_dir) / "chat-store.sqlite3"
@@ -5358,6 +5851,7 @@ def test_health_and_capabilities_report_openai_speech_not_ready_without_api_key(
         poll_interval_seconds=0,
         audio_transcription_backend="disabled",
         speech_synthesis_backend="openai",
+        speech_synthesis_response_format="mp3",
     )
     app = create_app(settings)
     client = TestClient(app)
@@ -5373,6 +5867,116 @@ def test_health_and_capabilities_report_openai_speech_not_ready_without_api_key(
     assert capabilities_response.json()["speech_output_backend"] == "openai"
     assert capabilities_response.json()["speech_output_voice"] == "cedar"
     assert capabilities_response.json()["speech_output_response_format"] == "mp3"
+
+
+def test_health_and_capabilities_report_kokoro_speech_ready(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(kokoro_synthesizer, "_missing_dependencies", lambda: [])
+    settings = Settings(
+        codex_command="python3 tests/fixtures/fake_codex.py",
+        codex_use_exec=False,
+        projects_root="..",
+        chat_store_backend="memory",
+        execution_timeout_seconds=10,
+        poll_interval_seconds=0,
+        audio_transcription_backend="disabled",
+        speech_synthesis_backend="kokoro",
+        speech_synthesis_kokoro_lang_code="e",
+        speech_synthesis_kokoro_voice="ef_dora",
+    )
+    app = create_app(settings)
+    client = TestClient(app)
+
+    health_response = client.get("/health")
+    capabilities_response = client.get("/capabilities")
+
+    assert health_response.status_code == 200
+    assert capabilities_response.status_code == 200
+    assert health_response.json()["speech_synthesis_backend"] == "kokoro"
+    assert health_response.json()["speech_synthesis_ready"] is True
+    assert health_response.json()["speech_synthesis_voice"] == "ef_dora"
+    assert health_response.json()["speech_synthesis_response_format"] == "wav"
+    assert capabilities_response.json()["supports_speech_output"] is True
+    assert capabilities_response.json()["speech_output_backend"] == "kokoro"
+    assert capabilities_response.json()["speech_output_voice"] == "ef_dora"
+
+
+def test_kokoro_speech_not_ready_disables_capabilities_and_speech_endpoint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        kokoro_synthesizer,
+        "_missing_dependencies",
+        lambda: ["espeak-ng/espeak"],
+    )
+    settings = Settings(
+        codex_command="python3 tests/fixtures/fake_codex.py",
+        codex_use_exec=False,
+        projects_root="..",
+        chat_store_backend="memory",
+        execution_timeout_seconds=10,
+        poll_interval_seconds=0,
+        audio_transcription_backend="disabled",
+        speech_synthesis_backend="kokoro",
+    )
+    app = create_app(settings)
+    client = TestClient(app)
+
+    capabilities_response = client.get("/capabilities")
+    speech_response = client.post("/audio/speech", json={"text": "Hola."})
+
+    assert capabilities_response.status_code == 200
+    assert capabilities_response.json()["supports_speech_output"] is False
+    assert capabilities_response.json()["speech_output_backend"] == "kokoro"
+    assert capabilities_response.json()["speech_output_voice"] == "ef_dora"
+    assert speech_response.status_code == 503
+    assert "espeak-ng/espeak" in speech_response.json()["detail"]
+
+
+def test_audio_speech_endpoint_returns_422_when_kokoro_encoding_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = build_test_client()
+    container = client.app.dependency_overrides[get_container]()
+    monkeypatch.setattr(kokoro_synthesizer, "_missing_dependencies", lambda: [])
+
+    def fake_load_pipeline(self):
+        def fake_pipeline(
+            text: str,
+            *,
+            voice: str,
+            speed: float,
+            split_pattern: str,
+        ):
+            return [("graphemes", "phonemes", ["bad-audio"])]
+
+        return fake_pipeline
+
+    def fail_encoding(audio_segments, response_format, sample_rate):
+        raise RuntimeError("bad audio data")
+
+    monkeypatch.setattr(
+        kokoro_synthesizer.KokoroSpeechSynthesizer,
+        "_load_pipeline",
+        fake_load_pipeline,
+    )
+    monkeypatch.setattr(kokoro_synthesizer, "_encode_audio", fail_encoding)
+    container.speech_synthesizer = kokoro_synthesizer.KokoroSpeechSynthesizer(
+        lang_code="e",
+        voice="ef_dora",
+        speed=1.0,
+        split_pattern=r"\n+",
+        sample_rate=24_000,
+        response_format="wav",
+    )
+
+    response = client.post("/audio/speech", json={"text": "Hola."})
+
+    assert response.status_code == 422
+    assert response.json() == {
+        "detail": "Kokoro audio encoding failed: bad audio data"
+    }
 
 
 def test_audio_speech_endpoint_returns_provider_audio() -> None:
@@ -5670,6 +6274,504 @@ def test_image_message_flow_accepts_image_uploads() -> None:
     assert "What does this show?" in job["response"]
     assert "[images: " in job["response"]
     assert "diagram.png" in job["response"]
+
+
+def test_feedback_queue_stores_and_deletes_items(tmp_path: Path) -> None:
+    client = build_feedback_queue_client(tmp_path)
+
+    create_response = client.post(
+        "/feedback-queue",
+        json={
+            "id": "feedback-1",
+            "sourceApp": "ambientando-calendar",
+            "sourceDisplayName": "Ambientando Calendar",
+            "comment": "Make this button bigger",
+            "screenshotPngBase64": base64.b64encode(b"fake png").decode("ascii"),
+            "selectionPoints": [{"x": 1, "y": 2}, {"x": 3, "y": 4}],
+            "selectionBounds": {"left": 1, "top": 2, "width": 2, "height": 2},
+            "audioMimeType": "audio/webm",
+            "audioDurationMs": 1200,
+            "audioByteLength": 3,
+            "audioBase64": base64.b64encode(b"\x01\x02\x03").decode("ascii"),
+        },
+    )
+
+    assert create_response.status_code == 201
+    created = create_response.json()
+    assert created["id"] == "feedback-1"
+    assert created["source_app"] == "ambientando-calendar"
+    assert created["source_display_name"] == "Ambientando Calendar"
+    assert created["has_screenshot"] is True
+    assert created["screenshot_png_base64"] == base64.b64encode(b"fake png").decode(
+        "ascii"
+    )
+    assert created["has_audio"] is True
+    assert created["audio_mime_type"] == "audio/webm"
+    assert created["audio_duration_ms"] == 1200
+    assert created["audio_byte_length"] == 3
+    assert created["audio_base64"] == base64.b64encode(b"\x01\x02\x03").decode(
+        "ascii"
+    )
+
+    list_response = client.get("/feedback-queue?include_images=true")
+    assert list_response.status_code == 200
+    items = list_response.json()
+    assert len(items) == 1
+    assert items[0]["comment"] == "Make this button bigger"
+    assert items[0]["source_display_name"] == "Ambientando Calendar"
+    assert items[0]["audio_base64"] == base64.b64encode(b"\x01\x02\x03").decode(
+        "ascii"
+    )
+
+    delete_response = client.delete("/feedback-queue/feedback-1")
+    assert delete_response.status_code == 204
+    assert client.get("/feedback-queue").json() == []
+    assert not any((tmp_path / "feedback_images").glob("*"))
+    assert not any((tmp_path / "feedback_audio").glob("*"))
+
+
+def test_feedback_queue_accepts_generic_source_app_payload(tmp_path: Path) -> None:
+    client = build_feedback_queue_client(tmp_path)
+
+    create_response = client.post(
+        "/feedback-queue",
+        json={
+            "id": "feedback-generic",
+            "kind": "codex.developerFeedback",
+            "version": 1,
+            "queue": "codexCli",
+            "sourceApp": "smart-nienfos",
+            "sourceDisplayName": "Smart Nienfos",
+            "comment": "Align the summary panel",
+            "screenshotPngBase64": base64.b64encode(b"fake png").decode("ascii"),
+            "selectionBounds": {"left": 1, "top": 2, "width": 3, "height": 4},
+        },
+    )
+
+    assert create_response.status_code == 201
+    created = create_response.json()
+    assert created["source_app"] == "smart-nienfos"
+    assert created["source_display_name"] == "Smart Nienfos"
+    assert created["comment"] == "Align the summary panel"
+    assert created["has_screenshot"] is True
+
+
+def test_feedback_queue_legacy_ambientando_payload_defaults_source(
+    tmp_path: Path,
+) -> None:
+    client = build_feedback_queue_client(tmp_path)
+
+    create_response = client.post(
+        "/feedback-queue",
+        json={
+            "id": "feedback-legacy",
+            "sourceApp": "ambientando-calendar",
+            "comment": "Legacy item",
+            "screenshotPngBase64": base64.b64encode(b"fake png").decode("ascii"),
+        },
+    )
+
+    assert create_response.status_code == 201
+    created = create_response.json()
+    assert created["source_app"] == "ambientando-calendar"
+    assert created["source_display_name"] is None
+
+
+def test_capabilities_exposes_feedback_source_workspace_aliases(
+    tmp_path: Path,
+) -> None:
+    client = build_feedback_queue_client(
+        tmp_path,
+        feedback_source_workspace_aliases=(
+            "smart-nienfos:/workspace/smart_nienfos,"
+            "ambientando-calendar:/workspace/ambientando-calendar"
+        ),
+    )
+
+    response = client.get("/capabilities")
+
+    assert response.status_code == 200
+    aliases = response.json()["feedback_source_workspace_aliases"]
+    assert aliases == {
+        "smart-nienfos": "/workspace/smart_nienfos",
+        "ambientando-calendar": "/workspace/ambientando-calendar",
+    }
+
+
+def test_feedback_workflow_presets_expose_agent_profiles(tmp_path: Path) -> None:
+    client = build_feedback_queue_client(tmp_path)
+
+    response = client.get("/feedback-workflow-presets")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["default_preset_id"] == "default"
+    default_preset = next(
+        preset for preset in payload["presets"] if preset["id"] == "default"
+    )
+    assert default_preset["name"] == "Generator"
+    assert default_preset["agent_profile_id"] == "default"
+    assert default_preset["target_mode"] == "generator_only"
+
+
+def test_feedback_queue_item_can_start_codex_image_session(tmp_path: Path) -> None:
+    client = build_feedback_queue_client(tmp_path)
+    client.post(
+        "/feedback-queue",
+        json={
+            "id": "feedback-start",
+            "sourceApp": "ambientando-calendar",
+            "comment": "Remove this card",
+            "screenshotPngBase64": base64.b64encode(b"fake png").decode("ascii"),
+            "selectionBounds": {"left": 10, "top": 20, "width": 30, "height": 40},
+        },
+    )
+
+    start_response = client.post("/feedback-queue/feedback-start/start-session", json={})
+
+    assert start_response.status_code == 202
+    payload = start_response.json()
+    assert payload["attached_image_name"] == "feedback-start.png"
+    job = wait_for_job(client, payload["job_id"])
+    assert job["status"] == "completed"
+    assert "Use this Ambientando Calendar feedback screenshot" in job["message"]
+    assert "Run target: Generator only." in job["message"]
+    assert "Remove this card" in job["message"]
+    assert "feedback-start.png" in job["response"]
+    assert client.get("/feedback-queue").json()[0]["status"] == "submitted"
+
+
+def test_feedback_batch_start_session_accepts_multiple_items_and_release(
+    tmp_path: Path,
+) -> None:
+    client = build_feedback_queue_client(tmp_path)
+
+    start_response = client.post(
+        "/feedback-batches/start-session",
+        json={
+            "sourceApp": "smart-nienfos",
+            "sourceDisplayName": "Smart Nienfos",
+            "workflowPresetId": "default",
+            "releaseWhenComplete": True,
+            "items": [
+                {
+                    "id": "feedback-batch-1",
+                    "comment": "Fix the first card",
+                    "screenshotPngBase64": base64.b64encode(b"first png").decode(
+                        "ascii"
+                    ),
+                    "selectionBounds": {
+                        "left": 1,
+                        "top": 2,
+                        "width": 3,
+                        "height": 4,
+                    },
+                },
+                {
+                    "id": "feedback-batch-2",
+                    "comment": "Fix the second card",
+                    "screenshotPngBase64": base64.b64encode(b"second png").decode(
+                        "ascii"
+                    ),
+                    "selectionBounds": {
+                        "left": 5,
+                        "top": 6,
+                        "width": 7,
+                        "height": 8,
+                    },
+                    "audioMimeType": "audio/webm",
+                    "audioDurationMs": 800,
+                    "audioByteLength": 2,
+                    "audioBase64": base64.b64encode(b"\x01\x02").decode("ascii"),
+                },
+            ],
+        },
+    )
+
+    assert start_response.status_code == 202
+    payload = start_response.json()
+    job = wait_for_job(client, payload["job_id"])
+    assert job["status"] == "completed"
+    assert "Use these Smart Nienfos feedback screenshots" in job["message"]
+    assert "Workflow preset: Generator" in job["message"]
+    assert "Batch size: 2 feedback items." in job["message"]
+    assert "Fix the first card" in job["message"]
+    assert "Fix the second card" in job["message"]
+    assert "Audio attached: audio/webm, 800 ms, 2 bytes." in job["message"]
+    assert "Release instruction: after implementation and validation complete" in job[
+        "message"
+    ]
+    assert "01-feedback-batch-1.png" in job["response"]
+    assert "02-feedback-batch-2.png" in job["response"]
+    queued = client.get("/feedback-queue").json()
+    assert [item["status"] for item in queued] == ["submitted", "submitted"]
+
+
+def test_feedback_batch_start_session_resolves_workspace_from_source_app(
+    tmp_path: Path,
+) -> None:
+    projects_root = tmp_path / "projects"
+    ambientando_workspace = projects_root / "ambientando-calendar"
+    bridge_workspace = projects_root / "codex-cli-mobile-bridge"
+    ambientando_workspace.mkdir(parents=True)
+    bridge_workspace.mkdir()
+    client = build_feedback_queue_client(tmp_path, projects_root=projects_root)
+
+    start_response = client.post(
+        "/feedback-batches/start-session",
+        json={
+            "sourceApp": "ambientando-calendar",
+            "sourceDisplayName": "Ambientando Calendar",
+            "workflowPresetId": "default",
+            "items": [
+                {
+                    "id": "feedback-ambientando-workspace",
+                    "comment": "Apply this to Ambientando",
+                    "screenshotPngBase64": base64.b64encode(b"fake png").decode(
+                        "ascii"
+                    ),
+                }
+            ],
+        },
+    )
+
+    assert start_response.status_code == 202
+    session_response = client.get(
+        f"/sessions/{start_response.json()['session_id']}"
+    )
+    assert session_response.status_code == 200
+    session = session_response.json()
+    assert session["workspace_name"] == "ambientando-calendar"
+    assert session["workspace_path"] == str(ambientando_workspace)
+
+
+def test_feedback_batch_start_session_resolves_workspace_from_source_alias(
+    tmp_path: Path,
+) -> None:
+    projects_root = tmp_path / "projects"
+    smart_workspace = projects_root / "smart_nienfos"
+    smart_workspace.mkdir(parents=True)
+    client = build_feedback_queue_client(
+        tmp_path,
+        projects_root=projects_root,
+        feedback_source_workspace_aliases=(
+            f"smart-nienfos:{smart_workspace}"
+        ),
+    )
+
+    start_response = client.post(
+        "/feedback-batches/start-session",
+        json={
+            "sourceApp": "smart-nienfos-mobile",
+            "sourceDisplayName": "Smart Nienfos",
+            "workflowPresetId": "default",
+            "items": [
+                {
+                    "id": "feedback-smart-alias",
+                    "comment": "Apply this to Smart Nienfos",
+                    "screenshotPngBase64": base64.b64encode(b"fake png").decode(
+                        "ascii"
+                    ),
+                }
+            ],
+        },
+    )
+
+    assert start_response.status_code == 202
+    session_response = client.get(
+        f"/sessions/{start_response.json()['session_id']}"
+    )
+    assert session_response.status_code == 200
+    session = session_response.json()
+    assert session["workspace_name"] == "smart_nienfos"
+    assert session["workspace_path"] == str(smart_workspace)
+
+
+@pytest.mark.parametrize(
+    ("workflow_preset_id", "expected_target"),
+    [
+        ("generator_only", "Run target: Generator only."),
+        ("generator_reviewer", "Run target: Generator + Reviewer."),
+    ],
+)
+def test_feedback_batch_start_session_accepts_fallback_preset_aliases(
+    tmp_path: Path,
+    workflow_preset_id: str,
+    expected_target: str,
+) -> None:
+    client = build_feedback_queue_client(tmp_path)
+
+    start_response = client.post(
+        "/feedback-batches/start-session",
+        json={
+            "sourceApp": "fixture-app",
+            "sourceDisplayName": "Fixture App",
+            "workflowPresetId": workflow_preset_id,
+            "items": [
+                {
+                    "id": f"feedback-{workflow_preset_id}",
+                    "comment": "Alias preset smoke",
+                    "screenshotPngBase64": base64.b64encode(b"fake png").decode(
+                        "ascii"
+                    ),
+                }
+            ],
+        },
+    )
+
+    assert start_response.status_code == 202
+    job = wait_for_job(client, start_response.json()["job_id"])
+    assert job["status"] == "completed"
+    assert expected_target in job["message"]
+    expected_preset = (
+        "Generator only"
+        if workflow_preset_id == "generator_only"
+        else "Generator + Reviewer"
+    )
+    assert f"Workflow preset: {expected_preset}" in job["message"]
+    assert client.get("/feedback-queue").json()[0]["status"] == "submitted"
+
+
+def test_feedback_batch_start_session_is_atomic_when_later_item_has_no_screenshot(
+    tmp_path: Path,
+) -> None:
+    client = build_feedback_queue_client(tmp_path)
+
+    start_response = client.post(
+        "/feedback-batches/start-session",
+        json={
+            "sourceApp": "fixture-app",
+            "workflowPresetId": "generator_only",
+            "items": [
+                {
+                    "id": "feedback-valid-before-invalid",
+                    "comment": "Valid first item",
+                    "screenshotPngBase64": base64.b64encode(b"fake png").decode(
+                        "ascii"
+                    ),
+                },
+                {
+                    "id": "feedback-invalid-no-screenshot",
+                    "comment": "Missing screenshot",
+                },
+            ],
+        },
+    )
+
+    assert start_response.status_code == 422
+    assert "has no screenshot" in start_response.json()["detail"]
+    assert client.get("/feedback-queue").json() == []
+    assert not any((tmp_path / "feedback_images").glob("*"))
+    assert not any((tmp_path / "feedback_audio").glob("*"))
+
+
+def test_feedback_queue_start_session_uses_source_display_name_in_prompt(
+    tmp_path: Path,
+) -> None:
+    client = build_feedback_queue_client(tmp_path)
+    client.post(
+        "/feedback-queue",
+        json={
+            "id": "feedback-display-name",
+            "sourceApp": "smart-nienfos",
+            "sourceDisplayName": "Smart Nienfos",
+            "comment": "Fix this table",
+            "screenshotPngBase64": base64.b64encode(b"fake png").decode("ascii"),
+            "selectionBounds": {"left": 10, "top": 20, "width": 30, "height": 40},
+        },
+    )
+
+    start_response = client.post(
+        "/feedback-queue/feedback-display-name/start-session",
+        json={},
+    )
+
+    assert start_response.status_code == 202
+    job = wait_for_job(client, start_response.json()["job_id"])
+    assert job["status"] == "completed"
+    assert "Use this Smart Nienfos feedback screenshot" in job["message"]
+    assert "Ambientando Calendar" not in job["message"]
+
+
+def test_feedback_queue_start_session_accepts_explicit_reviewer_target(
+    tmp_path: Path,
+) -> None:
+    client = build_feedback_queue_client(tmp_path)
+    client.post(
+        "/feedback-queue",
+        json={
+            "id": "feedback-reviewer",
+            "sourceApp": "ambientando-calendar",
+            "comment": "Check this flow with reviewer",
+            "screenshotPngBase64": base64.b64encode(b"fake png").decode("ascii"),
+            "selectionBounds": {"left": 10, "top": 20, "width": 30, "height": 40},
+        },
+    )
+
+    start_response = client.post(
+        "/feedback-queue/feedback-reviewer/start-session",
+        json={"target_mode": "generator_reviewer"},
+    )
+
+    assert start_response.status_code == 202
+    job = wait_for_job(client, start_response.json()["job_id"])
+    assert job["status"] == "completed"
+    assert "Run target: Generator + Reviewer." in job["message"]
+    assert "Check this flow with reviewer" in job["message"]
+
+
+def test_feedback_queue_start_session_accepts_camel_case_target_mode(
+    tmp_path: Path,
+) -> None:
+    client = build_feedback_queue_client(tmp_path)
+    client.post(
+        "/feedback-queue",
+        json={
+            "id": "feedback-camel-target",
+            "sourceApp": "ambientando-calendar",
+            "comment": "Target mode smoke",
+            "screenshotPngBase64": base64.b64encode(b"fake png").decode("ascii"),
+            "selectionBounds": {"left": 1, "top": 2, "width": 3, "height": 4},
+        },
+    )
+
+    start_response = client.post(
+        "/feedback-queue/feedback-camel-target/start-session",
+        json={"targetMode": "generator_reviewer"},
+    )
+
+    assert start_response.status_code == 202
+    job = wait_for_job(client, start_response.json()["job_id"])
+    assert job["status"] == "completed"
+    assert "Run target: Generator + Reviewer." in job["message"]
+    assert "Target mode smoke" in job["message"]
+    expected_bounds = (
+        "Selection bounds: {'left': 1.0, 'top': 2.0, "
+        "'width': 3.0, 'height': 4.0}"
+    )
+    assert expected_bounds in job["message"]
+
+
+def test_feedback_queue_start_session_rejects_invalid_target_mode(
+    tmp_path: Path,
+) -> None:
+    client = build_feedback_queue_client(tmp_path)
+    client.post(
+        "/feedback-queue",
+        json={
+            "id": "feedback-invalid-target",
+            "sourceApp": "ambientando-calendar",
+            "comment": "Invalid target",
+            "screenshotPngBase64": base64.b64encode(b"fake png").decode("ascii"),
+        },
+    )
+
+    start_response = client.post(
+        "/feedback-queue/feedback-invalid-target/start-session",
+        json={"target_mode": "reviewer_only"},
+    )
+
+    assert start_response.status_code == 422
 
 
 def test_document_message_flow_rejects_image_uploads() -> None:
@@ -6389,6 +7491,133 @@ def test_reviewer_runs_again_when_multiple_review_turns_are_configured() -> None
     assert payload["active_agent_turn_index"] == 2
 
 
+def test_terminal_reviewer_response_stops_review_loop_even_with_budget() -> None:
+    with TemporaryDirectory() as temp_dir:
+        workspace = Path(temp_dir) / "repo"
+        workspace.mkdir()
+        service, provider, repository = _build_controlled_message_service(
+            temp_dir,
+            barrier_agent_id=AgentId.SUPERVISOR,
+        )
+
+        session = service.create_session(workspace_path=str(workspace))
+        configuration = session.agent_configuration.normalized()
+        configuration.preset = AgentPreset.REVIEW
+        configuration.agents[AgentId.GENERATOR].max_turns = 3
+        configuration.agents[AgentId.REVIEWER].enabled = True
+        configuration.agents[AgentId.REVIEWER].max_turns = 2
+        configuration.agents[AgentId.SUMMARY].enabled = False
+        service.update_agent_configuration(
+            session_id=session.id,
+            configuration=configuration,
+        )
+
+        initial_job = service.submit_message(
+            "Build the initial implementation.",
+            session_id=session.id,
+        )
+        provider.complete_job(initial_job.id, response="Initial implementation done.")
+        service.get_job(initial_job.id)
+
+        reviewer_message = next(
+            message
+            for message in repository.list_messages(session.id)
+            if message.run_id == initial_job.run_id
+            and message.agent_id == AgentId.REVIEWER
+        )
+        assert reviewer_message.job_id is not None
+
+        provider.complete_job(
+            reviewer_message.job_id,
+            response=json.dumps(
+                {
+                    "status": "complete",
+                    "summary": "No further generator work is needed.",
+                }
+            ),
+        )
+        service.get_job(reviewer_message.job_id)
+
+        persisted_session = repository.get_session(session.id)
+        messages = repository.list_messages(session.id)
+        generator_follow_ups = [
+            message
+            for message in messages
+            if message.run_id == initial_job.run_id
+            and message.agent_id == AgentId.GENERATOR
+            and message.trigger_source == AgentTriggerSource.REVIEWER
+        ]
+
+        assert persisted_session is not None
+        assert persisted_session.active_agent_run_id is None
+        assert generator_follow_ups == []
+        assert len(repository._jobs) == 2
+
+
+def test_structured_reviewer_continue_sends_prompt_only_to_generator() -> None:
+    with TemporaryDirectory() as temp_dir:
+        workspace = Path(temp_dir) / "repo"
+        workspace.mkdir()
+        service, provider, repository = _build_controlled_message_service(
+            temp_dir,
+            barrier_agent_id=AgentId.SUPERVISOR,
+        )
+
+        session = service.create_session(workspace_path=str(workspace))
+        configuration = session.agent_configuration.normalized()
+        configuration.preset = AgentPreset.REVIEW
+        configuration.agents[AgentId.GENERATOR].max_turns = 2
+        configuration.agents[AgentId.REVIEWER].enabled = True
+        configuration.agents[AgentId.REVIEWER].max_turns = 1
+        configuration.agents[AgentId.SUMMARY].enabled = False
+        service.update_agent_configuration(
+            session_id=session.id,
+            configuration=configuration,
+        )
+
+        initial_job = service.submit_message(
+            "Build the initial implementation.",
+            session_id=session.id,
+        )
+        provider.complete_job(initial_job.id, response="Initial implementation done.")
+        service.get_job(initial_job.id)
+
+        reviewer_message = next(
+            message
+            for message in repository.list_messages(session.id)
+            if message.run_id == initial_job.run_id
+            and message.agent_id == AgentId.REVIEWER
+        )
+        assert reviewer_message.job_id is not None
+
+        provider.complete_job(
+            reviewer_message.job_id,
+            response=json.dumps(
+                {
+                    "status": "continue",
+                    "prompt": "Add regression tests for the completed flow.",
+                }
+            ),
+        )
+        service.get_job(reviewer_message.job_id)
+
+        generator_follow_up = next(
+            message
+            for message in repository.list_messages(session.id)
+            if message.run_id == initial_job.run_id
+            and message.agent_id == AgentId.GENERATOR
+            and message.trigger_source == AgentTriggerSource.REVIEWER
+        )
+        assert generator_follow_up.job_id is not None
+        request = next(
+            request
+            for request in provider.requests
+            if request["job_id"] == generator_follow_up.job_id
+        )
+        assert "Add regression tests for the completed flow." in request["message"]
+        assert '"status": "continue"' not in request["message"]
+
+
 def test_legacy_prompt_only_agent_profile_hydrates_default_configuration() -> None:
     client, container = build_session_client_with_container()
     repository = container.message_service._repository
@@ -6569,6 +7798,26 @@ def test_submit_message_applies_codex_guidance_and_passes_codex_options() -> Non
         assert "Prefer these Codex skills" in request["message"]
         assert "`skill-creator`" in request["message"]
         assert "`github`" in request["message"]
+
+
+def test_submit_message_adds_authenticated_github_guidance_for_repo_references() -> None:
+    with TemporaryDirectory() as temp_dir:
+        project_dir = Path(temp_dir) / "project"
+        project_dir.mkdir()
+        service, provider, _repository = _build_controlled_message_service(
+            temp_dir,
+            barrier_agent_id=AgentId.GENERATOR,
+        )
+
+        service.submit_message(
+            "Inspect brunojaime/software-project-builder and incorporate it here.",
+            workspace_path=str(project_dir),
+        )
+
+        request = provider.requests[-1]
+        assert "Private GitHub repositories may return 404" in request["message"]
+        assert "`gh repo view OWNER/REPO`" in request["message"]
+        assert "brunojaime/software-project-builder" in request["message"]
 
 
 def test_text_message_route_rejects_unknown_mcp_server_selection() -> None:
@@ -7090,6 +8339,138 @@ def test_upload_routes_reject_unknown_mcp_server_selection(
     }
 
 
+def test_image_message_response_exposes_safe_attachment_descriptor() -> None:
+    client = build_session_client()
+    session_response = client.post("/sessions", json={"title": "Images"})
+    assert session_response.status_code == 201
+    session_id = session_response.json()["id"]
+
+    upload_response = client.post(
+        "/message/image",
+        data={"session_id": session_id, "message": "Inspect this"},
+        files={"image": ("diagram.png", b"\x89PNG\r\n\x1a\nfake", "image/png")},
+    )
+    assert upload_response.status_code == 202
+    job_id = upload_response.json()["job_id"]
+
+    payload = wait_for_session(
+        client,
+        session_id,
+        predicate=lambda session: len(session["messages"]) >= 2,
+    )
+    user_message = next(
+        message for message in payload["messages"] if message["role"] == "user"
+    )
+    assistant_message = next(
+        message for message in payload["messages"] if message["role"] == "assistant"
+    )
+
+    assert user_message["attachments"] == [
+        {
+            "id": f"{job_id}:image:0",
+            "kind": "image",
+            "job_id": job_id,
+            "index": 0,
+            "download_url": f"/jobs/{job_id}/attachments/0",
+        }
+    ]
+    assert assistant_message["attachments"] == []
+    assert "image_paths" not in json.dumps(user_message)
+
+
+def test_image_attachment_download_serves_persisted_file() -> None:
+    client = build_session_client()
+    upload_response = client.post(
+        "/message/image",
+        data={"message": "Inspect this"},
+        files={"image": ("diagram.png", b"\x89PNG\r\n\x1a\nfake", "image/png")},
+    )
+    assert upload_response.status_code == 202
+    job_id = upload_response.json()["job_id"]
+
+    response = client.get(f"/jobs/{job_id}/attachments/0")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("image/png")
+    assert response.content == b"\x89PNG\r\n\x1a\nfake"
+
+
+def test_image_attachment_download_uses_content_type_for_suffixless_upload() -> None:
+    client = build_session_client()
+    upload_response = client.post(
+        "/message/image",
+        data={"message": "Inspect this"},
+        files={"image": ("capture", b"\x89PNG\r\n\x1a\nfake", "image/png")},
+    )
+    assert upload_response.status_code == 202
+    job_id = upload_response.json()["job_id"]
+
+    response = client.get(f"/jobs/{job_id}/attachments/0")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("image/png")
+    assert response.content == b"\x89PNG\r\n\x1a\nfake"
+
+
+def test_image_attachment_download_returns_404_for_invalid_index() -> None:
+    client = build_session_client()
+    upload_response = client.post(
+        "/message/image",
+        data={"message": "Inspect this"},
+        files={"image": ("diagram.png", b"\x89PNG\r\n\x1a\nfake", "image/png")},
+    )
+    assert upload_response.status_code == 202
+    job_id = upload_response.json()["job_id"]
+
+    response = client.get(f"/jobs/{job_id}/attachments/1")
+
+    assert response.status_code == 404
+
+
+def test_image_attachment_download_rejects_path_outside_retry_asset_root() -> None:
+    client, container = build_session_client_with_container()
+    upload_response = client.post(
+        "/message/image",
+        data={"message": "Inspect this"},
+        files={"image": ("diagram.png", b"\x89PNG\r\n\x1a\nfake", "image/png")},
+    )
+    assert upload_response.status_code == 202
+    job_id = upload_response.json()["job_id"]
+    outside_image = Path(tempfile.gettempdir()) / f"{job_id}-outside.png"
+    outside_image.write_bytes(b"\x89PNG\r\n\x1a\noutside")
+    try:
+        repository = container.message_service._repository
+        stored_job = repository.get_job(job_id)
+        assert stored_job is not None
+        stored_job.image_paths = [str(outside_image)]
+        repository.save_job(stored_job)
+
+        response = client.get(f"/jobs/{job_id}/attachments/0")
+
+        assert response.status_code == 404
+    finally:
+        outside_image.unlink(missing_ok=True)
+
+
+def test_image_attachment_download_returns_404_for_missing_file() -> None:
+    client, container = build_session_client_with_container()
+    upload_response = client.post(
+        "/message/image",
+        data={"message": "Inspect this"},
+        files={"image": ("diagram.png", b"\x89PNG\r\n\x1a\nfake", "image/png")},
+    )
+    assert upload_response.status_code == 202
+    job_id = upload_response.json()["job_id"]
+    stored_job = container.message_service.get_stored_job(job_id)
+    assert stored_job is not None
+    assert stored_job.image_paths
+    Path(stored_job.image_paths[0]).unlink()
+
+    response = client.get(f"/jobs/{job_id}/attachments/0")
+
+    assert response.status_code == 404
+
+
 def test_codex_tooling_endpoint_reports_status_skills_profiles_and_mcp(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -7266,6 +8647,26 @@ def test_codex_mcp_app_install_endpoint_registers_repo_app(
         assert project_catalog["install_state"] == "matching"
         assert project_catalog["server_present"] is True
         assert project_catalog["drift_summary"] is None
+
+
+def test_codex_tooling_ignores_mcp_list_table_header(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with TemporaryDirectory() as temp_dir:
+        home_dir = Path(temp_dir)
+        (home_dir / ".codex").mkdir(parents=True)
+        monkeypatch.setenv("HOME", str(home_dir))
+        monkeypatch.setenv("FAKE_CODEX_MCP_LIST_TABLE", "1")
+
+        client = build_tooling_client(projects_root="..")
+        client.post("/codex/mcp-apps/project-catalog/install")
+
+        response = client.get("/codex/tooling")
+
+        assert response.status_code == 200
+        server_ids = [server["server_id"] for server in response.json()["mcp_servers"]]
+        assert "project-catalog" in server_ids
+        assert "Name" not in server_ids
 
 
 def test_codex_mcp_app_install_endpoint_reports_already_installed(

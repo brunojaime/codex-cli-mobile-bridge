@@ -28,4 +28,28 @@ void main() {
     expect(profiles.first.baseUrl, 'http://localhost:8000');
     expect(profiles.last.id, 'remote-server');
   });
+
+  test('audio reply playback speed is stored per server and normalized',
+      () async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+
+    final store = ServerProfileStore();
+
+    expect(
+      await store.loadAudioReplyPlaybackSpeed('http://localhost:8000'),
+      1.0,
+    );
+
+    await store.saveAudioReplyPlaybackSpeed('http://localhost:8000', 1.49);
+    await store.saveAudioReplyPlaybackSpeed('http://localhost:9000', 1.75);
+
+    expect(
+      await store.loadAudioReplyPlaybackSpeed('http://localhost:8000'),
+      1.5,
+    );
+    expect(
+      await store.loadAudioReplyPlaybackSpeed('http://localhost:9000'),
+      1.75,
+    );
+  });
 }

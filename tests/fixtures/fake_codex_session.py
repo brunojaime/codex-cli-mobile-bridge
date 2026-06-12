@@ -289,6 +289,9 @@ def main() -> int:
         if current == "--color":
             index += 2
             continue
+        if current == "-c":
+            index += 2
+            continue
         if current == "-o":
             output_path = Path(args[index + 1])
             index += 2

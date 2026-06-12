@@ -11,6 +11,8 @@ String sanitizeTextForSpeech(String text) {
 }
 
 abstract class ReplySpeechPlayer {
+  Future<void> setPlaybackSpeed(double speed);
+
   Future<bool> speak(String rawText);
 
   Future<void> stop();
