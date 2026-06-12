@@ -180,6 +180,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     unawaited(_replyPlaybackService.dispose());
+    for (final draft in _sessionDrafts.values) {
+      _disposePendingAttachments(draft.attachments);
+    }
     _chatController.removeListener(_handleChatControllerChanged);
     if (widget.controllerOverride == null) {
       _chatController.dispose();
@@ -4744,16 +4747,15 @@ class _ComposerState extends State<_Composer> {
     final showAddVoiceAction =
         !_isRecording && !showMicAction && widget.voiceEnabled;
     final isDisabled = widget.isBusy || _isSubmittingAttachments;
-    final showAttachmentActions = !_isRecording;
 
     return SafeArea(
       top: false,
       child: Container(
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+        padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
         decoration: const BoxDecoration(
-          color: Color(0xFF0D1427),
+          color: Color(0xFF0B141A),
           border: Border(
-            top: BorderSide(color: Color(0xFF1F2945)),
+            top: BorderSide(color: Color(0xFF17232B)),
           ),
         ),
         child: LayoutBuilder(
@@ -4776,8 +4778,8 @@ class _ComposerState extends State<_Composer> {
                         child: FilledButton.icon(
                           onPressed: _confirmCancelRecording,
                           style: _actionButtonStyle(
-                            backgroundColor: const Color(0xFF31405F),
-                            foregroundColor: const Color(0xFFE8ECF8),
+                            backgroundColor: const Color(0xFF1F2C34),
+                            foregroundColor: const Color(0xFFE9EDEF),
                           ),
                           icon: const Icon(Icons.close_rounded),
                           label: const Text('Cancel'),
@@ -4786,13 +4788,13 @@ class _ComposerState extends State<_Composer> {
                       const SizedBox(width: 10),
                       Expanded(
                         child: FilledButton.icon(
-                          onPressed: _stopRecordingAndSend,
+                          onPressed: isDisabled ? null : _stopRecordingAndStage,
                           style: _actionButtonStyle(
-                            backgroundColor: const Color(0xFFFF7A7A),
-                            foregroundColor: const Color(0xFF2C0710),
+                            backgroundColor: const Color(0xFF25D366),
+                            foregroundColor: const Color(0xFF0B141A),
                           ),
                           icon: const Icon(Icons.send_rounded),
-                          label: const Text('Send'),
+                          label: const Text('Add'),
                         ),
                       ),
                     ],
@@ -4809,23 +4811,12 @@ class _ComposerState extends State<_Composer> {
                   const SizedBox(height: 10),
                   Row(
                     children: <Widget>[
-                      if (showAttachmentActions) ...<Widget>[
-                        FilledButton(
-                          onPressed: isDisabled ? null : _openAttachmentPicker,
-                          style: _actionButtonStyle(
-                            backgroundColor: const Color(0xFF1F4D45),
-                            foregroundColor: const Color(0xFFB6F4E4),
-                          ),
-                          child: const Icon(Icons.attach_file_rounded),
-                        ),
-                        const SizedBox(width: 10),
-                      ],
                       if (showAddVoiceAction) ...<Widget>[
                         FilledButton(
                           onPressed: isDisabled ? null : _toggleRecording,
                           style: _actionButtonStyle(
-                            backgroundColor: const Color(0xFF31405F),
-                            foregroundColor: const Color(0xFFE8ECF8),
+                            backgroundColor: const Color(0xFF1F2C34),
+                            foregroundColor: const Color(0xFF8696A0),
                           ),
                           child: const Icon(Icons.mic_rounded),
                         ),
@@ -4835,8 +4826,8 @@ class _ComposerState extends State<_Composer> {
                         child: FilledButton.icon(
                           onPressed: isDisabled ? null : _handlePrimaryAction,
                           style: _actionButtonStyle(
-                            backgroundColor: const Color(0xFF55D6BE),
-                            foregroundColor: const Color(0xFF07131D),
+                            backgroundColor: const Color(0xFF25D366),
+                            foregroundColor: const Color(0xFF0B141A),
                           ),
                           icon: const Icon(Icons.arrow_upward_rounded),
                           label: const Text('Send'),
@@ -4851,25 +4842,10 @@ class _ComposerState extends State<_Composer> {
             return Row(
               crossAxisAlignment: CrossAxisAlignment.end,
               children: <Widget>[
-                if (showAttachmentActions) ...<Widget>[
-                  FilledButton(
-                    onPressed: isDisabled ? null : _openAttachmentPicker,
-                    style: _actionButtonStyle(
-                      backgroundColor: hasPendingAttachment
-                          ? const Color(0xFF1F4D45)
-                          : const Color(0xFF31405F),
-                      foregroundColor: hasPendingAttachment
-                          ? const Color(0xFFB6F4E4)
-                          : const Color(0xFFE8ECF8),
-                    ),
-                    child: const Icon(Icons.attach_file_rounded),
-                  ),
-                  const SizedBox(width: 12),
-                ],
                 Expanded(
                   child: _buildComposerBody(),
                 ),
-                const SizedBox(width: 12),
+                const SizedBox(width: 8),
                 if (_isRecording)
                   Row(
                     mainAxisSize: MainAxisSize.min,
@@ -4877,18 +4853,18 @@ class _ComposerState extends State<_Composer> {
                       FilledButton(
                         onPressed: _confirmCancelRecording,
                         style: _actionButtonStyle(
-                          backgroundColor: const Color(0xFF31405F),
-                          foregroundColor: const Color(0xFFE8ECF8),
+                          backgroundColor: const Color(0xFF1F2C34),
+                          foregroundColor: const Color(0xFFE9EDEF),
                           minimumSize: const Size(52, 52),
                         ),
                         child: const Icon(Icons.close_rounded),
                       ),
                       const SizedBox(width: 6),
                       FilledButton(
-                        onPressed: _stopRecordingAndSend,
+                        onPressed: isDisabled ? null : _stopRecordingAndStage,
                         style: _actionButtonStyle(
-                          backgroundColor: const Color(0xFFFF7A7A),
-                          foregroundColor: const Color(0xFF2C0710),
+                          backgroundColor: const Color(0xFF25D366),
+                          foregroundColor: const Color(0xFF0B141A),
                           minimumSize: const Size(52, 52),
                         ),
                         child: const Icon(Icons.send_rounded),
@@ -4899,8 +4875,8 @@ class _ComposerState extends State<_Composer> {
                   FilledButton(
                     onPressed: _showVoiceUnavailableMessage,
                     style: _actionButtonStyle(
-                      backgroundColor: const Color(0xFF31405F),
-                      foregroundColor: const Color(0xFF9EABC9),
+                      backgroundColor: const Color(0xFF25D366),
+                      foregroundColor: const Color(0xFF0B141A),
                     ),
                     child: const Icon(Icons.mic_off_rounded),
                   )
@@ -4908,8 +4884,8 @@ class _ComposerState extends State<_Composer> {
                   FilledButton(
                     onPressed: isDisabled ? null : _toggleRecording,
                     style: _actionButtonStyle(
-                      backgroundColor: const Color(0xFF3F5EF7),
-                      foregroundColor: Colors.white,
+                      backgroundColor: const Color(0xFF25D366),
+                      foregroundColor: const Color(0xFF0B141A),
                     ),
                     child: const Icon(Icons.mic_rounded),
                   )
@@ -4921,8 +4897,8 @@ class _ComposerState extends State<_Composer> {
                         FilledButton(
                           onPressed: isDisabled ? null : _toggleRecording,
                           style: _actionButtonStyle(
-                            backgroundColor: const Color(0xFF31405F),
-                            foregroundColor: const Color(0xFFE8ECF8),
+                            backgroundColor: const Color(0xFF1F2C34),
+                            foregroundColor: const Color(0xFF8696A0),
                             minimumSize: const Size(52, 52),
                           ),
                           child: const Icon(Icons.mic_rounded),
@@ -4932,8 +4908,8 @@ class _ComposerState extends State<_Composer> {
                       FilledButton(
                         onPressed: isDisabled ? null : _handlePrimaryAction,
                         style: _actionButtonStyle(
-                          backgroundColor: const Color(0xFF55D6BE),
-                          foregroundColor: const Color(0xFF07131D),
+                          backgroundColor: const Color(0xFF25D366),
+                          foregroundColor: const Color(0xFF0B141A),
                           minimumSize: const Size(52, 52),
                         ),
                         child: const Icon(Icons.arrow_upward_rounded),
@@ -4953,12 +4929,12 @@ class _ComposerState extends State<_Composer> {
       return _VoiceStatusCard(
         icon: Icons.mic_rounded,
         title: 'Recording',
-        subtitle: 'Send to upload or cancel to discard',
-        color: const Color(0xFFFF7A7A),
+        subtitle: 'Add the voice note, then send it with your text',
+        color: const Color(0xFF25D366),
         trailing: _StatusPill(
           label: _formatDuration(),
-          backgroundColor: const Color(0xFF3B1521),
-          foregroundColor: const Color(0xFFFFB3B3),
+          backgroundColor: const Color(0xFF0B3D25),
+          foregroundColor: const Color(0xFFB7F5CF),
         ),
         titleMaxLines: 1,
         subtitleMaxLines: 1,
@@ -4994,7 +4970,34 @@ class _ComposerState extends State<_Composer> {
             await _handlePrimaryAction();
           },
           decoration: InputDecoration(
+            filled: true,
+            fillColor: const Color(0xFF1F2C34),
             hintText: _composerHintText(),
+            hintStyle: const TextStyle(color: Color(0xFF8696A0)),
+            contentPadding: const EdgeInsets.symmetric(
+              horizontal: 14,
+              vertical: 13,
+            ),
+            prefixIcon: IconButton(
+              onPressed: _isSubmittingAttachments
+                  ? null
+                  : (widget.isBusy ? null : _openAttachmentPicker),
+              tooltip: 'Add attachment',
+              icon: const Icon(Icons.attach_file_rounded),
+              color: const Color(0xFF8696A0),
+            ),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(28),
+              borderSide: BorderSide.none,
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(28),
+              borderSide: BorderSide.none,
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(28),
+              borderSide: BorderSide.none,
+            ),
           ),
         ),
       ],
@@ -5010,8 +5013,9 @@ class _ComposerState extends State<_Composer> {
       backgroundColor: backgroundColor,
       foregroundColor: foregroundColor,
       minimumSize: minimumSize,
+      padding: EdgeInsets.zero,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(18),
+        borderRadius: BorderRadius.circular(minimumSize.height / 2),
       ),
     );
   }
@@ -5028,7 +5032,7 @@ class _ComposerState extends State<_Composer> {
 
   Future<void> _toggleRecording() async {
     if (_isRecording) {
-      await _stopRecordingAndSend();
+      await _stopRecordingAndStage();
       return;
     }
     await _startRecording();
@@ -5262,7 +5266,7 @@ class _ComposerState extends State<_Composer> {
     }
   }
 
-  Future<void> _stopRecordingAndSend() async {
+  Future<void> _stopRecordingAndStage() async {
     if (!_isRecording) {
       return;
     }
@@ -5283,26 +5287,27 @@ class _ComposerState extends State<_Composer> {
       return;
     }
 
-    var didSend = false;
-    try {
-      didSend = await widget.onSendAudio(audioFile);
-    } catch (_) {
-      didSend = false;
-    } finally {
+    final audioName = _voiceNoteAttachmentName(audioFile);
+    final didStage = _appendPendingAttachments(
+      <_PendingAttachmentDraft>[
+        _PendingAttachmentDraft(
+          file: audioFile,
+          name: audioName,
+          kind: _AttachmentDraftKind.audio,
+          onDispose: () => recorder.cleanup(audioFile),
+        ),
+      ],
+    );
+    if (didStage) {
+      await recorder.dispose();
+    } else {
       await recorder.cleanup(audioFile);
       await recorder.dispose();
     }
     if (!mounted) {
       return;
     }
-    if (!didSend) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Voice note send failed.'),
-          duration: Duration(seconds: 2),
-        ),
-      );
-    }
+    _composerFocusNode.requestFocus();
   }
 
   Future<void> _handlePrimaryAction() async {
@@ -5326,11 +5331,12 @@ class _ComposerState extends State<_Composer> {
         return;
       }
       if (didSend) {
-        widget.controller.clear();
+        _disposePendingAttachments(attachments);
         setState(() {
           _pendingAttachments.clear();
           _isSubmittingAttachments = false;
         });
+        widget.controller.clear();
         _emitDraftChanged();
       } else {
         setState(() {
@@ -5369,6 +5375,7 @@ class _ComposerState extends State<_Composer> {
         (item) => item.identityKey == attachment.identityKey,
       );
     });
+    unawaited(attachment.dispose());
     _emitDraftChanged();
   }
 
@@ -5376,9 +5383,11 @@ class _ComposerState extends State<_Composer> {
     if (_pendingAttachments.isEmpty) {
       return;
     }
+    final attachments = List<_PendingAttachmentDraft>.from(_pendingAttachments);
     setState(() {
       _pendingAttachments.clear();
     });
+    _disposePendingAttachments(attachments);
     _emitDraftChanged();
   }
 
@@ -5661,15 +5670,15 @@ class _ComposerState extends State<_Composer> {
 
   String _composerHintText() {
     if (_pendingAttachments.isEmpty) {
-      return 'Send a command to your local Codex CLI';
+      return 'Message';
     }
     if (_pendingAttachments.length == 1 && _pendingAttachments.first.isAudio) {
-      return 'Add optional instructions for the voice note';
+      return 'Add text for this voice note';
     }
     if (_pendingAttachments.length == 1 && _pendingAttachments.first.isImage) {
-      return 'Add optional instructions for the image';
+      return 'Add text for this image';
     }
-    return 'Tell Codex what to do with these attachments';
+    return 'Add text for these attachments';
   }
 
   _AttachmentDraftKind _resolveAttachmentKind({
@@ -5712,6 +5721,15 @@ class _ComposerState extends State<_Composer> {
       SnackBar(content: Text(widget.voiceStatusText)),
     );
   }
+
+  String _voiceNoteAttachmentName(XFile audioFile) {
+    final originalName = audioFile.name.trim();
+    final extension = originalName.contains('.')
+        ? originalName.substring(originalName.lastIndexOf('.'))
+        : '.m4a';
+    final timestamp = DateTime.now().millisecondsSinceEpoch;
+    return 'voice-note-$timestamp$extension';
+  }
 }
 
 enum _AttachmentDraftKind { image, audio, file }
@@ -5725,6 +5743,7 @@ class _PendingAttachmentDraft {
     required this.kind,
     this.sizeBytes,
     this.previewBytes,
+    this.onDispose,
   });
 
   final XFile file;
@@ -5732,6 +5751,7 @@ class _PendingAttachmentDraft {
   final _AttachmentDraftKind kind;
   final int? sizeBytes;
   final Uint8List? previewBytes;
+  final Future<void> Function()? onDispose;
 
   bool get isImage => kind == _AttachmentDraftKind.image;
 
@@ -5748,6 +5768,16 @@ class _PendingAttachmentDraft {
   }
 
   String get identityKey => '${kind.name}:$name:${sizeBytes ?? 0}';
+
+  Future<void> dispose() async {
+    await onDispose?.call();
+  }
+}
+
+void _disposePendingAttachments(List<_PendingAttachmentDraft> attachments) {
+  for (final attachment in attachments) {
+    unawaited(attachment.dispose());
+  }
 }
 
 Color _colorFromHex(String value) {

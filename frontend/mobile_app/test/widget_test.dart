@@ -563,7 +563,8 @@ void main() {
     controller.dispose();
   });
 
-  testWidgets('recorded voice note sends without flushing staged attachments', (
+  testWidgets('recorded voice note stages with text before sending attachments',
+      (
     tester,
   ) async {
     tester.view.physicalSize = const Size(1200, 1600);
@@ -574,6 +575,7 @@ void main() {
     addTearDown(textController.dispose);
     final audioSends = <String>[];
     final attachmentSends = <String>[];
+    final attachmentPrompts = <String?>[];
     final recorders = <_FakeAudioNoteRecorder>[];
 
     await tester.pumpWidget(
@@ -600,6 +602,7 @@ void main() {
                 attachmentSends.addAll(
                   attachments.map((attachment) => attachment.name),
                 );
+                attachmentPrompts.add(prompt);
                 return true;
               },
             ),
@@ -630,14 +633,31 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 200));
 
-    expect(audioSends, <String>['voice-note.m4a']);
+    expect(audioSends, isEmpty);
     expect(attachmentSends, isEmpty);
-    expect(find.text('1 selected'), findsOneWidget);
+    expect(find.text('2 selected'), findsOneWidget);
     expect(textController.text, contains('Keep this attachment staged'));
     expect(recorders.first.started, isTrue);
     expect(recorders.first.stopped, isTrue);
-    expect(recorders.first.cleaned, isTrue);
+    expect(recorders.first.cleaned, isFalse);
     expect(recorders.first.disposed, isTrue);
+
+    final composerSendButton = find
+        .ancestor(
+          of: find.byIcon(Icons.arrow_upward_rounded),
+          matching: find.byType(FilledButton),
+        )
+        .last;
+    await tester.tap(composerSendButton);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+
+    expect(attachmentSends, hasLength(2));
+    expect(attachmentSends, contains('voice-note.m4a'));
+    expect(attachmentPrompts, <String?>['Keep this attachment staged']);
+    expect(find.text('2 selected'), findsNothing);
+    expect(textController.text, isEmpty);
+    expect(recorders.first.cleaned, isTrue);
   });
 
   testWidgets('renders assistant options as quick actions', (tester) async {
