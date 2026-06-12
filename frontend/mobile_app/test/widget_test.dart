@@ -593,8 +593,9 @@ void main() {
                 recorders.add(recorder);
                 return recorder;
               },
-              onSendAudio: (audioFile) async {
+              onSendAudio: (audioFile, {message}) async {
                 audioSends.add(audioFile.name);
+                expect(message, isNull);
                 return true;
               },
               onSendAttachments: (attachments, {prompt}) async {
@@ -652,6 +653,7 @@ void main() {
     final textController = TextEditingController();
     addTearDown(textController.dispose);
     final audioSends = <String>[];
+    final audioMessages = <String?>[];
     final attachmentSends = <String>[];
     final attachmentPrompts = <String?>[];
     final recorders = <_FakeAudioNoteRecorder>[];
@@ -671,8 +673,9 @@ void main() {
                 recorders.add(recorder);
                 return recorder;
               },
-              onSendAudio: (audioFile) async {
+              onSendAudio: (audioFile, {message}) async {
                 audioSends.add(audioFile.name);
+                audioMessages.add(message);
                 return true;
               },
               onSendAttachments: (attachments, {prompt}) async {
@@ -710,10 +713,10 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 200));
 
-    expect(audioSends, isEmpty);
-    expect(attachmentSends, hasLength(1));
-    expect(attachmentSends, contains('voice-note.m4a'));
-    expect(attachmentPrompts, <String?>['Explain this voice note']);
+    expect(audioSends, <String>['voice-note.m4a']);
+    expect(audioMessages, <String?>['Explain this voice note']);
+    expect(attachmentSends, isEmpty);
+    expect(attachmentPrompts, isEmpty);
     expect(textController.text, isEmpty);
     expect(recorders.first.cleaned, isTrue);
     expect(recorders.first.disposed, isTrue);
@@ -854,6 +857,23 @@ void main() {
     expect(find.textContaining('[Attached audio document'), findsNothing);
     expect(find.textContaining('PTT-20260322-WA0001.ogg'), findsNothing);
     expect(find.byIcon(Icons.graphic_eq_rounded), findsOneWidget);
+  });
+
+  testWidgets('renders voice note transcript instead of audio attachment', (
+    tester,
+  ) async {
+    await _pumpUserChatBubble(
+      tester,
+      'Explain this voice note\n\n'
+      '[Sent via audio]\n\n'
+      'The release is ready to send.',
+    );
+
+    expect(find.text('Explain this voice note'), findsOneWidget);
+    expect(find.text('The release is ready to send.'), findsOneWidget);
+    expect(find.text('Sent via audio'), findsOneWidget);
+    expect(find.text('Audio attached'), findsNothing);
+    expect(find.textContaining('[Sent via audio]'), findsNothing);
   });
 
   testWidgets('renders legacy user text document attachments visually', (
@@ -1722,6 +1742,7 @@ void main() {
     final didSend = await controller.sendAudioMessage(
       XFile.fromData(Uint8List.fromList(const <int>[1, 2, 3]),
           name: 'voice-note.m4a'),
+      message: 'Explain this voice note',
       sessionIdOverride: 'session-a',
       workspacePathOverride: '/workspace/a',
     );
@@ -1729,6 +1750,7 @@ void main() {
     expect(didSend, isTrue);
     expect(fakeApiClient.lastAudioSessionId, 'session-a');
     expect(fakeApiClient.lastAudioWorkspacePath, '/workspace/a');
+    expect(fakeApiClient.lastAudioMessage, 'Explain this voice note');
     expect(controller.selectedSessionId, 'session-b');
 
     controller.dispose();
@@ -2472,6 +2494,7 @@ class _FakeApiClient extends ApiClient {
 
   String? lastAudioSessionId;
   String? lastAudioWorkspacePath;
+  String? lastAudioMessage;
   AgentConfiguration? lastAgentConfiguration;
   AgentConfiguration? lastCreatedAgentProfileConfiguration;
   String? lastAppliedAgentProfileId;
@@ -2630,14 +2653,17 @@ class _FakeApiClient extends ApiClient {
     CodexRunOptions? codexRunOptions,
     String? sessionId,
     String? workspacePath,
+    String? message,
     String? language,
   }) async {
     lastAudioSessionId = sessionId;
     lastAudioWorkspacePath = workspacePath;
+    lastAudioMessage = message;
     audioSends.add(
       _RecordedAudioSend(
         sessionId: sessionId,
         workspacePath: workspacePath,
+        message: message,
         filename: audioFile.name,
       ),
     );
@@ -2816,11 +2842,13 @@ class _RecordedAudioSend {
   const _RecordedAudioSend({
     required this.sessionId,
     required this.workspacePath,
+    required this.message,
     required this.filename,
   });
 
   final String? sessionId;
   final String? workspacePath;
+  final String? message;
   final String filename;
 }
 

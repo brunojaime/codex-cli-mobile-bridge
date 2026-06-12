@@ -1792,6 +1792,7 @@ async def install_codex_mcp_app(
 @router.post("/message/audio", response_model=AudioMessageAcceptedResponse, status_code=202)
 async def post_audio_message(
     audio: UploadFile = File(...),
+    message: str | None = Form(default=None),
     session_id: str | None = Form(default=None),
     workspace_path: str | None = Form(default=None),
     language: str | None = Form(default=None),
@@ -1813,6 +1814,7 @@ async def post_audio_message(
             str(temp_path),
             filename=audio.filename or temp_path.name,
             content_type=audio.content_type,
+            message=message,
             session_id=session_id,
             workspace_path=workspace_path,
             language=language,

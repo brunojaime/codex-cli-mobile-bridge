@@ -12,6 +12,7 @@ class JobStatusResponse {
     this.agentLabel,
     this.notificationChannel,
     this.response,
+    this.transcript,
     this.error,
     this.providerSessionId,
     this.runId,
@@ -30,6 +31,7 @@ class JobStatusResponse {
   final String? agentLabel;
   final ChatNotificationChannel? notificationChannel;
   final String? response;
+  final String? transcript;
   final String? error;
   final String? providerSessionId;
   final String? runId;
@@ -59,6 +61,7 @@ class JobStatusResponse {
       notificationChannel:
           _resolveNotificationChannel(rawAgentId, rawAgentType),
       response: _readPayloadText(json['response']),
+      transcript: _readPayloadText(json['transcript']),
       error: _readPayloadText(json['error']),
       providerSessionId: _readText(json['provider_session_id']),
       runId: _readText(json['run_id']),
@@ -79,6 +82,7 @@ class JobStatusResponse {
       'agent_type': agentTypeToJson(agentType),
       if (agentLabel != null) 'agent_label': agentLabel,
       if (response != null) 'response': response,
+      if (transcript != null) 'transcript': transcript,
       if (error != null) 'error': error,
       if (providerSessionId != null) 'provider_session_id': providerSessionId,
       if (runId != null) 'run_id': runId,
@@ -99,6 +103,7 @@ class JobStatusResponse {
     String? agentLabel,
     ChatNotificationChannel? notificationChannel,
     String? response,
+    String? transcript,
     String? error,
     String? providerSessionId,
     String? runId,
@@ -117,6 +122,7 @@ class JobStatusResponse {
       agentLabel: agentLabel ?? this.agentLabel,
       notificationChannel: notificationChannel ?? this.notificationChannel,
       response: response ?? this.response,
+      transcript: transcript ?? this.transcript,
       error: error ?? this.error,
       providerSessionId: providerSessionId ?? this.providerSessionId,
       runId: runId ?? this.runId,
