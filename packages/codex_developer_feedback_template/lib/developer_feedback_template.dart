@@ -197,6 +197,7 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
   var _unreadNotificationCount = 0;
   var _unreadQuickAskCount = 0;
   var _quickAskGeneration = 0;
+  var _quickAskCancellation = Completer<void>();
   var _notificationRefreshScheduled = false;
   var _editMode = false;
   var _dialogOpen = false;
@@ -210,14 +211,25 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
   void didUpdateWidget(covariant DeveloperFeedbackTemplate oldWidget) {
     super.didUpdateWidget(oldWidget);
     final disabled = oldWidget.enabled && !widget.enabled;
+    final bridgeChanged = oldWidget.bridgeUrl.trim() != widget.bridgeUrl.trim();
+    final sourceChanged = oldWidget.sourceApp != widget.sourceApp;
     final contextChanged =
-        oldWidget.bridgeUrl.trim() != widget.bridgeUrl.trim() ||
-        oldWidget.sourceApp != widget.sourceApp ||
+        bridgeChanged ||
+        sourceChanged ||
         oldWidget.sourceDisplayName != widget.sourceDisplayName ||
         oldWidget.httpClient != widget.httpClient ||
         oldWidget.contextMetadataBuilder != widget.contextMetadataBuilder;
     if (disabled || contextChanged) {
       _cancelQuickAskBackgroundWork();
+      if (bridgeChanged || sourceChanged) {
+        _clearQuickAskContext();
+      } else if (disabled) {
+        _cancelActiveQuickAsks();
+      }
+    }
+    if (bridgeChanged || sourceChanged) {
+      _notificationRefreshScheduled = false;
+      _unreadNotificationCount = 0;
     }
   }
 
@@ -313,7 +325,13 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
 
   int get _quickAskActivityCount =>
       _unreadQuickAskCount +
-      _localQuickAsks.where((record) => record.isActive).length;
+      _currentLocalQuickAsks.where((record) => record.isActive).length;
+
+  Iterable<_QuickAskRecord> get _currentLocalQuickAsks {
+    return _localQuickAsks.where(
+      (record) => record.sourceApp == widget.sourceApp,
+    );
+  }
 
   BuildContext get _modalContext =>
       widget.navigatorKey?.currentState?.overlay?.context ??
@@ -329,7 +347,48 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
 
   void _cancelQuickAskBackgroundWork() {
     _quickAskGeneration += 1;
+    if (!_quickAskCancellation.isCompleted) {
+      _quickAskCancellation.complete();
+    }
+    _quickAskCancellation = Completer<void>();
     _quickAskPollingIds.clear();
+  }
+
+  Future<void> _waitForQuickAskPollDelay(int generation) async {
+    if (!_isQuickAskWorkActive(generation)) return;
+    final cancellation = _quickAskCancellation.future;
+    final completer = Completer<void>();
+    Timer? timer;
+    void complete() {
+      if (!completer.isCompleted) completer.complete();
+    }
+
+    timer = Timer(const Duration(seconds: 2), complete);
+    unawaited(
+      cancellation.then((_) {
+        timer?.cancel();
+        complete();
+      }),
+    );
+    try {
+      await completer.future;
+    } finally {
+      timer.cancel();
+    }
+  }
+
+  void _cancelActiveQuickAsks() {
+    for (var index = 0; index < _localQuickAsks.length; index += 1) {
+      final record = _localQuickAsks[index];
+      if (record.isActive) {
+        _localQuickAsks[index] = record.copyWith(status: 'canceled');
+      }
+    }
+  }
+
+  void _clearQuickAskContext() {
+    _localQuickAsks.clear();
+    _unreadQuickAskCount = 0;
   }
 
   Offset _effectiveToolbarOffset(Size viewport, EdgeInsets safePadding) {
@@ -685,7 +744,7 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
         if (detail.isFailed) {
           throw Exception(status['status_detail'] ?? 'Quick ask failed');
         }
-        await Future<void>.delayed(const Duration(seconds: 2));
+        await _waitForQuickAskPollDelay(generation);
         if (!_isQuickAskWorkActive(generation)) return;
       }
       _upsertQuickAskRecord(fallback.copyWith(status: 'running'));
@@ -721,7 +780,7 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
   }
 
   _QuickAskRecord? _quickAskById(String quickAskId) {
-    for (final record in _localQuickAsks) {
+    for (final record in _currentLocalQuickAsks) {
       if (record.quickAskId == quickAskId) return record;
     }
     return null;
@@ -1539,7 +1598,7 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
               });
             } catch (_) {
               if (!context.mounted) return;
-              final localRecords = _sortQuickAskRecords(_localQuickAsks);
+              final localRecords = _sortQuickAskRecords(_currentLocalQuickAsks);
               setDialogState(() {
                 loading = false;
                 records = localRecords;
@@ -1624,7 +1683,7 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
 
   List<_QuickAskRecord> _mergeQuickAskRecords(List<_QuickAskRecord> remote) {
     final byId = <String, _QuickAskRecord>{};
-    for (final record in _localQuickAsks) {
+    for (final record in _currentLocalQuickAsks) {
       byId[record.quickAskId] = record;
     }
     for (final record in remote) {
@@ -3113,12 +3172,15 @@ class _QuickAskRecord {
 
   bool get isFailed => status == 'failed';
 
-  bool get isActive => !isCompleted && !isFailed;
+  bool get isCanceled => status == 'canceled' || status == 'cancelled';
+
+  bool get isActive => !isCompleted && !isFailed && !isCanceled;
 
   String get statusLabel {
     return switch (status) {
       'completed' => 'Completada',
       'failed' => 'Fallida',
+      'canceled' || 'cancelled' => 'Cancelada',
       'queued' => 'Enviando',
       'pending' || 'running' => 'En curso',
       _ => status,
@@ -3128,6 +3190,7 @@ class _QuickAskRecord {
   IconData get statusIcon {
     if (isCompleted) return Icons.check_circle_outline;
     if (isFailed) return Icons.error_outline;
+    if (isCanceled) return Icons.pause_circle_outline;
     if (status == 'queued') return Icons.outbox_outlined;
     return Icons.timelapse;
   }

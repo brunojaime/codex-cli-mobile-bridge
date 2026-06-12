@@ -1011,6 +1011,222 @@ void main() {
     },
   );
 
+  testWidgets(
+    'quick ask cancellation does not leave activity after re-enable',
+    (tester) async {
+      var getCount = 0;
+      final client = MockClient((request) async {
+        if (request.url.path == '/feedback-batches') {
+          return http.Response('[]', 200);
+        }
+        if (request.url.path == '/feedback-quick-asks/ask') {
+          return http.Response(
+            jsonEncode(<String, Object?>{
+              'quickAskId': 'quick-ask-disable',
+              'status': 'pending',
+            }),
+            202,
+          );
+        }
+        if (request.url.path == '/feedback-quick-asks/quick-ask-disable') {
+          getCount += 1;
+          return http.Response(
+            jsonEncode(<String, Object?>{
+              'quickAskId': 'quick-ask-disable',
+              'sourceApp': 'fixture-app',
+              'question': 'Disable me?',
+              'status': 'running',
+              'selectionBounds': <String, double>{
+                'left': 1,
+                'top': 2,
+                'width': 3,
+                'height': 4,
+              },
+              'createdAt': '2026-06-11T00:00:00+00:00',
+            }),
+            200,
+          );
+        }
+        return http.Response('not found', 404);
+      });
+
+      await tester.pumpWidget(
+        _Harness(
+          enabled: true,
+          bridgeUrl: 'http://bridge.local',
+          httpClient: client,
+        ),
+      );
+      await _openQuickAskDialog(tester, 'Disable me?');
+      await tester.pumpAndSettle();
+      expect(getCount, 1);
+      expect(find.text('1'), findsOneWidget);
+
+      await tester.pumpWidget(
+        _Harness(
+          enabled: false,
+          bridgeUrl: 'http://bridge.local',
+          httpClient: client,
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.pumpWidget(
+        _Harness(
+          enabled: true,
+          bridgeUrl: 'http://bridge.local',
+          httpClient: client,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(developerFeedbackQuickAskHistoryKey), findsOneWidget);
+      expect(find.text('1'), findsNothing);
+      _expectNoFlutterExceptions(tester);
+    },
+  );
+
+  testWidgets('quick ask local cache is cleared when source app changes', (
+    tester,
+  ) async {
+    final client = MockClient((request) async {
+      if (request.url.path == '/feedback-batches') {
+        return http.Response('[]', 200);
+      }
+      if (request.url.path == '/feedback-quick-asks/ask') {
+        return http.Response(
+          jsonEncode(<String, Object?>{
+            'quickAskId': 'quick-ask-app-a',
+            'status': 'pending',
+          }),
+          202,
+        );
+      }
+      if (request.url.path == '/feedback-quick-asks/quick-ask-app-a') {
+        return http.Response(
+          jsonEncode(<String, Object?>{
+            'quickAskId': 'quick-ask-app-a',
+            'sourceApp': 'app-a',
+            'question': 'Question from app A',
+            'status': 'running',
+            'selectionBounds': <String, double>{
+              'left': 1,
+              'top': 2,
+              'width': 3,
+              'height': 4,
+            },
+            'createdAt': '2026-06-11T00:00:00+00:00',
+          }),
+          200,
+        );
+      }
+      if (request.url.path == '/feedback-quick-asks') {
+        expect(request.url.queryParameters['sourceApp'], 'app-b');
+        return http.Response('[]', 200);
+      }
+      return http.Response('not found', 404);
+    });
+
+    await tester.pumpWidget(
+      _Harness(
+        enabled: true,
+        sourceApp: 'app-a',
+        bridgeUrl: 'http://bridge.local',
+        httpClient: client,
+      ),
+    );
+    await _openQuickAskDialog(tester, 'Question from app A');
+    await tester.pumpAndSettle();
+    expect(find.text('1'), findsOneWidget);
+
+    await tester.pumpWidget(
+      _Harness(
+        enabled: true,
+        sourceApp: 'app-b',
+        bridgeUrl: 'http://bridge.local',
+        httpClient: client,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('1'), findsNothing);
+    await tester.tap(find.byKey(developerFeedbackQuickAskHistoryKey));
+    await tester.pumpAndSettle();
+    expect(find.text('No hay preguntas rápidas.'), findsOneWidget);
+    expect(find.text('Question from app A'), findsNothing);
+    _expectNoFlutterExceptions(tester);
+  });
+
+  testWidgets('quick ask local cache is cleared when bridge URL changes', (
+    tester,
+  ) async {
+    final requestedHistoryHosts = <String>[];
+    final client = MockClient((request) async {
+      if (request.url.path == '/feedback-batches') {
+        return http.Response('[]', 200);
+      }
+      if (request.url.path == '/feedback-quick-asks/ask') {
+        return http.Response(
+          jsonEncode(<String, Object?>{
+            'quickAskId': 'quick-ask-bridge-a',
+            'status': 'pending',
+          }),
+          202,
+        );
+      }
+      if (request.url.path == '/feedback-quick-asks/quick-ask-bridge-a') {
+        return http.Response(
+          jsonEncode(<String, Object?>{
+            'quickAskId': 'quick-ask-bridge-a',
+            'sourceApp': 'fixture-app',
+            'question': 'Question from bridge A',
+            'status': 'running',
+            'selectionBounds': <String, double>{
+              'left': 1,
+              'top': 2,
+              'width': 3,
+              'height': 4,
+            },
+            'createdAt': '2026-06-11T00:00:00+00:00',
+          }),
+          200,
+        );
+      }
+      if (request.url.path == '/feedback-quick-asks') {
+        requestedHistoryHosts.add(request.url.host);
+        return http.Response('[]', 200);
+      }
+      return http.Response('not found', 404);
+    });
+
+    await tester.pumpWidget(
+      _Harness(
+        enabled: true,
+        bridgeUrl: 'http://bridge-a.local',
+        httpClient: client,
+      ),
+    );
+    await _openQuickAskDialog(tester, 'Question from bridge A');
+    await tester.pumpAndSettle();
+    expect(find.text('1'), findsOneWidget);
+
+    await tester.pumpWidget(
+      _Harness(
+        enabled: true,
+        bridgeUrl: 'http://bridge-b.local',
+        httpClient: client,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('1'), findsNothing);
+    await tester.tap(find.byKey(developerFeedbackQuickAskHistoryKey));
+    await tester.pumpAndSettle();
+    expect(requestedHistoryHosts, contains('bridge-b.local'));
+    expect(find.text('No hay preguntas rápidas.'), findsOneWidget);
+    expect(find.text('Question from bridge A'), findsNothing);
+    _expectNoFlutterExceptions(tester);
+  });
+
   testWidgets('quick ask history shows provenance detail', (tester) async {
     const screenshot =
         'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=';
@@ -1393,6 +1609,53 @@ void main() {
 
     expect(find.byKey(developerFeedbackNotificationBellKey), findsOneWidget);
     expect(find.text('2'), findsOneWidget);
+  });
+
+  testWidgets('notification badge refreshes when source app changes', (
+    tester,
+  ) async {
+    final requestedSourceApps = <String?>[];
+    final client = MockClient((request) async {
+      if (request.url.path == '/feedback-batches') {
+        final sourceApp = request.url.queryParameters['sourceApp'];
+        requestedSourceApps.add(sourceApp);
+        return http.Response(
+          jsonEncode(<Map<String, Object?>>[
+            if (sourceApp == 'app-a')
+              _historyBatchJson('batch-app-a', unread: true),
+          ]),
+          200,
+        );
+      }
+      return http.Response('not found', 404);
+    });
+
+    await tester.pumpWidget(
+      _Harness(
+        enabled: true,
+        sourceApp: 'app-a',
+        bridgeUrl: 'http://bridge.local',
+        httpClient: client,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('1'), findsOneWidget);
+    expect(requestedSourceApps, contains('app-a'));
+
+    await tester.pumpWidget(
+      _Harness(
+        enabled: true,
+        sourceApp: 'app-b',
+        bridgeUrl: 'http://bridge.local',
+        httpClient: client,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(requestedSourceApps, contains('app-b'));
+    expect(find.text('1'), findsNothing);
+    expect(find.byIcon(Icons.notifications_none), findsOneWidget);
   });
 
   testWidgets('notification bell remains inside compact viewport', (
