@@ -180,9 +180,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     unawaited(_replyPlaybackService.dispose());
-    for (final draft in _sessionDrafts.values) {
-      _disposePendingAttachments(draft.attachments);
-    }
     _chatController.removeListener(_handleChatControllerChanged);
     if (widget.controllerOverride == null) {
       _chatController.dispose();
@@ -4788,13 +4785,13 @@ class _ComposerState extends State<_Composer> {
                       const SizedBox(width: 10),
                       Expanded(
                         child: FilledButton.icon(
-                          onPressed: isDisabled ? null : _stopRecordingAndStage,
+                          onPressed: isDisabled ? null : _stopRecordingAndSend,
                           style: _actionButtonStyle(
                             backgroundColor: const Color(0xFF25D366),
                             foregroundColor: const Color(0xFF0B141A),
                           ),
                           icon: const Icon(Icons.send_rounded),
-                          label: const Text('Add'),
+                          label: const Text('Send'),
                         ),
                       ),
                     ],
@@ -4861,7 +4858,7 @@ class _ComposerState extends State<_Composer> {
                       ),
                       const SizedBox(width: 6),
                       FilledButton(
-                        onPressed: isDisabled ? null : _stopRecordingAndStage,
+                        onPressed: isDisabled ? null : _stopRecordingAndSend,
                         style: _actionButtonStyle(
                           backgroundColor: const Color(0xFF25D366),
                           foregroundColor: const Color(0xFF0B141A),
@@ -4929,7 +4926,7 @@ class _ComposerState extends State<_Composer> {
       return _VoiceStatusCard(
         icon: Icons.mic_rounded,
         title: 'Recording',
-        subtitle: 'Add the voice note, then send it with your text',
+        subtitle: 'Send now or cancel to discard',
         color: const Color(0xFF25D366),
         trailing: _StatusPill(
           label: _formatDuration(),
@@ -5032,7 +5029,7 @@ class _ComposerState extends State<_Composer> {
 
   Future<void> _toggleRecording() async {
     if (_isRecording) {
-      await _stopRecordingAndStage();
+      await _stopRecordingAndSend();
       return;
     }
     await _startRecording();
@@ -5266,7 +5263,7 @@ class _ComposerState extends State<_Composer> {
     }
   }
 
-  Future<void> _stopRecordingAndStage() async {
+  Future<void> _stopRecordingAndSend() async {
     if (!_isRecording) {
       return;
     }
@@ -5287,27 +5284,57 @@ class _ComposerState extends State<_Composer> {
       return;
     }
 
-    final audioName = _voiceNoteAttachmentName(audioFile);
-    final didStage = _appendPendingAttachments(
-      <_PendingAttachmentDraft>[
-        _PendingAttachmentDraft(
-          file: audioFile,
-          name: audioName,
-          kind: _AttachmentDraftKind.audio,
-          onDispose: () => recorder.cleanup(audioFile),
-        ),
-      ],
-    );
-    if (didStage) {
-      await recorder.dispose();
-    } else {
+    final prompt = widget.controller.text.trim();
+    final sendWithPrompt = _pendingAttachments.isEmpty && prompt.isNotEmpty;
+    if (mounted) {
+      setState(() {
+        _isSubmittingAttachments = true;
+      });
+    }
+
+    var didSend = false;
+    try {
+      if (sendWithPrompt) {
+        didSend = await widget.onSendAttachments(
+          <_PendingAttachmentDraft>[
+            _PendingAttachmentDraft(
+              file: audioFile,
+              name: audioFile.name.trim().isEmpty
+                  ? 'voice-note.m4a'
+                  : audioFile.name,
+              kind: _AttachmentDraftKind.audio,
+            ),
+          ],
+          prompt: prompt,
+        );
+      } else {
+        didSend = await widget.onSendAudio(audioFile);
+      }
+    } catch (_) {
+      didSend = false;
+    } finally {
       await recorder.cleanup(audioFile);
       await recorder.dispose();
     }
     if (!mounted) {
       return;
     }
-    _composerFocusNode.requestFocus();
+    setState(() {
+      _isSubmittingAttachments = false;
+    });
+    if (didSend) {
+      if (sendWithPrompt) {
+        widget.controller.clear();
+        _emitDraftChanged();
+      }
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Voice note send failed.'),
+        duration: Duration(seconds: 2),
+      ),
+    );
   }
 
   Future<void> _handlePrimaryAction() async {
@@ -5331,7 +5358,6 @@ class _ComposerState extends State<_Composer> {
         return;
       }
       if (didSend) {
-        _disposePendingAttachments(attachments);
         setState(() {
           _pendingAttachments.clear();
           _isSubmittingAttachments = false;
@@ -5375,7 +5401,6 @@ class _ComposerState extends State<_Composer> {
         (item) => item.identityKey == attachment.identityKey,
       );
     });
-    unawaited(attachment.dispose());
     _emitDraftChanged();
   }
 
@@ -5383,11 +5408,9 @@ class _ComposerState extends State<_Composer> {
     if (_pendingAttachments.isEmpty) {
       return;
     }
-    final attachments = List<_PendingAttachmentDraft>.from(_pendingAttachments);
     setState(() {
       _pendingAttachments.clear();
     });
-    _disposePendingAttachments(attachments);
     _emitDraftChanged();
   }
 
@@ -5721,15 +5744,6 @@ class _ComposerState extends State<_Composer> {
       SnackBar(content: Text(widget.voiceStatusText)),
     );
   }
-
-  String _voiceNoteAttachmentName(XFile audioFile) {
-    final originalName = audioFile.name.trim();
-    final extension = originalName.contains('.')
-        ? originalName.substring(originalName.lastIndexOf('.'))
-        : '.m4a';
-    final timestamp = DateTime.now().millisecondsSinceEpoch;
-    return 'voice-note-$timestamp$extension';
-  }
 }
 
 enum _AttachmentDraftKind { image, audio, file }
@@ -5743,7 +5757,6 @@ class _PendingAttachmentDraft {
     required this.kind,
     this.sizeBytes,
     this.previewBytes,
-    this.onDispose,
   });
 
   final XFile file;
@@ -5751,7 +5764,6 @@ class _PendingAttachmentDraft {
   final _AttachmentDraftKind kind;
   final int? sizeBytes;
   final Uint8List? previewBytes;
-  final Future<void> Function()? onDispose;
 
   bool get isImage => kind == _AttachmentDraftKind.image;
 
@@ -5768,16 +5780,6 @@ class _PendingAttachmentDraft {
   }
 
   String get identityKey => '${kind.name}:$name:${sizeBytes ?? 0}';
-
-  Future<void> dispose() async {
-    await onDispose?.call();
-  }
-}
-
-void _disposePendingAttachments(List<_PendingAttachmentDraft> attachments) {
-  for (final attachment in attachments) {
-    unawaited(attachment.dispose());
-  }
 }
 
 Color _colorFromHex(String value) {

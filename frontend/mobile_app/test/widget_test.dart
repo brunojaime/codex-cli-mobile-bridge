@@ -563,8 +563,7 @@ void main() {
     controller.dispose();
   });
 
-  testWidgets('recorded voice note stages with text before sending attachments',
-      (
+  testWidgets('recorded voice note sends without flushing staged attachments', (
     tester,
   ) async {
     tester.view.physicalSize = const Size(1200, 1600);
@@ -633,31 +632,91 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 200));
 
-    expect(audioSends, isEmpty);
+    expect(audioSends, <String>['voice-note.m4a']);
     expect(attachmentSends, isEmpty);
-    expect(find.text('2 selected'), findsOneWidget);
+    expect(find.text('1 selected'), findsOneWidget);
     expect(textController.text, contains('Keep this attachment staged'));
     expect(recorders.first.started, isTrue);
     expect(recorders.first.stopped, isTrue);
-    expect(recorders.first.cleaned, isFalse);
+    expect(recorders.first.cleaned, isTrue);
     expect(recorders.first.disposed, isTrue);
+  });
 
-    final composerSendButton = find
+  testWidgets('recorded voice note sends with composer text immediately', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1200, 1600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final textController = TextEditingController();
+    addTearDown(textController.dispose);
+    final audioSends = <String>[];
+    final attachmentSends = <String>[];
+    final attachmentPrompts = <String?>[];
+    final recorders = <_FakeAudioNoteRecorder>[];
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Align(
+            alignment: Alignment.bottomCenter,
+            child: buildComposerVoiceRecordingHarnessForTest(
+              controller: textController,
+              stagedText: 'Explain this voice note',
+              audioRecorderFactory: () {
+                final recorder = _FakeAudioNoteRecorder(
+                  XFile('voice-note.m4a', name: 'voice-note.m4a'),
+                );
+                recorders.add(recorder);
+                return recorder;
+              },
+              onSendAudio: (audioFile) async {
+                audioSends.add(audioFile.name);
+                return true;
+              },
+              onSendAttachments: (attachments, {prompt}) async {
+                attachmentSends.addAll(
+                  attachments.map((attachment) => attachment.name),
+                );
+                attachmentPrompts.add(prompt);
+                return true;
+              },
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text('Explain this voice note'), findsOneWidget);
+    final micButton = find
         .ancestor(
-          of: find.byIcon(Icons.arrow_upward_rounded),
+          of: find.byIcon(Icons.mic_rounded),
           matching: find.byType(FilledButton),
         )
         .last;
-    await tester.tap(composerSendButton);
+    await tester.tap(micButton);
+    await tester.pump();
+    expect(find.text('Recording'), findsOneWidget);
+
+    final voiceSendButton = find
+        .ancestor(
+          of: find.byIcon(Icons.send_rounded),
+          matching: find.byType(FilledButton),
+        )
+        .last;
+    await tester.tap(voiceSendButton);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 200));
 
-    expect(attachmentSends, hasLength(2));
+    expect(audioSends, isEmpty);
+    expect(attachmentSends, hasLength(1));
     expect(attachmentSends, contains('voice-note.m4a'));
-    expect(attachmentPrompts, <String?>['Keep this attachment staged']);
-    expect(find.text('2 selected'), findsNothing);
+    expect(attachmentPrompts, <String?>['Explain this voice note']);
     expect(textController.text, isEmpty);
     expect(recorders.first.cleaned, isTrue);
+    expect(recorders.first.disposed, isTrue);
   });
 
   testWidgets('renders assistant options as quick actions', (tester) async {
