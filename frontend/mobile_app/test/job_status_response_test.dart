@@ -14,6 +14,7 @@ void main() {
       'agent_type': 'reviewer',
       'agent_label': 'Audit Bot',
       'response': 'Looks good.',
+      'transcript': 'Voice note transcript.',
       'run_id': 'run-1',
       'updated_at': DateTime.utc(2026, 1, 1).toIso8601String(),
     });
@@ -25,6 +26,7 @@ void main() {
     expect(snapshot.agentId, AgentId.reviewer);
     expect(snapshot.agentType, AgentType.reviewer);
     expect(snapshot.agentLabel, 'Audit Bot');
+    expect(snapshot.transcript, 'Voice note transcript.');
     expect(snapshot.runId, 'run-1');
     expect(
         snapshot.resolvedNotificationChannel, ChatNotificationChannel.reviewer);
@@ -82,6 +84,7 @@ void main() {
       'elapsed_seconds': '5',
       'agent_id': 'summary',
       'agent_type': 'summary',
+      'transcript': 'Voice note transcript.',
       'latest_activity': 'Done',
       'run_id': 'run-3',
     });
@@ -93,6 +96,7 @@ void main() {
       'elapsed_seconds': 5,
       'agent_id': 'summary',
       'agent_type': 'summary',
+      'transcript': 'Voice note transcript.',
       'latest_activity': 'Done',
       'run_id': 'run-3',
     });

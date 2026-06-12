@@ -6,8 +6,9 @@ import re
 from collections.abc import Iterator
 from pathlib import Path
 from tempfile import NamedTemporaryFile
+from typing import Any
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, WebSocket
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile, WebSocket
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, Response, StreamingResponse
 
@@ -20,6 +21,8 @@ from backend.app.api.schemas import (
     ArchiveSessionRequest,
     AudioMessageAcceptedResponse,
     AutoModeConfigRequest,
+    BackendDrainRequest,
+    BackendDrainStatusResponse,
     CodexConfigProfileResponse,
     CodexMcpAppInstallResponse,
     CodexMcpAppPreviewResponse,
@@ -39,6 +42,10 @@ from backend.app.api.schemas import (
     AppUpdateRegistryResponse,
     AppUpdateResponse,
     FeedbackBatchStartRequest,
+    FeedbackBatchStatusResponse,
+    FeedbackQuickAskAcceptedResponse,
+    FeedbackQuickAskRequest,
+    FeedbackQuickAskResponse,
     FeedbackQueueItemRequest,
     FeedbackQueueItemResponse,
     FeedbackQueueStartRequest,
@@ -69,12 +76,13 @@ from backend.app.application.services.app_update_service import (
 from backend.app.application.services.message_service import (
     AttachmentInput,
     DocumentProcessingError,
+    MaintenanceModeError,
     MessageService,
     UnsupportedDocumentError,
 )
 from backend.app.domain.entities.chat_message import ChatMessage
 from backend.app.domain.entities.agent_configuration import AgentId
-from backend.app.domain.entities.job import Job
+from backend.app.domain.entities.job import Job, JobStatus
 from backend.app.container import AppContainer
 from backend.app.infrastructure.codex_tooling import (
     inspect_codex_mcp_server_selection,
@@ -194,6 +202,23 @@ async def capabilities(
             container.settings.feedback_source_workspace_alias_map
         ),
     )
+
+
+@router.get("/maintenance/drain", response_model=BackendDrainStatusResponse)
+async def get_backend_drain_status(
+    service: MessageService = Depends(get_message_service),
+) -> BackendDrainStatusResponse:
+    status = await run_in_threadpool(service.backend_drain_status)
+    return BackendDrainStatusResponse.from_domain(status)
+
+
+@router.post("/maintenance/drain", response_model=BackendDrainStatusResponse)
+async def set_backend_drain(
+    payload: BackendDrainRequest,
+    service: MessageService = Depends(get_message_service),
+) -> BackendDrainStatusResponse:
+    status = await run_in_threadpool(service.set_backend_drain, payload.requested)
+    return BackendDrainStatusResponse.from_domain(status)
 
 
 @router.get("/app-updates", response_model=AppUpdateRegistryResponse)
@@ -549,13 +574,30 @@ def _feedback_batch_workspace_path(
     item_payloads: list[dict],
     container: AppContainer,
 ) -> str | None:
-    explicit_workspace_path = (payload.workspace_path or "").strip()
+    return _feedback_workspace_path_for_source(
+        source_app=payload.sourceApp,
+        source_display_name=payload.sourceDisplayName,
+        workspace_path=payload.workspace_path,
+        item_payloads=item_payloads,
+        container=container,
+    )
+
+
+def _feedback_workspace_path_for_source(
+    *,
+    source_app: str | None,
+    source_display_name: str | None,
+    workspace_path: str | None,
+    item_payloads: list[dict],
+    container: AppContainer,
+) -> str | None:
+    explicit_workspace_path = (workspace_path or "").strip()
     if explicit_workspace_path:
         return explicit_workspace_path
 
     candidates = [
-        payload.sourceApp,
-        payload.sourceDisplayName,
+        source_app,
+        source_display_name,
     ]
     for item_payload in item_payloads:
         candidates.extend(
@@ -635,6 +677,218 @@ def _feedback_audio_note(item) -> str:
             f"{item.audio_byte_length or 0} bytes."
         )
     return ""
+
+
+def _feedback_context_note(context_metadata: dict[str, Any] | None) -> str:
+    if not context_metadata:
+        return ""
+    return f"\nScreen/context metadata: {context_metadata}"
+
+
+async def _feedback_audio_prompt_note(
+    item,
+    *,
+    container: AppContainer,
+) -> str:
+    audio_note = _feedback_audio_note(item)
+    if not item.audio_file:
+        return audio_note
+
+    try:
+        transcript = (
+            await run_in_threadpool(
+                container.audio_transcriber.transcribe,
+                Path(item.audio_file),
+                filename=Path(item.audio_file).name,
+                content_type=item.audio_mime_type,
+            )
+        ).strip()
+    except AudioTranscriptionUnavailableError:
+        return (
+            f"{audio_note}\nAudio transcript unavailable; "
+            "using audio metadata only."
+        )
+    except AudioTranscriptionError as exc:
+        return (
+            f"{audio_note}\nAudio transcript failed: {exc}; "
+            "using audio metadata only."
+        )
+
+    if not transcript:
+        return (
+            f"{audio_note}\nAudio transcript unavailable; "
+            "transcriber returned empty text."
+        )
+
+    await run_in_threadpool(
+        container.feedback_queue_service.set_audio_transcript,
+        item.id,
+        transcript,
+    )
+    item.audio_transcript = transcript
+    return f"{audio_note}\nAudio transcript: {transcript}"
+
+
+async def _feedback_batch_status_response(
+    record,
+    *,
+    container: AppContainer,
+) -> FeedbackBatchStatusResponse:
+    job = None
+    if record.job_id:
+        job = await run_in_threadpool(container.message_service.get_job, record.job_id)
+
+    status, status_detail = _feedback_batch_status_from_job(record, job)
+    if status in {"completed", "failed"} and not (record.summary or "").strip():
+        summary = _build_feedback_final_summary(
+            record,
+            job=job,
+            status=status,
+            status_detail=status_detail,
+        )
+        record = await run_in_threadpool(
+            container.feedback_queue_service.set_batch_summary,
+            record.id,
+            summary,
+        )
+    if status in {"completed", "failed"} and not record.notification_created_at:
+        record = await run_in_threadpool(
+            container.feedback_queue_service.ensure_batch_notification,
+            record.id,
+        )
+    summary = (record.summary or "").strip() or None
+    notification_unread = bool(
+        record.notification_created_at and not record.notification_read_at
+    )
+    return FeedbackBatchStatusResponse(
+        batch_id=record.id,
+        batchId=record.id,
+        source_app=record.source_app,
+        source_display_name=record.source_display_name,
+        status=status,
+        workflowStatus=status,
+        status_detail=status_detail,
+        workflow_preset_id=record.workflow_preset_id,
+        workflowPresetId=record.workflow_preset_id,
+        release_when_complete=record.release_when_complete,
+        releaseWhenComplete=record.release_when_complete,
+        item_count=record.item_count,
+        itemCount=record.item_count,
+        item_ids=record.item_ids,
+        job_id=record.job_id,
+        jobId=record.job_id,
+        session_id=record.session_id,
+        sessionId=record.session_id,
+        run_id=job.run_id if job else None,
+        runId=job.run_id if job else None,
+        workspace_path=record.workspace_path,
+        quick_ask_id=record.quick_ask_id,
+        quickAskId=record.quick_ask_id,
+        job_status=job.status if job else None,
+        summary=summary,
+        finalSummary=summary,
+        summary_generated_at=record.summary_generated_at,
+        summary_line_count=_non_empty_line_count(summary),
+        notification_created_at=record.notification_created_at,
+        notification_read_at=record.notification_read_at,
+        notification_unread=notification_unread,
+        notificationUnread=notification_unread,
+        created_at=record.created_at,
+        submitted_at=record.submitted_at,
+    )
+
+
+def _feedback_batch_status_from_job(record, job: Job | None) -> tuple[str, str | None]:
+    if record.job_id and job is None:
+        return "failed", "Linked job was not found."
+    if job is None:
+        return _normalize_feedback_batch_status(record.status), None
+    if job.status == JobStatus.PENDING:
+        return "pending", job.latest_activity
+    if job.status == JobStatus.RUNNING:
+        return "running", job.latest_activity
+    if job.status == JobStatus.COMPLETED:
+        return "completed", job.latest_activity
+    return "failed", job.error or job.latest_activity
+
+
+def _normalize_feedback_batch_status(status: str) -> str:
+    normalized = (status or "").strip().lower()
+    if normalized in {"pending", "running", "review", "release", "completed", "failed"}:
+        return normalized
+    if normalized in {"submitted", "started"}:
+        return "running"
+    return "pending"
+
+
+def _build_feedback_final_summary(
+    record,
+    *,
+    job: Job | None,
+    status: str,
+    status_detail: str | None,
+) -> str:
+    result = "completed successfully" if status == "completed" else "failed"
+    reviewer = (
+        "Reviewer was requested by the selected workflow."
+        if "reviewer" in record.workflow_preset_id
+        else "Reviewer was not requested by the selected workflow."
+    )
+    release = (
+        "Release was requested after validation."
+        if record.release_when_complete
+        else "Release was not requested for this batch."
+    )
+    validation = (
+        "Validation details should be read from the completed Codex response."
+        if job and job.response
+        else "Validation details were not reported by a completed response."
+    )
+    failure = status_detail or (job.error if job else None) or "No failure detail."
+    return "\n".join(
+        [
+            f"1. Request: process developer feedback batch {record.id}.",
+            f"2. Source app: {record.source_app}.",
+            f"3. Source display name: {record.source_display_name or 'not provided'}.",
+            f"4. Screenshots/comments used: {record.item_count} item(s).",
+            f"5. Feedback item ids: {', '.join(record.item_ids) or 'none recorded'}.",
+            "6. Selected areas and bounds are recorded in the batch prompt.",
+            f"7. Workflow preset: {record.workflow_preset_id}.",
+            f"8. Reviewer: {reviewer}",
+            f"9. Release: {release}",
+            "10. Implementation: see the linked Codex job response for changed areas.",
+            f"11. Validation: {validation}",
+            f"12. Final result: workflow {result}.",
+            f"13. Remaining risk or next step: {failure if status == 'failed' else 'review the app build before publishing.'}",
+        ]
+    )
+
+
+def _quick_ask_implementation_comment(record) -> str:
+    answer = (record.answer or "").strip()
+    lines = [
+        f"Act from quick ask {record.id}.",
+        f"Question: {record.question}",
+    ]
+    if answer:
+        lines.append(f"Prior quick ask answer: {answer}")
+    return "\n".join(lines)
+
+
+def _quick_ask_batch_context(record) -> str:
+    answer = (record.answer or "").strip() or "not answered yet"
+    return (
+        "Quick ask provenance for this implementation batch:\n"
+        f"- Quick ask id: {record.id}\n"
+        f"- Original question: {record.question}\n"
+        f"- Prior answer: {answer}\n"
+        f"- Original selection bounds: {record.selection_bounds}\n"
+        f"- Original screen/context metadata: {record.context_metadata}\n\n"
+    )
+
+
+def _non_empty_line_count(value: str | None) -> int:
+    return len([line for line in (value or "").splitlines() if line.strip()])
 
 
 def _validate_feedback_base64(value: str, *, field_name: str, item_index: int) -> None:
@@ -766,6 +1020,7 @@ async def start_feedback_queue_session(
         f"Run target: {target_instruction}\n"
         f"Feedback: {item.comment}\n"
         f"Selection bounds: {item.selection_bounds}"
+        f"{_feedback_context_note(item.context_metadata)}"
         f"{audio_note}"
     )
     should_cleanup_temp_image = True
@@ -805,8 +1060,37 @@ async def start_feedback_batch_session(
     payload: FeedbackBatchStartRequest,
     container: AppContainer = Depends(get_container),
 ) -> MessageAcceptedResponse:
+    quick_ask_record = None
+    if payload.quick_ask_id:
+        try:
+            quick_ask_record = await run_in_threadpool(
+                container.feedback_queue_service.get_quick_ask,
+                payload.quick_ask_id,
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Quick ask not found.") from exc
+    quick_ask_item_payload = None
+    if quick_ask_record is not None and not payload.items:
+        screenshot_base64 = _quick_ask_screenshot_base64(quick_ask_record)
+        if not screenshot_base64:
+            raise HTTPException(
+                status_code=422,
+                detail="Quick ask screenshot is missing.",
+            )
+        quick_ask_item_payload = {
+            "id": f"{quick_ask_record.id}-implementation",
+            "sourceApp": quick_ask_record.source_app,
+            "sourceDisplayName": quick_ask_record.source_display_name,
+            "comment": _quick_ask_implementation_comment(quick_ask_record),
+            "screenshotMimeType": quick_ask_record.screenshot_mime_type,
+            "screenshotPngBase64": screenshot_base64,
+            "selectionPoints": quick_ask_record.selection_points,
+            "selectionBounds": quick_ask_record.selection_bounds,
+            "contextMetadata": quick_ask_record.context_metadata,
+        }
     if not payload.items:
-        raise HTTPException(status_code=422, detail="Feedback batch has no items.")
+        if quick_ask_item_payload is None:
+            raise HTTPException(status_code=422, detail="Feedback batch has no items.")
     preset = _feedback_preset_by_id(
         payload.workflow_preset_id,
         service=container.message_service,
@@ -815,8 +1099,12 @@ async def start_feedback_batch_session(
         raise HTTPException(status_code=422, detail="Unknown feedback workflow preset.")
 
     item_payloads = []
-    for index, item_request in enumerate(payload.items, start=1):
-        item_payload = item_request.model_dump(by_alias=False, exclude_none=True)
+    raw_item_payloads = (
+        [quick_ask_item_payload]
+        if quick_ask_item_payload is not None
+        else [item.model_dump(by_alias=False, exclude_none=True) for item in payload.items]
+    )
+    for index, item_payload in enumerate(raw_item_payloads, start=1):
         if not str(item_payload.get("screenshotPngBase64") or "").strip():
             raise HTTPException(
                 status_code=422,
@@ -927,15 +1215,22 @@ async def start_feedback_batch_session(
             target_session_id = session.id
         item_sections = []
         for index, item in enumerate(stored_items, start=1):
+            audio_note = await _feedback_audio_prompt_note(item, container=container)
             item_sections.append(
                 f"Item {index} ({item.id}):\n"
                 f"Feedback: {item.comment}\n"
                 f"Selection bounds: {item.selection_bounds}"
-                f"{_feedback_audio_note(item)}"
+                f"{_feedback_context_note(item.context_metadata)}"
+                f"{audio_note}"
             )
         release_note = (
             _feedback_release_instruction(includes_reviewer=preset.includes_reviewer)
             if payload.release_when_complete
+            else ""
+        )
+        quick_ask_context = (
+            _quick_ask_batch_context(quick_ask_record)
+            if quick_ask_record is not None
             else ""
         )
         message = payload.message or (
@@ -944,6 +1239,7 @@ async def start_feedback_batch_session(
             f"Run target: {_feedback_target_instruction(preset.target_mode)}\n"
             f"Workflow preset: {preset.name}\n"
             f"Batch size: {len(stored_items)} feedback items.\n\n"
+            f"{quick_ask_context}"
             + "\n\n".join(item_sections)
             + release_note
         )
@@ -961,6 +1257,21 @@ async def start_feedback_batch_session(
                 container.feedback_queue_service.mark_submitted,
                 item.id,
             )
+        batch_record = await run_in_threadpool(
+            container.feedback_queue_service.create_batch_record,
+            batch_id=payload.batch_id,
+            source_app=payload.sourceApp or first_item.source_app,
+            source_display_name=payload.sourceDisplayName
+            or first_item.source_display_name,
+            workflow_preset_id=payload.workflow_preset_id,
+            release_when_complete=payload.release_when_complete,
+            items=stored_items,
+            job_id=job.id,
+            session_id=job.session_id,
+            workspace_path=workspace_path,
+            message=message,
+            quick_ask_id=payload.quick_ask_id,
+        )
         should_keep_stored_items = True
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -977,7 +1288,310 @@ async def start_feedback_batch_session(
                     item.id,
                 )
 
-    return MessageAcceptedResponse.from_domain(job)
+    return MessageAcceptedResponse.from_domain(
+        job,
+        feedback_batch_id=batch_record.id,
+        source_app=batch_record.source_app,
+    )
+
+
+@router.get(
+    "/feedback-batches",
+    response_model=list[FeedbackBatchStatusResponse],
+)
+async def list_feedback_batches(
+    source_app: str | None = Query(default=None, alias="sourceApp"),
+    container: AppContainer = Depends(get_container),
+) -> list[FeedbackBatchStatusResponse]:
+    records = await run_in_threadpool(
+        container.feedback_queue_service.list_batches,
+        source_app=source_app,
+    )
+    return [
+        await _feedback_batch_status_response(record, container=container)
+        for record in records
+    ]
+
+
+@router.get(
+    "/feedback-batches/{batch_id}",
+    response_model=FeedbackBatchStatusResponse,
+)
+async def get_feedback_batch_status(
+    batch_id: str,
+    container: AppContainer = Depends(get_container),
+) -> FeedbackBatchStatusResponse:
+    try:
+        record = await run_in_threadpool(
+            container.feedback_queue_service.get_batch,
+            batch_id,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Feedback batch not found.") from exc
+
+    return await _feedback_batch_status_response(record, container=container)
+
+
+@router.patch(
+    "/feedback-batches/{batch_id}/notification",
+    response_model=FeedbackBatchStatusResponse,
+)
+async def update_feedback_batch_notification(
+    batch_id: str,
+    read: bool = True,
+    container: AppContainer = Depends(get_container),
+) -> FeedbackBatchStatusResponse:
+    try:
+        record = await run_in_threadpool(
+            container.feedback_queue_service.mark_batch_notification_read,
+            batch_id,
+            read=read,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Feedback batch not found.") from exc
+
+    return await _feedback_batch_status_response(record, container=container)
+
+
+@router.post(
+    "/feedback-quick-asks/ask",
+    response_model=FeedbackQuickAskAcceptedResponse,
+    status_code=202,
+)
+async def ask_feedback_quick_question(
+    payload: FeedbackQuickAskRequest,
+    container: AppContainer = Depends(get_container),
+) -> FeedbackQuickAskAcceptedResponse:
+    _validate_feedback_base64(
+        payload.screenshotPngBase64,
+        field_name="screenshotPngBase64",
+        item_index=1,
+    )
+    workspace_path = _feedback_workspace_path_for_source(
+        source_app=payload.sourceApp,
+        source_display_name=payload.sourceDisplayName,
+        workspace_path=payload.workspace_path,
+        item_payloads=[],
+        container=container,
+    )
+    source_label = _feedback_source_label(
+        source_display_name=payload.sourceDisplayName,
+        source_app=payload.sourceApp,
+        workspace_path=workspace_path,
+    )
+    message = _feedback_quick_ask_prompt(
+        source_label=source_label,
+        question=payload.question,
+        selection_bounds=payload.selectionBounds,
+        context_metadata=payload.contextMetadata,
+    )
+    suffix = _IMAGE_CONTENT_TYPE_SUFFIXES.get(payload.screenshotMimeType, ".png")
+    temp_image_path: Path | None = None
+    should_cleanup_temp_image = True
+    try:
+        with NamedTemporaryFile(delete=False, suffix=suffix) as temp_image:
+            temp_image.write(base64.b64decode(payload.screenshotPngBase64))
+            temp_image_path = Path(temp_image.name)
+        codex_options = await _validate_codex_options(
+            payload.codex_options.to_domain()
+            if payload.codex_options is not None
+            else None,
+            container=container,
+        )
+        job = await run_in_threadpool(
+            container.message_service.submit_attachment_message,
+            [
+                AttachmentInput(
+                    path=str(temp_image_path),
+                    filename=f"quick-ask{suffix}",
+                    content_type=payload.screenshotMimeType,
+                )
+            ],
+            message=message,
+            session_id=payload.session_id,
+            workspace_path=workspace_path,
+            codex_options=codex_options,
+        )
+        should_cleanup_temp_image = False
+        record = await run_in_threadpool(
+            container.feedback_queue_service.create_quick_ask_record,
+            quick_ask_id=None,
+            source_app=payload.sourceApp,
+            source_display_name=payload.sourceDisplayName,
+            question=payload.question,
+            screenshot_mime_type=payload.screenshotMimeType,
+            screenshot_png_base64=payload.screenshotPngBase64,
+            selection_points=[
+                point.model_dump() for point in payload.selectionPoints
+            ],
+            selection_bounds=payload.selectionBounds,
+            context_metadata=payload.contextMetadata,
+            job_id=job.id,
+            session_id=job.session_id,
+            workspace_path=workspace_path,
+            message=message,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except UnsupportedDocumentError as exc:
+        raise HTTPException(status_code=415, detail=str(exc)) from exc
+    finally:
+        if should_cleanup_temp_image and temp_image_path is not None:
+            temp_image_path.unlink(missing_ok=True)
+
+    return FeedbackQuickAskAcceptedResponse.from_domain(
+        job,
+        quick_ask_id=record.id,
+    )
+
+
+@router.get(
+    "/feedback-quick-asks",
+    response_model=list[FeedbackQuickAskResponse],
+)
+async def list_feedback_quick_asks(
+    source_app: str | None = Query(default=None, alias="sourceApp"),
+    container: AppContainer = Depends(get_container),
+) -> list[FeedbackQuickAskResponse]:
+    records = await run_in_threadpool(
+        container.feedback_queue_service.list_quick_asks,
+        source_app=source_app,
+    )
+    return [
+        await _feedback_quick_ask_response(record, container=container)
+        for record in records
+    ]
+
+
+@router.get(
+    "/feedback-quick-asks/{quick_ask_id}",
+    response_model=FeedbackQuickAskResponse,
+)
+async def get_feedback_quick_ask(
+    quick_ask_id: str,
+    container: AppContainer = Depends(get_container),
+) -> FeedbackQuickAskResponse:
+    try:
+        record = await run_in_threadpool(
+            container.feedback_queue_service.get_quick_ask,
+            quick_ask_id,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Quick ask not found.") from exc
+
+    return await _feedback_quick_ask_response(
+        record,
+        container=container,
+        include_screenshot=True,
+    )
+
+
+def _feedback_quick_ask_prompt(
+    *,
+    source_label: str,
+    question: str,
+    selection_bounds: dict[str, float],
+    context_metadata: dict[str, Any],
+) -> str:
+    return (
+        f"Quick ask about a selected {source_label} screen area.\n\n"
+        "Answer-only instructions:\n"
+        "- Do not edit files.\n"
+        "- Do not implement changes.\n"
+        "- Do not run commands or tools that modify files.\n"
+        "- Explain what may be happening.\n"
+        "- Be concise but useful.\n"
+        "- Suggest likely causes.\n"
+        "- Suggest possible next steps without executing them.\n\n"
+        f"Question: {question}\n"
+        f"Selection bounds: {selection_bounds}"
+        f"{_feedback_context_note(context_metadata)}"
+    )
+
+
+async def _feedback_quick_ask_response(
+    record,
+    *,
+    container: AppContainer,
+    include_screenshot: bool = False,
+) -> FeedbackQuickAskResponse:
+    job: Job | None = None
+    status = "pending"
+    status_detail: str | None = None
+    answer = record.answer
+    answered_at = record.answered_at
+    run_id: str | None = None
+    if record.job_id:
+        job = await run_in_threadpool(container.message_service.get_job, record.job_id)
+        if job is None:
+            status = "failed"
+            status_detail = "Linked job was not found."
+        elif job.status == JobStatus.COMPLETED:
+            status = "completed"
+            answer = job.response or answer
+            run_id = job.run_id
+            if answer and answer != record.answer:
+                record = await run_in_threadpool(
+                    container.feedback_queue_service.set_quick_ask_answer,
+                    record.id,
+                    answer,
+                )
+                answered_at = record.answered_at
+        elif job.status == JobStatus.FAILED:
+            status = "failed"
+            status_detail = job.error or "Quick ask failed."
+            run_id = job.run_id
+        else:
+            status = "running"
+            run_id = job.run_id
+    return FeedbackQuickAskResponse(
+        quick_ask_id=record.id,
+        quickAskId=record.id,
+        source_app=record.source_app,
+        source_display_name=record.source_display_name,
+        question=record.question,
+        status=status,
+        status_detail=status_detail,
+        answer=answer,
+        answered_at=answered_at,
+        screenshot_mime_type=record.screenshot_mime_type,
+        has_screenshot=record.screenshot_file is not None,
+        screenshot_png_base64=_quick_ask_screenshot_base64(record)
+        if include_screenshot
+        else None,
+        selection_points=record.selection_points,
+        selection_bounds=record.selection_bounds,
+        context_metadata=record.context_metadata,
+        job_id=record.job_id,
+        jobId=record.job_id,
+        session_id=record.session_id,
+        sessionId=record.session_id,
+        run_id=run_id,
+        runId=run_id,
+        workspace_path=record.workspace_path,
+        provenance={
+            "quickAskId": record.id,
+            "sourceApp": record.source_app,
+            "sourceDisplayName": record.source_display_name,
+            "selectionPoints": record.selection_points,
+            "selectionBounds": record.selection_bounds,
+            "contextMetadata": record.context_metadata,
+            "jobId": record.job_id,
+            "sessionId": record.session_id,
+            "runId": run_id,
+            "createdAt": record.created_at,
+        },
+        created_at=record.created_at,
+    )
+
+
+def _quick_ask_screenshot_base64(record) -> str | None:
+    if not record.screenshot_file:
+        return None
+    path = Path(record.screenshot_file)
+    if not path.exists():
+        return None
+    return base64.b64encode(path.read_bytes()).decode("ascii")
 
 
 def _feedback_source_label(
@@ -1178,6 +1792,7 @@ async def install_codex_mcp_app(
 @router.post("/message/audio", response_model=AudioMessageAcceptedResponse, status_code=202)
 async def post_audio_message(
     audio: UploadFile = File(...),
+    message: str | None = Form(default=None),
     session_id: str | None = Form(default=None),
     workspace_path: str | None = Form(default=None),
     language: str | None = Form(default=None),
@@ -1199,6 +1814,7 @@ async def post_audio_message(
             str(temp_path),
             filename=audio.filename or temp_path.name,
             content_type=audio.content_type,
+            message=message,
             session_id=session_id,
             workspace_path=workspace_path,
             language=language,
@@ -1734,6 +2350,8 @@ async def recover_message(
         )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except MaintenanceModeError:
+        raise
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
@@ -1805,6 +2423,8 @@ async def retry_job(
         raise HTTPException(status_code=415, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except MaintenanceModeError:
+        raise
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 

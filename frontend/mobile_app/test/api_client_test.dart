@@ -97,6 +97,50 @@ void main() {
     );
   });
 
+  test('sendAttachmentsMessage sends text, edited PNG image, and audio',
+      () async {
+    final client = ApiClient(
+      baseUrl: 'http://localhost:8000',
+      client: MockClient((request) async {
+        expect(request.method, 'POST');
+        expect(request.url.path, '/message/attachments');
+        expect(
+            request.headers['content-type'], contains('multipart/form-data'));
+        final body = String.fromCharCodes(request.bodyBytes).toLowerCase();
+        expect(body, contains('name="message"'));
+        expect(body, contains('compare this crop with the voice note'));
+        expect(body, contains('name="attachments"'));
+        expect(body, contains('filename="screenshot-edited.png"'));
+        expect(body, contains('content-type: image/png'));
+        expect(body, contains('filename="voice-note.ogg"'));
+        expect(body, contains('content-type: audio/ogg'));
+        return http.Response(
+          '{"job_id":"job-1","session_id":"session-1","status":"pending","elapsed_seconds":0}',
+          202,
+          headers: <String, String>{'content-type': 'application/json'},
+        );
+      }),
+    );
+
+    await client.sendAttachmentsMessage(
+      <XFile>[
+        XFile.fromData(
+          Uint8List.fromList(<int>[137, 80, 78, 71]),
+          name: 'screenshot-edited.png',
+          mimeType: 'image/png',
+          path: 'screenshot-edited.png',
+        ),
+        XFile.fromData(
+          Uint8List.fromList(<int>[79, 103, 103, 83]),
+          name: 'voice-note.ogg',
+          mimeType: 'audio/ogg',
+          path: 'voice-note.ogg',
+        ),
+      ],
+      message: 'Compare this crop with the voice note',
+    );
+  });
+
   test('updateTurnSummaries explains when the backend route is missing',
       () async {
     final client = ApiClient(

@@ -42,6 +42,8 @@ class ChatController extends ChangeNotifier {
       <String, WebSocketChannel>{};
   final Map<int, _OutgoingUploadTicket> _outgoingUploads =
       <int, _OutgoingUploadTicket>{};
+  final Map<int, _OptimisticAudioMessage> _optimisticAudioMessages =
+      <int, _OptimisticAudioMessage>{};
   final Set<String> _handledTerminalJobs = <String>{};
   final Set<String> _autoImportedAgentProfileIds = <String>{};
 
@@ -69,8 +71,27 @@ class ChatController extends ChangeNotifier {
   bool get isSendingDocument => _sendingDocumentCount > 0;
   bool get isSendingImage => _sendingImageCount > 0;
   bool get hasSessions => _sessions.isNotEmpty;
-  List<ChatMessage> get messages =>
-      _currentSession?.messages ?? const <ChatMessage>[];
+  List<ChatMessage> get messages {
+    final currentSession = _currentSession;
+    if (currentSession == null) {
+      return const <ChatMessage>[];
+    }
+
+    final optimisticMessages = _optimisticAudioMessages.values
+        .where((message) => message.sessionId == currentSession.id)
+        .map((message) => message.message)
+        .toList(growable: false);
+    if (optimisticMessages.isEmpty) {
+      return currentSession.messages;
+    }
+
+    return List<ChatMessage>.unmodifiable(
+      <ChatMessage>[
+        ...currentSession.messages,
+        ...optimisticMessages,
+      ],
+    );
+  }
 
   int activeJobCountForSession(String sessionId) {
     return _pendingJobs.values
@@ -610,6 +631,7 @@ class ChatController extends ChangeNotifier {
 
   Future<bool> sendAudioMessage(
     XFile audioFile, {
+    String? message,
     String? language,
     String? sessionIdOverride,
     String? workspacePathOverride,
@@ -622,6 +644,10 @@ class ChatController extends ChangeNotifier {
       originSessionId,
       OutgoingUploadKind.audio,
     );
+    _beginOptimisticAudioMessage(
+      outgoingUploadToken,
+      sessionId: originSessionId,
+    );
     _sendingAudioCount += 1;
     notifyListeners();
 
@@ -631,6 +657,7 @@ class ChatController extends ChangeNotifier {
         audioFile,
         sessionId: originSessionId,
         workspacePath: originWorkspacePath,
+        message: message,
         language: language,
         codexRunOptions: codexRunOptions,
       );
@@ -1521,11 +1548,34 @@ class ChatController extends ChangeNotifier {
     return token;
   }
 
+  void _beginOptimisticAudioMessage(int? token, {required String? sessionId}) {
+    if (token == null || sessionId == null) {
+      return;
+    }
+
+    final timestamp = DateTime.now().toUtc();
+    _optimisticAudioMessages[token] = _OptimisticAudioMessage(
+      sessionId: sessionId,
+      message: ChatMessage(
+        id: 'local-audio-upload-$token',
+        text: 'Sending voice...',
+        isUser: true,
+        authorType: ChatMessageAuthorType.human,
+        agentId: AgentId.user,
+        agentType: AgentType.human,
+        status: ChatMessageStatus.sending,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      ),
+    );
+  }
+
   void _finishOutgoingUpload(int? token) {
     if (token == null) {
       return;
     }
     _outgoingUploads.remove(token);
+    _optimisticAudioMessages.remove(token);
   }
 
   OutgoingUploadKind _resolveAttachmentsUploadKind(List<XFile> attachments) {
@@ -1835,6 +1885,16 @@ class _OutgoingUploadTicket {
 
   final String sessionId;
   final OutgoingUploadKind kind;
+}
+
+class _OptimisticAudioMessage {
+  const _OptimisticAudioMessage({
+    required this.sessionId,
+    required this.message,
+  });
+
+  final String sessionId;
+  final ChatMessage message;
 }
 
 class _DeferredRunNotification {

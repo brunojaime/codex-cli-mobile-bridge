@@ -312,7 +312,7 @@ void main() {
     expect(find.byType(CustomScrollView), findsOneWidget);
     expect(find.text('Safety Reviewer running'), findsOneWidget);
     expect(find.text('Run history'), findsOneWidget);
-    expect(find.text('Send a command to your local Codex CLI'), findsOneWidget);
+    expect(find.text('Message'), findsOneWidget);
 
     await tester.ensureVisible(
       find.text('Start a new Codex session', skipOffstage: false),
@@ -445,7 +445,7 @@ void main() {
     );
 
     expect(tester.takeException(), isNull);
-    expect(find.text('Send a command to your local Codex CLI'), findsOneWidget);
+    expect(find.text('Message'), findsOneWidget);
 
     await tester.scrollUntilVisible(
       find.text('Assistant reply'),
@@ -589,7 +589,7 @@ void main() {
     expect(tester.takeException(), isNull);
     expect(find.text('Start a new Codex session'), findsNothing);
     expect(find.text('Run history'), findsOneWidget);
-    expect(find.text('Send a command to your local Codex CLI'), findsOneWidget);
+    expect(find.text('Message'), findsOneWidget);
 
     await tester.ensureVisible(
       find.text('Messages hidden in this view', skipOffstage: false),
@@ -649,7 +649,7 @@ void main() {
     expect(tester.takeException(), isNull);
     expect(find.text('Start a new Codex session'), findsNothing);
     expect(find.text('Run history'), findsOneWidget);
-    expect(find.text('Send a command to your local Codex CLI'), findsOneWidget);
+    expect(find.text('Message'), findsOneWidget);
 
     await tester.ensureVisible(
       find.text('Messages hidden in this view', skipOffstage: false),
@@ -806,7 +806,7 @@ void main() {
 
     expect(tester.takeException(), isNull);
     expect(find.byKey(kChatScreenBodyScrollViewKey), findsOneWidget);
-    expect(find.text('Send a command to your local Codex CLI'), findsOneWidget);
+    expect(find.text('Message'), findsOneWidget);
 
     await tester.ensureVisible(
       find.text('Safety Reviewer running', skipOffstage: false),

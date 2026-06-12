@@ -162,7 +162,7 @@ echo
 echo "Boot services installed."
 echo "Useful commands:"
 echo "  systemctl status ${BACKEND_SERVICE}"
-echo "  systemctl restart ${BACKEND_SERVICE}"
+echo "  sudo ${ROOT_DIR}/scripts/safe_restart_backend.sh --systemd"
 
 if [[ "${INSTALL_USERSPACE_TAILSCALE}" == "true" ]]; then
   echo "  systemctl status ${TAILSCALED_SERVICE}"

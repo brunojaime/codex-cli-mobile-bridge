@@ -141,7 +141,7 @@ echo "  loginctl enable-linger ${USER}"
 echo
 echo "Useful commands:"
 echo "  systemctl --user status ${BACKEND_SERVICE}"
-echo "  systemctl --user restart ${BACKEND_SERVICE}"
+echo "  ${ROOT_DIR}/scripts/safe_restart_backend.sh --systemd-user"
 
 if [[ "${INSTALL_USERSPACE_TAILSCALE}" == "true" ]]; then
   echo "  systemctl --user status ${TAILSCALED_SERVICE}"

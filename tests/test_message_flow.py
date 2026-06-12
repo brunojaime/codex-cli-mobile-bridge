@@ -70,6 +70,7 @@ def build_test_client() -> TestClient:
         execution_timeout_seconds=10,
         poll_interval_seconds=0,
         audio_transcription_backend="auto",
+        speech_synthesis_backend="disabled",
     )
     app = create_app(settings)
     return TestClient(app)
@@ -417,6 +418,19 @@ class _WatchedControlledExecutionProvider(_ControlledExecutionProvider):
         return cancelled
 
 
+class _BlockingExecuteProvider(_ControlledExecutionProvider):
+    def __init__(self) -> None:
+        super().__init__()
+        self.execute_entered = threading.Event()
+        self.release_execute = threading.Event()
+
+    def execute(self, *args, **kwargs) -> str:
+        self.execute_entered.set()
+        if not self.release_execute.wait(timeout=2):
+            raise TimeoutError("Timed out waiting to release blocked execute.")
+        return super().execute(*args, **kwargs)
+
+
 class _FakeSpeechSynthesizer(SpeechSynthesizer):
     def __init__(
         self,
@@ -564,6 +578,206 @@ def build_audio_client() -> TestClient:
     return TestClient(app)
 
 
+def build_drain_client(
+    *,
+    provider: _ControlledExecutionProvider | None = None,
+    repository: InMemoryChatRepository | None = None,
+) -> tuple[TestClient, object, _ControlledExecutionProvider]:
+    settings = Settings(
+        codex_command="python3 tests/fixtures/fake_codex.py",
+        codex_use_exec=False,
+        projects_root="..",
+        chat_store_backend="memory",
+        execution_timeout_seconds=10,
+        poll_interval_seconds=0,
+        audio_transcription_backend="disabled",
+        speech_synthesis_backend="disabled",
+    )
+    app = create_app(settings)
+    container = app.dependency_overrides[get_container]()
+    provider = provider or _ControlledExecutionProvider()
+    repository = repository or InMemoryChatRepository(projects_root="..")
+    container.message_service = MessageService(
+        repository=repository,
+        execution_provider=provider,
+        default_workspace_path="..",
+        audio_transcriber=DisabledAudioTranscriber(),
+        follow_up_reconcile_interval_seconds=None,
+    )
+    return TestClient(app), container, provider
+
+
+def test_backend_drain_blocks_new_jobs_and_reports_active_jobs() -> None:
+    client, _container, provider = build_drain_client()
+
+    accepted = client.post("/message", json={"message": "Keep working"})
+    assert accepted.status_code == 202
+    job_id = accepted.json()["job_id"]
+
+    drain_response = client.post("/maintenance/drain", json={"requested": True})
+    assert drain_response.status_code == 200
+    drain_payload = drain_response.json()
+    assert drain_payload["requested"] is True
+    assert drain_payload["ready_to_restart"] is False
+    assert drain_payload["active_job_count"] == 1
+    assert drain_payload["active_jobs"][0]["job_id"] == job_id
+
+    blocked = client.post("/message", json={"message": "Start another job"})
+    assert blocked.status_code == 503
+    assert blocked.json()["detail"]["code"] == "backend_drain_active"
+
+    provider.complete_job(job_id, response="Done.")
+    ready_response = client.get("/maintenance/drain")
+    assert ready_response.status_code == 200
+    ready_payload = ready_response.json()
+    assert ready_payload["requested"] is True
+    assert ready_payload["ready_to_restart"] is True
+    assert ready_payload["active_job_count"] == 0
+
+
+def test_backend_drain_can_be_disabled() -> None:
+    client, _container, _provider = build_drain_client()
+
+    enabled = client.post("/maintenance/drain", json={"requested": True})
+    assert enabled.status_code == 200
+
+    disabled = client.post("/maintenance/drain", json={"requested": False})
+    assert disabled.status_code == 200
+    assert disabled.json()["requested"] is False
+
+    accepted = client.post("/message", json={"message": "Run after drain"})
+    assert accepted.status_code == 202
+
+
+def test_backend_drain_waits_for_concurrent_submit_to_be_visible() -> None:
+    provider = _BlockingExecuteProvider()
+    client, _container, _provider = build_drain_client(provider=provider)
+    submit_result: dict[str, object] = {}
+    drain_result: dict[str, object] = {}
+
+    def submit_message() -> None:
+        submit_result["response"] = client.post(
+            "/message",
+            json={"message": "Race with drain"},
+        )
+
+    def request_drain() -> None:
+        drain_result["response"] = client.post(
+            "/maintenance/drain",
+            json={"requested": True},
+        )
+
+    submit_thread = threading.Thread(target=submit_message)
+    submit_thread.start()
+    assert provider.execute_entered.wait(timeout=1)
+
+    drain_thread = threading.Thread(target=request_drain)
+    drain_thread.start()
+    time.sleep(0.05)
+    assert drain_thread.is_alive()
+
+    provider.release_execute.set()
+    submit_thread.join(timeout=2)
+    drain_thread.join(timeout=2)
+
+    submit_response = submit_result["response"]
+    drain_response = drain_result["response"]
+    assert submit_response.status_code == 202
+    assert drain_response.status_code == 200
+    drain_payload = drain_response.json()
+    assert drain_payload["ready_to_restart"] is False
+    assert drain_payload["active_job_count"] == 1
+    assert drain_payload["active_jobs"][0]["job_id"] == submit_response.json()["job_id"]
+
+
+def test_backend_drain_waits_through_reviewer_handoff_until_run_complete() -> None:
+    with TemporaryDirectory() as temp_dir:
+        workspace = Path(temp_dir) / "repo"
+        workspace.mkdir()
+        service, provider, _repository = _build_controlled_message_service(
+            temp_dir,
+            barrier_agent_id=AgentId.REVIEWER,
+        )
+
+        session = service.create_session(workspace_path=str(workspace))
+        configuration = session.agent_configuration.normalized()
+        configuration.preset = AgentPreset.REVIEW
+        configuration.agents[AgentId.GENERATOR].max_turns = 1
+        configuration.agents[AgentId.REVIEWER].enabled = True
+        configuration.agents[AgentId.REVIEWER].max_turns = 1
+        configuration.agents[AgentId.SUMMARY].enabled = False
+        service.update_agent_configuration(session_id=session.id, configuration=configuration)
+
+        initial_job = service.submit_message(
+            "Build the implementation.",
+            session_id=session.id,
+        )
+        provider.complete_job(initial_job.id, response="Initial implementation done.")
+
+        drain_status = service.set_backend_drain(True)
+        assert drain_status.ready_to_restart is False
+        assert drain_status.active_session_ids == [session.id]
+        assert drain_status.active_job_count == 1
+
+        reviewer_job = next(
+            job
+            for job in provider.requests
+            if job["job_id"] != initial_job.id
+        )
+        provider.complete_job(str(reviewer_job["job_id"]), response="Review complete.")
+
+        ready_status = service.backend_drain_status()
+        assert ready_status.ready_to_restart is True
+        assert ready_status.active_job_count == 0
+        assert ready_status.active_session_ids == []
+        assert ready_status.in_flight_message_ids == []
+
+
+def test_backend_drain_rejects_retries() -> None:
+    client, container, provider = build_drain_client()
+
+    accepted = client.post("/message", json={"message": "Retry target"})
+    assert accepted.status_code == 202
+    job_id = accepted.json()["job_id"]
+    provider.complete_job(job_id, response="Done.")
+    completed_job = container.message_service.get_job(job_id)
+    assert completed_job is not None
+    assert completed_job.status == JobStatus.COMPLETED
+
+    drain_response = client.post("/maintenance/drain", json={"requested": True})
+    assert drain_response.status_code == 200
+    retry_response = client.post(f"/jobs/{job_id}/retry")
+    assert retry_response.status_code == 503
+    assert retry_response.json()["detail"]["code"] == "backend_drain_active"
+
+
+def test_backend_drain_reconciles_stale_in_flight_jobs() -> None:
+    repository = InMemoryChatRepository(projects_root="..")
+    first_client, _first_container, _provider = build_drain_client(repository=repository)
+    accepted = first_client.post("/message", json={"message": "Stale job"})
+    assert accepted.status_code == 202
+    job_id = accepted.json()["job_id"]
+    session_id = accepted.json()["session_id"]
+
+    stale_provider = _ControlledExecutionProvider()
+    _second_client, second_container, _ = build_drain_client(
+        provider=stale_provider,
+        repository=repository,
+    )
+
+    drain_status = second_container.message_service.set_backend_drain(True)
+    assert drain_status.ready_to_restart is True
+    assert drain_status.active_job_count == 0
+    assert drain_status.active_session_ids == []
+
+    failed_job = repository.get_job(job_id)
+    failed_session = repository.get_session(session_id)
+    assert failed_job is not None
+    assert failed_job.status == JobStatus.FAILED
+    assert failed_session is not None
+    assert failed_session.active_agent_run_id is None
+
+
 def build_slow_audio_clients() -> tuple[TestClient, TestClient]:
     settings = Settings(
         codex_command="python3 tests/fixtures/fake_codex.py",
@@ -600,6 +814,8 @@ def build_feedback_queue_client(
     *,
     feedback_source_workspace_aliases: str = "",
     projects_root: Path | str = "..",
+    audio_transcription_backend: str = "auto",
+    audio_transcription_command: str = "",
 ) -> TestClient:
     settings = Settings(
         codex_command=(
@@ -610,7 +826,8 @@ def build_feedback_queue_client(
         chat_store_backend="memory",
         execution_timeout_seconds=10,
         poll_interval_seconds=0,
-        audio_transcription_backend="auto",
+        audio_transcription_backend=audio_transcription_backend,
+        audio_transcription_command=audio_transcription_command,
         feedback_queue_path=str(data_dir / "feedback_queue.json"),
         feedback_image_dir=str(data_dir / "feedback_images"),
         feedback_audio_dir=str(data_dir / "feedback_audio"),
@@ -618,6 +835,41 @@ def build_feedback_queue_client(
     )
     app = create_app(settings)
     return TestClient(app)
+
+
+def _write_feedback_batch_history(
+    data_dir: Path,
+    batches: list[dict],
+) -> None:
+    normalized_batches = []
+    for batch in batches:
+        normalized_batches.append(
+            {
+                "id": batch["id"],
+                "source_app": batch.get("source_app", "fixture-app"),
+                "source_display_name": batch.get("source_display_name"),
+                "created_at": batch.get(
+                    "created_at",
+                    batch.get("submitted_at", "2026-06-11T00:00:00+00:00"),
+                ),
+                "submitted_at": batch.get(
+                    "submitted_at",
+                    "2026-06-11T00:00:00+00:00",
+                ),
+                "status": batch.get("status", "completed"),
+                "workflow_preset_id": batch.get("workflow_preset_id", "default"),
+                "release_when_complete": batch.get("release_when_complete", False),
+                "item_count": batch.get("item_count", 1),
+                "item_ids": batch.get("item_ids", [f"{batch['id']}-item"]),
+                "job_id": batch.get("job_id"),
+                "session_id": batch.get("session_id"),
+                "workspace_path": batch.get("workspace_path"),
+            }
+        )
+    (data_dir / "feedback_queue.json").write_text(
+        json.dumps({"version": 2, "items": [], "batches": normalized_batches}),
+        encoding="utf-8",
+    )
 
 
 def build_multi_attachment_client() -> TestClient:
@@ -6033,8 +6285,37 @@ def test_audio_message_flow_transcribes_then_submits_prompt() -> None:
     payload = wait_for_job(client, job_id)
 
     assert payload["status"] == "completed"
-    assert payload["message"] == "Transcribed audio from voice-note.m4a"
+    assert payload["message"] == (
+        "[Sent via audio]\n\nTranscribed audio from voice-note.m4a"
+    )
     assert payload["response"] == "Codex response: Transcribed audio from voice-note.m4a"
+
+
+def test_audio_message_flow_combines_typed_message_with_transcript() -> None:
+    client = build_audio_client()
+
+    create_response = client.post(
+        "/message/audio",
+        data={"message": "Use this context"},
+        files={"audio": ("voice-note.m4a", b"fake audio bytes", "audio/mp4")},
+    )
+
+    assert create_response.status_code == 202
+    assert create_response.json()["transcript"] == "Transcribed audio from voice-note.m4a"
+
+    job_id = create_response.json()["job_id"]
+    payload = wait_for_job(client, job_id)
+
+    assert payload["status"] == "completed"
+    assert payload["message"] == (
+        "Use this context\n\n"
+        "[Sent via audio]\n\n"
+        "Transcribed audio from voice-note.m4a"
+    )
+    assert payload["response"] == (
+        "Codex response: Use this context\n"
+        "Transcribed audio from voice-note.m4a"
+    )
 
 
 def test_audio_message_flow_accepts_whatsapp_style_audio_uploads() -> None:
@@ -6052,7 +6333,9 @@ def test_audio_message_flow_accepts_whatsapp_style_audio_uploads() -> None:
     payload = wait_for_job(client, job_id)
 
     assert payload["status"] == "completed"
-    assert payload["message"] == "Transcribed audio from PTT-20260322-WA0001.ogg"
+    assert payload["message"] == (
+        "[Sent via audio]\n\nTranscribed audio from PTT-20260322-WA0001.ogg"
+    )
     assert payload["response"] == "Codex response: Transcribed audio from PTT-20260322-WA0001.ogg"
 
 
@@ -6153,15 +6436,23 @@ def test_audio_messages_from_different_sessions_stay_isolated_under_overlap() ->
     second_job = wait_for_job(second_client, accepted_responses["second"].json()["job_id"])
     assert first_job["session_id"] == first_session_id
     assert second_job["session_id"] == second_session_id
-    assert first_job["message"] == "Transcribed audio from voice-a.m4a"
-    assert second_job["message"] == "Transcribed audio from voice-b.m4a"
+    assert first_job["message"] == (
+        "[Sent via audio]\n\nTranscribed audio from voice-a.m4a"
+    )
+    assert second_job["message"] == (
+        "[Sent via audio]\n\nTranscribed audio from voice-b.m4a"
+    )
 
     first_payload = first_client.get(f"/sessions/{first_session_id}").json()
     second_payload = second_client.get(f"/sessions/{second_session_id}").json()
     assert len(first_payload["messages"]) == 2
     assert len(second_payload["messages"]) == 2
-    assert first_payload["messages"][0]["content"] == "Transcribed audio from voice-a.m4a"
-    assert second_payload["messages"][0]["content"] == "Transcribed audio from voice-b.m4a"
+    assert first_payload["messages"][0]["content"] == (
+        "[Sent via audio]\n\nTranscribed audio from voice-a.m4a"
+    )
+    assert second_payload["messages"][0]["content"] == (
+        "[Sent via audio]\n\nTranscribed audio from voice-b.m4a"
+    )
 
 
 def test_document_message_flow_transcribes_audio_documents() -> None:
@@ -6449,6 +6740,9 @@ def test_feedback_batch_start_session_accepts_multiple_items_and_release(
     start_response = client.post(
         "/feedback-batches/start-session",
         json={
+            "kind": "codex.developerFeedbackBatch",
+            "version": 3,
+            "batchId": "batch-v03-fixture",
             "sourceApp": "smart-nienfos",
             "sourceDisplayName": "Smart Nienfos",
             "workflowPresetId": "default",
@@ -6465,6 +6759,10 @@ def test_feedback_batch_start_session_accepts_multiple_items_and_release(
                         "top": 2,
                         "width": 3,
                         "height": 4,
+                    },
+                    "contextMetadata": {
+                        "screenName": "order-detail",
+                        "orderId": "order-1",
                     },
                 },
                 {
@@ -6490,6 +6788,11 @@ def test_feedback_batch_start_session_accepts_multiple_items_and_release(
 
     assert start_response.status_code == 202
     payload = start_response.json()
+    assert payload["feedback_batch_id"]
+    assert payload["batchId"] == "batch-v03-fixture"
+    assert payload["jobId"] == payload["job_id"]
+    assert payload["sessionId"] == payload["session_id"]
+    assert payload["sourceApp"] == "smart-nienfos"
     job = wait_for_job(client, payload["job_id"])
     assert job["status"] == "completed"
     assert "Use these Smart Nienfos feedback screenshots" in job["message"]
@@ -6497,6 +6800,9 @@ def test_feedback_batch_start_session_accepts_multiple_items_and_release(
     assert "Batch size: 2 feedback items." in job["message"]
     assert "Fix the first card" in job["message"]
     assert "Fix the second card" in job["message"]
+    assert "Screen/context metadata: {'screenName': 'order-detail'" in job[
+        "message"
+    ]
     assert "Audio attached: audio/webm, 800 ms, 2 bytes." in job["message"]
     assert "Release instruction: after implementation and validation complete" in job[
         "message"
@@ -6505,6 +6811,366 @@ def test_feedback_batch_start_session_accepts_multiple_items_and_release(
     assert "02-feedback-batch-2.png" in job["response"]
     queued = client.get("/feedback-queue").json()
     assert [item["status"] for item in queued] == ["submitted", "submitted"]
+
+
+def test_feedback_batch_status_response_tracks_completed_job(
+    tmp_path: Path,
+) -> None:
+    client = build_feedback_queue_client(tmp_path)
+
+    start_response = client.post(
+        "/feedback-batches/start-session",
+        json={
+            "sourceApp": "fixture-app",
+            "sourceDisplayName": "Fixture App",
+            "workflowPresetId": "default",
+            "items": [
+                {
+                    "id": "feedback-status",
+                    "comment": "Track this batch",
+                    "screenshotPngBase64": base64.b64encode(b"fake png").decode(
+                        "ascii"
+                    ),
+                }
+            ],
+        },
+    )
+
+    assert start_response.status_code == 202
+    accepted = start_response.json()
+    batch_id = accepted["feedback_batch_id"]
+    assert batch_id
+    wait_for_job(client, accepted["job_id"])
+
+    status_response = client.get(f"/feedback-batches/{batch_id}")
+
+    assert status_response.status_code == 200
+    status = status_response.json()
+    assert status["batch_id"] == batch_id
+    assert status["batchId"] == batch_id
+    assert status["source_app"] == "fixture-app"
+    assert status["source_display_name"] == "Fixture App"
+    assert status["status"] == "completed"
+    assert status["workflowStatus"] == "completed"
+    assert status["job_status"] == "completed"
+    assert status["job_id"] == accepted["job_id"]
+    assert status["jobId"] == accepted["job_id"]
+    assert status["session_id"] == accepted["session_id"]
+    assert status["sessionId"] == accepted["session_id"]
+    assert status["workflow_preset_id"] == "default"
+    assert status["workflowPresetId"] == "default"
+    assert status["item_count"] == 1
+    assert status["itemCount"] == 1
+    assert status["item_ids"] == ["feedback-status"]
+    assert status["summary_line_count"] >= 11
+    assert "Request: process developer feedback batch" in status["summary"]
+    assert status["finalSummary"] == status["summary"]
+    assert status["summary_generated_at"]
+    assert status["notification_created_at"]
+    assert status["notification_unread"] is True
+    assert status["notificationUnread"] is True
+    assert status["notification_read_at"] is None
+
+    persisted_status = client.get(f"/feedback-batches/{batch_id}").json()
+    assert persisted_status["summary"] == status["summary"]
+    assert persisted_status["notification_created_at"] == status[
+        "notification_created_at"
+    ]
+
+
+def test_feedback_batch_status_handles_missing_linked_job(
+    tmp_path: Path,
+) -> None:
+    queue_path = tmp_path / "feedback_queue.json"
+    queue_path.write_text(
+        json.dumps(
+            {
+                "version": 2,
+                "items": [],
+                "batches": [
+                    {
+                        "id": "feedback-batch-missing-job",
+                        "source_app": "fixture-app",
+                        "source_display_name": "Fixture App",
+                        "created_at": "2026-06-11T00:00:00+00:00",
+                        "submitted_at": "2026-06-11T00:00:00+00:00",
+                        "status": "running",
+                        "workflow_preset_id": "default",
+                        "release_when_complete": False,
+                        "item_count": 1,
+                        "item_ids": ["feedback-missing"],
+                        "job_id": "job-does-not-exist",
+                        "session_id": "session-does-not-exist",
+                        "workspace_path": str(tmp_path),
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    client = build_feedback_queue_client(tmp_path)
+
+    response = client.get("/feedback-batches/feedback-batch-missing-job")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "failed"
+    assert payload["status_detail"] == "Linked job was not found."
+    assert payload["job_status"] is None
+    assert payload["summary_line_count"] >= 11
+
+
+def test_feedback_batch_summary_absent_while_batch_is_active(
+    tmp_path: Path,
+) -> None:
+    _write_feedback_batch_history(
+        tmp_path,
+        [
+            {
+                "id": "batch-running",
+                "source_app": "fixture-app",
+                "status": "running",
+                "submitted_at": "2026-06-11T02:00:00+00:00",
+            }
+        ],
+    )
+    client = build_feedback_queue_client(tmp_path)
+
+    response = client.get("/feedback-batches/batch-running")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "running"
+    assert payload["summary"] is None
+    assert payload["summary_line_count"] == 0
+    assert payload["notification_created_at"] is None
+    assert payload["notification_unread"] is False
+
+
+def test_feedback_batch_notification_can_be_marked_read(tmp_path: Path) -> None:
+    client = build_feedback_queue_client(tmp_path)
+    start_response = client.post(
+        "/feedback-batches/start-session",
+        json={
+            "sourceApp": "fixture-app",
+            "workflowPresetId": "default",
+            "items": [
+                {
+                    "id": "feedback-notification-read",
+                    "comment": "Mark this read",
+                    "screenshotPngBase64": base64.b64encode(b"fake png").decode(
+                        "ascii"
+                    ),
+                }
+            ],
+        },
+    )
+    accepted = start_response.json()
+    batch_id = accepted["feedback_batch_id"]
+    wait_for_job(client, accepted["job_id"])
+    status = client.get(f"/feedback-batches/{batch_id}").json()
+    assert status["notification_unread"] is True
+
+    read_response = client.patch(f"/feedback-batches/{batch_id}/notification")
+
+    assert read_response.status_code == 200
+    read_payload = read_response.json()
+    assert read_payload["notification_unread"] is False
+    assert read_payload["notification_read_at"]
+
+
+def test_feedback_batch_history_filters_by_source_app(tmp_path: Path) -> None:
+    _write_feedback_batch_history(
+        tmp_path,
+        [
+            {
+                "id": "batch-a",
+                "source_app": "fixture-app",
+                "submitted_at": "2026-06-11T02:00:00+00:00",
+            },
+            {
+                "id": "batch-b",
+                "source_app": "other-app",
+                "submitted_at": "2026-06-11T03:00:00+00:00",
+            },
+        ],
+    )
+    client = build_feedback_queue_client(tmp_path)
+
+    response = client.get("/feedback-batches?sourceApp=fixture-app")
+
+    assert response.status_code == 200
+    batches = response.json()
+    assert [batch["batch_id"] for batch in batches] == ["batch-a"]
+    assert batches[0]["source_app"] == "fixture-app"
+
+
+def test_feedback_batch_history_empty_for_unknown_source_app(tmp_path: Path) -> None:
+    _write_feedback_batch_history(
+        tmp_path,
+        [
+            {
+                "id": "batch-a",
+                "source_app": "fixture-app",
+                "submitted_at": "2026-06-11T02:00:00+00:00",
+            }
+        ],
+    )
+    client = build_feedback_queue_client(tmp_path)
+
+    response = client.get("/feedback-batches?sourceApp=missing-app")
+
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+def test_feedback_batch_history_returns_newest_first(tmp_path: Path) -> None:
+    _write_feedback_batch_history(
+        tmp_path,
+        [
+            {
+                "id": "batch-old",
+                "source_app": "fixture-app",
+                "submitted_at": "2026-06-11T01:00:00+00:00",
+            },
+            {
+                "id": "batch-new",
+                "source_app": "fixture-app",
+                "submitted_at": "2026-06-11T03:00:00+00:00",
+            },
+            {
+                "id": "batch-mid",
+                "source_app": "fixture-app",
+                "submitted_at": "2026-06-11T02:00:00+00:00",
+            },
+        ],
+    )
+    client = build_feedback_queue_client(tmp_path)
+
+    response = client.get("/feedback-batches?sourceApp=fixture-app")
+
+    assert response.status_code == 200
+    assert [batch["batch_id"] for batch in response.json()] == [
+        "batch-new",
+        "batch-mid",
+        "batch-old",
+    ]
+
+
+def test_feedback_batch_start_session_transcribes_audio_items(
+    tmp_path: Path,
+) -> None:
+    client = build_feedback_queue_client(
+        tmp_path,
+        audio_transcription_backend="command",
+        audio_transcription_command=(
+            "python3 tests/fixtures/fake_transcriber.py {filename} {file}"
+        ),
+    )
+
+    start_response = client.post(
+        "/feedback-batches/start-session",
+        json={
+            "sourceApp": "fixture-app",
+            "workflowPresetId": "default",
+            "items": [
+                {
+                    "id": "feedback-transcribed-audio",
+                    "comment": "Use the spoken detail",
+                    "screenshotPngBase64": base64.b64encode(b"fake png").decode(
+                        "ascii"
+                    ),
+                    "audioMimeType": "audio/webm",
+                    "audioDurationMs": 900,
+                    "audioByteLength": 2,
+                    "audioBase64": base64.b64encode(b"\x01\x02").decode("ascii"),
+                }
+            ],
+        },
+    )
+
+    assert start_response.status_code == 202
+    job = wait_for_job(client, start_response.json()["job_id"])
+    assert job["status"] == "completed"
+    assert "Audio attached: audio/webm, 900 ms, 2 bytes." in job["message"]
+    assert (
+        "Audio transcript: Transcribed audio from feedback-transcribed-audio.webm"
+        in job["message"]
+    )
+    queued = client.get("/feedback-queue").json()
+    assert queued[0]["audio_transcript"] == (
+        "Transcribed audio from feedback-transcribed-audio.webm"
+    )
+
+
+def test_feedback_batch_start_session_keeps_audio_metadata_when_transcriber_disabled(
+    tmp_path: Path,
+) -> None:
+    client = build_feedback_queue_client(
+        tmp_path,
+        audio_transcription_backend="disabled",
+    )
+
+    start_response = client.post(
+        "/feedback-batches/start-session",
+        json={
+            "sourceApp": "fixture-app",
+            "workflowPresetId": "default",
+            "items": [
+                {
+                    "id": "feedback-disabled-transcriber",
+                    "comment": "Use metadata if transcript is unavailable",
+                    "screenshotPngBase64": base64.b64encode(b"fake png").decode(
+                        "ascii"
+                    ),
+                    "audioMimeType": "audio/webm",
+                    "audioDurationMs": 1100,
+                    "audioByteLength": 3,
+                    "audioBase64": base64.b64encode(b"\x01\x02\x03").decode(
+                        "ascii"
+                    ),
+                }
+            ],
+        },
+    )
+
+    assert start_response.status_code == 202
+    job = wait_for_job(client, start_response.json()["job_id"])
+    assert job["status"] == "completed"
+    assert "Audio attached: audio/webm, 1100 ms, 3 bytes." in job["message"]
+    assert "Audio transcript unavailable; using audio metadata only." in job[
+        "message"
+    ]
+    queued = client.get("/feedback-queue").json()
+    assert queued[0]["audio_transcript"] is None
+
+
+def test_feedback_batch_start_session_rejects_invalid_audio_base64(
+    tmp_path: Path,
+) -> None:
+    client = build_feedback_queue_client(tmp_path)
+
+    start_response = client.post(
+        "/feedback-batches/start-session",
+        json={
+            "sourceApp": "fixture-app",
+            "workflowPresetId": "default",
+            "items": [
+                {
+                    "id": "feedback-invalid-audio",
+                    "comment": "Invalid audio",
+                    "screenshotPngBase64": base64.b64encode(b"fake png").decode(
+                        "ascii"
+                    ),
+                    "audioBase64": "not-base64!",
+                }
+            ],
+        },
+    )
+
+    assert start_response.status_code == 422
+    assert "invalid audioBase64" in start_response.json()["detail"]
+    assert client.get("/feedback-queue").json() == []
 
 
 def test_feedback_batch_start_session_resolves_workspace_from_source_app(
@@ -6630,6 +7296,221 @@ def test_feedback_batch_start_session_accepts_fallback_preset_aliases(
     )
     assert f"Workflow preset: {expected_preset}" in job["message"]
     assert client.get("/feedback-queue").json()[0]["status"] == "submitted"
+
+
+def test_feedback_quick_ask_uses_answer_only_prompt_and_persists(
+    tmp_path: Path,
+) -> None:
+    client = build_feedback_queue_client(tmp_path)
+
+    ask_response = client.post(
+        "/feedback-quick-asks/ask",
+        json={
+            "sourceApp": "fixture-app",
+            "sourceDisplayName": "Fixture App",
+            "question": "Why is this button disabled?",
+            "screenshotPngBase64": base64.b64encode(b"quick png").decode(
+                "ascii"
+            ),
+            "selectionBounds": {
+                "left": 10,
+                "top": 20,
+                "width": 30,
+                "height": 40,
+            },
+            "contextMetadata": {
+                "screenName": "order-detail",
+                "orderId": "order-123",
+            },
+        },
+    )
+
+    assert ask_response.status_code == 202
+    accepted = ask_response.json()
+    assert accepted["quick_ask_id"]
+    assert accepted["quickAskId"] == accepted["quick_ask_id"]
+    assert accepted["jobId"] == accepted["job_id"]
+    assert accepted["sessionId"] == accepted["session_id"]
+    job = wait_for_job(client, accepted["job_id"])
+    assert job["status"] == "completed"
+    assert "Quick ask about a selected Fixture App screen area." in job["message"]
+    assert "Answer-only instructions:" in job["message"]
+    assert "Do not edit files." in job["message"]
+    assert "Do not implement changes." in job["message"]
+    assert "Why is this button disabled?" in job["message"]
+    assert "Selection bounds: {'left': 10.0, 'top': 20.0" in job["message"]
+    assert "Screen/context metadata: {'screenName': 'order-detail'" in job[
+        "message"
+    ]
+
+    status_response = client.get(
+        f"/feedback-quick-asks/{accepted['quick_ask_id']}"
+    )
+
+    assert status_response.status_code == 200
+    status = status_response.json()
+    assert status["quick_ask_id"] == accepted["quick_ask_id"]
+    assert status["quickAskId"] == accepted["quick_ask_id"]
+    assert status["status"] == "completed"
+    assert status["answer"]
+    assert status["answered_at"]
+    assert status["source_app"] == "fixture-app"
+    assert status["has_screenshot"] is True
+    assert status["selection_bounds"] == {
+        "left": 10,
+        "top": 20,
+        "width": 30,
+        "height": 40,
+    }
+    assert status["provenance"]["quickAskId"] == accepted["quick_ask_id"]
+    assert status["provenance"]["sourceApp"] == "fixture-app"
+    assert status["provenance"]["selectionBounds"] == status["selection_bounds"]
+    assert status["context_metadata"] == {
+        "screenName": "order-detail",
+        "orderId": "order-123",
+    }
+    assert status["provenance"]["contextMetadata"] == status["context_metadata"]
+
+    stored = json.loads((tmp_path / "feedback_queue.json").read_text())
+    assert stored["batches"] == []
+    assert len(stored["quick_asks"]) == 1
+    assert stored["quick_asks"][0]["answer"] == status["answer"]
+    assert stored["quick_asks"][0]["context_metadata"] == status["context_metadata"]
+
+
+def test_feedback_quick_ask_rejects_invalid_screenshot_base64(
+    tmp_path: Path,
+) -> None:
+    client = build_feedback_queue_client(tmp_path)
+
+    ask_response = client.post(
+        "/feedback-quick-asks/ask",
+        json={
+            "sourceApp": "fixture-app",
+            "question": "What is this?",
+            "screenshotPngBase64": "not-base64!",
+        },
+    )
+
+    assert ask_response.status_code == 422
+    assert "invalid screenshotPngBase64" in ask_response.json()["detail"]
+
+
+def test_feedback_quick_ask_history_filters_source_and_exposes_screenshot(
+    tmp_path: Path,
+) -> None:
+    client = build_feedback_queue_client(tmp_path)
+    screenshot_base64 = base64.b64encode(b"quick ask png").decode("ascii")
+
+    first_response = client.post(
+        "/feedback-quick-asks/ask",
+        json={
+            "sourceApp": "fixture-app",
+            "sourceDisplayName": "Fixture App",
+            "question": "What does this status mean?",
+            "screenshotPngBase64": screenshot_base64,
+            "selectionBounds": {
+                "left": 4,
+                "top": 5,
+                "width": 6,
+                "height": 7,
+            },
+        },
+    )
+    second_response = client.post(
+        "/feedback-quick-asks/ask",
+        json={
+            "sourceApp": "other-app",
+            "question": "Other app question?",
+            "screenshotPngBase64": base64.b64encode(b"other png").decode("ascii"),
+        },
+    )
+    first = first_response.json()
+    second = second_response.json()
+    wait_for_job(client, first["job_id"])
+    wait_for_job(client, second["job_id"])
+
+    history_response = client.get("/feedback-quick-asks?sourceApp=fixture-app")
+
+    assert history_response.status_code == 200
+    history = history_response.json()
+    assert [record["quick_ask_id"] for record in history] == [
+        first["quick_ask_id"]
+    ]
+    assert history[0]["source_app"] == "fixture-app"
+    assert history[0]["screenshot_png_base64"] is None
+
+    detail_response = client.get(f"/feedback-quick-asks/{first['quick_ask_id']}")
+
+    assert detail_response.status_code == 200
+    detail = detail_response.json()
+    assert detail["screenshot_png_base64"] == screenshot_base64
+    assert detail["selection_bounds"] == {
+        "left": 4,
+        "top": 5,
+        "width": 6,
+        "height": 7,
+    }
+    assert detail["question"] == "What does this status mean?"
+    assert detail["answer"]
+    assert detail["job_id"] == first["job_id"]
+    assert detail["session_id"] == first["session_id"]
+
+
+def test_feedback_batch_can_act_from_quick_ask_reference(tmp_path: Path) -> None:
+    client = build_feedback_queue_client(tmp_path)
+    ask_response = client.post(
+        "/feedback-quick-asks/ask",
+        json={
+            "sourceApp": "fixture-app",
+            "sourceDisplayName": "Fixture App",
+            "question": "Why is this title clipped?",
+            "screenshotPngBase64": base64.b64encode(b"quick ask png").decode(
+                "ascii"
+            ),
+            "selectionBounds": {
+                "left": 8,
+                "top": 9,
+                "width": 10,
+                "height": 11,
+            },
+            "contextMetadata": {"screenName": "order-detail"},
+        },
+    )
+    accepted = ask_response.json()
+    wait_for_job(client, accepted["job_id"])
+    client.get(f"/feedback-quick-asks/{accepted['quick_ask_id']}")
+
+    start_response = client.post(
+        "/feedback-batches/start-session",
+        json={
+            "sourceApp": "fixture-app",
+            "sourceDisplayName": "Fixture App",
+            "workflowPresetId": "default",
+            "releaseWhenComplete": True,
+            "quickAskId": accepted["quick_ask_id"],
+        },
+    )
+
+    assert start_response.status_code == 202
+    batch = start_response.json()
+    job = wait_for_job(client, batch["job_id"])
+    assert "Quick ask provenance for this implementation batch:" in job["message"]
+    assert f"- Quick ask id: {accepted['quick_ask_id']}" in job["message"]
+    assert "- Original question: Why is this title clipped?" in job["message"]
+    assert "- Prior answer: " in job["message"]
+    assert "- Original screen/context metadata: {'screenName': 'order-detail'}" in job[
+        "message"
+    ]
+    assert "Quick ask about a selected Fixture App screen area." in job["message"]
+    assert "Act from quick ask" in job["message"]
+    assert "Release instruction: after implementation and validation complete" in job[
+        "message"
+    ]
+
+    status = client.get(f"/feedback-batches/{batch['feedback_batch_id']}").json()
+    assert status["quick_ask_id"] == accepted["quick_ask_id"]
+    assert status["item_count"] == 1
 
 
 def test_feedback_batch_start_session_is_atomic_when_later_item_has_no_screenshot(

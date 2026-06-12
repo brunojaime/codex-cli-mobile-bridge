@@ -7,6 +7,7 @@ from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.app.api.routes import get_container, router
+from backend.app.application.services.message_service import MaintenanceModeError
 from backend.app.container import AppContainer, build_container
 from backend.app.infrastructure.config.settings import Settings
 from backend.app.domain.repositories.chat_repository import PersistenceDataError
@@ -49,6 +50,22 @@ def _configure_middleware(app: FastAPI, container: AppContainer) -> None:
 
 
 def _configure_exception_handlers(app: FastAPI) -> None:
+    @app.exception_handler(MaintenanceModeError)
+    async def handle_maintenance_mode_error(  # type: ignore[unused-ignore]
+        _request,
+        exc: MaintenanceModeError,
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "detail": {
+                    "error": "backend_drain_active",
+                    "code": "backend_drain_active",
+                    "message": str(exc),
+                }
+            },
+        )
+
     @app.exception_handler(sqlite3.DatabaseError)
     async def handle_sqlite_database_error(  # type: ignore[unused-ignore]
         _request,

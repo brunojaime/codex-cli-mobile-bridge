@@ -25,5 +25,23 @@
     "latestAssetName": "gestion-ludmilo.apk",
     "requiredMinimumBuild": null,
     "enabled": true
+  },
+  "smart-nienfos-moldegon": {
+    "displayName": "Moldegon",
+    "repo": "brunojaime/smart_nienfos",
+    "releaseTagPattern": "android-v*",
+    "apkAssetPattern": "smart-nienfos-moldegon-*.apk",
+    "latestAssetName": "smart-nienfos-moldegon.apk",
+    "requiredMinimumBuild": null,
+    "enabled": true
+  },
+  "smart-nienfos-admin": {
+    "displayName": "Smart Nienfos Admin",
+    "repo": "brunojaime/smart-nienfos-flutter-app",
+    "releaseTagPattern": "android-v*",
+    "apkAssetPattern": "smart-nienfos-admin-*.apk",
+    "latestAssetName": "smart-nienfos-admin.apk",
+    "requiredMinimumBuild": null,
+    "enabled": true
   }
 }

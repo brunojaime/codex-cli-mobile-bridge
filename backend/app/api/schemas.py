@@ -54,6 +54,7 @@ from backend.app.domain.entities.text_sanitization import (
     sanitize_image_attachment_error_text,
 )
 from backend.app.domain.repositories.chat_repository import PersistenceDiagnosticIssue
+from backend.app.application.services.message_service import BackendDrainStatus
 
 
 class MessageRequest(BaseModel):
@@ -86,10 +87,15 @@ class FeedbackQueueItemRequest(BaseModel):
     screenshotPngBase64: str | None = None
     selectionPoints: list[FeedbackPointRequest] = Field(default_factory=list)
     selectionBounds: dict[str, float] = Field(default_factory=dict)
+    contextMetadata: dict[str, Any] = Field(
+        default_factory=dict,
+        validation_alias=AliasChoices("contextMetadata", "context_metadata"),
+    )
     audioMimeType: str | None = Field(default=None, max_length=80)
     audioDurationMs: int | None = None
     audioByteLength: int | None = None
     audioBase64: str | None = None
+    audioTranscript: str | None = Field(default=None, max_length=20000)
 
 
 class FeedbackQueueItemResponse(BaseModel):
@@ -104,11 +110,13 @@ class FeedbackQueueItemResponse(BaseModel):
     screenshot_png_base64: str | None = None
     selection_points: list[dict[str, float]] = Field(default_factory=list)
     selection_bounds: dict[str, float] = Field(default_factory=dict)
+    context_metadata: dict[str, Any] = Field(default_factory=dict)
     audio_mime_type: str | None = None
     audio_duration_ms: int | None = None
     audio_byte_length: int | None = None
     has_audio: bool = False
     audio_base64: str | None = None
+    audio_transcript: str | None = None
 
 
 class FeedbackQueueStartRequest(BaseModel):
@@ -182,6 +190,11 @@ class AppUpdateResponse(BaseModel):
 
 
 class FeedbackBatchStartRequest(BaseModel):
+    batch_id: str | None = Field(
+        default=None,
+        max_length=160,
+        validation_alias=AliasChoices("batch_id", "batchId"),
+    )
     sourceApp: str = Field(
         default="unknown",
         max_length=120,
@@ -202,10 +215,107 @@ class FeedbackBatchStartRequest(BaseModel):
         default=False,
         validation_alias=AliasChoices("release_when_complete", "releaseWhenComplete"),
     )
+    quick_ask_id: str | None = Field(
+        default=None,
+        max_length=160,
+        validation_alias=AliasChoices("quick_ask_id", "quickAskId"),
+    )
     message: str | None = Field(default=None, max_length=10000)
     session_id: str | None = None
     workspace_path: str | None = None
     codex_options: "CodexRunOptionsRequest | None" = None
+
+
+class FeedbackQuickAskRequest(BaseModel):
+    sourceApp: str = Field(
+        default="unknown",
+        max_length=120,
+        validation_alias=AliasChoices("sourceApp", "source_app"),
+    )
+    sourceDisplayName: str | None = Field(
+        default=None,
+        max_length=160,
+        validation_alias=AliasChoices("sourceDisplayName", "source_display_name"),
+    )
+    question: str = Field(..., min_length=1, max_length=4000)
+    screenshotMimeType: str = Field(
+        default="image/png",
+        max_length=80,
+        validation_alias=AliasChoices("screenshotMimeType", "screenshot_mime_type"),
+    )
+    screenshotPngBase64: str = Field(
+        ...,
+        validation_alias=AliasChoices("screenshotPngBase64", "screenshot_png_base64"),
+    )
+    selectionPoints: list[FeedbackPointRequest] = Field(default_factory=list)
+    selectionBounds: dict[str, float] = Field(default_factory=dict)
+    contextMetadata: dict[str, Any] = Field(
+        default_factory=dict,
+        validation_alias=AliasChoices("contextMetadata", "context_metadata"),
+    )
+    session_id: str | None = None
+    workspace_path: str | None = None
+    codex_options: "CodexRunOptionsRequest | None" = None
+
+
+class FeedbackQuickAskAcceptedResponse(BaseModel):
+    job_id: str
+    jobId: str | None = None
+    session_id: str
+    sessionId: str | None = None
+    status: JobStatus
+    provider_session_id: str | None = None
+    agent_id: AgentId
+    agent_type: AgentType
+    quick_ask_id: str
+    quickAskId: str | None = None
+
+    @classmethod
+    def from_domain(
+        cls,
+        job: Job,
+        *,
+        quick_ask_id: str,
+    ) -> "FeedbackQuickAskAcceptedResponse":
+        return cls(
+            job_id=job.id,
+            jobId=job.id,
+            session_id=job.session_id,
+            sessionId=job.session_id,
+            status=job.status,
+            provider_session_id=job.provider_session_id,
+            agent_id=job.agent_id,
+            agent_type=job.agent_type,
+            quick_ask_id=quick_ask_id,
+            quickAskId=quick_ask_id,
+        )
+
+
+class FeedbackQuickAskResponse(BaseModel):
+    quick_ask_id: str
+    quickAskId: str | None = None
+    source_app: str
+    source_display_name: str | None = None
+    question: str
+    status: str
+    status_detail: str | None = None
+    answer: str | None = None
+    answered_at: str | None = None
+    screenshot_mime_type: str
+    has_screenshot: bool
+    screenshot_png_base64: str | None = None
+    selection_points: list[dict[str, float]] = Field(default_factory=list)
+    selection_bounds: dict[str, float] = Field(default_factory=dict)
+    context_metadata: dict[str, Any] = Field(default_factory=dict)
+    job_id: str | None = None
+    jobId: str | None = None
+    session_id: str | None = None
+    sessionId: str | None = None
+    run_id: str | None = None
+    runId: str | None = None
+    workspace_path: str | None = None
+    provenance: dict[str, Any] = Field(default_factory=dict)
+    created_at: str
 
 
 class CodexRunOptionsRequest(BaseModel):
@@ -646,21 +756,37 @@ class AgentConfigurationResponse(BaseModel):
 
 class MessageAcceptedResponse(BaseModel):
     job_id: str
+    jobId: str | None = None
     session_id: str
+    sessionId: str | None = None
     status: JobStatus
     provider_session_id: str | None = None
     agent_id: AgentId = AgentId.GENERATOR
     agent_type: AgentType = AgentType.GENERATOR
+    feedback_batch_id: str | None = None
+    batchId: str | None = None
+    sourceApp: str | None = None
 
     @classmethod
-    def from_domain(cls, job: Job) -> "MessageAcceptedResponse":
+    def from_domain(
+        cls,
+        job: Job,
+        *,
+        feedback_batch_id: str | None = None,
+        source_app: str | None = None,
+    ) -> "MessageAcceptedResponse":
         return cls(
             job_id=job.id,
+            jobId=job.id,
             session_id=job.session_id,
+            sessionId=job.session_id,
             status=job.status,
             provider_session_id=job.provider_session_id,
             agent_id=job.agent_id,
             agent_type=job.agent_type,
+            feedback_batch_id=feedback_batch_id,
+            batchId=feedback_batch_id,
+            sourceApp=source_app,
         )
 
 
@@ -704,6 +830,43 @@ class ImageMessageAcceptedResponse(MessageAcceptedResponse):
             agent_type=job.agent_type,
             attached_image_name=attached_image_name,
         )
+
+
+class FeedbackBatchStatusResponse(BaseModel):
+    batch_id: str
+    batchId: str | None = None
+    source_app: str
+    source_display_name: str | None = None
+    status: str
+    workflowStatus: str | None = None
+    status_detail: str | None = None
+    workflow_preset_id: str
+    workflowPresetId: str | None = None
+    release_when_complete: bool
+    releaseWhenComplete: bool | None = None
+    item_count: int
+    itemCount: int | None = None
+    item_ids: list[str] = Field(default_factory=list)
+    job_id: str | None = None
+    jobId: str | None = None
+    session_id: str | None = None
+    sessionId: str | None = None
+    run_id: str | None = None
+    runId: str | None = None
+    workspace_path: str | None = None
+    quick_ask_id: str | None = None
+    quickAskId: str | None = None
+    job_status: JobStatus | None = None
+    summary: str | None = None
+    finalSummary: str | None = None
+    summary_generated_at: str | None = None
+    summary_line_count: int = 0
+    notification_created_at: str | None = None
+    notification_read_at: str | None = None
+    notification_unread: bool = False
+    notificationUnread: bool | None = None
+    created_at: str
+    submitted_at: str
 
 
 class DocumentMessageAcceptedResponse(MessageAcceptedResponse):
@@ -1281,6 +1444,36 @@ class JobResponse(BaseModel):
             created_at=job.created_at,
             updated_at=job.updated_at,
             completed_at=job.completed_at,
+        )
+
+
+class BackendDrainRequest(BaseModel):
+    requested: bool = True
+
+
+class BackendDrainStatusResponse(BaseModel):
+    requested: bool
+    ready_to_restart: bool
+    active_job_count: int
+    active_session_count: int
+    in_flight_message_count: int
+    active_jobs: list[JobResponse]
+    active_session_ids: list[str]
+    in_flight_message_ids: list[str]
+    requested_at: datetime | None = None
+
+    @classmethod
+    def from_domain(cls, status: BackendDrainStatus) -> "BackendDrainStatusResponse":
+        return cls(
+            requested=status.requested,
+            ready_to_restart=status.ready_to_restart,
+            active_job_count=status.active_job_count,
+            active_session_count=status.active_session_count,
+            in_flight_message_count=status.in_flight_message_count,
+            active_jobs=[JobResponse.from_domain(job) for job in status.active_jobs],
+            active_session_ids=status.active_session_ids,
+            in_flight_message_ids=status.in_flight_message_ids,
+            requested_at=status.requested_at,
         )
 
 

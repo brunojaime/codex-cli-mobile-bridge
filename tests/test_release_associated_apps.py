@@ -187,14 +187,19 @@ def test_registry_missing_or_disabled_app_fails(tmp_path: Path) -> None:
 
 
 def test_default_associations_reference_enabled_registry_entries() -> None:
-    component = releases.load_component(
-        releases.DEFAULT_ASSOCIATIONS,
-        "codex_app_updater",
-    )
     registry = releases.load_registry(releases.DEFAULT_REGISTRY)
 
-    for app in component.apps:
-        releases.validate_registry(app, registry)
+    for component_name in (
+        "codex_app_updater",
+        "codex_developer_feedback_template",
+    ):
+        component = releases.load_component(
+            releases.DEFAULT_ASSOCIATIONS,
+            component_name,
+        )
+
+        for app in component.apps:
+            releases.validate_registry(app, registry)
 
 
 class Fixture:

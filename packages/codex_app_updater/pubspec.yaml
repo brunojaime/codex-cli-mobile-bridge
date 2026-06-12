@@ -1,7 +1,7 @@
 name: codex_app_updater
 description: Reusable Codex Mobile Bridge controlled Android APK updater.
 publish_to: 'none'
-version: 0.1.0
+version: 0.1.1
 
 environment:
   sdk: ^3.11.1

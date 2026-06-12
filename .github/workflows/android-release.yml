@@ -74,6 +74,8 @@ jobs:
           args=()
           if [[ -n "$API_BASE_URL" ]]; then
             args+=(--dart-define=API_BASE_URL="$API_BASE_URL")
+            args+=(--dart-define=CODEX_APP_UPDATER_ENABLED=true)
+            args+=(--dart-define=CODEX_APP_UPDATER_BRIDGE_URL="$API_BASE_URL")
           fi
           flutter build apk --release "${args[@]}"
 

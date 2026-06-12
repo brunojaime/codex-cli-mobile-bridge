@@ -5,7 +5,7 @@ from backend.app.domain.entities.agent_profile import AgentProfile
 from backend.app.domain.entities.chat_message import ChatMessage
 from backend.app.domain.entities.chat_session import ChatSession
 from backend.app.domain.entities.chat_turn_summary import ChatTurnSummary
-from backend.app.domain.entities.job import Job
+from backend.app.domain.entities.job import Job, JobStatus
 from backend.app.domain.entities.workspace import Workspace
 from backend.app.domain.repositories.chat_repository import (
     ChatRepository,
@@ -40,6 +40,9 @@ class UnavailableChatRepository(ChatRepository):
         raise PersistenceUnavailableError(self._issue)
 
     def get_job(self, job_id: str) -> Job | None:
+        raise PersistenceUnavailableError(self._issue)
+
+    def list_jobs(self, *, statuses: set[JobStatus] | None = None) -> list[Job]:
         raise PersistenceUnavailableError(self._issue)
 
     def save_session(self, session: ChatSession) -> None:
