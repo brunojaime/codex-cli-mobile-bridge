@@ -26,6 +26,15 @@
     "requiredMinimumBuild": null,
     "enabled": true
   },
+  "xr18-mobile-control": {
+    "displayName": "XR18 Mobile Control",
+    "repo": "brunojaime/xr18-mobile-control",
+    "releaseTagPattern": "internal-android-v*",
+    "apkAssetPattern": "xr18-mobile-control-*.apk",
+    "latestAssetName": "xr18-mobile-control.apk",
+    "requiredMinimumBuild": null,
+    "enabled": true
+  },
   "smart-nienfos-moldegon": {
     "displayName": "Moldegon",
     "repo": "brunojaime/smart_nienfos",

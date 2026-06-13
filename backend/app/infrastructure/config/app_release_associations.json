@@ -25,6 +25,16 @@
         "releaseWorkflow": "Android Release"
       },
       {
+        "sourceApp": "xr18-mobile-control",
+        "displayName": "XR18 Mobile Control",
+        "repo": "brunojaime/xr18-mobile-control",
+        "localPath": "../xr18-mobile-control",
+        "defaultBranch": "main",
+        "pubspecPath": "pubspec.yaml",
+        "releaseTagPrefix": "internal-android-v",
+        "releaseWorkflow": "Android Release"
+      },
+      {
         "sourceApp": "smart-nienfos-moldegon",
         "displayName": "Moldegon",
         "repo": "brunojaime/smart_nienfos",
