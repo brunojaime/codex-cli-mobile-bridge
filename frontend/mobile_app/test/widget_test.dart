@@ -807,6 +807,75 @@ void main() {
     expect(recorders.first.disposed, isTrue);
   });
 
+  testWidgets('swiping up on send starts voice recording with composer text', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1200, 1600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final textController = TextEditingController();
+    addTearDown(textController.dispose);
+    final audioSends = <String>[];
+    final audioMessages = <String?>[];
+    final recorders = <_FakeAudioNoteRecorder>[];
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Align(
+            alignment: Alignment.bottomCenter,
+            child: buildComposerVoiceRecordingHarnessForTest(
+              controller: textController,
+              stagedText: 'Keep this text with the audio',
+              audioRecorderFactory: () {
+                final recorder = _FakeAudioNoteRecorder(
+                  XFile('voice-note.m4a', name: 'voice-note.m4a'),
+                );
+                recorders.add(recorder);
+                return recorder;
+              },
+              onSendAudio: (audioFile, {message}) async {
+                audioSends.add(audioFile.name);
+                audioMessages.add(message);
+                return true;
+              },
+              onSendAttachments: (_, {prompt}) async => true,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final sendButton = find
+        .ancestor(
+          of: find.byIcon(Icons.arrow_upward_rounded),
+          matching: find.byType(FilledButton),
+        )
+        .last;
+    await tester.drag(sendButton, const Offset(0, -120));
+    await tester.pump();
+
+    expect(find.text('Recording'), findsOneWidget);
+    expect(recorders.first.started, isTrue);
+    expect(textController.text, contains('Keep this text with the audio'));
+
+    final voiceSendButton = find
+        .ancestor(
+          of: find.byIcon(Icons.send_rounded),
+          matching: find.byType(FilledButton),
+        )
+        .last;
+    await tester.tap(voiceSendButton);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+
+    expect(audioSends, <String>['voice-note.m4a']);
+    expect(audioMessages, <String?>['Keep this text with the audio']);
+    expect(textController.text, isEmpty);
+  });
+
   testWidgets('renders assistant options as quick actions', (tester) async {
     await tester.pumpWidget(
       MaterialApp(

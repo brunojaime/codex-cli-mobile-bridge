@@ -4691,6 +4691,8 @@ class _ComposerState extends State<_Composer> {
   bool _hasText = false;
   bool _isRecording = false;
   bool _isSubmittingAttachments = false;
+  bool _didStartRecordingFromPrimaryDrag = false;
+  double _primaryActionDragDy = 0;
   final List<_PendingAttachmentDraft> _pendingAttachments =
       <_PendingAttachmentDraft>[];
 
@@ -4826,14 +4828,9 @@ class _ComposerState extends State<_Composer> {
                         const SizedBox(width: 10),
                       ],
                       Expanded(
-                        child: FilledButton.icon(
-                          onPressed: isDisabled ? null : _handlePrimaryAction,
-                          style: _actionButtonStyle(
-                            backgroundColor: const Color(0xFF25D366),
-                            foregroundColor: const Color(0xFF0B141A),
-                          ),
-                          icon: const Icon(Icons.arrow_upward_rounded),
-                          label: const Text('Send'),
+                        child: _buildPrimaryActionButton(
+                          isDisabled: isDisabled,
+                          includeLabel: true,
                         ),
                       ),
                     ],
@@ -4908,14 +4905,9 @@ class _ComposerState extends State<_Composer> {
                         ),
                         const SizedBox(width: 6),
                       ],
-                      FilledButton(
-                        onPressed: isDisabled ? null : _handlePrimaryAction,
-                        style: _actionButtonStyle(
-                          backgroundColor: const Color(0xFF25D366),
-                          foregroundColor: const Color(0xFF0B141A),
-                          minimumSize: const Size(52, 52),
-                        ),
-                        child: const Icon(Icons.arrow_upward_rounded),
+                      _buildPrimaryActionButton(
+                        isDisabled: isDisabled,
+                        minimumSize: const Size(52, 52),
                       ),
                     ],
                   ),
@@ -5005,6 +4997,64 @@ class _ComposerState extends State<_Composer> {
         ),
       ],
     );
+  }
+
+  Widget _buildPrimaryActionButton({
+    required bool isDisabled,
+    bool includeLabel = false,
+    Size minimumSize = const Size(56, 56),
+  }) {
+    final canStartVoiceFromSwipe =
+        !isDisabled && widget.voiceEnabled && !_isRecording;
+    final button = includeLabel
+        ? FilledButton.icon(
+            onPressed: isDisabled ? null : _handlePrimaryAction,
+            style: _actionButtonStyle(
+              backgroundColor: const Color(0xFF25D366),
+              foregroundColor: const Color(0xFF0B141A),
+              minimumSize: minimumSize,
+            ),
+            icon: const Icon(Icons.arrow_upward_rounded),
+            label: const Text('Send'),
+          )
+        : FilledButton(
+            onPressed: isDisabled ? null : _handlePrimaryAction,
+            style: _actionButtonStyle(
+              backgroundColor: const Color(0xFF25D366),
+              foregroundColor: const Color(0xFF0B141A),
+              minimumSize: minimumSize,
+            ),
+            child: const Icon(Icons.arrow_upward_rounded),
+          );
+
+    if (!canStartVoiceFromSwipe) {
+      return button;
+    }
+
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onVerticalDragStart: (_) {
+        _didStartRecordingFromPrimaryDrag = false;
+        _primaryActionDragDy = 0;
+      },
+      onVerticalDragUpdate: (details) {
+        _primaryActionDragDy += details.delta.dy;
+        if (!_didStartRecordingFromPrimaryDrag && _primaryActionDragDy <= -44) {
+          _didStartRecordingFromPrimaryDrag = true;
+          unawaited(_startRecording());
+        }
+      },
+      onVerticalDragCancel: _resetPrimaryActionDrag,
+      onVerticalDragEnd: (_) {
+        _resetPrimaryActionDrag();
+      },
+      child: button,
+    );
+  }
+
+  void _resetPrimaryActionDrag() {
+    _didStartRecordingFromPrimaryDrag = false;
+    _primaryActionDragDy = 0;
   }
 
   ButtonStyle _actionButtonStyle({
