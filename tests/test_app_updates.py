@@ -156,6 +156,36 @@ def test_default_smart_house_update_registry_is_disabled_until_publishable() -> 
         registry.get("smart-nienfos-smart-house")
 
 
+def test_default_registry_disables_apps_without_apk_backed_releases() -> None:
+    registry = AppUpdateRegistry.from_json_file(
+        Path(__file__).resolve().parents[1]
+        / "backend/app/infrastructure/config/app_updates.json",
+    )
+    configs = {config.source_app: config for config in registry.list_configs()}
+
+    assert configs["ambientando-calendar"].enabled is False
+    assert configs["xr18-mobile-control"].enabled is False
+    assert configs["smart-nienfos-smart-house"].enabled is False
+    assert configs["gestion-ludmilo"].enabled is True
+    assert configs["smart-nienfos-moldegon"].enabled is True
+
+
+def test_enabled_default_update_configs_include_release_asset_metadata() -> None:
+    registry = AppUpdateRegistry.from_json_file(
+        Path(__file__).resolve().parents[1]
+        / "backend/app/infrastructure/config/app_updates.json",
+    )
+
+    for config in registry.list_configs():
+        if not config.enabled:
+            continue
+        assert "/" in config.repo
+        assert config.release_tag_pattern.endswith("*")
+        assert config.apk_asset_pattern.endswith(".apk")
+        assert config.latest_asset_name is not None
+        assert config.latest_asset_name.endswith(".apk")
+
+
 def test_release_without_apk_asset_is_ignored(tmp_path: Path) -> None:
     client = _build_app_update_client(
         tmp_path,

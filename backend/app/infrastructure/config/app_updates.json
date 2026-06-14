@@ -6,7 +6,7 @@
     "apkAssetPattern": "ambientando-calendar-*.apk",
     "latestAssetName": "ambientando-calendar.apk",
     "requiredMinimumBuild": null,
-    "enabled": true
+    "enabled": false
   },
   "codex-mobile": {
     "displayName": "Codex Mobile Bridge",
@@ -33,7 +33,7 @@
     "apkAssetPattern": "xr18-mobile-control-*.apk",
     "latestAssetName": "xr18-mobile-control.apk",
     "requiredMinimumBuild": null,
-    "enabled": true
+    "enabled": false
   },
   "smart-nienfos-moldegon": {
     "displayName": "Moldegon",
