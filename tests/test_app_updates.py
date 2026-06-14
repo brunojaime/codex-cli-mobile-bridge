@@ -9,6 +9,7 @@ import pytest
 
 from backend.app.api.routes import get_container
 from backend.app.application.services.app_update_service import (
+    AppDisabledError,
     AppUpdateRegistry,
     AppUpdateService,
     GitHubAsset,
@@ -141,6 +142,18 @@ def test_disabled_app_returns_no_update(tmp_path: Path) -> None:
     assert payload["available"] is False
     assert payload["required"] is False
     assert payload["latestBuild"] == 39
+
+
+def test_default_smart_house_update_registry_is_disabled_until_publishable() -> None:
+    registry = AppUpdateRegistry.from_json_file(
+        Path(__file__).resolve().parents[1]
+        / "backend/app/infrastructure/config/app_updates.json",
+    )
+    configs = {config.source_app: config for config in registry.list_configs()}
+
+    assert configs["smart-nienfos-smart-house"].enabled is False
+    with pytest.raises(AppDisabledError):
+        registry.get("smart-nienfos-smart-house")
 
 
 def test_release_without_apk_asset_is_ignored(tmp_path: Path) -> None:

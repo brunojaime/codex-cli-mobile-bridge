@@ -34,5 +34,23 @@
     "latestAssetName": "xr18-mobile-control.apk",
     "requiredMinimumBuild": null,
     "enabled": true
+  },
+  "smart-nienfos-moldegon": {
+    "displayName": "Moldegon",
+    "repo": "brunojaime/smart_nienfos",
+    "releaseTagPattern": "moldegon-android-v*",
+    "apkAssetPattern": "smart-nienfos-moldegon-*.apk",
+    "latestAssetName": "smart-nienfos-moldegon.apk",
+    "requiredMinimumBuild": null,
+    "enabled": true
+  },
+  "smart-nienfos-smart-house": {
+    "displayName": "Smart Nienfos Smart House",
+    "repo": "brunojaime/smart_nienfos",
+    "releaseTagPattern": "smart-house-android-v*",
+    "apkAssetPattern": "smart-nienfos-smart-house-*.apk",
+    "latestAssetName": "smart-nienfos-smart-house.apk",
+    "requiredMinimumBuild": null,
+    "enabled": false
   }
 }

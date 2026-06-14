@@ -230,6 +230,23 @@ def test_xr18_default_release_association_uses_android_release_tags() -> None:
     )
 
 
+def test_smart_house_is_not_release_associated_until_flutter_app_is_tracked() -> None:
+    registry = releases.load_registry(releases.DEFAULT_REGISTRY)
+
+    assert registry["smart-nienfos-smart-house"]["enabled"] is False
+    for component_name in (
+        "codex_developer_feedback_template",
+        "codex_app_updater",
+    ):
+        component = releases.load_component(
+            releases.DEFAULT_ASSOCIATIONS,
+            component_name,
+        )
+        assert all(
+            app.source_app != "smart-nienfos-smart-house" for app in component.apps
+        )
+
+
 class Fixture:
     def __init__(
         self,

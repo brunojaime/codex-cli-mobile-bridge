@@ -33,6 +33,16 @@
         "pubspecPath": "pubspec.yaml",
         "releaseTagPrefix": "android-v",
         "releaseWorkflow": "Android Release"
+      },
+      {
+        "sourceApp": "smart-nienfos-moldegon",
+        "displayName": "Moldegon",
+        "repo": "brunojaime/smart_nienfos",
+        "localPath": "../smart_nienfos",
+        "defaultBranch": "main",
+        "pubspecPath": "smart-nienfos-molding-domain/frontend/app/pubspec.yaml",
+        "releaseTagPrefix": "moldegon-android-v",
+        "releaseWorkflow": "Moldegon Android Release"
       }
     ]
   },
@@ -70,6 +80,16 @@
         "pubspecPath": "pubspec.yaml",
         "releaseTagPrefix": "android-v",
         "releaseWorkflow": "Android Release"
+      },
+      {
+        "sourceApp": "smart-nienfos-moldegon",
+        "displayName": "Moldegon",
+        "repo": "brunojaime/smart_nienfos",
+        "localPath": "../smart_nienfos",
+        "defaultBranch": "main",
+        "pubspecPath": "smart-nienfos-molding-domain/frontend/app/pubspec.yaml",
+        "releaseTagPrefix": "moldegon-android-v",
+        "releaseWorkflow": "Moldegon Android Release"
       }
     ]
   }
