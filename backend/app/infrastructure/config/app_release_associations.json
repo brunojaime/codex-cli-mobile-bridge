@@ -23,6 +23,16 @@
         "pubspecPath": "frontend/pubspec.yaml",
         "releaseTagPrefix": "android-v",
         "releaseWorkflow": "Android Release"
+      },
+      {
+        "sourceApp": "xr18-mobile-control",
+        "displayName": "XR18 Mobile Control",
+        "repo": "brunojaime/xr18-mobile-control",
+        "localPath": "../xr18-mobile-control",
+        "defaultBranch": "main",
+        "pubspecPath": "pubspec.yaml",
+        "releaseTagPrefix": "android-v",
+        "releaseWorkflow": "Android Release"
       }
     ]
   },
@@ -48,6 +58,16 @@
         "localPath": "../Gestion_ludmilo",
         "defaultBranch": "main",
         "pubspecPath": "frontend/pubspec.yaml",
+        "releaseTagPrefix": "android-v",
+        "releaseWorkflow": "Android Release"
+      },
+      {
+        "sourceApp": "xr18-mobile-control",
+        "displayName": "XR18 Mobile Control",
+        "repo": "brunojaime/xr18-mobile-control",
+        "localPath": "../xr18-mobile-control",
+        "defaultBranch": "main",
+        "pubspecPath": "pubspec.yaml",
         "releaseTagPrefix": "android-v",
         "releaseWorkflow": "Android Release"
       }

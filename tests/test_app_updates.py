@@ -55,6 +55,41 @@ def test_known_app_with_newer_release_returns_update(tmp_path: Path) -> None:
     assert payload["releaseNotes"] == "Cambios disponibles."
 
 
+def test_xr18_app_update_uses_android_release_tags(tmp_path: Path) -> None:
+    client = _build_app_update_client(
+        tmp_path,
+        source_app="xr18-mobile-control",
+        display_name="XR18 Mobile Control",
+        repo="brunojaime/xr18-mobile-control",
+        release_tag_pattern="android-v*",
+        apk_asset_pattern="xr18-mobile-control-*.apk",
+        latest_asset_name="xr18-mobile-control.apk",
+        releases=[
+            _release(
+                "internal-android-v1.0.0-build.99",
+                assets=[_apk_asset("xr18-mobile-control-1.0.0-build.99.apk")],
+            ),
+            _release(
+                "android-v1.0.0-build.16",
+                assets=[_apk_asset("xr18-mobile-control-1.0.0-build.16.apk")],
+            ),
+        ],
+    )
+
+    response = client.get(
+        "/app-updates/xr18-mobile-control",
+        params={"currentVersion": "1.0.0", "currentBuild": 15},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["sourceApp"] == "xr18-mobile-control"
+    assert payload["available"] is True
+    assert payload["latestBuild"] == 16
+    assert payload["releaseTag"] == "android-v1.0.0-build.16"
+    assert payload["apkAssetName"] == "xr18-mobile-control-1.0.0-build.16.apk"
+
+
 def test_known_app_with_same_build_is_up_to_date(tmp_path: Path) -> None:
     client = _build_app_update_client(
         tmp_path,
@@ -650,6 +685,12 @@ def _build_app_update_client(
     tmp_path: Path,
     *,
     releases: list[GitHubRelease] | GitHubReleaseError | _FakeGitHubReleaseClient,
+    source_app: str = "ambientando-calendar",
+    display_name: str = "Ambientando Calendar",
+    repo: str = "brunojaime/ambientando-calendar",
+    release_tag_pattern: str = "android-v*",
+    apk_asset_pattern: str = "ambientando-calendar-*.apk",
+    latest_asset_name: str = "ambientando-calendar.apk",
     enabled: bool = True,
     required_minimum_build: int | None = None,
 ) -> TestClient:
@@ -657,12 +698,12 @@ def _build_app_update_client(
     registry_path.write_text(
         json.dumps(
             {
-                "ambientando-calendar": {
-                    "displayName": "Ambientando Calendar",
-                    "repo": "brunojaime/ambientando-calendar",
-                    "releaseTagPattern": "android-v*",
-                    "apkAssetPattern": "ambientando-calendar-*.apk",
-                    "latestAssetName": "ambientando-calendar.apk",
+                source_app: {
+                    "displayName": display_name,
+                    "repo": repo,
+                    "releaseTagPattern": release_tag_pattern,
+                    "apkAssetPattern": apk_asset_pattern,
+                    "latestAssetName": latest_asset_name,
                     "requiredMinimumBuild": required_minimum_build,
                     "enabled": enabled,
                 }

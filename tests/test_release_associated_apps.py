@@ -202,6 +202,34 @@ def test_default_associations_reference_enabled_registry_entries() -> None:
             releases.validate_registry(app, registry)
 
 
+def test_xr18_default_release_association_uses_android_release_tags() -> None:
+    registry = releases.load_registry(releases.DEFAULT_REGISTRY)
+
+    for component_name in (
+        "codex_developer_feedback_template",
+        "codex_app_updater",
+    ):
+        component = releases.load_component(
+            releases.DEFAULT_ASSOCIATIONS,
+            component_name,
+        )
+        xr18 = next(
+            app for app in component.apps if app.source_app == "xr18-mobile-control"
+        )
+
+        assert xr18.release_tag_prefix == "android-v"
+        assert xr18.repo == "brunojaime/xr18-mobile-control"
+        assert str(xr18.local_path).endswith("/xr18-mobile-control")
+        assert xr18.pubspec_path == Path("pubspec.yaml")
+        releases.validate_registry(xr18, registry)
+
+    assert registry["xr18-mobile-control"]["releaseTagPattern"] == "android-v*"
+    assert (
+        registry["xr18-mobile-control"]["apkAssetPattern"]
+        == "xr18-mobile-control-*.apk"
+    )
+
+
 class Fixture:
     def __init__(
         self,

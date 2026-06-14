@@ -25,5 +25,14 @@
     "latestAssetName": "gestion-ludmilo.apk",
     "requiredMinimumBuild": null,
     "enabled": true
+  },
+  "xr18-mobile-control": {
+    "displayName": "XR18 Mobile Control",
+    "repo": "brunojaime/xr18-mobile-control",
+    "releaseTagPattern": "android-v*",
+    "apkAssetPattern": "xr18-mobile-control-*.apk",
+    "latestAssetName": "xr18-mobile-control.apk",
+    "requiredMinimumBuild": null,
+    "enabled": true
   }
 }
