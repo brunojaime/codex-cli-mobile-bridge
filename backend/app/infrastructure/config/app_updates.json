@@ -33,7 +33,7 @@
     "apkAssetPattern": "xr18-mobile-control-*.apk",
     "latestAssetName": "xr18-mobile-control.apk",
     "requiredMinimumBuild": null,
-    "enabled": false
+    "enabled": true
   },
   "smart-nienfos-moldegon": {
     "displayName": "Moldegon",

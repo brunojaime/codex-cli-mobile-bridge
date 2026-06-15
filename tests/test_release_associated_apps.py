@@ -190,7 +190,6 @@ def test_default_associations_reference_enabled_or_blocked_registry_entries() ->
     registry = releases.load_registry(releases.DEFAULT_REGISTRY)
     blocked_until_apk_release_exists = {
         "ambientando-calendar",
-        "xr18-mobile-control",
     }
 
     for component_name in (
@@ -230,15 +229,14 @@ def test_xr18_default_release_association_uses_android_release_tags() -> None:
         assert xr18.repo == "brunojaime/xr18-mobile-control"
         assert str(xr18.local_path).endswith("/xr18-mobile-control")
         assert xr18.pubspec_path == Path("pubspec.yaml")
-        with pytest.raises(releases.ReleasePlanError, match="not enabled"):
-            releases.validate_registry(xr18, registry)
+        releases.validate_registry(xr18, registry)
 
     assert registry["xr18-mobile-control"]["releaseTagPattern"] == "android-v*"
     assert (
         registry["xr18-mobile-control"]["apkAssetPattern"]
         == "xr18-mobile-control-*.apk"
     )
-    assert registry["xr18-mobile-control"]["enabled"] is False
+    assert registry["xr18-mobile-control"]["enabled"] is True
 
 
 def test_smart_house_is_not_release_associated_until_flutter_app_is_tracked() -> None:
