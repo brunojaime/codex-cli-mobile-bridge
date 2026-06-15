@@ -6,7 +6,7 @@
     "apkAssetPattern": "ambientando-calendar-*.apk",
     "latestAssetName": "ambientando-calendar.apk",
     "requiredMinimumBuild": null,
-    "enabled": false
+    "enabled": true
   },
   "codex-mobile": {
     "displayName": "Codex Mobile Bridge",

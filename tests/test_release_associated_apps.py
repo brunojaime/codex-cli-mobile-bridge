@@ -188,9 +188,7 @@ def test_registry_missing_or_disabled_app_fails(tmp_path: Path) -> None:
 
 def test_default_associations_reference_enabled_or_blocked_registry_entries() -> None:
     registry = releases.load_registry(releases.DEFAULT_REGISTRY)
-    blocked_until_apk_release_exists = {
-        "ambientando-calendar",
-    }
+    blocked_until_apk_release_exists: set[str] = set()
 
     for component_name in (
         "codex_app_updater",
