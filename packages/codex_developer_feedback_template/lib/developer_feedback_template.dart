@@ -144,6 +144,7 @@ class DeveloperFeedbackTemplate extends StatefulWidget {
     this.bridgeSubmitBatch,
     this.contextMetadataBuilder,
     this.httpClient,
+    this.initialEditMode = false,
     super.key,
   });
 
@@ -160,6 +161,7 @@ class DeveloperFeedbackTemplate extends StatefulWidget {
   final DeveloperFeedbackBridgeSubmitBatch? bridgeSubmitBatch;
   final DeveloperFeedbackContextMetadataBuilder? contextMetadataBuilder;
   final http.Client? httpClient;
+  final bool initialEditMode;
 
   @override
   State<DeveloperFeedbackTemplate> createState() =>
@@ -181,6 +183,7 @@ class CodexDeveloperFeedbackTemplate extends DeveloperFeedbackTemplate {
     super.bridgeSubmitBatch,
     super.contextMetadataBuilder,
     super.httpClient,
+    super.initialEditMode,
     super.key,
   });
 }
@@ -199,7 +202,7 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
   var _quickAskGeneration = 0;
   var _quickAskCancellation = Completer<void>();
   var _notificationRefreshScheduled = false;
-  var _editMode = false;
+  late var _editMode = widget.enabled && widget.initialEditMode;
   var _dialogOpen = false;
   var _selectionReady = false;
   var _toolbarExpanded = true;
@@ -2318,7 +2321,7 @@ class _Toolbar extends StatelessWidget {
                     if (compact)
                       const Icon(Icons.bug_report_outlined)
                     else
-                      const Text('Plantilla'),
+                      const Text('Feedback'),
                     SizedBox(width: compact ? 4 : 8),
                     Switch(
                       key: developerFeedbackSwitchKey,

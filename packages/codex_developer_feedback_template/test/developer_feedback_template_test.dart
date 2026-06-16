@@ -37,8 +37,32 @@ void main() {
   ) async {
     await tester.pumpWidget(const _Harness(enabled: true));
     expect(find.byKey(developerFeedbackToolbarKey), findsOneWidget);
+    expect(find.text('Feedback'), findsOneWidget);
     expect(find.byKey(developerFeedbackPendingKey), findsNothing);
     expect(find.byKey(developerFeedbackCopyKey), findsNothing);
+  });
+
+  testWidgets('toolbar label row toggles feedback mode', (tester) async {
+    await tester.pumpWidget(const _Harness(enabled: true));
+    await tester.pumpAndSettle();
+
+    expect(_feedbackSwitchValue(tester), isFalse);
+    await tester.tap(find.text('Feedback'));
+    await tester.pump();
+
+    expect(_feedbackSwitchValue(tester), isTrue);
+    expect(find.byKey(developerFeedbackOverlayKey), findsOneWidget);
+  });
+
+  testWidgets('template can start with feedback mode active', (tester) async {
+    await tester.pumpWidget(
+      const _Harness(enabled: true, initialEditMode: true),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Feedback'), findsOneWidget);
+    expect(_feedbackSwitchValue(tester), isTrue);
+    expect(find.byKey(developerFeedbackOverlayKey), findsOneWidget);
   });
 
   testWidgets('toolbar does not require an overlay ancestor', (tester) async {
@@ -2241,6 +2265,7 @@ class _Harness extends StatelessWidget {
     this.bridgeSubmitBatch,
     this.contextMetadataBuilder,
     this.httpClient,
+    this.initialEditMode = false,
   });
 
   final bool enabled;
@@ -2253,6 +2278,7 @@ class _Harness extends StatelessWidget {
   final DeveloperFeedbackBridgeSubmitBatch? bridgeSubmitBatch;
   final DeveloperFeedbackContextMetadataBuilder? contextMetadataBuilder;
   final http.Client? httpClient;
+  final bool initialEditMode;
 
   @override
   Widget build(BuildContext context) {
@@ -2274,6 +2300,7 @@ class _Harness extends StatelessWidget {
         bridgeSubmitBatch: bridgeSubmitBatch,
         contextMetadataBuilder: contextMetadataBuilder,
         httpClient: httpClient,
+        initialEditMode: initialEditMode,
         child: Scaffold(body: Center(child: child ?? const Text('App body'))),
       ),
     );
