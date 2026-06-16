@@ -800,6 +800,15 @@ the workspace name or path, for example:
 FEEDBACK_SOURCE_WORKSPACE_ALIASES=ambientando-calendar:/home/me/ambientando-calendar,smart-nienfos:/home/me/smart_nienfos
 ```
 
+Use the read-only integration doctor before shipping a new consumer app:
+
+```sh
+python scripts/developer_feedback_integration.py --app ambientando-calendar
+```
+
+The full onboarding checklist lives in
+`docs/developer-feedback-app-onboarding.md`.
+
 The legacy bridge queue endpoints remain supported:
 
 - `POST /feedback-queue` stores one feedback item.

@@ -170,7 +170,7 @@ const AgentConfiguration kDefaultAgentConfiguration = AgentConfiguration(
   turnBudgetMode: TurnBudgetMode.eachAgent,
   summaryStrategy: SummaryStrategy(
     mode: SummaryStrategyMode.deterministic,
-    deterministicInterval: 4,
+    deterministicInterval: 3,
     supervisorWindowStart: 3,
     supervisorWindowEnd: 6,
   ),
@@ -325,8 +325,7 @@ class AgentConfiguration {
         model: _readString(normalizedMap['model']) ?? fallback.model,
         visibility: parsedVisibility ?? fallback.visibility,
         maxTurns: _readInt(normalizedMap['max_turns']) ?? fallback.maxTurns,
-        triggerInterval:
-            _readInt(normalizedMap['trigger_interval']) ??
+        triggerInterval: _readInt(normalizedMap['trigger_interval']) ??
             fallback.triggerInterval,
         providerSessionId: _readString(normalizedMap['provider_session_id']) ??
             fallback.providerSessionId,
@@ -427,7 +426,7 @@ class SummaryStrategy {
       mode: summaryStrategyModeFromJson(
         _readString(json['mode']) ?? 'deterministic',
       ),
-      deterministicInterval: _readInt(json['deterministic_interval']) ?? 4,
+      deterministicInterval: _readInt(json['deterministic_interval']) ?? 3,
       supervisorWindowStart: _readInt(json['supervisor_window_start']) ?? 3,
       supervisorWindowEnd: _readInt(json['supervisor_window_end']) ?? 6,
     );
@@ -450,8 +449,10 @@ class SummaryStrategy {
   }) {
     return SummaryStrategy(
       mode: mode ?? this.mode,
-      deterministicInterval: deterministicInterval ?? this.deterministicInterval,
-      supervisorWindowStart: supervisorWindowStart ?? this.supervisorWindowStart,
+      deterministicInterval:
+          deterministicInterval ?? this.deterministicInterval,
+      supervisorWindowStart:
+          supervisorWindowStart ?? this.supervisorWindowStart,
       supervisorWindowEnd: supervisorWindowEnd ?? this.supervisorWindowEnd,
     );
   }

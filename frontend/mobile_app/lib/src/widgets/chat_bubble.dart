@@ -708,6 +708,7 @@ class _ReviewerHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     final phase = message.jobPhase ??
         (message.isPendingLike ? 'Preparing next prompt' : 'Prompt ready');
+    final elapsedLabel = _formatElapsed(message.jobElapsedSeconds);
 
     return Row(
       mainAxisSize: MainAxisSize.min,
@@ -740,6 +741,15 @@ class _ReviewerHeader extends StatelessWidget {
             ),
           ),
         ),
+        if (elapsedLabel != null) const SizedBox(width: 8),
+        if (elapsedLabel != null)
+          Text(
+            elapsedLabel,
+            style: TextStyle(
+              color: textColor.withValues(alpha: 0.64),
+              fontSize: 11,
+            ),
+          ),
       ],
     );
   }

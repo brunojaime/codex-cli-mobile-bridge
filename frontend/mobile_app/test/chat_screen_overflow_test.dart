@@ -155,11 +155,12 @@ void main() {
   });
 
   testWidgets(
-      'sidebar session tile shows conversation product status and sanitized description',
+      'sidebar session tile shows topic and sanitized description without status line',
       (WidgetTester tester) async {
     final session = _buildSession(
       title: 'Sanitized Chat',
       messages: const <ChatMessage>[],
+      topicDescription: 'Flaky snapshot tests',
       conversationProduct: const ConversationProduct(
         statusLine: 'Supervisor ready',
         description: 'Sanitized product update for the user.',
@@ -190,6 +191,13 @@ void main() {
       find.descendant(
         of: drawer,
         matching: find.text('Supervisor ready', skipOffstage: false),
+      ),
+      findsNothing,
+    );
+    expect(
+      find.descendant(
+        of: drawer,
+        matching: find.text('Flaky snapshot tests', skipOffstage: false),
       ),
       findsOneWidget,
     );
@@ -274,7 +282,7 @@ void main() {
       ),
     );
 
-    await tester.tap(find.byTooltip('Show summary tabs'));
+    await tester.tap(find.byTooltip('View summary').first);
     await tester.pumpAndSettle();
     await tester.scrollUntilVisible(
       find.text('The team enabled the summarizer and added provenance UI.'),
@@ -1170,6 +1178,7 @@ class _ChatScreenOverflowApiClient extends ApiClient {
             agentProfileColor: session.agentProfileColor,
             agentConfiguration: session.agentConfiguration,
             conversationProduct: session.conversationProduct,
+            topicDescription: session.topicDescription,
             lastMessagePreview:
                 lastMessagePreviewBySession.containsKey(session.id)
                     ? lastMessagePreviewBySession[session.id]
@@ -1251,6 +1260,7 @@ SessionDetail _buildSession({
   required List<ChatMessage> messages,
   AgentDisplayMode displayMode = AgentDisplayMode.showAll,
   ConversationProduct? conversationProduct,
+  String? topicDescription,
   bool turnSummariesEnabled = false,
   List<ChatTurnSummary> turnSummaries = const <ChatTurnSummary>[],
 }) {
@@ -1290,6 +1300,7 @@ SessionDetail _buildSession({
     turnSummaries: turnSummaries,
     agentConfiguration: configuration,
     conversationProduct: conversationProduct,
+    topicDescription: topicDescription,
     autoModeEnabled: true,
     autoMaxTurns: 1,
     activeAgentRunId: 'run-12345678',

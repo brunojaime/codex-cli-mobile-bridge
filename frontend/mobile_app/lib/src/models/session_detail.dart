@@ -31,6 +31,7 @@ class SessionDetail {
     this.autoTurnIndex = 0,
     this.reviewerState = ReviewerLifecycleState.off,
     this.conversationProduct,
+    this.topicDescription,
     this.currentRun,
     this.recentRuns = const <CurrentRunExecution>[],
   });
@@ -55,6 +56,7 @@ class SessionDetail {
   final int autoTurnIndex;
   final ReviewerLifecycleState reviewerState;
   final ConversationProduct? conversationProduct;
+  final String? topicDescription;
   final CurrentRunExecution? currentRun;
   final List<CurrentRunExecution> recentRuns;
   final DateTime createdAt;
@@ -83,6 +85,7 @@ class SessionDetail {
     int? autoTurnIndex,
     ReviewerLifecycleState? reviewerState,
     ConversationProduct? conversationProduct,
+    String? topicDescription,
     CurrentRunExecution? currentRun,
     List<CurrentRunExecution>? recentRuns,
     DateTime? createdAt,
@@ -116,6 +119,7 @@ class SessionDetail {
       autoTurnIndex: autoTurnIndex ?? this.autoTurnIndex,
       reviewerState: reviewerState ?? this.reviewerState,
       conversationProduct: conversationProduct ?? this.conversationProduct,
+      topicDescription: topicDescription ?? this.topicDescription,
       currentRun: currentRun ?? this.currentRun,
       recentRuns: recentRuns ?? this.recentRuns,
     );
@@ -159,6 +163,7 @@ class SessionDetail {
               json['conversation_product'] as Map<String, dynamic>,
             )
           : null,
+      topicDescription: json['topic_description'] as String?,
       currentRun: json['current_run'] is Map<String, dynamic>
           ? CurrentRunExecution.fromJson(
               json['current_run'] as Map<String, dynamic>,

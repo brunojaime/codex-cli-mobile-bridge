@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from collections.abc import Callable
 from dataclasses import replace
 from datetime import timedelta
@@ -31,6 +32,36 @@ from backend.app.infrastructure.persistence.sqlite_chat_repository import Sqlite
 from backend.app.infrastructure.transcription.disabled_transcriber import DisabledAudioTranscriber
 
 
+_TITLE_GENERATION_PROMPT_PREFIX = "Create a concise, specific chat title"
+
+
+def _is_title_generation_prompt(message: str) -> bool:
+    return message.startswith(_TITLE_GENERATION_PROMPT_PREFIX)
+
+
+def _wait_until(
+    predicate: Callable[[], bool],
+    *,
+    timeout_seconds: float = 1.0,
+) -> None:
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        if predicate():
+            return
+        time.sleep(0.01)
+    assert predicate()
+
+
+def _title_generation_calls(
+    provider: "_InstantExecutionProvider",
+) -> list[tuple[str, str | None]]:
+    return [
+        (message, model)
+        for message, model in provider.calls
+        if _is_title_generation_prompt(message)
+    ]
+
+
 class _InstantExecutionProvider(ExecutionProvider):
     def __init__(self) -> None:
         self._snapshots: dict[str, ExecutionSnapshot] = {}
@@ -53,7 +84,7 @@ class _InstantExecutionProvider(ExecutionProvider):
         self.calls.append((message, model))
         response = (
             "Release checklist"
-            if message.startswith("Create a concise chat title")
+            if _is_title_generation_prompt(message)
             else f"Completed: {message}"
         )
         self._snapshots[job_id] = ExecutionSnapshot(
@@ -549,37 +580,63 @@ def test_placeholder_session_title_is_generated_after_four_user_turns() -> None:
     with TemporaryDirectory() as temp_dir:
         workspace = Path(temp_dir) / "repo"
         workspace.mkdir()
-        service = _build_service(temp_dir)
+        provider = _InstantExecutionProvider()
+        service = _build_service(temp_dir, execution_provider=provider)
 
         session = service.create_session(workspace_path=str(workspace))
+        assert session.title == "New chat"
         assert session.title_is_placeholder is True
 
-        for index in range(4):
-            service.submit_message(
-                f"Turn {index + 1}: investigate the release checklist flow",
-                session_id=session.id,
-            )
+        service.submit_message(
+            "Turn 1: investigate the release checklist flow",
+            session_id=session.id,
+        )
 
+        _wait_until(
+            lambda: (service.get_session(session.id) or session).title
+            == "Release checklist"
+        )
         updated = service.get_session(session.id)
         assert updated is not None
         assert updated.title == "Release checklist"
-        assert updated.title_is_placeholder is False
+        assert updated.title_is_placeholder is True
+        assert len(_title_generation_calls(provider)) == 1
+
+        service.submit_message(
+            "Turn 2: refresh the release checklist scope",
+            session_id=session.id,
+        )
+
+        _wait_until(lambda: len(_title_generation_calls(provider)) == 2)
+        refreshed = service.get_session(session.id)
+        assert refreshed is not None
+        assert refreshed.title == "Release checklist"
+        assert refreshed.title_is_placeholder is True
 
 
 def test_manual_session_title_is_not_replaced_by_auto_generation() -> None:
     with TemporaryDirectory() as temp_dir:
         workspace = Path(temp_dir) / "repo"
         workspace.mkdir()
-        service = _build_service(temp_dir)
+        provider = _InstantExecutionProvider()
+        service = _build_service(temp_dir, execution_provider=provider)
 
         session = service.create_session(
             title="Manual title",
             workspace_path=str(workspace),
         )
 
-        for index in range(4):
+        with patch.object(
+            service,
+            "_queue_session_title_refresh",
+            side_effect=service._maybe_finalize_session_title,
+        ):
             service.submit_message(
-                f"Turn {index + 1}: discuss the manual title behavior",
+                "Turn 1: discuss the manual title behavior",
+                session_id=session.id,
+            )
+            service.submit_message(
+                "Turn 2: keep manual title behavior",
                 session_id=session.id,
             )
 
@@ -587,6 +644,7 @@ def test_manual_session_title_is_not_replaced_by_auto_generation() -> None:
         assert updated is not None
         assert updated.title == "Manual title"
         assert updated.title_is_placeholder is False
+        assert _title_generation_calls(provider) == []
 
 
 def test_placeholder_title_generation_uses_configured_title_model() -> None:
@@ -601,18 +659,43 @@ def test_placeholder_title_generation_uses_configured_title_model() -> None:
         )
 
         session = service.create_session(workspace_path=str(workspace))
-        for index in range(4):
-            service.submit_message(
-                f"Turn {index + 1}: investigate the release checklist flow",
-                session_id=session.id,
+        service.submit_message(
+            "Turn 1: investigate the release checklist flow",
+            session_id=session.id,
+        )
+
+        _wait_until(lambda: len(_title_generation_calls(provider)) == 1)
+        title_calls = [model for _message, model in _title_generation_calls(provider)]
+        assert title_calls == ["gpt-5.4-mini"]
+
+
+def test_implicit_session_starts_with_placeholder_title_before_generation() -> None:
+    with TemporaryDirectory() as temp_dir:
+        workspace = Path(temp_dir) / "repo"
+        workspace.mkdir()
+        service = _build_service(temp_dir)
+
+        with patch.object(service, "_queue_session_title_refresh") as queue_refresh:
+            job = service.submit_message(
+                "Investigate the implicit session title path",
+                workspace_path=str(workspace),
             )
 
-        title_calls = [
-            model
-            for message, model in provider.calls
-            if message.startswith("Create a concise chat title")
-        ]
-        assert title_calls == ["gpt-5.4-mini"]
+        queue_refresh.assert_called_once_with(job.session_id)
+        created = service.get_session(job.session_id)
+        assert created is not None
+        assert created.title == "New chat"
+        assert created.title_is_placeholder is True
+
+        service._maybe_finalize_session_title(job.session_id)
+        _wait_until(
+            lambda: (service.get_session(job.session_id) or created).title
+            == "Release checklist"
+        )
+        updated = service.get_session(job.session_id)
+        assert updated is not None
+        assert updated.title == "Release checklist"
+        assert updated.title_is_placeholder is True
 
 
 def test_submit_message_uses_agent_model_override() -> None:

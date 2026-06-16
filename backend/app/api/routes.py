@@ -145,7 +145,10 @@ def get_message_service(container: AppContainer = Depends(get_container)) -> Mes
 async def healthcheck(
     container: AppContainer = Depends(get_container),
 ) -> HealthResponse:
-    tailscale = detect_tailscale_info(container.settings.tailscale_socket)
+    tailscale = detect_tailscale_info(
+        container.settings.tailscale_socket,
+        api_port=container.settings.api_port,
+    )
     audio_status = container.audio_transcriber.status()
     speech_status = container.speech_synthesizer.status()
     persistence_issue = container.persistence_startup_issue
@@ -172,6 +175,8 @@ async def healthcheck(
         tailscale_magic_dns_name=tailscale.magic_dns_name,
         tailscale_ipv4=tailscale.ipv4,
         tailscale_suggested_url=tailscale.suggested_url,
+        preferred_client_url=tailscale.preferred_client_url,
+        public_base_urls=tailscale.public_base_urls,
     )
 
 
@@ -182,6 +187,10 @@ async def capabilities(
     audio_status = container.audio_transcriber.status()
     speech_status = container.speech_synthesizer.status()
     service = container.message_service
+    tailscale = detect_tailscale_info(
+        container.settings.tailscale_socket,
+        api_port=container.settings.api_port,
+    )
     return ServerCapabilitiesResponse(
         supports_audio_input=audio_status.ready,
         supports_speech_output=speech_status.ready,
@@ -201,6 +210,8 @@ async def capabilities(
         feedback_source_workspace_aliases=(
             container.settings.feedback_source_workspace_alias_map
         ),
+        preferred_client_url=tailscale.preferred_client_url,
+        public_base_urls=tailscale.public_base_urls,
     )
 
 

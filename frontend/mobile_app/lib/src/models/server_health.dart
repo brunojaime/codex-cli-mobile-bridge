@@ -19,6 +19,8 @@ class ServerHealth {
     this.tailscaleMagicDnsName,
     this.tailscaleIpv4,
     this.tailscaleSuggestedUrl,
+    this.preferredClientUrl,
+    this.publicBaseUrls = const <String>[],
   });
 
   final String serverName;
@@ -40,6 +42,8 @@ class ServerHealth {
   final String? tailscaleMagicDnsName;
   final String? tailscaleIpv4;
   final String? tailscaleSuggestedUrl;
+  final String? preferredClientUrl;
+  final List<String> publicBaseUrls;
 
   factory ServerHealth.fromJson(Map<String, dynamic> json) {
     return ServerHealth(
@@ -67,6 +71,16 @@ class ServerHealth {
       tailscaleMagicDnsName: json['tailscale_magic_dns_name'] as String?,
       tailscaleIpv4: json['tailscale_ipv4'] as String?,
       tailscaleSuggestedUrl: json['tailscale_suggested_url'] as String?,
+      preferredClientUrl: json['preferred_client_url'] as String?,
+      publicBaseUrls: _stringListFromJson(json['public_base_urls']),
     );
+  }
+
+  static List<String> _stringListFromJson(Object? value) {
+    if (value is! List) return const <String>[];
+    return value
+        .map((item) => item?.toString() ?? '')
+        .where((item) => item.trim().isNotEmpty)
+        .toList(growable: false);
   }
 }

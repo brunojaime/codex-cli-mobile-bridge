@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+import re
 from typing import Any, Literal
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
@@ -595,7 +596,9 @@ class AgentDefinitionPayload(BaseModel):
                 f"{expected_type.value} type."
             )
         if self.enabled and not self.prompt.strip():
-            raise ValueError(f"Enabled agent {self.agent_id.value} must have a non-empty prompt.")
+            raise ValueError(
+                f"Enabled agent {self.agent_id.value} must have a non-empty prompt."
+            )
         return self
 
 
@@ -643,7 +646,9 @@ class AgentConfigurationRequest(BaseModel):
                 "Supervisor member ids must reference qa, ux, senior_engineer, or scraper."
             )
         if self.preset == AgentPreset.SUPERVISOR and AgentId.SUPERVISOR not in set(ids):
-            raise ValueError("Supervisor preset requires the supervisor agent definition.")
+            raise ValueError(
+                "Supervisor preset requires the supervisor agent definition."
+            )
         return self
 
     def to_domain(self) -> AgentConfiguration:
@@ -652,7 +657,9 @@ class AgentConfigurationRequest(BaseModel):
                 "preset": self.preset.value,
                 "display_mode": self.display_mode.value,
                 "turn_budget_mode": self.turn_budget_mode.value,
-                "supervisor_member_ids": [agent_id.value for agent_id in self.supervisor_member_ids],
+                "supervisor_member_ids": [
+                    agent_id.value for agent_id in self.supervisor_member_ids
+                ],
                 "summary_strategy": (
                     self.summary_strategy.to_domain().to_dict()
                     if self.summary_strategy is not None
@@ -691,7 +698,7 @@ class AgentDefinitionResponse(BaseModel):
 
 class SummaryStrategyPayload(BaseModel):
     mode: SummaryStrategyMode
-    deterministic_interval: int = Field(default=4, ge=1)
+    deterministic_interval: int = Field(default=3, ge=1)
     supervisor_window_start: int = Field(default=3, ge=1)
     supervisor_window_end: int = Field(default=6, ge=1)
 
@@ -728,13 +735,17 @@ class AgentConfigurationResponse(BaseModel):
     supervisor_member_ids: list[AgentId] = Field(default_factory=list)
 
     @classmethod
-    def from_domain(cls, configuration: AgentConfiguration) -> "AgentConfigurationResponse":
+    def from_domain(
+        cls, configuration: AgentConfiguration
+    ) -> "AgentConfigurationResponse":
         normalized = configuration.normalized()
         return cls(
             preset=normalized.preset,
             display_mode=normalized.display_mode,
             turn_budget_mode=normalized.turn_budget_mode,
-            summary_strategy=SummaryStrategyPayload.from_domain(normalized.summary_strategy),
+            summary_strategy=SummaryStrategyPayload.from_domain(
+                normalized.summary_strategy
+            ),
             supervisor_member_ids=list(normalized.supervisor_member_ids),
             agents=[
                 AgentDefinitionResponse(
@@ -1054,7 +1065,9 @@ class TurnSummaryResponse(BaseModel):
     id: str
     content: str
     source_message_ids: list[str] = Field(default_factory=list)
-    source_messages: list[TurnSummarySourceMessageResponse] = Field(default_factory=list)
+    source_messages: list[TurnSummarySourceMessageResponse] = Field(
+        default_factory=list
+    )
     created_at: datetime
     updated_at: datetime
 
@@ -1115,6 +1128,90 @@ class ConversationProductResponse(BaseModel):
         )
 
 
+_TOPIC_DESCRIPTION_MAX_WORDS = 7
+_TOPIC_DESCRIPTION_MAX_CHARS = 64
+_TOPIC_DESCRIPTION_STOPWORDS = {
+    "a",
+    "about",
+    "add",
+    "an",
+    "and",
+    "can",
+    "could",
+    "de",
+    "del",
+    "do",
+    "el",
+    "en",
+    "for",
+    "hacer",
+    "i",
+    "implement",
+    "improve",
+    "la",
+    "las",
+    "lo",
+    "los",
+    "me",
+    "need",
+    "necesito",
+    "para",
+    "please",
+    "podemos",
+    "por",
+    "que",
+    "quiero",
+    "sobre",
+    "the",
+    "to",
+    "un",
+    "una",
+    "we",
+    "with",
+    "y",
+}
+
+
+def _topic_description_for_messages(messages: list[ChatMessage]) -> str | None:
+    latest_user_message = next(
+        (
+            message.content
+            for message in reversed(messages)
+            if message.role == ChatMessageRole.USER
+            and message.author_type == ChatMessageAuthorType.HUMAN
+            and message.content.strip()
+        ),
+        None,
+    )
+    if latest_user_message is None:
+        return None
+
+    normalized = " ".join(
+        sanitize_image_attachment_error_text(latest_user_message).split()
+    ).strip()
+    if not normalized:
+        return None
+
+    words = re.findall(r"[\w#+./-]+", normalized, flags=re.UNICODE)
+    selected: list[str] = []
+    for word in words:
+        cleaned = word.strip(".,:;!?()[]{}\"'")
+        if not cleaned:
+            continue
+        if cleaned.lower() in _TOPIC_DESCRIPTION_STOPWORDS:
+            continue
+        selected.append(cleaned)
+        if len(selected) >= _TOPIC_DESCRIPTION_MAX_WORDS:
+            break
+
+    if not selected:
+        selected = words[:_TOPIC_DESCRIPTION_MAX_WORDS]
+    topic = " ".join(selected).strip()
+    if len(topic) > _TOPIC_DESCRIPTION_MAX_CHARS:
+        topic = f"{topic[: _TOPIC_DESCRIPTION_MAX_CHARS - 3].rstrip()}..."
+    return topic or None
+
+
 class SessionSummaryResponse(BaseModel):
     id: str
     title: str
@@ -1137,6 +1234,7 @@ class SessionSummaryResponse(BaseModel):
     auto_turn_index: int = 0
     reviewer_state: ReviewerLifecycleState = ReviewerLifecycleState.OFF
     conversation_product: ConversationProductResponse
+    topic_description: str | None = None
     created_at: datetime
     updated_at: datetime
     last_message_preview: str | None = None
@@ -1153,7 +1251,8 @@ class SessionSummaryResponse(BaseModel):
     ) -> "SessionSummaryResponse":
         last_message = messages[-1] if messages else None
         has_pending = any(
-            message.status in {
+            message.status
+            in {
                 ChatMessageStatus.RESERVED,
                 ChatMessageStatus.SUBMISSION_PENDING,
                 ChatMessageStatus.PENDING,
@@ -1206,6 +1305,7 @@ class SessionSummaryResponse(BaseModel):
                     recent_runs=recent_runs,
                 )
             ),
+            topic_description=_topic_description_for_messages(messages),
             created_at=session.created_at,
             updated_at=session.updated_at,
             last_message_preview=last_message.content[:120] if last_message else None,
@@ -1234,6 +1334,7 @@ class SessionDetailResponse(BaseModel):
     auto_turn_index: int = 0
     reviewer_state: ReviewerLifecycleState = ReviewerLifecycleState.OFF
     conversation_product: ConversationProductResponse
+    topic_description: str | None = None
     current_run: "CurrentRunExecutionResponse | None" = None
     recent_runs: list["CurrentRunExecutionResponse"] = Field(default_factory=list)
     created_at: datetime
@@ -1283,7 +1384,9 @@ class SessionDetailResponse(BaseModel):
             reviewer_provider_session_id=session.reviewer_provider_session_id,
             active_agent_run_id=session.active_agent_run_id,
             active_agent_turn_index=session.active_agent_turn_index,
-            agent_configuration=AgentConfigurationResponse.from_domain(session.agent_configuration),
+            agent_configuration=AgentConfigurationResponse.from_domain(
+                session.agent_configuration
+            ),
             auto_mode_enabled=session.auto_mode_enabled,
             auto_max_turns=session.auto_max_turns,
             auto_reviewer_prompt=session.auto_reviewer_prompt,
@@ -1301,12 +1404,12 @@ class SessionDetailResponse(BaseModel):
                     recent_runs=recent_runs,
                 )
             ),
+            topic_description=_topic_description_for_messages(messages),
             current_run=CurrentRunExecutionResponse.from_domain(current_run)
             if current_run is not None
             else None,
             recent_runs=[
-                CurrentRunExecutionResponse.from_domain(run)
-                for run in recent_runs
+                CurrentRunExecutionResponse.from_domain(run) for run in recent_runs
             ],
             created_at=session.created_at,
             updated_at=session.updated_at,
@@ -1392,7 +1495,9 @@ class CurrentRunExecutionResponse(BaseModel):
             completed_at=run.completed_at,
             participant_agent_ids=list(run.participant_agent_ids),
             call_count=run.call_count,
-            stages=[RunStageExecutionResponse.from_domain(stage) for stage in run.stages],
+            stages=[
+                RunStageExecutionResponse.from_domain(stage) for stage in run.stages
+            ],
         )
 
 
@@ -1501,6 +1606,8 @@ class HealthResponse(BaseModel):
     tailscale_magic_dns_name: str | None = None
     tailscale_ipv4: str | None = None
     tailscale_suggested_url: str | None = None
+    preferred_client_url: str | None = None
+    public_base_urls: list[str] = Field(default_factory=list)
 
 
 class PersistenceIntegrityIssueResponse(BaseModel):
@@ -1548,6 +1655,8 @@ class ServerCapabilitiesResponse(BaseModel):
     document_max_upload_bytes: int
     document_text_char_limit: int
     feedback_source_workspace_aliases: dict[str, str] = Field(default_factory=dict)
+    preferred_client_url: str | None = None
+    public_base_urls: list[str] = Field(default_factory=list)
 
 
 class SpeechRequest(BaseModel):

@@ -1615,6 +1615,8 @@ class ChatController extends ChangeNotifier {
       autoReviewerPrompt: session.autoReviewerPrompt,
       autoTurnIndex: session.autoTurnIndex,
       reviewerState: session.reviewerState,
+      conversationProduct: session.conversationProduct,
+      topicDescription: session.topicDescription,
       createdAt: session.createdAt,
       updatedAt: session.updatedAt,
       messages: const <ChatMessage>[],

@@ -167,7 +167,7 @@ void main() {
       await tester.tap(find.widgetWithText(FilledButton, 'New Chat'));
       await tester.pumpAndSettle();
 
-      expect(find.text('Enable summarizer'), findsOneWidget);
+      expect(find.text('Enable chat summary'), findsOneWidget);
 
       await tester.tap(find.byType(Switch).first);
       await tester.pumpAndSettle();

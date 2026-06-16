@@ -66,8 +66,9 @@ from backend.app.infrastructure.transcription.base import AudioTranscriber, Audi
 
 
 DocumentKind = Literal["audio", "docx", "image", "text"]
-_TURN_SUMMARY_TRIGGER_MESSAGE_COUNT = 4
+_TURN_SUMMARY_TRIGGER_MESSAGE_COUNT = 3
 _TURN_SUMMARY_COMPLETION_TIMEOUT_SECONDS = 15.0
+_TITLE_REFRESH_USER_TURN_INTERVAL = 2
 _GITHUB_REPOSITORY_REFERENCE_PATTERN = re.compile(
     r"https?://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+"
     r"|(?<![\w./-])[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?![\w./-])",
@@ -339,7 +340,7 @@ class MessageService:
         workspace = self._resolve_workspace(workspace_path)
         profile = self.get_agent_profile(agent_profile_id or "default")
         configuration = self._profile_configuration_for_session(profile)
-        resolved_title = title or profile.name
+        resolved_title = title or "New chat"
         session = ChatSession(
             id=str(uuid4()),
             title=resolved_title,
@@ -817,7 +818,7 @@ class MessageService:
                 agent_run=agent_run,
             )
             self._register_background_job_watch(job.id)
-        self._maybe_finalize_session_title(session.id)
+        self._queue_session_title_refresh(session.id)
         return job
 
     def list_agent_runs(self, session_id: str) -> list[AgentRun]:
@@ -1443,7 +1444,7 @@ class MessageService:
             return session
 
         session = self.create_session(
-            title=self._derive_title(message),
+            title=None,
             workspace_path=workspace_path,
             title_is_placeholder=True,
         )
@@ -3686,11 +3687,21 @@ class MessageService:
 
     def _maybe_finalize_session_title(self, session_id: str) -> None:
         session = self._repository.get_session(session_id)
-        if session is None or session.archived_at is not None or not session.title_is_placeholder:
+        if (
+            session is None
+            or session.archived_at is not None
+            or not session.title_is_placeholder
+        ):
             return
 
         messages = self._repository.list_messages(session_id)
-        if self._count_titleable_turns(messages) < 4:
+        titleable_turns = self._count_titleable_turns(messages)
+        if titleable_turns < 1:
+            return
+        if (
+            titleable_turns > 1
+            and titleable_turns % _TITLE_REFRESH_USER_TURN_INTERVAL != 0
+        ):
             return
 
         generated_title = (
@@ -3708,9 +3719,18 @@ class MessageService:
             return
 
         latest_session.title = normalized_title
-        latest_session.title_is_placeholder = False
+        latest_session.title_is_placeholder = True
         latest_session.touch()
         self._repository.save_session(latest_session)
+
+    def _queue_session_title_refresh(self, session_id: str) -> None:
+        thread = threading.Thread(
+            target=self._maybe_finalize_session_title,
+            args=(session_id,),
+            name=f"session-title-refresh-{session_id[:8]}",
+            daemon=True,
+        )
+        thread.start()
 
     def _count_titleable_turns(self, messages: list[ChatMessage]) -> int:
         return sum(
@@ -3755,20 +3775,24 @@ class MessageService:
         messages: list[ChatMessage],
     ) -> str:
         conversation_lines: list[str] = []
-        for message in messages:
+        recent_messages = [
+            message for message in messages if message.content.strip()
+        ][-8:]
+        for message in recent_messages:
             content = " ".join(message.content.split()).strip()
             if not content:
                 continue
-            role_label = "User" if message.role == ChatMessageRole.USER else "Assistant"
+            role_label = (
+                "User" if message.role == ChatMessageRole.USER else "Assistant"
+            )
             conversation_lines.append(f"{role_label}: {content}")
-            if len(conversation_lines) >= 8:
-                break
 
         if not conversation_lines:
             return ""
 
         return (
-            "Create a concise chat title from this conversation. "
+            "Create a concise, specific chat title from this conversation. "
+            "Prefer the latest user request when the topic changed. "
             "Return only the title, 3 to 6 words, no quotes, maximum 60 characters.\n\n"
             + "\n".join(conversation_lines)
         )

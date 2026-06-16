@@ -27,6 +27,7 @@ class ChatSessionSummary {
     this.autoTurnIndex = 0,
     this.reviewerState = ReviewerLifecycleState.off,
     this.conversationProduct,
+    this.topicDescription,
     this.lastMessagePreview,
     this.hasPendingMessages = false,
   });
@@ -52,6 +53,7 @@ class ChatSessionSummary {
   final int autoTurnIndex;
   final ReviewerLifecycleState reviewerState;
   final ConversationProduct? conversationProduct;
+  final String? topicDescription;
   final DateTime createdAt;
   final DateTime updatedAt;
   final String? lastMessagePreview;
@@ -93,6 +95,7 @@ class ChatSessionSummary {
               json['conversation_product'] as Map<String, dynamic>,
             )
           : null,
+      topicDescription: json['topic_description'] as String?,
       createdAt: DateTime.parse(json['created_at'] as String),
       updatedAt: DateTime.parse(json['updated_at'] as String),
       lastMessagePreview: json['last_message_preview'] as String?,

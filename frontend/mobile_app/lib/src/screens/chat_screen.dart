@@ -531,12 +531,12 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                                 ),
                                               ),
                                               Tooltip(
-                                                message: 'Show summaries',
+                                                message: 'View summary',
                                                 child: ChoiceChip(
                                                   label: Text(
                                                     summaryMessageCount == 1
-                                                        ? 'Agent summary'
-                                                        : 'Agent summaries ($summaryMessageCount)',
+                                                        ? 'Run summary'
+                                                        : 'Run summaries ($summaryMessageCount)',
                                                   ),
                                                   selected:
                                                       isShowingAgentSummaries,
@@ -573,8 +573,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                               ChoiceChip(
                                                 label: Text(
                                                   turnSummaryCount == 1
-                                                      ? 'Turn summary'
-                                                      : 'Turn summaries ($turnSummaryCount)',
+                                                      ? 'Chat summary'
+                                                      : 'Chat summaries ($turnSummaryCount)',
                                                 ),
                                                 selected:
                                                     isShowingTurnSummaries,
@@ -2168,7 +2168,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
               ? Icons.chat_bubble_outline_rounded
               : Icons.summarize_outlined,
         ),
-        tooltip: showingSummaryView ? 'Show full chat' : 'Show summary tabs',
+        tooltip: showingSummaryView ? 'Show full chat' : 'View summary',
       ),
     ];
     if (isCompactAppBar) {
@@ -2190,8 +2190,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
               icon: showingSummaryView
                   ? Icons.chat_bubble_outline_rounded
                   : Icons.summarize_outlined,
-              label:
-                  showingSummaryView ? 'Show full chat' : 'Show summary tabs',
+              label: showingSummaryView ? 'Show full chat' : 'View summary',
               enabled: showingSummaryView ||
                   (_chatController.currentSession != null && canShowAnySummary),
             ),
@@ -3622,13 +3621,8 @@ class _SessionTile extends StatelessWidget {
     final previewColor = isActive || isUploading
         ? const Color(0xFFA8C7C0)
         : const Color(0xFF8B97B5);
-    final conversationProduct = session.conversationProduct;
-    final subtitleText = conversationProduct != null &&
-            conversationProduct.description.trim().isNotEmpty
-        ? conversationProduct.description
-        : session.lastMessagePreview?.isNotEmpty == true
-            ? session.lastMessagePreview!
-            : 'No messages yet';
+    final topicText = _sessionTopicDescription(session);
+    final previewText = _sessionPreviewText(session);
 
     return AnimatedContainer(
       duration: const Duration(milliseconds: 180),
@@ -3652,17 +3646,18 @@ class _SessionTile extends StatelessWidget {
             overflow: TextOverflow.ellipsis,
             style: TextStyle(
               color: session.isArchived ? const Color(0xFFB8C8EA) : titleColor,
-              fontWeight: isActive ? FontWeight.w600 : null,
+              fontSize: 15,
+              fontWeight: isActive ? FontWeight.w700 : FontWeight.w600,
             ),
           ),
           subtitle: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
             children: <Widget>[
-              if (conversationProduct?.statusLine.trim().isNotEmpty ==
-                  true) ...<Widget>[
+              if (topicText != null) ...<Widget>[
+                const SizedBox(height: 4),
                 Text(
-                  conversationProduct!.statusLine,
+                  topicText,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
@@ -3676,8 +3671,8 @@ class _SessionTile extends StatelessWidget {
                 const SizedBox(height: 4),
               ],
               Text(
-                subtitleText,
-                maxLines: 2,
+                previewText,
+                maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
                   color: session.isArchived
@@ -3818,6 +3813,39 @@ class _SessionTile extends StatelessWidget {
       ),
     );
   }
+}
+
+String? _sessionTopicDescription(ChatSessionSummary session) {
+  final topic = session.topicDescription?.trim();
+  if (topic != null && topic.isNotEmpty) {
+    return topic;
+  }
+  final preview = session.lastMessagePreview?.trim();
+  if (preview == null || preview.isEmpty) {
+    return null;
+  }
+  final words = RegExp(r'[\w#+./-]+')
+      .allMatches(preview)
+      .map((match) => match.group(0) ?? '')
+      .where((word) => word.isNotEmpty)
+      .take(7)
+      .toList(growable: false);
+  if (words.isEmpty) {
+    return null;
+  }
+  return words.join(' ');
+}
+
+String _sessionPreviewText(ChatSessionSummary session) {
+  final productDescription = session.conversationProduct?.description.trim();
+  if (productDescription != null && productDescription.isNotEmpty) {
+    return productDescription;
+  }
+  final preview = session.lastMessagePreview?.trim();
+  if (preview != null && preview.isNotEmpty) {
+    return preview;
+  }
+  return 'No messages yet';
 }
 
 String _formatProjectActivityLabel({
@@ -4412,8 +4440,8 @@ class _TurnSummaryBanner extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final label = summaryCount == 1
-        ? 'Showing 1 turn summary'
-        : 'Showing $summaryCount turn summaries';
+        ? 'Showing 1 chat summary'
+        : 'Showing $summaryCount chat summaries';
     final suffix = enabled
         ? 'New summaries are generated automatically for this chat.'
         : 'Automatic generation is off for this chat.';
@@ -4464,8 +4492,8 @@ class _TurnSummariesPlaceholder extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final message = enabled
-        ? 'The summarizer is enabled, but it has not created a turn summary yet.'
-        : 'The summarizer is disabled for this chat. Enable it from Agents to start collecting turn summaries.';
+        ? 'The chat summary is enabled, but the first summary has not been created yet.'
+        : 'The chat summary is disabled for this chat. Enable it from Agents to start collecting summaries.';
     return Center(
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 24),
@@ -4475,7 +4503,7 @@ class _TurnSummariesPlaceholder extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             children: <Widget>[
               const Text(
-                'No turn summaries yet',
+                'No chat summaries yet',
                 style: TextStyle(fontSize: 24, fontWeight: FontWeight.w600),
                 textAlign: TextAlign.center,
               ),
@@ -5975,9 +6003,9 @@ class _NewChatSheetState extends State<_NewChatSheet> {
                 ),
                 SwitchListTile(
                   value: _turnSummariesEnabled,
-                  title: const Text('Enable summarizer'),
+                  title: const Text('Enable chat summary'),
                   subtitle: const Text(
-                    'Create turn summaries with provenance for this chat.',
+                    'Create short background summaries for this chat.',
                   ),
                   onChanged: (value) {
                     setState(() {
@@ -6266,9 +6294,9 @@ class _AgentStudioSheetState extends State<_AgentStudioSheet> {
               SwitchListTile(
                 contentPadding: EdgeInsets.zero,
                 value: _turnSummariesEnabled,
-                title: const Text('Chat summarizer'),
+                title: const Text('Chat summary'),
                 subtitle: const Text(
-                  'Generate hidden turn summaries with provenance for this session.',
+                  'Keep a short background summary for this session.',
                 ),
                 onChanged: (value) {
                   setState(() {

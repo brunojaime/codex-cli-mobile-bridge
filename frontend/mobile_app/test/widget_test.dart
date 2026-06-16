@@ -1166,6 +1166,7 @@ void main() {
               updatedAt: DateTime.utc(2026, 1, 1),
               jobStatus: 'completed',
               jobPhase: 'Prompt ready',
+              jobElapsedSeconds: 125,
             ),
           ),
         ),
@@ -1173,6 +1174,7 @@ void main() {
     );
 
     expect(find.text('CODEX REVIEWER'), findsOneWidget);
+    expect(find.text('2m 5s'), findsOneWidget);
     expect(
       find.text('Ask the generator Codex to add integration coverage.'),
       findsOneWidget,
@@ -1309,7 +1311,7 @@ void main() {
     expect(find.text('Generator update'), findsOneWidget);
     expect(find.text('Summary update one'), findsOneWidget);
 
-    await tester.tap(find.byTooltip('Show summaries'));
+    await tester.tap(find.byTooltip('View summary').first);
     await tester.pumpAndSettle();
 
     expect(find.textContaining('Showing 2 summary updates'), findsOneWidget);

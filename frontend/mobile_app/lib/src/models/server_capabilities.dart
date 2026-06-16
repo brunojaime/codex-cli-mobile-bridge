@@ -16,6 +16,8 @@ class ServerCapabilities {
     this.feedbackSourceWorkspaceAliases = const <String, String>{},
     this.speechOutputVoice,
     this.speechOutputResponseFormat,
+    this.preferredClientUrl,
+    this.publicBaseUrls = const <String>[],
   });
 
   final bool supportsAudioInput;
@@ -34,6 +36,8 @@ class ServerCapabilities {
   final int documentMaxUploadBytes;
   final int documentTextCharLimit;
   final Map<String, String> feedbackSourceWorkspaceAliases;
+  final String? preferredClientUrl;
+  final List<String> publicBaseUrls;
 
   factory ServerCapabilities.fromJson(Map<String, dynamic> json) {
     return ServerCapabilities(
@@ -59,6 +63,8 @@ class ServerCapabilities {
       feedbackSourceWorkspaceAliases: _stringMapFromJson(
         json['feedback_source_workspace_aliases'],
       ),
+      preferredClientUrl: json['preferred_client_url'] as String?,
+      publicBaseUrls: _stringListFromJson(json['public_base_urls']),
     );
   }
 
@@ -67,5 +73,13 @@ class ServerCapabilities {
     return value.map(
       (key, raw) => MapEntry(key.toString(), raw?.toString() ?? ''),
     )..removeWhere((key, raw) => key.trim().isEmpty || raw.trim().isEmpty);
+  }
+
+  static List<String> _stringListFromJson(Object? value) {
+    if (value is! List) return const <String>[];
+    return value
+        .map((item) => item?.toString() ?? '')
+        .where((item) => item.trim().isNotEmpty)
+        .toList(growable: false);
   }
 }
