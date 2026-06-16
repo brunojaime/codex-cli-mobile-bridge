@@ -14,6 +14,7 @@ class CodexAppUpdater extends StatefulWidget {
     required this.child,
     this.controller,
     this.checkOnStart = true,
+    this.checkOnResume = true,
     super.key,
   });
 
@@ -21,12 +22,14 @@ class CodexAppUpdater extends StatefulWidget {
   final Widget child;
   final CodexAppUpdaterController? controller;
   final bool checkOnStart;
+  final bool checkOnResume;
 
   @override
   State<CodexAppUpdater> createState() => _CodexAppUpdaterState();
 }
 
-class _CodexAppUpdaterState extends State<CodexAppUpdater> {
+class _CodexAppUpdaterState extends State<CodexAppUpdater>
+    with WidgetsBindingObserver {
   late final CodexAppUpdaterController _controller =
       widget.controller ?? CodexAppUpdaterController();
 
@@ -35,6 +38,7 @@ class _CodexAppUpdaterState extends State<CodexAppUpdater> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     if (widget.checkOnStart) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) _controller.checkForUpdate(widget.config);
@@ -52,8 +56,16 @@ class _CodexAppUpdaterState extends State<CodexAppUpdater> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     if (_ownsController) _controller.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && widget.checkOnResume) {
+      _controller.checkForUpdate(widget.config);
+    }
   }
 
   @override

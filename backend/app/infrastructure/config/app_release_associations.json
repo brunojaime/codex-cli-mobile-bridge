@@ -43,6 +43,16 @@
         "pubspecPath": "smart-nienfos-molding-domain/frontend/app/pubspec.yaml",
         "releaseTagPrefix": "moldegon-android-v",
         "releaseWorkflow": "Moldegon Android Release"
+      },
+      {
+        "sourceApp": "smart-nienfos-admin",
+        "displayName": "Smart Nienfos Admin",
+        "repo": "brunojaime/smart-nienfos-flutter-app",
+        "localPath": "../smart_nienfos/smart-nienfos-flutter-app",
+        "defaultBranch": "main",
+        "pubspecPath": "app/client/pubspec.yaml",
+        "releaseTagPrefix": "android-v",
+        "releaseWorkflow": "Android Release"
       }
     ]
   },

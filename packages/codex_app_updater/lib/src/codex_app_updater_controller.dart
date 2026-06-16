@@ -117,7 +117,7 @@ class CodexAppUpdaterController extends ChangeNotifier {
     final fileName = info.apkAssetName ?? '${info.sourceApp}.apk';
     _setStatus(CodexAppUpdateStatus.downloading);
     try {
-      final downloader = _downloader ?? HttpCodexApkDownloader();
+      final downloader = _downloader ?? const PlatformCodexApkDownloader();
       final apkPath = await downloader.download(
         apkUrl,
         fileName: fileName,

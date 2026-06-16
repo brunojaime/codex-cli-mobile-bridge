@@ -132,11 +132,9 @@ packages:
   codex_app_updater:
     dependency: "direct main"
     description:
-      path: "packages/codex_app_updater"
-      ref: "codex-app-updater-v0.1.1"
-      resolved-ref: "0e94beb960e1b228eebad78a42f3b64facbee03c"
-      url: "https://github.com/brunojaime/codex-cli-mobile-bridge.git"
-    source: git
+      path: "../../packages/codex_app_updater"
+      relative: true
+    source: path
     version: "0.1.1"
   collection:
     dependency: transitive

@@ -1,0 +1,4 @@
+interface:
+  display_name: "OneNote Connect"
+  short_description: "Connect Codex to Microsoft OneNote"
+  default_prompt: "Use $onenote-connect to connect to Microsoft OneNote, inspect notebooks, and create or update pages with attachments."

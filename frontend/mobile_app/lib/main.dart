@@ -10,32 +10,28 @@ const _configuredApiBaseUrl = String.fromEnvironment(
   'API_BASE_URL',
   defaultValue: '',
 );
-const _codexAppUpdaterSourceApp = String.fromEnvironment(
-  'CODEX_APP_UPDATER_SOURCE_APP',
-  defaultValue: 'codex-mobile',
+const _configuredAppUpdaterEnabled = bool.fromEnvironment(
+  'APP_UPDATER_ENABLED',
+  defaultValue: true,
 );
-const _codexAppUpdaterEnabled = bool.fromEnvironment(
-  'CODEX_APP_UPDATER_ENABLED',
-);
-const _codexAppUpdaterBridgeUrl = String.fromEnvironment(
-  'CODEX_APP_UPDATER_BRIDGE_URL',
-);
-const _codexAppVersion = String.fromEnvironment(
-  'CODEX_APP_VERSION',
-  defaultValue: '1.0.0',
-);
-const _codexAppBuild = int.fromEnvironment('CODEX_APP_BUILD', defaultValue: 36);
+const _codexMobileSourceApp = 'codex-mobile';
+const _fallbackAppVersion = '1.0.0';
+const _fallbackAppBuild = 41;
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   final apiBaseUrl = _configuredApiBaseUrl.isNotEmpty
       ? _configuredApiBaseUrl
       : _defaultApiBaseUrl();
+  final packageInfo = await PackageInfo.fromPlatform();
   final notificationService = createChatNotificationService();
   await notificationService.initialize();
   runApp(
     CodexMobileApp(
       initialApiBaseUrl: apiBaseUrl,
+      currentVersion: packageInfo.version,
+      currentBuild: _parseBuildNumber(packageInfo.buildNumber),
+      appUpdaterEnabled: shouldEnableCodexAppUpdater(),
       notificationService: notificationService,
     ),
   );
@@ -57,55 +53,55 @@ String _defaultApiBaseUrl() {
   return 'http://localhost:8000';
 }
 
+int _parseBuildNumber(String buildNumber) {
+  return int.tryParse(buildNumber.trim()) ?? _fallbackAppBuild;
+}
+
+@visibleForTesting
+bool shouldEnableCodexAppUpdater({
+  bool configuredEnabled = _configuredAppUpdaterEnabled,
+  bool? isWebOverride,
+  TargetPlatform? platformOverride,
+}) {
+  final isWeb = isWebOverride ?? kIsWeb;
+  final platform = platformOverride ?? defaultTargetPlatform;
+  return configuredEnabled && !isWeb && platform == TargetPlatform.android;
+}
+
 class CodexMobileApp extends StatefulWidget {
   const CodexMobileApp({
     super.key,
     required this.initialApiBaseUrl,
-    this.notificationService = const NoopChatNotificationService(),
+    this.currentVersion = _fallbackAppVersion,
+    this.currentBuild = _fallbackAppBuild,
+    this.appUpdaterEnabled = false,
     this.appUpdaterController,
-    this.appUpdaterBridgeUrl,
-    this.appUpdaterEnabled,
-    this.appVersion,
-    this.appBuild,
+    this.appUpdaterCheckOnStart = true,
+    this.notificationService = const NoopChatNotificationService(),
   });
 
   final String initialApiBaseUrl;
-  final ChatNotificationService notificationService;
+  final String currentVersion;
+  final int currentBuild;
+  final bool appUpdaterEnabled;
   final CodexAppUpdaterController? appUpdaterController;
-  final String? appUpdaterBridgeUrl;
-  final bool? appUpdaterEnabled;
-  final String? appVersion;
-  final int? appBuild;
+  final bool appUpdaterCheckOnStart;
+  final ChatNotificationService notificationService;
 
   @override
   State<CodexMobileApp> createState() => _CodexMobileAppState();
 }
 
 class _CodexMobileAppState extends State<CodexMobileApp> {
-  String _appVersion = _codexAppVersion;
-  int _appBuild = _codexAppBuild;
-  bool _appVersionLoaded = false;
+  late String _activeBridgeUrl = widget.initialApiBaseUrl;
 
-  @override
-  void initState() {
-    super.initState();
-    _loadAppVersion();
-  }
-
-  Future<void> _loadAppVersion() async {
-    try {
-      final info = await PackageInfo.fromPlatform();
-      final build = int.tryParse(info.buildNumber);
-      if (!mounted) return;
-      setState(() {
-        _appVersion = info.version;
-        if (build != null) _appBuild = build;
-        _appVersionLoaded = true;
-      });
-    } catch (_) {
-      if (!mounted) return;
-      setState(() => _appVersionLoaded = true);
+  void _handleActiveServerBaseUrlChanged(String baseUrl) {
+    if (baseUrl == _activeBridgeUrl) {
+      return;
     }
+    setState(() {
+      _activeBridgeUrl = baseUrl;
+    });
   }
 
   @override
@@ -148,37 +144,26 @@ class _CodexMobileAppState extends State<CodexMobileApp> {
           elevation: 0,
         ),
       ),
-      builder: (context, child) {
-        Widget wrapped = child ?? const SizedBox.shrink();
-        final updaterBridgeUrl = widget.appUpdaterBridgeUrl ??
-            (_codexAppUpdaterBridgeUrl.isNotEmpty
-                ? _codexAppUpdaterBridgeUrl
-                : widget.initialApiBaseUrl);
-        final updaterVersionReady =
-            (widget.appVersion != null && widget.appBuild != null) ||
-                _appVersionLoaded;
-        final updaterEnabled =
-            (widget.appUpdaterEnabled ?? _codexAppUpdaterEnabled) &&
-                updaterBridgeUrl.isNotEmpty &&
-                updaterVersionReady;
-        if (updaterEnabled) {
-          wrapped = CodexAppUpdater(
-            config: CodexAppUpdaterConfig(
-              sourceApp: _codexAppUpdaterSourceApp,
-              bridgeUrl: updaterBridgeUrl,
-              currentVersion: widget.appVersion ?? _appVersion,
-              currentBuild: widget.appBuild ?? _appBuild,
-            ),
-            controller: widget.appUpdaterController,
-            child: wrapped,
-          );
-        }
-        return wrapped;
-      },
       home: ChatScreen(
         initialApiBaseUrl: widget.initialApiBaseUrl,
         notificationService: widget.notificationService,
+        onActiveServerBaseUrlChanged: _handleActiveServerBaseUrlChanged,
       ),
+      builder: (context, child) {
+        final home = child ?? const SizedBox.shrink();
+        return CodexAppUpdater(
+          config: CodexAppUpdaterConfig(
+            sourceApp: _codexMobileSourceApp,
+            bridgeUrl: _activeBridgeUrl,
+            currentVersion: widget.currentVersion,
+            currentBuild: widget.currentBuild,
+            enabled: widget.appUpdaterEnabled,
+          ),
+          controller: widget.appUpdaterController,
+          checkOnStart: widget.appUpdaterCheckOnStart,
+          child: home,
+        );
+      },
     );
   }
 }

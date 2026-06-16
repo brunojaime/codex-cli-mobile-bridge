@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
@@ -15,8 +17,73 @@ abstract class CodexApkDownloader {
   });
 }
 
+class PlatformCodexApkDownloader implements CodexApkDownloader {
+  const PlatformCodexApkDownloader({
+    MethodChannel channel = const MethodChannel('codex_app_updater/installer'),
+    CodexApkDownloader fallback = const HttpCodexApkDownloader(),
+  }) : _channel = channel,
+       _fallback = fallback;
+
+  final MethodChannel _channel;
+  final CodexApkDownloader _fallback;
+
+  @override
+  Future<String> download(
+    Uri url, {
+    required String fileName,
+    CodexDownloadProgress? onProgress,
+  }) async {
+    if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) {
+      return _fallback.download(
+        url,
+        fileName: fileName,
+        onProgress: onProgress,
+      );
+    }
+    onProgress?.call(0, null);
+    try {
+      final result = await _channel.invokeMethod<Object?>('downloadApk', {
+        'url': url.toString(),
+        'fileName': fileName,
+      });
+      final download = _downloadResultFromPlatform(result);
+      if (download.status == 'unsupported') {
+        return _fallback.download(
+          url,
+          fileName: fileName,
+          onProgress: onProgress,
+        );
+      }
+      if (download.path == null) {
+        throw HttpException(download.message ?? 'APK download failed.');
+      }
+      final totalBytes = download.totalBytes;
+      if (totalBytes != null) {
+        onProgress?.call(totalBytes, totalBytes);
+      }
+      return download.path!;
+    } on MissingPluginException {
+      return _fallback.download(
+        url,
+        fileName: fileName,
+        onProgress: onProgress,
+      );
+    } on PlatformException catch (error) {
+      if (error.code == 'unsupported') {
+        return _fallback.download(
+          url,
+          fileName: fileName,
+          onProgress: onProgress,
+        );
+      }
+      throw HttpException(error.message ?? 'APK download failed.');
+    }
+  }
+}
+
 class HttpCodexApkDownloader implements CodexApkDownloader {
-  HttpCodexApkDownloader({http.Client? httpClient}) : _httpClient = httpClient;
+  const HttpCodexApkDownloader({http.Client? httpClient})
+    : _httpClient = httpClient;
 
   final http.Client? _httpClient;
 
@@ -53,4 +120,36 @@ class HttpCodexApkDownloader implements CodexApkDownloader {
       if (closeClient) client.close();
     }
   }
+}
+
+class _PlatformDownloadResult {
+  const _PlatformDownloadResult({
+    this.status,
+    this.path,
+    this.totalBytes,
+    this.message,
+  });
+
+  final String? status;
+  final String? path;
+  final int? totalBytes;
+  final String? message;
+}
+
+_PlatformDownloadResult _downloadResultFromPlatform(Object? value) {
+  if (value is String) {
+    return _PlatformDownloadResult(path: value, status: 'downloaded');
+  }
+  if (value is Map) {
+    final status = value['status'] as String?;
+    final path = value['apkPath'] as String?;
+    final totalBytes = value['totalBytes'];
+    return _PlatformDownloadResult(
+      status: status,
+      path: path,
+      totalBytes: totalBytes is int ? totalBytes : null,
+      message: value['message'] as String?,
+    );
+  }
+  return const _PlatformDownloadResult(message: 'Invalid download response.');
 }

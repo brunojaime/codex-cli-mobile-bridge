@@ -3,7 +3,9 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:codex_app_updater/codex_app_updater.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -321,6 +323,179 @@ void main() {
     );
   });
 
+  test('platform downloader uses Android download manager channel', () async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    final channel = const MethodChannel('codex_app_updater/test_download');
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    MethodCall? capturedCall;
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      capturedCall = call;
+      return <String, Object?>{
+        'status': 'downloaded',
+        'apkPath': '/downloads/codex-mobile.apk',
+        'totalBytes': 12,
+      };
+    });
+    addTearDown(() {
+      debugDefaultTargetPlatformOverride = null;
+      messenger.setMockMethodCallHandler(channel, null);
+    });
+    final progress = <String>[];
+    final downloader = PlatformCodexApkDownloader(
+      channel: channel,
+      fallback: _FailingDownloader(),
+    );
+
+    final path = await downloader.download(
+      Uri.parse('https://bridge.test/codex-mobile.apk'),
+      fileName: 'codex-mobile.apk',
+      onProgress: (received, total) => progress.add('$received/$total'),
+    );
+
+    expect(path, '/downloads/codex-mobile.apk');
+    expect(capturedCall?.method, 'downloadApk');
+    expect(capturedCall?.arguments, <String, Object?>{
+      'url': 'https://bridge.test/codex-mobile.apk',
+      'fileName': 'codex-mobile.apk',
+    });
+    expect(progress, <String>['0/null', '12/12']);
+  });
+
+  test(
+    'platform downloader completes only after native download result',
+    () async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.android;
+      final channel = const MethodChannel('codex_app_updater/test_pending');
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      final nativeResult = Completer<Map<String, Object?>>();
+      messenger.setMockMethodCallHandler(channel, (_) => nativeResult.future);
+      addTearDown(() {
+        debugDefaultTargetPlatformOverride = null;
+        messenger.setMockMethodCallHandler(channel, null);
+      });
+      final downloader = PlatformCodexApkDownloader(
+        channel: channel,
+        fallback: _FailingDownloader(),
+      );
+
+      var completed = false;
+      final download = downloader
+          .download(
+            Uri.parse('https://bridge.test/codex-mobile.apk'),
+            fileName: 'codex-mobile.apk',
+          )
+          .then((_) => completed = true);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(completed, isFalse);
+
+      nativeResult.complete(<String, Object?>{
+        'status': 'downloaded',
+        'apkPath': '/downloads/codex-mobile.apk',
+      });
+      await download;
+
+      expect(completed, isTrue);
+    },
+  );
+
+  test(
+    'platform downloader falls back when Android downloader is unavailable',
+    () async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.android;
+      final channel = const MethodChannel('codex_app_updater/test_unsupported');
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      messenger.setMockMethodCallHandler(channel, (_) async {
+        return <String, Object?>{
+          'status': 'unsupported',
+          'message': 'DownloadManager unavailable.',
+        };
+      });
+      addTearDown(() {
+        debugDefaultTargetPlatformOverride = null;
+        messenger.setMockMethodCallHandler(channel, null);
+      });
+      final fallback = _FakeDownloader('/tmp/fallback.apk');
+      final downloader = PlatformCodexApkDownloader(
+        channel: channel,
+        fallback: fallback,
+      );
+
+      final path = await downloader.download(
+        Uri.parse('https://bridge.test/codex-mobile.apk'),
+        fileName: 'codex-mobile.apk',
+      );
+
+      expect(path, '/tmp/fallback.apk');
+      expect(fallback.downloadCount, 1);
+    },
+  );
+
+  test(
+    'platform downloader surfaces Android download failure reason',
+    () async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.android;
+      final channel = const MethodChannel('codex_app_updater/test_failed');
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      messenger.setMockMethodCallHandler(channel, (_) async {
+        return <String, Object?>{
+          'status': 'downloadFailed',
+          'message': 'DownloadManager failed with reason 1006.',
+        };
+      });
+      addTearDown(() {
+        debugDefaultTargetPlatformOverride = null;
+        messenger.setMockMethodCallHandler(channel, null);
+      });
+      final downloader = PlatformCodexApkDownloader(
+        channel: channel,
+        fallback: _FakeDownloader('/tmp/unused.apk'),
+      );
+
+      expect(
+        downloader.download(
+          Uri.parse('https://bridge.test/codex-mobile.apk'),
+          fileName: 'codex-mobile.apk',
+        ),
+        throwsA(
+          isA<HttpException>().having(
+            (error) => error.message,
+            'message',
+            contains('reason 1006'),
+          ),
+        ),
+      );
+    },
+  );
+
+  test(
+    'method channel installer sends APK path and maps launched result',
+    () async {
+      final channel = const MethodChannel('codex_app_updater/test_install');
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      MethodCall? capturedCall;
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        capturedCall = call;
+        return <String, Object?>{'status': 'installerLaunched'};
+      });
+      addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+      final launcher = MethodChannelCodexInstallerLauncher(channel: channel);
+
+      final result = await launcher.launch('/downloads/codex-mobile.apk');
+
+      expect(result, CodexInstallerLaunchResult.installerLaunched);
+      expect(capturedCall?.method, 'launchInstaller');
+      expect(capturedCall?.arguments, <String, Object?>{
+        'apkPath': '/downloads/codex-mobile.apk',
+      });
+    },
+  );
+
   test('up-to-date response cannot be prepared for installation', () async {
     final controller = CodexAppUpdaterController(
       httpClient: MockClient(
@@ -629,6 +804,28 @@ void main() {
     expect(requestedUri!.queryParameters['currentVersion'], '1.0.0');
     expect(requestedUri!.queryParameters['currentBuild'], '39');
     expect(requestedUri!.queryParameters['channel'], 'stable');
+  });
+
+  testWidgets('checks again when app resumes', (tester) async {
+    var requestCount = 0;
+    final controller = CodexAppUpdaterController(
+      httpClient: MockClient((_) async {
+        requestCount += 1;
+        return http.Response(jsonEncode(_updateJson(available: false)), 200);
+      }),
+    );
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(_Harness(controller: controller));
+    await tester.pump();
+
+    expect(requestCount, 1);
+
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pump();
+
+    expect(requestCount, 2);
   });
 }
 

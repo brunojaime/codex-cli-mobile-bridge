@@ -52,5 +52,14 @@
     "latestAssetName": "smart-nienfos-smart-house.apk",
     "requiredMinimumBuild": null,
     "enabled": false
+  },
+  "smart-nienfos-admin": {
+    "displayName": "Smart Nienfos Admin",
+    "repo": "brunojaime/smart-nienfos-flutter-app",
+    "releaseTagPattern": "android-v*",
+    "apkAssetPattern": "smart-nienfos-admin-*.apk",
+    "latestAssetName": "smart-nienfos-admin.apk",
+    "requiredMinimumBuild": null,
+    "enabled": true
   }
 }

@@ -29,6 +29,76 @@ import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
+  test('Codex app updater defaults on for Android only', () {
+    expect(
+      shouldEnableCodexAppUpdater(
+        isWebOverride: false,
+        platformOverride: TargetPlatform.android,
+      ),
+      isTrue,
+    );
+    expect(
+      shouldEnableCodexAppUpdater(
+        isWebOverride: false,
+        platformOverride: TargetPlatform.iOS,
+      ),
+      isFalse,
+    );
+    expect(
+      shouldEnableCodexAppUpdater(
+        isWebOverride: true,
+        platformOverride: TargetPlatform.android,
+      ),
+      isFalse,
+    );
+  });
+
+  test('Codex app updater honors explicit Android enablement define', () {
+    expect(
+      shouldEnableCodexAppUpdater(
+        configuredEnabled: true,
+        isWebOverride: false,
+        platformOverride: TargetPlatform.android,
+      ),
+      isTrue,
+    );
+    expect(
+      shouldEnableCodexAppUpdater(
+        configuredEnabled: false,
+        isWebOverride: false,
+        platformOverride: TargetPlatform.android,
+      ),
+      isFalse,
+    );
+  });
+
+  test('Codex app updater stays off outside Android even when enabled', () {
+    expect(
+      shouldEnableCodexAppUpdater(
+        configuredEnabled: true,
+        isWebOverride: false,
+        platformOverride: TargetPlatform.linux,
+      ),
+      isFalse,
+    );
+    expect(
+      shouldEnableCodexAppUpdater(
+        configuredEnabled: false,
+        isWebOverride: false,
+        platformOverride: TargetPlatform.linux,
+      ),
+      isFalse,
+    );
+    expect(
+      shouldEnableCodexAppUpdater(
+        configuredEnabled: true,
+        isWebOverride: true,
+        platformOverride: TargetPlatform.android,
+      ),
+      isFalse,
+    );
+  });
+
   testWidgets('renders Codex Remote shell', (tester) async {
     SharedPreferences.setMockInitialValues(<String, Object>{});
     await tester.pumpWidget(
@@ -42,49 +112,64 @@ void main() {
     expect(find.byIcon(Icons.download_for_offline_outlined), findsNothing);
   });
 
-  testWidgets('app updater uses shared banner when enabled', (tester) async {
+  testWidgets('uses Bridge-controlled updater for Codex Mobile APKs', (
+    tester,
+  ) async {
     SharedPreferences.setMockInitialValues(<String, Object>{});
+    final requestedUris = <Uri>[];
     final controller = CodexAppUpdaterController(
-      httpClient: MockClient(
-        (_) async => http.Response(
+      httpClient: MockClient((request) async {
+        requestedUris.add(request.url);
+        return http.Response(
           jsonEncode({
             'kind': 'codex.appUpdate',
             'version': 1,
             'sourceApp': 'codex-mobile',
-            'displayName': 'Codex Mobile Bridge',
+            'displayName': 'Codex Mobile',
             'platform': 'android',
-            'currentVersion': '1.0.0',
-            'currentBuild': 35,
-            'latestVersion': '1.0.0',
-            'latestBuild': 36,
-            'releaseTag': 'android-v1.0.0-build.36',
-            'releaseUrl': 'https://example.test/release',
-            'apkUrl': 'https://example.test/codex-mobile.apk',
+            'currentVersion': '1.2.3',
+            'currentBuild': 33,
+            'latestVersion': '1.2.4',
+            'latestBuild': 34,
+            'releaseTag': 'android-v1.2.4-build.34',
+            'apkUrl':
+                'http://bridge.test/app-updates/codex-mobile/apk/android-v1.2.4-build.34/codex-mobile.apk',
             'apkAssetName': 'codex-mobile.apk',
+            'sha256': null,
+            'sizeBytes': 123,
+            'releaseNotes': 'Nueva APK disponible.',
             'required': false,
             'available': true,
           }),
           200,
-        ),
-      ),
+        );
+      }),
     );
     addTearDown(controller.dispose);
 
     await tester.pumpWidget(
       CodexMobileApp(
-        initialApiBaseUrl: 'http://localhost:8000',
-        appUpdaterController: controller,
-        appUpdaterBridgeUrl: 'https://bridge.test',
+        initialApiBaseUrl: 'http://bridge.test',
+        currentVersion: '1.2.3',
+        currentBuild: 33,
         appUpdaterEnabled: true,
-        appVersion: '1.0.0',
-        appBuild: 35,
+        appUpdaterController: controller,
       ),
     );
-    await tester.pumpAndSettle();
+    await tester.pump();
 
-    expect(controller.status, CodexAppUpdateStatus.updateAvailable);
+    expect(requestedUris, hasLength(1));
+    final uri = requestedUris.single;
+    expect(uri.path, '/app-updates/codex-mobile');
+    expect(uri.queryParameters['platform'], 'android');
+    expect(uri.queryParameters['currentVersion'], '1.2.3');
+    expect(uri.queryParameters['currentBuild'], '33');
+    expect(uri.queryParameters['channel'], 'stable');
+    expect(controller.updateInfo?.apkUrl, startsWith('http://bridge.test/'));
+    expect(
+        controller.updateInfo?.apkUrl, contains('/app-updates/codex-mobile/'));
+    expect(controller.updateInfo?.apkUrl, isNot(contains('github.com')));
     expect(find.byKey(codexAppUpdaterBannerKey), findsOneWidget);
-    expect(find.text('Actualización disponible'), findsOneWidget);
     expect(find.byKey(codexAppUpdaterUpdateButtonKey), findsOneWidget);
   });
 
@@ -720,6 +805,75 @@ void main() {
     expect(textController.text, isEmpty);
     expect(recorders.first.cleaned, isTrue);
     expect(recorders.first.disposed, isTrue);
+  });
+
+  testWidgets('swiping up on send starts voice recording with composer text', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1200, 1600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final textController = TextEditingController();
+    addTearDown(textController.dispose);
+    final audioSends = <String>[];
+    final audioMessages = <String?>[];
+    final recorders = <_FakeAudioNoteRecorder>[];
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Align(
+            alignment: Alignment.bottomCenter,
+            child: buildComposerVoiceRecordingHarnessForTest(
+              controller: textController,
+              stagedText: 'Keep this text with the audio',
+              audioRecorderFactory: () {
+                final recorder = _FakeAudioNoteRecorder(
+                  XFile('voice-note.m4a', name: 'voice-note.m4a'),
+                );
+                recorders.add(recorder);
+                return recorder;
+              },
+              onSendAudio: (audioFile, {message}) async {
+                audioSends.add(audioFile.name);
+                audioMessages.add(message);
+                return true;
+              },
+              onSendAttachments: (_, {prompt}) async => true,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final sendButton = find
+        .ancestor(
+          of: find.byIcon(Icons.arrow_upward_rounded),
+          matching: find.byType(FilledButton),
+        )
+        .last;
+    await tester.drag(sendButton, const Offset(0, -120));
+    await tester.pump();
+
+    expect(find.text('Recording'), findsOneWidget);
+    expect(recorders.first.started, isTrue);
+    expect(textController.text, contains('Keep this text with the audio'));
+
+    final voiceSendButton = find
+        .ancestor(
+          of: find.byIcon(Icons.send_rounded),
+          matching: find.byType(FilledButton),
+        )
+        .last;
+    await tester.tap(voiceSendButton);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+
+    expect(audioSends, <String>['voice-note.m4a']);
+    expect(audioMessages, <String?>['Keep this text with the audio']);
+    expect(textController.text, isEmpty);
   });
 
   testWidgets('renders assistant options as quick actions', (tester) async {

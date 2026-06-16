@@ -370,6 +370,23 @@ class _ControlledExecutionProvider(ExecutionProvider):
             return self._snapshots[job_id].latest_activity
 
 
+def _provider_request(
+    provider: _ControlledExecutionProvider,
+    job_id: str,
+) -> dict[str, object]:
+    return next(request for request in provider.requests if request["job_id"] == job_id)
+
+
+def _conversation_provider_requests(
+    provider: _ControlledExecutionProvider,
+) -> list[dict[str, object]]:
+    return [
+        request
+        for request in provider.requests
+        if not str(request.get("serial_key") or "").endswith(":title")
+    ]
+
+
 class _WatchedControlledExecutionProvider(_ControlledExecutionProvider):
     def __init__(self) -> None:
         super().__init__()
@@ -742,7 +759,9 @@ def test_backend_drain_waits_through_reviewer_handoff_until_run_complete() -> No
         assert drain_status.active_job_count == 1
 
         reviewer_job = next(
-            job for job in provider.requests if job["job_id"] != initial_job.id
+            job
+            for job in _conversation_provider_requests(provider)
+            if job["job_id"] != initial_job.id
         )
         provider.complete_job(str(reviewer_job["job_id"]), response="Review complete.")
 
@@ -5448,7 +5467,7 @@ def test_background_reconciler_dispatches_reserved_reviewer_follow_up_idempotent
         assert len(dispatched_messages) == 1
         assert dispatched_messages[0].status == ChatMessageStatus.PENDING
         assert dispatched_messages[0].job_id is not None
-        assert len(provider.requests) == 2
+        assert len(_conversation_provider_requests(provider)) == 2
 
 
 def test_background_reconciler_attaches_submission_pending_follow_up_without_resubmitting() -> (
@@ -6798,18 +6817,22 @@ def test_audio_messages_from_different_sessions_stay_isolated_under_overlap() ->
     )
     assert first_job["session_id"] == first_session_id
     assert second_job["session_id"] == second_session_id
-    assert first_job["message"] == "Transcribed audio from voice-a.m4a"
-    assert second_job["message"] == "Transcribed audio from voice-b.m4a"
+    assert first_job["message"] == (
+        "[Sent via audio]\n\nTranscribed audio from voice-a.m4a"
+    )
+    assert second_job["message"] == (
+        "[Sent via audio]\n\nTranscribed audio from voice-b.m4a"
+    )
 
     first_payload = first_client.get(f"/sessions/{first_session_id}").json()
     second_payload = second_client.get(f"/sessions/{second_session_id}").json()
     assert len(first_payload["messages"]) == 2
     assert len(second_payload["messages"]) == 2
-    assert (
-        first_payload["messages"][0]["content"] == "Transcribed audio from voice-a.m4a"
+    assert first_payload["messages"][0]["content"] == (
+        "[Sent via audio]\n\nTranscribed audio from voice-a.m4a"
     )
-    assert (
-        second_payload["messages"][0]["content"] == "Transcribed audio from voice-b.m4a"
+    assert second_payload["messages"][0]["content"] == (
+        "[Sent via audio]\n\nTranscribed audio from voice-b.m4a"
     )
 
 
@@ -9046,7 +9069,7 @@ def test_submit_message_applies_codex_guidance_and_passes_codex_options() -> Non
             barrier_agent_id=AgentId.REVIEWER,
         )
 
-        service.submit_message(
+        job = service.submit_message(
             "Create a reusable skill for release automation.",
             workspace_path=str(project_dir),
             codex_options=CodexRunOptions(
@@ -9058,7 +9081,7 @@ def test_submit_message_applies_codex_guidance_and_passes_codex_options() -> Non
             ),
         )
 
-        request = provider.requests[-1]
+        request = _provider_request(provider, job.id)
         assert request["codex_options"] == CodexRunOptions(
             profile="safe",
             search_enabled=True,
@@ -9082,12 +9105,12 @@ def test_submit_message_adds_authenticated_github_guidance_for_repo_references()
             barrier_agent_id=AgentId.GENERATOR,
         )
 
-        service.submit_message(
+        job = service.submit_message(
             "Inspect brunojaime/software-project-builder and incorporate it here.",
             workspace_path=str(project_dir),
         )
 
-        request = provider.requests[-1]
+        request = _provider_request(provider, job.id)
         assert "Private GitHub repositories may return 404" in request["message"]
         assert "`gh repo view OWNER/REPO`" in request["message"]
         assert "brunojaime/software-project-builder" in request["message"]
