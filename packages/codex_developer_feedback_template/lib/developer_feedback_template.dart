@@ -2321,7 +2321,7 @@ class _Toolbar extends StatelessWidget {
                     if (compact)
                       const Icon(Icons.bug_report_outlined)
                     else
-                      const Text('Feedback'),
+                      const Text('Plantilla'),
                     SizedBox(width: compact ? 4 : 8),
                     Switch(
                       key: developerFeedbackSwitchKey,

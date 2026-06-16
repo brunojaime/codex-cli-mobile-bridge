@@ -37,7 +37,7 @@ void main() {
   ) async {
     await tester.pumpWidget(const _Harness(enabled: true));
     expect(find.byKey(developerFeedbackToolbarKey), findsOneWidget);
-    expect(find.text('Feedback'), findsOneWidget);
+    expect(find.text('Plantilla'), findsOneWidget);
     expect(find.byKey(developerFeedbackPendingKey), findsNothing);
     expect(find.byKey(developerFeedbackCopyKey), findsNothing);
   });
@@ -47,7 +47,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(_feedbackSwitchValue(tester), isFalse);
-    await tester.tap(find.text('Feedback'));
+    await tester.tap(find.text('Plantilla'));
     await tester.pump();
 
     expect(_feedbackSwitchValue(tester), isTrue);
@@ -60,7 +60,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Feedback'), findsOneWidget);
+    expect(find.text('Plantilla'), findsOneWidget);
     expect(_feedbackSwitchValue(tester), isTrue);
     expect(find.byKey(developerFeedbackOverlayKey), findsOneWidget);
   });
