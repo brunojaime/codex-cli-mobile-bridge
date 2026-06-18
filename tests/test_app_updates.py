@@ -170,6 +170,21 @@ def test_default_registry_disables_apps_without_apk_backed_releases() -> None:
     assert configs["smart-nienfos-moldegon"].enabled is True
 
 
+def test_default_registry_resolves_smart_nienfos_admin_from_monorepo_release() -> None:
+    registry = AppUpdateRegistry.from_json_file(
+        Path(__file__).resolve().parents[1]
+        / "backend/app/infrastructure/config/app_updates.json",
+    )
+
+    config = registry.get("smart-nienfos-admin")
+
+    assert config.enabled is True
+    assert config.repo == "brunojaime/smart_nienfos"
+    assert config.release_tag_pattern == "smart-nienfos-admin-android-v*"
+    assert config.apk_asset_pattern == "smart-nienfos-admin-*.apk"
+    assert config.latest_asset_name == "smart-nienfos-admin.apk"
+
+
 def test_enabled_default_update_configs_include_release_asset_metadata() -> None:
     registry = AppUpdateRegistry.from_json_file(
         Path(__file__).resolve().parents[1]
