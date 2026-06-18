@@ -47,12 +47,12 @@
       {
         "sourceApp": "smart-nienfos-admin",
         "displayName": "Smart Nienfos Admin",
-        "repo": "brunojaime/smart-nienfos-flutter-app",
+        "repo": "brunojaime/smart_nienfos",
         "localPath": "../smart_nienfos/smart-nienfos-flutter-app",
         "defaultBranch": "main",
         "pubspecPath": "app/client/pubspec.yaml",
-        "releaseTagPrefix": "android-v",
-        "releaseWorkflow": "Android Release"
+        "releaseTagPrefix": "smart-nienfos-admin-android-v",
+        "releaseWorkflow": "Smart Nienfos Admin Android Release"
       }
     ]
   },
@@ -100,6 +100,16 @@
         "pubspecPath": "smart-nienfos-molding-domain/frontend/app/pubspec.yaml",
         "releaseTagPrefix": "moldegon-android-v",
         "releaseWorkflow": "Moldegon Android Release"
+      },
+      {
+        "sourceApp": "smart-nienfos-admin",
+        "displayName": "Smart Nienfos Admin",
+        "repo": "brunojaime/smart_nienfos",
+        "localPath": "../smart_nienfos/smart-nienfos-flutter-app",
+        "defaultBranch": "main",
+        "pubspecPath": "app/client/pubspec.yaml",
+        "releaseTagPrefix": "smart-nienfos-admin-android-v",
+        "releaseWorkflow": "Smart Nienfos Admin Android Release"
       }
     ]
   }
