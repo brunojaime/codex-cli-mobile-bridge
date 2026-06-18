@@ -7073,10 +7073,21 @@ def test_capabilities_exposes_feedback_source_workspace_aliases(
 
     assert response.status_code == 200
     aliases = response.json()["feedback_source_workspace_aliases"]
-    assert aliases == {
-        "smart-nienfos": "/workspace/smart_nienfos",
-        "ambientando-calendar": "/workspace/ambientando-calendar",
-    }
+    assert aliases["smart-nienfos"] == "/workspace/smart_nienfos"
+    assert aliases["ambientando-calendar"] == "/workspace/ambientando-calendar"
+
+
+def test_capabilities_defaults_smart_nienfos_admin_to_project_root(
+    tmp_path: Path,
+) -> None:
+    projects_root = tmp_path / "projects"
+    client = build_feedback_queue_client(tmp_path, projects_root=projects_root)
+
+    response = client.get("/capabilities")
+
+    assert response.status_code == 200
+    aliases = response.json()["feedback_source_workspace_aliases"]
+    assert aliases["smart-nienfos-admin"] == str(projects_root / "smart_nienfos")
 
 
 def test_feedback_workflow_presets_expose_agent_profiles(tmp_path: Path) -> None:
@@ -7618,6 +7629,40 @@ def test_feedback_batch_start_session_resolves_workspace_from_source_alias(
                 {
                     "id": "feedback-smart-alias",
                     "comment": "Apply this to Smart Nienfos",
+                    "screenshotPngBase64": base64.b64encode(b"fake png").decode(
+                        "ascii"
+                    ),
+                }
+            ],
+        },
+    )
+
+    assert start_response.status_code == 202
+    session_response = client.get(f"/sessions/{start_response.json()['session_id']}")
+    assert session_response.status_code == 200
+    session = session_response.json()
+    assert session["workspace_name"] == "smart_nienfos"
+    assert session["workspace_path"] == str(smart_workspace)
+
+
+def test_feedback_batch_start_session_defaults_admin_to_smart_nienfos_root(
+    tmp_path: Path,
+) -> None:
+    projects_root = tmp_path / "projects"
+    smart_workspace = projects_root / "smart_nienfos"
+    smart_workspace.mkdir(parents=True)
+    client = build_feedback_queue_client(tmp_path, projects_root=projects_root)
+
+    start_response = client.post(
+        "/feedback-batches/start-session",
+        json={
+            "sourceApp": "smart-nienfos-admin",
+            "sourceDisplayName": "Smart Nienfos Admin",
+            "workflowPresetId": "default",
+            "items": [
+                {
+                    "id": "feedback-smart-admin-default",
+                    "comment": "Apply this to Smart Nienfos admin.",
                     "screenshotPngBase64": base64.b64encode(b"fake png").decode(
                         "ascii"
                     ),

@@ -8,6 +8,11 @@ from pydantic import Field, computed_field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+_DEFAULT_FEEDBACK_SOURCE_WORKSPACE_ALIASES = {
+    "smart-nienfos-admin": Path("smart_nienfos"),
+}
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -81,7 +86,13 @@ class Settings(BaseSettings):
 
     @property
     def feedback_source_workspace_alias_map(self) -> dict[str, str]:
-        aliases: dict[str, str] = {}
+        projects_root = Path(self.projects_root).expanduser()
+        aliases: dict[str, str] = {
+            source_app: str(projects_root / relative_path)
+            for source_app, relative_path in (
+                _DEFAULT_FEEDBACK_SOURCE_WORKSPACE_ALIASES.items()
+            )
+        }
         for raw_entry in self.feedback_source_workspace_aliases.split(","):
             entry = raw_entry.strip()
             if not entry or ":" not in entry:
