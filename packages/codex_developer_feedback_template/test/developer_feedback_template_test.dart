@@ -227,6 +227,10 @@ void main() {
   testWidgets('role gate supports credential login and clear failures', (
     tester,
   ) async {
+    const expectedUsername = String.fromEnvironment(
+      'TEST_EXPECTED_FEEDBACK_ADMIN_USERNAME',
+      defaultValue: developerFeedbackAdminUsername,
+    );
     await tester.pumpWidget(
       MaterialApp(
         home: CodexDeveloperRoleGate(
@@ -242,19 +246,59 @@ void main() {
       ),
     );
 
-    await tester.enterText(find.byKey(developerFeedbackUsernameKey), 'admin');
-    await tester.enterText(find.byKey(developerFeedbackPasswordKey), 'bad');
+    await tester.enterText(
+      find.byKey(developerFeedbackUsernameKey),
+      developerFeedbackAdminUsername,
+    );
+    await tester.enterText(
+      find.byKey(developerFeedbackPasswordKey),
+      '${developerFeedbackAdminPassword}-bad',
+    );
     await tester.tap(find.byKey(developerFeedbackCredentialLoginKey));
     await tester.pump();
 
     expect(find.byKey(developerFeedbackRoleLoginErrorKey), findsOneWidget);
 
-    await tester.enterText(find.byKey(developerFeedbackPasswordKey), 'admin');
+    await tester.enterText(
+      find.byKey(developerFeedbackPasswordKey),
+      developerFeedbackAdminPassword,
+    );
     await tester.tap(find.byKey(developerFeedbackCredentialLoginKey));
     await tester.pumpAndSettle();
 
-    expect(find.text('admin'), findsOneWidget);
+    expect(find.text(expectedUsername), findsOneWidget);
     expect(find.byKey(developerFeedbackRoleLoginKey), findsNothing);
+  });
+
+  test('admin role and credential constants support dart-define overrides', () {
+    expect(
+      developerFeedbackAdminRoleId,
+      const String.fromEnvironment(
+        'TEST_EXPECTED_FEEDBACK_ADMIN_ROLE_ID',
+        defaultValue: 'admin',
+      ),
+    );
+    expect(
+      developerFeedbackAdminRoleLabel,
+      const String.fromEnvironment(
+        'TEST_EXPECTED_FEEDBACK_ADMIN_ROLE_LABEL',
+        defaultValue: 'Administrador',
+      ),
+    );
+    expect(
+      developerFeedbackAdminUsername,
+      const String.fromEnvironment(
+        'TEST_EXPECTED_FEEDBACK_ADMIN_USERNAME',
+        defaultValue: 'admin',
+      ),
+    );
+    expect(
+      developerFeedbackAdminPassword,
+      const String.fromEnvironment(
+        'TEST_EXPECTED_FEEDBACK_ADMIN_PASSWORD',
+        defaultValue: 'admin',
+      ),
+    );
   });
 
   testWidgets('toolbar does not require an overlay ancestor', (tester) async {
