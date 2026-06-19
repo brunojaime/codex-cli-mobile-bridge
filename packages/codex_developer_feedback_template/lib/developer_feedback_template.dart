@@ -44,6 +44,11 @@ const developerFeedbackSourceDisplayName = String.fromEnvironment(
 const developerFeedbackRoleAuthEnabled = bool.fromEnvironment(
   'CODEX_FEEDBACK_ROLE_AUTH_ENABLED',
 );
+const developerFeedbackAdminRoleLoginEnabled = bool.fromEnvironment(
+  'CODEX_FEEDBACK_ADMIN_ROLE_LOGIN_ENABLED',
+);
+const developerFeedbackRoleGateEnabled =
+    developerFeedbackRoleAuthEnabled || developerFeedbackAdminRoleLoginEnabled;
 const developerFeedbackAdminRoleId = String.fromEnvironment(
   'CODEX_FEEDBACK_ADMIN_ROLE_ID',
   defaultValue: 'admin',
@@ -153,6 +158,9 @@ const developerFeedbackBridgeUnavailableKey = Key(
   'developer-feedback-bridge-unavailable',
 );
 const developerFeedbackRoleLoginKey = Key('developer-feedback-role-login');
+const developerFeedbackRoleDropdownKey = Key(
+  'developer-feedback-role-dropdown',
+);
 const developerFeedbackRoleButtonKey = Key('developer-feedback-role-button');
 const developerFeedbackUsernameKey = Key('developer-feedback-username');
 const developerFeedbackPasswordKey = Key('developer-feedback-password');
@@ -259,12 +267,13 @@ class DeveloperFeedbackRoleScope extends InheritedWidget {
 class CodexDeveloperRoleGate extends StatefulWidget {
   const CodexDeveloperRoleGate({
     required this.child,
-    this.enabled = developerFeedbackRoleAuthEnabled,
+    this.enabled = developerFeedbackRoleGateEnabled,
     this.roles = const <DeveloperFeedbackRole>[DeveloperFeedbackRole.admin],
     this.credentials = const <DeveloperFeedbackCredential>[
       DeveloperFeedbackCredential.admin,
     ],
-    this.allowRoleLogin = true,
+    this.allowRoleLogin = developerFeedbackAdminRoleLoginEnabled,
+    this.allowCredentialLogin = developerFeedbackRoleAuthEnabled,
     this.title = 'Ingresar',
     this.onSessionChanged,
     super.key,
@@ -275,6 +284,7 @@ class CodexDeveloperRoleGate extends StatefulWidget {
   final List<DeveloperFeedbackRole> roles;
   final List<DeveloperFeedbackCredential> credentials;
   final bool allowRoleLogin;
+  final bool allowCredentialLogin;
   final String title;
   final ValueChanged<DeveloperFeedbackRoleSession?>? onSessionChanged;
 
@@ -285,6 +295,7 @@ class CodexDeveloperRoleGate extends StatefulWidget {
 class _CodexDeveloperRoleGateState extends State<CodexDeveloperRoleGate> {
   final _usernameController = TextEditingController();
   final _passwordController = TextEditingController();
+  DeveloperFeedbackRole? _selectedRole;
   DeveloperFeedbackRoleSession? _session;
   String? _error;
 
@@ -304,6 +315,13 @@ class _CodexDeveloperRoleGateState extends State<CodexDeveloperRoleGate> {
     if (session != null) {
       return DeveloperFeedbackRoleScope(session: session, child: widget.child);
     }
+    final showRoleLogin = widget.allowRoleLogin && widget.roles.isNotEmpty;
+    final showCredentialLogin =
+        widget.allowCredentialLogin && widget.credentials.isNotEmpty;
+    if (!showRoleLogin && !showCredentialLogin) {
+      return DeveloperFeedbackRoleScope(session: null, child: widget.child);
+    }
+    final selectedRole = _selectedRoleOrDefault();
     return Scaffold(
       key: developerFeedbackRoleLoginKey,
       body: SafeArea(
@@ -320,63 +338,82 @@ class _CodexDeveloperRoleGateState extends State<CodexDeveloperRoleGate> {
                     widget.title,
                     style: Theme.of(context).textTheme.headlineSmall,
                   ),
-                  if (widget.allowRoleLogin && widget.roles.isNotEmpty) ...[
+                  if (showRoleLogin) ...[
                     const SizedBox(height: 20),
-                    for (final role in widget.roles)
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: 8),
-                        child: FilledButton.icon(
-                          key: developerFeedbackRoleButtonKey,
-                          onPressed: () => _setSession(
-                            DeveloperFeedbackRoleSession(role: role),
+                    DropdownButtonFormField<DeveloperFeedbackRole>(
+                      key: developerFeedbackRoleDropdownKey,
+                      initialValue: selectedRole,
+                      decoration: const InputDecoration(
+                        labelText: 'Rol',
+                        border: OutlineInputBorder(),
+                      ),
+                      items: [
+                        for (final role in widget.roles)
+                          DropdownMenuItem(
+                            value: role,
+                            child: Text(role.label),
                           ),
-                          icon: Icon(
-                            role.isAdmin
-                                ? Icons.admin_panel_settings_outlined
-                                : Icons.badge_outlined,
-                          ),
-                          label: Text(role.label),
+                      ],
+                      onChanged: (role) {
+                        setState(() => _selectedRole = role);
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    FilledButton.icon(
+                      key: developerFeedbackRoleButtonKey,
+                      onPressed: selectedRole == null
+                          ? null
+                          : () => _setSession(
+                              DeveloperFeedbackRoleSession(role: selectedRole),
+                            ),
+                      icon: Icon(
+                        selectedRole?.isAdmin == true
+                            ? Icons.admin_panel_settings_outlined
+                            : Icons.badge_outlined,
+                      ),
+                      label: const Text('Ingresar'),
+                    ),
+                  ],
+                  if (showCredentialLogin) ...[
+                    const SizedBox(height: 12),
+                    TextField(
+                      key: developerFeedbackUsernameKey,
+                      controller: _usernameController,
+                      decoration: const InputDecoration(
+                        labelText: 'Usuario',
+                        border: OutlineInputBorder(),
+                      ),
+                      textInputAction: TextInputAction.next,
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      key: developerFeedbackPasswordKey,
+                      controller: _passwordController,
+                      obscureText: true,
+                      decoration: const InputDecoration(
+                        labelText: 'Password',
+                        border: OutlineInputBorder(),
+                      ),
+                      onSubmitted: (_) => _loginWithCredentials(),
+                    ),
+                    if (_error != null) ...[
+                      const SizedBox(height: 10),
+                      Text(
+                        _error!,
+                        key: developerFeedbackRoleLoginErrorKey,
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.error,
                         ),
                       ),
-                  ],
-                  const SizedBox(height: 12),
-                  TextField(
-                    key: developerFeedbackUsernameKey,
-                    controller: _usernameController,
-                    decoration: const InputDecoration(
-                      labelText: 'Usuario',
-                      border: OutlineInputBorder(),
-                    ),
-                    textInputAction: TextInputAction.next,
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    key: developerFeedbackPasswordKey,
-                    controller: _passwordController,
-                    obscureText: true,
-                    decoration: const InputDecoration(
-                      labelText: 'Password',
-                      border: OutlineInputBorder(),
-                    ),
-                    onSubmitted: (_) => _loginWithCredentials(),
-                  ),
-                  if (_error != null) ...[
-                    const SizedBox(height: 10),
-                    Text(
-                      _error!,
-                      key: developerFeedbackRoleLoginErrorKey,
-                      style: TextStyle(
-                        color: Theme.of(context).colorScheme.error,
-                      ),
+                    ],
+                    const SizedBox(height: 16),
+                    FilledButton.icon(
+                      key: developerFeedbackCredentialLoginKey,
+                      onPressed: _loginWithCredentials,
+                      icon: const Icon(Icons.login),
+                      label: const Text('Ingresar'),
                     ),
                   ],
-                  const SizedBox(height: 16),
-                  FilledButton.icon(
-                    key: developerFeedbackCredentialLoginKey,
-                    onPressed: _loginWithCredentials,
-                    icon: const Icon(Icons.login),
-                    label: const Text('Ingresar'),
-                  ),
                 ],
               ),
             ),
@@ -384,6 +421,15 @@ class _CodexDeveloperRoleGateState extends State<CodexDeveloperRoleGate> {
         ),
       ),
     );
+  }
+
+  DeveloperFeedbackRole? _selectedRoleOrDefault() {
+    if (widget.roles.isEmpty) return null;
+    final selectedRole = _selectedRole;
+    if (selectedRole != null && widget.roles.contains(selectedRole)) {
+      return selectedRole;
+    }
+    return widget.roles.first;
   }
 
   void _loginWithCredentials() {

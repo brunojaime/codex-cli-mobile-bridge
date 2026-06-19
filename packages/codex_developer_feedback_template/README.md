@@ -6,8 +6,9 @@ gate.
 
 ## Role Gate
 
-`CodexDeveloperRoleGate` provides an optional login screen before the app body.
-It is disabled by default and must be enabled explicitly:
+`CodexDeveloperRoleGate` provides optional login screens before the app body.
+It is disabled by default and must be enabled explicitly. To show the gate's
+username/password login, set:
 
 ```text
 --dart-define=CODEX_FEEDBACK_ROLE_AUTH_ENABLED=true
@@ -22,6 +23,18 @@ CODEX_FEEDBACK_ADMIN_ROLE_LABEL=Administrador
 CODEX_FEEDBACK_ADMIN_USERNAME=admin
 CODEX_FEEDBACK_ADMIN_PASSWORD=admin
 ```
+
+Internal builds can show direct admin role entry, without username/password, by
+setting:
+
+```text
+--dart-define=CODEX_FEEDBACK_ADMIN_ROLE_LOGIN_ENABLED=true
+```
+
+When `CODEX_FEEDBACK_ADMIN_ROLE_LOGIN_ENABLED` is false or absent, the direct
+admin role selector is hidden. When both role login and credential login are
+false or absent, the role gate does not block the app body and the app's
+classic login appears.
 
 Apps can override those values at build time with their own `--dart-define`
 values. The role gate also accepts explicit `roles` and `credentials` lists when

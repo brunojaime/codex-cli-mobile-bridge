@@ -197,32 +197,60 @@ void main() {
     },
   );
 
-  testWidgets('role gate allows default admin role login', (tester) async {
-    DeveloperFeedbackRoleSession? captured;
+  testWidgets('role gate follows env-configured login methods', (tester) async {
     await tester.pumpWidget(
-      MaterialApp(
-        home: CodexDeveloperRoleGate(
-          enabled: true,
-          onSessionChanged: (session) => captured = session,
-          child: Builder(
-            builder: (context) {
-              final session = DeveloperFeedbackRoleScope.of(context);
-              return Text('${session.role.id}:${session.role.isAdmin}');
-            },
-          ),
-        ),
-      ),
+      MaterialApp(home: CodexDeveloperRoleGate(child: const Text('App body'))),
     );
 
-    expect(find.byKey(developerFeedbackRoleLoginKey), findsOneWidget);
-
-    await tester.tap(find.byKey(developerFeedbackRoleButtonKey));
-    await tester.pumpAndSettle();
-
-    expect(captured?.role.id, developerFeedbackAdminRoleId);
-    expect(captured?.role.isAdmin, isTrue);
-    expect(find.text('$developerFeedbackAdminRoleId:true'), findsOneWidget);
+    expect(
+      find.byKey(developerFeedbackRoleLoginKey),
+      developerFeedbackRoleGateEnabled ? findsOneWidget : findsNothing,
+    );
+    expect(
+      find.byKey(developerFeedbackRoleDropdownKey),
+      developerFeedbackAdminRoleLoginEnabled ? findsOneWidget : findsNothing,
+    );
+    expect(
+      find.byKey(developerFeedbackUsernameKey),
+      developerFeedbackRoleAuthEnabled ? findsOneWidget : findsNothing,
+    );
+    if (!developerFeedbackRoleGateEnabled) {
+      expect(find.text('App body'), findsOneWidget);
+    }
   });
+
+  testWidgets(
+    'role gate allows explicit admin role login without credentials',
+    (tester) async {
+      DeveloperFeedbackRoleSession? captured;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: CodexDeveloperRoleGate(
+            enabled: true,
+            allowRoleLogin: true,
+            allowCredentialLogin: false,
+            onSessionChanged: (session) => captured = session,
+            child: Builder(
+              builder: (context) {
+                final session = DeveloperFeedbackRoleScope.of(context);
+                return Text('${session.role.id}:${session.role.isAdmin}');
+              },
+            ),
+          ),
+        ),
+      );
+
+      expect(find.byKey(developerFeedbackRoleDropdownKey), findsOneWidget);
+      expect(find.byKey(developerFeedbackUsernameKey), findsNothing);
+
+      await tester.tap(find.byKey(developerFeedbackRoleButtonKey));
+      await tester.pumpAndSettle();
+
+      expect(captured?.role.id, developerFeedbackAdminRoleId);
+      expect(captured?.role.isAdmin, isTrue);
+      expect(find.text('$developerFeedbackAdminRoleId:true'), findsOneWidget);
+    },
+  );
 
   testWidgets('role gate supports credential login and clear failures', (
     tester,
@@ -236,6 +264,7 @@ void main() {
         home: CodexDeveloperRoleGate(
           enabled: true,
           allowRoleLogin: false,
+          allowCredentialLogin: true,
           child: Builder(
             builder: (context) {
               final session = DeveloperFeedbackRoleScope.of(context);
@@ -271,6 +300,22 @@ void main() {
   });
 
   test('admin role and credential constants support dart-define overrides', () {
+    final expectedRoleAuthEnabled = const bool.fromEnvironment(
+      'TEST_EXPECTED_FEEDBACK_ROLE_AUTH',
+    );
+    final expectedAdminRoleLoginEnabled = const bool.fromEnvironment(
+      'TEST_EXPECTED_FEEDBACK_ADMIN_ROLE_LOGIN',
+    );
+
+    expect(developerFeedbackRoleAuthEnabled, expectedRoleAuthEnabled);
+    expect(
+      developerFeedbackAdminRoleLoginEnabled,
+      expectedAdminRoleLoginEnabled,
+    );
+    expect(
+      developerFeedbackRoleGateEnabled,
+      expectedRoleAuthEnabled || expectedAdminRoleLoginEnabled,
+    );
     expect(
       developerFeedbackAdminRoleId,
       const String.fromEnvironment(

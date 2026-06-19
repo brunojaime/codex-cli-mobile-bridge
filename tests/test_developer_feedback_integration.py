@@ -260,7 +260,7 @@ def _write_fixture(
     include_role_gate: bool = True,
     unsafe_wrapper: bool = False,
     conditional_wrapper: bool = False,
-    dependency_ref: str = "codex-developer-feedback-template-v0.4.3",
+    dependency_ref: str = "codex-developer-feedback-template-v0.4.4",
     include_updater_dependency: bool = False,
     updater_dependency_ref: str = "afbefbb7a6b1f8a928af07d2889a266a45eaba82",
 ) -> Fixture:
