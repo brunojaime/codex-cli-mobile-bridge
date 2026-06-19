@@ -71,6 +71,36 @@ def test_doctor_fails_when_wrapper_is_missing(tmp_path: Path) -> None:
     assert not report.ok
 
 
+def test_doctor_fails_when_template_ref_is_too_old(tmp_path: Path) -> None:
+    fixture = _write_fixture(tmp_path, dependency_ref="codex-developer-feedback-template-v0.3.10")
+    component = feedback.load_component(fixture.associations, "codex_developer_feedback_template")
+    report = feedback.build_report(
+        component=component,
+        app=component.apps[0],
+        registry=feedback.load_registry(fixture.registry),
+        workspace_aliases={"fixture-app": str(fixture.app_repo)},
+    )
+
+    failed = [check for check in report.checks if check.status == "fail"]
+    assert any(check.name == "dependency_ref_minimum" for check in failed)
+    assert not report.ok
+
+
+def test_doctor_fails_when_role_gate_is_missing(tmp_path: Path) -> None:
+    fixture = _write_fixture(tmp_path, include_role_gate=False)
+    component = feedback.load_component(fixture.associations, "codex_developer_feedback_template")
+    report = feedback.build_report(
+        component=component,
+        app=component.apps[0],
+        registry=feedback.load_registry(fixture.registry),
+        workspace_aliases={"fixture-app": str(fixture.app_repo)},
+    )
+
+    failed = [check for check in report.checks if check.status == "fail"]
+    assert any(check.name == "role_gate" for check in failed)
+    assert not report.ok
+
+
 def test_doctor_warns_strict_failure_when_wrapper_wraps_material_app(
     tmp_path: Path,
 ) -> None:
@@ -189,18 +219,25 @@ def _write_fixture(
     display_name: str = "Fixture App",
     include_dependency: bool = True,
     include_wrapper: bool = True,
+    include_role_gate: bool = True,
     unsafe_wrapper: bool = False,
+    dependency_ref: str = "codex-developer-feedback-template-v0.4.0",
 ) -> Fixture:
     app_repo = tmp_path / "fixture_app"
     app_dir = app_repo / "frontend"
     (app_dir / "lib").mkdir(parents=True)
     (app_dir / "test").mkdir(parents=True)
-    _write_pubspec(app_dir / "pubspec.yaml", include_dependency=include_dependency)
+    _write_pubspec(
+        app_dir / "pubspec.yaml",
+        include_dependency=include_dependency,
+        dependency_ref=dependency_ref,
+    )
     _write_main(
         app_dir / "lib/main.dart",
         source_app=source_app,
         display_name=display_name,
         include_wrapper=include_wrapper,
+        include_role_gate=include_role_gate,
         unsafe_wrapper=unsafe_wrapper,
     )
     (app_dir / "test/widget_test.dart").write_text(
@@ -257,14 +294,19 @@ void main() {{
     return Fixture(associations=associations, registry=registry, app_repo=app_repo)
 
 
-def _write_pubspec(path: Path, *, include_dependency: bool) -> None:
+def _write_pubspec(
+    path: Path,
+    *,
+    include_dependency: bool,
+    dependency_ref: str,
+) -> None:
     dependency = (
-        """
+        f"""
   codex_developer_feedback_template:
     git:
       url: https://github.com/brunojaime/codex-cli-mobile-bridge.git
       path: packages/codex_developer_feedback_template
-      ref: codex-developer-feedback-template-v0.3.7
+      ref: {dependency_ref}
 """
         if include_dependency
         else ""
@@ -287,6 +329,7 @@ def _write_main(
     source_app: str,
     display_name: str,
     include_wrapper: bool,
+    include_role_gate: bool,
     unsafe_wrapper: bool,
 ) -> None:
     safe_wrapper = """
@@ -297,25 +340,48 @@ MaterialApp(
       sourceApp: _feedbackSourceApp,
       sourceDisplayName: _feedbackSourceDisplayName,
       bridgeUrl: developerFeedbackBridgeUrl,
+      appUpdaterBridgeUrl: developerFeedbackAppUpdaterBridgeUrl,
       child: child ?? const SizedBox.shrink(),
     );
   },
   home: const SizedBox.shrink(),
 )
 """
+    role_gate_wrapper = """
+CodexDeveloperRoleGate(
+  child: MaterialApp(
+    builder: (context, child) {
+      return DeveloperFeedbackTemplate(
+        enabled: developerFeedbackTemplateEnabled,
+        sourceApp: _feedbackSourceApp,
+        sourceDisplayName: _feedbackSourceDisplayName,
+        bridgeUrl: developerFeedbackBridgeUrl,
+        appUpdaterBridgeUrl: developerFeedbackAppUpdaterBridgeUrl,
+        child: child ?? const SizedBox.shrink(),
+      );
+    },
+    home: const SizedBox.shrink(),
+  ),
+)
+"""
     unsafe = """
-DeveloperFeedbackTemplate(
-  enabled: developerFeedbackTemplateEnabled,
-  sourceApp: _feedbackSourceApp,
-  sourceDisplayName: _feedbackSourceDisplayName,
-  bridgeUrl: developerFeedbackBridgeUrl,
-  child: MaterialApp(home: const SizedBox.shrink()),
+CodexDeveloperRoleGate(
+  child: DeveloperFeedbackTemplate(
+    enabled: developerFeedbackTemplateEnabled,
+    sourceApp: _feedbackSourceApp,
+    sourceDisplayName: _feedbackSourceDisplayName,
+    bridgeUrl: developerFeedbackBridgeUrl,
+    appUpdaterBridgeUrl: developerFeedbackAppUpdaterBridgeUrl,
+    child: MaterialApp(home: const SizedBox.shrink()),
+  ),
 )
 """
     wrapper = (
         unsafe
         if unsafe_wrapper
         else safe_wrapper
+        if include_wrapper and not include_role_gate
+        else role_gate_wrapper
         if include_wrapper
         else "MaterialApp(home: SizedBox.shrink())"
     )

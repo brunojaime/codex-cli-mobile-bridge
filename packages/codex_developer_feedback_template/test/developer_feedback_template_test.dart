@@ -1,13 +1,15 @@
 import 'dart:convert';
 import 'dart:async';
-import 'dart:typed_data';
 
+import 'package:codex_app_updater/codex_app_updater.dart';
 import 'package:codex_developer_feedback_template/developer_feedback_audio_recorder_contract.dart';
 import 'package:codex_developer_feedback_template/developer_feedback_template.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -39,6 +41,170 @@ void main() {
     expect(find.byKey(developerFeedbackToolbarKey), findsOneWidget);
     expect(find.byKey(developerFeedbackPendingKey), findsNothing);
     expect(find.byKey(developerFeedbackCopyKey), findsNothing);
+  });
+
+  test('feedback bridge URL falls back to updater bridge URL', () {
+    expect(
+      resolveDeveloperFeedbackBridgeUrl(
+        feedbackBridgeUrl: '',
+        appUpdaterBridgeUrl: ' http://bridge.local ',
+      ),
+      'http://bridge.local',
+    );
+    expect(
+      resolveDeveloperFeedbackBridgeUrl(
+        feedbackBridgeUrl: 'http://feedback.local',
+        appUpdaterBridgeUrl: 'http://updater.local',
+      ),
+      'http://feedback.local',
+    );
+  });
+
+  testWidgets('bridge-backed toolbar actions stay visible without bridge URL', (
+    tester,
+  ) async {
+    await tester.pumpWidget(const _Harness(enabled: true));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(developerFeedbackNotificationBellKey), findsOneWidget);
+    expect(find.byKey(developerFeedbackHistoryKey), findsOneWidget);
+    expect(find.byKey(developerFeedbackQuickAskHistoryKey), findsOneWidget);
+
+    await tester.tap(find.byKey(developerFeedbackHistoryKey));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(developerFeedbackBridgeUnavailableKey), findsOneWidget);
+    expect(find.text('Bridge no configurado'), findsOneWidget);
+    expect(find.textContaining('CODEX_FEEDBACK_BRIDGE_URL'), findsOneWidget);
+  });
+
+  testWidgets(
+    'quick ask action explains missing bridge instead of disappearing',
+    (tester) async {
+      await tester.pumpWidget(const _Harness(enabled: true));
+      await tester.tap(find.byKey(developerFeedbackSwitchKey));
+      await tester.pump();
+      await _drawFeedbackSelection(tester);
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(developerFeedbackQuickAskActionKey), findsOneWidget);
+
+      await tester.tap(find.byKey(developerFeedbackQuickAskActionKey));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(developerFeedbackBridgeUnavailableKey), findsOneWidget);
+    },
+  );
+
+  testWidgets('integrated updater uses updater bridge URL when available', (
+    tester,
+  ) async {
+    PackageInfo.setMockInitialValues(
+      appName: 'Template test',
+      packageName: 'com.codex.template.test',
+      version: '1.0.0',
+      buildNumber: '89',
+      buildSignature: '',
+    );
+    addTearDown(() {
+      PackageInfo.setMockInitialValues(
+        appName: '',
+        packageName: '',
+        version: '',
+        buildNumber: '',
+        buildSignature: '',
+      );
+    });
+    var requestedUpdate = false;
+    final controller = CodexAppUpdaterController(
+      httpClient: MockClient((request) async {
+        requestedUpdate = request.url.path == '/app-updates/test-app';
+        return http.Response(
+          jsonEncode(_appUpdateJson(currentBuild: 89, latestBuild: 90)),
+          200,
+        );
+      }),
+    );
+    addTearDown(controller.dispose);
+
+    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    try {
+      await tester.pumpWidget(
+        _Harness(
+          enabled: true,
+          sourceApp: 'test-app',
+          appUpdaterBridgeUrl: 'http://bridge.local',
+          appUpdaterController: controller,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(requestedUpdate, isTrue);
+      expect(find.byKey(codexAppUpdaterBannerKey), findsOneWidget);
+      expect(find.byKey(codexAppUpdaterUpdateButtonKey), findsOneWidget);
+    } finally {
+      debugDefaultTargetPlatformOverride = null;
+    }
+  });
+
+  testWidgets('role gate allows default admin role login', (tester) async {
+    DeveloperFeedbackRoleSession? captured;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: CodexDeveloperRoleGate(
+          enabled: true,
+          onSessionChanged: (session) => captured = session,
+          child: Builder(
+            builder: (context) {
+              final session = DeveloperFeedbackRoleScope.of(context);
+              return Text('${session.role.id}:${session.role.isAdmin}');
+            },
+          ),
+        ),
+      ),
+    );
+
+    expect(find.byKey(developerFeedbackRoleLoginKey), findsOneWidget);
+
+    await tester.tap(find.byKey(developerFeedbackRoleButtonKey));
+    await tester.pumpAndSettle();
+
+    expect(captured?.role.id, developerFeedbackAdminRoleId);
+    expect(captured?.role.isAdmin, isTrue);
+    expect(find.text('$developerFeedbackAdminRoleId:true'), findsOneWidget);
+  });
+
+  testWidgets('role gate supports credential login and clear failures', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: CodexDeveloperRoleGate(
+          enabled: true,
+          allowRoleLogin: false,
+          child: Builder(
+            builder: (context) {
+              final session = DeveloperFeedbackRoleScope.of(context);
+              return Text(session.username ?? session.role.id);
+            },
+          ),
+        ),
+      ),
+    );
+
+    await tester.enterText(find.byKey(developerFeedbackUsernameKey), 'admin');
+    await tester.enterText(find.byKey(developerFeedbackPasswordKey), 'bad');
+    await tester.tap(find.byKey(developerFeedbackCredentialLoginKey));
+    await tester.pump();
+
+    expect(find.byKey(developerFeedbackRoleLoginErrorKey), findsOneWidget);
+
+    await tester.enterText(find.byKey(developerFeedbackPasswordKey), 'admin');
+    await tester.tap(find.byKey(developerFeedbackCredentialLoginKey));
+    await tester.pumpAndSettle();
+
+    expect(find.text('admin'), findsOneWidget);
+    expect(find.byKey(developerFeedbackRoleLoginKey), findsNothing);
   });
 
   testWidgets('toolbar does not require an overlay ancestor', (tester) async {
@@ -2241,6 +2407,8 @@ class _Harness extends StatelessWidget {
     this.bridgeSubmitBatch,
     this.contextMetadataBuilder,
     this.httpClient,
+    this.appUpdaterBridgeUrl = '',
+    this.appUpdaterController,
   });
 
   final bool enabled;
@@ -2253,6 +2421,8 @@ class _Harness extends StatelessWidget {
   final DeveloperFeedbackBridgeSubmitBatch? bridgeSubmitBatch;
   final DeveloperFeedbackContextMetadataBuilder? contextMetadataBuilder;
   final http.Client? httpClient;
+  final String appUpdaterBridgeUrl;
+  final CodexAppUpdaterController? appUpdaterController;
 
   @override
   Widget build(BuildContext context) {
@@ -2274,6 +2444,8 @@ class _Harness extends StatelessWidget {
         bridgeSubmitBatch: bridgeSubmitBatch,
         contextMetadataBuilder: contextMetadataBuilder,
         httpClient: httpClient,
+        appUpdaterBridgeUrl: appUpdaterBridgeUrl,
+        appUpdaterController: appUpdaterController,
         child: Scaffold(body: Center(child: child ?? const Text('App body'))),
       ),
     );
@@ -2299,6 +2471,26 @@ class _UnsupportedRecorder implements DeveloperFeedbackAudioRecorder {
 
   @override
   Future<void> cancel() async {}
+}
+
+Map<String, Object?> _appUpdateJson({
+  required int currentBuild,
+  required int latestBuild,
+}) {
+  return <String, Object?>{
+    'kind': 'codex.appUpdate',
+    'version': 1,
+    'sourceApp': 'test-app',
+    'platform': 'android',
+    'available': latestBuild > currentBuild,
+    'required': false,
+    'currentVersion': '1.0.0',
+    'currentBuild': currentBuild,
+    'latestVersion': '1.0.0',
+    'latestBuild': latestBuild,
+    'apkUrl': 'https://example.test/test-app.apk',
+    'apkAssetName': 'test-app.apk',
+  };
 }
 
 class _SupportedRecorder implements DeveloperFeedbackAudioRecorder {

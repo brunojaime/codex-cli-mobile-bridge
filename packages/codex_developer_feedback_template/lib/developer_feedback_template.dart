@@ -3,11 +3,13 @@ import 'dart:convert';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
+import 'package:codex_app_updater/codex_app_updater.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
+import 'package:package_info_plus/package_info_plus.dart';
 
 import 'developer_feedback_audio_recorder.dart';
 import 'developer_feedback_audio_recorder_contract.dart';
@@ -29,12 +31,34 @@ const developerFeedbackTemplateEnabled =
 const developerFeedbackBridgeUrl = String.fromEnvironment(
   'CODEX_FEEDBACK_BRIDGE_URL',
 );
+const developerFeedbackAppUpdaterBridgeUrl = String.fromEnvironment(
+  'CODEX_APP_UPDATER_BRIDGE_URL',
+);
 const developerFeedbackSourceApp = String.fromEnvironment(
   'CODEX_FEEDBACK_SOURCE_APP',
   defaultValue: 'unknown',
 );
 const developerFeedbackSourceDisplayName = String.fromEnvironment(
   'CODEX_FEEDBACK_SOURCE_NAME',
+);
+const developerFeedbackRoleAuthEnabled = bool.fromEnvironment(
+  'CODEX_FEEDBACK_ROLE_AUTH_ENABLED',
+);
+const developerFeedbackAdminRoleId = String.fromEnvironment(
+  'CODEX_FEEDBACK_ADMIN_ROLE_ID',
+  defaultValue: 'admin',
+);
+const developerFeedbackAdminRoleLabel = String.fromEnvironment(
+  'CODEX_FEEDBACK_ADMIN_ROLE_LABEL',
+  defaultValue: 'Administrador',
+);
+const developerFeedbackAdminUsername = String.fromEnvironment(
+  'CODEX_FEEDBACK_ADMIN_USERNAME',
+  defaultValue: 'admin',
+);
+const developerFeedbackAdminPassword = String.fromEnvironment(
+  'CODEX_FEEDBACK_ADMIN_PASSWORD',
+  defaultValue: 'admin',
 );
 
 const developerFeedbackToolbarKey = Key('developer-feedback-toolbar');
@@ -125,6 +149,279 @@ const developerFeedbackCommentActionKey = Key(
 const developerFeedbackResetSelectionKey = Key(
   'developer-feedback-reset-selection',
 );
+const developerFeedbackBridgeUnavailableKey = Key(
+  'developer-feedback-bridge-unavailable',
+);
+const developerFeedbackRoleLoginKey = Key('developer-feedback-role-login');
+const developerFeedbackRoleButtonKey = Key('developer-feedback-role-button');
+const developerFeedbackUsernameKey = Key('developer-feedback-username');
+const developerFeedbackPasswordKey = Key('developer-feedback-password');
+const developerFeedbackCredentialLoginKey = Key(
+  'developer-feedback-credential-login',
+);
+const developerFeedbackRoleLoginErrorKey = Key(
+  'developer-feedback-role-login-error',
+);
+
+String resolveDeveloperFeedbackBridgeUrl({
+  String feedbackBridgeUrl = developerFeedbackBridgeUrl,
+  String appUpdaterBridgeUrl = developerFeedbackAppUpdaterBridgeUrl,
+}) {
+  final feedback = feedbackBridgeUrl.trim();
+  if (feedback.isNotEmpty) return feedback;
+  return appUpdaterBridgeUrl.trim();
+}
+
+String resolveCodexAppUpdaterBridgeUrl({
+  String appUpdaterBridgeUrl = developerFeedbackAppUpdaterBridgeUrl,
+  String feedbackBridgeUrl = developerFeedbackBridgeUrl,
+}) {
+  final updater = appUpdaterBridgeUrl.trim();
+  if (updater.isNotEmpty) return updater;
+  return feedbackBridgeUrl.trim();
+}
+
+class DeveloperFeedbackRole {
+  const DeveloperFeedbackRole({
+    required this.id,
+    required this.label,
+    this.isAdmin = false,
+  });
+
+  static const admin = DeveloperFeedbackRole(
+    id: developerFeedbackAdminRoleId,
+    label: developerFeedbackAdminRoleLabel,
+    isAdmin: true,
+  );
+
+  final String id;
+  final String label;
+  final bool isAdmin;
+}
+
+class DeveloperFeedbackCredential {
+  const DeveloperFeedbackCredential({
+    required this.username,
+    required this.password,
+    required this.roleId,
+  });
+
+  static const admin = DeveloperFeedbackCredential(
+    username: developerFeedbackAdminUsername,
+    password: developerFeedbackAdminPassword,
+    roleId: developerFeedbackAdminRoleId,
+  );
+
+  final String username;
+  final String password;
+  final String roleId;
+}
+
+class DeveloperFeedbackRoleSession {
+  const DeveloperFeedbackRoleSession({
+    required this.role,
+    this.username,
+    this.credentialLogin = false,
+  });
+
+  final DeveloperFeedbackRole role;
+  final String? username;
+  final bool credentialLogin;
+}
+
+class DeveloperFeedbackRoleScope extends InheritedWidget {
+  const DeveloperFeedbackRoleScope({
+    required this.session,
+    required super.child,
+    super.key,
+  });
+
+  final DeveloperFeedbackRoleSession? session;
+
+  static DeveloperFeedbackRoleSession? maybeOf(BuildContext context) {
+    return context
+        .dependOnInheritedWidgetOfExactType<DeveloperFeedbackRoleScope>()
+        ?.session;
+  }
+
+  static DeveloperFeedbackRoleSession of(BuildContext context) {
+    final session = maybeOf(context);
+    assert(session != null, 'No DeveloperFeedbackRoleScope found.');
+    return session!;
+  }
+
+  @override
+  bool updateShouldNotify(covariant DeveloperFeedbackRoleScope oldWidget) {
+    return oldWidget.session != session;
+  }
+}
+
+class CodexDeveloperRoleGate extends StatefulWidget {
+  const CodexDeveloperRoleGate({
+    required this.child,
+    this.enabled = developerFeedbackRoleAuthEnabled,
+    this.roles = const <DeveloperFeedbackRole>[DeveloperFeedbackRole.admin],
+    this.credentials = const <DeveloperFeedbackCredential>[
+      DeveloperFeedbackCredential.admin,
+    ],
+    this.allowRoleLogin = true,
+    this.title = 'Ingresar',
+    this.onSessionChanged,
+    super.key,
+  });
+
+  final Widget child;
+  final bool enabled;
+  final List<DeveloperFeedbackRole> roles;
+  final List<DeveloperFeedbackCredential> credentials;
+  final bool allowRoleLogin;
+  final String title;
+  final ValueChanged<DeveloperFeedbackRoleSession?>? onSessionChanged;
+
+  @override
+  State<CodexDeveloperRoleGate> createState() => _CodexDeveloperRoleGateState();
+}
+
+class _CodexDeveloperRoleGateState extends State<CodexDeveloperRoleGate> {
+  final _usernameController = TextEditingController();
+  final _passwordController = TextEditingController();
+  DeveloperFeedbackRoleSession? _session;
+  String? _error;
+
+  @override
+  void dispose() {
+    _usernameController.dispose();
+    _passwordController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!widget.enabled) {
+      return DeveloperFeedbackRoleScope(session: null, child: widget.child);
+    }
+    final session = _session;
+    if (session != null) {
+      return DeveloperFeedbackRoleScope(session: session, child: widget.child);
+    }
+    return Scaffold(
+      key: developerFeedbackRoleLoginKey,
+      body: SafeArea(
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 420),
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: <Widget>[
+                  Text(
+                    widget.title,
+                    style: Theme.of(context).textTheme.headlineSmall,
+                  ),
+                  if (widget.allowRoleLogin && widget.roles.isNotEmpty) ...[
+                    const SizedBox(height: 20),
+                    for (final role in widget.roles)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: FilledButton.icon(
+                          key: developerFeedbackRoleButtonKey,
+                          onPressed: () => _setSession(
+                            DeveloperFeedbackRoleSession(role: role),
+                          ),
+                          icon: Icon(
+                            role.isAdmin
+                                ? Icons.admin_panel_settings_outlined
+                                : Icons.badge_outlined,
+                          ),
+                          label: Text(role.label),
+                        ),
+                      ),
+                  ],
+                  const SizedBox(height: 12),
+                  TextField(
+                    key: developerFeedbackUsernameKey,
+                    controller: _usernameController,
+                    decoration: const InputDecoration(
+                      labelText: 'Usuario',
+                      border: OutlineInputBorder(),
+                    ),
+                    textInputAction: TextInputAction.next,
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    key: developerFeedbackPasswordKey,
+                    controller: _passwordController,
+                    obscureText: true,
+                    decoration: const InputDecoration(
+                      labelText: 'Password',
+                      border: OutlineInputBorder(),
+                    ),
+                    onSubmitted: (_) => _loginWithCredentials(),
+                  ),
+                  if (_error != null) ...[
+                    const SizedBox(height: 10),
+                    Text(
+                      _error!,
+                      key: developerFeedbackRoleLoginErrorKey,
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.error,
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 16),
+                  FilledButton.icon(
+                    key: developerFeedbackCredentialLoginKey,
+                    onPressed: _loginWithCredentials,
+                    icon: const Icon(Icons.login),
+                    label: const Text('Ingresar'),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _loginWithCredentials() {
+    final username = _usernameController.text.trim();
+    final password = _passwordController.text;
+    for (final credential in widget.credentials) {
+      if (credential.username == username && credential.password == password) {
+        final role = _roleById(credential.roleId);
+        if (role != null) {
+          _setSession(
+            DeveloperFeedbackRoleSession(
+              role: role,
+              username: username,
+              credentialLogin: true,
+            ),
+          );
+          return;
+        }
+      }
+    }
+    setState(() => _error = 'Usuario o password invalidos.');
+  }
+
+  DeveloperFeedbackRole? _roleById(String id) {
+    for (final role in widget.roles) {
+      if (role.id == id) return role;
+    }
+    return null;
+  }
+
+  void _setSession(DeveloperFeedbackRoleSession session) {
+    setState(() {
+      _session = session;
+      _error = null;
+    });
+    widget.onSessionChanged?.call(session);
+  }
+}
 
 const _transparentPngBase64 =
     'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=';
@@ -144,6 +441,16 @@ class DeveloperFeedbackTemplate extends StatefulWidget {
     this.bridgeSubmitBatch,
     this.contextMetadataBuilder,
     this.httpClient,
+    this.appUpdaterEnabled = true,
+    this.appUpdaterBridgeUrl = developerFeedbackAppUpdaterBridgeUrl,
+    this.appUpdaterCurrentVersion,
+    this.appUpdaterCurrentBuild,
+    this.appUpdaterPlatform = 'android',
+    this.appUpdaterChannel = 'stable',
+    this.appUpdaterRequireChecksum = false,
+    this.appUpdaterController,
+    this.appUpdaterCheckOnStart = true,
+    this.appUpdaterCheckOnResume = true,
     super.key,
   });
 
@@ -160,6 +467,16 @@ class DeveloperFeedbackTemplate extends StatefulWidget {
   final DeveloperFeedbackBridgeSubmitBatch? bridgeSubmitBatch;
   final DeveloperFeedbackContextMetadataBuilder? contextMetadataBuilder;
   final http.Client? httpClient;
+  final bool appUpdaterEnabled;
+  final String appUpdaterBridgeUrl;
+  final String? appUpdaterCurrentVersion;
+  final int? appUpdaterCurrentBuild;
+  final String appUpdaterPlatform;
+  final String appUpdaterChannel;
+  final bool appUpdaterRequireChecksum;
+  final CodexAppUpdaterController? appUpdaterController;
+  final bool appUpdaterCheckOnStart;
+  final bool appUpdaterCheckOnResume;
 
   @override
   State<DeveloperFeedbackTemplate> createState() =>
@@ -181,6 +498,16 @@ class CodexDeveloperFeedbackTemplate extends DeveloperFeedbackTemplate {
     super.bridgeSubmitBatch,
     super.contextMetadataBuilder,
     super.httpClient,
+    super.appUpdaterEnabled,
+    super.appUpdaterBridgeUrl,
+    super.appUpdaterCurrentVersion,
+    super.appUpdaterCurrentBuild,
+    super.appUpdaterPlatform,
+    super.appUpdaterChannel,
+    super.appUpdaterRequireChecksum,
+    super.appUpdaterController,
+    super.appUpdaterCheckOnStart,
+    super.appUpdaterCheckOnResume,
     super.key,
   });
 }
@@ -211,7 +538,8 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
   void didUpdateWidget(covariant DeveloperFeedbackTemplate oldWidget) {
     super.didUpdateWidget(oldWidget);
     final disabled = oldWidget.enabled && !widget.enabled;
-    final bridgeChanged = oldWidget.bridgeUrl.trim() != widget.bridgeUrl.trim();
+    final bridgeChanged =
+        _effectiveBridgeUrlFor(oldWidget) != _effectiveBridgeUrl;
     final sourceChanged = oldWidget.sourceApp != widget.sourceApp;
     final contextChanged =
         bridgeChanged ||
@@ -244,6 +572,7 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
     if (!widget.enabled) return widget.child;
     _scheduleNotificationRefresh();
     final safePadding = MediaQuery.paddingOf(context);
+    final bridgeAvailable = _effectiveBridgeUrl.isNotEmpty;
 
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -253,7 +582,23 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
 
         return Stack(
           children: <Widget>[
-            RepaintBoundary(key: _captureKey, child: widget.child),
+            RepaintBoundary(
+              key: _captureKey,
+              child: _DeveloperFeedbackAppUpdater(
+                enabled: _shouldEnableIntegratedAppUpdater,
+                sourceApp: widget.sourceApp,
+                bridgeUrl: _effectiveAppUpdaterBridgeUrl,
+                currentVersion: widget.appUpdaterCurrentVersion,
+                currentBuild: widget.appUpdaterCurrentBuild,
+                platform: widget.appUpdaterPlatform,
+                channel: widget.appUpdaterChannel,
+                requireChecksum: widget.appUpdaterRequireChecksum,
+                controller: widget.appUpdaterController,
+                checkOnStart: widget.appUpdaterCheckOnStart,
+                checkOnResume: widget.appUpdaterCheckOnResume,
+                child: widget.child,
+              ),
+            ),
             if (_editMode && !_dialogOpen)
               Positioned.fill(
                 child: _DrawingOverlay(
@@ -271,9 +616,9 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
                 bottom: safePadding.bottom + 128,
                 child: _SelectionActions(
                   onComment: () => _openFeedbackDialog(List.of(_drawing)),
-                  onQuickAsk: widget.bridgeUrl.trim().isEmpty
-                      ? null
-                      : () => _openQuickAskDialog(List.of(_drawing)),
+                  onQuickAsk: bridgeAvailable
+                      ? () => _openQuickAskDialog(List.of(_drawing))
+                      : () => _openBridgeUnavailableDialog(),
                   onReset: _resetDrawing,
                 ),
               ),
@@ -287,10 +632,10 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
                 child: _Toolbar(
                   expanded: _toolbarExpanded,
                   editMode: _editMode,
-                  compact: viewport.width < 360,
+                  compact: viewport.width < 600,
                   pendingCount: _items.length,
                   submittedCount: _submittedBatches.length,
-                  showHistory: widget.bridgeUrl.trim().isNotEmpty,
+                  bridgeAvailable: bridgeAvailable,
                   unreadNotificationCount: _unreadNotificationCount,
                   quickAskActivityCount: _quickAskActivityCount,
                   onEditModeChanged: (value) => setState(() {
@@ -305,15 +650,15 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
                   onOpenRuns: _submittedBatches.isEmpty
                       ? null
                       : _openRunsDialog,
-                  onOpenHistory: widget.bridgeUrl.trim().isEmpty
-                      ? null
-                      : _openHistoryDialog,
-                  onOpenNotifications: widget.bridgeUrl.trim().isEmpty
-                      ? null
-                      : _openNotificationCenterDialog,
-                  onOpenQuickAskHistory: widget.bridgeUrl.trim().isEmpty
-                      ? null
-                      : _openQuickAskHistoryDialog,
+                  onOpenHistory: bridgeAvailable
+                      ? _openHistoryDialog
+                      : _openBridgeUnavailableDialog,
+                  onOpenNotifications: bridgeAvailable
+                      ? _openNotificationCenterDialog
+                      : _openBridgeUnavailableDialog,
+                  onOpenQuickAskHistory: bridgeAvailable
+                      ? _openQuickAskHistoryDialog
+                      : _openBridgeUnavailableDialog,
                 ),
               ),
             ),
@@ -333,6 +678,31 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
     );
   }
 
+  String get _effectiveBridgeUrl => _effectiveBridgeUrlFor(widget);
+
+  String _effectiveBridgeUrlFor(DeveloperFeedbackTemplate value) {
+    return resolveDeveloperFeedbackBridgeUrl(
+      feedbackBridgeUrl: value.bridgeUrl,
+      appUpdaterBridgeUrl: value.appUpdaterBridgeUrl,
+    );
+  }
+
+  String get _effectiveAppUpdaterBridgeUrl {
+    return resolveCodexAppUpdaterBridgeUrl(
+      appUpdaterBridgeUrl: widget.appUpdaterBridgeUrl,
+      feedbackBridgeUrl: widget.bridgeUrl,
+    );
+  }
+
+  bool get _shouldEnableIntegratedAppUpdater {
+    return widget.appUpdaterEnabled &&
+        !kIsWeb &&
+        defaultTargetPlatform == TargetPlatform.android &&
+        widget.sourceApp.trim().isNotEmpty &&
+        widget.sourceApp.trim() != 'unknown' &&
+        _effectiveAppUpdaterBridgeUrl.isNotEmpty;
+  }
+
   BuildContext get _modalContext =>
       widget.navigatorKey?.currentState?.overlay?.context ??
       widget.navigatorKey?.currentContext ??
@@ -342,7 +712,7 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
     return mounted &&
         widget.enabled &&
         generation == _quickAskGeneration &&
-        widget.bridgeUrl.trim().isNotEmpty;
+        _effectiveBridgeUrl.isNotEmpty;
   }
 
   void _cancelQuickAskBackgroundWork() {
@@ -431,13 +801,13 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
         math.max(measured.height, collapsedEstimate.height),
       );
     }
-    const baseEstimate = Size(260, 48);
+    const baseEstimate = Size(360, 48);
     const pendingEstimate = Size(520, 48);
     final measured = _toolbarSize ?? Size.zero;
     final estimate =
         _items.isEmpty &&
             _submittedBatches.isEmpty &&
-            widget.bridgeUrl.trim().isEmpty
+            _effectiveBridgeUrl.isEmpty
         ? baseEstimate
         : pendingEstimate;
     return Size(
@@ -557,7 +927,11 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
   }
 
   Future<void> _openQuickAskDialog(List<Offset> points) async {
-    if (points.isEmpty || widget.bridgeUrl.trim().isEmpty) return;
+    if (points.isEmpty) return;
+    if (_effectiveBridgeUrl.isEmpty) {
+      _openBridgeUnavailableDialog();
+      return;
+    }
     final screenshotPngBase64 = await _captureMarkedScreenshot(points);
     if (!mounted) return;
     setState(() => _dialogOpen = true);
@@ -622,7 +996,7 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
     required String screenshotPngBase64,
     required List<Offset> points,
   }) async {
-    final baseUrl = widget.bridgeUrl.trim().replaceAll(RegExp(r'/$'), '');
+    final baseUrl = _effectiveBridgeUrl.replaceAll(RegExp(r'/$'), '');
     final ownsClient = widget.httpClient == null;
     final client = widget.httpClient ?? http.Client();
     final quickAskItem = DeveloperFeedbackItem(
@@ -883,10 +1257,10 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
   }
 
   Future<_DeveloperFeedbackWorkflowPresets> _loadWorkflowPresets() async {
-    if (widget.bridgeUrl.trim().isEmpty) {
+    if (_effectiveBridgeUrl.isEmpty) {
       return _DeveloperFeedbackWorkflowPresets.fallback();
     }
-    final baseUrl = widget.bridgeUrl.trim().replaceAll(RegExp(r'/$'), '');
+    final baseUrl = _effectiveBridgeUrl.replaceAll(RegExp(r'/$'), '');
     final ownsClient = widget.httpClient == null;
     final client = widget.httpClient ?? http.Client();
     try {
@@ -955,8 +1329,11 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
         return false;
       }
     }
-    if (widget.bridgeUrl.trim().isEmpty) return false;
-    final baseUrl = widget.bridgeUrl.trim().replaceAll(RegExp(r'/$'), '');
+    if (_effectiveBridgeUrl.isEmpty) {
+      _showBridgeUnavailableMessage();
+      return false;
+    }
+    final baseUrl = _effectiveBridgeUrl.replaceAll(RegExp(r'/$'), '');
     final ownsClient = widget.httpClient == null;
     final client = widget.httpClient ?? http.Client();
     try {
@@ -1336,7 +1713,7 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
                         final batchId = batch.batchId;
                         final canRefresh =
                             batchId != null &&
-                            widget.bridgeUrl.trim().isNotEmpty &&
+                            _effectiveBridgeUrl.isNotEmpty &&
                             !refreshing.contains(batchId);
                         return Row(
                           crossAxisAlignment: CrossAxisAlignment.center,
@@ -1413,7 +1790,7 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
   }
 
   Future<void> _refreshSubmittedBatch(String batchId) async {
-    final baseUrl = widget.bridgeUrl.trim().replaceAll(RegExp(r'/$'), '');
+    final baseUrl = _effectiveBridgeUrl.replaceAll(RegExp(r'/$'), '');
     final ownsClient = widget.httpClient == null;
     final client = widget.httpClient ?? http.Client();
     try {
@@ -1547,7 +1924,7 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
   }
 
   Future<List<_SubmittedFeedbackBatch>> _loadFeedbackHistory() async {
-    final baseUrl = widget.bridgeUrl.trim().replaceAll(RegExp(r'/$'), '');
+    final baseUrl = _effectiveBridgeUrl.replaceAll(RegExp(r'/$'), '');
     final ownsClient = widget.httpClient == null;
     final client = widget.httpClient ?? http.Client();
     try {
@@ -1660,7 +2037,7 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
   }
 
   Future<List<_QuickAskRecord>> _loadQuickAskHistory() async {
-    final baseUrl = widget.bridgeUrl.trim().replaceAll(RegExp(r'/$'), '');
+    final baseUrl = _effectiveBridgeUrl.replaceAll(RegExp(r'/$'), '');
     final ownsClient = widget.httpClient == null;
     final client = widget.httpClient ?? http.Client();
     try {
@@ -1834,7 +2211,7 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
   }
 
   Future<_QuickAskRecord> _loadQuickAskDetail(String quickAskId) async {
-    final baseUrl = widget.bridgeUrl.trim().replaceAll(RegExp(r'/$'), '');
+    final baseUrl = _effectiveBridgeUrl.replaceAll(RegExp(r'/$'), '');
     final ownsClient = widget.httpClient == null;
     final client = widget.httpClient ?? http.Client();
     try {
@@ -2025,7 +2402,7 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
   }
 
   Future<_SubmittedFeedbackBatch?> _markNotificationRead(String batchId) async {
-    final baseUrl = widget.bridgeUrl.trim().replaceAll(RegExp(r'/$'), '');
+    final baseUrl = _effectiveBridgeUrl.replaceAll(RegExp(r'/$'), '');
     final ownsClient = widget.httpClient == null;
     final client = widget.httpClient ?? http.Client();
     try {
@@ -2067,7 +2444,7 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
   }
 
   void _scheduleNotificationRefresh() {
-    if (_notificationRefreshScheduled || widget.bridgeUrl.trim().isEmpty) {
+    if (_notificationRefreshScheduled || _effectiveBridgeUrl.isEmpty) {
       return;
     }
     _notificationRefreshScheduled = true;
@@ -2140,6 +2517,148 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
         widget.scaffoldMessengerKey?.currentState ??
         ScaffoldMessenger.maybeOf(context);
     messenger?.showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  void _showBridgeUnavailableMessage() {
+    _showMessage(
+      'Bridge no configurado: definí CODEX_FEEDBACK_BRIDGE_URL o '
+      'CODEX_APP_UPDATER_BRIDGE_URL para usar esta acción.',
+    );
+  }
+
+  void _openBridgeUnavailableDialog() {
+    showDialog<void>(
+      context: _modalContext,
+      builder: (context) => AlertDialog(
+        key: developerFeedbackBridgeUnavailableKey,
+        title: const Text('Bridge no configurado'),
+        content: const Text(
+          'No se pudo obtener la URL de Codex Mobile Bridge. '
+          'Notificaciones, historial y preguntas rápidas necesitan Bridge. '
+          'Revisá CODEX_FEEDBACK_BRIDGE_URL o CODEX_APP_UPDATER_BRIDGE_URL '
+          'en el build de la app.',
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cerrar'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _DeveloperFeedbackAppUpdater extends StatefulWidget {
+  const _DeveloperFeedbackAppUpdater({
+    required this.enabled,
+    required this.sourceApp,
+    required this.bridgeUrl,
+    required this.currentVersion,
+    required this.currentBuild,
+    required this.platform,
+    required this.channel,
+    required this.requireChecksum,
+    required this.controller,
+    required this.checkOnStart,
+    required this.checkOnResume,
+    required this.child,
+  });
+
+  final bool enabled;
+  final String sourceApp;
+  final String bridgeUrl;
+  final String? currentVersion;
+  final int? currentBuild;
+  final String platform;
+  final String channel;
+  final bool requireChecksum;
+  final CodexAppUpdaterController? controller;
+  final bool checkOnStart;
+  final bool checkOnResume;
+  final Widget child;
+
+  @override
+  State<_DeveloperFeedbackAppUpdater> createState() =>
+      _DeveloperFeedbackAppUpdaterState();
+}
+
+class _DeveloperFeedbackAppUpdaterState
+    extends State<_DeveloperFeedbackAppUpdater> {
+  Future<PackageInfo>? _packageInfoFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _maybeLoadPackageInfo();
+  }
+
+  @override
+  void didUpdateWidget(covariant _DeveloperFeedbackAppUpdater oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.enabled != widget.enabled ||
+        oldWidget.currentVersion != widget.currentVersion ||
+        oldWidget.currentBuild != widget.currentBuild) {
+      _maybeLoadPackageInfo();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!widget.enabled) return widget.child;
+    final explicitVersion = widget.currentVersion?.trim();
+    final explicitBuild = widget.currentBuild;
+    if (explicitVersion != null &&
+        explicitVersion.isNotEmpty &&
+        explicitBuild != null) {
+      return _buildUpdater(explicitVersion, explicitBuild);
+    }
+    final packageInfoFuture = _packageInfoFuture;
+    if (packageInfoFuture == null) return widget.child;
+    return FutureBuilder<PackageInfo>(
+      future: packageInfoFuture,
+      builder: (context, snapshot) {
+        final packageInfo = snapshot.data;
+        if (packageInfo == null) return widget.child;
+        final version = explicitVersion?.isNotEmpty == true
+            ? explicitVersion!
+            : packageInfo.version;
+        final build = explicitBuild ?? int.tryParse(packageInfo.buildNumber);
+        if (version.trim().isEmpty || build == null) return widget.child;
+        return _buildUpdater(version, build);
+      },
+    );
+  }
+
+  void _maybeLoadPackageInfo() {
+    final explicitVersion = widget.currentVersion?.trim();
+    if (!widget.enabled ||
+        (explicitVersion != null &&
+            explicitVersion.isNotEmpty &&
+            widget.currentBuild != null)) {
+      _packageInfoFuture = null;
+      return;
+    }
+    _packageInfoFuture ??= PackageInfo.fromPlatform();
+  }
+
+  Widget _buildUpdater(String currentVersion, int currentBuild) {
+    return CodexAppUpdater(
+      config: CodexAppUpdaterConfig(
+        sourceApp: widget.sourceApp,
+        bridgeUrl: widget.bridgeUrl,
+        currentVersion: currentVersion,
+        currentBuild: currentBuild,
+        platform: widget.platform,
+        channel: widget.channel,
+        enabled: widget.enabled,
+        requireChecksum: widget.requireChecksum,
+      ),
+      controller: widget.controller,
+      checkOnStart: widget.checkOnStart,
+      checkOnResume: widget.checkOnResume,
+      child: widget.child,
+    );
   }
 }
 
@@ -2224,7 +2743,7 @@ class _Toolbar extends StatelessWidget {
     required this.compact,
     required this.pendingCount,
     required this.submittedCount,
-    required this.showHistory,
+    required this.bridgeAvailable,
     required this.unreadNotificationCount,
     required this.quickAskActivityCount,
     required this.onEditModeChanged,
@@ -2241,7 +2760,7 @@ class _Toolbar extends StatelessWidget {
   final bool compact;
   final int pendingCount;
   final int submittedCount;
-  final bool showHistory;
+  final bool bridgeAvailable;
   final int unreadNotificationCount;
   final int quickAskActivityCount;
   final ValueChanged<bool> onEditModeChanged;
@@ -2357,7 +2876,7 @@ class _Toolbar extends StatelessWidget {
                 ),
               ),
             ],
-            if (showHistory) ...<Widget>[
+            ...<Widget>[
               SizedBox(width: itemSpacing),
               IconButton(
                 key: developerFeedbackNotificationBellKey,
@@ -2365,7 +2884,9 @@ class _Toolbar extends StatelessWidget {
                 padding: buttonPadding,
                 tooltip: toolbarTooltip('Notificaciones'),
                 onPressed: onOpenNotifications,
-                icon: unreadNotificationCount > 0
+                icon: !bridgeAvailable
+                    ? const Icon(Icons.notifications_off_outlined)
+                    : unreadNotificationCount > 0
                     ? Badge.count(
                         count: unreadNotificationCount,
                         child: const Icon(Icons.notifications_outlined),
@@ -2378,7 +2899,9 @@ class _Toolbar extends StatelessWidget {
                 padding: buttonPadding,
                 tooltip: toolbarTooltip('Historial'),
                 onPressed: onOpenHistory,
-                icon: const Icon(Icons.history),
+                icon: Icon(
+                  bridgeAvailable ? Icons.history : Icons.history_toggle_off,
+                ),
               ),
               IconButton(
                 key: developerFeedbackQuickAskHistoryKey,
@@ -2386,7 +2909,9 @@ class _Toolbar extends StatelessWidget {
                 padding: buttonPadding,
                 tooltip: toolbarTooltip('Preguntas rápidas'),
                 onPressed: onOpenQuickAskHistory,
-                icon: quickAskActivityCount > 0
+                icon: !bridgeAvailable
+                    ? const Icon(Icons.manage_search)
+                    : quickAskActivityCount > 0
                     ? Badge.count(
                         count: quickAskActivityCount,
                         child: const Icon(Icons.manage_search),

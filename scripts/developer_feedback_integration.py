@@ -19,6 +19,9 @@ DEFAULT_ASSOCIATIONS = (
 )
 DEFAULT_REGISTRY = ROOT / "backend/app/infrastructure/config/app_updates.json"
 DEFAULT_COMPONENT = "codex_developer_feedback_template"
+MINIMUM_DEPENDENCY_REFS = {
+    "codex_developer_feedback_template": "codex-developer-feedback-template-v0.4.0",
+}
 
 
 class FeedbackIntegrationError(RuntimeError):
@@ -238,6 +241,25 @@ def check_pubspec(component: Component, app: AssociatedApp) -> list[Check]:
         )
     else:
         checks.append(Check("dependency_ref", "pass", ref))
+        minimum_ref = MINIMUM_DEPENDENCY_REFS.get(component.name)
+        if minimum_ref and dependency_ref_is_older(
+            ref,
+            minimum_ref,
+            component.dependency_ref_prefix,
+        ):
+            checks.append(
+                Check(
+                    "dependency_ref_minimum",
+                    "fail",
+                    (
+                        f"{ref!r} is too old; upgrade to {minimum_ref!r} or newer "
+                        "so feedback, updater, bridge diagnostics, and role gate "
+                        "come from the reusable template."
+                    ),
+                )
+            )
+        elif minimum_ref:
+            checks.append(Check("dependency_ref_minimum", "pass", minimum_ref))
 
     package_path = yaml_scalar(block, "path")
     if package_path == "packages/codex_developer_feedback_template":
@@ -264,6 +286,24 @@ def dependency_block(text: str, dependency_name: str) -> str | None:
 def yaml_scalar(text: str, key: str) -> str | None:
     match = re.search(rf"(?m)^\s+{re.escape(key)}:\s*(.+?)\s*$", text)
     return match.group(1).strip("'\"") if match else None
+
+
+def dependency_ref_is_older(ref: str, minimum_ref: str, prefix: str) -> bool:
+    current_version = dependency_ref_version(ref, prefix)
+    minimum_version = dependency_ref_version(minimum_ref, prefix)
+    if current_version is None or minimum_version is None:
+        return True
+    return current_version < minimum_version
+
+
+def dependency_ref_version(ref: str, prefix: str) -> tuple[int, ...] | None:
+    if prefix and not ref.startswith(prefix):
+        return None
+    raw = ref[len(prefix) :] if prefix else ref
+    match = re.match(r"^(\d+(?:\.\d+)*)", raw)
+    if not match:
+        return None
+    return tuple(int(part) for part in match.group(1).split("."))
 
 
 def check_app_code(app: AssociatedApp) -> list[Check]:
@@ -313,6 +353,66 @@ def check_app_code(app: AssociatedApp) -> list[Check]:
     else:
         checks.append(
             Check("bridge_url", "fail", "Wrapper should use developerFeedbackBridgeUrl")
+        )
+
+    if "appUpdaterBridgeUrl:" in text or "developerFeedbackAppUpdaterBridgeUrl" in text:
+        checks.append(
+            Check(
+                "template_updater_bridge",
+                "pass",
+                "feedback template receives updater Bridge URL",
+            )
+        )
+    elif "CODEX_APP_UPDATER_BRIDGE_URL" in text:
+        checks.append(
+            Check(
+                "template_updater_bridge",
+                "warn",
+                (
+                    "CODEX_APP_UPDATER_BRIDGE_URL is present, but pass "
+                    "appUpdaterBridgeUrl into DeveloperFeedbackTemplate when the "
+                    "app resolves updater URLs in code."
+                ),
+            )
+        )
+    else:
+        checks.append(
+            Check(
+                "template_updater_bridge",
+                "fail",
+                (
+                    "Missing appUpdaterBridgeUrl/template updater configuration; "
+                    "updates must be driven by codex_developer_feedback_template."
+                ),
+            )
+        )
+
+    if "CodexAppUpdater(" in text:
+        checks.append(
+            Check(
+                "app_level_updater",
+                "fail",
+                (
+                    "Remove app-level CodexAppUpdater wrapper; updater must be "
+                    "embedded through codex_developer_feedback_template."
+                ),
+            )
+        )
+    else:
+        checks.append(Check("app_level_updater", "pass", "no app-level updater wrapper"))
+
+    if "CodexDeveloperRoleGate(" in text:
+        checks.append(Check("role_gate", "pass", "reusable role gate wrapper"))
+    else:
+        checks.append(
+            Check(
+                "role_gate",
+                "fail",
+                (
+                    "Missing CodexDeveloperRoleGate; default admin/role login must "
+                    "come from codex_developer_feedback_template."
+                ),
+            )
         )
     return checks
 
