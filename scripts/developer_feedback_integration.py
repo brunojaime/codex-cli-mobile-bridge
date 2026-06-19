@@ -19,8 +19,16 @@ DEFAULT_ASSOCIATIONS = (
 )
 DEFAULT_REGISTRY = ROOT / "backend/app/infrastructure/config/app_updates.json"
 DEFAULT_COMPONENT = "codex_developer_feedback_template"
-MINIMUM_DEPENDENCY_REFS = {
+LATEST_DEPENDENCY_REFS = {
     "codex_developer_feedback_template": "codex-developer-feedback-template-v0.4.3",
+}
+COORDINATED_DEPENDENCIES = {
+    "codex_developer_feedback_template": {
+        "codex_app_updater": {
+            "path": "packages/codex_app_updater",
+            "ref": "afbefbb7a6b1f8a928af07d2889a266a45eaba82",
+        },
+    },
 }
 
 
@@ -241,10 +249,25 @@ def check_pubspec(component: Component, app: AssociatedApp) -> list[Check]:
         )
     else:
         checks.append(Check("dependency_ref", "pass", ref))
-        minimum_ref = MINIMUM_DEPENDENCY_REFS.get(component.name)
-        if minimum_ref and dependency_ref_is_older(
+        latest_ref = LATEST_DEPENDENCY_REFS.get(component.name)
+        if latest_ref and ref != latest_ref:
+            checks.append(
+                Check(
+                    "dependency_ref_latest",
+                    "fail",
+                    (
+                        f"{ref!r} is not the approved latest ref; upgrade to "
+                        f"{latest_ref!r} so feedback editing, updater, bridge "
+                        "diagnostics, and role gate come from one reusable template."
+                    ),
+                )
+            )
+        elif latest_ref:
+            checks.append(Check("dependency_ref_latest", "pass", latest_ref))
+
+        if latest_ref and dependency_ref_is_older(
             ref,
-            minimum_ref,
+            latest_ref,
             component.dependency_ref_prefix,
         ):
             checks.append(
@@ -252,14 +275,14 @@ def check_pubspec(component: Component, app: AssociatedApp) -> list[Check]:
                     "dependency_ref_minimum",
                     "fail",
                     (
-                        f"{ref!r} is too old; upgrade to {minimum_ref!r} or newer "
+                        f"{ref!r} is too old; upgrade to {latest_ref!r} "
                         "so feedback, updater, bridge diagnostics, and role gate "
                         "come from the reusable template."
                     ),
                 )
             )
-        elif minimum_ref:
-            checks.append(Check("dependency_ref_minimum", "pass", minimum_ref))
+        elif latest_ref:
+            checks.append(Check("dependency_ref_minimum", "pass", latest_ref))
 
     package_path = yaml_scalar(block, "path")
     if package_path == "packages/codex_developer_feedback_template":
@@ -272,6 +295,55 @@ def check_pubspec(component: Component, app: AssociatedApp) -> list[Check]:
                 "Expected path packages/codex_developer_feedback_template",
             )
         )
+    checks.extend(check_coordinated_dependencies(component, text))
+    return checks
+
+
+def check_coordinated_dependencies(component: Component, pubspec_text: str) -> list[Check]:
+    checks: list[Check] = []
+    requirements = COORDINATED_DEPENDENCIES.get(component.name, {})
+    for dependency_name, requirement in requirements.items():
+        block = dependency_block(pubspec_text, dependency_name)
+        if block is None:
+            checks.append(
+                Check(
+                    f"{dependency_name}_ref",
+                    "pass",
+                    f"{dependency_name} is inherited from {component.dependency_name}",
+                )
+            )
+            continue
+
+        expected_ref = str(requirement["ref"])
+        actual_ref = yaml_scalar(block, "ref")
+        if actual_ref == expected_ref:
+            checks.append(Check(f"{dependency_name}_ref", "pass", expected_ref))
+        else:
+            checks.append(
+                Check(
+                    f"{dependency_name}_ref",
+                    "fail",
+                    (
+                        f"{dependency_name} must use ref {expected_ref!r}; found "
+                        f"{actual_ref!r}. Keep direct updater dependencies aligned "
+                        "with the feedback template commit so background updates "
+                        "cannot drift."
+                    ),
+                )
+            )
+
+        expected_path = str(requirement["path"])
+        actual_path = yaml_scalar(block, "path")
+        if actual_path == expected_path:
+            checks.append(Check(f"{dependency_name}_path", "pass", expected_path))
+        else:
+            checks.append(
+                Check(
+                    f"{dependency_name}_path",
+                    "fail",
+                    f"{dependency_name} must use path {expected_path!r}.",
+                )
+            )
     return checks
 
 

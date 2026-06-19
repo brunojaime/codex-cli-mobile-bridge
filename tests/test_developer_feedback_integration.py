@@ -82,7 +82,44 @@ def test_doctor_fails_when_template_ref_is_too_old(tmp_path: Path) -> None:
     )
 
     failed = [check for check in report.checks if check.status == "fail"]
+    assert any(check.name == "dependency_ref_latest" for check in failed)
     assert any(check.name == "dependency_ref_minimum" for check in failed)
+    assert not report.ok
+
+
+def test_doctor_fails_when_template_ref_is_not_latest(tmp_path: Path) -> None:
+    fixture = _write_fixture(tmp_path, dependency_ref="codex-developer-feedback-template-v0.4.2")
+    component = feedback.load_component(fixture.associations, "codex_developer_feedback_template")
+    report = feedback.build_report(
+        component=component,
+        app=component.apps[0],
+        registry=feedback.load_registry(fixture.registry),
+        workspace_aliases={"fixture-app": str(fixture.app_repo)},
+    )
+
+    failed = [check for check in report.checks if check.status == "fail"]
+    assert any(check.name == "dependency_ref_latest" for check in failed)
+    assert not report.ok
+
+
+def test_doctor_fails_when_direct_updater_ref_is_not_coordinated(
+    tmp_path: Path,
+) -> None:
+    fixture = _write_fixture(
+        tmp_path,
+        include_updater_dependency=True,
+        updater_dependency_ref="codex-app-updater-v0.1.2",
+    )
+    component = feedback.load_component(fixture.associations, "codex_developer_feedback_template")
+    report = feedback.build_report(
+        component=component,
+        app=component.apps[0],
+        registry=feedback.load_registry(fixture.registry),
+        workspace_aliases={"fixture-app": str(fixture.app_repo)},
+    )
+
+    failed = [check for check in report.checks if check.status == "fail"]
+    assert any(check.name == "codex_app_updater_ref" for check in failed)
     assert not report.ok
 
 
@@ -224,6 +261,8 @@ def _write_fixture(
     unsafe_wrapper: bool = False,
     conditional_wrapper: bool = False,
     dependency_ref: str = "codex-developer-feedback-template-v0.4.3",
+    include_updater_dependency: bool = False,
+    updater_dependency_ref: str = "afbefbb7a6b1f8a928af07d2889a266a45eaba82",
 ) -> Fixture:
     app_repo = tmp_path / "fixture_app"
     app_dir = app_repo / "frontend"
@@ -233,6 +272,8 @@ def _write_fixture(
         app_dir / "pubspec.yaml",
         include_dependency=include_dependency,
         dependency_ref=dependency_ref,
+        include_updater_dependency=include_updater_dependency,
+        updater_dependency_ref=updater_dependency_ref,
     )
     _write_main(
         app_dir / "lib/main.dart",
@@ -302,6 +343,8 @@ def _write_pubspec(
     *,
     include_dependency: bool,
     dependency_ref: str,
+    include_updater_dependency: bool,
+    updater_dependency_ref: str,
 ) -> None:
     dependency = (
         f"""
@@ -314,6 +357,17 @@ def _write_pubspec(
         if include_dependency
         else ""
     )
+    updater_dependency = (
+        f"""
+  codex_app_updater:
+    git:
+      url: https://github.com/brunojaime/codex-cli-mobile-bridge.git
+      path: packages/codex_app_updater
+      ref: {updater_dependency_ref}
+"""
+        if include_updater_dependency
+        else ""
+    )
     path.write_text(
         f"""
 name: fixture_app
@@ -322,6 +376,7 @@ dependencies:
   flutter:
     sdk: flutter
 {dependency}
+{updater_dependency}
 """.lstrip()
     )
 
