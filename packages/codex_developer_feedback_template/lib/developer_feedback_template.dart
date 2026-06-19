@@ -578,7 +578,7 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
 
   @override
   Widget build(BuildContext context) {
-    if (!widget.enabled) return widget.child;
+    if (!widget.enabled) return _appContent;
     _scheduleNotificationRefresh();
     final safePadding = MediaQuery.paddingOf(context);
     final bridgeAvailable = _effectiveBridgeUrl.isNotEmpty;
@@ -591,23 +591,7 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
 
         return Stack(
           children: <Widget>[
-            RepaintBoundary(
-              key: _captureKey,
-              child: _DeveloperFeedbackAppUpdater(
-                enabled: _shouldEnableIntegratedAppUpdater,
-                sourceApp: widget.sourceApp,
-                bridgeUrl: _effectiveAppUpdaterBridgeUrl,
-                currentVersion: widget.appUpdaterCurrentVersion,
-                currentBuild: widget.appUpdaterCurrentBuild,
-                platform: widget.appUpdaterPlatform,
-                channel: widget.appUpdaterChannel,
-                requireChecksum: widget.appUpdaterRequireChecksum,
-                controller: widget.appUpdaterController,
-                checkOnStart: widget.appUpdaterCheckOnStart,
-                checkOnResume: widget.appUpdaterCheckOnResume,
-                child: widget.child,
-              ),
-            ),
+            RepaintBoundary(key: _captureKey, child: _appContent),
             if (_editMode && !_dialogOpen)
               Positioned.fill(
                 child: _DrawingOverlay(
@@ -674,6 +658,23 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
           ],
         );
       },
+    );
+  }
+
+  Widget get _appContent {
+    return _DeveloperFeedbackAppUpdater(
+      enabled: _shouldEnableIntegratedAppUpdater,
+      sourceApp: widget.sourceApp,
+      bridgeUrl: _effectiveAppUpdaterBridgeUrl,
+      currentVersion: widget.appUpdaterCurrentVersion,
+      currentBuild: widget.appUpdaterCurrentBuild,
+      platform: widget.appUpdaterPlatform,
+      channel: widget.appUpdaterChannel,
+      requireChecksum: widget.appUpdaterRequireChecksum,
+      controller: widget.appUpdaterController,
+      checkOnStart: widget.appUpdaterCheckOnStart,
+      checkOnResume: widget.appUpdaterCheckOnResume,
+      child: widget.child,
     );
   }
 

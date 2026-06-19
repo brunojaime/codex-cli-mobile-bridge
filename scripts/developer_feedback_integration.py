@@ -20,7 +20,7 @@ DEFAULT_ASSOCIATIONS = (
 DEFAULT_REGISTRY = ROOT / "backend/app/infrastructure/config/app_updates.json"
 DEFAULT_COMPONENT = "codex_developer_feedback_template"
 MINIMUM_DEPENDENCY_REFS = {
-    "codex_developer_feedback_template": "codex-developer-feedback-template-v0.4.2",
+    "codex_developer_feedback_template": "codex-developer-feedback-template-v0.4.3",
 }
 
 

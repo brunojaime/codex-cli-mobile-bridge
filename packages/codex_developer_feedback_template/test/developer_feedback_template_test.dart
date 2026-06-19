@@ -147,6 +147,56 @@ void main() {
     }
   });
 
+  testWidgets(
+    'integrated updater still runs when feedback overlay is disabled',
+    (tester) async {
+      PackageInfo.setMockInitialValues(
+        appName: 'Template test',
+        packageName: 'com.codex.template.test',
+        version: '1.0.0',
+        buildNumber: '89',
+        buildSignature: '',
+      );
+      addTearDown(() {
+        PackageInfo.setMockInitialValues(
+          appName: '',
+          packageName: '',
+          version: '',
+          buildNumber: '',
+          buildSignature: '',
+        );
+      });
+      final controller = CodexAppUpdaterController(
+        httpClient: MockClient(
+          (_) async => http.Response(
+            jsonEncode(_appUpdateJson(currentBuild: 89, latestBuild: 90)),
+            200,
+          ),
+        ),
+      );
+      addTearDown(controller.dispose);
+
+      debugDefaultTargetPlatformOverride = TargetPlatform.android;
+      try {
+        await tester.pumpWidget(
+          _Harness(
+            enabled: false,
+            sourceApp: 'test-app',
+            appUpdaterBridgeUrl: 'http://bridge.local',
+            appUpdaterController: controller,
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        expect(find.byKey(developerFeedbackToolbarKey), findsNothing);
+        expect(find.byKey(codexAppUpdaterBannerKey), findsOneWidget);
+        expect(controller.status, CodexAppUpdateStatus.updateAvailable);
+      } finally {
+        debugDefaultTargetPlatformOverride = null;
+      }
+    },
+  );
+
   testWidgets('role gate allows default admin role login', (tester) async {
     DeveloperFeedbackRoleSession? captured;
     await tester.pumpWidget(

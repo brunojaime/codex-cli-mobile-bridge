@@ -207,7 +207,7 @@ def _write_fixture(
     include_wrapper: bool = True,
     include_role_gate: bool = True,
     unsafe_wrapper: bool = False,
-    dependency_ref: str = "codex-developer-feedback-template-v0.4.2",
+    dependency_ref: str = "codex-developer-feedback-template-v0.4.3",
 ) -> Fixture:
     app_repo = tmp_path / "fixture_app"
     app_dir = app_repo / "frontend"
