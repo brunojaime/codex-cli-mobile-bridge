@@ -26,7 +26,7 @@ COORDINATED_DEPENDENCIES = {
     "codex_developer_feedback_template": {
         "codex_app_updater": {
             "path": "packages/codex_app_updater",
-            "ref": "afbefbb7a6b1f8a928af07d2889a266a45eaba82",
+            "ref": "7cdbda6a605bc4623df9b581b9c37757562a0d67",
         },
     },
 }
