@@ -140,12 +140,10 @@ def test_doctor_warns_strict_failure_when_wrapper_wraps_material_app(
     assert "wrapper_placement" in strict.stdout
 
 
-def test_workspace_alias_warning_is_strict_failure_only_in_strict_mode(
-    tmp_path: Path,
-) -> None:
+def test_registered_local_path_satisfies_workspace_mapping(tmp_path: Path) -> None:
     fixture = _write_fixture(tmp_path, source_app="fixture-mobile")
 
-    relaxed = _run_script(
+    result = _run_script(
         [
             "--associations",
             str(fixture.associations),
@@ -155,24 +153,12 @@ def test_workspace_alias_warning_is_strict_failure_only_in_strict_mode(
         ],
         check=True,
     )
-    report = json.loads(relaxed.stdout)[0]
+    report = json.loads(result.stdout)[0]
     assert report["ok"] is True
     assert any(
-        check["name"] == "workspace_alias" and check["status"] == "warn"
+        check["name"] == "workspace_alias" and check["status"] == "pass"
         for check in report["checks"]
     )
-
-    strict = _run_script(
-        [
-            "--associations",
-            str(fixture.associations),
-            "--registry",
-            str(fixture.registry),
-            "--strict",
-        ],
-        check=False,
-    )
-    assert strict.returncode == 1
 
 
 def test_selecting_unknown_app_fails(tmp_path: Path) -> None:

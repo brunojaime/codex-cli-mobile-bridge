@@ -464,6 +464,8 @@ def check_workspace_alias(app: AssociatedApp, aliases: dict[str, str]) -> Check:
             "warn",
             f"Alias for {app.source_app} points to missing path {path}",
         )
+    if app.local_path.exists():
+        return Check("workspace_alias", "pass", f"registered localPath {app.local_path}")
     normalized_source = normalize_key(app.source_app)
     local_parts = {normalize_key(part) for part in app.local_path.parts}
     if normalized_source in local_parts:
