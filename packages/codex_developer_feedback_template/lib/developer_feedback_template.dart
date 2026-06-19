@@ -441,6 +441,7 @@ class DeveloperFeedbackTemplate extends StatefulWidget {
     this.bridgeSubmitBatch,
     this.contextMetadataBuilder,
     this.httpClient,
+    this.initialEditMode = false,
     this.appUpdaterEnabled = true,
     this.appUpdaterBridgeUrl = developerFeedbackAppUpdaterBridgeUrl,
     this.appUpdaterCurrentVersion,
@@ -467,6 +468,7 @@ class DeveloperFeedbackTemplate extends StatefulWidget {
   final DeveloperFeedbackBridgeSubmitBatch? bridgeSubmitBatch;
   final DeveloperFeedbackContextMetadataBuilder? contextMetadataBuilder;
   final http.Client? httpClient;
+  final bool initialEditMode;
   final bool appUpdaterEnabled;
   final String appUpdaterBridgeUrl;
   final String? appUpdaterCurrentVersion;
@@ -498,6 +500,7 @@ class CodexDeveloperFeedbackTemplate extends DeveloperFeedbackTemplate {
     super.bridgeSubmitBatch,
     super.contextMetadataBuilder,
     super.httpClient,
+    super.initialEditMode,
     super.appUpdaterEnabled,
     super.appUpdaterBridgeUrl,
     super.appUpdaterCurrentVersion,
@@ -533,6 +536,12 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
   var _drawing = <Offset>[];
   Offset? _toolbarOffset;
   Size? _toolbarSize;
+
+  @override
+  void initState() {
+    super.initState();
+    _editMode = widget.initialEditMode;
+  }
 
   @override
   void didUpdateWidget(covariant DeveloperFeedbackTemplate oldWidget) {
