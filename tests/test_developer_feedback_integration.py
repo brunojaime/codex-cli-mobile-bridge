@@ -101,6 +101,21 @@ def test_doctor_fails_when_role_gate_is_missing(tmp_path: Path) -> None:
     assert not report.ok
 
 
+def test_doctor_fails_when_template_is_conditionally_mounted(tmp_path: Path) -> None:
+    fixture = _write_fixture(tmp_path, conditional_wrapper=True)
+    component = feedback.load_component(fixture.associations, "codex_developer_feedback_template")
+    report = feedback.build_report(
+        component=component,
+        app=component.apps[0],
+        registry=feedback.load_registry(fixture.registry),
+        workspace_aliases={"fixture-app": str(fixture.app_repo)},
+    )
+
+    failed = [check for check in report.checks if check.status == "fail"]
+    assert any(check.name == "template_always_mounted" for check in failed)
+    assert not report.ok
+
+
 def test_doctor_warns_strict_failure_when_wrapper_wraps_material_app(
     tmp_path: Path,
 ) -> None:
@@ -207,6 +222,7 @@ def _write_fixture(
     include_wrapper: bool = True,
     include_role_gate: bool = True,
     unsafe_wrapper: bool = False,
+    conditional_wrapper: bool = False,
     dependency_ref: str = "codex-developer-feedback-template-v0.4.3",
 ) -> Fixture:
     app_repo = tmp_path / "fixture_app"
@@ -225,6 +241,7 @@ def _write_fixture(
         include_wrapper=include_wrapper,
         include_role_gate=include_role_gate,
         unsafe_wrapper=unsafe_wrapper,
+        conditional_wrapper=conditional_wrapper,
     )
     (app_dir / "test/widget_test.dart").write_text(
         f"""
@@ -317,6 +334,7 @@ def _write_main(
     include_wrapper: bool,
     include_role_gate: bool,
     unsafe_wrapper: bool,
+    conditional_wrapper: bool,
 ) -> None:
     safe_wrapper = """
 MaterialApp(
@@ -350,6 +368,26 @@ CodexDeveloperRoleGate(
   ),
 )
 """
+    conditional = """
+MaterialApp(
+  builder: (context, child) {
+    Widget wrapped = child ?? const SizedBox.shrink();
+    wrapped = CodexDeveloperRoleGate(child: wrapped);
+    if (developerFeedbackTemplateEnabled) {
+      wrapped = DeveloperFeedbackTemplate(
+        enabled: true,
+        sourceApp: _feedbackSourceApp,
+        sourceDisplayName: _feedbackSourceDisplayName,
+        bridgeUrl: developerFeedbackBridgeUrl,
+        appUpdaterBridgeUrl: developerFeedbackAppUpdaterBridgeUrl,
+        child: wrapped,
+      );
+    }
+    return wrapped;
+  },
+  home: const SizedBox.shrink(),
+)
+"""
     unsafe = """
 CodexDeveloperRoleGate(
   child: DeveloperFeedbackTemplate(
@@ -365,6 +403,8 @@ CodexDeveloperRoleGate(
     wrapper = (
         unsafe
         if unsafe_wrapper
+        else conditional
+        if conditional_wrapper
         else safe_wrapper
         if include_wrapper and not include_role_gate
         else role_gate_wrapper

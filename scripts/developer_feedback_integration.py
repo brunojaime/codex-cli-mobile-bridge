@@ -323,6 +323,7 @@ def check_app_code(app: AssociatedApp) -> list[Check]:
     if "DeveloperFeedbackTemplate(" in text or "CodexDeveloperFeedbackTemplate(" in text:
         checks.append(Check("wrapper", "pass", "feedback template wrapper"))
         checks.append(check_wrapper_placement(text))
+        checks.append(check_template_always_mounted(text))
     else:
         checks.append(Check("wrapper", "fail", "Missing feedback template wrapper"))
 
@@ -433,6 +434,33 @@ def check_wrapper_placement(text: str) -> Check:
         "wrapper_placement",
         "pass",
         "feedback template is not wrapping MaterialApp directly",
+    )
+
+
+def check_template_always_mounted(text: str) -> Check:
+    conditional_pattern = (
+        r"if\s*\("
+        r"(?s:[^)]*)"
+        r"(?:developerFeedbackTemplateEnabled|feedbackTemplateEnabled|feedbackEnabled)"
+        r"(?s:[^)]*)"
+        r"\)\s*\{"
+        r"(?s:.{0,600})"
+        r"(?:Codex)?DeveloperFeedbackTemplate\s*\("
+    )
+    if re.search(conditional_pattern, text):
+        return Check(
+            "template_always_mounted",
+            "fail",
+            (
+                "DeveloperFeedbackTemplate must always be mounted; pass the "
+                "feedback flag to enabled: so updater, bridge diagnostics, and "
+                "role support remain active when feedback tools are hidden."
+            ),
+        )
+    return Check(
+        "template_always_mounted",
+        "pass",
+        "feedback template is always mounted",
     )
 
 
