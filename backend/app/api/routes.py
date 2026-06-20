@@ -317,14 +317,13 @@ async def get_app_update(
     apk_url = None
     response_channel = result.release_channel or channel
     if result.available and result.release_tag and result.apk_asset_name:
-        apk_url = str(
-            request.url_for(
-                "download_app_update_apk",
-                source_app=result.source_app,
-                release_tag=result.release_tag,
-                asset_name=result.apk_asset_name,
-            ).include_query_params(platform=platform, channel=response_channel),
-        )
+        generated_apk_url = request.url_for(
+            "download_app_update_apk",
+            source_app=result.source_app,
+            release_tag=result.release_tag,
+            asset_name=result.apk_asset_name,
+        ).include_query_params(platform=platform, channel=response_channel)
+        apk_url = _preserve_api_v1_prefix(request, str(generated_apk_url))
     return _app_update_response(result, apk_url=apk_url)
 
 
@@ -2490,6 +2489,16 @@ def _app_update_response(
         required=result.required,
         available=result.available,
     )
+
+
+def _preserve_api_v1_prefix(request: Request, url: str) -> str:
+    if not request.url.path.startswith("/api/v1/"):
+        return url
+    origin = str(request.base_url).rstrip("/")
+    root_path = f"{origin}/app-updates/"
+    if url.startswith(root_path):
+        return f"{origin}/api/v1/app-updates/{url[len(root_path):]}"
+    return url
 
 
 def _apk_download_headers(

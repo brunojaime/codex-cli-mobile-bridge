@@ -56,6 +56,40 @@ def test_known_app_with_newer_release_returns_update(tmp_path: Path) -> None:
     assert payload["releaseNotes"] == "Cambios disponibles."
 
 
+def test_api_v1_prefix_serves_health_update_and_apk_proxy(tmp_path: Path) -> None:
+    asset = _apk_asset("ambientando-calendar-1.0.0-build.40.apk")
+    github_client = _FakeGitHubReleaseClient(
+        [
+            _release(
+                "android-v1.0.0-build.40",
+                assets=[asset],
+            ),
+        ],
+        asset_content=b"PK\x03\x04fake apk",
+    )
+    client = _build_app_update_client(tmp_path, releases=github_client)
+
+    health_response = client.get("/api/v1/health")
+    update_response = client.get(
+        "/api/v1/app-updates/ambientando-calendar",
+        params={"currentVersion": "1.0.0", "currentBuild": 39},
+    )
+    apk_response = client.head(
+        "/api/v1/app-updates/ambientando-calendar/apk/"
+        "android-v1.0.0-build.40/ambientando-calendar-1.0.0-build.40.apk",
+    )
+
+    assert health_response.status_code == 200
+    assert update_response.status_code == 200
+    assert update_response.json()["apkUrl"].startswith(
+        "http://testserver/api/v1/app-updates/"
+    )
+    assert apk_response.status_code == 200
+    assert apk_response.headers["content-type"] == (
+        "application/vnd.android.package-archive"
+    )
+
+
 def test_xr18_app_update_uses_android_release_tags(tmp_path: Path) -> None:
     client = _build_app_update_client(
         tmp_path,
