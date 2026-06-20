@@ -27,6 +27,10 @@ COORDINATED_DEPENDENCIES = {
         "codex_app_updater": {
             "path": "packages/codex_app_updater",
             "ref": "codex-developer-feedback-template-v0.4.6",
+            "allowedRefs": [
+                "codex-developer-feedback-template-v0.4.6",
+                "febcc99c007d3c1c5e531b6b635e21b92268c2df",
+            ],
         },
     },
 }
@@ -316,8 +320,9 @@ def check_coordinated_dependencies(component: Component, pubspec_text: str) -> l
 
         expected_ref = str(requirement["ref"])
         actual_ref = yaml_scalar(block, "ref")
-        if actual_ref == expected_ref:
-            checks.append(Check(f"{dependency_name}_ref", "pass", expected_ref))
+        allowed_refs = tuple(str(item) for item in requirement.get("allowedRefs", [expected_ref]))
+        if actual_ref in allowed_refs:
+            checks.append(Check(f"{dependency_name}_ref", "pass", actual_ref or ""))
         else:
             checks.append(
                 Check(
