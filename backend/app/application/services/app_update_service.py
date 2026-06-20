@@ -22,6 +22,7 @@ class AppUpdateConfig:
     latest_asset_name: str | None
     required_minimum_build: int | None
     enabled: bool
+    release_channel: str = "stable"
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,6 +60,9 @@ class AppUpdateResult:
     sha256: str | None
     size_bytes: int | None
     release_notes: str | None
+    release_channel: str
+    release_prerelease: bool
+    private_install: bool
     required: bool
     available: bool
 
@@ -231,6 +235,9 @@ class AppUpdateRegistry:
                     else None
                 ),
                 enabled=bool(raw_config.get("enabled", True)),
+                release_channel=_validate_release_channel_value(
+                    str(raw_config.get("releaseChannel", "stable"))
+                ),
             )
         return cls(configs)
 
@@ -273,7 +280,8 @@ class AppUpdateService:
         _validate_channel(channel)
 
         config = self._registry.get(source_app)
-        latest = self._latest_valid_release(config, channel=channel)
+        effective_channel = _effective_channel(config, requested_channel=channel)
+        latest = self._latest_valid_release(config, channel=effective_channel)
         if latest is None:
             return _empty_result(
                 config,
@@ -308,6 +316,9 @@ class AppUpdateService:
             sha256=_sha256_for_asset(release.assets, apk_asset) if available else None,
             size_bytes=apk_asset.size if available else None,
             release_notes=release.body if available else None,
+            release_channel=effective_channel,
+            release_prerelease=release.prerelease,
+            private_install=effective_channel == "private-install",
             required=required,
             available=available,
         )
@@ -329,12 +340,13 @@ class AppUpdateService:
                 f"{source_app}:{release_tag}:{asset_name}"
             )
         config = self._registry.get(source_app)
+        effective_channel = _effective_channel(config, requested_channel=channel)
         for release in self._release_client.list_releases(config.repo):
             if release.tag_name != release_tag:
                 continue
             if (
                 release.draft
-                or not _release_allowed_for_channel(release, channel)
+                or not _release_allowed_for_channel(release, effective_channel)
                 or not fnmatch.fnmatch(release.tag_name, config.release_tag_pattern)
             ):
                 break
@@ -420,6 +432,9 @@ def _empty_result(
         sha256=None,
         size_bytes=None,
         release_notes=None,
+        release_channel=config.release_channel,
+        release_prerelease=False,
+        private_install=config.release_channel == "private-install",
         required=False,
         available=False,
     )
@@ -470,7 +485,7 @@ def _select_apk_asset(
 
 
 def _validate_channel(channel: str) -> None:
-    if channel not in {"stable", "prerelease", "all"}:
+    if channel not in {"stable", "prerelease", "private-install", "all"}:
         raise ValueError("Unsupported app update channel.")
 
 
@@ -478,9 +493,23 @@ def _release_allowed_for_channel(release: GitHubRelease, channel: str) -> bool:
     _validate_channel(channel)
     if channel == "stable":
         return not release.prerelease
-    if channel == "prerelease":
+    if channel in {"prerelease", "private-install"}:
         return release.prerelease
     return True
+
+
+def _validate_release_channel_value(channel: str) -> str:
+    _validate_channel(channel)
+    if channel == "all":
+        raise ValueError("App update releaseChannel cannot be 'all'.")
+    return channel
+
+
+def _effective_channel(config: AppUpdateConfig, *, requested_channel: str) -> str:
+    _validate_channel(requested_channel)
+    if requested_channel == "stable" and config.release_channel != "stable":
+        return config.release_channel
+    return requested_channel
 
 
 def _is_safe_asset_name(asset_name: str) -> bool:

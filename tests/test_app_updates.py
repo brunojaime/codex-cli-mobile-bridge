@@ -258,6 +258,47 @@ def test_drafts_prereleases_and_invalid_assets_are_ignored(tmp_path: Path) -> No
     assert payload["releaseTag"] == "android-v1.0.0-build.47"
 
 
+def test_private_install_config_returns_prerelease_update_by_default(
+    tmp_path: Path,
+) -> None:
+    client = _build_app_update_client(
+        tmp_path,
+        source_app="smart-nienfos-moldegon",
+        display_name="Moldegon",
+        repo="brunojaime/smart_nienfos",
+        release_tag_pattern="moldegon-android-v*",
+        apk_asset_pattern="smart-nienfos-moldegon-*.apk",
+        latest_asset_name="smart-nienfos-moldegon.apk",
+        release_channel="private-install",
+        releases=[
+            _release(
+                "moldegon-android-v1.0.0-build.8",
+                assets=[_apk_asset("smart-nienfos-moldegon.apk")],
+                prerelease=True,
+            ),
+        ],
+    )
+
+    response = client.get(
+        "/app-updates/smart-nienfos-moldegon",
+        params={"currentVersion": "1.0.0", "currentBuild": 7},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["available"] is True
+    assert payload["latestBuild"] == 8
+    assert payload["releaseTag"] == "moldegon-android-v1.0.0-build.8"
+    assert payload["releaseChannel"] == "private-install"
+    assert payload["releasePrerelease"] is True
+    assert payload["privateInstall"] is True
+    assert payload["apkUrl"] == (
+        "http://testserver/app-updates/smart-nienfos-moldegon/apk/"
+        "moldegon-android-v1.0.0-build.8/smart-nienfos-moldegon.apk"
+        "?platform=android&channel=private-install"
+    )
+
+
 def test_multiple_releases_choose_highest_valid_build(tmp_path: Path) -> None:
     client = _build_app_update_client(
         tmp_path,
@@ -751,6 +792,7 @@ def _build_app_update_client(
     latest_asset_name: str = "ambientando-calendar.apk",
     enabled: bool = True,
     required_minimum_build: int | None = None,
+    release_channel: str = "stable",
 ) -> TestClient:
     registry_path = tmp_path / "app_updates.json"
     registry_path.write_text(
@@ -763,6 +805,7 @@ def _build_app_update_client(
                     "apkAssetPattern": apk_asset_pattern,
                     "latestAssetName": latest_asset_name,
                     "requiredMinimumBuild": required_minimum_build,
+                    "releaseChannel": release_channel,
                     "enabled": enabled,
                 }
             },

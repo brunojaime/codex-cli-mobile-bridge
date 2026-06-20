@@ -24,6 +24,7 @@
     "apkAssetPattern": "gestion-ludmilo-*.apk",
     "latestAssetName": "gestion-ludmilo.apk",
     "requiredMinimumBuild": null,
+    "releaseChannel": "private-install",
     "enabled": true
   },
   "xr18-mobile-control": {
@@ -33,6 +34,7 @@
     "apkAssetPattern": "xr18-mobile-control-*.apk",
     "latestAssetName": "xr18-mobile-control.apk",
     "requiredMinimumBuild": null,
+    "releaseChannel": "private-install",
     "enabled": true
   },
   "smart-nienfos-moldegon": {
@@ -42,6 +44,7 @@
     "apkAssetPattern": "smart-nienfos-moldegon-*.apk",
     "latestAssetName": "smart-nienfos-moldegon.apk",
     "requiredMinimumBuild": null,
+    "releaseChannel": "private-install",
     "enabled": true
   },
   "smart-nienfos-smart-house": {

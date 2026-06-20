@@ -243,6 +243,8 @@ async def list_app_updates(
                 display_name=config.display_name,
                 enabled=config.enabled,
                 required_minimum_build=config.required_minimum_build,
+                release_channel=config.release_channel,
+                private_install=config.release_channel == "private-install",
             )
             for config in container.app_update_service.list_apps()
         ],
@@ -292,6 +294,9 @@ async def get_app_update(
             sha256=None,
             size_bytes=None,
             release_notes=None,
+            release_channel="stable",
+            release_prerelease=False,
+            private_install=False,
             required=False,
             available=False,
         )
@@ -308,6 +313,7 @@ async def get_app_update(
         ) from exc
 
     apk_url = None
+    response_channel = result.release_channel or channel
     if result.available and result.release_tag and result.apk_asset_name:
         apk_url = str(
             request.url_for(
@@ -315,7 +321,7 @@ async def get_app_update(
                 source_app=result.source_app,
                 release_tag=result.release_tag,
                 asset_name=result.apk_asset_name,
-            ).include_query_params(platform=platform, channel=channel),
+            ).include_query_params(platform=platform, channel=response_channel),
         )
     return _app_update_response(result, apk_url=apk_url)
 
@@ -2475,6 +2481,9 @@ def _app_update_response(
         sha256=result.sha256,
         size_bytes=result.size_bytes,
         release_notes=result.release_notes,
+        release_channel=result.release_channel,
+        release_prerelease=result.release_prerelease,
+        private_install=result.private_install,
         required=result.required,
         available=result.available,
     )

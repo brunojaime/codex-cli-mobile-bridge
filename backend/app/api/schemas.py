@@ -157,6 +157,8 @@ class AppUpdateRegistryItemResponse(BaseModel):
         default=None,
         alias="requiredMinimumBuild",
     )
+    release_channel: str = Field(default="stable", alias="releaseChannel")
+    private_install: bool = Field(default=False, alias="privateInstall")
 
 
 class AppUpdateRegistryResponse(BaseModel):
@@ -186,6 +188,9 @@ class AppUpdateResponse(BaseModel):
     sha256: str | None = None
     size_bytes: int | None = Field(default=None, alias="sizeBytes")
     release_notes: str | None = Field(default=None, alias="releaseNotes")
+    release_channel: str = Field(default="stable", alias="releaseChannel")
+    release_prerelease: bool = Field(default=False, alias="releasePrerelease")
+    private_install: bool = Field(default=False, alias="privateInstall")
     required: bool
     available: bool
 
