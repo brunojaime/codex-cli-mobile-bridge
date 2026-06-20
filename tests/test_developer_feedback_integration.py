@@ -281,7 +281,7 @@ def _write_fixture(
     conditional_wrapper: bool = False,
     include_local_demo_contract: bool = True,
     legacy_local_demo_without_contract: bool = False,
-    dependency_ref: str = "codex-developer-feedback-template-v0.4.5",
+    dependency_ref: str = "codex-developer-feedback-template-v0.4.6",
     include_updater_dependency: bool = False,
     updater_dependency_ref: str = "afbefbb7a6b1f8a928af07d2889a266a45eaba82",
 ) -> Fixture:
