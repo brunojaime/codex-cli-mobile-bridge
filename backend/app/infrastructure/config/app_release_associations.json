@@ -47,7 +47,7 @@
       {
         "sourceApp": "smart-nienfos-admin",
         "displayName": "Smart Nienfos Admin",
-        "repo": "brunojaime/smart_nienfos",
+        "repo": "brunojaime/smart-nienfos-flutter-app",
         "localPath": "../smart_nienfos/smart-nienfos-flutter-app",
         "defaultBranch": "main",
         "pubspecPath": "app/client/pubspec.yaml",
@@ -104,7 +104,7 @@
       {
         "sourceApp": "smart-nienfos-admin",
         "displayName": "Smart Nienfos Admin",
-        "repo": "brunojaime/smart_nienfos",
+        "repo": "brunojaime/smart-nienfos-flutter-app",
         "localPath": "../smart_nienfos/smart-nienfos-flutter-app",
         "defaultBranch": "main",
         "pubspecPath": "app/client/pubspec.yaml",

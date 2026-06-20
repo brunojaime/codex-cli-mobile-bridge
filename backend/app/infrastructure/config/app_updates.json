@@ -55,7 +55,7 @@
   },
   "smart-nienfos-admin": {
     "displayName": "Smart Nienfos Admin",
-    "repo": "brunojaime/smart_nienfos",
+    "repo": "brunojaime/smart-nienfos-flutter-app",
     "releaseTagPattern": "smart-nienfos-admin-android-v*",
     "apkAssetPattern": "smart-nienfos-admin-*.apk",
     "latestAssetName": "smart-nienfos-admin.apk",
