@@ -245,6 +245,7 @@ async def list_app_updates(
                 required_minimum_build=config.required_minimum_build,
                 release_channel=config.release_channel,
                 private_install=config.release_channel == "private-install",
+                expected_package_id=config.expected_package_id,
             )
             for config in container.app_update_service.list_apps()
         ],
@@ -297,6 +298,7 @@ async def get_app_update(
             release_channel="stable",
             release_prerelease=False,
             private_install=False,
+            package_id=None,
             required=False,
             available=False,
         )
@@ -2484,6 +2486,7 @@ def _app_update_response(
         release_channel=result.release_channel,
         release_prerelease=result.release_prerelease,
         private_install=result.private_install,
+        package_id=result.package_id,
         required=result.required,
         available=result.available,
     )

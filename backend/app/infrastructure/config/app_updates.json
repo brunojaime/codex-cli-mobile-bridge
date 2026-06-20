@@ -5,6 +5,10 @@
     "releaseTagPattern": "android-local-demo-feedback-v*",
     "apkAssetPattern": "ambientando-calendar-*.apk",
     "latestAssetName": "ambientando-calendar.apk",
+    "expectedPackageId": "com.ambientando.calendar",
+    "verifiedPackageIds": {
+      "android-local-demo-feedback-v1.0.0-build.92": "com.ambientando.calendar"
+    },
     "requiredMinimumBuild": null,
     "enabled": true
   },
@@ -23,6 +27,10 @@
     "releaseTagPattern": "android-v*",
     "apkAssetPattern": "gestion-ludmilo-*.apk",
     "latestAssetName": "gestion-ludmilo.apk",
+    "expectedPackageId": "com.ludmilo.gestion",
+    "verifiedPackageIds": {
+      "android-v1.0.0-build.14": "com.ludmilo.gestion"
+    },
     "requiredMinimumBuild": null,
     "releaseChannel": "private-install",
     "enabled": true
@@ -33,6 +41,10 @@
     "releaseTagPattern": "android-v*",
     "apkAssetPattern": "xr18-mobile-control-*.apk",
     "latestAssetName": "xr18-mobile-control.apk",
+    "expectedPackageId": "com.xr18mobilecontrol.xr18_mobile_control",
+    "verifiedPackageIds": {
+      "android-v1.0.0-build.20": "com.xr18mobilecontrol.xr18_mobile_control"
+    },
     "requiredMinimumBuild": null,
     "releaseChannel": "private-install",
     "enabled": true
@@ -43,6 +55,10 @@
     "releaseTagPattern": "moldegon-android-v*",
     "apkAssetPattern": "smart-nienfos-moldegon-*.apk",
     "latestAssetName": "smart-nienfos-moldegon.apk",
+    "expectedPackageId": "com.smartnienfos.molding.molding_operator_app",
+    "verifiedPackageIds": {
+      "moldegon-android-v1.0.0-build.8": "com.smartnienfos.molding.molding_operator_app"
+    },
     "requiredMinimumBuild": null,
     "releaseChannel": "private-install",
     "enabled": true
@@ -62,6 +78,11 @@
     "releaseTagPattern": "smart-nienfos-admin-android-v*",
     "apkAssetPattern": "smart-nienfos-admin-*.apk",
     "latestAssetName": "smart-nienfos-admin.apk",
+    "expectedPackageId": "com.example.client",
+    "verifiedPackageIds": {
+      "smart-nienfos-admin-android-v1.0.0-build.12": "com.smartnienfos.admin",
+      "smart-nienfos-admin-android-v1.0.0-build.13": "com.example.client"
+    },
     "requiredMinimumBuild": null,
     "enabled": true
   }

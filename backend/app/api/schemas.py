@@ -159,6 +159,7 @@ class AppUpdateRegistryItemResponse(BaseModel):
     )
     release_channel: str = Field(default="stable", alias="releaseChannel")
     private_install: bool = Field(default=False, alias="privateInstall")
+    expected_package_id: str | None = Field(default=None, alias="expectedPackageId")
 
 
 class AppUpdateRegistryResponse(BaseModel):
@@ -191,6 +192,7 @@ class AppUpdateResponse(BaseModel):
     release_channel: str = Field(default="stable", alias="releaseChannel")
     release_prerelease: bool = Field(default=False, alias="releasePrerelease")
     private_install: bool = Field(default=False, alias="privateInstall")
+    package_id: str | None = Field(default=None, alias="packageId")
     required: bool
     available: bool
 

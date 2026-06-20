@@ -23,6 +23,8 @@ class AppUpdateConfig:
     required_minimum_build: int | None
     enabled: bool
     release_channel: str = "stable"
+    expected_package_id: str | None = None
+    verified_package_ids: dict[str, str] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,6 +65,7 @@ class AppUpdateResult:
     release_channel: str
     release_prerelease: bool
     private_install: bool
+    package_id: str | None
     required: bool
     available: bool
 
@@ -238,6 +241,17 @@ class AppUpdateRegistry:
                 release_channel=_validate_release_channel_value(
                     str(raw_config.get("releaseChannel", "stable"))
                 ),
+                expected_package_id=(
+                    str(raw_config["expectedPackageId"])
+                    if raw_config.get("expectedPackageId") is not None
+                    else None
+                ),
+                verified_package_ids={
+                    str(key): str(value)
+                    for key, value in (
+                        raw_config.get("verifiedPackageIds") or {}
+                    ).items()
+                },
             )
         return cls(configs)
 
@@ -291,6 +305,7 @@ class AppUpdateService:
             )
 
         release, apk_asset, latest_version, latest_build = latest
+        package_id = _verified_package_id_for(config, release, apk_asset)
         available = (
             current_build is None
             or latest_build is None
@@ -319,6 +334,7 @@ class AppUpdateService:
             release_channel=effective_channel,
             release_prerelease=release.prerelease,
             private_install=effective_channel == "private-install",
+            package_id=package_id,
             required=required,
             available=available,
         )
@@ -352,6 +368,8 @@ class AppUpdateService:
                 break
             asset = _find_downloadable_apk_asset(release.assets, config, asset_name)
             if asset is None:
+                break
+            if not _release_package_matches(config, release, asset):
                 break
             return config, asset
         raise AppUpdateAssetNotFoundError(f"{source_app}:{release_tag}:{asset_name}")
@@ -395,6 +413,8 @@ class AppUpdateService:
             apk_asset = _select_apk_asset(release.assets, config)
             if apk_asset is None:
                 continue
+            if not _release_package_matches(config, release, apk_asset):
+                continue
             latest_version, latest_build = _derive_version_and_build(
                 release.tag_name,
                 apk_asset.name,
@@ -435,6 +455,7 @@ def _empty_result(
         release_channel=config.release_channel,
         release_prerelease=False,
         private_install=config.release_channel == "private-install",
+        package_id=None,
         required=False,
         available=False,
     )
@@ -535,6 +556,27 @@ def _find_downloadable_apk_asset(
         if fnmatch.fnmatch(asset.name, config.apk_asset_pattern):
             return asset
     return None
+
+
+def _verified_package_id_for(
+    config: AppUpdateConfig,
+    release: GitHubRelease,
+    apk_asset: GitHubAsset,
+) -> str | None:
+    verified = config.verified_package_ids or {}
+    return verified.get(release.tag_name) or verified.get(apk_asset.name)
+
+
+def _release_package_matches(
+    config: AppUpdateConfig,
+    release: GitHubRelease,
+    apk_asset: GitHubAsset,
+) -> bool:
+    expected = config.expected_package_id
+    if expected is None:
+        return True
+    package_id = _verified_package_id_for(config, release, apk_asset)
+    return package_id == expected
 
 
 def _derive_version_and_build(*values: str) -> tuple[str | None, int | None]:

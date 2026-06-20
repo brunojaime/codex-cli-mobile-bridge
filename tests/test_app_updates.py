@@ -183,6 +183,19 @@ def test_default_registry_resolves_smart_nienfos_admin_from_flutter_app_release(
     assert config.release_tag_pattern == "smart-nienfos-admin-android-v*"
     assert config.apk_asset_pattern == "smart-nienfos-admin-*.apk"
     assert config.latest_asset_name == "smart-nienfos-admin.apk"
+    assert config.expected_package_id == "com.example.client"
+    assert (
+        config.verified_package_ids[
+            "smart-nienfos-admin-android-v1.0.0-build.12"
+        ]
+        == "com.smartnienfos.admin"
+    )
+    assert (
+        config.verified_package_ids[
+            "smart-nienfos-admin-android-v1.0.0-build.13"
+        ]
+        == "com.example.client"
+    )
 
 
 def test_enabled_default_update_configs_include_release_asset_metadata() -> None:
@@ -199,6 +212,8 @@ def test_enabled_default_update_configs_include_release_asset_metadata() -> None
         assert config.apk_asset_pattern.endswith(".apk")
         assert config.latest_asset_name is not None
         assert config.latest_asset_name.endswith(".apk")
+        if config.expected_package_id is not None:
+            assert config.verified_package_ids
 
 
 def test_release_without_apk_asset_is_ignored(tmp_path: Path) -> None:
@@ -261,6 +276,7 @@ def test_drafts_prereleases_and_invalid_assets_are_ignored(tmp_path: Path) -> No
 def test_private_install_config_returns_prerelease_update_by_default(
     tmp_path: Path,
 ) -> None:
+    package_id = "com.smartnienfos.molding.molding_operator_app"
     client = _build_app_update_client(
         tmp_path,
         source_app="smart-nienfos-moldegon",
@@ -270,6 +286,10 @@ def test_private_install_config_returns_prerelease_update_by_default(
         apk_asset_pattern="smart-nienfos-moldegon-*.apk",
         latest_asset_name="smart-nienfos-moldegon.apk",
         release_channel="private-install",
+        expected_package_id=package_id,
+        verified_package_ids={
+            "moldegon-android-v1.0.0-build.8": package_id,
+        },
         releases=[
             _release(
                 "moldegon-android-v1.0.0-build.8",
@@ -292,11 +312,98 @@ def test_private_install_config_returns_prerelease_update_by_default(
     assert payload["releaseChannel"] == "private-install"
     assert payload["releasePrerelease"] is True
     assert payload["privateInstall"] is True
+    assert payload["packageId"] == package_id
     assert payload["apkUrl"] == (
         "http://testserver/app-updates/smart-nienfos-moldegon/apk/"
         "moldegon-android-v1.0.0-build.8/smart-nienfos-moldegon.apk"
         "?platform=android&channel=private-install"
     )
+
+
+def test_smart_admin_discards_package_mismatch_and_chooses_compat_build(
+    tmp_path: Path,
+) -> None:
+    client = _build_app_update_client(
+        tmp_path,
+        source_app="smart-nienfos-admin",
+        display_name="Smart Nienfos Admin",
+        repo="brunojaime/smart-nienfos-flutter-app",
+        release_tag_pattern="smart-nienfos-admin-android-v*",
+        apk_asset_pattern="smart-nienfos-admin-*.apk",
+        latest_asset_name="smart-nienfos-admin.apk",
+        expected_package_id="com.example.client",
+        verified_package_ids={
+            "smart-nienfos-admin-android-v1.0.0-build.12": (
+                "com.smartnienfos.admin"
+            ),
+            "smart-nienfos-admin-android-v1.0.0-build.13": "com.example.client",
+        },
+        releases=[
+            _release(
+                "smart-nienfos-admin-android-v1.0.0-build.13",
+                assets=[_apk_asset("smart-nienfos-admin.apk")],
+            ),
+            _release(
+                "smart-nienfos-admin-android-v1.0.0-build.12",
+                assets=[_apk_asset("smart-nienfos-admin.apk")],
+            ),
+        ],
+    )
+
+    response = client.get(
+        "/app-updates/smart-nienfos-admin",
+        params={"currentVersion": "1.0.0", "currentBuild": 11},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["available"] is True
+    assert payload["latestBuild"] == 13
+    assert payload["releaseTag"] == "smart-nienfos-admin-android-v1.0.0-build.13"
+    assert payload["packageId"] == "com.example.client"
+
+
+def test_package_mismatch_release_is_not_offered_or_served(tmp_path: Path) -> None:
+    github_client = _FakeGitHubReleaseClient(
+        [
+            _release(
+                "smart-nienfos-admin-android-v1.0.0-build.12",
+                assets=[_apk_asset("smart-nienfos-admin.apk")],
+            ),
+        ],
+    )
+    client = _build_app_update_client(
+        tmp_path,
+        source_app="smart-nienfos-admin",
+        display_name="Smart Nienfos Admin",
+        repo="brunojaime/smart-nienfos-flutter-app",
+        release_tag_pattern="smart-nienfos-admin-android-v*",
+        apk_asset_pattern="smart-nienfos-admin-*.apk",
+        latest_asset_name="smart-nienfos-admin.apk",
+        expected_package_id="com.example.client",
+        verified_package_ids={
+            "smart-nienfos-admin-android-v1.0.0-build.12": (
+                "com.smartnienfos.admin"
+            ),
+        },
+        releases=github_client,
+    )
+
+    response = client.get(
+        "/app-updates/smart-nienfos-admin",
+        params={"currentVersion": "1.0.0", "currentBuild": 11},
+    )
+    proxy_response = client.get(
+        "/app-updates/smart-nienfos-admin/apk/"
+        "smart-nienfos-admin-android-v1.0.0-build.12/smart-nienfos-admin.apk",
+    )
+
+    assert response.status_code == 200
+    assert response.json()["available"] is False
+    assert response.json()["latestBuild"] == 11
+    assert response.json()["packageId"] is None
+    assert proxy_response.status_code == 404
+    assert github_client.streamed_assets == []
 
 
 def test_multiple_releases_choose_highest_valid_build(tmp_path: Path) -> None:
@@ -793,6 +900,8 @@ def _build_app_update_client(
     enabled: bool = True,
     required_minimum_build: int | None = None,
     release_channel: str = "stable",
+    expected_package_id: str | None = None,
+    verified_package_ids: dict[str, str] | None = None,
 ) -> TestClient:
     registry_path = tmp_path / "app_updates.json"
     registry_path.write_text(
@@ -806,6 +915,8 @@ def _build_app_update_client(
                     "latestAssetName": latest_asset_name,
                     "requiredMinimumBuild": required_minimum_build,
                     "releaseChannel": release_channel,
+                    "expectedPackageId": expected_package_id,
+                    "verifiedPackageIds": verified_package_ids or {},
                     "enabled": enabled,
                 }
             },
