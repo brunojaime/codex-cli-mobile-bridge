@@ -14,6 +14,8 @@ import 'package:package_info_plus/package_info_plus.dart';
 import 'developer_feedback_audio_recorder.dart';
 import 'developer_feedback_audio_recorder_contract.dart';
 
+export 'codex_local_demo.dart';
+
 typedef DeveloperFeedbackRecorderFactory =
     DeveloperFeedbackAudioRecorder Function();
 typedef DeveloperFeedbackCopyText = Future<void> Function(String text);

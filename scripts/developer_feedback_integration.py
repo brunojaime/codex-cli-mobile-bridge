@@ -20,7 +20,7 @@ DEFAULT_ASSOCIATIONS = (
 DEFAULT_REGISTRY = ROOT / "backend/app/infrastructure/config/app_updates.json"
 DEFAULT_COMPONENT = "codex_developer_feedback_template"
 LATEST_DEPENDENCY_REFS = {
-    "codex_developer_feedback_template": "codex-developer-feedback-template-v0.4.4",
+    "codex_developer_feedback_template": "codex-developer-feedback-template-v0.4.5",
 }
 COORDINATED_DEPENDENCIES = {
     "codex_developer_feedback_template": {
@@ -487,7 +487,33 @@ def check_app_code(app: AssociatedApp) -> list[Check]:
                 ),
             )
         )
+    checks.append(check_local_demo_contract(text))
     return checks
+
+
+def check_local_demo_contract(text: str) -> Check:
+    has_contract = "CodexLocalDemoConfig" in text and "CodexLocalDemoDescriptor" in text
+    if has_contract:
+        return Check("local_demo_contract", "pass", "Codex local demo contract")
+    has_app_demo = "LOCAL_DEMO_MODE" in text or "LocalDemo" in text or "Mock" in text
+    if has_app_demo:
+        return Check(
+            "local_demo_contract",
+            "fail",
+            (
+                "Local demo code exists but does not use CodexLocalDemoConfig and "
+                "CodexLocalDemoDescriptor from codex_developer_feedback_template."
+            ),
+        )
+    return Check(
+        "local_demo_contract",
+        "warn",
+        (
+            "Add the standard local demo scaffold before publishing Android demo "
+            "APKs: CodexLocalDemoConfig, CodexLocalDemoDescriptor, "
+            "lib/src/local_demo_api.dart, and LOCAL_DEMO_MODE."
+        ),
+    )
 
 
 def check_wrapper_placement(text: str) -> Check:

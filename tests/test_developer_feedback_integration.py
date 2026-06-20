@@ -138,6 +138,25 @@ def test_doctor_fails_when_role_gate_is_missing(tmp_path: Path) -> None:
     assert not report.ok
 
 
+def test_doctor_fails_when_local_demo_skips_package_contract(tmp_path: Path) -> None:
+    fixture = _write_fixture(
+        tmp_path,
+        include_local_demo_contract=False,
+        legacy_local_demo_without_contract=True,
+    )
+    component = feedback.load_component(fixture.associations, "codex_developer_feedback_template")
+    report = feedback.build_report(
+        component=component,
+        app=component.apps[0],
+        registry=feedback.load_registry(fixture.registry),
+        workspace_aliases={"fixture-app": str(fixture.app_repo)},
+    )
+
+    failed = [check for check in report.checks if check.status == "fail"]
+    assert any(check.name == "local_demo_contract" for check in failed)
+    assert not report.ok
+
+
 def test_doctor_fails_when_template_is_conditionally_mounted(tmp_path: Path) -> None:
     fixture = _write_fixture(tmp_path, conditional_wrapper=True)
     component = feedback.load_component(fixture.associations, "codex_developer_feedback_template")
@@ -260,7 +279,9 @@ def _write_fixture(
     include_role_gate: bool = True,
     unsafe_wrapper: bool = False,
     conditional_wrapper: bool = False,
-    dependency_ref: str = "codex-developer-feedback-template-v0.4.4",
+    include_local_demo_contract: bool = True,
+    legacy_local_demo_without_contract: bool = False,
+    dependency_ref: str = "codex-developer-feedback-template-v0.4.5",
     include_updater_dependency: bool = False,
     updater_dependency_ref: str = "afbefbb7a6b1f8a928af07d2889a266a45eaba82",
 ) -> Fixture:
@@ -283,6 +304,8 @@ def _write_fixture(
         include_role_gate=include_role_gate,
         unsafe_wrapper=unsafe_wrapper,
         conditional_wrapper=conditional_wrapper,
+        include_local_demo_contract=include_local_demo_contract,
+        legacy_local_demo_without_contract=legacy_local_demo_without_contract,
     )
     (app_dir / "test/widget_test.dart").write_text(
         f"""
@@ -390,6 +413,8 @@ def _write_main(
     include_role_gate: bool,
     unsafe_wrapper: bool,
     conditional_wrapper: bool,
+    include_local_demo_contract: bool,
+    legacy_local_demo_without_contract: bool,
 ) -> None:
     safe_wrapper = """
 MaterialApp(
@@ -466,6 +491,27 @@ CodexDeveloperRoleGate(
         if include_wrapper
         else "MaterialApp(home: SizedBox.shrink())"
     )
+    if include_local_demo_contract:
+        local_demo_code = f"""
+const localDemoConfig = CodexLocalDemoConfig.fromEnvironment;
+const localDemoDescriptor = CodexLocalDemoDescriptor(
+  appName: '{display_name}',
+  tenant: 'tenant-demo',
+  email: 'owner@example.com',
+  password: 'StrongPass123',
+  highlights: ['Seeded workspace'],
+);
+"""
+    elif legacy_local_demo_without_contract:
+        local_demo_code = """
+const localDemoMode = bool.fromEnvironment('LOCAL_DEMO_MODE');
+
+class LocalDemoBackendApi {
+  const LocalDemoBackendApi();
+}
+"""
+    else:
+        local_demo_code = ""
     path.write_text(
         f"""
 import 'package:codex_developer_feedback_template/developer_feedback_template.dart';
@@ -479,6 +525,7 @@ const _feedbackSourceDisplayName = String.fromEnvironment(
   'CODEX_FEEDBACK_SOURCE_NAME',
   defaultValue: '{display_name}',
 );
+{local_demo_code}
 
 class App extends StatelessWidget {{
   const App({{super.key}});

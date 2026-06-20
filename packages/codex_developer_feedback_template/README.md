@@ -51,3 +51,44 @@ remove the template from the widget tree.
 When `CODEX_FEEDBACK_BRIDGE_URL` is empty, the template can fall back to the
 updater Bridge URL through `appUpdaterBridgeUrl`. Bridge-backed actions remain
 visible and show a clear unavailable-Bridge dialog if no usable URL exists.
+
+## Local Demo Contract
+
+The package also exposes a business-agnostic local demo contract. It does not
+ship app seeds or backend mocks. Each app keeps its own `LocalDemoApi` adapter
+and seeded records, while the template standardizes the build flag, credential
+descriptor, README/UI helpers, and release validation language.
+
+```dart
+import 'package:codex_developer_feedback_template/developer_feedback_template.dart';
+
+const localDemo = CodexLocalDemoConfig.fromEnvironment;
+
+const demoDescriptor = CodexLocalDemoDescriptor(
+  appName: 'Example App',
+  tenant: 'tenant-demo',
+  email: 'owner@example.com',
+  password: 'StrongPass123',
+  highlights: ['Seeded clients', 'Seeded devices'],
+);
+```
+
+Apps should wire their API selection near startup:
+
+```dart
+final api = localDemo.select(
+  localDemo: LocalDemoBackendApi(),
+  production: HttpBackendApi(baseUrl: resolvedBaseUrl),
+);
+```
+
+Build demo APKs with:
+
+```sh
+flutter build apk --release --dart-define=LOCAL_DEMO_MODE=true
+```
+
+Before publishing a demo APK, inspect extracted APK strings and block
+app-specific backend loopbacks such as `http://localhost`, `localhost:8080`,
+`http://127.0.0.1`, and `10.0.2.2`. Generic Dart VM service strings may still
+contain `localhost` or `127.0.0.1`; those are not backend configuration.
