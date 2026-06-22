@@ -379,6 +379,83 @@ class ApiClient {
     );
   }
 
+  Future<SessionDetail> renameSession(
+    String sessionId, {
+    required String title,
+  }) async {
+    final response = await _client.put(
+      Uri.parse('$baseUrl/sessions/$sessionId/title'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode(<String, dynamic>{
+        'title': title,
+      }),
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception('Failed to rename chat: ${response.body}');
+    }
+
+    return SessionDetail.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<SessionDetail> generateSessionTitle(
+    String sessionId, {
+    String? instructions,
+  }) async {
+    final trimmedInstructions = instructions?.trim();
+    final response = await _client.post(
+      Uri.parse('$baseUrl/sessions/$sessionId/title/generate'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode(<String, dynamic>{
+        if (trimmedInstructions != null && trimmedInstructions.isNotEmpty)
+          'instructions': trimmedInstructions,
+      }),
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception('Failed to generate chat title: ${response.body}');
+    }
+
+    return SessionDetail.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<SessionDetail> generateSessionTitleFromAudio(
+    String sessionId,
+    XFile audioFile, {
+    String? instructions,
+    String? language,
+  }) async {
+    final request = http.MultipartRequest(
+      'POST',
+      Uri.parse('$baseUrl/sessions/$sessionId/title/generate/audio'),
+    );
+    final trimmedInstructions = instructions?.trim();
+    if (trimmedInstructions != null && trimmedInstructions.isNotEmpty) {
+      request.fields['instructions'] = trimmedInstructions;
+    }
+    if (language != null) {
+      request.fields['language'] = language;
+    }
+    request.files.add(
+      await _multipartFileFromXFile('audio', audioFile),
+    );
+
+    final streamedResponse = await _client.send(request);
+    final response = await http.Response.fromStream(streamedResponse);
+    if (response.statusCode != 200) {
+      throw Exception(
+          'Failed to generate chat title from audio: ${response.body}');
+    }
+
+    return SessionDetail.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
   Future<SessionDetail> applyAgentProfile(
     String sessionId, {
     required String profileId,

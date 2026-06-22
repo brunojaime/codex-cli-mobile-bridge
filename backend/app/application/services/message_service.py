@@ -558,6 +558,83 @@ class MessageService:
         self._repository.save_session(session)
         return session
 
+    def rename_session(
+        self,
+        *,
+        session_id: str,
+        title: str,
+    ) -> ChatSession:
+        session = self.get_session(session_id)
+        if session is None:
+            raise ValueError(f"Session {session_id} was not found.")
+
+        normalized_title = self._normalize_manual_session_title(title)
+        session.title = normalized_title
+        session.title_is_placeholder = False
+        session.touch()
+        self._repository.save_session(session)
+        return session
+
+    def generate_session_title(
+        self,
+        *,
+        session_id: str,
+        instructions: str | None = None,
+    ) -> ChatSession:
+        session = self.get_session(session_id)
+        if session is None:
+            raise ValueError(f"Session {session_id} was not found.")
+
+        messages = self._repository.list_messages(session_id)
+        generated_title = (
+            self._generate_title_with_codex(
+                session,
+                messages,
+                instructions=instructions,
+            )
+            or self._derive_title_from_instructions(instructions)
+            or self._derive_conversation_title(messages)
+        )
+        normalized_title = self._normalize_generated_title(generated_title)
+        if normalized_title is None:
+            normalized_title = self._normalize_manual_session_title(generated_title)
+
+        session.title = normalized_title
+        session.title_is_placeholder = False
+        session.touch()
+        self._repository.save_session(session)
+        return session
+
+    def generate_session_title_from_audio(
+        self,
+        audio_path: str,
+        *,
+        session_id: str,
+        filename: str | None = None,
+        content_type: str | None = None,
+        instructions: str | None = None,
+        language: str | None = None,
+    ) -> tuple[ChatSession, str]:
+        transcript = self._audio_transcriber.transcribe(
+            Path(audio_path),
+            filename=filename,
+            content_type=content_type,
+            language=language,
+        ).strip()
+        if not transcript:
+            raise AudioTranscriptionError("Transcription returned an empty prompt.")
+
+        combined_instructions = "\n\n".join(
+            part for part in ((instructions or "").strip(), transcript) if part
+        )
+        return (
+            self.generate_session_title(
+                session_id=session_id,
+                instructions=combined_instructions,
+            ),
+            transcript,
+        )
+
     def list_messages(self, session_id: str) -> list[ChatMessage]:
         return self._repository.list_messages(session_id)
 
@@ -3745,8 +3822,13 @@ class MessageService:
         self,
         session: ChatSession,
         messages: list[ChatMessage],
+        *,
+        instructions: str | None = None,
     ) -> str | None:
-        prompt = self._build_title_generation_prompt(messages)
+        prompt = self._build_title_generation_prompt(
+            messages,
+            instructions=instructions,
+        )
         if not prompt:
             return None
 
@@ -3773,6 +3855,8 @@ class MessageService:
     def _build_title_generation_prompt(
         self,
         messages: list[ChatMessage],
+        *,
+        instructions: str | None = None,
     ) -> str:
         conversation_lines: list[str] = []
         recent_messages = [
@@ -3787,15 +3871,39 @@ class MessageService:
             )
             conversation_lines.append(f"{role_label}: {content}")
 
-        if not conversation_lines:
+        normalized_instructions = " ".join((instructions or "").split()).strip()
+
+        if not conversation_lines and not normalized_instructions:
             return ""
 
-        return (
+        prompt = (
             "Create a concise, specific chat title from this conversation. "
             "Prefer the latest user request when the topic changed. "
             "Return only the title, 3 to 6 words, no quotes, maximum 60 characters.\n\n"
-            + "\n".join(conversation_lines)
         )
+        if normalized_instructions:
+            prompt += (
+                "User title instructions:\n"
+                f"{normalized_instructions}\n\n"
+            )
+        if conversation_lines:
+            prompt += "Conversation:\n" + "\n".join(conversation_lines)
+        return prompt
+
+    def _derive_title_from_instructions(self, instructions: str | None) -> str | None:
+        normalized = " ".join((instructions or "").split()).strip()
+        if not normalized:
+            return None
+
+        trimmed = re.sub(
+            r"^(quiero|necesito|haz|hace|crear|crea|t[íi]tulo|sobre|que)\s+",
+            "",
+            normalized,
+            flags=re.IGNORECASE,
+        )
+        if len(trimmed) <= 60:
+            return trimmed or None
+        return f"{trimmed[:57].rstrip()}..."
 
     def _derive_conversation_title(self, messages: list[ChatMessage]) -> str:
         for message in messages:
@@ -3827,6 +3935,14 @@ class MessageService:
             return None
         if ":" in normalized and len(normalized.split()) > 8:
             return None
+        return normalized
+
+    def _normalize_manual_session_title(self, raw_title: str) -> str:
+        normalized = " ".join(raw_title.split()).strip()
+        if not normalized:
+            raise ValueError("Session title cannot be empty.")
+        if len(normalized) > 120:
+            normalized = f"{normalized[:117].rstrip()}..."
         return normalized
 
     def _classify_document(

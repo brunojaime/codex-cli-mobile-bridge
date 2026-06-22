@@ -479,6 +479,14 @@ class ArchiveSessionRequest(BaseModel):
     archived: bool = False
 
 
+class RenameSessionRequest(BaseModel):
+    title: str = Field(..., min_length=1, max_length=120)
+
+
+class GenerateSessionTitleRequest(BaseModel):
+    instructions: str | None = Field(default=None, max_length=2000)
+
+
 class CreateSessionRequest(BaseModel):
     title: str | None = Field(default=None, max_length=120)
     workspace_path: str | None = None

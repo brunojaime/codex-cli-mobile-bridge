@@ -69,6 +69,11 @@ enum _PinnedWorkspaceAction {
   remove,
 }
 
+enum _RenameChatMode {
+  manual,
+  generated,
+}
+
 enum _ChatBodyView {
   conversation,
   agentSummaries,
@@ -1429,6 +1434,79 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         ),
       );
     }
+  }
+
+  Future<void> _openRenameChatSheet(ChatSessionSummary session) async {
+    final draft = await showModalBottomSheet<_RenameChatDraft>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      backgroundColor: const Color(0xFF101931),
+      constraints: BoxConstraints(
+        maxWidth: 640,
+        maxHeight: MediaQuery.sizeOf(context).height * 0.86,
+      ),
+      builder: (context) => _RenameChatSheet(
+        initialTitle: session.title,
+        voiceEnabled: _resolvedAudioInputEnabled(),
+        voiceStatusText: _resolveVoiceStatusText(),
+        audioRecorderFactory:
+            widget.audioRecorderFactoryOverride ?? AudioNoteRecorder.new,
+        onBeginRecording: _handleBeginRecording,
+      ),
+    );
+
+    if (!mounted || draft == null) {
+      return;
+    }
+
+    var didUpdate = false;
+    try {
+      switch (draft.kind) {
+        case _RenameChatDraftKind.manual:
+          didUpdate = await _chatController.renameSession(
+            session.id,
+            title: draft.title!,
+          );
+          break;
+        case _RenameChatDraftKind.generatedText:
+          didUpdate = await _chatController.generateSessionTitle(
+            session.id,
+            instructions: draft.instructions,
+          );
+          break;
+        case _RenameChatDraftKind.generatedAudio:
+          didUpdate = await _chatController.generateSessionTitleFromAudio(
+            session.id,
+            draft.audioFile!,
+            instructions: draft.instructions,
+          );
+          break;
+      }
+    } finally {
+      final audioFile = draft.audioFile;
+      if (audioFile != null) {
+        final recorder =
+            widget.audioRecorderFactoryOverride?.call() ?? AudioNoteRecorder();
+        await recorder.cleanup(audioFile);
+        await recorder.dispose();
+      }
+    }
+
+    if (!mounted) {
+      return;
+    }
+    final errorText = _chatController.errorText;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          didUpdate
+              ? 'Chat renamed.'
+              : 'Could not rename chat.${errorText == null ? '' : '\n$errorText'}',
+        ),
+        duration: const Duration(seconds: 3),
+      ),
+    );
   }
 
   Future<void> _openSaveCurrentAgentProfile() async {
@@ -3306,6 +3384,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                               Navigator.of(context).pop();
                               await _chatController.selectSession(session.id);
                             },
+                            onRename: () async {
+                              Navigator.of(context).pop();
+                              await _openRenameChatSheet(session);
+                            },
                             onArchiveToggle: () async {
                               await _chatController.setSessionArchived(
                                 session.id,
@@ -3582,6 +3664,7 @@ class _SessionTile extends StatelessWidget {
     required this.unreadCount,
     required this.selected,
     required this.onTap,
+    required this.onRename,
     required this.onArchiveToggle,
   });
 
@@ -3591,6 +3674,7 @@ class _SessionTile extends StatelessWidget {
   final int unreadCount;
   final bool selected;
   final VoidCallback onTap;
+  final VoidCallback onRename;
   final VoidCallback onArchiveToggle;
 
   @override
@@ -3782,13 +3866,27 @@ class _SessionTile extends StatelessWidget {
                 ),
               PopupMenuButton<String>(
                 padding: EdgeInsets.zero,
-                tooltip: session.isArchived ? 'Unarchive chat' : 'Archive chat',
+                tooltip: 'Chat actions',
                 onSelected: (value) {
+                  if (value == 'rename') {
+                    onRename();
+                    return;
+                  }
                   if (value == 'toggle-archive') {
                     onArchiveToggle();
                   }
                 },
                 itemBuilder: (context) => <PopupMenuEntry<String>>[
+                  const PopupMenuItem<String>(
+                    value: 'rename',
+                    child: Row(
+                      children: <Widget>[
+                        Icon(Icons.edit_outlined, size: 18),
+                        SizedBox(width: 12),
+                        Text('Rename chat'),
+                      ],
+                    ),
+                  ),
                   PopupMenuItem<String>(
                     value: 'toggle-archive',
                     child: Row(
@@ -5850,6 +5948,393 @@ class _PendingAttachmentDraft {
   }
 
   String get identityKey => '${kind.name}:$name:${sizeBytes ?? 0}';
+}
+
+enum _RenameChatDraftKind { manual, generatedText, generatedAudio }
+
+class _RenameChatDraft {
+  const _RenameChatDraft._({
+    required this.kind,
+    this.title,
+    this.instructions,
+    this.audioFile,
+  });
+
+  factory _RenameChatDraft.manual(String title) {
+    return _RenameChatDraft._(
+      kind: _RenameChatDraftKind.manual,
+      title: title,
+    );
+  }
+
+  factory _RenameChatDraft.generatedText(String? instructions) {
+    return _RenameChatDraft._(
+      kind: _RenameChatDraftKind.generatedText,
+      instructions: instructions,
+    );
+  }
+
+  factory _RenameChatDraft.generatedAudio({
+    required XFile audioFile,
+    String? instructions,
+  }) {
+    return _RenameChatDraft._(
+      kind: _RenameChatDraftKind.generatedAudio,
+      instructions: instructions,
+      audioFile: audioFile,
+    );
+  }
+
+  final _RenameChatDraftKind kind;
+  final String? title;
+  final String? instructions;
+  final XFile? audioFile;
+}
+
+class _RenameChatSheet extends StatefulWidget {
+  const _RenameChatSheet({
+    required this.initialTitle,
+    required this.voiceEnabled,
+    required this.voiceStatusText,
+    required this.audioRecorderFactory,
+    required this.onBeginRecording,
+  });
+
+  final String initialTitle;
+  final bool voiceEnabled;
+  final String voiceStatusText;
+  final AudioNoteRecorder Function() audioRecorderFactory;
+  final Future<void> Function() onBeginRecording;
+
+  @override
+  State<_RenameChatSheet> createState() => _RenameChatSheetState();
+}
+
+class _RenameChatSheetState extends State<_RenameChatSheet> {
+  late final TextEditingController _manualTitleController;
+  late final TextEditingController _instructionsController;
+  late AudioNoteRecorder _audioRecorder;
+  _RenameChatMode _mode = _RenameChatMode.manual;
+  XFile? _recordedAudio;
+  Stopwatch? _recordingStopwatch;
+  Timer? _recordingTicker;
+  bool _isRecording = false;
+  bool _isSubmitting = false;
+  bool _audioReturnedToCaller = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _manualTitleController = TextEditingController(text: widget.initialTitle);
+    _instructionsController = TextEditingController();
+    _audioRecorder = widget.audioRecorderFactory();
+  }
+
+  @override
+  void dispose() {
+    _recordingTicker?.cancel();
+    _manualTitleController.dispose();
+    _instructionsController.dispose();
+    if (_isRecording) {
+      unawaited(_audioRecorder.cancel());
+    }
+    final recordedAudio = _recordedAudio;
+    if (recordedAudio != null && !_audioReturnedToCaller) {
+      unawaited(_audioRecorder.cleanup(recordedAudio));
+    }
+    unawaited(_audioRecorder.dispose());
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bottomInset = MediaQuery.viewInsetsOf(context).bottom;
+    return SafeArea(
+      top: false,
+      child: SingleChildScrollView(
+        padding: EdgeInsets.fromLTRB(20, 8, 20, 20 + bottomInset),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: <Widget>[
+            Row(
+              children: <Widget>[
+                const Expanded(
+                  child: Text(
+                    'Rename chat',
+                    style: TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+                IconButton(
+                  onPressed:
+                      _isSubmitting ? null : () => Navigator.of(context).pop(),
+                  icon: const Icon(Icons.close_rounded),
+                  tooltip: 'Close',
+                ),
+              ],
+            ),
+            const SizedBox(height: 14),
+            SegmentedButton<_RenameChatMode>(
+              segments: const <ButtonSegment<_RenameChatMode>>[
+                ButtonSegment<_RenameChatMode>(
+                  value: _RenameChatMode.manual,
+                  icon: Icon(Icons.edit_outlined),
+                  label: Text('Manual'),
+                ),
+                ButtonSegment<_RenameChatMode>(
+                  value: _RenameChatMode.generated,
+                  icon: Icon(Icons.auto_awesome_outlined),
+                  label: Text('Suggest'),
+                ),
+              ],
+              selected: <_RenameChatMode>{_mode},
+              onSelectionChanged: _isSubmitting
+                  ? null
+                  : (selection) {
+                      setState(() {
+                        _mode = selection.first;
+                      });
+                    },
+            ),
+            const SizedBox(height: 18),
+            if (_mode == _RenameChatMode.manual)
+              TextField(
+                controller: _manualTitleController,
+                autofocus: true,
+                maxLength: 120,
+                minLines: 1,
+                maxLines: 2,
+                textInputAction: TextInputAction.done,
+                onSubmitted: (_) => _submit(),
+                decoration: const InputDecoration(
+                  labelText: 'Chat name',
+                  border: OutlineInputBorder(),
+                ),
+              )
+            else
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: <Widget>[
+                  TextField(
+                    controller: _instructionsController,
+                    maxLength: 2000,
+                    minLines: 3,
+                    maxLines: 6,
+                    decoration: const InputDecoration(
+                      labelText: 'Title instructions',
+                      hintText: 'Make it about the release plan',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  _buildVoiceTitleControls(),
+                ],
+              ),
+            const SizedBox(height: 18),
+            FilledButton.icon(
+              onPressed: _isSubmitting ? null : _submit,
+              icon: Icon(
+                _mode == _RenameChatMode.manual
+                    ? Icons.check_rounded
+                    : Icons.auto_awesome_rounded,
+              ),
+              label: Text(
+                _mode == _RenameChatMode.manual ? 'Save name' : 'Generate name',
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildVoiceTitleControls() {
+    final recordedAudio = _recordedAudio;
+    if (_isRecording) {
+      return Row(
+        children: <Widget>[
+          Expanded(
+            child: _VoiceStatusCard(
+              icon: Icons.mic_rounded,
+              title: 'Recording',
+              subtitle: 'Speak the title direction',
+              color: const Color(0xFF25D366),
+              trailing: _StatusPill(
+                label: _formatRenameRecordingDuration(),
+                backgroundColor: const Color(0xFF0B3D25),
+                foregroundColor: const Color(0xFFB7F5CF),
+              ),
+              titleMaxLines: 1,
+              subtitleMaxLines: 1,
+            ),
+          ),
+          const SizedBox(width: 10),
+          FilledButton(
+            onPressed: _stopRecording,
+            style: FilledButton.styleFrom(
+              minimumSize: const Size(52, 52),
+              padding: EdgeInsets.zero,
+            ),
+            child: const Icon(Icons.stop_rounded),
+          ),
+        ],
+      );
+    }
+
+    if (recordedAudio != null) {
+      return Row(
+        children: <Widget>[
+          const Expanded(
+            child: _VoiceStatusCard(
+              icon: Icons.graphic_eq_rounded,
+              title: 'Voice instruction ready',
+              subtitle: 'It will be transcribed before naming',
+              color: Color(0xFF55D6BE),
+              titleMaxLines: 1,
+              subtitleMaxLines: 1,
+            ),
+          ),
+          const SizedBox(width: 10),
+          IconButton.filledTonal(
+            onPressed: _discardRecordedAudio,
+            icon: const Icon(Icons.delete_outline_rounded),
+            tooltip: 'Discard voice instruction',
+          ),
+        ],
+      );
+    }
+
+    return OutlinedButton.icon(
+      onPressed: _isSubmitting ? null : _startRecording,
+      icon:
+          Icon(widget.voiceEnabled ? Icons.mic_rounded : Icons.mic_off_rounded),
+      label: Text(
+        widget.voiceEnabled
+            ? 'Record title instruction'
+            : widget.voiceStatusText,
+        overflow: TextOverflow.ellipsis,
+      ),
+    );
+  }
+
+  Future<void> _startRecording() async {
+    if (!widget.voiceEnabled) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(widget.voiceStatusText)),
+      );
+      return;
+    }
+    if (_isRecording || _isSubmitting) {
+      return;
+    }
+
+    try {
+      await _discardRecordedAudio();
+      await widget.onBeginRecording();
+      await _audioRecorder.start();
+      _recordingStopwatch = Stopwatch()..start();
+      _recordingTicker?.cancel();
+      _recordingTicker = Timer.periodic(const Duration(seconds: 1), (_) {
+        if (mounted) {
+          setState(() {});
+        }
+      });
+      setState(() {
+        _isRecording = true;
+      });
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('$error')),
+      );
+    }
+  }
+
+  Future<void> _stopRecording() async {
+    if (!_isRecording) {
+      return;
+    }
+
+    final audioFile = await _audioRecorder.stop();
+    _recordingTicker?.cancel();
+    _recordingStopwatch?.stop();
+    _recordingStopwatch = null;
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _isRecording = false;
+      _recordedAudio = audioFile;
+    });
+  }
+
+  Future<void> _discardRecordedAudio() async {
+    final audioFile = _recordedAudio;
+    if (audioFile == null) {
+      return;
+    }
+    _recordedAudio = null;
+    await _audioRecorder.cleanup(audioFile);
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
+  void _submit() {
+    if (_isRecording) {
+      return;
+    }
+
+    setState(() {
+      _isSubmitting = true;
+    });
+
+    if (_mode == _RenameChatMode.manual) {
+      final title = _manualTitleController.text.trim();
+      if (title.isEmpty) {
+        setState(() {
+          _isSubmitting = false;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Enter a chat name.')),
+        );
+        return;
+      }
+      Navigator.of(context).pop(_RenameChatDraft.manual(title));
+      return;
+    }
+
+    final instructions = _instructionsController.text.trim();
+    final audioFile = _recordedAudio;
+    if (audioFile != null) {
+      _audioReturnedToCaller = true;
+      Navigator.of(context).pop(
+        _RenameChatDraft.generatedAudio(
+          audioFile: audioFile,
+          instructions: instructions.isEmpty ? null : instructions,
+        ),
+      );
+      return;
+    }
+
+    Navigator.of(context).pop(
+      _RenameChatDraft.generatedText(
+        instructions.isEmpty ? null : instructions,
+      ),
+    );
+  }
+
+  String _formatRenameRecordingDuration() {
+    final elapsed = _recordingStopwatch?.elapsed ?? Duration.zero;
+    final minutes = elapsed.inMinutes.remainder(60).toString().padLeft(2, '0');
+    final seconds = elapsed.inSeconds.remainder(60).toString().padLeft(2, '0');
+    return '$minutes:$seconds';
+  }
 }
 
 Color _colorFromHex(String value) {

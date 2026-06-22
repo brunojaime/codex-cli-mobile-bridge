@@ -415,6 +415,65 @@ class ChatController extends ChangeNotifier {
     }
   }
 
+  Future<bool> renameSession(
+    String sessionId, {
+    required String title,
+  }) async {
+    try {
+      _errorText = null;
+      final session = await _apiClient.renameSession(
+        sessionId,
+        title: title,
+      );
+      await _applyUpdatedSession(sessionId, session);
+      return true;
+    } catch (error) {
+      _errorText = 'Failed to rename chat.\n$error';
+      notifyListeners();
+      return false;
+    }
+  }
+
+  Future<bool> generateSessionTitle(
+    String sessionId, {
+    String? instructions,
+  }) async {
+    try {
+      _errorText = null;
+      final session = await _apiClient.generateSessionTitle(
+        sessionId,
+        instructions: instructions,
+      );
+      await _applyUpdatedSession(sessionId, session);
+      return true;
+    } catch (error) {
+      _errorText = 'Failed to generate chat title.\n$error';
+      notifyListeners();
+      return false;
+    }
+  }
+
+  Future<bool> generateSessionTitleFromAudio(
+    String sessionId,
+    XFile audioFile, {
+    String? instructions,
+  }) async {
+    try {
+      _errorText = null;
+      final session = await _apiClient.generateSessionTitleFromAudio(
+        sessionId,
+        audioFile,
+        instructions: instructions,
+      );
+      await _applyUpdatedSession(sessionId, session);
+      return true;
+    } catch (error) {
+      _errorText = 'Failed to generate chat title from audio.\n$error';
+      notifyListeners();
+      return false;
+    }
+  }
+
   Future<void> selectSession(String sessionId) async {
     ChatSessionSummary? sessionSummary;
     for (final session in _sessions) {
@@ -1358,6 +1417,19 @@ class ChatController extends ChangeNotifier {
       return currentSession;
     }
     return null;
+  }
+
+  Future<void> _applyUpdatedSession(
+    String sessionId,
+    SessionDetail session,
+  ) async {
+    await refreshSessions();
+    if (_selectedSessionId == sessionId) {
+      _currentSession = _overlaySessionWithJobSnapshots(session);
+      _reconcilePendingJobsForSession(_currentSession);
+      _trackPendingJobsFromSession(_currentSession);
+    }
+    notifyListeners();
   }
 
   ChatSessionSummary? _sessionSummaryForId(String sessionId) {

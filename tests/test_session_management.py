@@ -317,6 +317,54 @@ def test_session_archive_can_be_toggled() -> None:
         assert restored.archived_at is None
 
 
+def test_session_can_be_renamed_manually() -> None:
+    with TemporaryDirectory() as temp_dir:
+        workspace = Path(temp_dir) / "repo"
+        workspace.mkdir()
+        service = _build_service(temp_dir)
+
+        session = service.create_session(workspace_path=str(workspace))
+        renamed = service.rename_session(
+            session_id=session.id,
+            title="  Release planning   notes  ",
+        )
+
+        assert renamed.title == "Release planning notes"
+        assert renamed.title_is_placeholder is False
+
+
+def test_generated_session_title_uses_instructions_and_clears_placeholder() -> None:
+    with TemporaryDirectory() as temp_dir:
+        workspace = Path(temp_dir) / "repo"
+        workspace.mkdir()
+        provider = _InstantExecutionProvider()
+        service = _build_service(temp_dir, execution_provider=provider)
+
+        session = service.create_session(workspace_path=str(workspace))
+        service._repository.save_message(
+            ChatMessage(
+                id="message-1",
+                session_id=session.id,
+                role=ChatMessageRole.USER,
+                author_type=ChatMessageAuthorType.HUMAN,
+                content="Fix the release checklist bugs",
+                status=ChatMessageStatus.COMPLETED,
+            )
+        )
+
+        renamed = service.generate_session_title(
+            session_id=session.id,
+            instructions="Make it about release QA",
+        )
+
+        assert renamed.title == "Release checklist"
+        assert renamed.title_is_placeholder is False
+        title_prompts = _title_generation_calls(provider)
+        assert title_prompts
+        assert "User title instructions:" in title_prompts[-1][0]
+        assert "Make it about release QA" in title_prompts[-1][0]
+
+
 def test_sqlite_session_round_trip_preserves_optional_archived_at() -> None:
     with TemporaryDirectory() as temp_dir:
         workspace = Path(temp_dir) / "repo"

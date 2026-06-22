@@ -141,6 +141,88 @@ void main() {
     );
   });
 
+  test('renameSession updates the session title endpoint', () async {
+    final client = ApiClient(
+      baseUrl: 'http://localhost:8000',
+      client: MockClient((request) async {
+        expect(request.method, 'PUT');
+        expect(request.url.path, '/sessions/session-1/title');
+        expect(request.body, contains('"title":"Release planning"'));
+        return http.Response(
+          _sessionDetailJson(title: 'Release planning'),
+          200,
+          headers: <String, String>{'content-type': 'application/json'},
+        );
+      }),
+    );
+
+    final session = await client.renameSession(
+      'session-1',
+      title: 'Release planning',
+    );
+
+    expect(session.title, 'Release planning');
+  });
+
+  test('generateSessionTitle sends text instructions', () async {
+    final client = ApiClient(
+      baseUrl: 'http://localhost:8000',
+      client: MockClient((request) async {
+        expect(request.method, 'POST');
+        expect(request.url.path, '/sessions/session-1/title/generate');
+        expect(request.body, contains('"instructions":"Focus on bugs"'));
+        return http.Response(
+          _sessionDetailJson(title: 'Bug triage'),
+          200,
+          headers: <String, String>{'content-type': 'application/json'},
+        );
+      }),
+    );
+
+    final session = await client.generateSessionTitle(
+      'session-1',
+      instructions: 'Focus on bugs',
+    );
+
+    expect(session.title, 'Bug triage');
+  });
+
+  test('generateSessionTitleFromAudio uploads voice instructions', () async {
+    final client = ApiClient(
+      baseUrl: 'http://localhost:8000',
+      client: MockClient((request) async {
+        expect(request.method, 'POST');
+        expect(request.url.path, '/sessions/session-1/title/generate/audio');
+        expect(
+            request.headers['content-type'], contains('multipart/form-data'));
+        final body = String.fromCharCodes(request.bodyBytes).toLowerCase();
+        expect(body, contains('name="instructions"'));
+        expect(body, contains('keep it short'));
+        expect(body, contains('name="audio"'));
+        expect(body, contains('filename="title-note.ogg"'));
+        expect(body, contains('content-type: audio/ogg'));
+        return http.Response(
+          _sessionDetailJson(title: 'Short title'),
+          200,
+          headers: <String, String>{'content-type': 'application/json'},
+        );
+      }),
+    );
+
+    final session = await client.generateSessionTitleFromAudio(
+      'session-1',
+      XFile.fromData(
+        Uint8List.fromList(<int>[79, 103, 103, 83]),
+        name: 'title-note.ogg',
+        mimeType: 'audio/ogg',
+        path: 'title-note.ogg',
+      ),
+      instructions: 'Keep it short',
+    );
+
+    expect(session.title, 'Short title');
+  });
+
   test('updateTurnSummaries explains when the backend route is missing',
       () async {
     final client = ApiClient(
@@ -346,6 +428,32 @@ void main() {
     expect(result.reconciled, isFalse);
     expect(result.summary, 'Already installed');
   });
+}
+
+String _sessionDetailJson({required String title}) {
+  return '''
+  {
+    "id": "session-1",
+    "title": "$title",
+    "workspace_path": "/workspace/project",
+    "workspace_name": "Project",
+    "agent_profile_id": "default",
+    "agent_profile_name": "Generator",
+    "agent_profile_color": "#55D6BE",
+    "agent_configuration": {
+      "version": 1,
+      "preset": "solo",
+      "agents": []
+    },
+    "conversation_product": {
+      "status_line": "Idle",
+      "description": "No updates yet"
+    },
+    "created_at": "2026-04-01T00:00:00Z",
+    "updated_at": "2026-04-01T00:00:00Z",
+    "messages": []
+  }
+  ''';
 }
 
 class _MissingTurnSummaryRouteApiClient extends ApiClient {

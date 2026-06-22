@@ -51,6 +51,7 @@ from backend.app.api.schemas import (
     FeedbackQueueStartRequest,
     FeedbackWorkflowPresetResponse,
     FeedbackWorkflowPresetsResponse,
+    GenerateSessionTitleRequest,
     HealthResponse,
     ImageMessageAcceptedResponse,
     JobResponse,
@@ -59,6 +60,7 @@ from backend.app.api.schemas import (
     MessageRequest,
     PersistenceIntegrityIssueResponse,
     PersistenceIntegrityResponse,
+    RenameSessionRequest,
     ServerCapabilitiesResponse,
     SessionDetailResponse,
     SessionSummaryResponse,
@@ -2202,6 +2204,103 @@ async def update_session_archive_state(
         )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    messages = service.list_messages(session_id)
+    return SessionDetailResponse.from_domain(
+        session,
+        messages=messages,
+        turn_summaries=service.list_turn_summaries(session_id),
+        jobs_by_id=_jobs_by_id_for_messages(service, messages),
+        run_configurations_by_id=_run_configurations_by_id_for_session(service, session_id),
+    )
+
+
+@router.put("/sessions/{session_id}/title", response_model=SessionDetailResponse)
+async def rename_session(
+    session_id: str,
+    payload: RenameSessionRequest,
+    service: MessageService = Depends(get_message_service),
+) -> SessionDetailResponse:
+    try:
+        session = await run_in_threadpool(
+            service.rename_session,
+            session_id=session_id,
+            title=payload.title,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    messages = service.list_messages(session_id)
+    return SessionDetailResponse.from_domain(
+        session,
+        messages=messages,
+        turn_summaries=service.list_turn_summaries(session_id),
+        jobs_by_id=_jobs_by_id_for_messages(service, messages),
+        run_configurations_by_id=_run_configurations_by_id_for_session(service, session_id),
+    )
+
+
+@router.post("/sessions/{session_id}/title/generate", response_model=SessionDetailResponse)
+async def generate_session_title(
+    session_id: str,
+    payload: GenerateSessionTitleRequest,
+    service: MessageService = Depends(get_message_service),
+) -> SessionDetailResponse:
+    try:
+        session = await run_in_threadpool(
+            service.generate_session_title,
+            session_id=session_id,
+            instructions=payload.instructions,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    messages = service.list_messages(session_id)
+    return SessionDetailResponse.from_domain(
+        session,
+        messages=messages,
+        turn_summaries=service.list_turn_summaries(session_id),
+        jobs_by_id=_jobs_by_id_for_messages(service, messages),
+        run_configurations_by_id=_run_configurations_by_id_for_session(service, session_id),
+    )
+
+
+@router.post(
+    "/sessions/{session_id}/title/generate/audio",
+    response_model=SessionDetailResponse,
+)
+async def generate_session_title_from_audio(
+    session_id: str,
+    audio: UploadFile = File(...),
+    instructions: str | None = Form(default=None),
+    language: str | None = Form(default=None),
+    service: MessageService = Depends(get_message_service),
+    container: AppContainer = Depends(get_container),
+) -> SessionDetailResponse:
+    temp_path = await _store_uploaded_audio(
+        audio,
+        max_bytes=container.settings.audio_max_upload_bytes,
+    )
+
+    try:
+        session, _transcript = await run_in_threadpool(
+            service.generate_session_title_from_audio,
+            str(temp_path),
+            session_id=session_id,
+            filename=audio.filename or temp_path.name,
+            content_type=audio.content_type,
+            instructions=instructions,
+            language=language,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except AudioTranscriptionUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except AudioTranscriptionError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    finally:
+        temp_path.unlink(missing_ok=True)
+        await audio.close()
 
     messages = service.list_messages(session_id)
     return SessionDetailResponse.from_domain(
