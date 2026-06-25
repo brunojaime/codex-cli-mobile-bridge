@@ -215,7 +215,7 @@ def test_default_registry_accepts_latest_ambientando_release_package_id() -> Non
     assert config.expected_package_id == "com.ambientando.calendar"
     assert (
         config.verified_package_ids[
-            "android-local-demo-feedback-v1.0.0-build.93"
+            "android-local-demo-feedback-v1.0.0-build.94"
         ]
         == "com.ambientando.calendar"
     )
