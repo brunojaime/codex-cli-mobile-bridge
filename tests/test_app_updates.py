@@ -204,6 +204,23 @@ def test_default_registry_disables_apps_without_apk_backed_releases() -> None:
     assert configs["smart-nienfos-moldegon"].enabled is True
 
 
+def test_default_registry_accepts_latest_ambientando_release_package_id() -> None:
+    registry = AppUpdateRegistry.from_json_file(
+        Path(__file__).resolve().parents[1]
+        / "backend/app/infrastructure/config/app_updates.json",
+    )
+
+    config = registry.get("ambientando-calendar")
+
+    assert config.expected_package_id == "com.ambientando.calendar"
+    assert (
+        config.verified_package_ids[
+            "android-local-demo-feedback-v1.0.0-build.93"
+        ]
+        == "com.ambientando.calendar"
+    )
+
+
 def test_default_registry_resolves_smart_nienfos_admin_from_flutter_app_release() -> None:
     registry = AppUpdateRegistry.from_json_file(
         Path(__file__).resolve().parents[1]
