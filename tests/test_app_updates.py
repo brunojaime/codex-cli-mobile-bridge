@@ -214,9 +214,7 @@ def test_default_registry_accepts_latest_ambientando_release_package_id() -> Non
 
     assert config.expected_package_id == "com.ambientando.calendar"
     assert (
-        config.verified_package_ids[
-            "android-local-demo-feedback-v1.0.0-build.94"
-        ]
+        config.verified_package_ids["android-local-demo-feedback-v*"]
         == "com.ambientando.calendar"
     )
 
@@ -412,6 +410,40 @@ def test_smart_admin_discards_package_mismatch_and_chooses_compat_build(
     assert payload["latestBuild"] == 13
     assert payload["releaseTag"] == "smart-nienfos-admin-android-v1.0.0-build.13"
     assert payload["packageId"] == "com.example.client"
+
+
+def test_package_verification_accepts_release_tag_patterns(tmp_path: Path) -> None:
+    client = _build_app_update_client(
+        tmp_path,
+        source_app="ambientando-calendar",
+        display_name="Ambientando Calendar",
+        repo="brunojaime/ambientando-calendar",
+        release_tag_pattern="android-local-demo-feedback-v*",
+        apk_asset_pattern="ambientando-calendar-*.apk",
+        latest_asset_name="ambientando-calendar.apk",
+        expected_package_id="com.ambientando.calendar",
+        verified_package_ids={
+            "android-local-demo-feedback-v*": "com.ambientando.calendar",
+        },
+        releases=[
+            _release(
+                "android-local-demo-feedback-v1.0.0-build.99",
+                assets=[_apk_asset("ambientando-calendar.apk")],
+            ),
+        ],
+    )
+
+    response = client.get(
+        "/app-updates/ambientando-calendar",
+        params={"currentVersion": "1.0.0", "currentBuild": 98},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["available"] is True
+    assert payload["latestBuild"] == 99
+    assert payload["releaseTag"] == "android-local-demo-feedback-v1.0.0-build.99"
+    assert payload["packageId"] == "com.ambientando.calendar"
 
 
 def test_package_mismatch_release_is_not_offered_or_served(tmp_path: Path) -> None:

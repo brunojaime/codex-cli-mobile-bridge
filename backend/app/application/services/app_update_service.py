@@ -564,7 +564,16 @@ def _verified_package_id_for(
     apk_asset: GitHubAsset,
 ) -> str | None:
     verified = config.verified_package_ids or {}
-    return verified.get(release.tag_name) or verified.get(apk_asset.name)
+    exact = verified.get(release.tag_name) or verified.get(apk_asset.name)
+    if exact is not None:
+        return exact
+    for pattern, package_id in verified.items():
+        if fnmatch.fnmatch(release.tag_name, pattern) or fnmatch.fnmatch(
+            apk_asset.name,
+            pattern,
+        ):
+            return package_id
+    return None
 
 
 def _release_package_matches(

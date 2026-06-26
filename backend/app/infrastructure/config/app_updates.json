@@ -7,9 +7,7 @@
     "latestAssetName": "ambientando-calendar.apk",
     "expectedPackageId": "com.ambientando.calendar",
     "verifiedPackageIds": {
-      "android-local-demo-feedback-v1.0.0-build.92": "com.ambientando.calendar",
-      "android-local-demo-feedback-v1.0.0-build.93": "com.ambientando.calendar",
-      "android-local-demo-feedback-v1.0.0-build.94": "com.ambientando.calendar"
+      "android-local-demo-feedback-v*": "com.ambientando.calendar"
     },
     "requiredMinimumBuild": null,
     "enabled": true
