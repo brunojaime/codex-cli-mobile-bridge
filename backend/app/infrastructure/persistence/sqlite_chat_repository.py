@@ -150,7 +150,10 @@ class SqliteChatRepository(ChatRepository):
     def list_sessions(self) -> list[ChatSession]:
         with self._lock, self._connect() as connection:
             rows = connection.execute(
-                "SELECT * FROM sessions ORDER BY updated_at DESC",
+                """
+                SELECT * FROM sessions
+                ORDER BY updated_at DESC, created_at DESC, id DESC
+                """,
             ).fetchall()
         return [self._session_from_row(row) for row in rows]
 

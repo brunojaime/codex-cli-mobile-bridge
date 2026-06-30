@@ -391,6 +391,78 @@ def test_sqlite_session_round_trip_preserves_optional_archived_at() -> None:
         assert restored.archived_at == archived_at
 
 
+def test_repositories_list_sessions_by_recent_activity_with_deterministic_ties() -> None:
+    with TemporaryDirectory() as temp_dir:
+        workspace_a = Path(temp_dir) / "project-a"
+        workspace_b = Path(temp_dir) / "project-b"
+        workspace_a.mkdir()
+        workspace_b.mkdir()
+        timestamp = utc_now()
+        sessions = [
+            ChatSession(
+                id="a-old",
+                title="A old",
+                workspace_path=str(workspace_a),
+                workspace_name=workspace_a.name,
+                created_at=timestamp - timedelta(hours=4),
+                updated_at=timestamp - timedelta(hours=3),
+            ),
+            ChatSession(
+                id="a-new",
+                title="A new",
+                workspace_path=str(workspace_a),
+                workspace_name=workspace_a.name,
+                created_at=timestamp - timedelta(hours=2),
+                updated_at=timestamp,
+            ),
+            ChatSession(
+                id="b-newer-created",
+                title="B newer created",
+                workspace_path=str(workspace_b),
+                workspace_name=workspace_b.name,
+                created_at=timestamp - timedelta(minutes=30),
+                updated_at=timestamp,
+            ),
+            ChatSession(
+                id="b-older-created",
+                title="B older created",
+                workspace_path=str(workspace_b),
+                workspace_name=workspace_b.name,
+                created_at=timestamp - timedelta(hours=1),
+                updated_at=timestamp,
+            ),
+        ]
+        repositories = [
+            InMemoryChatRepository(projects_root=temp_dir),
+            SqliteChatRepository(
+                database_path=str(Path(temp_dir) / "chat.sqlite3"),
+                projects_root=temp_dir,
+            ),
+        ]
+
+        for repository in repositories:
+            for session in sessions:
+                repository.save_session(session)
+
+            listed = repository.list_sessions()
+            assert [session.id for session in listed] == [
+                "b-newer-created",
+                "b-older-created",
+                "a-new",
+                "a-old",
+            ]
+            assert [
+                session.id
+                for session in listed
+                if session.workspace_path == str(workspace_a)
+            ] == ["a-new", "a-old"]
+            assert [
+                session.id
+                for session in listed
+                if session.workspace_path == str(workspace_b)
+            ] == ["b-newer-created", "b-older-created"]
+
+
 def test_sqlite_session_round_trip_preserves_turn_summary_checkpoint() -> None:
     with TemporaryDirectory() as temp_dir:
         workspace = Path(temp_dir) / "repo"

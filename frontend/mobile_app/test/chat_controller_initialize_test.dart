@@ -76,6 +76,40 @@ void main() {
 
     controller.dispose();
   });
+
+  test('refreshSessions sorts chats by most recent activity within projects',
+      () async {
+    final controller = ChatController(
+      apiClient: _UnsortedSessionsApiClient(),
+      notificationService: const NoopChatNotificationService(),
+    );
+
+    await controller.refreshSessions();
+
+    expect(
+      controller.sessions.map((session) => session.id),
+      <String>[
+        'project-b-newer-created',
+        'project-b-older-created',
+        'project-a-new',
+        'project-a-old',
+      ],
+    );
+    expect(
+      controller.sessions
+          .where((session) => session.workspacePath == '/workspace/project-a')
+          .map((session) => session.id),
+      <String>['project-a-new', 'project-a-old'],
+    );
+    expect(
+      controller.sessions
+          .where((session) => session.workspacePath == '/workspace/project-b')
+          .map((session) => session.id),
+      <String>['project-b-newer-created', 'project-b-older-created'],
+    );
+
+    controller.dispose();
+  });
 }
 
 class _FailingAgentProfilesApiClient extends ApiClient {
@@ -189,6 +223,66 @@ class _MutableRefreshApiClient extends ApiClient {
   Future<List<AgentProfile>> listAgentProfiles() async {
     return agentProfiles;
   }
+}
+
+class _UnsortedSessionsApiClient extends ApiClient {
+  _UnsortedSessionsApiClient() : super(baseUrl: 'http://localhost:8000');
+
+  static final DateTime _timestamp = DateTime.utc(2026, 1, 1, 12);
+
+  @override
+  Future<List<ChatSessionSummary>> listSessions() async {
+    return <ChatSessionSummary>[
+      _summary(
+        id: 'project-a-old',
+        workspacePath: '/workspace/project-a',
+        workspaceName: 'Project A',
+        createdAt: _timestamp.subtract(const Duration(hours: 4)),
+        updatedAt: _timestamp.subtract(const Duration(hours: 3)),
+      ),
+      _summary(
+        id: 'project-b-older-created',
+        workspacePath: '/workspace/project-b',
+        workspaceName: 'Project B',
+        createdAt: _timestamp.subtract(const Duration(hours: 1)),
+        updatedAt: _timestamp,
+      ),
+      _summary(
+        id: 'project-a-new',
+        workspacePath: '/workspace/project-a',
+        workspaceName: 'Project A',
+        createdAt: _timestamp.subtract(const Duration(hours: 2)),
+        updatedAt: _timestamp,
+      ),
+      _summary(
+        id: 'project-b-newer-created',
+        workspacePath: '/workspace/project-b',
+        workspaceName: 'Project B',
+        createdAt: _timestamp.subtract(const Duration(minutes: 30)),
+        updatedAt: _timestamp,
+      ),
+    ];
+  }
+}
+
+ChatSessionSummary _summary({
+  required String id,
+  required String workspacePath,
+  required String workspaceName,
+  required DateTime createdAt,
+  required DateTime updatedAt,
+}) {
+  return ChatSessionSummary(
+    id: id,
+    title: id,
+    workspacePath: workspacePath,
+    workspaceName: workspaceName,
+    agentProfileId: 'generator',
+    agentProfileName: 'Generator',
+    agentProfileColor: '#55D6BE',
+    createdAt: createdAt,
+    updatedAt: updatedAt,
+  );
 }
 
 AgentProfile _testAgentProfile({

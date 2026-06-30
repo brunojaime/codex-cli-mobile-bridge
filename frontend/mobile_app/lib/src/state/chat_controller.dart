@@ -238,12 +238,28 @@ class ChatController extends ChangeNotifier {
 
   Future<void> refreshSessions() async {
     final sessions = await _apiClient.listSessions();
+    sessions.sort(_compareSessionsByRecentActivity);
     _sessions
       ..clear()
       ..addAll(sessions);
     _errorText = null;
     _flushDeferredRunNotifications();
     notifyListeners();
+  }
+
+  static int _compareSessionsByRecentActivity(
+    ChatSessionSummary left,
+    ChatSessionSummary right,
+  ) {
+    final updatedComparison = right.updatedAt.compareTo(left.updatedAt);
+    if (updatedComparison != 0) {
+      return updatedComparison;
+    }
+    final createdComparison = right.createdAt.compareTo(left.createdAt);
+    if (createdComparison != 0) {
+      return createdComparison;
+    }
+    return right.id.compareTo(left.id);
   }
 
   Future<void> refreshWorkspaces() async {

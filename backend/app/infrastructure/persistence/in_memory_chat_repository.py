@@ -98,7 +98,11 @@ class InMemoryChatRepository(ChatRepository):
         with self._lock:
             return sorted(
                 self._sessions.values(),
-                key=lambda session: session.updated_at,
+                key=lambda session: (
+                    session.updated_at,
+                    session.created_at,
+                    session.id,
+                ),
                 reverse=True,
             )
 
