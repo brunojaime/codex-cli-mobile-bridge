@@ -2,12 +2,13 @@
   "ambientando-calendar": {
     "displayName": "Ambientando Calendar",
     "repo": "brunojaime/ambientando-calendar",
-    "releaseTagPattern": "android-local-demo-feedback-v*",
+    "releaseTagPattern": "android-*-feedback-v*",
     "apkAssetPattern": "ambientando-calendar-*.apk",
     "latestAssetName": "ambientando-calendar.apk",
     "expectedPackageId": "com.ambientando.calendar",
     "verifiedPackageIds": {
-      "android-local-demo-feedback-v*": "com.ambientando.calendar"
+      "android-local-demo-feedback-v*": "com.ambientando.calendar",
+      "android-prod-feedback-v*": "com.ambientando.calendar"
     },
     "requiredMinimumBuild": null,
     "enabled": true

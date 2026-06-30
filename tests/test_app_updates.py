@@ -213,8 +213,13 @@ def test_default_registry_accepts_latest_ambientando_release_package_id() -> Non
     config = registry.get("ambientando-calendar")
 
     assert config.expected_package_id == "com.ambientando.calendar"
+    assert config.release_tag_pattern == "android-*-feedback-v*"
     assert (
         config.verified_package_ids["android-local-demo-feedback-v*"]
+        == "com.ambientando.calendar"
+    )
+    assert (
+        config.verified_package_ids["android-prod-feedback-v*"]
         == "com.ambientando.calendar"
     )
 
@@ -418,16 +423,25 @@ def test_package_verification_accepts_release_tag_patterns(tmp_path: Path) -> No
         source_app="ambientando-calendar",
         display_name="Ambientando Calendar",
         repo="brunojaime/ambientando-calendar",
-        release_tag_pattern="android-local-demo-feedback-v*",
+        release_tag_pattern="android-*-feedback-v*",
         apk_asset_pattern="ambientando-calendar-*.apk",
         latest_asset_name="ambientando-calendar.apk",
         expected_package_id="com.ambientando.calendar",
         verified_package_ids={
             "android-local-demo-feedback-v*": "com.ambientando.calendar",
+            "android-prod-feedback-v*": "com.ambientando.calendar",
         },
         releases=[
             _release(
+                "android-v1.0.0-build.112",
+                assets=[_apk_asset("ambientando-calendar.apk")],
+            ),
+            _release(
                 "android-local-demo-feedback-v1.0.0-build.99",
+                assets=[_apk_asset("ambientando-calendar.apk")],
+            ),
+            _release(
+                "android-prod-feedback-v1.0.0-build.100",
                 assets=[_apk_asset("ambientando-calendar.apk")],
             ),
         ],
@@ -441,8 +455,8 @@ def test_package_verification_accepts_release_tag_patterns(tmp_path: Path) -> No
     assert response.status_code == 200
     payload = response.json()
     assert payload["available"] is True
-    assert payload["latestBuild"] == 99
-    assert payload["releaseTag"] == "android-local-demo-feedback-v1.0.0-build.99"
+    assert payload["latestBuild"] == 100
+    assert payload["releaseTag"] == "android-prod-feedback-v1.0.0-build.100"
     assert payload["packageId"] == "com.ambientando.calendar"
 
 
