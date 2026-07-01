@@ -71,6 +71,8 @@ class FeedbackPointRequest(BaseModel):
 
 
 class FeedbackQueueItemRequest(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
     id: str | None = Field(default=None, max_length=160)
     sourceApp: str = Field(
         default="unknown",
@@ -82,8 +84,13 @@ class FeedbackQueueItemRequest(BaseModel):
         max_length=160,
         validation_alias=AliasChoices("sourceDisplayName", "source_display_name"),
     )
-    comment: str = Field(..., min_length=1, max_length=10000)
+    comment: str = Field(default="", max_length=10000)
     createdAt: str | None = None
+    feedbackKind: str | None = Field(
+        default=None,
+        max_length=120,
+        validation_alias=AliasChoices("feedbackKind", "feedback_kind"),
+    )
     screenshotMimeType: str = Field(default="image/png", max_length=80)
     screenshotPngBase64: str | None = None
     selectionPoints: list[FeedbackPointRequest] = Field(default_factory=list)
@@ -97,6 +104,26 @@ class FeedbackQueueItemRequest(BaseModel):
     audioByteLength: int | None = None
     audioBase64: str | None = None
     audioTranscript: str | None = Field(default=None, max_length=20000)
+    imageCapture: dict[str, Any] = Field(
+        default_factory=dict,
+        validation_alias=AliasChoices("imageCapture", "image_capture"),
+    )
+    guidedTrace: dict[str, Any] = Field(
+        default_factory=dict,
+        validation_alias=AliasChoices("guidedTrace", "guided_trace"),
+    )
+
+    @model_validator(mode="after")
+    def require_feedback_content(self) -> "FeedbackQueueItemRequest":
+        if (
+            self.comment.strip()
+            or str(self.screenshotPngBase64 or "").strip()
+            or str(self.audioBase64 or "").strip()
+            or self.imageCapture
+            or self.guidedTrace
+        ):
+            return self
+        raise ValueError("Feedback item has no comment, screenshot, audio, or trace.")
 
 
 class FeedbackQueueItemResponse(BaseModel):
@@ -112,6 +139,9 @@ class FeedbackQueueItemResponse(BaseModel):
     selection_points: list[dict[str, float]] = Field(default_factory=list)
     selection_bounds: dict[str, float] = Field(default_factory=dict)
     context_metadata: dict[str, Any] = Field(default_factory=dict)
+    feedback_kind: str | None = None
+    image_capture: dict[str, Any] = Field(default_factory=dict)
+    guided_trace: dict[str, Any] = Field(default_factory=dict)
     audio_mime_type: str | None = None
     audio_duration_ms: int | None = None
     audio_byte_length: int | None = None

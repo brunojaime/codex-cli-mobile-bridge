@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import json
 import re
 from collections.abc import Iterator
 from pathlib import Path
@@ -705,6 +706,25 @@ def _feedback_context_note(context_metadata: dict[str, Any] | None) -> str:
     return f"\nScreen/context metadata: {context_metadata}"
 
 
+def _feedback_live_feedback_note(item) -> str:
+    parts: list[str] = []
+    if item.feedback_kind:
+        parts.append(f"Feedback contract: {item.feedback_kind}")
+    if item.image_capture:
+        parts.append(
+            "Image capture schema: "
+            + json.dumps(item.image_capture, ensure_ascii=False, default=str)
+        )
+    if item.guided_trace:
+        parts.append(
+            "Guided trace schema: "
+            + json.dumps(item.guided_trace, ensure_ascii=False, default=str)
+        )
+    if not parts:
+        return ""
+    return "\n" + "\n".join(parts)
+
+
 async def _feedback_audio_prompt_note(
     item,
     *,
@@ -1041,6 +1061,7 @@ async def start_feedback_queue_session(
         f"Feedback: {item.comment}\n"
         f"Selection bounds: {item.selection_bounds}"
         f"{_feedback_context_note(item.context_metadata)}"
+        f"{_feedback_live_feedback_note(item)}"
         f"{audio_note}"
     )
     should_cleanup_temp_image = True
@@ -1241,6 +1262,7 @@ async def start_feedback_batch_session(
                 f"Feedback: {item.comment}\n"
                 f"Selection bounds: {item.selection_bounds}"
                 f"{_feedback_context_note(item.context_metadata)}"
+                f"{_feedback_live_feedback_note(item)}"
                 f"{audio_note}"
             )
         release_note = (

@@ -67,6 +67,8 @@ const developerFeedbackAdminPassword = String.fromEnvironment(
   'CODEX_FEEDBACK_ADMIN_PASSWORD',
   defaultValue: 'admin',
 );
+const developerFeedbackImageCaptureKind = 'codex.liveFeedback.imageCapture';
+const developerFeedbackGuidedTraceKind = 'codex.liveFeedback.guidedTrace';
 
 const developerFeedbackToolbarKey = Key('developer-feedback-toolbar');
 const developerFeedbackToolbarCollapseKey = Key(
@@ -152,6 +154,27 @@ const developerFeedbackQuickAskBoundsKey = Key(
 const developerFeedbackQuickAskActKey = Key('developer-feedback-quick-ask-act');
 const developerFeedbackCommentActionKey = Key(
   'developer-feedback-comment-action',
+);
+const developerFeedbackGuidedTraceStartKey = Key(
+  'developer-feedback-guided-trace-start',
+);
+const developerFeedbackGuidedTraceStopKey = Key(
+  'developer-feedback-guided-trace-stop',
+);
+const developerFeedbackGuidedTraceDiscardKey = Key(
+  'developer-feedback-guided-trace-discard',
+);
+const developerFeedbackGuidedTraceBannerKey = Key(
+  'developer-feedback-guided-trace-banner',
+);
+const developerFeedbackGuidedTraceCommentKey = Key(
+  'developer-feedback-guided-trace-comment',
+);
+const developerFeedbackGuidedTraceAttachKey = Key(
+  'developer-feedback-guided-trace-attach',
+);
+const developerFeedbackGuidedTraceRerecordKey = Key(
+  'developer-feedback-guided-trace-rerecord',
 );
 const developerFeedbackResetSelectionKey = Key(
   'developer-feedback-reset-selection',
@@ -500,6 +523,11 @@ class DeveloperFeedbackTemplate extends StatefulWidget {
     this.appUpdaterController,
     this.appUpdaterCheckOnStart = true,
     this.appUpdaterCheckOnResume = true,
+    this.guidedTraceEnabled = true,
+    this.guidedTraceFrameInterval = const Duration(seconds: 5),
+    this.guidedTraceMaxFrames = 8,
+    this.guidedTraceMaxEvents = 160,
+    this.guidedTraceMaxDuration = const Duration(minutes: 2),
     super.key,
   });
 
@@ -527,6 +555,24 @@ class DeveloperFeedbackTemplate extends StatefulWidget {
   final CodexAppUpdaterController? appUpdaterController;
   final bool appUpdaterCheckOnStart;
   final bool appUpdaterCheckOnResume;
+
+  /// Enables the floating toolbar action that records a structured walkthrough.
+  ///
+  /// Existing integrations keep the default enabled behavior and can opt out
+  /// without changing the feedback queue or batch submission contracts.
+  final bool guidedTraceEnabled;
+
+  /// Interval for automatic screen captures while a guided trace is recording.
+  final Duration guidedTraceFrameInterval;
+
+  /// Maximum screenshots kept inside one guided trace payload.
+  final int guidedTraceMaxFrames;
+
+  /// Maximum timeline events kept inside one guided trace payload.
+  final int guidedTraceMaxEvents;
+
+  /// Maximum recording duration before the guided trace auto-stops.
+  final Duration guidedTraceMaxDuration;
 
   @override
   State<DeveloperFeedbackTemplate> createState() =>
@@ -559,6 +605,11 @@ class CodexDeveloperFeedbackTemplate extends DeveloperFeedbackTemplate {
     super.appUpdaterController,
     super.appUpdaterCheckOnStart,
     super.appUpdaterCheckOnResume,
+    super.guidedTraceEnabled,
+    super.guidedTraceFrameInterval,
+    super.guidedTraceMaxFrames,
+    super.guidedTraceMaxEvents,
+    super.guidedTraceMaxDuration,
     super.key,
   });
 }
@@ -581,9 +632,16 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
   var _dialogOpen = false;
   var _selectionReady = false;
   var _toolbarExpanded = true;
+  var _guidedTraceCaptureInProgress = false;
+  var _guidedTraceStarting = false;
+  var _guidedTraceStopping = false;
   var _drawing = <Offset>[];
   Offset? _toolbarOffset;
   Size? _toolbarSize;
+  _GuidedTraceRecording? _guidedTraceRecording;
+  Timer? _guidedTraceFrameTimer;
+  Timer? _guidedTraceUiTimer;
+  Timer? _guidedTraceMaxDurationTimer;
 
   @override
   void initState() {
@@ -620,6 +678,10 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
 
   @override
   void dispose() {
+    _guidedTraceFrameTimer?.cancel();
+    _guidedTraceUiTimer?.cancel();
+    _guidedTraceMaxDurationTimer?.cancel();
+    unawaited(_guidedTraceRecording?.recorder?.cancel());
     _cancelQuickAskBackgroundWork();
     super.dispose();
   }
@@ -639,7 +701,15 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
 
         return Stack(
           children: <Widget>[
-            RepaintBoundary(key: _captureKey, child: _appContent),
+            RepaintBoundary(
+              key: _captureKey,
+              child: Listener(
+                onPointerDown: _recordGuidedTracePointerDown,
+                onPointerUp: _recordGuidedTracePointerUp,
+                onPointerCancel: _recordGuidedTracePointerCancel,
+                child: _appContent,
+              ),
+            ),
             if (_editMode && !_dialogOpen)
               Positioned.fill(
                 child: _DrawingOverlay(
@@ -700,9 +770,26 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
                   onOpenQuickAskHistory: bridgeAvailable
                       ? _openQuickAskHistoryDialog
                       : _openBridgeUnavailableDialog,
+                  guidedTraceEnabled: widget.guidedTraceEnabled,
+                  guidedTraceRecording: _guidedTraceRecording != null,
+                  guidedTraceBusy: _guidedTraceStarting || _guidedTraceStopping,
+                  onStartGuidedTrace: _startGuidedTrace,
+                  onStopGuidedTrace: _stopGuidedTrace,
                 ),
               ),
             ),
+            if (_guidedTraceRecording != null && !_dialogOpen)
+              Positioned(
+                left: 16,
+                right: 16,
+                bottom: safePadding.bottom + 72,
+                child: _GuidedTraceRecordingBanner(
+                  recording: _guidedTraceRecording!,
+                  stopping: _guidedTraceStopping,
+                  onStop: _stopGuidedTrace,
+                  onDiscard: _discardGuidedTrace,
+                ),
+              ),
           ],
         );
       },
@@ -1303,6 +1390,442 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
     }
   }
 
+  Future<_CapturedFeedbackScreenshot> _captureGuidedTraceScreenshot() async {
+    try {
+      if (_isWidgetTestBinding()) {
+        return const _CapturedFeedbackScreenshot(
+          pngBase64: _transparentPngBase64,
+          width: 1,
+          height: 1,
+          pixelRatio: 1,
+        );
+      }
+      final boundary =
+          _captureKey.currentContext?.findRenderObject()
+              as RenderRepaintBoundary?;
+      if (boundary == null) return _CapturedFeedbackScreenshot.transparent();
+      const pixelRatio = 1.0;
+      final image = await boundary
+          .toImage(pixelRatio: pixelRatio)
+          .timeout(const Duration(seconds: 1));
+      final byteData = await image
+          .toByteData(format: ui.ImageByteFormat.png)
+          .timeout(const Duration(seconds: 1));
+      final width = image.width;
+      final height = image.height;
+      image.dispose();
+      if (byteData == null) return _CapturedFeedbackScreenshot.transparent();
+      return _CapturedFeedbackScreenshot(
+        pngBase64: base64Encode(
+          Uint8List.view(
+            byteData.buffer,
+            byteData.offsetInBytes,
+            byteData.lengthInBytes,
+          ),
+        ),
+        width: width,
+        height: height,
+        pixelRatio: pixelRatio,
+      );
+    } catch (_) {
+      return _CapturedFeedbackScreenshot.transparent();
+    }
+  }
+
+  void _startGuidedTrace() {
+    unawaited(_startGuidedTraceAsync());
+  }
+
+  Future<void> _startGuidedTraceAsync() async {
+    if (!widget.guidedTraceEnabled ||
+        _guidedTraceRecording != null ||
+        _guidedTraceStarting) {
+      return;
+    }
+    setState(() => _guidedTraceStarting = true);
+    final now = DateTime.now().toUtc();
+    DeveloperFeedbackAudioRecorder? recorder;
+    var audioStarted = false;
+    try {
+      final candidate = widget.recorderFactory();
+      if (await candidate.isSupported.timeout(const Duration(seconds: 1))) {
+        await candidate.start().timeout(const Duration(seconds: 2));
+        recorder = candidate;
+        audioStarted = true;
+      } else {
+        await candidate.cancel();
+      }
+    } catch (_) {
+      await recorder?.cancel();
+      recorder = null;
+      audioStarted = false;
+    }
+    try {
+      final recording = _GuidedTraceRecording(
+        id: 'trace-${now.microsecondsSinceEpoch}',
+        startedAt: now,
+        recorder: recorder,
+        audioStarted: audioStarted,
+      );
+      recording.contextSnapshots.add(_newGuidedTraceContextSnapshot(recording));
+      _addGuidedTraceEvent(
+        recording,
+        DeveloperFeedbackTraceEvent(
+          id: recording.nextEventId(),
+          type: 'session_started',
+          atMs: recording.elapsedMs,
+          contextSnapshotId: recording.contextSnapshots.first['id'] as String?,
+        ),
+      );
+      if (!mounted) {
+        await recorder?.cancel();
+        return;
+      }
+      setState(() {
+        _guidedTraceRecording = recording;
+        _guidedTraceStarting = false;
+        _editMode = false;
+        _drawing = <Offset>[];
+        _selectionReady = false;
+      });
+      _startGuidedTraceTimers();
+      await _captureGuidedTraceFrame(reason: 'initial_screen', force: true);
+      _showMessage(
+        audioStarted
+            ? 'Grabando recorrido con audio.'
+            : 'Grabando recorrido sin audio.',
+      );
+    } catch (_) {
+      await recorder?.cancel();
+      if (mounted) setState(() => _guidedTraceStarting = false);
+      _showMessage('No se pudo iniciar el recorrido.');
+    }
+  }
+
+  void _startGuidedTraceTimers() {
+    _guidedTraceFrameTimer?.cancel();
+    _guidedTraceUiTimer?.cancel();
+    _guidedTraceMaxDurationTimer?.cancel();
+    _guidedTraceFrameTimer = Timer.periodic(
+      _effectiveGuidedTraceFrameInterval,
+      (_) => unawaited(_captureGuidedTraceFrame(reason: 'interval')),
+    );
+    _guidedTraceUiTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted && _guidedTraceRecording != null) setState(() {});
+    });
+    final maxDuration = _effectiveGuidedTraceMaxDuration;
+    if (maxDuration > Duration.zero) {
+      _guidedTraceMaxDurationTimer = Timer(maxDuration, () {
+        if (mounted && _guidedTraceRecording != null) {
+          _showMessage('Recorrido detenido por duración máxima.');
+          _stopGuidedTrace();
+        }
+      });
+    }
+  }
+
+  Duration get _effectiveGuidedTraceFrameInterval {
+    final interval = widget.guidedTraceFrameInterval;
+    if (interval <= Duration.zero) return const Duration(seconds: 5);
+    return interval;
+  }
+
+  int get _effectiveGuidedTraceMaxFrames =>
+      math.max(1, widget.guidedTraceMaxFrames);
+
+  int get _effectiveGuidedTraceMaxEvents =>
+      math.max(8, widget.guidedTraceMaxEvents);
+
+  Duration get _effectiveGuidedTraceMaxDuration {
+    final duration = widget.guidedTraceMaxDuration;
+    if (duration <= Duration.zero) return Duration.zero;
+    return duration;
+  }
+
+  void _stopGuidedTrace() {
+    unawaited(_stopGuidedTraceAsync());
+  }
+
+  Future<void> _stopGuidedTraceAsync() async {
+    final recording = _guidedTraceRecording;
+    if (recording == null || _guidedTraceStopping) return;
+    setState(() => _guidedTraceStopping = true);
+    _guidedTraceFrameTimer?.cancel();
+    _guidedTraceUiTimer?.cancel();
+    _guidedTraceMaxDurationTimer?.cancel();
+    await _captureGuidedTraceFrame(reason: 'stopped', force: true);
+    DeveloperFeedbackAudioClip? audio;
+    if (recording.audioStarted) {
+      try {
+        audio = await recording.recorder?.stop().timeout(
+          const Duration(seconds: 2),
+        );
+      } catch (_) {
+        await recording.recorder?.cancel();
+      }
+    }
+    final endedAt = DateTime.now().toUtc();
+    final trace = DeveloperFeedbackGuidedTrace(
+      id: recording.id,
+      startedAt: recording.startedAt,
+      endedAt: endedAt,
+      durationMs: endedAt.difference(recording.startedAt).inMilliseconds,
+      truncated: recording.truncated,
+      droppedFrameCount: recording.droppedFrameCount,
+      droppedEventCount: recording.droppedEventCount,
+      maxFrames: _effectiveGuidedTraceMaxFrames,
+      maxEvents: _effectiveGuidedTraceMaxEvents,
+      audio: audio == null
+          ? null
+          : DeveloperFeedbackTraceAudio(
+              attachmentId: '${recording.id}_audio',
+              mimeType: audio.mimeType,
+              durationMs: audio.durationMs,
+              transcriptAvailable: false,
+            ),
+      timeline: List.of(recording.events),
+      frames: List.of(recording.frames),
+      contextSnapshots: List.of(recording.contextSnapshots),
+    );
+    if (trace.timeline.isEmpty && trace.frames.isEmpty && audio == null) {
+      setState(() {
+        _guidedTraceRecording = null;
+        _guidedTraceStopping = false;
+      });
+      _showMessage('No se grabó contenido para el recorrido.');
+      return;
+    }
+    setState(() {
+      _guidedTraceRecording = null;
+      _guidedTraceStopping = false;
+      _dialogOpen = true;
+    });
+    final result = await showDialog<_GuidedTracePreviewResult>(
+      context: widget.navigatorKey?.currentContext ?? context,
+      barrierDismissible: false,
+      builder: (context) => _GuidedTracePreviewDialog(
+        trace: trace,
+        audio: audio,
+        onAttach: (comment) => Navigator.of(
+          context,
+        ).pop(_GuidedTracePreviewResult.attach(comment: comment)),
+        onDiscard: () => Navigator.of(
+          context,
+        ).pop(const _GuidedTracePreviewResult.discard()),
+        onRerecord: () => Navigator.of(
+          context,
+        ).pop(const _GuidedTracePreviewResult.rerecord()),
+      ),
+    );
+    if (!mounted) return;
+    setState(() => _dialogOpen = false);
+    switch (result?.action) {
+      case _GuidedTracePreviewAction.attach:
+        _queueGuidedTrace(trace: trace, audio: audio, comment: result!.comment);
+      case _GuidedTracePreviewAction.rerecord:
+        _showMessage('Recorrido descartado.');
+        _startGuidedTrace();
+      case _GuidedTracePreviewAction.discard:
+      case null:
+        _showMessage('Recorrido descartado.');
+    }
+  }
+
+  void _discardGuidedTrace() {
+    final recording = _guidedTraceRecording;
+    _guidedTraceFrameTimer?.cancel();
+    _guidedTraceUiTimer?.cancel();
+    _guidedTraceMaxDurationTimer?.cancel();
+    setState(() {
+      _guidedTraceRecording = null;
+      _guidedTraceStarting = false;
+      _guidedTraceStopping = false;
+    });
+    unawaited(recording?.recorder?.cancel());
+    _showMessage('Recorrido descartado.');
+  }
+
+  void _queueGuidedTrace({
+    required DeveloperFeedbackGuidedTrace trace,
+    required DeveloperFeedbackAudioClip? audio,
+    required String comment,
+  }) {
+    final now = DateTime.now().toUtc();
+    final fallbackScreenshot = trace.frames.isEmpty
+        ? _transparentPngBase64
+        : trace.frames.last.screenshotPngBase64 ?? _transparentPngBase64;
+    final item = DeveloperFeedbackItem(
+      id: 'feedback-${now.microsecondsSinceEpoch}',
+      createdAt: now,
+      sourceApp: widget.sourceApp,
+      sourceDisplayName: widget.sourceDisplayName,
+      comment: comment.trim(),
+      screenshotPngBase64: fallbackScreenshot,
+      selectionPoints: const <Offset>[],
+      audio: audio,
+      contextMetadata: _currentContextMetadata(),
+      screen: _currentScreenSnapshot(),
+      guidedTrace: trace,
+    );
+    setState(() => _items.add(item));
+    _showMessage('Recorrido agregado a la cola.');
+  }
+
+  Future<void> _captureGuidedTraceFrame({
+    required String reason,
+    bool force = false,
+  }) async {
+    final recording = _guidedTraceRecording;
+    if (recording == null || _guidedTraceCaptureInProgress) return;
+    if (!force && recording.frames.length >= _effectiveGuidedTraceMaxFrames) {
+      return;
+    }
+    final now = DateTime.now().toUtc();
+    if (!force &&
+        recording.lastFrameAt != null &&
+        now.difference(recording.lastFrameAt!) <
+            const Duration(milliseconds: 750)) {
+      return;
+    }
+    _guidedTraceCaptureInProgress = true;
+    try {
+      final screenshot = await _captureGuidedTraceScreenshot();
+      final contextSnapshot = _newGuidedTraceContextSnapshot(recording);
+      final contextSnapshotId = contextSnapshot['id'] as String;
+      final frameId = recording.nextFrameId();
+      final frame = DeveloperFeedbackTraceFrame(
+        id: frameId,
+        attachmentId: '${frameId}_png',
+        atMs: recording.elapsedMs,
+        width: screenshot.width,
+        height: screenshot.height,
+        pixelRatio: screenshot.pixelRatio,
+        screen: _currentScreenSnapshot(),
+        screenshotMimeType: 'image/png',
+        screenshotPngBase64: screenshot.pngBase64,
+      );
+      if (!mounted || _guidedTraceRecording != recording) return;
+      setState(() {
+        recording.contextSnapshots.add(contextSnapshot);
+        _trimGuidedTraceContextSnapshots(recording);
+        if (recording.frames.length >= _effectiveGuidedTraceMaxFrames) {
+          recording.frames.removeAt(0);
+          recording.droppedFrameCount += 1;
+          recording.truncated = true;
+        }
+        recording.frames.add(frame);
+        recording.lastFrameAt = now;
+        _addGuidedTraceEvent(
+          recording,
+          DeveloperFeedbackTraceEvent(
+            id: recording.nextEventId(),
+            type: 'screen_frame',
+            atMs: recording.elapsedMs,
+            frameId: frameId,
+            contextSnapshotId: contextSnapshotId,
+            data: <String, Object?>{'reason': reason},
+          ),
+        );
+      });
+    } finally {
+      _guidedTraceCaptureInProgress = false;
+    }
+  }
+
+  void _addGuidedTraceEvent(
+    _GuidedTraceRecording recording,
+    DeveloperFeedbackTraceEvent event,
+  ) {
+    if (recording.events.length >= _effectiveGuidedTraceMaxEvents) {
+      recording.events.removeAt(0);
+      recording.droppedEventCount += 1;
+      recording.truncated = true;
+    }
+    recording.events.add(event);
+  }
+
+  void _trimGuidedTraceContextSnapshots(_GuidedTraceRecording recording) {
+    final maxSnapshots = _effectiveGuidedTraceMaxFrames + 2;
+    while (recording.contextSnapshots.length > maxSnapshots) {
+      recording.contextSnapshots.removeAt(0);
+      recording.truncated = true;
+    }
+  }
+
+  Map<String, Object?> _newGuidedTraceContextSnapshot(
+    _GuidedTraceRecording recording,
+  ) {
+    return <String, Object?>{
+      'id': recording.nextContextSnapshotId(),
+      'observedAtMs': recording.elapsedMs,
+      ..._currentContextMetadata(),
+    };
+  }
+
+  DeveloperFeedbackScreenSnapshot _currentScreenSnapshot() {
+    final contextForMetadata = widget.navigatorKey?.currentContext ?? context;
+    final media = MediaQuery.maybeOf(contextForMetadata);
+    final route = ModalRoute.of(contextForMetadata);
+    return DeveloperFeedbackScreenSnapshot(
+      route: route?.settings.name,
+      name: route?.settings.name,
+      metadata: <String, Object?>{
+        if (media != null) ...<String, Object?>{
+          'screenWidth': media.size.width,
+          'screenHeight': media.size.height,
+          'devicePixelRatio': media.devicePixelRatio,
+          'orientation': media.orientation.name,
+        },
+      },
+    );
+  }
+
+  void _recordGuidedTracePointerDown(PointerDownEvent event) {
+    _recordGuidedTracePointerEvent('pointer_down', event.localPosition);
+  }
+
+  void _recordGuidedTracePointerUp(PointerUpEvent event) {
+    _recordGuidedTracePointerEvent('pointer_up', event.localPosition);
+    unawaited(_captureGuidedTraceFrame(reason: 'gesture_end'));
+  }
+
+  void _recordGuidedTracePointerCancel(PointerCancelEvent event) {
+    _recordGuidedTracePointerEvent('pointer_cancel', event.localPosition);
+  }
+
+  void _recordGuidedTracePointerEvent(String kind, Offset position) {
+    final recording = _guidedTraceRecording;
+    if (recording == null) return;
+    final normalized = _normalizeGuidedTracePosition(position);
+    _addGuidedTraceEvent(
+      recording,
+      DeveloperFeedbackTraceEvent(
+        id: recording.nextEventId(),
+        type: 'gesture',
+        atMs: recording.elapsedMs,
+        data: <String, Object?>{
+          'gesture': <String, Object?>{
+            'kind': kind,
+            'position': <String, double>{
+              'x': normalized.dx,
+              'y': normalized.dy,
+            },
+          },
+        },
+      ),
+    );
+  }
+
+  Offset _normalizeGuidedTracePosition(Offset position) {
+    final renderObject = _captureKey.currentContext?.findRenderObject();
+    final size = renderObject is RenderBox ? renderObject.size : Size.zero;
+    if (size.width <= 0 || size.height <= 0) return position;
+    return Offset(
+      (position.dx / size.width).clamp(0.0, 1.0),
+      (position.dy / size.height).clamp(0.0, 1.0),
+    );
+  }
+
   bool _isWidgetTestBinding() {
     var isTestBinding = false;
     assert(() {
@@ -1487,7 +2010,7 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
                                             CrossAxisAlignment.start,
                                         children: <Widget>[
                                           SelectableText(
-                                            item.comment,
+                                            _feedbackPreviewComment(item),
                                             key:
                                                 developerFeedbackPreviewCommentKey,
                                             maxLines: 4,
@@ -1518,6 +2041,13 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
                                                   item.audio,
                                                 ),
                                               ),
+                                              if (item.guidedTrace != null)
+                                                _PreviewMetaChip(
+                                                  icon: Icons.timeline,
+                                                  label:
+                                                      '${item.guidedTrace!.frames.length} pantallas · '
+                                                      '${item.guidedTrace!.timeline.length} eventos',
+                                                ),
                                             ],
                                           ),
                                         ],
@@ -2811,6 +3341,11 @@ class _Toolbar extends StatelessWidget {
     required this.onOpenHistory,
     required this.onOpenNotifications,
     required this.onOpenQuickAskHistory,
+    required this.guidedTraceEnabled,
+    required this.guidedTraceRecording,
+    required this.guidedTraceBusy,
+    required this.onStartGuidedTrace,
+    required this.onStopGuidedTrace,
   });
 
   final bool expanded;
@@ -2828,6 +3363,11 @@ class _Toolbar extends StatelessWidget {
   final VoidCallback? onOpenHistory;
   final VoidCallback? onOpenNotifications;
   final VoidCallback? onOpenQuickAskHistory;
+  final bool guidedTraceEnabled;
+  final bool guidedTraceRecording;
+  final bool guidedTraceBusy;
+  final VoidCallback onStartGuidedTrace;
+  final VoidCallback onStopGuidedTrace;
 
   @override
   Widget build(BuildContext context) {
@@ -2871,113 +3411,149 @@ class _Toolbar extends StatelessWidget {
       color: colorScheme.surface,
       elevation: 6,
       borderRadius: BorderRadius.circular(8),
-      child: Padding(
-        padding: toolbarPadding,
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: <Widget>[
-            IconButton(
-              key: developerFeedbackToolbarCollapseKey,
-              constraints: buttonConstraints,
-              padding: buttonPadding,
-              tooltip: toolbarTooltip('Contraer feedback'),
-              onPressed: () => onExpandedChanged(false),
-              icon: const Icon(Icons.keyboard_arrow_right),
-            ),
-            InkWell(
-              borderRadius: BorderRadius.circular(6),
-              onTap: () => onEditModeChanged(!editMode),
-              child: Padding(
-                padding: EdgeInsets.only(left: compact ? 0 : 4),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: <Widget>[
-                    if (compact)
-                      const Icon(Icons.bug_report_outlined)
-                    else
-                      const Text('Plantilla'),
-                    SizedBox(width: compact ? 4 : 8),
-                    Switch(
-                      key: developerFeedbackSwitchKey,
-                      value: editMode,
-                      onChanged: onEditModeChanged,
+      clipBehavior: Clip.antiAlias,
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxWidth: math.max(48.0, MediaQuery.sizeOf(context).width - 16),
+        ),
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Padding(
+            padding: toolbarPadding,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                IconButton(
+                  key: developerFeedbackToolbarCollapseKey,
+                  constraints: buttonConstraints,
+                  padding: buttonPadding,
+                  tooltip: toolbarTooltip('Contraer feedback'),
+                  onPressed: () => onExpandedChanged(false),
+                  icon: const Icon(Icons.keyboard_arrow_right),
+                ),
+                InkWell(
+                  borderRadius: BorderRadius.circular(6),
+                  onTap: () => onEditModeChanged(!editMode),
+                  child: Padding(
+                    padding: EdgeInsets.only(left: compact ? 0 : 4),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: <Widget>[
+                        if (compact)
+                          const Icon(Icons.bug_report_outlined)
+                        else
+                          const Text('Plantilla'),
+                        SizedBox(width: compact ? 4 : 8),
+                        Switch(
+                          key: developerFeedbackSwitchKey,
+                          value: editMode,
+                          onChanged: onEditModeChanged,
+                        ),
+                      ],
                     ),
-                  ],
+                  ),
                 ),
-              ),
+                if (guidedTraceEnabled) ...<Widget>[
+                  SizedBox(width: itemSpacing),
+                  IconButton(
+                    key: guidedTraceRecording
+                        ? developerFeedbackGuidedTraceStopKey
+                        : developerFeedbackGuidedTraceStartKey,
+                    constraints: buttonConstraints,
+                    padding: buttonPadding,
+                    tooltip: toolbarTooltip(
+                      guidedTraceRecording
+                          ? 'Detener recorrido'
+                          : 'Grabar recorrido',
+                    ),
+                    onPressed: guidedTraceBusy
+                        ? null
+                        : guidedTraceRecording
+                        ? onStopGuidedTrace
+                        : onStartGuidedTrace,
+                    icon: Icon(
+                      guidedTraceRecording
+                          ? Icons.stop_circle_outlined
+                          : Icons.radio_button_checked,
+                    ),
+                  ),
+                ],
+                if (pendingCount > 0) ...<Widget>[
+                  SizedBox(width: itemSpacing),
+                  IconButton(
+                    key: developerFeedbackPendingKey,
+                    constraints: buttonConstraints,
+                    padding: buttonPadding,
+                    tooltip: toolbarTooltip('Pendientes'),
+                    onPressed: onOpenPending,
+                    icon: Badge.count(
+                      count: pendingCount,
+                      child: const Icon(Icons.pending_actions),
+                    ),
+                  ),
+                ],
+                if (submittedCount > 0) ...<Widget>[
+                  SizedBox(width: itemSpacing),
+                  IconButton(
+                    key: developerFeedbackRunsKey,
+                    constraints: buttonConstraints,
+                    padding: buttonPadding,
+                    tooltip: toolbarTooltip('Runs'),
+                    onPressed: onOpenRuns,
+                    icon: Badge.count(
+                      count: submittedCount,
+                      child: const Icon(Icons.track_changes),
+                    ),
+                  ),
+                ],
+                ...<Widget>[
+                  SizedBox(width: itemSpacing),
+                  IconButton(
+                    key: developerFeedbackNotificationBellKey,
+                    constraints: buttonConstraints,
+                    padding: buttonPadding,
+                    tooltip: toolbarTooltip('Notificaciones'),
+                    onPressed: onOpenNotifications,
+                    icon: !bridgeAvailable
+                        ? const Icon(Icons.notifications_off_outlined)
+                        : unreadNotificationCount > 0
+                        ? Badge.count(
+                            count: unreadNotificationCount,
+                            child: const Icon(Icons.notifications_outlined),
+                          )
+                        : const Icon(Icons.notifications_none),
+                  ),
+                  IconButton(
+                    key: developerFeedbackHistoryKey,
+                    constraints: buttonConstraints,
+                    padding: buttonPadding,
+                    tooltip: toolbarTooltip('Historial'),
+                    onPressed: onOpenHistory,
+                    icon: Icon(
+                      bridgeAvailable
+                          ? Icons.history
+                          : Icons.history_toggle_off,
+                    ),
+                  ),
+                  IconButton(
+                    key: developerFeedbackQuickAskHistoryKey,
+                    constraints: buttonConstraints,
+                    padding: buttonPadding,
+                    tooltip: toolbarTooltip('Preguntas rápidas'),
+                    onPressed: onOpenQuickAskHistory,
+                    icon: !bridgeAvailable
+                        ? const Icon(Icons.manage_search)
+                        : quickAskActivityCount > 0
+                        ? Badge.count(
+                            count: quickAskActivityCount,
+                            child: const Icon(Icons.manage_search),
+                          )
+                        : const Icon(Icons.manage_search),
+                  ),
+                ],
+              ],
             ),
-            if (pendingCount > 0) ...<Widget>[
-              SizedBox(width: itemSpacing),
-              IconButton(
-                key: developerFeedbackPendingKey,
-                constraints: buttonConstraints,
-                padding: buttonPadding,
-                tooltip: toolbarTooltip('Pendientes'),
-                onPressed: onOpenPending,
-                icon: Badge.count(
-                  count: pendingCount,
-                  child: const Icon(Icons.pending_actions),
-                ),
-              ),
-            ],
-            if (submittedCount > 0) ...<Widget>[
-              SizedBox(width: itemSpacing),
-              IconButton(
-                key: developerFeedbackRunsKey,
-                constraints: buttonConstraints,
-                padding: buttonPadding,
-                tooltip: toolbarTooltip('Runs'),
-                onPressed: onOpenRuns,
-                icon: Badge.count(
-                  count: submittedCount,
-                  child: const Icon(Icons.track_changes),
-                ),
-              ),
-            ],
-            ...<Widget>[
-              SizedBox(width: itemSpacing),
-              IconButton(
-                key: developerFeedbackNotificationBellKey,
-                constraints: buttonConstraints,
-                padding: buttonPadding,
-                tooltip: toolbarTooltip('Notificaciones'),
-                onPressed: onOpenNotifications,
-                icon: !bridgeAvailable
-                    ? const Icon(Icons.notifications_off_outlined)
-                    : unreadNotificationCount > 0
-                    ? Badge.count(
-                        count: unreadNotificationCount,
-                        child: const Icon(Icons.notifications_outlined),
-                      )
-                    : const Icon(Icons.notifications_none),
-              ),
-              IconButton(
-                key: developerFeedbackHistoryKey,
-                constraints: buttonConstraints,
-                padding: buttonPadding,
-                tooltip: toolbarTooltip('Historial'),
-                onPressed: onOpenHistory,
-                icon: Icon(
-                  bridgeAvailable ? Icons.history : Icons.history_toggle_off,
-                ),
-              ),
-              IconButton(
-                key: developerFeedbackQuickAskHistoryKey,
-                constraints: buttonConstraints,
-                padding: buttonPadding,
-                tooltip: toolbarTooltip('Preguntas rápidas'),
-                onPressed: onOpenQuickAskHistory,
-                icon: !bridgeAvailable
-                    ? const Icon(Icons.manage_search)
-                    : quickAskActivityCount > 0
-                    ? Badge.count(
-                        count: quickAskActivityCount,
-                        child: const Icon(Icons.manage_search),
-                      )
-                    : const Icon(Icons.manage_search),
-              ),
-            ],
-          ],
+          ),
         ),
       ),
     );
@@ -3008,6 +3584,171 @@ class _ToolbarStatusBadge extends StatelessWidget {
         quickAskActivityCount;
     if (count <= 0) return child;
     return Badge.count(count: count, child: child);
+  }
+}
+
+class _GuidedTraceRecordingBanner extends StatelessWidget {
+  const _GuidedTraceRecordingBanner({
+    required this.recording,
+    required this.stopping,
+    required this.onStop,
+    required this.onDiscard,
+  });
+
+  final _GuidedTraceRecording recording;
+  final bool stopping;
+  final VoidCallback onStop;
+  final VoidCallback onDiscard;
+
+  @override
+  Widget build(BuildContext context) {
+    final duration = Duration(milliseconds: recording.elapsedMs);
+    final minutes = duration.inMinutes.toString().padLeft(2, '0');
+    final seconds = duration.inSeconds.remainder(60).toString().padLeft(2, '0');
+    return Align(
+      alignment: Alignment.bottomCenter,
+      child: Material(
+        key: developerFeedbackGuidedTraceBannerKey,
+        color: Theme.of(context).colorScheme.surface,
+        elevation: 6,
+        borderRadius: BorderRadius.circular(8),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          child: Wrap(
+            alignment: WrapAlignment.center,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: 8,
+            runSpacing: 4,
+            children: <Widget>[
+              Chip(
+                avatar: const Icon(Icons.radio_button_checked, size: 18),
+                label: Text(
+                  '$minutes:$seconds · ${recording.frames.length} pantallas',
+                ),
+              ),
+              TextButton.icon(
+                key: developerFeedbackGuidedTraceDiscardKey,
+                onPressed: stopping ? null : onDiscard,
+                icon: const Icon(Icons.delete_outline),
+                label: const Text('Descartar'),
+              ),
+              FilledButton.icon(
+                key: developerFeedbackGuidedTraceStopKey,
+                onPressed: stopping ? null : onStop,
+                icon: const Icon(Icons.stop_circle_outlined),
+                label: Text(stopping ? 'Procesando' : 'Detener'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _GuidedTracePreviewDialog extends StatefulWidget {
+  const _GuidedTracePreviewDialog({
+    required this.trace,
+    required this.audio,
+    required this.onAttach,
+    required this.onDiscard,
+    required this.onRerecord,
+  });
+
+  final DeveloperFeedbackGuidedTrace trace;
+  final DeveloperFeedbackAudioClip? audio;
+  final ValueChanged<String> onAttach;
+  final VoidCallback onDiscard;
+  final VoidCallback onRerecord;
+
+  @override
+  State<_GuidedTracePreviewDialog> createState() =>
+      _GuidedTracePreviewDialogState();
+}
+
+class _GuidedTracePreviewDialogState extends State<_GuidedTracePreviewDialog> {
+  final _commentController = TextEditingController();
+
+  @override
+  void dispose() {
+    _commentController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final availableWidth = math.max(0.0, MediaQuery.sizeOf(context).width - 48);
+    final dialogWidth = math.min(520.0, availableWidth);
+    final recording =
+        widget.trace.toJson()['recording'] as Map<String, Object?>;
+    final durationMs = (recording['durationMs'] as int?) ?? 0;
+    final duration = Duration(milliseconds: durationMs);
+    final seconds = math.max(1, duration.inSeconds);
+    return AlertDialog(
+      title: const Text('Recorrido grabado'),
+      content: SizedBox(
+        width: dialogWidth,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: <Widget>[
+            Wrap(
+              spacing: 8,
+              runSpacing: 4,
+              children: <Widget>[
+                _PreviewMetaChip(
+                  icon: Icons.image_outlined,
+                  label: '${widget.trace.frames.length} pantallas',
+                ),
+                _PreviewMetaChip(
+                  icon: Icons.timeline,
+                  label: '${widget.trace.timeline.length} eventos',
+                ),
+                _PreviewMetaChip(
+                  icon: widget.audio == null
+                      ? Icons.mic_off_outlined
+                      : Icons.mic_none_outlined,
+                  label: widget.audio == null
+                      ? 'Audio: sin adjunto'
+                      : _formatAudioSummary(widget.audio),
+                ),
+                _PreviewMetaChip(
+                  icon: Icons.timer_outlined,
+                  label: '$seconds s',
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              key: developerFeedbackGuidedTraceCommentKey,
+              controller: _commentController,
+              minLines: 3,
+              maxLines: 5,
+              decoration: const InputDecoration(
+                labelText: 'Comentario',
+                helperText: 'Opcional si el recorrido/audio explica el cambio',
+                border: OutlineInputBorder(),
+              ),
+            ),
+          ],
+        ),
+      ),
+      actions: <Widget>[
+        TextButton(onPressed: widget.onDiscard, child: const Text('Descartar')),
+        TextButton.icon(
+          key: developerFeedbackGuidedTraceRerecordKey,
+          onPressed: widget.onRerecord,
+          icon: const Icon(Icons.refresh),
+          label: const Text('Regrabar'),
+        ),
+        FilledButton.icon(
+          key: developerFeedbackGuidedTraceAttachKey,
+          onPressed: () => widget.onAttach(_commentController.text),
+          icon: const Icon(Icons.playlist_add_check),
+          label: const Text('Agregar a cola'),
+        ),
+      ],
+    );
   }
 }
 
@@ -3164,6 +3905,8 @@ class _FeedbackDialogState extends State<_FeedbackDialog> {
     final availableWidth = math.max(0.0, MediaQuery.sizeOf(context).width - 48);
     final dialogWidth = math.min(460.0, availableWidth);
     final compactDialog = MediaQuery.sizeOf(context).width < 420;
+    final hasContent =
+        _commentController.text.trim().isNotEmpty || _audio != null;
     return AlertDialog(
       title: const Text('Guardar feedback'),
       content: SizedBox(
@@ -3178,6 +3921,7 @@ class _FeedbackDialogState extends State<_FeedbackDialog> {
               maxLines: 5,
               decoration: const InputDecoration(
                 labelText: 'Comentario',
+                helperText: 'Opcional si adjuntas audio',
                 border: OutlineInputBorder(),
               ),
             ),
@@ -3217,11 +3961,7 @@ class _FeedbackDialogState extends State<_FeedbackDialog> {
         ),
         FilledButton(
           key: developerFeedbackSaveKey,
-          onPressed:
-              _commentController.text.trim().isEmpty ||
-                  _recording ||
-                  _audioBusy ||
-                  _saving
+          onPressed: !hasContent || _recording || _audioBusy || _saving
               ? null
               : () async {
                   setState(() => _saving = true);
@@ -3908,6 +4648,82 @@ class _FeedbackDraft {
   final DeveloperFeedbackAudioClip? audio;
 }
 
+class _CapturedFeedbackScreenshot {
+  const _CapturedFeedbackScreenshot({
+    required this.pngBase64,
+    required this.width,
+    required this.height,
+    required this.pixelRatio,
+  });
+
+  factory _CapturedFeedbackScreenshot.transparent() {
+    return const _CapturedFeedbackScreenshot(
+      pngBase64: _transparentPngBase64,
+      width: 1,
+      height: 1,
+      pixelRatio: 1,
+    );
+  }
+
+  final String pngBase64;
+  final int width;
+  final int height;
+  final double pixelRatio;
+}
+
+class _GuidedTraceRecording {
+  _GuidedTraceRecording({
+    required this.id,
+    required this.startedAt,
+    required this.recorder,
+    required this.audioStarted,
+  });
+
+  final String id;
+  final DateTime startedAt;
+  final DeveloperFeedbackAudioRecorder? recorder;
+  final bool audioStarted;
+  final List<DeveloperFeedbackTraceEvent> events =
+      <DeveloperFeedbackTraceEvent>[];
+  final List<DeveloperFeedbackTraceFrame> frames =
+      <DeveloperFeedbackTraceFrame>[];
+  final List<Map<String, Object?>> contextSnapshots = <Map<String, Object?>>[];
+  DateTime? lastFrameAt;
+  var truncated = false;
+  var droppedFrameCount = 0;
+  var droppedEventCount = 0;
+  var _eventCount = 0;
+  var _frameCount = 0;
+  var _contextSnapshotCount = 0;
+
+  int get elapsedMs =>
+      DateTime.now().toUtc().difference(startedAt).inMilliseconds;
+
+  String nextEventId() => 'event-${++_eventCount}';
+
+  String nextFrameId() => 'frame-${++_frameCount}';
+
+  String nextContextSnapshotId() => 'ctx-${++_contextSnapshotCount}';
+}
+
+enum _GuidedTracePreviewAction { attach, discard, rerecord }
+
+class _GuidedTracePreviewResult {
+  const _GuidedTracePreviewResult.attach({required this.comment})
+    : action = _GuidedTracePreviewAction.attach;
+
+  const _GuidedTracePreviewResult.discard()
+    : action = _GuidedTracePreviewAction.discard,
+      comment = '';
+
+  const _GuidedTracePreviewResult.rerecord()
+    : action = _GuidedTracePreviewAction.rerecord,
+      comment = '';
+
+  final _GuidedTracePreviewAction action;
+  final String comment;
+}
+
 class DeveloperFeedbackBatch {
   const DeveloperFeedbackBatch({
     required this.batchId,
@@ -4011,6 +4827,297 @@ class _DeveloperFeedbackWorkflowPresets {
   }
 }
 
+class DeveloperFeedbackScreenSnapshot {
+  const DeveloperFeedbackScreenSnapshot({
+    this.route,
+    this.name,
+    this.title,
+    this.metadata = const <String, Object?>{},
+  });
+
+  final String? route;
+  final String? name;
+  final String? title;
+  final Map<String, Object?> metadata;
+
+  Map<String, Object?> toJson() => <String, Object?>{
+    if ((route ?? '').trim().isNotEmpty) 'route': route,
+    if ((name ?? '').trim().isNotEmpty) 'name': name,
+    if ((title ?? '').trim().isNotEmpty) 'title': title,
+    ..._jsonSafeMetadata(metadata),
+  };
+}
+
+class DeveloperFeedbackAttachmentSnapshot {
+  const DeveloperFeedbackAttachmentSnapshot({
+    required this.attachmentId,
+    required this.mimeType,
+    this.width,
+    this.height,
+    this.pixelRatio,
+    this.sha256,
+  });
+
+  final String attachmentId;
+  final String mimeType;
+  final int? width;
+  final int? height;
+  final double? pixelRatio;
+  final String? sha256;
+
+  Map<String, Object?> toJson() => <String, Object?>{
+    'attachmentId': attachmentId,
+    'mimeType': mimeType,
+    if (width != null) 'width': width,
+    if (height != null) 'height': height,
+    if (pixelRatio != null) 'pixelRatio': pixelRatio,
+    if ((sha256 ?? '').trim().isNotEmpty) 'sha256': sha256,
+  };
+}
+
+class DeveloperFeedbackAnnotationSnapshot {
+  const DeveloperFeedbackAnnotationSnapshot({
+    required this.id,
+    required this.type,
+    required this.bounds,
+    this.label,
+  });
+
+  final String id;
+  final String type;
+  final Map<String, double> bounds;
+  final String? label;
+
+  Map<String, Object?> toJson() => <String, Object?>{
+    'id': id,
+    'type': type,
+    if ((label ?? '').trim().isNotEmpty) 'label': label,
+    'bounds': bounds,
+  };
+}
+
+class DeveloperFeedbackUiElementSnapshot {
+  const DeveloperFeedbackUiElementSnapshot({
+    required this.id,
+    required this.type,
+    required this.bounds,
+    this.label,
+    this.state = const <String, Object?>{},
+    this.metadata = const <String, Object?>{},
+  });
+
+  final String id;
+  final String type;
+  final String? label;
+  final Map<String, double> bounds;
+  final Map<String, Object?> state;
+  final Map<String, Object?> metadata;
+
+  Map<String, Object?> toJson() => <String, Object?>{
+    'id': id,
+    'type': type,
+    if ((label ?? '').trim().isNotEmpty) 'label': label,
+    'bounds': bounds,
+    if (state.isNotEmpty) 'state': _jsonSafeMetadata(state),
+    ..._jsonSafeMetadata(metadata),
+  };
+}
+
+class DeveloperFeedbackUiMapSnapshot {
+  const DeveloperFeedbackUiMapSnapshot({this.elements = const []});
+
+  final List<DeveloperFeedbackUiElementSnapshot> elements;
+
+  Map<String, Object?> toJson() => <String, Object?>{
+    'elements': elements.map((element) => element.toJson()).toList(),
+  };
+}
+
+class DeveloperFeedbackImageCapture {
+  const DeveloperFeedbackImageCapture({
+    required this.screenshot,
+    this.annotations = const [],
+    this.comment,
+    this.screen,
+    this.contextSnapshot = const <String, Object?>{},
+    this.uiMap,
+  });
+
+  final DeveloperFeedbackAttachmentSnapshot screenshot;
+  final List<DeveloperFeedbackAnnotationSnapshot> annotations;
+  final String? comment;
+  final DeveloperFeedbackScreenSnapshot? screen;
+  final Map<String, Object?> contextSnapshot;
+  final DeveloperFeedbackUiMapSnapshot? uiMap;
+
+  Map<String, Object?> toJson() => <String, Object?>{
+    'kind': developerFeedbackImageCaptureKind,
+    'version': 1,
+    'type': 'single_image',
+    'screenshot': screenshot.toJson(),
+    if (annotations.isNotEmpty)
+      'annotations': annotations
+          .map((annotation) => annotation.toJson())
+          .toList(),
+    if ((comment ?? '').trim().isNotEmpty) 'comment': comment,
+    if (screen != null && screen!.toJson().isNotEmpty)
+      'screen': screen!.toJson(),
+    if (contextSnapshot.isNotEmpty)
+      'contextSnapshot': _jsonSafeMetadata(contextSnapshot),
+    if (uiMap != null) 'uiMap': uiMap!.toJson(),
+  };
+}
+
+class DeveloperFeedbackTraceAudio {
+  const DeveloperFeedbackTraceAudio({
+    required this.attachmentId,
+    required this.mimeType,
+    required this.durationMs,
+    this.transcriptAvailable = false,
+  });
+
+  final String attachmentId;
+  final String mimeType;
+  final int durationMs;
+  final bool transcriptAvailable;
+
+  Map<String, Object?> toJson() => <String, Object?>{
+    'attachmentId': attachmentId,
+    'mimeType': mimeType,
+    'durationMs': durationMs,
+    'transcriptAvailable': transcriptAvailable,
+  };
+}
+
+class DeveloperFeedbackTraceFrame {
+  const DeveloperFeedbackTraceFrame({
+    required this.id,
+    required this.attachmentId,
+    required this.atMs,
+    this.width,
+    this.height,
+    this.pixelRatio,
+    this.sha256,
+    this.screen,
+    this.screenshotMimeType,
+    this.screenshotPngBase64,
+  });
+
+  final String id;
+  final String attachmentId;
+  final int atMs;
+  final int? width;
+  final int? height;
+  final double? pixelRatio;
+  final String? sha256;
+  final DeveloperFeedbackScreenSnapshot? screen;
+  final String? screenshotMimeType;
+  final String? screenshotPngBase64;
+
+  Map<String, Object?> toJson() => <String, Object?>{
+    'id': id,
+    'attachmentId': attachmentId,
+    'atMs': atMs,
+    if (width != null) 'width': width,
+    if (height != null) 'height': height,
+    if (pixelRatio != null) 'pixelRatio': pixelRatio,
+    if ((sha256 ?? '').trim().isNotEmpty) 'sha256': sha256,
+    if (screen != null && screen!.toJson().isNotEmpty)
+      'screen': screen!.toJson(),
+    if ((screenshotMimeType ?? '').trim().isNotEmpty)
+      'screenshotMimeType': screenshotMimeType,
+    if ((screenshotPngBase64 ?? '').trim().isNotEmpty)
+      'screenshotPngBase64': screenshotPngBase64,
+  };
+}
+
+class DeveloperFeedbackTraceEvent {
+  const DeveloperFeedbackTraceEvent({
+    required this.id,
+    required this.type,
+    required this.atMs,
+    this.frameId,
+    this.contextSnapshotId,
+    this.data = const <String, Object?>{},
+  });
+
+  final String id;
+  final String type;
+  final int atMs;
+  final String? frameId;
+  final String? contextSnapshotId;
+  final Map<String, Object?> data;
+
+  Map<String, Object?> toJson() => <String, Object?>{
+    'id': id,
+    'type': type,
+    'atMs': atMs,
+    if ((frameId ?? '').trim().isNotEmpty) 'frameId': frameId,
+    if ((contextSnapshotId ?? '').trim().isNotEmpty)
+      'contextSnapshotId': contextSnapshotId,
+    ..._jsonSafeMetadata(data),
+  };
+}
+
+class DeveloperFeedbackGuidedTrace {
+  const DeveloperFeedbackGuidedTrace({
+    required this.id,
+    required this.startedAt,
+    this.endedAt,
+    this.durationMs,
+    this.mode = 'screen_trace_with_audio',
+    this.frameStrategy = 'route_change_interaction_and_interval',
+    this.audio,
+    this.timeline = const [],
+    this.frames = const [],
+    this.contextSnapshots = const <Map<String, Object?>>[],
+    this.truncated = false,
+    this.droppedFrameCount = 0,
+    this.droppedEventCount = 0,
+    this.maxFrames,
+    this.maxEvents,
+  });
+
+  final String id;
+  final DateTime startedAt;
+  final DateTime? endedAt;
+  final int? durationMs;
+  final String mode;
+  final String frameStrategy;
+  final DeveloperFeedbackTraceAudio? audio;
+  final List<DeveloperFeedbackTraceEvent> timeline;
+  final List<DeveloperFeedbackTraceFrame> frames;
+  final List<Map<String, Object?>> contextSnapshots;
+  final bool truncated;
+  final int droppedFrameCount;
+  final int droppedEventCount;
+  final int? maxFrames;
+  final int? maxEvents;
+
+  Map<String, Object?> toJson() => <String, Object?>{
+    'kind': developerFeedbackGuidedTraceKind,
+    'version': 1,
+    'id': id,
+    'startedAt': startedAt.toUtc().toIso8601String(),
+    if (endedAt != null) 'endedAt': endedAt!.toUtc().toIso8601String(),
+    'recording': <String, Object?>{
+      'mode': mode,
+      if (durationMs != null) 'durationMs': durationMs,
+      'frameStrategy': frameStrategy,
+      if (maxFrames != null) 'maxFrames': maxFrames,
+      if (maxEvents != null) 'maxEvents': maxEvents,
+      if (truncated) 'truncated': true,
+      if (droppedFrameCount > 0) 'droppedFrameCount': droppedFrameCount,
+      if (droppedEventCount > 0) 'droppedEventCount': droppedEventCount,
+      if (audio != null) 'audio': audio!.toJson(),
+    },
+    'timeline': timeline.map((event) => event.toJson()).toList(),
+    'frames': frames.map((frame) => frame.toJson()).toList(),
+    if (contextSnapshots.isNotEmpty)
+      'contextSnapshots': contextSnapshots.map(_jsonSafeMetadata).toList(),
+  };
+}
+
 class DeveloperFeedbackItem {
   const DeveloperFeedbackItem({
     required this.id,
@@ -4022,6 +5129,10 @@ class DeveloperFeedbackItem {
     required this.selectionPoints,
     required this.audio,
     this.contextMetadata = const <String, Object?>{},
+    this.screen,
+    this.uiMap,
+    this.imageCapture,
+    this.guidedTrace,
   });
 
   final String id;
@@ -4033,12 +5144,24 @@ class DeveloperFeedbackItem {
   final List<Offset> selectionPoints;
   final DeveloperFeedbackAudioClip? audio;
   final Map<String, Object?> contextMetadata;
+  final DeveloperFeedbackScreenSnapshot? screen;
+  final DeveloperFeedbackUiMapSnapshot? uiMap;
+  final DeveloperFeedbackImageCapture? imageCapture;
+  final DeveloperFeedbackGuidedTrace? guidedTrace;
 
   Map<String, double> get selectionBounds => _selectionBounds(selectionPoints);
+
+  String get feedbackKind => guidedTrace == null
+      ? developerFeedbackImageCaptureKind
+      : developerFeedbackGuidedTraceKind;
 
   DeveloperFeedbackItem copyWith({
     String? comment,
     Map<String, Object?>? contextMetadata,
+    DeveloperFeedbackScreenSnapshot? screen,
+    DeveloperFeedbackUiMapSnapshot? uiMap,
+    DeveloperFeedbackImageCapture? imageCapture,
+    DeveloperFeedbackGuidedTrace? guidedTrace,
   }) {
     return DeveloperFeedbackItem(
       id: id,
@@ -4050,6 +5173,10 @@ class DeveloperFeedbackItem {
       selectionPoints: selectionPoints,
       audio: audio,
       contextMetadata: contextMetadata ?? this.contextMetadata,
+      screen: screen ?? this.screen,
+      uiMap: uiMap ?? this.uiMap,
+      imageCapture: imageCapture ?? this.imageCapture,
+      guidedTrace: guidedTrace ?? this.guidedTrace,
     );
   }
 
@@ -4074,6 +5201,9 @@ class DeveloperFeedbackItem {
           .toList(),
       'selectionBounds': bounds,
       if (contextMetadata.isNotEmpty) 'contextMetadata': contextMetadata,
+      'feedbackKind': feedbackKind,
+      'imageCapture': _imageCaptureJson(),
+      if (guidedTrace != null) 'guidedTrace': guidedTrace!.toJson(),
       'hasAudio': hasAudioBytes,
       if (audio != null) 'audioMimeType': audio!.mimeType,
       if (audio != null) 'audioDurationMs': audio!.durationMs,
@@ -4102,6 +5232,9 @@ class DeveloperFeedbackItem {
           .toList(),
       'selectionBounds': selectionBounds,
       if (contextMetadata.isNotEmpty) 'contextMetadata': contextMetadata,
+      'feedbackKind': feedbackKind,
+      'imageCapture': _imageCaptureJson(),
+      if (guidedTrace != null) 'guidedTrace': guidedTrace!.toJson(),
       'hasAudio': hasAudioBytes,
       if (audio != null) 'audioMimeType': audio!.mimeType,
       if (audio != null) 'audioDurationMs': audio!.durationMs,
@@ -4110,7 +5243,40 @@ class DeveloperFeedbackItem {
     };
   }
 
+  Map<String, Object?> _imageCaptureJson() {
+    final explicit = imageCapture;
+    if (explicit != null) return explicit.toJson();
+    final contextSnapshot = <String, Object?>{
+      'observedAt': createdAt.toUtc().toIso8601String(),
+      ...contextMetadata,
+    };
+    final bounds = selectionBounds;
+    return DeveloperFeedbackImageCapture(
+      screenshot: DeveloperFeedbackAttachmentSnapshot(
+        attachmentId: '${id}_screenshot',
+        mimeType: 'image/png',
+      ),
+      annotations: selectionPoints.isEmpty
+          ? const <DeveloperFeedbackAnnotationSnapshot>[]
+          : <DeveloperFeedbackAnnotationSnapshot>[
+              DeveloperFeedbackAnnotationSnapshot(
+                id: '${id}_selection',
+                type: 'bounds',
+                label: comment.trim().isEmpty ? null : comment.trim(),
+                bounds: bounds,
+              ),
+            ],
+      comment: comment,
+      screen: screen,
+      contextSnapshot: contextSnapshot,
+      uiMap: uiMap,
+    ).toJson();
+  }
+
   Map<String, double> _selectionBounds(List<Offset> points) {
+    if (points.isEmpty) {
+      return <String, double>{'left': 0, 'top': 0, 'width': 0, 'height': 0};
+    }
     var minX = points.first.dx;
     var maxX = points.first.dx;
     var minY = points.first.dy;
@@ -4133,6 +5299,14 @@ class DeveloperFeedbackItem {
 String _formatSelectionBounds(Map<String, double> bounds) {
   return 'Bounds: x ${bounds['left']!.round()}, y ${bounds['top']!.round()}, '
       '${bounds['width']!.round()} x ${bounds['height']!.round()}';
+}
+
+String _feedbackPreviewComment(DeveloperFeedbackItem item) {
+  final comment = item.comment.trim();
+  if (comment.isNotEmpty) return comment;
+  if (item.guidedTrace != null) return 'Recorrido guiado sin texto';
+  if (item.audio != null) return 'Comentario de audio sin texto';
+  return 'Feedback sin texto';
 }
 
 BoxConstraints _dialogContentConstraints(

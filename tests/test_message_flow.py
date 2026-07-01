@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 import pytest
 
 from backend.app.application.services.message_service import MessageService
+from backend.app.application.services.feedback_queue_service import FeedbackQueueItem
 from backend.app.api.routes import _jobs_by_id_for_messages, get_container
 from backend.app.api.schemas import SessionDetailResponse, SessionSummaryResponse
 from backend.app.domain.entities.agent_configuration import (
@@ -7035,6 +7036,187 @@ def test_feedback_queue_accepts_generic_source_app_payload(tmp_path: Path) -> No
     assert created["source_display_name"] == "Smart Nienfos"
     assert created["comment"] == "Align the summary panel"
     assert created["has_screenshot"] is True
+
+
+def test_feedback_queue_accepts_audio_only_payload_without_comment(
+    tmp_path: Path,
+) -> None:
+    client = build_feedback_queue_client(tmp_path)
+
+    create_response = client.post(
+        "/feedback-queue",
+        json={
+            "id": "feedback-audio-only",
+            "kind": "codex.developerFeedback",
+            "version": 3,
+            "sourceApp": "smart-nienfos",
+            "comment": "",
+            "feedbackKind": "codex.liveFeedback.imageCapture",
+            "imageCapture": {
+                "kind": "codex.liveFeedback.imageCapture",
+                "version": 1,
+                "type": "single_image",
+                "screenshot": {
+                    "attachmentId": "feedback-audio-only-screenshot",
+                    "mimeType": "image/png",
+                },
+            },
+            "audioMimeType": "audio/webm",
+            "audioDurationMs": 1200,
+            "audioByteLength": 3,
+            "audioBase64": base64.b64encode(b"\x01\x02\x03").decode("ascii"),
+        },
+    )
+
+    assert create_response.status_code == 201
+    created = create_response.json()
+    assert created["comment"] == ""
+    assert created["has_screenshot"] is False
+    assert created["has_audio"] is True
+    assert created["feedback_kind"] == "codex.liveFeedback.imageCapture"
+    assert created["image_capture"]["type"] == "single_image"
+
+
+def test_feedback_queue_accepts_screenshot_only_payload_without_comment(
+    tmp_path: Path,
+) -> None:
+    client = build_feedback_queue_client(tmp_path)
+
+    create_response = client.post(
+        "/feedback-queue",
+        json={
+            "id": "feedback-screenshot-only",
+            "sourceApp": "smart-nienfos",
+            "comment": "",
+            "screenshotPngBase64": base64.b64encode(b"fake png").decode("ascii"),
+        },
+    )
+
+    assert create_response.status_code == 201
+    created = create_response.json()
+    assert created["comment"] == ""
+    assert created["has_screenshot"] is True
+
+
+def test_feedback_queue_accepts_image_capture_only_payload_without_comment(
+    tmp_path: Path,
+) -> None:
+    client = build_feedback_queue_client(tmp_path)
+
+    create_response = client.post(
+        "/feedback-queue",
+        json={
+            "id": "feedback-image-capture-only",
+            "sourceApp": "smart-nienfos",
+            "comment": "",
+            "feedbackKind": "codex.liveFeedback.imageCapture",
+            "imageCapture": {
+                "kind": "codex.liveFeedback.imageCapture",
+                "version": 1,
+                "type": "single_image",
+                "screenshot": {
+                    "attachmentId": "capture-only-screenshot",
+                    "mimeType": "image/png",
+                },
+            },
+        },
+    )
+
+    assert create_response.status_code == 201
+    created = create_response.json()
+    assert created["comment"] == ""
+    assert created["has_screenshot"] is False
+    assert created["image_capture"]["screenshot"]["attachmentId"] == (
+        "capture-only-screenshot"
+    )
+
+
+def test_feedback_queue_accepts_guided_trace_payload_without_comment(
+    tmp_path: Path,
+) -> None:
+    client = build_feedback_queue_client(tmp_path)
+
+    create_response = client.post(
+        "/feedback-queue",
+        json={
+            "id": "feedback-guided-trace",
+            "kind": "codex.developerFeedback",
+            "version": 3,
+            "sourceApp": "smart-nienfos",
+            "comment": "",
+            "feedbackKind": "codex.liveFeedback.guidedTrace",
+            "guidedTrace": {
+                "kind": "codex.liveFeedback.guidedTrace",
+                "version": 1,
+                "id": "trace-1",
+                "startedAt": "2026-07-01T15:00:00Z",
+                "recording": {
+                    "mode": "screen_trace_with_audio",
+                    "durationMs": 1000,
+                    "frameStrategy": "route_change_interaction_and_interval",
+                },
+                "timeline": [
+                    {"id": "event-1", "type": "screen_frame", "atMs": 0}
+                ],
+                "frames": [
+                    {
+                        "id": "frame-1",
+                        "attachmentId": "frame-1-png",
+                        "atMs": 0,
+                        "screenshotMimeType": "image/png",
+                        "screenshotPngBase64": base64.b64encode(
+                            b"frame png"
+                        ).decode("ascii"),
+                    }
+                ],
+            },
+        },
+    )
+
+    assert create_response.status_code == 201
+    created = create_response.json()
+    assert created["comment"] == ""
+    assert created["feedback_kind"] == "codex.liveFeedback.guidedTrace"
+    assert created["guided_trace"]["frames"][0]["id"] == "frame-1"
+
+
+def test_feedback_queue_item_legacy_dict_defaults_live_feedback_fields() -> None:
+    item = FeedbackQueueItem.from_dict(
+        {
+            "id": "legacy-feedback",
+            "source_app": "legacy-app",
+            "source_display_name": None,
+            "comment": "Legacy comment",
+            "created_at": "2026-07-01T15:00:00+00:00",
+            "status": "pending",
+            "screenshot_mime_type": "image/png",
+            "selection_points": [],
+            "selection_bounds": {},
+            "context_metadata": {},
+        }
+    )
+
+    assert item.feedback_kind is None
+    assert item.image_capture == {}
+    assert item.guided_trace == {}
+
+
+def test_feedback_queue_rejects_empty_payload_without_comment_audio_or_trace(
+    tmp_path: Path,
+) -> None:
+    client = build_feedback_queue_client(tmp_path)
+
+    create_response = client.post(
+        "/feedback-queue",
+        json={
+            "id": "feedback-empty",
+            "sourceApp": "smart-nienfos",
+            "comment": "",
+        },
+    )
+
+    assert create_response.status_code == 422
+    assert "Feedback item has no comment" in str(create_response.json()["detail"])
 
 
 def test_feedback_queue_legacy_ambientando_payload_defaults_source(

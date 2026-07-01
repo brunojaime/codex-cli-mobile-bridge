@@ -2246,6 +2246,226 @@ void main() {
     expect(find.text('Audio adjunto'), findsOneWidget);
   });
 
+  testWidgets('audio attachment allows saving feedback without text', (
+    tester,
+  ) async {
+    final recorder = _TrackedRecorder();
+    DeveloperFeedbackBatch? submitted;
+    await tester.pumpWidget(
+      _Harness(
+        enabled: true,
+        recorderFactory: () => recorder,
+        bridgeSubmitBatch: (batch) async => submitted = batch,
+      ),
+    );
+
+    await _openFeedbackDialog(tester);
+    expect(
+      tester
+          .widget<FilledButton>(find.byKey(developerFeedbackSaveKey))
+          .onPressed,
+      isNull,
+    );
+
+    await tester.tap(find.byKey(const Key('developer-feedback-audio')));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('developer-feedback-audio')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Audio adjunto'), findsOneWidget);
+    expect(
+      tester
+          .widget<FilledButton>(find.byKey(developerFeedbackSaveKey))
+          .onPressed,
+      isNotNull,
+    );
+
+    await tester.tap(find.byKey(developerFeedbackSaveKey));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(developerFeedbackPendingKey));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(developerFeedbackSendBatchKey));
+    await tester.pumpAndSettle();
+
+    final item = submitted!.items.single;
+    expect(item.comment, '');
+    expect(item.audio?.bytes, <int>[9]);
+  });
+
+  testWidgets('guided trace records previews and sends without text', (
+    tester,
+  ) async {
+    final recorder = _TrackedRecorder();
+    DeveloperFeedbackBatch? submitted;
+    await tester.pumpWidget(
+      _Harness(
+        enabled: true,
+        recorderFactory: () => recorder,
+        bridgeSubmitBatch: (batch) async => submitted = batch,
+        guidedTraceFrameInterval: const Duration(milliseconds: 200),
+      ),
+    );
+
+    await tester.tap(find.byKey(developerFeedbackGuidedTraceStartKey));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+
+    expect(find.byKey(developerFeedbackGuidedTraceBannerKey), findsOneWidget);
+    expect(recorder.starts, 1);
+
+    await tester.tap(find.text('App body'));
+    await tester.pump(const Duration(milliseconds: 250));
+    await tester.tap(find.byKey(developerFeedbackGuidedTraceStopKey).last);
+    await tester.pump();
+    await tester.pumpAndSettle();
+
+    expect(find.text('Recorrido grabado'), findsOneWidget);
+    await tester.tap(find.byKey(developerFeedbackGuidedTraceAttachKey));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(developerFeedbackPendingKey));
+    await tester.pumpAndSettle();
+    expect(find.text('Recorrido guiado sin texto'), findsOneWidget);
+    await tester.tap(find.byKey(developerFeedbackSendBatchKey));
+    await tester.pumpAndSettle();
+
+    final item = submitted!.items.single;
+    expect(item.comment, '');
+    expect(item.audio?.bytes, <int>[9]);
+    expect(item.guidedTrace, isNotNull);
+    expect(item.guidedTrace!.frames, isNotEmpty);
+    expect(item.guidedTrace!.frames.first.screenshotPngBase64, isNotEmpty);
+    expect(
+      item.guidedTrace!.timeline.any((event) => event.type == 'gesture'),
+      isTrue,
+    );
+  });
+
+  testWidgets('guided trace can be discarded without queueing', (tester) async {
+    await tester.pumpWidget(
+      _Harness(enabled: true, recorderFactory: () => _TrackedRecorder()),
+    );
+
+    await tester.tap(find.byKey(developerFeedbackGuidedTraceStartKey));
+    await tester.pump();
+    expect(find.byKey(developerFeedbackGuidedTraceBannerKey), findsOneWidget);
+
+    await tester.tap(find.byKey(developerFeedbackGuidedTraceDiscardKey));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(developerFeedbackGuidedTraceBannerKey), findsNothing);
+    expect(find.byKey(developerFeedbackPendingKey), findsNothing);
+  });
+
+  testWidgets('guided trace recorder is cancelled on wrapper dispose', (
+    tester,
+  ) async {
+    final recorder = _TrackedRecorder();
+    await tester.pumpWidget(
+      _Harness(enabled: true, recorderFactory: () => recorder),
+    );
+
+    await tester.tap(find.byKey(developerFeedbackGuidedTraceStartKey));
+    await tester.pump();
+    expect(recorder.starts, 1);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+
+    expect(recorder.cancels, 1);
+  });
+
+  testWidgets('guided trace preview can discard and immediately rerecord', (
+    tester,
+  ) async {
+    final recorders = <_TrackedRecorder>[];
+    await tester.pumpWidget(
+      _Harness(
+        enabled: true,
+        recorderFactory: () {
+          final recorder = _TrackedRecorder();
+          recorders.add(recorder);
+          return recorder;
+        },
+      ),
+    );
+
+    await tester.tap(find.byKey(developerFeedbackGuidedTraceStartKey));
+    await tester.pump();
+    await tester.tap(find.byKey(developerFeedbackGuidedTraceStopKey).last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(developerFeedbackGuidedTraceRerecordKey));
+    await tester.pump();
+
+    expect(recorders, hasLength(2));
+    expect(recorders.first.stops, 1);
+    expect(recorders.last.starts, 1);
+    expect(find.byKey(developerFeedbackGuidedTraceBannerKey), findsOneWidget);
+  });
+
+  testWidgets('guided trace auto-stops at max duration', (tester) async {
+    await tester.pumpWidget(
+      _Harness(
+        enabled: true,
+        recorderFactory: () => _TrackedRecorder(),
+        guidedTraceMaxDuration: const Duration(milliseconds: 250),
+      ),
+    );
+
+    await tester.tap(find.byKey(developerFeedbackGuidedTraceStartKey));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Recorrido grabado'), findsOneWidget);
+  });
+
+  testWidgets('guided trace caps payload events and marks truncation', (
+    tester,
+  ) async {
+    DeveloperFeedbackBatch? submitted;
+    await tester.pumpWidget(
+      _Harness(
+        enabled: true,
+        recorderFactory: () => _TrackedRecorder(),
+        bridgeSubmitBatch: (batch) async => submitted = batch,
+        guidedTraceFrameInterval: const Duration(milliseconds: 100),
+        guidedTraceMaxFrames: 2,
+        guidedTraceMaxEvents: 8,
+      ),
+    );
+
+    await tester.tap(find.byKey(developerFeedbackGuidedTraceStartKey));
+    await tester.pump();
+    for (var i = 0; i < 10; i += 1) {
+      await tester.tap(find.text('App body'));
+      await tester.pump(const Duration(milliseconds: 80));
+    }
+    await tester.pump(const Duration(milliseconds: 800));
+    await tester.tap(find.byKey(developerFeedbackGuidedTraceStopKey).last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(developerFeedbackGuidedTraceAttachKey));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(developerFeedbackPendingKey));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(developerFeedbackSendBatchKey));
+    await tester.pumpAndSettle();
+
+    final trace = submitted!.items.single.guidedTrace!;
+    final recording = trace.toJson()['recording'] as Map<String, Object?>;
+    expect(trace.frames.length, lessThanOrEqualTo(2));
+    expect(trace.timeline.length, lessThanOrEqualTo(8));
+    expect(recording['truncated'], isTrue);
+  });
+
+  testWidgets('guided trace toolbar action can be disabled', (tester) async {
+    await tester.pumpWidget(
+      const _Harness(enabled: true, guidedTraceEnabled: false),
+    );
+
+    expect(find.byKey(developerFeedbackGuidedTraceStartKey), findsNothing);
+  });
+
   test('export JSON has stable fields and no raw object serialization', () {
     final item = DeveloperFeedbackItem(
       id: 'feedback-1',
@@ -2302,8 +2522,68 @@ void main() {
     expect(exported['audioDurationMs'], 250);
     expect(exported['audioByteLength'], 3);
     expect(exported['audioBase64'], base64Encode(<int>[4, 5, 6]));
+    expect(exported['feedbackKind'], developerFeedbackImageCaptureKind);
+    expect(exported['imageCapture'], isA<Map<String, Object?>>());
     expect(jsonText, isNot(contains('Offset(')));
     expect(jsonText, isNot(contains('Instance of')));
+  });
+
+  test('guided trace JSON is available as a structured feedback contract', () {
+    final item = DeveloperFeedbackItem(
+      id: 'feedback-trace',
+      createdAt: DateTime.utc(2026, 7, 1, 15),
+      sourceApp: 'fixture-app',
+      comment: 'Trace review',
+      screenshotPngBase64: 'png',
+      selectionPoints: const <Offset>[Offset(1, 2), Offset(5, 8)],
+      audio: null,
+      guidedTrace: DeveloperFeedbackGuidedTrace(
+        id: 'trace-1',
+        startedAt: DateTime.utc(2026, 7, 1, 15),
+        durationMs: 1200,
+        audio: const DeveloperFeedbackTraceAudio(
+          attachmentId: 'audio-1',
+          mimeType: 'audio/m4a',
+          durationMs: 1200,
+          transcriptAvailable: true,
+        ),
+        frames: const <DeveloperFeedbackTraceFrame>[
+          DeveloperFeedbackTraceFrame(
+            id: 'frame-1',
+            attachmentId: 'frame-1-png',
+            atMs: 0,
+            width: 1080,
+            height: 2400,
+          ),
+        ],
+        timeline: const <DeveloperFeedbackTraceEvent>[
+          DeveloperFeedbackTraceEvent(
+            id: 'event-1',
+            type: 'screen_frame',
+            atMs: 0,
+            frameId: 'frame-1',
+          ),
+        ],
+        contextSnapshots: const <Map<String, Object?>>[
+          <String, Object?>{
+            'id': 'ctx-1',
+            'observedAtMs': 0,
+            'roles': <String>['viewer'],
+          },
+        ],
+      ),
+    );
+
+    final decoded = item.toBridgeJson();
+    final trace = decoded['guidedTrace'] as Map<String, Object?>;
+    final recording = trace['recording'] as Map<String, Object?>;
+
+    expect(decoded['feedbackKind'], developerFeedbackGuidedTraceKind);
+    expect(trace['kind'], developerFeedbackGuidedTraceKind);
+    expect(recording['mode'], 'screen_trace_with_audio');
+    expect(trace['frames'], isA<List<Object?>>());
+    expect(trace['timeline'], isA<List<Object?>>());
+    expect(trace['contextSnapshots'], isA<List<Object?>>());
   });
 
   test('export omits audioBase64 when clip has no bytes', () {
@@ -2548,6 +2828,11 @@ class _Harness extends StatelessWidget {
     this.httpClient,
     this.appUpdaterBridgeUrl = '',
     this.appUpdaterController,
+    this.guidedTraceEnabled = true,
+    this.guidedTraceFrameInterval = const Duration(seconds: 5),
+    this.guidedTraceMaxFrames = 8,
+    this.guidedTraceMaxEvents = 160,
+    this.guidedTraceMaxDuration = const Duration(minutes: 2),
   });
 
   final bool enabled;
@@ -2562,6 +2847,11 @@ class _Harness extends StatelessWidget {
   final http.Client? httpClient;
   final String appUpdaterBridgeUrl;
   final CodexAppUpdaterController? appUpdaterController;
+  final bool guidedTraceEnabled;
+  final Duration guidedTraceFrameInterval;
+  final int guidedTraceMaxFrames;
+  final int guidedTraceMaxEvents;
+  final Duration guidedTraceMaxDuration;
 
   @override
   Widget build(BuildContext context) {
@@ -2585,6 +2875,11 @@ class _Harness extends StatelessWidget {
         httpClient: httpClient,
         appUpdaterBridgeUrl: appUpdaterBridgeUrl,
         appUpdaterController: appUpdaterController,
+        guidedTraceEnabled: guidedTraceEnabled,
+        guidedTraceFrameInterval: guidedTraceFrameInterval,
+        guidedTraceMaxFrames: guidedTraceMaxFrames,
+        guidedTraceMaxEvents: guidedTraceMaxEvents,
+        guidedTraceMaxDuration: guidedTraceMaxDuration,
         child: Scaffold(body: Center(child: child ?? const Text('App body'))),
       ),
     );
