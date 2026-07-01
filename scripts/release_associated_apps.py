@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import json
 import re
 import subprocess
@@ -240,7 +241,8 @@ def validate_registry(app: AssociatedApp, registry: dict[str, Any]) -> None:
             f"registry uses {entry.get('repo')}."
         )
     pattern = str(entry.get("releaseTagPattern") or "")
-    if pattern and not app.release_tag_prefix.startswith(pattern.rstrip("*")):
+    prefix_pattern = pattern.rstrip("*")
+    if pattern and not fnmatch.fnmatchcase(app.release_tag_prefix, prefix_pattern):
         raise ReleasePlanError(
             f"{app.source_app!r} tag prefix {app.release_tag_prefix!r} does not "
             f"match registry pattern {pattern!r}."

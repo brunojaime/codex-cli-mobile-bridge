@@ -939,6 +939,90 @@ void main() {
     );
   });
 
+  testWidgets(
+      'sidebar limits workspace chats and shows more by recent activity',
+      (WidgetTester tester) async {
+    final baseTime = DateTime.utc(2026, 1, 1, 12);
+    final sessions = List<SessionDetail>.generate(7, (index) {
+      final chatNumber = index + 1;
+      final timestamp = baseTime.subtract(Duration(minutes: index));
+      return _buildSession(
+        id: 'session-$chatNumber',
+        title: 'Chat $chatNumber',
+        messages: const <ChatMessage>[],
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      );
+    });
+
+    await _pumpChatScreen(
+      tester,
+      width: 430,
+      height: 760,
+      session: sessions.first,
+      apiClient: _ChatScreenOverflowApiClient(
+        sessions.first,
+        additionalSessions: sessions.skip(1).toList(),
+      ),
+      sidebarWorkspaces: const <Workspace>[
+        Workspace(name: 'Workspace A', path: '/workspace/a'),
+      ],
+    );
+
+    tester.state<ScaffoldState>(find.byType(Scaffold)).openDrawer();
+    await tester.pumpAndSettle();
+
+    final drawer = find.byType(Drawer);
+    for (var chatNumber = 1; chatNumber <= 5; chatNumber += 1) {
+      expect(
+        find.descendant(
+          of: drawer,
+          matching: find.text('Chat $chatNumber', skipOffstage: false),
+        ),
+        findsOneWidget,
+      );
+    }
+    expect(
+      find.descendant(
+        of: drawer,
+        matching: find.text('Chat 6', skipOffstage: false),
+      ),
+      findsNothing,
+    );
+    expect(
+      find.descendant(
+        of: drawer,
+        matching: find.text('Show 2 more', skipOffstage: false),
+      ),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.text('Show 2 more'));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.descendant(
+        of: drawer,
+        matching: find.text('Chat 6', skipOffstage: false),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: drawer,
+        matching: find.text('Chat 7', skipOffstage: false),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: drawer,
+        matching: find.text('Show 2 more', skipOffstage: false),
+      ),
+      findsNothing,
+    );
+  });
+
   testWidgets('sidebar project can be removed and stays removed after rebuild',
       (WidgetTester tester) async {
     SharedPreferences.setMockInitialValues(<String, Object>{});
@@ -1257,6 +1341,8 @@ SessionDetail _buildSession({
   DateTime? archivedAt,
   String workspacePath = '/workspace/a',
   String workspaceName = 'Workspace A',
+  DateTime? createdAt,
+  DateTime? updatedAt,
   required List<ChatMessage> messages,
   AgentDisplayMode displayMode = AgentDisplayMode.showAll,
   ConversationProduct? conversationProduct,
@@ -1294,8 +1380,8 @@ SessionDetail _buildSession({
     agentProfileId: 'default',
     agentProfileName: 'Generator',
     agentProfileColor: '#55D6BE',
-    createdAt: now,
-    updatedAt: now,
+    createdAt: createdAt ?? now,
+    updatedAt: updatedAt ?? now,
     messages: messages,
     turnSummaries: turnSummaries,
     agentConfiguration: configuration,

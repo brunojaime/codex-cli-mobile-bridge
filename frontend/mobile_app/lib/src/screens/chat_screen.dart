@@ -129,6 +129,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   List<ServerProfile> _serverProfiles = <ServerProfile>[];
   List<Workspace> _sidebarWorkspaces = <Workspace>[];
   Map<String, DateTime> _sessionReadMarkers = <String, DateTime>{};
+  final Map<String, int> _visibleSessionLimitsByGroup = <String, int>{};
   ServerProfile? _activeServer;
   ServerHealth? _activeServerHealth;
   ServerCapabilities? _activeServerCapabilities;
@@ -152,6 +153,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   List<FeedbackQueueItem> _feedbackQueuePreviewItems = <FeedbackQueueItem>[];
   bool _isRefreshingFeedbackQueueCount = false;
   static const double _compactAppBarBreakpoint = 640;
+  static const int _sessionGroupPageSize = 5;
 
   @override
   void initState() {
@@ -1675,6 +1677,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       _activeServerCapabilities = null;
       _activeCodexTooling = null;
       _sidebarWorkspaces = sidebarWorkspaces;
+      _visibleSessionLimitsByGroup.clear();
       _sessionReadMarkers = sessionReadMarkers;
       _serverErrorText = null;
       _codexToolingErrorText = null;
@@ -3107,6 +3110,15 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                 archivedOnly ? session.isArchived : !session.isArchived,
           )
           .toList(growable: false);
+      final displayedSessionCount = _visibleSessionCountForGroup(
+        workspace.path,
+        archivedOnly: archivedOnly,
+        sessions: visibleSessions,
+      );
+      final displayedSessions =
+          visibleSessions.take(displayedSessionCount).toList(growable: false);
+      final hiddenSessionCount =
+          math.max(0, visibleSessions.length - displayedSessions.length);
       if (archivedOnly && visibleSessions.isEmpty) {
         continue;
       }
@@ -3366,7 +3378,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                             await _openFeedbackQueueSheet(workspace: workspace);
                           },
                         ),
-                      ...visibleSessions.map(
+                      ...displayedSessions.map(
                         (session) => Padding(
                           padding: const EdgeInsets.only(left: 10, right: 10),
                           child: _SessionTile(
@@ -3397,6 +3409,22 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                           ),
                         ),
                       ),
+                      if (hiddenSessionCount > 0)
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(10, 8, 10, 0),
+                          child: OutlinedButton.icon(
+                            onPressed: () {
+                              _showMoreSessionsForGroup(
+                                workspace.path,
+                                archivedOnly: archivedOnly,
+                              );
+                            },
+                            icon: const Icon(Icons.expand_more_rounded),
+                            label: Text(
+                              'Show ${math.min(_sessionGroupPageSize, hiddenSessionCount)} more',
+                            ),
+                          ),
+                        ),
                     ],
             ),
           ),
@@ -3405,6 +3433,51 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     }
 
     return sessionGroups;
+  }
+
+  int _visibleSessionCountForGroup(
+    String workspacePath, {
+    required bool archivedOnly,
+    required List<ChatSessionSummary> sessions,
+  }) {
+    final groupKey = _sessionGroupKey(
+      workspacePath,
+      archivedOnly: archivedOnly,
+    );
+    var limit = _visibleSessionLimitsByGroup[groupKey] ?? _sessionGroupPageSize;
+    final selectedSessionId = _chatController.selectedSessionId;
+    if (selectedSessionId != null) {
+      final selectedIndex = sessions.indexWhere(
+        (session) => session.id == selectedSessionId,
+      );
+      if (selectedIndex >= limit) {
+        limit = selectedIndex + 1;
+      }
+    }
+    return math.min(limit, sessions.length);
+  }
+
+  void _showMoreSessionsForGroup(
+    String workspacePath, {
+    required bool archivedOnly,
+  }) {
+    final groupKey = _sessionGroupKey(
+      workspacePath,
+      archivedOnly: archivedOnly,
+    );
+    final currentLimit =
+        _visibleSessionLimitsByGroup[groupKey] ?? _sessionGroupPageSize;
+    setState(() {
+      _visibleSessionLimitsByGroup[groupKey] =
+          currentLimit + _sessionGroupPageSize;
+    });
+  }
+
+  String _sessionGroupKey(
+    String workspacePath, {
+    required bool archivedOnly,
+  }) {
+    return '${archivedOnly ? 'archived' : 'active'}::$workspacePath';
   }
 
   String _fallbackWorkspaceName(String workspacePath) {
