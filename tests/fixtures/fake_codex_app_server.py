@@ -8,7 +8,12 @@ import time
 import uuid
 
 
-STATE_FILE = Path(tempfile.gettempdir()) / "fake_codex_app_server_threads.json"
+STATE_FILE = Path(
+    os.environ.get(
+        "FAKE_CODEX_APP_SERVER_STATE_FILE",
+        str(Path(tempfile.gettempdir()) / "fake_codex_app_server_threads.json"),
+    )
+)
 
 
 def _load_threads() -> dict[str, dict[str, object]]:

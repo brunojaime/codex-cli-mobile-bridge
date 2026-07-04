@@ -17,7 +17,10 @@ from uuid import uuid4
 from backend.app.domain.entities.codex_options import CodexRunOptions
 from backend.app.domain.entities.job import JobStatus
 from backend.app.infrastructure.codex_tooling import sync_repo_skills
-from backend.app.infrastructure.execution.base import ExecutionProvider, ExecutionSnapshot
+from backend.app.infrastructure.execution.base import (
+    ExecutionProvider,
+    ExecutionSnapshot,
+)
 
 
 @dataclass(slots=True)
@@ -62,8 +65,8 @@ class LocalExecutionProvider(ExecutionProvider):
         self._exec_args = exec_args
         self._resume_args = resume_args
         self._default_reasoning_effort = (
-            (default_reasoning_effort or "").strip() or None
-        )
+            default_reasoning_effort or ""
+        ).strip() or None
         self._workdir = str(Path(workdir).resolve()) if workdir else None
         self._timeout_seconds = timeout_seconds
         self._states: dict[str, _ExecutionState] = {}
@@ -118,7 +121,10 @@ class LocalExecutionProvider(ExecutionProvider):
                     if predecessor_job_id is not None
                     else None
                 )
-                if predecessor_state is not None and not predecessor_state.status.is_terminal:
+                if (
+                    predecessor_state is not None
+                    and not predecessor_state.status.is_terminal
+                ):
                     should_queue = True
                     self._serial_successors[predecessor_job_id] = job_id
                     self._serial_predecessors[job_id] = predecessor_job_id
@@ -325,7 +331,7 @@ class LocalExecutionProvider(ExecutionProvider):
                     Path.home(),
                     repo_root=Path(resolved_workdir).resolve(),
                 )
-            command_parts, output_path = self._build_command(
+            command_parts, output_path, stdin_prompt = self._build_command(
                 message,
                 image_paths=image_paths,
                 provider_session_id=provider_session_id,
@@ -340,6 +346,7 @@ class LocalExecutionProvider(ExecutionProvider):
                 process = subprocess.Popen(
                     command_parts,
                     cwd=resolved_workdir,
+                    stdin=subprocess.PIPE if stdin_prompt is not None else None,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     text=True,
@@ -384,6 +391,13 @@ class LocalExecutionProvider(ExecutionProvider):
             )
             stdout_thread.start()
             stderr_thread.start()
+            if stdin_prompt is not None and process.stdin is not None:
+                try:
+                    process.stdin.write(stdin_prompt)
+                    process.stdin.close()
+                except OSError:
+                    if self._is_cancelled(job_id):
+                        return
 
             try:
                 if self._timeout_seconds is None or self._timeout_seconds <= 0:
@@ -413,7 +427,9 @@ class LocalExecutionProvider(ExecutionProvider):
 
             stdout_text = "\n".join(stdout_lines).strip()
             stderr_text = "\n".join(stderr_lines).strip()
-            resolved_provider_session_id = self._extract_provider_session_id(stdout_text)
+            resolved_provider_session_id = self._extract_provider_session_id(
+                stdout_text
+            )
             output = self._resolve_output(
                 output_path=output_path,
                 stdout_text=stdout_text,
@@ -425,7 +441,8 @@ class LocalExecutionProvider(ExecutionProvider):
                     job_id,
                     status=JobStatus.COMPLETED,
                     response=output or "Execution completed with no output.",
-                    provider_session_id=resolved_provider_session_id or provider_session_id,
+                    provider_session_id=resolved_provider_session_id
+                    or provider_session_id,
                     phase="Completed",
                     latest_activity="Codex returned a final response.",
                 )
@@ -583,9 +600,7 @@ class LocalExecutionProvider(ExecutionProvider):
                             "approvalPolicy": self._approval_policy_for_app_server(
                                 self._exec_args
                             ),
-                            "sandbox": self._app_server_thread_sandbox(
-                                self._exec_args
-                            ),
+                            "sandbox": self._app_server_thread_sandbox(self._exec_args),
                             "experimentalRawEvents": False,
                         },
                     },
@@ -630,10 +645,14 @@ class LocalExecutionProvider(ExecutionProvider):
                         ],
                         "cwd": resolved_workdir,
                         "approvalPolicy": self._approval_policy_for_app_server(
-                            self._resume_args if provider_session_id else self._exec_args
+                            self._resume_args
+                            if provider_session_id
+                            else self._exec_args
                         ),
                         "sandboxPolicy": self._app_server_turn_sandbox_policy(
-                            self._resume_args if provider_session_id else self._exec_args,
+                            self._resume_args
+                            if provider_session_id
+                            else self._exec_args,
                             workdir=resolved_workdir,
                         ),
                         "model": model,
@@ -733,7 +752,10 @@ class LocalExecutionProvider(ExecutionProvider):
         except Exception as exc:  # pragma: no cover - defensive path
             if self._is_cancelled(job_id):
                 return
-            fallback_error = self._first_non_empty(stderr_lines) or f"Unexpected execution error: {exc}"
+            fallback_error = (
+                self._first_non_empty(stderr_lines)
+                or f"Unexpected execution error: {exc}"
+            )
             self._set_state(
                 job_id,
                 status=JobStatus.FAILED,
@@ -785,7 +807,7 @@ class LocalExecutionProvider(ExecutionProvider):
         provider_session_id: str | None = None,
         model: str | None = None,
         codex_options: CodexRunOptions | None = None,
-    ) -> tuple[list[str], str | None]:
+    ) -> tuple[list[str], str | None, str | None]:
         base_parts = shlex.split(self._command)
         image_args = self._build_image_args(image_paths)
         model_args = ["--model", model] if model else []
@@ -795,7 +817,11 @@ class LocalExecutionProvider(ExecutionProvider):
         )
 
         if not self._use_exec_mode:
-            return [*base_parts, *model_args, *codex_args, message, *image_args], None
+            return (
+                [*base_parts, *model_args, *codex_args, message, *image_args],
+                None,
+                None,
+            )
 
         file_descriptor, output_path = tempfile.mkstemp(
             prefix="codex-last-message-",
@@ -804,7 +830,12 @@ class LocalExecutionProvider(ExecutionProvider):
         os.close(file_descriptor)
 
         if provider_session_id:
-            resume_options = [*shlex.split(self._resume_args), "--json", "-o", output_path]
+            resume_options = [
+                *shlex.split(self._resume_args),
+                "--json",
+                "-o",
+                output_path,
+            ]
             exec_parts = [
                 *base_parts,
                 "exec",
@@ -813,7 +844,7 @@ class LocalExecutionProvider(ExecutionProvider):
                 *model_args,
                 *codex_args,
                 provider_session_id,
-                message,
+                "-",
                 *image_args,
             ]
         else:
@@ -824,10 +855,10 @@ class LocalExecutionProvider(ExecutionProvider):
                 *exec_options,
                 *model_args,
                 *codex_args,
-                message,
+                "-",
                 *image_args,
             ]
-        return exec_parts, output_path
+        return exec_parts, output_path, message
 
     def _build_app_server_command(
         self,
@@ -872,8 +903,7 @@ class LocalExecutionProvider(ExecutionProvider):
         overrides = list(normalized.config_overrides) if normalized is not None else []
         if (
             include_default_reasoning_effort
-            and
-            self._default_reasoning_effort is not None
+            and self._default_reasoning_effort is not None
             and not any(
                 override.strip().startswith("model_reasoning_effort")
                 for override in overrides
@@ -991,13 +1021,19 @@ class LocalExecutionProvider(ExecutionProvider):
         )
         result = payload.get("result")
         if not isinstance(result, dict):
-            raise _AppServerRequestError(f"Codex app-server returned no result for {request_id}.")
+            raise _AppServerRequestError(
+                f"Codex app-server returned no result for {request_id}."
+            )
         thread = result.get("thread")
         if not isinstance(thread, dict):
-            raise _AppServerRequestError(f"Codex app-server returned no thread for {request_id}.")
+            raise _AppServerRequestError(
+                f"Codex app-server returned no thread for {request_id}."
+            )
         thread_id = thread.get("id")
         if not isinstance(thread_id, str) or not thread_id.strip():
-            raise _AppServerRequestError(f"Codex app-server returned an invalid thread id for {request_id}.")
+            raise _AppServerRequestError(
+                f"Codex app-server returned an invalid thread id for {request_id}."
+            )
         return thread_id
 
     def _await_app_server_response(
@@ -1062,7 +1098,9 @@ class LocalExecutionProvider(ExecutionProvider):
             else:
                 remaining_seconds = max(0.0, deadline - time.monotonic())
                 if remaining_seconds <= 0:
-                    raise subprocess.TimeoutExpired("codex app-server", timeout_seconds or 0)
+                    raise subprocess.TimeoutExpired(
+                        "codex app-server", timeout_seconds or 0
+                    )
                 remaining_timeout = max(1, int(remaining_seconds))
             payload = self._read_app_server_payload(
                 process,
@@ -1272,7 +1310,10 @@ class LocalExecutionProvider(ExecutionProvider):
         if isinstance(item_id, str):
             if item_id in non_final_agent_message_item_ids:
                 return None
-            if final_agent_message_item_ids and item_id not in final_agent_message_item_ids:
+            if (
+                final_agent_message_item_ids
+                and item_id not in final_agent_message_item_ids
+            ):
                 return None
         phase = item.get("phase")
         if phase == "commentary":
@@ -1567,7 +1608,10 @@ class LocalExecutionProvider(ExecutionProvider):
         if event_type == "turn.started":
             return ("Reasoning", "Codex started working on the current turn.")
         if event_type == "turn.completed":
-            return ("Finalizing", "Codex finished the turn and is preparing the final output.")
+            return (
+                "Finalizing",
+                "Codex finished the turn and is preparing the final output.",
+            )
 
         if event_type in {"item.started", "item.completed"}:
             item = payload.get("item")
@@ -1589,12 +1633,7 @@ class LocalExecutionProvider(ExecutionProvider):
 
     def _humanize(self, value: str) -> str:
         spaced = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", value)
-        words = (
-            spaced.replace(".", " ")
-            .replace("_", " ")
-            .replace("-", " ")
-            .strip()
-        )
+        words = spaced.replace(".", " ").replace("_", " ").replace("-", " ").strip()
         if not words:
             return ""
         return " ".join(words.split()).capitalize()
@@ -1632,12 +1671,18 @@ class LocalExecutionProvider(ExecutionProvider):
             else:
                 self._states[job_id] = _ExecutionState(
                     status=status,
-                    response=response if response is not None else (current.response if current else None),
-                    error=error if error is not None else (current.error if current else None),
+                    response=response
+                    if response is not None
+                    else (current.response if current else None),
+                    error=error
+                    if error is not None
+                    else (current.error if current else None),
                     provider_session_id=provider_session_id
                     if provider_session_id is not None
                     else (current.provider_session_id if current else None),
-                    phase=phase if phase is not None else (current.phase if current else None),
+                    phase=phase
+                    if phase is not None
+                    else (current.phase if current else None),
                     latest_activity=latest_activity
                     if latest_activity is not None
                     else (current.latest_activity if current else None),
@@ -1724,7 +1769,10 @@ class LocalExecutionProvider(ExecutionProvider):
             successor_job_id = self._serial_successors.pop(completed_job_id, None)
             serial_key = self._job_serial_keys.get(completed_job_id)
             if successor_job_id is None:
-                if serial_key is not None and self._serial_tails.get(serial_key) == completed_job_id:
+                if (
+                    serial_key is not None
+                    and self._serial_tails.get(serial_key) == completed_job_id
+                ):
                     self._serial_tails.pop(serial_key, None)
                 self._queued_executions.pop(completed_job_id, None)
                 self._job_serial_keys.pop(completed_job_id, None)

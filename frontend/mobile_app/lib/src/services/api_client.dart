@@ -606,6 +606,38 @@ class ApiClient {
         .toList();
   }
 
+  Future<FeedbackQueueItem> createFeedbackQueueItem({
+    required String sourceApp,
+    required String comment,
+    String? sourceDisplayName,
+    String? feedbackKind,
+    Map<String, Object?> contextMetadata = const <String, Object?>{},
+    Map<String, double> selectionBounds = const <String, double>{},
+  }) async {
+    final response = await _client.post(
+      Uri.parse('$baseUrl/feedback-queue'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode(<String, Object?>{
+        'sourceApp': sourceApp,
+        if (sourceDisplayName != null && sourceDisplayName.trim().isNotEmpty)
+          'sourceDisplayName': sourceDisplayName.trim(),
+        'comment': comment.trim(),
+        if (feedbackKind != null && feedbackKind.trim().isNotEmpty)
+          'feedbackKind': feedbackKind.trim(),
+        if (contextMetadata.isNotEmpty) 'contextMetadata': contextMetadata,
+        if (selectionBounds.isNotEmpty) 'selectionBounds': selectionBounds,
+      }),
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception('Failed to create feedback item: ${response.body}');
+    }
+
+    return FeedbackQueueItem.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
   Future<void> deleteFeedbackQueueItem(String id) async {
     final response =
         await _client.delete(Uri.parse('$baseUrl/feedback-queue/$id'));

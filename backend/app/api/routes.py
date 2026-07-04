@@ -9,7 +9,17 @@ from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Any
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile, WebSocket
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    Request,
+    UploadFile,
+    WebSocket,
+)
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, Response, StreamingResponse
 
@@ -66,6 +76,13 @@ from backend.app.api.schemas import (
     SessionDetailResponse,
     SessionSummaryResponse,
     SpeechRequest,
+    SddDiagramResponse,
+    SddFileResponse,
+    SddProjectDiagramsResponse,
+    SddProjectResponse,
+    SddProjectsResponse,
+    SddProjectSummaryResponse,
+    SddSpecResponse,
     TurnSummaryConfigRequest,
     WorkspaceResponse,
 )
@@ -82,6 +99,14 @@ from backend.app.application.services.message_service import (
     MaintenanceModeError,
     MessageService,
     UnsupportedDocumentError,
+)
+from backend.app.application.services.sdd_project_service import (
+    SddDiagram,
+    SddFile,
+    SddProject,
+    SddProjectSummary,
+    SddSpec,
+    SddWorkspacePathError,
 )
 from backend.app.domain.entities.chat_message import ChatMessage
 from backend.app.domain.entities.agent_configuration import AgentId
@@ -116,6 +141,11 @@ _IMAGE_CONTENT_TYPE_SUFFIXES = {
     "image/webp": ".webp",
 }
 
+_TRANSPARENT_PNG_BASE64 = (
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/"
+    "x8AAwMCAO+/p9sAAAAASUVORK5CYII="
+)
+
 _FALLBACK_FEEDBACK_WORKFLOW_PRESETS = (
     FeedbackWorkflowPresetResponse(
         id="generator_only",
@@ -140,7 +170,9 @@ def get_container() -> AppContainer:
     raise RuntimeError("Container dependency was not configured.")
 
 
-def get_message_service(container: AppContainer = Depends(get_container)) -> MessageService:
+def get_message_service(
+    container: AppContainer = Depends(get_container),
+) -> MessageService:
     return container.message_service
 
 
@@ -161,7 +193,9 @@ async def healthcheck(
         projects_root=container.settings.projects_root,
         persistence_available=container.message_service.is_persistence_available(),
         persistence_error_code=persistence_issue.code if persistence_issue else None,
-        persistence_error_detail=persistence_issue.detail if persistence_issue else None,
+        persistence_error_detail=persistence_issue.detail
+        if persistence_issue
+        else None,
         audio_transcription_backend=container.settings.audio_transcription_backend,
         audio_transcription_resolved_backend=audio_status.backend,
         audio_transcription_ready=audio_status.ready,
@@ -203,6 +237,7 @@ async def capabilities(
         supports_job_cancellation=service.supports_job_cancellation(),
         supports_job_retry=service.supports_job_retry(),
         supports_push_job_stream=True,
+        supports_sdd=True,
         speech_output_backend=speech_status.backend,
         speech_output_voice=speech_status.voice,
         speech_output_response_format=speech_status.response_format,
@@ -215,6 +250,145 @@ async def capabilities(
         ),
         preferred_client_url=tailscale.preferred_client_url,
         public_base_urls=tailscale.public_base_urls,
+    )
+
+
+@router.get("/sdd/projects", response_model=SddProjectsResponse)
+async def list_sdd_projects(
+    container: AppContainer = Depends(get_container),
+) -> SddProjectsResponse:
+    projects = await run_in_threadpool(container.sdd_project_service.list_projects)
+    return SddProjectsResponse(
+        default_workspace_path=container.settings.codex_workdir,
+        projects=[_sdd_project_summary_response(project) for project in projects],
+    )
+
+
+@router.get("/sdd/project", response_model=SddProjectResponse)
+async def get_sdd_project(
+    workspace_path: str = Query(...),
+    container: AppContainer = Depends(get_container),
+) -> SddProjectResponse:
+    try:
+        project = await run_in_threadpool(
+            container.sdd_project_service.get_project,
+            workspace_path,
+        )
+    except SddWorkspacePathError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return _sdd_project_response(project)
+
+
+@router.get("/sdd/project/diagrams", response_model=SddProjectDiagramsResponse)
+async def get_sdd_project_diagrams(
+    workspace_path: str = Query(...),
+    container: AppContainer = Depends(get_container),
+) -> SddProjectDiagramsResponse:
+    try:
+        project = await run_in_threadpool(
+            container.sdd_project_service.get_project,
+            workspace_path,
+        )
+    except SddWorkspacePathError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return SddProjectDiagramsResponse(
+        workspace_path=project.workspace_path,
+        diagrams=[
+            _sdd_diagram_response(diagram)
+            for diagram in (
+                *project.architecture_diagrams,
+                *(diagram for spec in project.specs for diagram in spec.diagrams),
+            )
+        ],
+    )
+
+
+def _sdd_file_response(file_value: SddFile | None) -> SddFileResponse | None:
+    if file_value is None:
+        return None
+    return SddFileResponse(
+        path=file_value.path,
+        title=file_value.title,
+        size_bytes=file_value.size_bytes,
+        content=file_value.content,
+        error=file_value.error,
+    )
+
+
+def _sdd_diagram_response(diagram: SddDiagram) -> SddDiagramResponse:
+    return SddDiagramResponse(
+        path=diagram.path,
+        title=diagram.title,
+        size_bytes=diagram.size_bytes,
+        content=diagram.content,
+        error=diagram.error,
+        diagram_type=diagram.diagram_type,
+        scope=diagram.scope,
+    )
+
+
+def _sdd_spec_response(spec: SddSpec) -> SddSpecResponse:
+    return SddSpecResponse(
+        id=spec.id,
+        title=spec.title,
+        path=spec.path,
+        spec=_sdd_file_response(spec.spec),
+        plan=_sdd_file_response(spec.plan),
+        tasks=_sdd_file_response(spec.tasks),
+        spec_files=[
+            file_response
+            for file_value in spec.spec_files
+            if (file_response := _sdd_file_response(file_value)) is not None
+        ],
+        plan_files=[
+            file_response
+            for file_value in spec.plan_files
+            if (file_response := _sdd_file_response(file_value)) is not None
+        ],
+        task_files=[
+            file_response
+            for file_value in spec.task_files
+            if (file_response := _sdd_file_response(file_value)) is not None
+        ],
+        slice_docs=[
+            file_response
+            for file_value in spec.slice_docs
+            if (file_response := _sdd_file_response(file_value)) is not None
+        ],
+        diagrams=[_sdd_diagram_response(diagram) for diagram in spec.diagrams],
+        missing=list(spec.missing),
+    )
+
+
+def _sdd_project_summary_response(
+    project: SddProjectSummary,
+) -> SddProjectSummaryResponse:
+    return SddProjectSummaryResponse(
+        workspace_name=project.workspace_name,
+        workspace_path=project.workspace_path,
+        has_manifest=project.has_manifest,
+        has_constitution=project.has_constitution,
+        spec_count=project.spec_count,
+        diagram_count=project.diagram_count,
+        missing_required=list(project.missing_required),
+    )
+
+
+def _sdd_project_response(
+    project: SddProject,
+) -> SddProjectResponse:
+    return SddProjectResponse(
+        workspace_name=project.workspace_name,
+        workspace_path=project.workspace_path,
+        required=project.required,
+        manifest=_sdd_file_response(project.manifest),
+        constitution=_sdd_file_response(project.constitution),
+        architecture_diagrams=[
+            _sdd_diagram_response(diagram)
+            for diagram in project.architecture_diagrams
+        ],
+        specs=[_sdd_spec_response(spec) for spec in project.specs],
+        missing_required=list(project.missing_required),
     )
 
 
@@ -486,8 +660,7 @@ async def persistence_integrity(
         backend=container.settings.chat_store_backend,
         is_healthy=not issues,
         issues=[
-            PersistenceIntegrityIssueResponse.from_domain(issue)
-            for issue in issues
+            PersistenceIntegrityIssueResponse.from_domain(issue) for issue in issues
         ],
     )
 
@@ -581,11 +754,7 @@ def _normalize_feedback_workspace_key(value: str | None) -> str:
     raw_value = (value or "").strip().lower()
     if not raw_value:
         return ""
-    parts = [
-        part
-        for part in _FEEDBACK_WORKSPACE_KEY_PATTERN.split(raw_value)
-        if part
-    ]
+    parts = [part for part in _FEEDBACK_WORKSPACE_KEY_PATTERN.split(raw_value) if part]
     return "-".join(parts)
 
 
@@ -614,7 +783,10 @@ def _feedback_workspace_path_for_source(
 ) -> str | None:
     explicit_workspace_path = (workspace_path or "").strip()
     if explicit_workspace_path:
-        return explicit_workspace_path
+        return _resolve_explicit_feedback_workspace_path(
+            explicit_workspace_path,
+            container=container,
+        )
 
     candidates = [
         source_app,
@@ -648,9 +820,14 @@ def _feedback_workspace_path_for_source(
         )
     }
     for candidate_key in candidate_keys:
-        workspace_path = aliases.get(candidate_key)
-        if workspace_path:
-            return workspace_path
+        configured_workspace_path = aliases.get(candidate_key)
+        if configured_workspace_path:
+            workspace_path = _known_feedback_workspace_path(
+                configured_workspace_path,
+                container=container,
+            )
+            if workspace_path:
+                return workspace_path
 
     for workspace in container.message_service.list_workspaces():
         workspace_keys = {
@@ -660,6 +837,60 @@ def _feedback_workspace_path_for_source(
         if candidate_keys & workspace_keys:
             return workspace.path
 
+    return None
+
+
+def _resolve_explicit_feedback_workspace_path(
+    workspace_path: str,
+    *,
+    container: AppContainer,
+) -> str:
+    known_workspace_path = _known_feedback_workspace_path(
+        workspace_path,
+        container=container,
+    )
+    if known_workspace_path:
+        return known_workspace_path
+
+    try:
+        candidate = Path(workspace_path).expanduser()
+        if not candidate.is_absolute():
+            candidate = Path(container.settings.projects_root).expanduser() / candidate
+        resolved_workspace_path = str(candidate.resolve())
+    except (OSError, RuntimeError):
+        return workspace_path
+
+    known_workspace_path = _known_feedback_workspace_path(
+        resolved_workspace_path,
+        container=container,
+    )
+    return known_workspace_path or workspace_path
+
+
+def _known_feedback_workspace_path(
+    workspace_path: str,
+    *,
+    container: AppContainer,
+) -> str | None:
+    workspaces = container.message_service.list_workspaces()
+    for workspace in workspaces:
+        if workspace.path == workspace_path:
+            return workspace.path
+
+    try:
+        candidate = Path(workspace_path).expanduser()
+        if not candidate.is_absolute():
+            candidate = Path(container.settings.projects_root).expanduser() / candidate
+        resolved = candidate.resolve()
+    except (OSError, RuntimeError):
+        return None
+
+    for workspace in workspaces:
+        try:
+            if Path(workspace.path).resolve() == resolved:
+                return workspace.path
+        except (OSError, RuntimeError):
+            continue
     return None
 
 
@@ -706,6 +937,52 @@ def _feedback_context_note(context_metadata: dict[str, Any] | None) -> str:
     return f"\nScreen/context metadata: {context_metadata}"
 
 
+_FEEDBACK_PROMPT_BINARY_KEYS = {
+    "audiobase64",
+    "audio_base64",
+    "base64",
+    "bytesbase64",
+    "bytes_base64",
+    "dataurl",
+    "data_url",
+    "screenshotpngbase64",
+    "screenshot_png_base64",
+}
+_FEEDBACK_PROMPT_MAX_LIST_ITEMS = 50
+_FEEDBACK_PROMPT_MAX_STRING_CHARS = 2000
+
+
+def _feedback_prompt_safe_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        safe: dict[str, Any] = {}
+        for key, nested_value in value.items():
+            key_text = str(key)
+            normalized_key = key_text.replace("-", "_").lower()
+            if normalized_key in _FEEDBACK_PROMPT_BINARY_KEYS:
+                safe[key_text] = (
+                    f"<omitted binary payload; "
+                    f"{len(str(nested_value or ''))} encoded chars>"
+                )
+                continue
+            safe[key_text] = _feedback_prompt_safe_value(nested_value)
+        return safe
+    if isinstance(value, list):
+        safe_items = [
+            _feedback_prompt_safe_value(item)
+            for item in value[:_FEEDBACK_PROMPT_MAX_LIST_ITEMS]
+        ]
+        omitted_count = len(value) - len(safe_items)
+        if omitted_count > 0:
+            safe_items.append({"omittedItems": omitted_count})
+        return safe_items
+    if isinstance(value, str) and len(value) > _FEEDBACK_PROMPT_MAX_STRING_CHARS:
+        return (
+            value[:_FEEDBACK_PROMPT_MAX_STRING_CHARS]
+            + f"... <truncated; {len(value)} chars total>"
+        )
+    return value
+
+
 def _feedback_live_feedback_note(item) -> str:
     parts: list[str] = []
     if item.feedback_kind:
@@ -713,12 +990,20 @@ def _feedback_live_feedback_note(item) -> str:
     if item.image_capture:
         parts.append(
             "Image capture schema: "
-            + json.dumps(item.image_capture, ensure_ascii=False, default=str)
+            + json.dumps(
+                _feedback_prompt_safe_value(item.image_capture),
+                ensure_ascii=False,
+                default=str,
+            )
         )
     if item.guided_trace:
         parts.append(
             "Guided trace schema: "
-            + json.dumps(item.guided_trace, ensure_ascii=False, default=str)
+            + json.dumps(
+                _feedback_prompt_safe_value(item.guided_trace),
+                ensure_ascii=False,
+                default=str,
+            )
         )
     if not parts:
         return ""
@@ -744,14 +1029,10 @@ async def _feedback_audio_prompt_note(
             )
         ).strip()
     except AudioTranscriptionUnavailableError:
-        return (
-            f"{audio_note}\nAudio transcript unavailable; "
-            "using audio metadata only."
-        )
+        return f"{audio_note}\nAudio transcript unavailable; using audio metadata only."
     except AudioTranscriptionError as exc:
         return (
-            f"{audio_note}\nAudio transcript failed: {exc}; "
-            "using audio metadata only."
+            f"{audio_note}\nAudio transcript failed: {exc}; using audio metadata only."
         )
 
     if not transcript:
@@ -941,6 +1222,77 @@ def _validate_feedback_base64(value: str, *, field_name: str, item_index: int) -
         ) from exc
 
 
+def _feedback_image_value(payload: dict[str, Any], *keys: str) -> str:
+    current: Any = payload
+    for key in keys:
+        if not isinstance(current, dict):
+            return ""
+        current = current.get(key)
+    return str(current or "").strip()
+
+
+def _feedback_trace_frame_image(payload: dict[str, Any]) -> str:
+    trace = payload.get("guidedTrace") or payload.get("guided_trace") or {}
+    if not isinstance(trace, dict):
+        return ""
+    frames = trace.get("frames") or []
+    if not isinstance(frames, list):
+        return ""
+    for frame in reversed(frames):
+        if not isinstance(frame, dict):
+            continue
+        screenshot = str(
+            frame.get("screenshotPngBase64") or frame.get("screenshot_png_base64") or ""
+        ).strip()
+        if screenshot:
+            return screenshot
+    return ""
+
+
+def _ensure_feedback_batch_image(payload: dict[str, Any], *, item_index: int) -> None:
+    screenshot = str(
+        payload.get("screenshotPngBase64") or payload.get("screenshot_png_base64") or ""
+    ).strip()
+    if screenshot:
+        _validate_feedback_base64(
+            screenshot,
+            field_name="screenshotPngBase64",
+            item_index=item_index,
+        )
+        payload["screenshotPngBase64"] = screenshot
+        return
+
+    derived_screenshot = (
+        _feedback_image_value(payload, "imageCapture", "screenshotPngBase64")
+        or _feedback_image_value(payload, "image_capture", "screenshot_png_base64")
+        or _feedback_image_value(
+            payload,
+            "imageCapture",
+            "screenshot",
+            "screenshotPngBase64",
+        )
+        or _feedback_image_value(
+            payload,
+            "image_capture",
+            "screenshot",
+            "screenshot_png_base64",
+        )
+        or _feedback_trace_frame_image(payload)
+    )
+    if derived_screenshot:
+        _validate_feedback_base64(
+            derived_screenshot,
+            field_name="derived screenshot",
+            item_index=item_index,
+        )
+        payload["screenshotPngBase64"] = derived_screenshot
+        payload.setdefault("screenshotMimeType", "image/png")
+        return
+
+    payload["screenshotPngBase64"] = _TRANSPARENT_PNG_BASE64
+    payload.setdefault("screenshotMimeType", "image/png")
+
+
 @router.get(
     "/feedback-workflow-presets",
     response_model=FeedbackWorkflowPresetsResponse,
@@ -969,8 +1321,7 @@ async def list_feedback_queue(
         include_images=include_images,
     )
     return [
-        _feedback_item_response(item, include_image=include_images)
-        for item in items
+        _feedback_item_response(item, include_image=include_images) for item in items
     ]
 
 
@@ -1077,7 +1428,9 @@ async def start_feedback_queue_session(
             codex_options=codex_options,
         )
         should_cleanup_temp_image = False
-        await run_in_threadpool(container.feedback_queue_service.mark_submitted, item_id)
+        await run_in_threadpool(
+            container.feedback_queue_service.mark_submitted, item_id
+        )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except UnsupportedDocumentError as exc:
@@ -1143,19 +1496,12 @@ async def start_feedback_batch_session(
     raw_item_payloads = (
         [quick_ask_item_payload]
         if quick_ask_item_payload is not None
-        else [item.model_dump(by_alias=False, exclude_none=True) for item in payload.items]
+        else [
+            item.model_dump(by_alias=False, exclude_none=True) for item in payload.items
+        ]
     )
     for index, item_payload in enumerate(raw_item_payloads, start=1):
-        if not str(item_payload.get("screenshotPngBase64") or "").strip():
-            raise HTTPException(
-                status_code=422,
-                detail=f"Feedback batch item {index} has no screenshot.",
-            )
-        _validate_feedback_base64(
-            str(item_payload["screenshotPngBase64"]),
-            field_name="screenshotPngBase64",
-            item_index=index,
-        )
+        _ensure_feedback_batch_image(item_payload, item_index=index)
         if str(item_payload.get("audioBase64") or "").strip():
             _validate_feedback_base64(
                 str(item_payload["audioBase64"]),
@@ -1188,7 +1534,9 @@ async def start_feedback_batch_session(
             )
     except ValueError as exc:
         for item in stored_items:
-            await run_in_threadpool(container.feedback_queue_service.delete_item, item.id)
+            await run_in_threadpool(
+                container.feedback_queue_service.delete_item, item.id
+            )
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     temp_image_paths: list[Path] = []
@@ -1222,7 +1570,9 @@ async def start_feedback_batch_session(
         for temp_image_path in temp_image_paths:
             temp_image_path.unlink(missing_ok=True)
         for item in stored_items:
-            await run_in_threadpool(container.feedback_queue_service.delete_item, item.id)
+            await run_in_threadpool(
+                container.feedback_queue_service.delete_item, item.id
+            )
         raise
 
     should_keep_stored_items = False
@@ -1281,9 +1631,7 @@ async def start_feedback_batch_session(
             f"Run target: {_feedback_target_instruction(preset.target_mode)}\n"
             f"Workflow preset: {preset.name}\n"
             f"Batch size: {len(stored_items)} feedback items.\n\n"
-            f"{quick_ask_context}"
-            + "\n\n".join(item_sections)
-            + release_note
+            f"{quick_ask_context}" + "\n\n".join(item_sections) + release_note
         )
         job = await run_in_threadpool(
             container.message_service.submit_attachment_message,
@@ -1369,7 +1717,9 @@ async def get_feedback_batch_status(
             batch_id,
         )
     except KeyError as exc:
-        raise HTTPException(status_code=404, detail="Feedback batch not found.") from exc
+        raise HTTPException(
+            status_code=404, detail="Feedback batch not found."
+        ) from exc
 
     return await _feedback_batch_status_response(record, container=container)
 
@@ -1390,7 +1740,9 @@ async def update_feedback_batch_notification(
             read=read,
         )
     except KeyError as exc:
-        raise HTTPException(status_code=404, detail="Feedback batch not found.") from exc
+        raise HTTPException(
+            status_code=404, detail="Feedback batch not found."
+        ) from exc
 
     return await _feedback_batch_status_response(record, container=container)
 
@@ -1463,9 +1815,7 @@ async def ask_feedback_quick_question(
             question=payload.question,
             screenshot_mime_type=payload.screenshotMimeType,
             screenshot_png_base64=payload.screenshotPngBase64,
-            selection_points=[
-                point.model_dump() for point in payload.selectionPoints
-            ],
+            selection_points=[point.model_dump() for point in payload.selectionPoints],
             selection_bounds=payload.selectionBounds,
             context_metadata=payload.contextMetadata,
             job_id=job.id,
@@ -1664,9 +2014,11 @@ async def codex_tooling(
     workspace_path: str | None = None,
     container: AppContainer = Depends(get_container),
 ) -> CodexToolingResponse:
-    repo_root = Path(workspace_path).resolve() if workspace_path else Path(
-        container.settings.codex_workdir
-    ).resolve()
+    repo_root = (
+        Path(workspace_path).resolve()
+        if workspace_path
+        else Path(container.settings.codex_workdir).resolve()
+    )
     snapshot = await run_in_threadpool(
         inspect_codex_tooling,
         container.settings.codex_command,
@@ -1831,7 +2183,9 @@ async def install_codex_mcp_app(
     )
 
 
-@router.post("/message/audio", response_model=AudioMessageAcceptedResponse, status_code=202)
+@router.post(
+    "/message/audio", response_model=AudioMessageAcceptedResponse, status_code=202
+)
 async def post_audio_message(
     audio: UploadFile = File(...),
     message: str | None = Form(default=None),
@@ -1878,7 +2232,9 @@ async def post_audio_message(
     )
 
 
-@router.post("/message/image", response_model=ImageMessageAcceptedResponse, status_code=202)
+@router.post(
+    "/message/image", response_model=ImageMessageAcceptedResponse, status_code=202
+)
 async def post_image_message(
     image: UploadFile = File(...),
     message: str | None = Form(default=None),
@@ -1926,7 +2282,9 @@ async def post_image_message(
     )
 
 
-@router.post("/message/document", response_model=DocumentMessageAcceptedResponse, status_code=202)
+@router.post(
+    "/message/document", response_model=DocumentMessageAcceptedResponse, status_code=202
+)
 async def post_document_message(
     document: UploadFile = File(...),
     message: str | None = Form(default=None),
@@ -1983,7 +2341,9 @@ async def post_document_message(
     )
 
 
-@router.post("/message/attachments", response_model=MessageAcceptedResponse, status_code=202)
+@router.post(
+    "/message/attachments", response_model=MessageAcceptedResponse, status_code=202
+)
 async def post_attachment_message(
     attachments: list[UploadFile] = File(...),
     message: str | None = Form(default=None),
@@ -2100,10 +2460,7 @@ async def import_agent_profiles(
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    return [
-        AgentProfileResponse.from_domain(profile)
-        for profile in profiles
-    ]
+    return [AgentProfileResponse.from_domain(profile) for profile in profiles]
 
 
 def _jobs_by_id_for_messages(
@@ -2208,7 +2565,9 @@ async def get_session(
         messages=messages,
         turn_summaries=service.list_turn_summaries(session_id),
         jobs_by_id=jobs_by_id,
-        run_configurations_by_id=_run_configurations_by_id_for_session(service, session_id),
+        run_configurations_by_id=_run_configurations_by_id_for_session(
+            service, session_id
+        ),
     )
 
 
@@ -2233,7 +2592,9 @@ async def update_session_archive_state(
         messages=messages,
         turn_summaries=service.list_turn_summaries(session_id),
         jobs_by_id=_jobs_by_id_for_messages(service, messages),
-        run_configurations_by_id=_run_configurations_by_id_for_session(service, session_id),
+        run_configurations_by_id=_run_configurations_by_id_for_session(
+            service, session_id
+        ),
     )
 
 
@@ -2258,11 +2619,15 @@ async def rename_session(
         messages=messages,
         turn_summaries=service.list_turn_summaries(session_id),
         jobs_by_id=_jobs_by_id_for_messages(service, messages),
-        run_configurations_by_id=_run_configurations_by_id_for_session(service, session_id),
+        run_configurations_by_id=_run_configurations_by_id_for_session(
+            service, session_id
+        ),
     )
 
 
-@router.post("/sessions/{session_id}/title/generate", response_model=SessionDetailResponse)
+@router.post(
+    "/sessions/{session_id}/title/generate", response_model=SessionDetailResponse
+)
 async def generate_session_title(
     session_id: str,
     payload: GenerateSessionTitleRequest,
@@ -2283,7 +2648,9 @@ async def generate_session_title(
         messages=messages,
         turn_summaries=service.list_turn_summaries(session_id),
         jobs_by_id=_jobs_by_id_for_messages(service, messages),
-        run_configurations_by_id=_run_configurations_by_id_for_session(service, session_id),
+        run_configurations_by_id=_run_configurations_by_id_for_session(
+            service, session_id
+        ),
     )
 
 
@@ -2330,11 +2697,17 @@ async def generate_session_title_from_audio(
         messages=messages,
         turn_summaries=service.list_turn_summaries(session_id),
         jobs_by_id=_jobs_by_id_for_messages(service, messages),
-        run_configurations_by_id=_run_configurations_by_id_for_session(service, session_id),
+        run_configurations_by_id=_run_configurations_by_id_for_session(
+            service, session_id
+        ),
     )
 
 
-@router.post("/sessions/{session_id}/messages", response_model=MessageAcceptedResponse, status_code=202)
+@router.post(
+    "/sessions/{session_id}/messages",
+    response_model=MessageAcceptedResponse,
+    status_code=202,
+)
 async def post_session_message(
     session_id: str,
     payload: MessageRequest,
@@ -2385,7 +2758,9 @@ async def update_auto_mode(
         messages=messages,
         turn_summaries=service.list_turn_summaries(session_id),
         jobs_by_id=_jobs_by_id_for_messages(service, messages),
-        run_configurations_by_id=_run_configurations_by_id_for_session(service, session_id),
+        run_configurations_by_id=_run_configurations_by_id_for_session(
+            service, session_id
+        ),
     )
 
 
@@ -2412,11 +2787,15 @@ async def update_agent_configuration(
         messages=messages,
         turn_summaries=service.list_turn_summaries(session_id),
         jobs_by_id=_jobs_by_id_for_messages(service, messages),
-        run_configurations_by_id=_run_configurations_by_id_for_session(service, session_id),
+        run_configurations_by_id=_run_configurations_by_id_for_session(
+            service, session_id
+        ),
     )
 
 
-@router.put("/sessions/{session_id}/agent-profile", response_model=SessionDetailResponse)
+@router.put(
+    "/sessions/{session_id}/agent-profile", response_model=SessionDetailResponse
+)
 async def apply_agent_profile_to_session(
     session_id: str,
     payload: AgentProfileSelectionRequest,
@@ -2439,11 +2818,15 @@ async def apply_agent_profile_to_session(
         messages=messages,
         turn_summaries=service.list_turn_summaries(session_id),
         jobs_by_id=_jobs_by_id_for_messages(service, messages),
-        run_configurations_by_id=_run_configurations_by_id_for_session(service, session_id),
+        run_configurations_by_id=_run_configurations_by_id_for_session(
+            service, session_id
+        ),
     )
 
 
-@router.put("/sessions/{session_id}/turn-summaries", response_model=SessionDetailResponse)
+@router.put(
+    "/sessions/{session_id}/turn-summaries", response_model=SessionDetailResponse
+)
 async def update_turn_summaries(
     session_id: str,
     payload: TurnSummaryConfigRequest,
@@ -2466,7 +2849,9 @@ async def update_turn_summaries(
         messages=messages,
         turn_summaries=service.list_turn_summaries(session_id),
         jobs_by_id=_jobs_by_id_for_messages(service, messages),
-        run_configurations_by_id=_run_configurations_by_id_for_session(service, session_id),
+        run_configurations_by_id=_run_configurations_by_id_for_session(
+            service, session_id
+        ),
     )
 
 
@@ -2500,7 +2885,9 @@ async def recover_message(
         messages=messages,
         turn_summaries=service.list_turn_summaries(session_id),
         jobs_by_id=_jobs_by_id_for_messages(service, messages),
-        run_configurations_by_id=_run_configurations_by_id_for_session(service, session_id),
+        run_configurations_by_id=_run_configurations_by_id_for_session(
+            service, session_id
+        ),
     )
 
 
@@ -2618,7 +3005,7 @@ def _preserve_api_v1_prefix(request: Request, url: str) -> str:
     origin = str(request.base_url).rstrip("/")
     root_path = f"{origin}/app-updates/"
     if url.startswith(root_path):
-        return f"{origin}/api/v1/app-updates/{url[len(root_path):]}"
+        return f"{origin}/api/v1/app-updates/{url[len(root_path) :]}"
     return url
 
 
@@ -2768,7 +3155,9 @@ def _parse_codex_options_json(raw_json: str | None):
     try:
         return CodexRunOptionsRequest.model_validate_json(raw_json).to_domain()
     except ValueError as exc:
-        raise HTTPException(status_code=422, detail=f"Invalid codex_options_json: {exc}") from exc
+        raise HTTPException(
+            status_code=422, detail=f"Invalid codex_options_json: {exc}"
+        ) from exc
 
 
 async def _parse_and_validate_codex_options_json(
@@ -2811,10 +3200,7 @@ async def _validate_codex_options(
         codex_options.mcp_server_ids,
     )
     if issues:
-        joined = "; ".join(
-            f"`{issue.server_id}` {issue.reason}"
-            for issue in issues
-        )
+        joined = "; ".join(f"`{issue.server_id}` {issue.reason}" for issue in issues)
         raise HTTPException(
             status_code=422,
             detail=f"Rejected MCP server selections: {joined}",

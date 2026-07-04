@@ -9,6 +9,7 @@ from backend.app.application.services.app_update_service import (
     HttpGitHubReleaseClient,
 )
 from backend.app.application.services.message_service import MessageService
+from backend.app.application.services.sdd_project_service import SddProjectService
 from backend.app.application.services.feedback_queue_service import FeedbackQueueService
 from backend.app.domain.repositories.chat_repository import (
     ChatRepository,
@@ -49,6 +50,7 @@ class AppContainer:
     message_service: MessageService
     feedback_queue_service: FeedbackQueueService
     app_update_service: AppUpdateService
+    sdd_project_service: SddProjectService
     job_stream_hub: JobStreamHub
     audio_transcriber: AudioTranscriber
     speech_synthesizer: SpeechSynthesizer
@@ -96,11 +98,17 @@ def build_container(settings: Settings | None = None) -> AppContainer:
             timeout_seconds=resolved_settings.app_update_github_timeout_seconds,
         ),
     )
+    sdd_project_service = SddProjectService(
+        projects_root=resolved_settings.projects_root,
+        workspace_aliases=resolved_settings.feedback_source_workspace_alias_map,
+        file_max_bytes=resolved_settings.sdd_file_max_bytes,
+    )
     return AppContainer(
         settings=resolved_settings,
         message_service=message_service,
         feedback_queue_service=feedback_queue_service,
         app_update_service=app_update_service,
+        sdd_project_service=sdd_project_service,
         job_stream_hub=job_stream_hub,
         audio_transcriber=audio_transcriber,
         speech_synthesizer=speech_synthesizer,

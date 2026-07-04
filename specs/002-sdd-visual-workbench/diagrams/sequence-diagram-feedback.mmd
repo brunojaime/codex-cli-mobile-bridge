@@ -1,0 +1,24 @@
+sequenceDiagram
+    actor User as Developer or reviewer
+    participant App as Product app
+    participant Workbench as SDD Workbench
+    participant API as Bridge backend
+    participant Files as Current workspace SDD files
+    participant Diagram as Diagram Viewer
+    participant Feedback as Feedback Queue
+    participant Codex as Codex Workflow
+
+    User->>App: Open with CODEX_BRIDGE_DEV_MODE=true
+    App->>Workbench: Open current-project SDD panel
+    Workbench->>API: GET /sdd/project?workspace_path=current
+    API->>Files: Read specs, tasks, and diagrams
+    Files-->>API: Read-only SDD snapshot
+    API-->>Workbench: Project SDD data
+    User->>Workbench: Open project diagram
+    Workbench->>Diagram: Render .mmd source
+    User->>Diagram: Mark node, edge, or region
+    Diagram->>Feedback: Create feedback with diagram metadata
+    User->>Workbench: Request Codex update
+    Workbench->>Codex: Send workspace, SDD path, and selection context
+    Codex->>Files: Propose diagram/spec/task update
+    Files-->>Workbench: Updated SDD snapshot

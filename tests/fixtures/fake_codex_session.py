@@ -14,7 +14,9 @@ _WRAPPED_USER_FAIL_PREFIX = "You are the primary builder Codex.\n\nUser request:
 
 
 def _state_path() -> Path:
-    return Path(os.environ.get("HOME", ".")).resolve() / ".codex" / "fake_mcp_state.json"
+    return (
+        Path(os.environ.get("HOME", ".")).resolve() / ".codex" / "fake_mcp_state.json"
+    )
 
 
 def _load_servers() -> dict[str, dict[str, object]]:
@@ -79,7 +81,7 @@ def _server_payload(server_id: str, server: dict[str, object]) -> dict[str, obje
 
 
 def _maybe_supervisor_response(prompt: str) -> str | None:
-    if 'Available specialist ids:' not in prompt:
+    if "Available specialist ids:" not in prompt:
         return None
     available_specialists = ["qa", "ux", "senior_engineer", "scraper"]
     for line in prompt.splitlines():
@@ -100,8 +102,11 @@ def _maybe_supervisor_response(prompt: str) -> str | None:
             return available_specialists[0]
         return None
 
-    if 'Latest specialist report agent_id: qa' in prompt:
-        if "senior_engineer" not in available_specialists and prompt.count("QA review:") <= 2:
+    if "Latest specialist report agent_id: qa" in prompt:
+        if (
+            "senior_engineer" not in available_specialists
+            and prompt.count("QA review:") <= 2
+        ):
             return json.dumps(
                 {
                     "status": "continue",
@@ -129,7 +134,7 @@ def _maybe_supervisor_response(prompt: str) -> str | None:
                 "user_response": "QA feedback is in. The run is complete.",
             }
         )
-    if 'Latest specialist report agent_id: senior_engineer' in prompt:
+    if "Latest specialist report agent_id: senior_engineer" in prompt:
         next_agent_id = choose_specialist("qa", "senior_engineer")
         return json.dumps(
             {
@@ -196,12 +201,14 @@ def _maybe_supervisor_response(prompt: str) -> str | None:
 
 
 def _maybe_specialist_response(prompt: str) -> str | None:
-    if 'Assigned specialist id: senior_engineer' in prompt:
-        return 'Senior engineering review: architecture looks sound; QA should verify tests.'
-    if 'Assigned specialist id: qa' in prompt:
-        return 'QA review: no blocking regressions found; test coverage looks acceptable.'
-    if 'Assigned specialist id: ux' in prompt:
-        return 'UX review: the current flow is acceptable.'
+    if "Assigned specialist id: senior_engineer" in prompt:
+        return "Senior engineering review: architecture looks sound; QA should verify tests."
+    if "Assigned specialist id: qa" in prompt:
+        return (
+            "QA review: no blocking regressions found; test coverage looks acceptable."
+        )
+    if "Assigned specialist id: ux" in prompt:
+        return "UX review: the current flow is acceptable."
     return None
 
 
@@ -307,7 +314,10 @@ def main() -> int:
             index += 1
             continue
 
-        prompt = current
+        if current == "-":
+            prompt = sys.stdin.read()
+        else:
+            prompt = current
         index += 1
 
     if prompt is None:
@@ -318,14 +328,16 @@ def main() -> int:
         time.sleep(0.1)
         missing_images = [str(path) for path in attached_images if not path.exists()]
         if missing_images:
-            print(f"missing image file(s): {', '.join(missing_images)}", file=sys.stderr)
+            print(
+                f"missing image file(s): {', '.join(missing_images)}", file=sys.stderr
+            )
             return 1
 
     if prompt.startswith("fail:"):
         print(prompt.split(":", maxsplit=1)[1], file=sys.stderr)
         return 1
     if prompt.startswith(_WRAPPED_USER_FAIL_PREFIX):
-        print(prompt[len(_WRAPPED_USER_FAIL_PREFIX):], file=sys.stderr)
+        print(prompt[len(_WRAPPED_USER_FAIL_PREFIX) :], file=sys.stderr)
         return 1
 
     sleep_match = _SLEEP_PREFIX.match(prompt)
@@ -340,7 +352,9 @@ def main() -> int:
         or f"{mode}:{thread_id}:{prompt}"
     )
     if attached_images:
-        response = f"{response} [images: {', '.join(path.name for path in attached_images)}]"
+        response = (
+            f"{response} [images: {', '.join(path.name for path in attached_images)}]"
+        )
 
     print(json.dumps({"type": "thread.started", "thread_id": thread_id}))
     print(json.dumps({"type": "turn.started"}))
@@ -352,7 +366,11 @@ def main() -> int:
             }
         )
     )
-    print(json.dumps({"type": "turn.completed", "usage": {"input_tokens": 1, "output_tokens": 1}}))
+    print(
+        json.dumps(
+            {"type": "turn.completed", "usage": {"input_tokens": 1, "output_tokens": 1}}
+        )
+    )
 
     if output_path is not None:
         output_path.write_text(response, encoding="utf-8")

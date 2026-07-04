@@ -466,6 +466,71 @@ class CodexMcpAppResponse(BaseModel):
     protocol_error: str | None = None
 
 
+class SddFileResponse(BaseModel):
+    path: str
+    title: str | None = None
+    size_bytes: int
+    content: str | None = None
+    error: str | None = None
+
+
+class SddDiagramResponse(SddFileResponse):
+    diagram_type: str
+    scope: str
+
+
+class SddSpecResponse(BaseModel):
+    id: str
+    title: str
+    path: str
+    spec: SddFileResponse | None = None
+    plan: SddFileResponse | None = None
+    tasks: SddFileResponse | None = None
+    spec_files: list[SddFileResponse] = Field(default_factory=list)
+    plan_files: list[SddFileResponse] = Field(default_factory=list)
+    task_files: list[SddFileResponse] = Field(default_factory=list)
+    slice_docs: list[SddFileResponse] = Field(default_factory=list)
+    diagrams: list[SddDiagramResponse] = Field(default_factory=list)
+    missing: list[str] = Field(default_factory=list)
+
+
+class SddProjectSummaryResponse(BaseModel):
+    workspace_name: str
+    workspace_path: str
+    has_manifest: bool
+    has_constitution: bool
+    spec_count: int
+    diagram_count: int
+    missing_required: list[str] = Field(default_factory=list)
+
+
+class SddProjectsResponse(BaseModel):
+    kind: str = "codex.sddProjects"
+    version: int = 1
+    default_workspace_path: str | None = None
+    projects: list[SddProjectSummaryResponse] = Field(default_factory=list)
+
+
+class SddProjectResponse(BaseModel):
+    kind: str = "codex.sddProject"
+    version: int = 1
+    workspace_name: str
+    workspace_path: str
+    required: bool
+    manifest: SddFileResponse | None = None
+    constitution: SddFileResponse | None = None
+    architecture_diagrams: list[SddDiagramResponse] = Field(default_factory=list)
+    specs: list[SddSpecResponse] = Field(default_factory=list)
+    missing_required: list[str] = Field(default_factory=list)
+
+
+class SddProjectDiagramsResponse(BaseModel):
+    kind: str = "codex.sddProjectDiagrams"
+    version: int = 1
+    workspace_path: str
+    diagrams: list[SddDiagramResponse] = Field(default_factory=list)
+
+
 class CodexMcpAppInstallResponse(BaseModel):
     app_id: str
     server_id: str
@@ -1692,6 +1757,7 @@ class ServerCapabilitiesResponse(BaseModel):
     supports_job_retry: bool
     supports_push_job_stream: bool
     supports_feedback_batches: bool = True
+    supports_sdd: bool = True
     speech_output_backend: str
     speech_output_voice: str | None = None
     speech_output_response_format: str | None = None

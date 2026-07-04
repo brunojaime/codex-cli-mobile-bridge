@@ -86,16 +86,17 @@
     "requiredMinimumBuild": null,
     "enabled": false
   },
-  "smart-nienfos-admin": {
+  "smart-nienfos": {
     "displayName": "Smart Nienfos Admin",
     "repo": "brunojaime/smart-nienfos-flutter-app",
-    "releaseTagPattern": "smart-nienfos-admin-android-v*",
-    "apkAssetPattern": "smart-nienfos-admin-*.apk",
-    "latestAssetName": "smart-nienfos-admin.apk",
+    "releaseTagPattern": "android-smart-nienfos-v*",
+    "apkAssetPattern": "smart-nienfos-*.apk",
+    "latestAssetName": "smart-nienfos.apk",
     "expectedPackageId": "com.example.client",
     "verifiedPackageIds": {
       "smart-nienfos-admin-android-v1.0.0-build.12": "com.smartnienfos.admin",
-      "smart-nienfos-admin-android-v1.0.0-build.13": "com.example.client"
+      "smart-nienfos-admin-android-v1.0.0-build.13": "com.example.client",
+      "android-smart-nienfos-v*": "com.example.client"
     },
     "requiredMinimumBuild": null,
     "enabled": true

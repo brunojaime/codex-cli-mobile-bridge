@@ -1,0 +1,24 @@
+name: codex_bridge_workbench
+description: Reusable Codex Mobile Bridge SDD Architecture Workbench.
+publish_to: 'none'
+version: 0.1.0
+
+environment:
+  sdk: ^3.11.1
+
+dependencies:
+  flutter:
+    sdk: flutter
+  http: ^1.2.2
+  webview_flutter: ^4.14.0
+  webview_flutter_android: ^4.12.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/vendor/mermaid/mermaid.min.js

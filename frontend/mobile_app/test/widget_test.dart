@@ -1,7 +1,8 @@
+import 'dart:async';
 import 'dart:convert';
-import 'dart:typed_data';
 
 import 'package:codex_app_updater/codex_app_updater.dart';
+import 'package:codex_bridge_workbench/codex_bridge_workbench.dart';
 import 'package:codex_mobile_frontend/main.dart';
 import 'package:codex_mobile_frontend/src/models/agent_configuration.dart';
 import 'package:codex_mobile_frontend/src/models/agent_profile.dart';
@@ -23,6 +24,7 @@ import 'package:codex_mobile_frontend/src/utils/chat_message_visibility.dart';
 import 'package:codex_mobile_frontend/src/widgets/chat_bubble.dart';
 import 'package:cross_file/cross_file.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -97,6 +99,938 @@ void main() {
       ),
       isFalse,
     );
+  });
+
+  test('Codex Bridge dev mode follows its single compile-time flag helper', () {
+    expect(isCodexBridgeDevModeEnabled(), isFalse);
+    expect(isCodexBridgeDevModeEnabled(configuredEnabled: false), isFalse);
+    expect(isCodexBridgeDevModeEnabled(configuredEnabled: true), isTrue);
+  });
+
+  testWidgets('Codex Bridge dev wrapper returns child unchanged when disabled',
+      (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: CodexBridgeDevModeWrapper(
+          enabled: false,
+          bridgeUrl: 'http://bridge.test',
+          child: Text('normal app'),
+        ),
+      ),
+    );
+
+    expect(find.text('normal app'), findsOneWidget);
+    expect(_codexDevBannerFinder(), findsNothing);
+  });
+
+  testWidgets('Codex Bridge dev wrapper marks development mode when enabled', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: CodexBridgeDevModeWrapper(
+          enabled: true,
+          bridgeUrl: 'http://bridge.test',
+          child: Text('normal app'),
+        ),
+      ),
+    );
+
+    expect(find.text('normal app'), findsOneWidget);
+    expect(_codexDevBannerFinder(), findsOneWidget);
+    expect(find.byTooltip('Open SDD Explorer'), findsOneWidget);
+  });
+
+  testWidgets('SDD Explorer shows loading state', (tester) async {
+    final pending = Completer<SddProject?>();
+    addTearDown(() {
+      if (!pending.isCompleted) {
+        pending.complete(null);
+      }
+    });
+    await _pumpSddWrapper(
+      tester,
+      loader: (_) => pending.future,
+    );
+
+    await tester.tap(find.byTooltip('Open SDD Explorer'));
+    await tester.pump();
+
+    expect(find.text('Loading SDD Explorer'), findsOneWidget);
+  });
+
+  testWidgets('SDD Explorer shows error and retry state', (tester) async {
+    var attempts = 0;
+    await _pumpSddWrapper(
+      tester,
+      loader: (_) async {
+        attempts += 1;
+        if (attempts > 1) {
+          return null;
+        }
+        throw Exception('backend unavailable');
+      },
+    );
+
+    await tester.tap(find.byTooltip('Open SDD Explorer'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Could not load SDD Explorer'), findsOneWidget);
+    expect(find.textContaining('backend unavailable'), findsOneWidget);
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Retry'));
+    await tester.pumpAndSettle();
+    expect(attempts, 2);
+    expect(find.text('No SDD project found'), findsOneWidget);
+  });
+
+  testWidgets('SDD Explorer shows empty state', (tester) async {
+    await _pumpSddWrapper(
+      tester,
+      loader: (_) async => null,
+    );
+
+    await tester.tap(find.byTooltip('Open SDD Explorer'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('No SDD project found'), findsOneWidget);
+    expect(find.textContaining('did not return a project'), findsOneWidget);
+  });
+
+  testWidgets('SDD Explorer renders a read-only project view', (tester) async {
+    final requestedPaths = <String>[];
+    final httpClient = MockClient((request) async {
+      requestedPaths.add(request.url.path);
+      if (request.url.path == '/sdd/projects') {
+        return http.Response(jsonEncode(_sddProjectsIndexJson()), 200);
+      }
+      if (request.url.path == '/sdd/project') {
+        return http.Response(jsonEncode(_sddProjectJson()), 200);
+      }
+      if (request.url.path == '/sdd/project/diagrams') {
+        return http.Response(jsonEncode(_sddProjectDiagramsJson()), 200);
+      }
+      return http.Response('not found', 404);
+    });
+    await _pumpSddWrapper(
+      tester,
+      loader: (bridgeUrl) {
+        return SddExplorerClient(
+          baseUrl: bridgeUrl,
+          client: httpClient,
+        ).loadDefaultProject();
+      },
+      diagramRenderer: _FakeMermaidRenderer.success(),
+    );
+
+    await tester.tap(find.byTooltip('Open SDD Explorer'));
+    await tester.pumpAndSettle();
+
+    expect(requestedPaths, <String>[
+      '/sdd/projects',
+      '/sdd/project',
+      '/sdd/project/diagrams',
+    ]);
+
+    expect(find.text('SDD Workbench'), findsOneWidget);
+    expect(find.text('Codex Bridge'), findsWidgets);
+    expect(find.text('Overview'), findsWidgets);
+    expect(find.text('Specs'), findsWidgets);
+    expect(find.text('Diagrams'), findsWidgets);
+    expect(find.text('SDD files'), findsNothing);
+    expect(find.text('Project identity'), findsOneWidget);
+    expect(find.text('1/2'), findsOneWidget);
+
+    await tester.tap(find.text('Specs').first);
+    await tester.pumpAndSettle();
+    expect(find.text('Bridge Contract'), findsWidgets);
+    expect(find.textContaining('# Bridge Contract'), findsOneWidget);
+    await tester.tap(find.text('Plan').first);
+    await tester.pumpAndSettle();
+    expect(find.textContaining('# Plan'), findsOneWidget);
+    await tester.tap(find.text('Tasks').first);
+    await tester.pumpAndSettle();
+    expect(find.text('1/2 tasks complete'), findsOneWidget);
+    await tester.tap(find.text('Slice One').first);
+    await tester.pumpAndSettle();
+    expect(find.textContaining('# Slice One'), findsOneWidget);
+
+    await tester.tap(find.text('Diagrams').first);
+    await tester.pumpAndSettle();
+    expect(find.text('Architecture diagrams'), findsOneWidget);
+    expect(find.text('flowchart diagram'), findsWidgets);
+    expect(find.text('rendered architecture/components.mmd'), findsNothing);
+    await tester.tap(find.text('flowchart diagram').first);
+    await tester.pumpAndSettle();
+    expect(
+      find.text('rendered architecture/components.mmd'),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('SDD overview renders local SDD health only', (
+    tester,
+  ) async {
+    await _pumpSddWrapper(
+      tester,
+      loader: (_) async => SddProject.fromJson(_sddProjectJson()),
+      diagramRenderer: _FakeMermaidRenderer.success(),
+    );
+
+    await tester.tap(find.byTooltip('Open SDD Explorer'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Project identity'), findsOneWidget);
+    expect(find.text('Codex Bridge'), findsWidgets);
+    expect(find.text('Manifest'), findsOneWidget);
+    expect(find.text('Constitution'), findsOneWidget);
+    expect(find.text('Specs'), findsWidgets);
+    expect(find.text('Diagrams'), findsWidgets);
+    expect(find.text('1/2'), findsOneWidget);
+    await tester.drag(find.byType(ListView).first, const Offset(0, -520));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('No feedback queued'), findsOneWidget);
+    expect(find.textContaining('No Codex action submitted'), findsOneWidget);
+    expect(find.textContaining('Other Project'), findsNothing);
+  });
+
+  testWidgets('SDD overview navigates to Workbench sections', (
+    tester,
+  ) async {
+    await _pumpSddWrapper(
+      tester,
+      loader: (_) async => SddProject.fromJson(_sddProjectJson()),
+      diagramRenderer: _FakeMermaidRenderer.success(),
+    );
+
+    await tester.tap(find.byTooltip('Open SDD Explorer'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Diagrams').first);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Architecture diagrams'), findsOneWidget);
+    expect(find.text('flowchart diagram'), findsWidgets);
+  });
+
+  testWidgets('SDD overview launches recommended action composer', (
+    tester,
+  ) async {
+    await _pumpSddWrapper(
+      tester,
+      loader: (_) async => SddProject.fromJson(_sddProjectJson()),
+      diagramRenderer: _FakeMermaidRenderer.success(),
+    );
+
+    await tester.tap(find.byTooltip('Open SDD Explorer'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(
+      find.widgetWithText(OutlinedButton, 'Refine first spec'),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Refine first spec'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Refine spec.md'), findsOneWidget);
+    expect(find.textContaining('Action kind: sdd.refine_spec'), findsOneWidget);
+    expect(
+      find.textContaining(
+        'artifact_path: specs/001-codex-bridge-sdd-wrapper/spec.md',
+      ),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('SDD Workbench shows missing artifact status in overview', (
+    tester,
+  ) async {
+    await _pumpSddWrapper(
+      tester,
+      loader: (_) async => SddProject.fromJson(_sddProjectWithMissingJson()),
+    );
+
+    await tester.tap(find.byTooltip('Open SDD Explorer'));
+    await tester.pumpAndSettle();
+    await tester.drag(find.byType(ListView).first, const Offset(0, -520));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Missing required artifacts'), findsOneWidget);
+    expect(find.text('- codex-bridge.yaml'), findsOneWidget);
+    expect(find.text('Missing'), findsWidgets);
+  });
+
+  testWidgets('SDD Workbench switches spec file panes', (tester) async {
+    await _pumpSddWrapper(
+      tester,
+      loader: (_) async => SddProject.fromJson(_sddProjectJson()),
+      diagramRenderer: _FakeMermaidRenderer.success(),
+    );
+
+    await tester.tap(find.byTooltip('Open SDD Explorer'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Specs').first);
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('# Bridge Contract'), findsOneWidget);
+    await tester.tap(find.text('Plan').first);
+    await tester.pumpAndSettle();
+    expect(find.textContaining('# Plan'), findsOneWidget);
+    await tester.tap(find.text('Tasks').first);
+    await tester.pumpAndSettle();
+    expect(find.textContaining('# Tasks'), findsOneWidget);
+    expect(find.text('1/2 tasks complete'), findsOneWidget);
+    await tester.tap(find.text('Slice One').first);
+    await tester.pumpAndSettle();
+    expect(find.textContaining('# Slice One'), findsOneWidget);
+  });
+
+  testWidgets('SDD Explorer shows diagram list before opening preview', (
+    tester,
+  ) async {
+    await _pumpSddWrapper(
+      tester,
+      loader: (_) async => SddProject.fromJson(_sddProjectJson()),
+      diagramRenderer: _FakeMermaidRenderer.success(),
+    );
+
+    await tester.tap(find.byTooltip('Open SDD Explorer'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Diagrams').first);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Architecture diagrams'), findsOneWidget);
+    expect(find.text('flowchart diagram'), findsWidgets);
+    expect(find.text('rendered architecture/components.mmd'), findsNothing);
+    await tester.tap(find.text('flowchart diagram').first);
+    await tester.pumpAndSettle();
+    expect(
+      find.text('rendered architecture/components.mmd'),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('SDD Explorer toggles a diagram between preview and source', (
+    tester,
+  ) async {
+    await _pumpSddWrapper(
+      tester,
+      loader: (_) async => SddProject.fromJson(_sddProjectJson()),
+      diagramRenderer: _FakeMermaidRenderer.success(),
+    );
+
+    await tester.tap(find.byTooltip('Open SDD Explorer'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Diagrams').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('flowchart diagram').first);
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text('rendered architecture/components.mmd'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('flowchart LR'), findsNothing);
+
+    await tester.tap(find.text('Source').first);
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('flowchart LR'), findsOneWidget);
+
+    await tester.tap(find.text('Preview').first);
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text('rendered architecture/components.mmd'),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('SDD Explorer shows empty diagram groups', (tester) async {
+    await _pumpSddWrapper(
+      tester,
+      loader: (_) async =>
+          SddProject.fromJson(_sddProjectWithoutDiagramsJson()),
+    );
+
+    await tester.tap(find.byTooltip('Open SDD Explorer'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Diagrams').first);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Diagrams'), findsWidgets);
+    expect(find.text('No diagrams found'), findsWidgets);
+  });
+
+  testWidgets('SDD Explorer keeps source available when preview fails', (
+    tester,
+  ) async {
+    final renderer = _FakeMermaidRenderer.failure('invalid Mermaid syntax');
+    await _pumpSddWrapper(
+      tester,
+      loader: (_) async => SddProject.fromJson(_sddProjectJson()),
+      diagramRenderer: renderer,
+    );
+
+    await tester.tap(find.byTooltip('Open SDD Explorer'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Diagrams').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('flowchart diagram').first);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Diagram preview failed'), findsOneWidget);
+    expect(find.text('invalid Mermaid syntax'), findsOneWidget);
+    expect(find.textContaining('flowchart LR'), findsOneWidget);
+
+    final callsBeforeRetry = renderer.calls;
+    final retry = find.widgetWithText(TextButton, 'Retry');
+    tester.widget<TextButton>(retry).onPressed!();
+    await tester.pumpAndSettle();
+
+    expect(renderer.calls, greaterThan(callsBeforeRetry));
+  });
+
+  testWidgets('SDD Workbench queues feedback from a spec artifact', (
+    tester,
+  ) async {
+    final drafts = <SddFeedbackDraft>[];
+    await _pumpSddWrapper(
+      tester,
+      loader: (_) async => SddProject.fromJson(_sddProjectJson()),
+      diagramRenderer: _FakeMermaidRenderer.success(),
+      feedbackSubmitter: (_, draft) async {
+        drafts.add(draft);
+        return const SddFeedbackSubmissionResult(
+          id: 'sdd-feedback-1',
+        );
+      },
+    );
+
+    await tester.tap(find.byTooltip('Open SDD Explorer'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Specs').first);
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(
+      find.byTooltip(
+        'Add SDD feedback for specs/001-codex-bridge-sdd-wrapper/spec.md',
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byTooltip(
+        'Add SDD feedback for specs/001-codex-bridge-sdd-wrapper/spec.md',
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('SDD feedback'), findsOneWidget);
+    expect(find.textContaining('# Bridge Contract'), findsWidgets);
+    await tester.enterText(
+      find.byType(TextField).last,
+      'Clarify acceptance criteria in this spec.',
+    );
+    await tester.tap(find.widgetWithText(FilledButton, 'Submit feedback'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Feedback queued'), findsOneWidget);
+    expect(drafts, hasLength(1));
+    final draft = drafts.single;
+    expect(draft.comment, 'Clarify acceptance criteria in this spec.');
+    expect(draft.target.artifactType, 'spec');
+    expect(
+      draft.target.artifactPath,
+      'specs/001-codex-bridge-sdd-wrapper/spec.md',
+    );
+    expect(draft.target.specId, '001-codex-bridge-sdd-wrapper');
+    expect(
+      draft.target.toContextMetadata()['sdd'],
+      isA<Map<String, Object?>>()
+          .having(
+            (value) => value['sourceExcerpt'],
+            'source excerpt',
+            contains('# Bridge Contract'),
+          )
+          .having(
+            (value) => value['artifactType'],
+            'artifact type',
+            'spec',
+          ),
+    );
+  });
+
+  testWidgets('SDD Workbench cancels artifact feedback without submitting', (
+    tester,
+  ) async {
+    final drafts = <SddFeedbackDraft>[];
+    await _pumpSddWrapper(
+      tester,
+      loader: (_) async => SddProject.fromJson(_sddProjectJson()),
+      diagramRenderer: _FakeMermaidRenderer.success(),
+      feedbackSubmitter: (_, draft) async {
+        drafts.add(draft);
+        return const SddFeedbackSubmissionResult(
+          id: 'sdd-feedback-cancel',
+        );
+      },
+    );
+
+    await tester.tap(find.byTooltip('Open SDD Explorer'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Specs').first);
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(
+      find.byTooltip(
+        'Add SDD feedback for specs/001-codex-bridge-sdd-wrapper/spec.md',
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byTooltip(
+        'Add SDD feedback for specs/001-codex-bridge-sdd-wrapper/spec.md',
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('SDD feedback'), findsOneWidget);
+    await tester.tap(find.widgetWithText(TextButton, 'Cancel'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('SDD feedback'), findsNothing);
+    expect(drafts, isEmpty);
+  });
+
+  testWidgets('SDD Workbench shows feedback submit errors', (tester) async {
+    await _pumpSddWrapper(
+      tester,
+      loader: (_) async => SddProject.fromJson(_sddProjectJson()),
+      diagramRenderer: _FakeMermaidRenderer.success(),
+      feedbackSubmitter: (_, __) async {
+        throw Exception('queue unavailable');
+      },
+    );
+
+    await tester.tap(find.byTooltip('Open SDD Explorer'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Specs').first);
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(
+      find.byTooltip(
+        'Add SDD feedback for specs/001-codex-bridge-sdd-wrapper/spec.md',
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byTooltip(
+        'Add SDD feedback for specs/001-codex-bridge-sdd-wrapper/spec.md',
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField).last, 'This should fail.');
+    await tester.tap(find.widgetWithText(FilledButton, 'Submit feedback'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('queue unavailable'), findsOneWidget);
+    expect(find.text('Feedback queued'), findsNothing);
+  });
+
+  testWidgets('SDD Workbench links feedback metadata to a diagram', (
+    tester,
+  ) async {
+    final drafts = <SddFeedbackDraft>[];
+    await _pumpSddWrapper(
+      tester,
+      loader: (_) async => SddProject.fromJson(_sddProjectJson()),
+      diagramRenderer: _FakeMermaidRenderer.success(),
+      feedbackSubmitter: (_, draft) async {
+        drafts.add(draft);
+        return const SddFeedbackSubmissionResult(
+          id: 'sdd-feedback-diagram',
+        );
+      },
+    );
+
+    await tester.tap(find.byTooltip('Open SDD Explorer'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Diagrams').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Add diagram feedback').first);
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byType(TextField).last,
+      'Component boundary should be clearer.',
+    );
+    await tester.tap(find.widgetWithText(FilledButton, 'Submit feedback'));
+    await tester.pumpAndSettle();
+
+    expect(drafts, hasLength(1));
+    final target = drafts.single.target;
+    expect(target.feedbackKind, 'sdd.diagram');
+    expect(target.artifactPath, 'architecture/components.mmd');
+    expect(target.diagramType, 'flowchart');
+    expect(target.diagramScope, 'architecture');
+    expect(
+      target.toContextMetadata()['sdd'],
+      isA<Map<String, Object?>>()
+          .having(
+            (value) => value['sourceExcerpt'],
+            'source excerpt',
+            contains('flowchart LR'),
+          )
+          .having(
+            (value) => value['diagramScope'],
+            'diagram scope',
+            'architecture',
+          ),
+    );
+  });
+
+  test('api client creates feedback queue items with SDD metadata', () async {
+    late Map<String, dynamic> requestPayload;
+    final apiClient = ApiClient(
+      baseUrl: 'http://bridge.test',
+      client: MockClient((request) async {
+        expect(request.method, 'POST');
+        expect(request.url.path, '/feedback-queue');
+        requestPayload = jsonDecode(request.body) as Map<String, dynamic>;
+        return http.Response(
+          jsonEncode(<String, dynamic>{
+            'id': 'feedback-sdd',
+            'source_app': requestPayload['sourceApp'],
+            'source_display_name': requestPayload['sourceDisplayName'],
+            'comment': requestPayload['comment'],
+            'created_at': '2026-07-04T12:00:00Z',
+            'status': 'pending',
+            'has_screenshot': false,
+            'selection_points': <Map<String, dynamic>>[],
+            'selection_bounds': requestPayload['selectionBounds'],
+            'feedback_kind': requestPayload['feedbackKind'],
+            'context_metadata': requestPayload['contextMetadata'],
+          }),
+          200,
+        );
+      }),
+    );
+
+    final item = await apiClient.createFeedbackQueueItem(
+      sourceApp: 'codex-mobile',
+      sourceDisplayName: 'Codex Mobile',
+      comment: 'Clarify this diagram.',
+      feedbackKind: 'sdd.diagram',
+      contextMetadata: const <String, Object?>{
+        'sdd': <String, Object?>{
+          'workspacePath': '/workspace/codex-cli-mobile-bridge',
+          'artifactPath': 'architecture/components.mmd',
+          'diagramType': 'flowchart',
+        },
+      },
+      selectionBounds: const <String, double>{
+        'left': 0,
+        'top': 0,
+        'width': 1,
+        'height': 1,
+      },
+    );
+
+    expect(requestPayload['sourceApp'], 'codex-mobile');
+    expect(requestPayload['feedbackKind'], 'sdd.diagram');
+    expect(requestPayload['contextMetadata'], isA<Map<String, dynamic>>());
+    expect(requestPayload['selectionBounds'], <String, dynamic>{
+      'left': 0,
+      'top': 0,
+      'width': 1,
+      'height': 1,
+    });
+    expect(item.feedbackKind, 'sdd.diagram');
+    expect(item.contextMetadata['sdd'], isA<Map>());
+  });
+
+  test('SDD Codex action prompt includes action and linked context', () {
+    final prompt = buildSddCodexActionPrompt(
+      const SddCodexActionRequest(
+        kind: SddCodexActionKind.addressFeedback,
+        target: SddFeedbackTarget(
+          workspacePath: '/workspace/codex-cli-mobile-bridge',
+          artifactType: 'diagram',
+          artifactPath: 'architecture/components.mmd',
+          artifactTitle: 'Component diagram',
+          sourceExcerpt: 'flowchart LR\nA --> B',
+          specId: '002-sdd-visual-workbench',
+          specTitle: 'Visual Workbench',
+          diagramType: 'flowchart',
+          diagramScope: 'architecture',
+        ),
+        linkedFeedbackIds: <String>['feedback-sdd-1'],
+      ),
+    );
+
+    expect(prompt, contains('Action kind: sdd.address_feedback'));
+    expect(
+        prompt, contains('workspace_path: /workspace/codex-cli-mobile-bridge'));
+    expect(prompt, contains('artifact_path: architecture/components.mmd'));
+    expect(prompt, contains('diagram_type: flowchart'));
+    expect(prompt, contains('  - feedback-sdd-1'));
+    expect(prompt, contains('flowchart LR'));
+    expect(
+        prompt, contains('Validate any path before reading or editing files.'));
+  });
+
+  testWidgets('SDD Workbench shows Codex action menu for a spec artifact', (
+    tester,
+  ) async {
+    await _pumpSddWrapper(
+      tester,
+      loader: (_) async => SddProject.fromJson(_sddProjectJson()),
+      diagramRenderer: _FakeMermaidRenderer.success(),
+    );
+
+    await tester.tap(find.byTooltip('Open SDD Explorer'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Specs').first);
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(
+      find.byTooltip(
+        'Open Codex actions for specs/001-codex-bridge-sdd-wrapper/spec.md',
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byTooltip(
+        'Open Codex actions for specs/001-codex-bridge-sdd-wrapper/spec.md',
+      ),
+      findsOneWidget,
+    );
+    await tester.tap(
+      find.byTooltip(
+        'Open Codex actions for specs/001-codex-bridge-sdd-wrapper/spec.md',
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Refine spec.md'), findsOneWidget);
+  });
+
+  testWidgets('SDD Codex action composer submits an editable prompt', (
+    tester,
+  ) async {
+    final drafts = <SddCodexActionDraft>[];
+    await _pumpSddWrapper(
+      tester,
+      loader: (_) async => SddProject.fromJson(_sddProjectJson()),
+      diagramRenderer: _FakeMermaidRenderer.success(),
+      actionSubmitter: (_, draft) async {
+        drafts.add(draft);
+        return _jobResponse(
+          jobId: 'job-sdd-action',
+          sessionId: 'session-sdd-action',
+        );
+      },
+    );
+
+    await tester.tap(find.byTooltip('Open SDD Explorer'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Specs').first);
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(
+      find.byTooltip(
+        'Open Codex actions for specs/001-codex-bridge-sdd-wrapper/spec.md',
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byTooltip(
+        'Open Codex actions for specs/001-codex-bridge-sdd-wrapper/spec.md',
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Refine spec.md'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Refine spec.md'), findsOneWidget);
+    expect(find.textContaining('Action kind: sdd.refine_spec'), findsOneWidget);
+    await tester.enterText(
+      find.byType(TextField).last,
+      'Custom prompt for refining the spec.',
+    );
+    await tester.tap(find.widgetWithText(FilledButton, 'Submit to Codex'));
+    await tester.pumpAndSettle();
+
+    expect(drafts, hasLength(1));
+    expect(drafts.single.prompt, 'Custom prompt for refining the spec.');
+    expect(drafts.single.request.kind, SddCodexActionKind.refineSpec);
+    expect(
+      drafts.single.request.target.artifactPath,
+      'specs/001-codex-bridge-sdd-wrapper/spec.md',
+    );
+    expect(
+      find.textContaining('session session-sdd-action'),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('SDD Codex action composer shows submit failure', (tester) async {
+    await _pumpSddWrapper(
+      tester,
+      loader: (_) async => SddProject.fromJson(_sddProjectJson()),
+      diagramRenderer: _FakeMermaidRenderer.success(),
+      actionSubmitter: (_, __) async {
+        throw Exception('Codex rejected action');
+      },
+    );
+
+    await tester.tap(find.byTooltip('Open SDD Explorer'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Diagrams').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Open diagram Codex actions').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Update .mmd'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Submit to Codex'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('Codex rejected action'), findsOneWidget);
+    expect(find.textContaining('Codex action submitted'), findsNothing);
+  });
+
+  testWidgets('SDD feedback can open a linked Codex action', (tester) async {
+    final actionDrafts = <SddCodexActionDraft>[];
+    await _pumpSddWrapper(
+      tester,
+      loader: (_) async => SddProject.fromJson(_sddProjectJson()),
+      diagramRenderer: _FakeMermaidRenderer.success(),
+      feedbackSubmitter: (_, draft) async {
+        return const SddFeedbackSubmissionResult(
+          id: 'feedback-linked-1',
+        );
+      },
+      actionSubmitter: (_, draft) async {
+        actionDrafts.add(draft);
+        return _jobResponse(jobId: 'job-linked', sessionId: 'session-linked');
+      },
+    );
+
+    await tester.tap(find.byTooltip('Open SDD Explorer'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Diagrams').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Add diagram feedback').first);
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField).last, 'Fix this diagram.');
+    await tester.tap(find.widgetWithText(FilledButton, 'Submit feedback'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(
+      find.widgetWithText(OutlinedButton, 'Ask Codex to address feedback'),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.widgetWithText(OutlinedButton, 'Ask Codex to address feedback'),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Address feedback'), findsOneWidget);
+    expect(find.textContaining('feedback-linked-1'), findsWidgets);
+    await tester.tap(find.widgetWithText(FilledButton, 'Submit to Codex'));
+    await tester.pumpAndSettle();
+
+    expect(actionDrafts, hasLength(1));
+    expect(
+        actionDrafts.single.request.kind, SddCodexActionKind.addressFeedback);
+    expect(actionDrafts.single.request.linkedFeedbackIds, <String>[
+      'feedback-linked-1',
+    ]);
+    expect(actionDrafts.single.prompt, contains('linked_feedback_ids'));
+  });
+
+  testWidgets('SDD overview opens an audit Codex action', (tester) async {
+    final drafts = <SddCodexActionDraft>[];
+    await _pumpSddWrapper(
+      tester,
+      loader: (_) async => SddProject.fromJson(_sddProjectWithMissingJson()),
+      actionSubmitter: (_, draft) async {
+        drafts.add(draft);
+        return _jobResponse(jobId: 'job-audit', sessionId: 'session-audit');
+      },
+    );
+
+    await tester.tap(find.byTooltip('Open SDD Explorer'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Audit SDD').first);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Audit SDD'), findsWidgets);
+    expect(find.textContaining('Action kind: sdd.audit'), findsOneWidget);
+    expect(find.textContaining('missing: codex-bridge.yaml'), findsOneWidget);
+    await tester.tap(find.widgetWithText(FilledButton, 'Submit to Codex'));
+    await tester.pumpAndSettle();
+
+    expect(drafts, hasLength(1));
+    expect(drafts.single.request.kind, SddCodexActionKind.auditSdd);
+    expect(drafts.single.request.target.artifactType, 'overview');
+  });
+
+  testWidgets('production Mermaid renderer uses a local engine asset', (
+    tester,
+  ) async {
+    final result = await WebViewMermaidDiagramRenderer(
+      assetBundle: _FakeMermaidAssetBundle(
+        '''
+window.mermaid = {
+  initialize: function() {},
+  render: async function() { return { svg: '<svg></svg>' }; }
+};
+''',
+      ),
+    ).render(
+      const SddDiagram(
+        path: 'architecture/components.mmd',
+        sizeBytes: 22,
+        diagramType: 'flowchart',
+        scope: 'architecture',
+        content: 'flowchart LR\nA --> B',
+      ),
+    );
+
+    expect(result.isSuccess, isTrue);
+    expect(result.preview, isA<MermaidWebViewPreview>());
+  });
+
+  test('Mermaid preview HTML base64-encodes suspicious diagram source', () {
+    const maliciousSource = '''
+flowchart LR
+  A["</script><script>window.pwned = true</script>"]
+  B["<img src=x onerror=alert(1)>"]
+  C["quotes ' \\" ` and unicode ñ"]
+  A --> B
+  click B "https://example.com" "external"
+''';
+
+    final html = buildMermaidPreviewHtml(
+      mermaidJs: 'window.mermaid = {};',
+      source: maliciousSource,
+    );
+
+    expect(html, contains(base64Encode(utf8.encode(maliciousSource))));
+    expect(html, isNot(contains(maliciousSource)));
+    expect(html, isNot(contains('</script><script>window.pwned')));
+    expect(html, isNot(contains('<img src=x onerror=alert(1)>')));
+    expect(html, isNot(contains('https://example.com')));
+  });
+
+  test('Mermaid preview HTML keeps strict security and timeout guards', () {
+    final html = buildMermaidPreviewHtml(
+      mermaidJs: 'window.mermaid = {};',
+      source: 'flowchart LR\nA --> B',
+      renderTimeout: const Duration(milliseconds: 1234),
+    );
+
+    expect(html, contains("securityLevel: 'strict'"));
+    expect(html, contains('htmlLabels: false'));
+    expect(html, contains("connect-src 'none'"));
+    expect(html, contains("frame-src 'none'"));
+    expect(html, contains('setTimeout'));
+    expect(html, contains('Mermaid render timed out after 1234 ms.'));
+    expect(html, contains('TextDecoder'));
   });
 
   testWidgets('renders Codex Remote shell', (tester) async {
@@ -2639,6 +3573,256 @@ FeedbackQueueItem _feedbackItem({
       'height': 40,
     },
   );
+}
+
+SddCodexActionSubmissionResult _jobResponse({
+  required String jobId,
+  required String sessionId,
+}) {
+  return SddCodexActionSubmissionResult(
+    jobId: jobId,
+    sessionId: sessionId,
+    status: 'pending',
+  );
+}
+
+Finder _codexDevBannerFinder() {
+  return find.byWidgetPredicate(
+    (widget) => widget is Banner && widget.message == 'CODEX DEV',
+  );
+}
+
+Future<void> _pumpSddWrapper(
+  WidgetTester tester, {
+  required Future<SddProject?> Function(String bridgeUrl) loader,
+  MermaidDiagramRenderer? diagramRenderer,
+  SddFeedbackSubmitter? feedbackSubmitter,
+  SddCodexActionSubmitter? actionSubmitter,
+}) async {
+  await tester.pumpWidget(
+    MaterialApp(
+      home: CodexBridgeDevModeWrapper(
+        enabled: true,
+        bridgeUrl: 'http://bridge.test',
+        diagramRenderer: diagramRenderer,
+        explorerLoader: loader,
+        sddFeedbackSubmitter: feedbackSubmitter,
+        sddActionSubmitter: actionSubmitter,
+        child: const Text('normal app'),
+      ),
+    ),
+  );
+}
+
+Map<String, dynamic> _sddProjectsIndexJson() {
+  return <String, dynamic>{
+    'kind': 'codex.sddProjects',
+    'version': 1,
+    'default_workspace_path': '/workspace/codex-cli-mobile-bridge',
+    'projects': <Map<String, dynamic>>[
+      <String, dynamic>{
+        'workspace_name': 'Codex Bridge',
+        'workspace_path': '/workspace/codex-cli-mobile-bridge',
+        'has_manifest': true,
+        'has_constitution': true,
+        'spec_count': 2,
+        'diagram_count': 2,
+        'missing_required': <String>[],
+      },
+    ],
+  };
+}
+
+Map<String, dynamic> _sddProjectJson() {
+  return <String, dynamic>{
+    'kind': 'codex.sddProject',
+    'version': 1,
+    'workspace_name': 'Codex Bridge',
+    'workspace_path': '/workspace/codex-cli-mobile-bridge',
+    'required': true,
+    'manifest': <String, dynamic>{
+      'path': 'codex-bridge.yaml',
+      'title': null,
+      'size_bytes': 40,
+      'content': 'kind: codex.bridge.project\nname: Codex Bridge',
+    },
+    'constitution': <String, dynamic>{
+      'path': '.specify/memory/constitution.md',
+      'title': 'Constitution',
+      'size_bytes': 120,
+      'content': '# Constitution\n\nSDD is mandatory.',
+    },
+    'architecture_diagrams': <Map<String, dynamic>>[
+      <String, dynamic>{
+        'path': 'architecture/components.mmd',
+        'title': null,
+        'size_bytes': 42,
+        'content': 'flowchart LR\nA --> B',
+        'diagram_type': 'flowchart',
+        'scope': 'architecture',
+      },
+    ],
+    'specs': <Map<String, dynamic>>[
+      <String, dynamic>{
+        'id': '001-codex-bridge-sdd-wrapper',
+        'title': 'Bridge Contract',
+        'path': 'specs/001-codex-bridge-sdd-wrapper',
+        'missing': <String>[],
+        'spec': <String, dynamic>{
+          'path': 'specs/001-codex-bridge-sdd-wrapper/spec.md',
+          'title': 'Bridge Contract',
+          'size_bytes': 80,
+          'content': '# Bridge Contract',
+        },
+        'plan': <String, dynamic>{
+          'path': 'specs/001-codex-bridge-sdd-wrapper/plan.md',
+          'title': 'Plan',
+          'size_bytes': 50,
+          'content': '# Plan',
+        },
+        'tasks': <String, dynamic>{
+          'path': 'specs/001-codex-bridge-sdd-wrapper/tasks.md',
+          'title': 'Tasks',
+          'size_bytes': 50,
+          'content': '# Tasks\n\n- [x] Done\n- [ ] Pending',
+        },
+        'slice_docs': <Map<String, dynamic>>[
+          <String, dynamic>{
+            'path': 'specs/001-codex-bridge-sdd-wrapper/slices/01-slice.md',
+            'title': 'Slice One',
+            'size_bytes': 70,
+            'content': '# Slice One',
+          },
+        ],
+        'diagrams': <Map<String, dynamic>>[],
+      },
+      <String, dynamic>{
+        'id': '002-sdd-visual-workbench',
+        'title': 'Visual Workbench',
+        'path': 'specs/002-sdd-visual-workbench',
+        'missing': <String>[],
+        'spec': <String, dynamic>{
+          'path': 'specs/002-sdd-visual-workbench/spec.md',
+          'title': 'Visual Workbench',
+          'size_bytes': 100,
+          'content': '# Visual Workbench',
+        },
+        'plan': <String, dynamic>{
+          'path': 'specs/002-sdd-visual-workbench/plan.md',
+          'title': 'Plan',
+          'size_bytes': 50,
+          'content': '# Plan',
+        },
+        'tasks': <String, dynamic>{
+          'path': 'specs/002-sdd-visual-workbench/tasks.md',
+          'title': 'Tasks',
+          'size_bytes': 50,
+          'content': '# Tasks',
+        },
+        'slice_docs': <Map<String, dynamic>>[],
+        'diagrams': <Map<String, dynamic>>[
+          <String, dynamic>{
+            'path': 'specs/002-sdd-visual-workbench/diagrams/components.mmd',
+            'title': null,
+            'size_bytes': 64,
+            'content': 'flowchart LR\nWorkbench --> API',
+            'diagram_type': 'flowchart',
+            'scope': '002-sdd-visual-workbench',
+          },
+        ],
+      },
+    ],
+    'missing_required': <String>[],
+  };
+}
+
+Map<String, dynamic> _sddProjectWithoutDiagramsJson() {
+  final json = _sddProjectJson();
+  json['architecture_diagrams'] = <Map<String, dynamic>>[];
+  json['specs'] = <Map<String, dynamic>>[];
+  return json;
+}
+
+Map<String, dynamic> _sddProjectWithMissingJson() {
+  final json = _sddProjectJson();
+  json['manifest'] = null;
+  json['missing_required'] = <String>['codex-bridge.yaml'];
+  return json;
+}
+
+Map<String, dynamic> _sddProjectDiagramsJson() {
+  return <String, dynamic>{
+    'kind': 'codex.sddProjectDiagrams',
+    'version': 1,
+    'workspace_path': '/workspace/codex-cli-mobile-bridge',
+    'diagrams': <Map<String, dynamic>>[
+      <String, dynamic>{
+        'path': 'architecture/components.mmd',
+        'title': null,
+        'size_bytes': 42,
+        'content': 'flowchart LR\nA --> B',
+        'diagram_type': 'flowchart',
+        'scope': 'architecture',
+      },
+      <String, dynamic>{
+        'path': 'specs/002-sdd-visual-workbench/diagrams/components.mmd',
+        'title': null,
+        'size_bytes': 64,
+        'content': 'flowchart LR\nWorkbench --> API',
+        'diagram_type': 'flowchart',
+        'scope': '002-sdd-visual-workbench',
+      },
+    ],
+  };
+}
+
+class _FakeMermaidRenderer implements MermaidDiagramRenderer {
+  _FakeMermaidRenderer(this._render);
+
+  factory _FakeMermaidRenderer.success() {
+    return _FakeMermaidRenderer((diagram) async {
+      return MermaidRenderResult.success(
+        kind: 'fake',
+        preview: SizedBox(
+          width: 420,
+          height: 160,
+          child: Text('rendered ${diagram.path}'),
+        ),
+      );
+    });
+  }
+
+  factory _FakeMermaidRenderer.failure(String message) {
+    return _FakeMermaidRenderer((_) async {
+      return MermaidRenderResult.failure(message);
+    });
+  }
+
+  final Future<MermaidRenderResult> Function(SddDiagram diagram) _render;
+  int calls = 0;
+
+  @override
+  Future<MermaidRenderResult> render(SddDiagram diagram) {
+    calls += 1;
+    return _render(diagram);
+  }
+}
+
+class _FakeMermaidAssetBundle extends CachingAssetBundle {
+  _FakeMermaidAssetBundle(this.asset);
+
+  final String asset;
+
+  @override
+  Future<ByteData> load(String key) async {
+    final bytes = Uint8List.fromList(utf8.encode(asset));
+    return ByteData.view(bytes.buffer);
+  }
+
+  @override
+  Future<String> loadString(String key, {bool cache = true}) async {
+    return asset;
+  }
 }
 
 class _FakeApiClient extends ApiClient {

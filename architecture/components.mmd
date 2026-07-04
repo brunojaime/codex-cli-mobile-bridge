@@ -1,0 +1,41 @@
+flowchart LR
+    subgraph Mobile["Flutter mobile app"]
+        ProductUI["Product UI"]
+        DevWrapper["Codex dev wrapper"]
+        SddPanel["SDD visual panel"]
+        FeedbackCapture["Feedback capture"]
+    end
+
+    subgraph Backend["FastAPI bridge backend"]
+        SddRoutes["Read-only SDD routes"]
+        FeedbackRoutes["Feedback routes"]
+        ActionRoutes["Codex action routes"]
+        SddService["SddProjectService"]
+        Config["Real backend, updater, feedback, release config"]
+    end
+
+    subgraph Workspace["Current project workspace"]
+        Manifest["codex-bridge.yaml"]
+        Constitution["Constitution"]
+        Specs["Specs, plans, tasks"]
+        Diagrams["Mermaid architecture and feature diagrams"]
+    end
+
+    subgraph Tooling["Developer tooling"]
+        CodexCli["Codex CLI"]
+        Doctor["SDD doctor"]
+        GitHubRelease["Android release workflow"]
+    end
+
+    ProductUI --> DevWrapper
+    DevWrapper --> SddPanel
+    SddPanel --> SddRoutes
+    FeedbackCapture --> FeedbackRoutes
+    SddRoutes --> SddService
+    SddService --> Manifest
+    SddService --> Constitution
+    SddService --> Specs
+    SddService --> Diagrams
+    ActionRoutes --> CodexCli
+    ActionRoutes --> Doctor
+    Config --> GitHubRelease

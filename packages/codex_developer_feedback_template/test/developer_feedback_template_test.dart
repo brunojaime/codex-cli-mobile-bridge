@@ -881,6 +881,106 @@ void main() {
     expect(item['hasAudio'], isFalse);
   });
 
+  testWidgets(
+    'execution target switch sends batch to configured meta workspace',
+    (tester) async {
+      DeveloperFeedbackBatch? submitted;
+      await tester.pumpWidget(
+        _Harness(
+          enabled: true,
+          sourceApp: 'sat-catalogo-ropa',
+          sourceDisplayName: 'SAT Catalogo Ropa',
+          domainWorkspacePath: 'sat-catalogo-ropa',
+          domainWorkspaceLabel: 'SAT',
+          codexCliWorkspacePath: 'codex-cli-mobile-bridge',
+          codexCliWorkspaceLabel: 'Codex CLI',
+          bridgeSubmitBatch: (batch) async => submitted = batch,
+        ),
+      );
+
+      expect(
+        find.byKey(developerFeedbackExecutionTargetSwitchKey),
+        findsOneWidget,
+      );
+      expect(
+        tester
+            .widget<Switch>(
+              find.byKey(developerFeedbackExecutionTargetSwitchKey),
+            )
+            .value,
+        isFalse,
+      );
+
+      await tester.tap(find.byKey(developerFeedbackExecutionTargetSwitchKey));
+      await tester.pump();
+      await _saveFeedback(tester, 'Cambiar comportamiento compartido');
+      await tester.tap(find.byKey(developerFeedbackPendingKey));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(developerFeedbackSendBatchKey));
+      await tester.pumpAndSettle();
+
+      final bridgeJson = submitted!.toBridgeJson();
+      expect(bridgeJson['workspace_path'], 'codex-cli-mobile-bridge');
+      final items = bridgeJson['items'] as List<Object?>;
+      final item = items.single as Map<String, Object?>;
+      final contextMetadata = item['contextMetadata'] as Map<String, Object?>;
+      final executionTarget =
+          contextMetadata['executionTarget'] as Map<String, Object?>;
+      expect(executionTarget['kind'], 'codexCli');
+      expect(executionTarget['workspacePath'], 'codex-cli-mobile-bridge');
+    },
+  );
+
+  testWidgets('queue tabs group and send each execution target separately', (
+    tester,
+  ) async {
+    final submitted = <DeveloperFeedbackBatch>[];
+    await tester.pumpWidget(
+      _Harness(
+        enabled: true,
+        sourceApp: 'sat-catalogo-ropa',
+        sourceDisplayName: 'SAT Catalogo Ropa',
+        domainWorkspacePath: 'sat-catalogo-ropa',
+        domainWorkspaceLabel: 'SAT',
+        codexCliWorkspacePath: 'codex-cli-mobile-bridge',
+        codexCliWorkspaceLabel: 'Codex CLI',
+        bridgeSubmitBatch: (batch) async {
+          submitted.add(batch);
+        },
+      ),
+    );
+
+    await _saveFeedback(tester, 'Cambiar regla de negocio SAT');
+    await tester.tap(find.byKey(developerFeedbackExecutionTargetSwitchKey));
+    await tester.pump();
+    await _saveFeedback(tester, 'Cambiar wrapper compartido');
+
+    await tester.tap(find.byKey(developerFeedbackPendingKey));
+    await tester.pumpAndSettle();
+    expect(find.byKey(developerFeedbackQueueTabsKey), findsOneWidget);
+    expect(find.text('SAT (1)'), findsOneWidget);
+    expect(find.text('Codex CLI (1)'), findsOneWidget);
+    expect(find.textContaining('Cambiar regla de negocio SAT'), findsOneWidget);
+
+    await tester.tap(find.byKey(developerFeedbackQueueCodexCliTabKey));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Cambiar wrapper compartido'), findsOneWidget);
+
+    await tester.tap(find.byKey(developerFeedbackSendBatchKey));
+    await tester.pumpAndSettle();
+
+    expect(submitted, hasLength(2));
+    final submittedWorkspaces = submitted
+        .map((batch) => batch.toBridgeJson()['workspace_path'])
+        .toSet();
+    expect(submittedWorkspaces, contains('sat-catalogo-ropa'));
+    expect(submittedWorkspaces, contains('codex-cli-mobile-bridge'));
+    for (final batch in submitted) {
+      final items = batch.toBridgeJson()['items'] as List<Object?>;
+      expect(items, hasLength(1));
+    }
+  });
+
   testWidgets('bridge submission posts queued batch to configured bridge URL', (
     tester,
   ) async {
@@ -2825,6 +2925,10 @@ class _Harness extends StatelessWidget {
     this.copyText,
     this.bridgeSubmitBatch,
     this.contextMetadataBuilder,
+    this.domainWorkspacePath = '',
+    this.domainWorkspaceLabel = 'Repo actual',
+    this.codexCliWorkspacePath = '',
+    this.codexCliWorkspaceLabel = 'Codex CLI',
     this.httpClient,
     this.appUpdaterBridgeUrl = '',
     this.appUpdaterController,
@@ -2844,6 +2948,10 @@ class _Harness extends StatelessWidget {
   final DeveloperFeedbackCopyText? copyText;
   final DeveloperFeedbackBridgeSubmitBatch? bridgeSubmitBatch;
   final DeveloperFeedbackContextMetadataBuilder? contextMetadataBuilder;
+  final String domainWorkspacePath;
+  final String domainWorkspaceLabel;
+  final String codexCliWorkspacePath;
+  final String codexCliWorkspaceLabel;
   final http.Client? httpClient;
   final String appUpdaterBridgeUrl;
   final CodexAppUpdaterController? appUpdaterController;
@@ -2872,6 +2980,10 @@ class _Harness extends StatelessWidget {
         copyText: copyText,
         bridgeSubmitBatch: bridgeSubmitBatch,
         contextMetadataBuilder: contextMetadataBuilder,
+        domainWorkspacePath: domainWorkspacePath,
+        domainWorkspaceLabel: domainWorkspaceLabel,
+        codexCliWorkspacePath: codexCliWorkspacePath,
+        codexCliWorkspaceLabel: codexCliWorkspaceLabel,
         httpClient: httpClient,
         appUpdaterBridgeUrl: appUpdaterBridgeUrl,
         appUpdaterController: appUpdaterController,

@@ -1,0 +1,40 @@
+flowchart TD
+    subgraph Device["Physical location: Android device"]
+        Frontend["Flutter product app"]
+        Wrapper["Codex dev wrapper, flag gated"]
+        Workbench["Project-local SDD workbench"]
+    end
+
+    subgraph Host["Physical location: configured Bridge host or workstation"]
+        Backend["FastAPI Bridge backend"]
+        FeedbackStore["Feedback storage"]
+        CodexCli["Codex CLI process"]
+        DiagramCache["Rendered diagram cache"]
+    end
+
+    subgraph ProjectStorage["Physical location: project filesystem"]
+        ProjectsRoot["PROJECTS_ROOT"]
+        CurrentWorkspace["Current workspace"]
+        SddFiles["SDD markdown and Mermaid files"]
+        RealConfig["Real backend, updater, feedback, release config"]
+    end
+
+    subgraph External["Physical location: configured external systems"]
+        GitHub["GitHub repository and releases"]
+        UpdateHost["Configured update host"]
+        ProjectBackend["Project backend or cloud services"]
+    end
+
+    Frontend --> Wrapper
+    Wrapper --> Workbench
+    Workbench --> Backend
+    Backend --> FeedbackStore
+    Backend --> DiagramCache
+    Backend --> ProjectsRoot
+    ProjectsRoot --> CurrentWorkspace
+    CurrentWorkspace --> SddFiles
+    CurrentWorkspace --> RealConfig
+    Backend --> CodexCli
+    RealConfig --> GitHub
+    RealConfig --> UpdateHost
+    RealConfig --> ProjectBackend

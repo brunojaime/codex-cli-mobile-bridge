@@ -1,0 +1,47 @@
+flowchart LR
+    User["Developer or product reviewer"]
+
+    subgraph Mobile["Flutter mobile app"]
+        App["Product app"]
+        Wrapper["Codex dev wrapper"]
+        Workbench["SDD visual workbench"]
+        DiagramViewer["Mermaid diagram viewer"]
+        FeedbackCapture["Feedback capture"]
+    end
+
+    subgraph Backend["Configured Bridge backend"]
+        SddApi["Read-only SDD API"]
+        FeedbackApi["Feedback API"]
+        ActionApi["Codex action API"]
+        SddService["SddProjectService"]
+    end
+
+    subgraph Workspace["Current workspace"]
+        Manifest["codex-bridge.yaml"]
+        Specs["specs/<feature>/*.md"]
+        Architecture["architecture/*.mmd"]
+        FeatureDiagrams["specs/*/diagrams/*.mmd"]
+        RealConfig["Real backend, updater, feedback, release config"]
+    end
+
+    subgraph Tooling["Developer tooling"]
+        Codex["Codex CLI workflows"]
+        Doctor["SDD doctor"]
+    end
+
+    User --> App
+    App --> Wrapper
+    Wrapper --> Workbench
+    Workbench --> DiagramViewer
+    Workbench --> SddApi
+    Workbench --> FeedbackApi
+    Workbench --> ActionApi
+    FeedbackCapture --> FeedbackApi
+    SddApi --> SddService
+    SddService --> Manifest
+    SddService --> Specs
+    SddService --> Architecture
+    SddService --> FeatureDiagrams
+    SddService --> RealConfig
+    ActionApi --> Codex
+    ActionApi --> Doctor

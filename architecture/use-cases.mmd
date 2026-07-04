@@ -1,0 +1,30 @@
+flowchart LR
+    Developer["Actor: Developer"]
+    Reviewer["Actor: Product reviewer"]
+    CodexAgent["Actor: Codex agent"]
+
+    subgraph Bridge["System boundary: Codex Mobile Bridge"]
+        ReadSdd["Read current-project SDD"]
+        ViewDiagrams["View UML-oriented diagrams"]
+        MarkDiagram["Mark diagram change"]
+        LinkFeedback["Link feedback to SDD"]
+        RequestCodex["Request Codex action"]
+        CurrentDashboard["Inspect current-project dashboard"]
+        Validate["Run SDD doctor"]
+    end
+
+    Developer --> ReadSdd
+    Developer --> ViewDiagrams
+    Developer --> CurrentDashboard
+    Developer --> Validate
+    Reviewer --> ViewDiagrams
+    Reviewer --> MarkDiagram
+    Reviewer --> LinkFeedback
+    Reviewer --> RequestCodex
+    CodexAgent --> RequestCodex
+    CodexAgent --> Validate
+
+    ReadSdd --> ViewDiagrams
+    MarkDiagram --> LinkFeedback
+    LinkFeedback --> RequestCodex
+    CurrentDashboard --> Validate

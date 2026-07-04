@@ -1,0 +1,31 @@
+kind: codex.bridge.project
+version: 1
+project:
+  id: codex-cli-mobile-bridge
+  name: Codex CLI Mobile Bridge
+sdd:
+  required: true
+  devModeFlag: CODEX_BRIDGE_DEV_MODE
+  constitution: .specify/memory/constitution.md
+  specs: specs
+  architecture: architecture
+  diagramsSourceOfTruth: mmd
+  renderedDiagramCache: .codex-bridge/cache/diagrams
+  dashboardScope: current-workspace
+  requiredDiagramCategories:
+    - component
+    - deployment
+    - sequence
+    - class
+    - entity-relationship
+    - use-case
+  diagramChangeRequests:
+    enabled: true
+    selectionKinds:
+      - node
+      - edge
+      - region
+frontend:
+  wrapper:
+    compileTimeFlag: CODEX_BRIDGE_DEV_MODE
+    disabledBehavior: return-child-unchanged

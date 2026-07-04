@@ -16,7 +16,11 @@ import pytest
 
 from backend.app.application.services.message_service import MessageService
 from backend.app.application.services.feedback_queue_service import FeedbackQueueItem
-from backend.app.api.routes import _jobs_by_id_for_messages, get_container
+from backend.app.api.routes import (
+    _feedback_live_feedback_note,
+    _jobs_by_id_for_messages,
+    get_container,
+)
 from backend.app.api.schemas import SessionDetailResponse, SessionSummaryResponse
 from backend.app.domain.entities.agent_configuration import (
     AgentConfiguration,
@@ -120,10 +124,17 @@ def build_json_only_client() -> TestClient:
 
 
 def build_app_server_streaming_client() -> TestClient:
-    state_file = Path(tempfile.gettempdir()) / "fake_codex_app_server_threads.json"
+    state_file = (
+        Path(tempfile.gettempdir())
+        / f"fake_codex_app_server_threads_{os.getpid()}_{time.monotonic_ns()}.json"
+    )
     state_file.unlink(missing_ok=True)
     settings = Settings(
-        codex_command="python3 tests/fixtures/fake_codex_app_server.py",
+        codex_command=(
+            "env "
+            f"FAKE_CODEX_APP_SERVER_STATE_FILE={state_file} "
+            "python3 tests/fixtures/fake_codex_app_server.py"
+        ),
         codex_use_exec=True,
         codex_streaming_mode="app_server",
         codex_exec_args="--skip-git-repo-check --color never --dangerously-bypass-approvals-and-sandbox",
@@ -6301,6 +6312,35 @@ def test_app_server_event_descriptions_do_not_expose_raw_tool_item_names() -> No
     assert latest_activity == "Calling MCP tool."
 
 
+def test_exec_command_reads_prompt_from_stdin_instead_of_argv() -> None:
+    provider = LocalExecutionProvider(command="codex")
+    message = "fix this" * 50_000
+
+    command_parts, output_path, stdin_prompt = provider._build_command(message)
+
+    try:
+        assert stdin_prompt == message
+        assert message not in command_parts
+        assert "-" in command_parts
+    finally:
+        provider._cleanup_output_file(output_path)
+
+
+def test_exec_resume_command_reads_prompt_from_stdin_instead_of_argv() -> None:
+    provider = LocalExecutionProvider(command="codex")
+
+    command_parts, output_path, stdin_prompt = provider._build_command(
+        "continue this",
+        provider_session_id="thread-1",
+    )
+
+    try:
+        assert stdin_prompt == "continue this"
+        assert command_parts[-2:] == ["thread-1", "-"]
+    finally:
+        provider._cleanup_output_file(output_path)
+
+
 def test_app_server_sandbox_payload_preserves_danger_full_access() -> None:
     provider = LocalExecutionProvider(command="codex")
     args = "--skip-git-repo-check --dangerously-bypass-approvals-and-sandbox"
@@ -7155,18 +7195,16 @@ def test_feedback_queue_accepts_guided_trace_payload_without_comment(
                     "durationMs": 1000,
                     "frameStrategy": "route_change_interaction_and_interval",
                 },
-                "timeline": [
-                    {"id": "event-1", "type": "screen_frame", "atMs": 0}
-                ],
+                "timeline": [{"id": "event-1", "type": "screen_frame", "atMs": 0}],
                 "frames": [
                     {
                         "id": "frame-1",
                         "attachmentId": "frame-1-png",
                         "atMs": 0,
                         "screenshotMimeType": "image/png",
-                        "screenshotPngBase64": base64.b64encode(
-                            b"frame png"
-                        ).decode("ascii"),
+                        "screenshotPngBase64": base64.b64encode(b"frame png").decode(
+                            "ascii"
+                        ),
                     }
                 ],
             },
@@ -7178,6 +7216,39 @@ def test_feedback_queue_accepts_guided_trace_payload_without_comment(
     assert created["comment"] == ""
     assert created["feedback_kind"] == "codex.liveFeedback.guidedTrace"
     assert created["guided_trace"]["frames"][0]["id"] == "frame-1"
+
+
+def test_feedback_live_feedback_note_omits_binary_trace_payloads() -> None:
+    image_base64 = base64.b64encode(b"frame png" * 2048).decode("ascii")
+    item = FeedbackQueueItem(
+        id="feedback-guided-trace",
+        source_app="smart-nienfos",
+        source_display_name=None,
+        comment="",
+        created_at="2026-07-01T15:00:00Z",
+        feedback_kind="codex.liveFeedback.guidedTrace",
+        guided_trace={
+            "kind": "codex.liveFeedback.guidedTrace",
+            "frames": [
+                {
+                    "id": "frame-1",
+                    "screenshotPngBase64": image_base64,
+                    "screenshotMimeType": "image/png",
+                }
+            ],
+            "timeline": [
+                {"id": f"event-{index}", "type": "pointer", "atMs": index}
+                for index in range(55)
+            ],
+        },
+    )
+
+    note = _feedback_live_feedback_note(item)
+
+    assert image_base64 not in note
+    assert "<omitted binary payload" in note
+    assert '"omittedItems": 5' in note
+    assert "frame-1" in note
 
 
 def test_feedback_queue_item_legacy_dict_defaults_live_feedback_fields() -> None:
@@ -7270,6 +7341,19 @@ def test_capabilities_defaults_smart_nienfos_admin_to_project_root(
     assert response.status_code == 200
     aliases = response.json()["feedback_source_workspace_aliases"]
     assert aliases["smart-nienfos-admin"] == str(projects_root / "smart_nienfos")
+
+
+def test_capabilities_defaults_sat_catalog_to_project_root(
+    tmp_path: Path,
+) -> None:
+    projects_root = tmp_path / "projects"
+    client = build_feedback_queue_client(tmp_path, projects_root=projects_root)
+
+    response = client.get("/capabilities")
+
+    assert response.status_code == 200
+    aliases = response.json()["feedback_source_workspace_aliases"]
+    assert aliases["sat-catalogo-ropa"] == str(projects_root / "sat-catalogo-ropa")
 
 
 def test_feedback_workflow_presets_expose_agent_profiles(tmp_path: Path) -> None:
@@ -7395,6 +7479,94 @@ def test_feedback_batch_start_session_accepts_multiple_items_and_release(
     assert "02-feedback-batch-2.png" in job["response"]
     queued = client.get("/feedback-queue").json()
     assert [item["status"] for item in queued] == ["submitted", "submitted"]
+
+
+def test_feedback_batch_start_session_accepts_audio_only_item_without_comment(
+    tmp_path: Path,
+) -> None:
+    client = build_feedback_queue_client(
+        tmp_path,
+        audio_transcription_backend="disabled",
+    )
+
+    start_response = client.post(
+        "/feedback-batches/start-session",
+        json={
+            "sourceApp": "ambientando-calendar",
+            "sourceDisplayName": "Ambientando Calendar",
+            "workflowPresetId": "default",
+            "items": [
+                {
+                    "id": "feedback-audio-only",
+                    "comment": "",
+                    "audioMimeType": "audio/webm",
+                    "audioDurationMs": 1200,
+                    "audioByteLength": 2,
+                    "audioBase64": base64.b64encode(b"\x01\x02").decode("ascii"),
+                }
+            ],
+        },
+    )
+
+    assert start_response.status_code == 202
+    job = wait_for_job(client, start_response.json()["job_id"])
+    assert job["status"] == "completed"
+    assert "Audio attached: audio/webm, 1200 ms, 2 bytes." in job["message"]
+    assert "01-feedback-audio-only.png" in job["response"]
+    queued = client.get("/feedback-queue").json()
+    assert queued[0]["status"] == "submitted"
+    assert queued[0]["has_screenshot"] is True
+    assert queued[0]["has_audio"] is True
+
+
+def test_feedback_batch_start_session_accepts_guided_trace_without_screenshot(
+    tmp_path: Path,
+) -> None:
+    client = build_feedback_queue_client(tmp_path)
+
+    start_response = client.post(
+        "/feedback-batches/start-session",
+        json={
+            "sourceApp": "ambientando-calendar",
+            "sourceDisplayName": "Ambientando Calendar",
+            "workflowPresetId": "default",
+            "items": [
+                {
+                    "id": "feedback-trace-only",
+                    "comment": "",
+                    "feedbackKind": "codex.liveFeedback.guidedTrace",
+                    "guidedTrace": {
+                        "kind": "codex.liveFeedback.guidedTrace",
+                        "version": 1,
+                        "id": "trace-1",
+                        "startedAt": "2026-07-01T13:50:00Z",
+                        "recording": {
+                            "mode": "screen_trace_with_audio",
+                            "durationMs": 100,
+                        },
+                        "timeline": [
+                            {
+                                "id": "event-1",
+                                "type": "pointerDown",
+                                "atMs": 12,
+                            }
+                        ],
+                        "frames": [],
+                    },
+                }
+            ],
+        },
+    )
+
+    assert start_response.status_code == 202
+    job = wait_for_job(client, start_response.json()["job_id"])
+    assert job["status"] == "completed"
+    assert "Feedback contract: codex.liveFeedback.guidedTrace" in job["message"]
+    assert "Guided trace schema:" in job["message"]
+    assert "pointerDown" in job["message"]
+    queued = client.get("/feedback-queue").json()
+    assert queued[0]["status"] == "submitted"
+    assert queued[0]["guided_trace"]["id"] == "trace-1"
 
 
 def test_feedback_batch_status_response_tracks_completed_job(
@@ -7753,6 +7925,82 @@ def test_feedback_batch_start_session_rejects_invalid_audio_base64(
     assert client.get("/feedback-queue").json() == []
 
 
+def test_feedback_batch_start_session_uses_explicit_workspace_path(
+    tmp_path: Path,
+) -> None:
+    projects_root = tmp_path / "projects"
+    sat_workspace = projects_root / "sat-catalogo-ropa"
+    bridge_workspace = projects_root / "codex-cli-mobile-bridge"
+    sat_workspace.mkdir(parents=True)
+    bridge_workspace.mkdir()
+    client = build_feedback_queue_client(tmp_path, projects_root=projects_root)
+
+    start_response = client.post(
+        "/feedback-batches/start-session",
+        json={
+            "sourceApp": "sat-catalogo-ropa",
+            "sourceDisplayName": "SAT Catalogo Ropa",
+            "workspace_path": "codex-cli-mobile-bridge",
+            "workflowPresetId": "default",
+            "items": [
+                {
+                    "id": "feedback-explicit-bridge-workspace",
+                    "comment": "Apply this to the shared Codex Bridge wrapper.",
+                    "screenshotPngBase64": base64.b64encode(b"fake png").decode(
+                        "ascii"
+                    ),
+                }
+            ],
+        },
+    )
+
+    assert start_response.status_code == 202
+    session_response = client.get(f"/sessions/{start_response.json()['session_id']}")
+    assert session_response.status_code == 200
+    session = session_response.json()
+    assert session["workspace_name"] == "codex-cli-mobile-bridge"
+    assert session["workspace_path"] == str(bridge_workspace)
+
+
+@pytest.mark.parametrize(
+    "workspace_path",
+    [
+        "../outside",
+        "/tmp/outside-codex-workspace",
+    ],
+)
+def test_feedback_batch_start_session_rejects_unsafe_explicit_workspace_path(
+    tmp_path: Path,
+    workspace_path: str,
+) -> None:
+    projects_root = tmp_path / "projects"
+    sat_workspace = projects_root / "sat-catalogo-ropa"
+    sat_workspace.mkdir(parents=True)
+    client = build_feedback_queue_client(tmp_path, projects_root=projects_root)
+
+    start_response = client.post(
+        "/feedback-batches/start-session",
+        json={
+            "sourceApp": "sat-catalogo-ropa",
+            "sourceDisplayName": "SAT Catalogo Ropa",
+            "workspace_path": workspace_path,
+            "workflowPresetId": "default",
+            "items": [
+                {
+                    "id": "feedback-unsafe-explicit-workspace",
+                    "comment": "Do not run outside the configured projects root.",
+                    "screenshotPngBase64": base64.b64encode(b"fake png").decode(
+                        "ascii"
+                    ),
+                }
+            ],
+        },
+    )
+
+    assert start_response.status_code == 404
+    assert "Workspace" in start_response.json()["detail"]
+
+
 def test_feedback_batch_start_session_resolves_workspace_from_source_app(
     tmp_path: Path,
 ) -> None:
@@ -7859,6 +8107,78 @@ def test_feedback_batch_start_session_defaults_admin_to_smart_nienfos_root(
     session = session_response.json()
     assert session["workspace_name"] == "smart_nienfos"
     assert session["workspace_path"] == str(smart_workspace)
+
+
+def test_feedback_batch_start_session_defaults_sat_catalog_to_sibling_repo(
+    tmp_path: Path,
+) -> None:
+    projects_root = tmp_path / "projects"
+    bridge_workspace = projects_root / "codex-cli-mobile-bridge"
+    sat_workspace = projects_root / "sat-catalogo-ropa"
+    bridge_workspace.mkdir(parents=True)
+    sat_workspace.mkdir()
+    client = build_feedback_queue_client(tmp_path, projects_root=projects_root)
+
+    start_response = client.post(
+        "/feedback-batches/start-session",
+        json={
+            "sourceApp": "sat-catalogo-ropa",
+            "sourceDisplayName": "SAT Catalogo Ropa",
+            "workflowPresetId": "default",
+            "items": [
+                {
+                    "id": "feedback-sat-catalog-default",
+                    "comment": "Apply this to SAT catalog.",
+                    "screenshotPngBase64": base64.b64encode(b"fake png").decode(
+                        "ascii"
+                    ),
+                }
+            ],
+        },
+    )
+
+    assert start_response.status_code == 202
+    session_response = client.get(f"/sessions/{start_response.json()['session_id']}")
+    assert session_response.status_code == 200
+    session = session_response.json()
+    assert session["workspace_name"] == "sat-catalogo-ropa"
+    assert session["workspace_path"] == str(sat_workspace)
+
+
+def test_feedback_batch_start_session_keeps_unknown_source_app_fallback(
+    tmp_path: Path,
+) -> None:
+    projects_root = tmp_path / "projects"
+    fallback_workspace = projects_root / "aaa-default-workspace"
+    sat_workspace = projects_root / "sat-catalogo-ropa"
+    fallback_workspace.mkdir(parents=True)
+    sat_workspace.mkdir()
+    client = build_feedback_queue_client(tmp_path, projects_root=projects_root)
+
+    start_response = client.post(
+        "/feedback-batches/start-session",
+        json={
+            "sourceApp": "unknown-catalog-app",
+            "sourceDisplayName": "Unknown Catalog App",
+            "workflowPresetId": "default",
+            "items": [
+                {
+                    "id": "feedback-unknown-source-default",
+                    "comment": "Apply this to the default workspace.",
+                    "screenshotPngBase64": base64.b64encode(b"fake png").decode(
+                        "ascii"
+                    ),
+                }
+            ],
+        },
+    )
+
+    assert start_response.status_code == 202
+    session_response = client.get(f"/sessions/{start_response.json()['session_id']}")
+    assert session_response.status_code == 200
+    session = session_response.json()
+    assert session["workspace_name"] == "aaa-default-workspace"
+    assert session["workspace_path"] == str(fallback_workspace)
 
 
 @pytest.mark.parametrize(
@@ -8113,7 +8433,7 @@ def test_feedback_batch_can_act_from_quick_ask_reference(tmp_path: Path) -> None
     assert status["item_count"] == 1
 
 
-def test_feedback_batch_start_session_is_atomic_when_later_item_has_no_screenshot(
+def test_feedback_batch_start_session_is_atomic_when_later_item_has_invalid_image(
     tmp_path: Path,
 ) -> None:
     client = build_feedback_queue_client(tmp_path)
@@ -8132,15 +8452,16 @@ def test_feedback_batch_start_session_is_atomic_when_later_item_has_no_screensho
                     ),
                 },
                 {
-                    "id": "feedback-invalid-no-screenshot",
-                    "comment": "Missing screenshot",
+                    "id": "feedback-invalid-image",
+                    "comment": "Invalid screenshot",
+                    "screenshotPngBase64": "not-base64!",
                 },
             ],
         },
     )
 
     assert start_response.status_code == 422
-    assert "has no screenshot" in start_response.json()["detail"]
+    assert "invalid screenshotPngBase64" in start_response.json()["detail"]
     assert client.get("/feedback-queue").json() == []
     assert not any((tmp_path / "feedback_images").glob("*"))
     assert not any((tmp_path / "feedback_audio").glob("*"))

@@ -1,0 +1,58 @@
+erDiagram
+    SDD_PROJECT ||--o{ SDD_SPEC : contains
+    SDD_PROJECT ||--o{ SDD_DIAGRAM : owns
+    SDD_SPEC ||--o{ SDD_DIAGRAM : documents
+    SDD_PROJECT ||--o{ FEEDBACK_ITEM : receives
+    SDD_SPEC ||--o{ FEEDBACK_ITEM : may_link
+    SDD_DIAGRAM ||--o{ DIAGRAM_SELECTION : may_mark
+    DIAGRAM_SELECTION ||--o{ FEEDBACK_ITEM : explains
+    FEEDBACK_ITEM ||--o{ CODEX_ACTION_REQUEST : can_create
+    SDD_SPEC ||--o{ CODEX_ACTION_REQUEST : can_create
+    SDD_DIAGRAM ||--o{ CODEX_ACTION_REQUEST : can_create
+
+    SDD_PROJECT {
+        string workspace_path
+        string project_id
+        string project_name
+        string manifest_path
+    }
+
+    SDD_SPEC {
+        string spec_id
+        string path
+        string spec_md_path
+        string plan_md_path
+        string tasks_md_path
+    }
+
+    SDD_DIAGRAM {
+        string path
+        string diagram_type
+        string source_kind
+        string render_status
+    }
+
+    DIAGRAM_SELECTION {
+        string selection_id
+        string diagram_path
+        string element_kind
+        string element_id
+        string region
+    }
+
+    FEEDBACK_ITEM {
+        string feedback_id
+        string workspace_path
+        string spec_id
+        string screen
+        string component
+        string diagram_path
+    }
+
+    CODEX_ACTION_REQUEST {
+        string action_id
+        string intent
+        string workspace_path
+        string source_type
+        string status
+    }

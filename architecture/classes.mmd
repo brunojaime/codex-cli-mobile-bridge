@@ -1,0 +1,61 @@
+classDiagram
+    class SddProjectService {
+        +get_projects()
+        +get_project(workspacePath)
+        +get_project_diagrams(workspacePath)
+    }
+
+    class SddProject {
+        +String workspacePath
+        +String projectId
+        +String projectName
+        +List~SddSpec~ specs
+        +List~SddFile~ architectureDiagrams
+    }
+
+    class SddSpec {
+        +String id
+        +String path
+        +SddFile spec
+        +SddFile plan
+        +SddFile tasks
+        +List~SddFile~ diagrams
+    }
+
+    class SddFile {
+        +String path
+        +String content
+        +String error
+    }
+
+    class DiagramChangeRequest {
+        +String workspacePath
+        +String diagramPath
+        +String selectionKind
+        +String requestedChange
+    }
+
+    class FeedbackItem {
+        +String workspacePath
+        +String specId
+        +String screen
+        +String component
+        +String diagramPath
+    }
+
+    class CodexActionRequest {
+        +String intent
+        +String workspacePath
+        +List~String~ sddPaths
+        +String sourceFeedbackId
+    }
+
+    SddProjectService --> SddProject
+    SddProject "1" o-- "*" SddSpec
+    SddProject "1" o-- "*" SddFile
+    SddSpec "1" o-- "*" SddFile
+    FeedbackItem "0..*" --> "0..1" SddSpec
+    DiagramChangeRequest "0..*" --> "1" SddFile
+    DiagramChangeRequest "0..*" --> "0..1" FeedbackItem
+    CodexActionRequest "0..*" --> "0..1" FeedbackItem
+    CodexActionRequest "0..*" --> "0..1" DiagramChangeRequest

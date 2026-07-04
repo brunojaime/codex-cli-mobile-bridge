@@ -14,6 +14,7 @@ class ServerCapabilities {
     required this.documentMaxUploadBytes,
     required this.documentTextCharLimit,
     this.feedbackSourceWorkspaceAliases = const <String, String>{},
+    this.supportsSdd = false,
     this.speechOutputVoice,
     this.speechOutputResponseFormat,
     this.preferredClientUrl,
@@ -28,6 +29,7 @@ class ServerCapabilities {
   final bool supportsJobCancellation;
   final bool supportsJobRetry;
   final bool supportsPushJobStream;
+  final bool supportsSdd;
   final String speechOutputBackend;
   final String? speechOutputVoice;
   final String? speechOutputResponseFormat;
@@ -51,6 +53,7 @@ class ServerCapabilities {
           json['supports_job_cancellation'] as bool? ?? false,
       supportsJobRetry: json['supports_job_retry'] as bool? ?? false,
       supportsPushJobStream: json['supports_push_job_stream'] as bool? ?? false,
+      supportsSdd: json['supports_sdd'] as bool? ?? false,
       speechOutputBackend:
           json['speech_output_backend'] as String? ?? 'disabled',
       speechOutputVoice: json['speech_output_voice'] as String?,

@@ -20,14 +20,16 @@ DEFAULT_ASSOCIATIONS = (
 DEFAULT_REGISTRY = ROOT / "backend/app/infrastructure/config/app_updates.json"
 DEFAULT_COMPONENT = "codex_developer_feedback_template"
 LATEST_DEPENDENCY_REFS = {
-    "codex_developer_feedback_template": "codex-developer-feedback-template-v0.4.6",
+    "codex_developer_feedback_template": "codex-developer-feedback-template-v0.4.7",
 }
 COORDINATED_DEPENDENCIES = {
     "codex_developer_feedback_template": {
         "codex_app_updater": {
             "path": "packages/codex_app_updater",
-            "ref": "codex-developer-feedback-template-v0.4.6",
+            "ref": "codex-developer-feedback-template-v0.4.7",
             "allowedRefs": [
+                "codex-developer-feedback-template-v0.4.7",
+                "374f0e3180dc8d80214dcaa4374073d8e4ab1340",
                 "codex-developer-feedback-template-v0.4.6",
                 "febcc99c007d3c1c5e531b6b635e21b92268c2df",
             ],

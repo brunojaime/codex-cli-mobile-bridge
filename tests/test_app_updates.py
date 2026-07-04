@@ -300,19 +300,19 @@ def test_sat_catalog_app_update_returns_latest_feedback_release(
     )
 
 
-def test_default_registry_resolves_smart_nienfos_admin_from_flutter_app_release() -> None:
+def test_default_registry_resolves_smart_nienfos_from_flutter_app_release() -> None:
     registry = AppUpdateRegistry.from_json_file(
         Path(__file__).resolve().parents[1]
         / "backend/app/infrastructure/config/app_updates.json",
     )
 
-    config = registry.get("smart-nienfos-admin")
+    config = registry.get("smart-nienfos")
 
     assert config.enabled is True
     assert config.repo == "brunojaime/smart-nienfos-flutter-app"
-    assert config.release_tag_pattern == "smart-nienfos-admin-android-v*"
-    assert config.apk_asset_pattern == "smart-nienfos-admin-*.apk"
-    assert config.latest_asset_name == "smart-nienfos-admin.apk"
+    assert config.release_tag_pattern == "android-smart-nienfos-v*"
+    assert config.apk_asset_pattern == "smart-nienfos-*.apk"
+    assert config.latest_asset_name == "smart-nienfos.apk"
     assert config.expected_package_id == "com.example.client"
     assert (
         config.verified_package_ids[
@@ -325,6 +325,9 @@ def test_default_registry_resolves_smart_nienfos_admin_from_flutter_app_release(
             "smart-nienfos-admin-android-v1.0.0-build.13"
         ]
         == "com.example.client"
+    )
+    assert config.verified_package_ids["android-smart-nienfos-v*"] == (
+        "com.example.client"
     )
 
 
@@ -450,46 +453,46 @@ def test_private_install_config_returns_prerelease_update_by_default(
     )
 
 
-def test_smart_admin_discards_package_mismatch_and_chooses_compat_build(
+def test_smart_nienfos_discards_package_mismatch_and_chooses_compat_build(
     tmp_path: Path,
 ) -> None:
     client = _build_app_update_client(
         tmp_path,
-        source_app="smart-nienfos-admin",
+        source_app="smart-nienfos",
         display_name="Smart Nienfos Admin",
         repo="brunojaime/smart-nienfos-flutter-app",
-        release_tag_pattern="smart-nienfos-admin-android-v*",
-        apk_asset_pattern="smart-nienfos-admin-*.apk",
-        latest_asset_name="smart-nienfos-admin.apk",
+        release_tag_pattern="android-smart-nienfos-v*",
+        apk_asset_pattern="smart-nienfos-*.apk",
+        latest_asset_name="smart-nienfos.apk",
         expected_package_id="com.example.client",
         verified_package_ids={
             "smart-nienfos-admin-android-v1.0.0-build.12": (
                 "com.smartnienfos.admin"
             ),
-            "smart-nienfos-admin-android-v1.0.0-build.13": "com.example.client",
+            "android-smart-nienfos-v*": "com.example.client",
         },
         releases=[
             _release(
-                "smart-nienfos-admin-android-v1.0.0-build.13",
-                assets=[_apk_asset("smart-nienfos-admin.apk")],
+                "android-smart-nienfos-v1.0.0-build.14",
+                assets=[_apk_asset("smart-nienfos.apk")],
             ),
             _release(
                 "smart-nienfos-admin-android-v1.0.0-build.12",
-                assets=[_apk_asset("smart-nienfos-admin.apk")],
+                assets=[_apk_asset("smart-nienfos.apk")],
             ),
         ],
     )
 
     response = client.get(
-        "/app-updates/smart-nienfos-admin",
+        "/app-updates/smart-nienfos",
         params={"currentVersion": "1.0.0", "currentBuild": 11},
     )
 
     assert response.status_code == 200
     payload = response.json()
     assert payload["available"] is True
-    assert payload["latestBuild"] == 13
-    assert payload["releaseTag"] == "smart-nienfos-admin-android-v1.0.0-build.13"
+    assert payload["latestBuild"] == 14
+    assert payload["releaseTag"] == "android-smart-nienfos-v1.0.0-build.14"
     assert payload["packageId"] == "com.example.client"
 
 
@@ -540,35 +543,33 @@ def test_package_mismatch_release_is_not_offered_or_served(tmp_path: Path) -> No
     github_client = _FakeGitHubReleaseClient(
         [
             _release(
-                "smart-nienfos-admin-android-v1.0.0-build.12",
-                assets=[_apk_asset("smart-nienfos-admin.apk")],
+                "android-smart-nienfos-v1.0.0-build.12",
+                assets=[_apk_asset("smart-nienfos.apk")],
             ),
         ],
     )
     client = _build_app_update_client(
         tmp_path,
-        source_app="smart-nienfos-admin",
+        source_app="smart-nienfos",
         display_name="Smart Nienfos Admin",
         repo="brunojaime/smart-nienfos-flutter-app",
-        release_tag_pattern="smart-nienfos-admin-android-v*",
-        apk_asset_pattern="smart-nienfos-admin-*.apk",
-        latest_asset_name="smart-nienfos-admin.apk",
+        release_tag_pattern="android-smart-nienfos-v*",
+        apk_asset_pattern="smart-nienfos-*.apk",
+        latest_asset_name="smart-nienfos.apk",
         expected_package_id="com.example.client",
         verified_package_ids={
-            "smart-nienfos-admin-android-v1.0.0-build.12": (
-                "com.smartnienfos.admin"
-            ),
+            "android-smart-nienfos-v1.0.0-build.12": "com.smartnienfos.admin",
         },
         releases=github_client,
     )
 
     response = client.get(
-        "/app-updates/smart-nienfos-admin",
+        "/app-updates/smart-nienfos",
         params={"currentVersion": "1.0.0", "currentBuild": 11},
     )
     proxy_response = client.get(
-        "/app-updates/smart-nienfos-admin/apk/"
-        "smart-nienfos-admin-android-v1.0.0-build.12/smart-nienfos-admin.apk",
+        "/app-updates/smart-nienfos/apk/"
+        "android-smart-nienfos-v1.0.0-build.12/smart-nienfos.apk",
     )
 
     assert response.status_code == 200

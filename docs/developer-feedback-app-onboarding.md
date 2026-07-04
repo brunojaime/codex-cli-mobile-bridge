@@ -25,7 +25,7 @@ dependencies:
     git:
       url: https://github.com/brunojaime/codex-cli-mobile-bridge.git
       path: packages/codex_developer_feedback_template
-      ref: codex-developer-feedback-template-v0.4.6
+      ref: codex-developer-feedback-template-v0.4.7
 ```
 
 Wrap the app shell once with `MaterialApp.builder`. Keep `MaterialApp` at the

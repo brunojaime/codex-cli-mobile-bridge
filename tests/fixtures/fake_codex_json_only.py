@@ -11,7 +11,7 @@ def main() -> int:
         print("expected exec command", file=sys.stderr)
         return 1
 
-    prompt = args[-1]
+    prompt = sys.stdin.read() if args[-1] == "-" else args[-1]
     thread_id = f"thread-{uuid.uuid4()}"
     response = f"json-only:{prompt}"
 

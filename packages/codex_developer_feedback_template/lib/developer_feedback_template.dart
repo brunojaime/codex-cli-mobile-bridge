@@ -78,6 +78,9 @@ const developerFeedbackToolbarExpandKey = Key(
   'developer-feedback-toolbar-expand',
 );
 const developerFeedbackSwitchKey = Key('developer-feedback-switch');
+const developerFeedbackExecutionTargetSwitchKey = Key(
+  'developer-feedback-execution-target-switch',
+);
 const developerFeedbackOverlayKey = Key('developer-feedback-overlay');
 const developerFeedbackCommentKey = Key('developer-feedback-comment');
 const developerFeedbackSaveKey = Key('developer-feedback-save');
@@ -91,6 +94,13 @@ const developerFeedbackReleaseWhenCompleteKey = Key(
   'developer-feedback-release-when-complete',
 );
 const developerFeedbackSendBatchKey = Key('developer-feedback-send-batch');
+const developerFeedbackQueueTabsKey = Key('developer-feedback-queue-tabs');
+const developerFeedbackQueueDomainTabKey = Key(
+  'developer-feedback-queue-domain-tab',
+);
+const developerFeedbackQueueCodexCliTabKey = Key(
+  'developer-feedback-queue-codex-cli-tab',
+);
 const developerFeedbackPreviewItemKey = Key('developer-feedback-preview-item');
 const developerFeedbackPreviewCommentKey = Key(
   'developer-feedback-preview-comment',
@@ -511,6 +521,10 @@ class DeveloperFeedbackTemplate extends StatefulWidget {
     this.bridgeSubmit,
     this.bridgeSubmitBatch,
     this.contextMetadataBuilder,
+    this.domainWorkspacePath = '',
+    this.domainWorkspaceLabel = 'Repo actual',
+    this.codexCliWorkspacePath = '',
+    this.codexCliWorkspaceLabel = 'Codex CLI',
     this.httpClient,
     this.initialEditMode = false,
     this.appUpdaterEnabled = true,
@@ -543,6 +557,10 @@ class DeveloperFeedbackTemplate extends StatefulWidget {
   final DeveloperFeedbackBridgeSubmit? bridgeSubmit;
   final DeveloperFeedbackBridgeSubmitBatch? bridgeSubmitBatch;
   final DeveloperFeedbackContextMetadataBuilder? contextMetadataBuilder;
+  final String domainWorkspacePath;
+  final String domainWorkspaceLabel;
+  final String codexCliWorkspacePath;
+  final String codexCliWorkspaceLabel;
   final http.Client? httpClient;
   final bool initialEditMode;
   final bool appUpdaterEnabled;
@@ -593,6 +611,10 @@ class CodexDeveloperFeedbackTemplate extends DeveloperFeedbackTemplate {
     super.bridgeSubmit,
     super.bridgeSubmitBatch,
     super.contextMetadataBuilder,
+    super.domainWorkspacePath,
+    super.domainWorkspaceLabel,
+    super.codexCliWorkspacePath,
+    super.codexCliWorkspaceLabel,
     super.httpClient,
     super.initialEditMode,
     super.appUpdaterEnabled,
@@ -629,6 +651,7 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
   var _quickAskCancellation = Completer<void>();
   var _notificationRefreshScheduled = false;
   var _editMode = false;
+  var _runFeedbackInCodexCliWorkspace = false;
   var _dialogOpen = false;
   var _selectionReady = false;
   var _toolbarExpanded = true;
@@ -756,6 +779,13 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
                       _selectionReady = false;
                     }
                   }),
+                  executionTargetEnabled: _feedbackExecutionTargetEnabled,
+                  runInCodexCliWorkspace: _runFeedbackInCodexCliWorkspace,
+                  domainWorkspaceLabel: _feedbackDomainLabel,
+                  codexCliWorkspaceLabel: _feedbackCodexCliLabel,
+                  onExecutionTargetChanged: (value) => setState(() {
+                    _runFeedbackInCodexCliWorkspace = value;
+                  }),
                   onExpandedChanged: _setToolbarExpanded,
                   onOpenPending: _items.isEmpty ? null : _openPendingDialog,
                   onOpenRuns: _submittedBatches.isEmpty
@@ -846,6 +876,119 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
         widget.sourceApp.trim().isNotEmpty &&
         widget.sourceApp.trim() != 'unknown' &&
         _effectiveAppUpdaterBridgeUrl.isNotEmpty;
+  }
+
+  bool get _feedbackExecutionTargetEnabled =>
+      widget.codexCliWorkspacePath.trim().isNotEmpty;
+
+  String get _feedbackDomainLabel {
+    final label = widget.domainWorkspaceLabel.trim();
+    return label.isEmpty ? 'Repo actual' : label;
+  }
+
+  String get _feedbackCodexCliLabel {
+    final label = widget.codexCliWorkspaceLabel.trim();
+    return label.isEmpty ? 'Codex CLI' : label;
+  }
+
+  String? get _feedbackExecutionWorkspacePath {
+    if (_runFeedbackInCodexCliWorkspace &&
+        widget.codexCliWorkspacePath.trim().isNotEmpty) {
+      return widget.codexCliWorkspacePath.trim();
+    }
+    final domainWorkspacePath = widget.domainWorkspacePath.trim();
+    if (domainWorkspacePath.isNotEmpty) {
+      return domainWorkspacePath;
+    }
+    return null;
+  }
+
+  String get _feedbackExecutionWorkspaceLabel =>
+      _runFeedbackInCodexCliWorkspace && _feedbackExecutionTargetEnabled
+      ? _feedbackCodexCliLabel
+      : _feedbackDomainLabel;
+
+  _FeedbackExecutionTarget _domainExecutionTarget() => _FeedbackExecutionTarget(
+    kind: _FeedbackExecutionTargetKind.domain,
+    label: _feedbackDomainLabel,
+    workspacePath: widget.domainWorkspacePath.trim().isEmpty
+        ? null
+        : widget.domainWorkspacePath.trim(),
+  );
+
+  _FeedbackExecutionTarget _codexCliExecutionTarget() =>
+      _FeedbackExecutionTarget(
+        kind: _FeedbackExecutionTargetKind.codexCli,
+        label: _feedbackCodexCliLabel,
+        workspacePath: widget.codexCliWorkspacePath.trim().isEmpty
+            ? null
+            : widget.codexCliWorkspacePath.trim(),
+      );
+
+  _FeedbackExecutionTarget _executionTargetForItem(DeveloperFeedbackItem item) {
+    final rawTarget = item.contextMetadata['executionTarget'];
+    if (rawTarget is Map) {
+      final kind = rawTarget['kind']?.toString().trim();
+      final label = rawTarget['workspaceLabel']?.toString().trim();
+      final workspacePath = rawTarget['workspacePath']?.toString().trim();
+      if (kind == 'codexCli') {
+        final fallback = _codexCliExecutionTarget();
+        return fallback.copyWith(
+          label: label == null || label.isEmpty ? fallback.label : label,
+          workspacePath: workspacePath == null || workspacePath.isEmpty
+              ? fallback.workspacePath
+              : workspacePath,
+        );
+      }
+      if (kind == 'domain') {
+        final fallback = _domainExecutionTarget();
+        return fallback.copyWith(
+          label: label == null || label.isEmpty ? fallback.label : label,
+          workspacePath: workspacePath == null || workspacePath.isEmpty
+              ? fallback.workspacePath
+              : workspacePath,
+        );
+      }
+    }
+    return _domainExecutionTarget();
+  }
+
+  List<_FeedbackExecutionGroup> _executionGroupsForItems(
+    List<DeveloperFeedbackItem> items, {
+    bool includeEmptyTargets = false,
+  }) {
+    final groupsByKind =
+        <_FeedbackExecutionTargetKind, _FeedbackExecutionGroup>{};
+    if (includeEmptyTargets && _feedbackExecutionTargetEnabled) {
+      final domain = _domainExecutionTarget();
+      final codexCli = _codexCliExecutionTarget();
+      groupsByKind[domain.kind] = _FeedbackExecutionGroup(
+        target: domain,
+        items: const <DeveloperFeedbackItem>[],
+      );
+      groupsByKind[codexCli.kind] = _FeedbackExecutionGroup(
+        target: codexCli,
+        items: const <DeveloperFeedbackItem>[],
+      );
+    }
+
+    for (final item in items) {
+      final target = _executionTargetForItem(item);
+      final existing = groupsByKind[target.kind];
+      groupsByKind[target.kind] = _FeedbackExecutionGroup(
+        target: existing?.target ?? target,
+        items: <DeveloperFeedbackItem>[...?existing?.items, item],
+      );
+    }
+
+    final orderedKinds = <_FeedbackExecutionTargetKind>[
+      _FeedbackExecutionTargetKind.domain,
+      _FeedbackExecutionTargetKind.codexCli,
+    ];
+    return orderedKinds
+        .map((kind) => groupsByKind[kind])
+        .whereType<_FeedbackExecutionGroup>()
+        .toList();
   }
 
   BuildContext get _modalContext =>
@@ -946,8 +1089,9 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
         math.max(measured.height, collapsedEstimate.height),
       );
     }
-    const baseEstimate = Size(360, 48);
-    const pendingEstimate = Size(520, 48);
+    final estimatedHeight = _feedbackExecutionTargetEnabled ? 88.0 : 48.0;
+    final baseEstimate = Size(360, estimatedHeight);
+    final pendingEstimate = Size(520, estimatedHeight);
     final measured = _toolbarSize ?? Size.zero;
     final estimate =
         _items.isEmpty &&
@@ -1172,6 +1316,8 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
               .map((point) => <String, double>{'x': point.dx, 'y': point.dy})
               .toList(),
           'selectionBounds': quickAskItem.selectionBounds,
+          if (_feedbackExecutionWorkspacePath != null)
+            'workspace_path': _feedbackExecutionWorkspacePath,
           'contextMetadata': quickAskItem.contextMetadata,
         }),
       );
@@ -1323,6 +1469,15 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
         'screenHeight': media.size.height,
         'devicePixelRatio': media.devicePixelRatio,
         'orientation': media.orientation.name,
+      },
+      'executionTarget': <String, Object?>{
+        'kind':
+            _runFeedbackInCodexCliWorkspace && _feedbackExecutionTargetEnabled
+            ? 'codexCli'
+            : 'domain',
+        'workspaceLabel': _feedbackExecutionWorkspaceLabel,
+        if (_feedbackExecutionWorkspacePath != null)
+          'workspacePath': _feedbackExecutionWorkspacePath,
       },
     };
     final extra = widget.contextMetadataBuilder?.call(contextForMetadata);
@@ -1866,6 +2021,52 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
     required bool releaseWhenComplete,
   }) async {
     if (_items.isEmpty) return false;
+    final groups = _executionGroupsForItems(
+      _items,
+    ).where((group) => group.items.isNotEmpty).toList();
+    if (groups.isEmpty) return false;
+    final sentItemIds = <String>{};
+    final submittedBatches = <_SubmittedFeedbackBatch>[];
+    for (final group in groups) {
+      final submittedBatch = await _submitFeedbackExecutionGroupToBridge(
+        group,
+        workflowPresetId: workflowPresetId,
+        releaseWhenComplete: releaseWhenComplete,
+        includeQuickAskId: groups.length == 1,
+      );
+      if (submittedBatch == null) {
+        if (sentItemIds.isNotEmpty && mounted) {
+          setState(() {
+            _items.removeWhere((item) => sentItemIds.contains(item.id));
+            _submittedBatches.insertAll(0, submittedBatches);
+            if (_items.isEmpty) _pendingQuickAskId = null;
+          });
+        }
+        return false;
+      }
+      sentItemIds.addAll(group.items.map((item) => item.id));
+      submittedBatches.add(submittedBatch);
+    }
+    if (!mounted) return true;
+    setState(() {
+      _items.removeWhere((item) => sentItemIds.contains(item.id));
+      _pendingQuickAskId = null;
+      _submittedBatches.insertAll(0, submittedBatches.reversed);
+    });
+    _showMessage(
+      groups.length == 1
+          ? 'Feedback enviado a ${groups.single.target.label}.'
+          : 'Feedback enviado a ${groups.length} destinos.',
+    );
+    return true;
+  }
+
+  Future<_SubmittedFeedbackBatch?> _submitFeedbackExecutionGroupToBridge(
+    _FeedbackExecutionGroup group, {
+    required String workflowPresetId,
+    required bool releaseWhenComplete,
+    required bool includeQuickAskId,
+  }) async {
     final batch = DeveloperFeedbackBatch(
       batchId:
           'feedback-batch-${DateTime.now().toUtc().microsecondsSinceEpoch}',
@@ -1873,46 +2074,39 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
       sourceDisplayName: widget.sourceDisplayName,
       workflowPresetId: workflowPresetId,
       releaseWhenComplete: releaseWhenComplete,
-      quickAskId: _pendingQuickAskId,
-      items: List.of(_items),
+      quickAskId: includeQuickAskId ? _pendingQuickAskId : null,
+      workspacePath: group.target.workspacePath,
+      items: List.of(group.items),
     );
     final customBatchSubmit = widget.bridgeSubmitBatch;
     if (customBatchSubmit != null) {
       try {
         await customBatchSubmit(batch);
-        setState(() {
-          _items.clear();
-          _pendingQuickAskId = null;
-          _submittedBatches.insert(0, _SubmittedFeedbackBatch.local());
-        });
-        _showMessage('Feedback enviado a Codex CLI.');
-        return true;
+        return _SubmittedFeedbackBatch.local();
       } catch (_) {
-        _showMessage('Guardado local; no se pudo enviar a Codex CLI.');
-        return false;
+        _showMessage(
+          'Guardado local; no se pudo enviar a ${group.target.label}.',
+        );
+        return null;
       }
     }
     final customSubmit = widget.bridgeSubmit;
     if (customSubmit != null) {
       try {
-        for (final item in List<DeveloperFeedbackItem>.of(_items)) {
+        for (final item in List<DeveloperFeedbackItem>.of(group.items)) {
           await customSubmit(item);
         }
-        setState(() {
-          _items.clear();
-          _pendingQuickAskId = null;
-          _submittedBatches.insert(0, _SubmittedFeedbackBatch.local());
-        });
-        _showMessage('Feedback enviado a Codex CLI.');
-        return true;
+        return _SubmittedFeedbackBatch.local();
       } catch (_) {
-        _showMessage('Guardado local; no se pudo enviar a Codex CLI.');
-        return false;
+        _showMessage(
+          'Guardado local; no se pudo enviar a ${group.target.label}.',
+        );
+        return null;
       }
     }
     if (_effectiveBridgeUrl.isEmpty) {
       _showBridgeUnavailableMessage();
-      return false;
+      return null;
     }
     final baseUrl = _effectiveBridgeUrl.replaceAll(RegExp(r'/$'), '');
     final ownsClient = widget.httpClient == null;
@@ -1926,19 +2120,15 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
       if (response.statusCode < 200 || response.statusCode >= 300) {
         throw Exception('HTTP ${response.statusCode}: ${response.body}');
       }
-      final submittedBatch = _SubmittedFeedbackBatch.fromStartResponse(
-        jsonDecode(response.body) as Map<String, Object?>,
-      );
-      setState(() {
-        _items.clear();
-        _pendingQuickAskId = null;
-        if (submittedBatch != null) _submittedBatches.insert(0, submittedBatch);
-      });
-      _showMessage('Feedback enviado a Codex CLI.');
-      return true;
+      return _SubmittedFeedbackBatch.fromStartResponse(
+            jsonDecode(response.body) as Map<String, Object?>,
+          ) ??
+          _SubmittedFeedbackBatch.local();
     } catch (_) {
-      _showMessage('Guardado local; no se pudo enviar a Codex CLI.');
-      return false;
+      _showMessage(
+        'Guardado local; no se pudo enviar a ${group.target.label}.',
+      );
+      return null;
     } finally {
       if (ownsClient) client.close();
     }
@@ -1947,6 +2137,7 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
   void _openPendingDialog() {
     final presetsFuture = _loadWorkflowPresets();
     var selectedPresetId = '';
+    _FeedbackExecutionTargetKind? selectedExecutionTargetKind;
     var releaseWhenComplete = false;
     var sending = false;
     showDialog<void>(
@@ -1959,6 +2150,34 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
           );
           final dialogWidth = math.min(560.0, availableWidth);
           final compactActions = MediaQuery.sizeOf(context).width < 420;
+          final executionGroups = _executionGroupsForItems(
+            _items,
+            includeEmptyTargets: true,
+          );
+          final defaultExecutionGroup = executionGroups.isEmpty
+              ? null
+              : executionGroups.firstWhere(
+                  (group) => group.items.isNotEmpty,
+                  orElse: () => executionGroups.first,
+                );
+          if (defaultExecutionGroup != null) {
+            selectedExecutionTargetKind ??= defaultExecutionGroup.target.kind;
+            if (!executionGroups.any(
+              (group) => group.target.kind == selectedExecutionTargetKind,
+            )) {
+              selectedExecutionTargetKind = defaultExecutionGroup.target.kind;
+            }
+          }
+          final selectedExecutionGroup = defaultExecutionGroup == null
+              ? null
+              : executionGroups.firstWhere(
+                  (group) => group.target.kind == selectedExecutionTargetKind,
+                  orElse: () => defaultExecutionGroup,
+                );
+          final selectedItems =
+              selectedExecutionGroup?.items ?? const <DeveloperFeedbackItem>[];
+          final showExecutionTabs =
+              _feedbackExecutionTargetEnabled && executionGroups.length > 1;
           return AlertDialog(
             title: const Text('Cola de feedback'),
             actionsOverflowDirection: VerticalDirection.down,
@@ -1970,6 +2189,41 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
                   : Column(
                       mainAxisSize: MainAxisSize.min,
                       children: <Widget>[
+                        if (showExecutionTabs) ...[
+                          DefaultTabController(
+                            length: executionGroups.length,
+                            initialIndex: executionGroups.indexWhere(
+                              (group) =>
+                                  group.target.kind ==
+                                  selectedExecutionTargetKind,
+                            ),
+                            child: TabBar(
+                              key: developerFeedbackQueueTabsKey,
+                              isScrollable: true,
+                              onTap: (index) {
+                                setDialogState(() {
+                                  selectedExecutionTargetKind =
+                                      executionGroups[index].target.kind;
+                                });
+                              },
+                              tabs: executionGroups
+                                  .map(
+                                    (group) => Tab(
+                                      key:
+                                          group.target.kind ==
+                                              _FeedbackExecutionTargetKind
+                                                  .codexCli
+                                          ? developerFeedbackQueueCodexCliTabKey
+                                          : developerFeedbackQueueDomainTabKey,
+                                      text:
+                                          '${group.target.label} (${group.items.length})',
+                                    ),
+                                  )
+                                  .toList(),
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                        ],
                         ConstrainedBox(
                           constraints: BoxConstraints(
                             maxHeight: math.min(
@@ -1977,124 +2231,141 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
                               MediaQuery.sizeOf(context).height * 0.32,
                             ),
                           ),
-                          child: ListView.separated(
-                            shrinkWrap: true,
-                            cacheExtent: 1000,
-                            itemCount: _items.length,
-                            separatorBuilder: (_, _) =>
-                                const Divider(height: 20),
-                            itemBuilder: (context, index) {
-                              final item = _items[index];
-                              return Container(
-                                key: developerFeedbackPreviewItemKey,
-                                padding: const EdgeInsets.all(10),
-                                decoration: BoxDecoration(
-                                  border: Border.all(
-                                    color: Theme.of(
-                                      context,
-                                    ).colorScheme.outlineVariant,
+                          child: selectedItems.isEmpty
+                              ? Center(
+                                  child: Text(
+                                    'No hay feedback pendiente para ${selectedExecutionGroup!.target.label}.',
+                                    textAlign: TextAlign.center,
                                   ),
-                                  borderRadius: BorderRadius.circular(8),
-                                  color: Theme.of(
-                                    context,
-                                  ).colorScheme.surfaceContainerHighest,
-                                ),
-                                child: Row(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: <Widget>[
-                                    _FeedbackPreviewThumbnail(item: item),
-                                    const SizedBox(width: 12),
-                                    Expanded(
-                                      child: Column(
+                                )
+                              : ListView.separated(
+                                  shrinkWrap: true,
+                                  cacheExtent: 1000,
+                                  itemCount: selectedItems.length,
+                                  separatorBuilder: (_, _) =>
+                                      const Divider(height: 20),
+                                  itemBuilder: (context, index) {
+                                    final item = selectedItems[index];
+                                    return Container(
+                                      key: developerFeedbackPreviewItemKey,
+                                      padding: const EdgeInsets.all(10),
+                                      decoration: BoxDecoration(
+                                        border: Border.all(
+                                          color: Theme.of(
+                                            context,
+                                          ).colorScheme.outlineVariant,
+                                        ),
+                                        borderRadius: BorderRadius.circular(8),
+                                        color: Theme.of(
+                                          context,
+                                        ).colorScheme.surfaceContainerHighest,
+                                      ),
+                                      child: Row(
                                         crossAxisAlignment:
                                             CrossAxisAlignment.start,
                                         children: <Widget>[
-                                          SelectableText(
-                                            _feedbackPreviewComment(item),
-                                            key:
-                                                developerFeedbackPreviewCommentKey,
-                                            maxLines: 4,
-                                            style: Theme.of(
-                                              context,
-                                            ).textTheme.bodyMedium,
+                                          _FeedbackPreviewThumbnail(item: item),
+                                          const SizedBox(width: 12),
+                                          Expanded(
+                                            child: Column(
+                                              crossAxisAlignment:
+                                                  CrossAxisAlignment.start,
+                                              children: <Widget>[
+                                                SelectableText(
+                                                  _feedbackPreviewComment(item),
+                                                  key:
+                                                      developerFeedbackPreviewCommentKey,
+                                                  maxLines: 4,
+                                                  style: Theme.of(
+                                                    context,
+                                                  ).textTheme.bodyMedium,
+                                                ),
+                                                const SizedBox(height: 8),
+                                                Wrap(
+                                                  spacing: 8,
+                                                  runSpacing: 4,
+                                                  children: <Widget>[
+                                                    _PreviewMetaChip(
+                                                      key:
+                                                          developerFeedbackPreviewBoundsKey,
+                                                      icon: Icons.crop_free,
+                                                      label:
+                                                          _formatSelectionBounds(
+                                                            item.selectionBounds,
+                                                          ),
+                                                    ),
+                                                    _PreviewMetaChip(
+                                                      key:
+                                                          developerFeedbackPreviewAudioKey,
+                                                      icon: item.audio == null
+                                                          ? Icons
+                                                                .mic_off_outlined
+                                                          : Icons
+                                                                .mic_none_outlined,
+                                                      label:
+                                                          _formatAudioSummary(
+                                                            item.audio,
+                                                          ),
+                                                    ),
+                                                    if (item.guidedTrace !=
+                                                        null)
+                                                      _PreviewMetaChip(
+                                                        icon: Icons.timeline,
+                                                        label:
+                                                            '${item.guidedTrace!.frames.length} pantallas · '
+                                                            '${item.guidedTrace!.timeline.length} eventos',
+                                                      ),
+                                                  ],
+                                                ),
+                                              ],
+                                            ),
                                           ),
-                                          const SizedBox(height: 8),
-                                          Wrap(
-                                            spacing: 8,
-                                            runSpacing: 4,
+                                          Column(
+                                            mainAxisSize: MainAxisSize.min,
                                             children: <Widget>[
-                                              _PreviewMetaChip(
+                                              IconButton(
                                                 key:
-                                                    developerFeedbackPreviewBoundsKey,
-                                                icon: Icons.crop_free,
-                                                label: _formatSelectionBounds(
-                                                  item.selectionBounds,
+                                                    developerFeedbackEditCommentKey,
+                                                tooltip: 'Editar comentario',
+                                                onPressed: sending
+                                                    ? null
+                                                    : () async {
+                                                        await _editQueuedComment(
+                                                          item,
+                                                        );
+                                                        if (context.mounted) {
+                                                          setDialogState(() {});
+                                                        }
+                                                      },
+                                                icon: const Icon(
+                                                  Icons.edit_outlined,
                                                 ),
                                               ),
-                                              _PreviewMetaChip(
-                                                key:
-                                                    developerFeedbackPreviewAudioKey,
-                                                icon: item.audio == null
-                                                    ? Icons.mic_off_outlined
-                                                    : Icons.mic_none_outlined,
-                                                label: _formatAudioSummary(
-                                                  item.audio,
+                                              IconButton(
+                                                tooltip: 'Eliminar',
+                                                onPressed: sending
+                                                    ? null
+                                                    : () {
+                                                        setState(() {
+                                                          _items.remove(item);
+                                                          if (_items.isEmpty) {
+                                                            _pendingQuickAskId =
+                                                                null;
+                                                          }
+                                                        });
+                                                        setDialogState(() {});
+                                                      },
+                                                icon: const Icon(
+                                                  Icons.delete_outline,
                                                 ),
                                               ),
-                                              if (item.guidedTrace != null)
-                                                _PreviewMetaChip(
-                                                  icon: Icons.timeline,
-                                                  label:
-                                                      '${item.guidedTrace!.frames.length} pantallas · '
-                                                      '${item.guidedTrace!.timeline.length} eventos',
-                                                ),
                                             ],
                                           ),
                                         ],
                                       ),
-                                    ),
-                                    Column(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: <Widget>[
-                                        IconButton(
-                                          key: developerFeedbackEditCommentKey,
-                                          tooltip: 'Editar comentario',
-                                          onPressed: sending
-                                              ? null
-                                              : () async {
-                                                  await _editQueuedComment(
-                                                    item,
-                                                  );
-                                                  if (context.mounted) {
-                                                    setDialogState(() {});
-                                                  }
-                                                },
-                                          icon: const Icon(Icons.edit_outlined),
-                                        ),
-                                        IconButton(
-                                          tooltip: 'Eliminar',
-                                          onPressed: sending
-                                              ? null
-                                              : () {
-                                                  setState(() {
-                                                    _items.remove(item);
-                                                    if (_items.isEmpty) {
-                                                      _pendingQuickAskId = null;
-                                                    }
-                                                  });
-                                                  setDialogState(() {});
-                                                },
-                                          icon: const Icon(
-                                            Icons.delete_outline,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ],
+                                    );
+                                  },
                                 ),
-                              );
-                            },
-                          ),
                         ),
                         const SizedBox(height: 16),
                         FutureBuilder<_DeveloperFeedbackWorkflowPresets>(
@@ -3250,6 +3521,35 @@ class _DeveloperFeedbackAppUpdaterState
   }
 }
 
+enum _FeedbackExecutionTargetKind { domain, codexCli }
+
+class _FeedbackExecutionTarget {
+  const _FeedbackExecutionTarget({
+    required this.kind,
+    required this.label,
+    required this.workspacePath,
+  });
+
+  final _FeedbackExecutionTargetKind kind;
+  final String label;
+  final String? workspacePath;
+
+  _FeedbackExecutionTarget copyWith({String? label, String? workspacePath}) {
+    return _FeedbackExecutionTarget(
+      kind: kind,
+      label: label ?? this.label,
+      workspacePath: workspacePath ?? this.workspacePath,
+    );
+  }
+}
+
+class _FeedbackExecutionGroup {
+  const _FeedbackExecutionGroup({required this.target, required this.items});
+
+  final _FeedbackExecutionTarget target;
+  final List<DeveloperFeedbackItem> items;
+}
+
 class _SelectionActions extends StatelessWidget {
   const _SelectionActions({
     required this.onComment,
@@ -3335,6 +3635,11 @@ class _Toolbar extends StatelessWidget {
     required this.unreadNotificationCount,
     required this.quickAskActivityCount,
     required this.onEditModeChanged,
+    required this.executionTargetEnabled,
+    required this.runInCodexCliWorkspace,
+    required this.domainWorkspaceLabel,
+    required this.codexCliWorkspaceLabel,
+    required this.onExecutionTargetChanged,
     required this.onExpandedChanged,
     required this.onOpenPending,
     required this.onOpenRuns,
@@ -3357,6 +3662,11 @@ class _Toolbar extends StatelessWidget {
   final int unreadNotificationCount;
   final int quickAskActivityCount;
   final ValueChanged<bool> onEditModeChanged;
+  final bool executionTargetEnabled;
+  final bool runInCodexCliWorkspace;
+  final String domainWorkspaceLabel;
+  final String codexCliWorkspaceLabel;
+  final ValueChanged<bool> onExecutionTargetChanged;
   final ValueChanged<bool> onExpandedChanged;
   final VoidCallback? onOpenPending;
   final VoidCallback? onOpenRuns;
@@ -3433,21 +3743,56 @@ class _Toolbar extends StatelessWidget {
                 ),
                 InkWell(
                   borderRadius: BorderRadius.circular(6),
-                  onTap: () => onEditModeChanged(!editMode),
+                  onTap: null,
                   child: Padding(
                     padding: EdgeInsets.only(left: compact ? 0 : 4),
-                    child: Row(
+                    child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: <Widget>[
-                        if (compact)
-                          const Icon(Icons.bug_report_outlined)
-                        else
-                          const Text('Plantilla'),
-                        SizedBox(width: compact ? 4 : 8),
-                        Switch(
-                          key: developerFeedbackSwitchKey,
-                          value: editMode,
-                          onChanged: onEditModeChanged,
+                        if (executionTargetEnabled) ...[
+                          Tooltip(
+                            message: runInCodexCliWorkspace
+                                ? 'Ejecuta en $codexCliWorkspaceLabel'
+                                : 'Ejecuta en $domainWorkspaceLabel',
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: <Widget>[
+                                Icon(
+                                  runInCodexCliWorkspace
+                                      ? Icons.hub_outlined
+                                      : Icons.home_work_outlined,
+                                  size: compact ? 18 : 20,
+                                ),
+                                SizedBox(width: compact ? 4 : 8),
+                                Switch(
+                                  key:
+                                      developerFeedbackExecutionTargetSwitchKey,
+                                  value: runInCodexCliWorkspace,
+                                  onChanged: onExecutionTargetChanged,
+                                ),
+                              ],
+                            ),
+                          ),
+                          SizedBox(height: compact ? 0 : 2),
+                        ],
+                        InkWell(
+                          borderRadius: BorderRadius.circular(6),
+                          onTap: () => onEditModeChanged(!editMode),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: <Widget>[
+                              if (compact)
+                                const Icon(Icons.bug_report_outlined)
+                              else
+                                const Text('Plantilla'),
+                              SizedBox(width: compact ? 4 : 8),
+                              Switch(
+                                key: developerFeedbackSwitchKey,
+                                value: editMode,
+                                onChanged: onEditModeChanged,
+                              ),
+                            ],
+                          ),
                         ),
                       ],
                     ),
@@ -4732,6 +5077,7 @@ class DeveloperFeedbackBatch {
     required this.workflowPresetId,
     required this.releaseWhenComplete,
     this.quickAskId,
+    this.workspacePath,
     required this.items,
   });
 
@@ -4741,6 +5087,7 @@ class DeveloperFeedbackBatch {
   final String workflowPresetId;
   final bool releaseWhenComplete;
   final String? quickAskId;
+  final String? workspacePath;
   final List<DeveloperFeedbackItem> items;
 
   Map<String, Object?> toBridgeJson() {
@@ -4754,6 +5101,8 @@ class DeveloperFeedbackBatch {
       'workflowPresetId': workflowPresetId,
       'releaseWhenComplete': releaseWhenComplete,
       if ((quickAskId ?? '').trim().isNotEmpty) 'quickAskId': quickAskId,
+      if ((workspacePath ?? '').trim().isNotEmpty)
+        'workspace_path': workspacePath!.trim(),
       'items': items.map((item) => item.toBridgeJson()).toList(),
     };
   }

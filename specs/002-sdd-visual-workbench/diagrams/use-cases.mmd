@@ -1,0 +1,32 @@
+flowchart LR
+    Developer["Actor: Developer"]
+    ProductOwner["Actor: Product owner"]
+    Reviewer["Actor: Reviewer"]
+    CodexAgent["Actor: Codex agent"]
+
+    subgraph Workbench["System boundary: SDD Visual Workbench"]
+        Inspect["Inspect current-project SDD"]
+        Validate["Validate architecture"]
+        Mark["Mark diagram change"]
+        Link["Link feedback to spec or diagram"]
+        Update["Request spec or diagram update"]
+        Implement["Start implementation task"]
+        Dashboard["View current-project dashboard"]
+        Doctor["Run SDD doctor"]
+    end
+
+    Developer --> Inspect
+    Developer --> Dashboard
+    Developer --> Implement
+    ProductOwner --> Validate
+    ProductOwner --> Mark
+    Reviewer --> Validate
+    Reviewer --> Mark
+    Reviewer --> Doctor
+    CodexAgent --> Update
+    CodexAgent --> Implement
+    CodexAgent --> Doctor
+    Mark --> Link
+    Link --> Update
+    Inspect --> Validate
+    Dashboard --> Doctor
