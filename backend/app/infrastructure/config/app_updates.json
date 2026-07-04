@@ -39,12 +39,12 @@
   "sat-catalogo-ropa": {
     "displayName": "SAT Catalogo Ropa",
     "repo": "brunojaime/sat-catalogo-ropa",
-    "releaseTagPattern": "android-mock-feedback*-v*",
+    "releaseTagPattern": "android-feedback*-v*",
     "apkAssetPattern": "sat-catalogo-ropa*.apk",
     "latestAssetName": "sat-catalogo-ropa.apk",
     "expectedPackageId": "com.sat.sat_catalogo_ropa",
     "verifiedPackageIds": {
-      "android-mock-feedback*-v*": "com.sat.sat_catalogo_ropa"
+      "android-feedback*-v*": "com.sat.sat_catalogo_ropa"
     },
     "requiredMinimumBuild": null,
     "enabled": true

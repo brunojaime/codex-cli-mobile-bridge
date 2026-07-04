@@ -235,12 +235,12 @@ def test_default_registry_includes_sat_catalog_updates() -> None:
     assert config.enabled is True
     assert config.display_name == "SAT Catalogo Ropa"
     assert config.repo == "brunojaime/sat-catalogo-ropa"
-    assert config.release_tag_pattern == "android-mock-feedback*-v*"
+    assert config.release_tag_pattern == "android-feedback*-v*"
     assert config.apk_asset_pattern == "sat-catalogo-ropa*.apk"
     assert config.latest_asset_name == "sat-catalogo-ropa.apk"
     assert config.expected_package_id == "com.sat.sat_catalogo_ropa"
     assert (
-        config.verified_package_ids["android-mock-feedback*-v*"]
+        config.verified_package_ids["android-feedback*-v*"]
         == "com.sat.sat_catalogo_ropa"
     )
 
@@ -257,16 +257,16 @@ def test_sat_catalog_app_update_returns_latest_feedback_release(
         source_app="sat-catalogo-ropa",
         display_name="SAT Catalogo Ropa",
         repo="brunojaime/sat-catalogo-ropa",
-        release_tag_pattern="android-mock-feedback*-v*",
+        release_tag_pattern="android-feedback*-v*",
         apk_asset_pattern="sat-catalogo-ropa*.apk",
         latest_asset_name=asset_name,
         expected_package_id="com.sat.sat_catalogo_ropa",
         verified_package_ids={
-            "android-mock-feedback*-v*": "com.sat.sat_catalogo_ropa",
+            "android-feedback*-v*": "com.sat.sat_catalogo_ropa",
         },
         releases=[
             _release(
-                "android-mock-feedback-v047-v1.0.4-build.5",
+                "android-feedback-updater-v1.0.4-build.5",
                 assets=[_apk_asset(asset_name, digest=asset_digest)],
                 body="SAT feedback release.",
             ),
@@ -284,7 +284,7 @@ def test_sat_catalog_app_update_returns_latest_feedback_release(
     assert payload["available"] is True
     assert payload["latestVersion"] == "1.0.4"
     assert payload["latestBuild"] == 5
-    assert payload["releaseTag"] == "android-mock-feedback-v047-v1.0.4-build.5"
+    assert payload["releaseTag"] == "android-feedback-updater-v1.0.4-build.5"
     assert payload["apkAssetName"] == asset_name
     assert (
         payload["sha256"]
@@ -294,7 +294,7 @@ def test_sat_catalog_app_update_returns_latest_feedback_release(
     assert payload["releaseNotes"] == "SAT feedback release."
     assert payload["apkUrl"] == (
         "http://testserver/app-updates/sat-catalogo-ropa/apk/"
-        "android-mock-feedback-v047-v1.0.4-build.5/"
+        "android-feedback-updater-v1.0.4-build.5/"
         "sat-catalogo-ropa.apk"
         "?platform=android&channel=stable"
     )
