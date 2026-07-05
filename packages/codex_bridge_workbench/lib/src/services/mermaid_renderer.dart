@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -147,8 +148,13 @@ class _MermaidWebViewPreviewState extends State<MermaidWebViewPreview> {
 
   @override
   Widget build(BuildContext context) {
+    final screenWidth = MediaQuery.sizeOf(context).width;
+    final maxScreenWidth = math.max(280.0, screenWidth - 48);
+    final effectiveWidth = widget.width.isFinite
+        ? math.min(widget.width, maxScreenWidth)
+        : maxScreenWidth;
     return SizedBox(
-      width: widget.width,
+      width: effectiveWidth,
       height: widget.height,
       child: WebViewWidget(controller: _controller),
     );
@@ -190,13 +196,15 @@ String buildMermaidPreviewHtml({
       overflow: auto;
     }
     #diagram {
-      min-width: 680px;
-      min-height: 260px;
-      padding: 16px;
+      width: 100vw;
+      min-width: 0;
+      min-height: 240px;
+      padding: 12px;
       box-sizing: border-box;
     }
     #diagram svg {
-      max-width: none;
+      max-width: 100%;
+      width: 100%;
       height: auto;
       background: #0b1426;
     }

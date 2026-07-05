@@ -259,9 +259,9 @@ void main() {
     await tester.tap(find.text('Diagrams').first);
     await tester.pumpAndSettle();
     expect(find.text('Architecture diagrams'), findsOneWidget);
-    expect(find.text('flowchart diagram'), findsWidgets);
+    expect(find.text('UML component diagram'), findsWidgets);
     expect(find.text('rendered architecture/components.mmd'), findsNothing);
-    await tester.tap(find.text('flowchart diagram').first);
+    await tester.tap(find.text('UML component diagram').first);
     await tester.pumpAndSettle();
     expect(
       find.text('rendered architecture/components.mmd'),
@@ -310,10 +310,10 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Architecture diagrams'), findsOneWidget);
-    expect(find.text('flowchart diagram'), findsWidgets);
+    expect(find.text('UML component diagram'), findsWidgets);
   });
 
-  testWidgets('SDD overview launches recommended action composer', (
+  testWidgets('SDD spec artifact launches action composer', (
     tester,
   ) async {
     await _pumpSddWrapper(
@@ -324,11 +324,11 @@ void main() {
 
     await tester.tap(find.byTooltip('Open SDD Explorer'));
     await tester.pumpAndSettle();
-    await tester.ensureVisible(
-      find.widgetWithText(OutlinedButton, 'Refine first spec'),
-    );
+    await tester.tap(find.text('Specs').first);
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(OutlinedButton, 'Refine first spec'));
+    await tester.tap(find.text('Codex').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Refine spec.md').first);
     await tester.pumpAndSettle();
 
     expect(find.text('Refine spec.md'), findsOneWidget);
@@ -399,9 +399,9 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Architecture diagrams'), findsOneWidget);
-    expect(find.text('flowchart diagram'), findsWidgets);
+    expect(find.text('UML component diagram'), findsWidgets);
     expect(find.text('rendered architecture/components.mmd'), findsNothing);
-    await tester.tap(find.text('flowchart diagram').first);
+    await tester.tap(find.text('UML component diagram').first);
     await tester.pumpAndSettle();
     expect(
       find.text('rendered architecture/components.mmd'),
@@ -422,7 +422,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Diagrams').first);
     await tester.pumpAndSettle();
-    await tester.tap(find.text('flowchart diagram').first);
+    await tester.tap(find.text('UML component diagram').first);
     await tester.pumpAndSettle();
 
     expect(
@@ -475,7 +475,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Diagrams').first);
     await tester.pumpAndSettle();
-    await tester.tap(find.text('flowchart diagram').first);
+    await tester.tap(find.text('UML component diagram').first);
     await tester.pumpAndSettle();
 
     expect(find.text('Diagram preview failed'), findsOneWidget);
@@ -964,31 +964,19 @@ void main() {
     expect(actionDrafts.single.prompt, contains('linked_feedback_ids'));
   });
 
-  testWidgets('SDD overview opens an audit Codex action', (tester) async {
-    final drafts = <SddCodexActionDraft>[];
+  testWidgets('SDD overview does not show direct audit actions',
+      (tester) async {
     await _pumpSddWrapper(
       tester,
       loader: (_) async => SddProject.fromJson(_sddProjectWithMissingJson()),
-      actionSubmitter: (_, draft) async {
-        drafts.add(draft);
-        return _jobResponse(jobId: 'job-audit', sessionId: 'session-audit');
-      },
     );
 
     await tester.tap(find.byTooltip('Open SDD Explorer'));
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(OutlinedButton, 'Audit SDD').first);
-    await tester.pumpAndSettle();
 
-    expect(find.text('Audit SDD'), findsWidgets);
-    expect(find.textContaining('Action kind: sdd.audit'), findsOneWidget);
-    expect(find.textContaining('missing: codex-bridge.yaml'), findsOneWidget);
-    await tester.tap(find.widgetWithText(FilledButton, 'Submit to Codex'));
-    await tester.pumpAndSettle();
-
-    expect(drafts, hasLength(1));
-    expect(drafts.single.request.kind, SddCodexActionKind.auditSdd);
-    expect(drafts.single.request.target.artifactType, 'overview');
+    expect(find.text('Project identity'), findsOneWidget);
+    expect(find.text('Audit SDD'), findsNothing);
+    expect(find.text('Next actions'), findsNothing);
   });
 
   testWidgets('production Mermaid renderer uses a local engine asset', (

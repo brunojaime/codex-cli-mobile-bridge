@@ -669,7 +669,7 @@ class _SddExplorerHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.fromLTRB(18, 6, 8, 6),
+      padding: const EdgeInsets.fromLTRB(14, 2, 4, 2),
       decoration: const BoxDecoration(
         border: Border(bottom: BorderSide(color: _WorkbenchColors.border)),
       ),
@@ -677,9 +677,10 @@ class _SddExplorerHeader extends StatelessWidget {
         children: <Widget>[
           const Icon(
             Icons.account_tree_outlined,
+            size: 18,
             color: _WorkbenchColors.primary,
           ),
-          const SizedBox(width: 10),
+          const SizedBox(width: 8),
           const Expanded(
             child: Text(
               'SDD Workbench',
@@ -691,6 +692,9 @@ class _SddExplorerHeader extends StatelessWidget {
           IconButton(
             tooltip: 'Close SDD Explorer',
             onPressed: onClose,
+            visualDensity: VisualDensity.compact,
+            constraints: const BoxConstraints.tightFor(width: 38, height: 34),
+            padding: EdgeInsets.zero,
             icon: const Icon(Icons.close_rounded),
           ),
         ],
@@ -824,23 +828,23 @@ class _SddProjectView extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: <Widget>[
           _WorkbenchProjectHeader(project: project),
-          const TabBar(
-            isScrollable: true,
-            tabAlignment: TabAlignment.start,
-            tabs: <Widget>[
-              Tab(text: 'Overview'),
-              Tab(text: 'Specs'),
-              Tab(text: 'Diagrams'),
-            ],
+          const SizedBox(
+            height: 36,
+            child: TabBar(
+              isScrollable: true,
+              tabAlignment: TabAlignment.start,
+              labelPadding: EdgeInsets.symmetric(horizontal: 14),
+              tabs: <Widget>[
+                Tab(height: 34, text: 'Overview'),
+                Tab(height: 34, text: 'Specs'),
+                Tab(height: 34, text: 'Diagrams'),
+              ],
+            ),
           ),
           Expanded(
             child: TabBarView(
               children: <Widget>[
-                _OverviewTab(
-                  project: project,
-                  activity: activity,
-                  onCodexAction: onCodexAction,
-                ),
+                _OverviewTab(project: project, activity: activity),
                 _SpecsTab(
                   project: project,
                   diagramRenderer: diagramRenderer,
@@ -870,7 +874,7 @@ class _WorkbenchProjectHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(18, 8, 18, 6),
+      padding: const EdgeInsets.fromLTRB(14, 5, 14, 2),
       child: Row(
         children: <Widget>[
           Expanded(
@@ -888,25 +892,18 @@ class _WorkbenchProjectHeader extends StatelessWidget {
 }
 
 class _OverviewTab extends StatelessWidget {
-  const _OverviewTab({
-    required this.project,
-    required this.activity,
-    required this.onCodexAction,
-  });
+  const _OverviewTab({required this.project, required this.activity});
 
   final SddProject project;
   final SddDashboardActivity activity;
-  final ValueChanged<SddCodexActionRequest> onCodexAction;
 
   @override
   Widget build(BuildContext context) {
     final diagrams = _allDiagrams(project);
     final progress = _projectTaskProgress(project);
-    final overviewTarget = _overviewActionTarget(project);
-    final firstSpec = project.specs.isEmpty ? null : project.specs.first;
-    final firstDiagram = diagrams.isEmpty ? null : diagrams.first;
+    final tabs = DefaultTabController.of(context);
     return ListView(
-      padding: const EdgeInsets.fromLTRB(18, 16, 18, 28),
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 24),
       children: <Widget>[
         Wrap(
           spacing: 10,
@@ -916,19 +913,30 @@ class _OverviewTab extends StatelessWidget {
               label: 'Constitution',
               value: project.constitution == null ? 'Missing' : 'Present',
               warning: project.constitution == null,
+              onTap: () => tabs.animateTo(0),
             ),
-            _MetricTile(label: 'Specs', value: '${project.specs.length}'),
-            _MetricTile(label: 'Diagrams', value: '${diagrams.length}'),
+            _MetricTile(
+              label: 'Specs',
+              value: '${project.specs.length}',
+              onTap: () => tabs.animateTo(1),
+            ),
+            _MetricTile(
+              label: 'Diagrams',
+              value: '${diagrams.length}',
+              onTap: () => tabs.animateTo(2),
+            ),
             _MetricTile(
               label: 'Tasks',
               value: progress == null
                   ? 'Source only'
                   : '${progress.completed}/${progress.total}',
               warning: progress == null || progress.completed < progress.total,
+              onTap: () => tabs.animateTo(1),
             ),
             _MetricTile(
               label: 'Slice docs',
               value: '${_sliceDocCount(project)}',
+              onTap: () => tabs.animateTo(1),
             ),
           ],
         ),
@@ -951,90 +959,6 @@ class _OverviewTab extends StatelessWidget {
               _KeyValueLine(
                 label: 'Workspace',
                 value: _workspaceFolderName(project.workspacePath),
-              ),
-              const SizedBox(height: 10),
-              Align(
-                alignment: Alignment.centerRight,
-                child: Tooltip(
-                  message: 'Audit missing or incomplete SDD artifacts',
-                  child: OutlinedButton.icon(
-                    onPressed: () {
-                      onCodexAction(
-                        SddCodexActionRequest(
-                          kind: SddCodexActionKind.auditSdd,
-                          target: overviewTarget,
-                        ),
-                      );
-                    },
-                    icon: const Icon(Icons.manage_search_rounded, size: 16),
-                    label: const Text('Audit SDD'),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-        _PanelCard(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
-              const Text(
-                'Next actions',
-                style: TextStyle(fontWeight: FontWeight.w800),
-              ),
-              const SizedBox(height: 10),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: <Widget>[
-                  OutlinedButton.icon(
-                    onPressed: () {
-                      onCodexAction(
-                        SddCodexActionRequest(
-                          kind: SddCodexActionKind.auditSdd,
-                          target: overviewTarget,
-                        ),
-                      );
-                    },
-                    icon: const Icon(Icons.manage_search_rounded, size: 16),
-                    label: const Text('Audit SDD'),
-                  ),
-                  if (firstSpec?.spec != null)
-                    OutlinedButton.icon(
-                      onPressed: () {
-                        onCodexAction(
-                          SddCodexActionRequest(
-                            kind: SddCodexActionKind.refineSpec,
-                            target: _fileFeedbackTarget(
-                              project: project,
-                              spec: firstSpec,
-                              file: firstSpec!.spec,
-                              artifactType: 'spec',
-                              fallbackTitle: 'spec.md',
-                            )!,
-                          ),
-                        );
-                      },
-                      icon: const Icon(Icons.description_outlined, size: 16),
-                      label: const Text('Refine first spec'),
-                    ),
-                  if (firstDiagram != null)
-                    OutlinedButton.icon(
-                      onPressed: () {
-                        onCodexAction(
-                          SddCodexActionRequest(
-                            kind: SddCodexActionKind.explainDiagramImpact,
-                            target: _diagramFeedbackTarget(
-                              project: project,
-                              diagram: firstDiagram,
-                            ),
-                          ),
-                        );
-                      },
-                      icon: const Icon(Icons.account_tree_outlined, size: 16),
-                      label: const Text('Explain first diagram'),
-                    ),
-                ],
               ),
             ],
           ),
@@ -1125,43 +1049,28 @@ class _SpecsTabState extends State<_SpecsTab> {
       );
     }
     final selection = _validatedSelection(_selection, specs);
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final wide = constraints.maxWidth >= 720;
-        final navigator = _SpecTraceNavigator(
-          specs: specs,
-          selection: selection,
-          onSelected: _select,
-        );
-        final inspector = _SpecArtifactInspector(
-          project: widget.project,
-          spec: specs[selection.specIndex],
-          selection: selection,
-          diagramRenderer: widget.diagramRenderer,
-          onFeedback: widget.onFeedback,
-          onCodexAction: widget.onCodexAction,
-        );
-        return SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(18, 16, 18, 28),
-          child: wide
-              ? Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: <Widget>[
-                    SizedBox(width: 280, child: navigator),
-                    const SizedBox(width: 14),
-                    Expanded(child: inspector),
-                  ],
-                )
-              : Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: <Widget>[
-                    navigator,
-                    const SizedBox(height: 12),
-                    inspector,
-                  ],
-                ),
-        );
-      },
+    final selectedSpec = specs[selection.specIndex];
+    return SingleChildScrollView(
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          _SpecTraceNavigator(
+            specs: specs,
+            selection: selection,
+            onSelected: _select,
+          ),
+          const SizedBox(height: 10),
+          _SpecArtifactInspector(
+            project: widget.project,
+            spec: selectedSpec,
+            selection: selection,
+            diagramRenderer: widget.diagramRenderer,
+            onFeedback: widget.onFeedback,
+            onCodexAction: widget.onCodexAction,
+          ),
+        ],
+      ),
     );
   }
 }
@@ -1238,238 +1147,137 @@ class _SpecTraceNavigator extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final selectedSpec = specs[selection.specIndex];
     return _PanelCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
-          const Row(
+          Row(
             children: <Widget>[
-              Icon(
+              const Icon(
                 Icons.account_tree_outlined,
                 size: 16,
                 color: _WorkbenchColors.primary,
               ),
-              SizedBox(width: 8),
-              Text('SDD trace', style: TextStyle(fontWeight: FontWeight.w900)),
-            ],
-          ),
-          const SizedBox(height: 8),
-          ConstrainedBox(
-            constraints: const BoxConstraints(maxHeight: 520),
-            child: ListView.builder(
-              shrinkWrap: true,
-              itemCount: specs.length,
-              itemBuilder: (context, index) {
-                return _SpecTraceSpecNode(
-                  spec: specs[index],
-                  specIndex: index,
-                  selection: selection,
-                  onSelected: onSelected,
-                );
-              },
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _SpecTraceSpecNode extends StatelessWidget {
-  const _SpecTraceSpecNode({
-    required this.spec,
-    required this.specIndex,
-    required this.selection,
-    required this.onSelected,
-  });
-
-  final SddSpec spec;
-  final int specIndex;
-  final _SpecArtifactSelection selection;
-  final ValueChanged<_SpecArtifactSelection> onSelected;
-
-  @override
-  Widget build(BuildContext context) {
-    final selectedSpec = selection.specIndex == specIndex;
-    final specFiles = spec.allSpecFiles;
-    final planFiles = spec.allPlanFiles;
-    final taskFiles = spec.allTaskFiles;
-    return Theme(
-      data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
-      child: ExpansionTile(
-        initiallyExpanded: selectedSpec,
-        tilePadding: EdgeInsets.zero,
-        childrenPadding: const EdgeInsets.only(left: 8, bottom: 8),
-        leading: Icon(
-          selectedSpec
-              ? Icons.folder_open_outlined
-              : Icons.folder_copy_outlined,
-          size: 18,
-          color: selectedSpec
-              ? _WorkbenchColors.primary
-              : _WorkbenchColors.secondaryText,
-        ),
-        title: Text(
-          spec.title,
-          maxLines: 2,
-          overflow: TextOverflow.ellipsis,
-          style: TextStyle(
-            fontSize: 13,
-            fontWeight: selectedSpec ? FontWeight.w900 : FontWeight.w700,
-          ),
-        ),
-        subtitle: Text(
-          spec.id,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: const TextStyle(
-            color: _WorkbenchColors.secondaryText,
-            fontSize: 11,
-          ),
-        ),
-        children: <Widget>[
-          if (spec.missing.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.only(left: 32, bottom: 6),
-              child: Text(
-                'Missing: ${spec.missing.join(', ')}',
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: _WorkbenchColors.warning,
-                  fontSize: 11,
+              const SizedBox(width: 8),
+              const Expanded(
+                child: Text(
+                  'SDD trace',
+                  style: TextStyle(
+                    color: _WorkbenchColors.onBackground,
+                    fontWeight: FontWeight.w900,
+                  ),
                 ),
               ),
+              if (specs.length > 1)
+                _SpecSelectorMenu(
+                  specs: specs,
+                  selectedIndex: selection.specIndex,
+                  onSelected: (index) {
+                    onSelected(
+                      _SpecArtifactSelection(
+                        specIndex: index,
+                        kind: _firstAvailableArtifact(specs[index]),
+                      ),
+                    );
+                  },
+                ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            '${selectedSpec.id} · ${selectedSpec.path}',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              color: _WorkbenchColors.secondaryText,
+              fontSize: 12,
             ),
-          ..._traceFileTiles(
-            specIndex: specIndex,
-            kind: _SpecArtifactKind.spec,
-            files: specFiles,
-            fallbackLabel: 'spec.md',
-            icon: Icons.description_outlined,
           ),
-          if (planFiles.isNotEmpty) const _TraceGroupLabel(label: 'Plans'),
-          if (planFiles.isEmpty && taskFiles.isNotEmpty)
-            const _TraceGroupLabel(label: 'Tasks'),
-          if (planFiles.isEmpty)
-            ..._traceFileTiles(
-              specIndex: specIndex,
-              kind: _SpecArtifactKind.tasks,
-              files: taskFiles,
-              fallbackLabel: 'tasks.md',
-              icon: Icons.checklist_rounded,
-              indent: 18,
-            )
-          else
-            ..._planTraceTiles(planFiles, taskFiles),
-          if (spec.sliceDocs.isNotEmpty)
-            const _TraceGroupLabel(label: 'Slices'),
-          ..._traceFileTiles(
-            specIndex: specIndex,
-            kind: _SpecArtifactKind.slice,
-            files: spec.sliceDocs,
-            fallbackLabel: 'slice.md',
-            icon: Icons.view_agenda_outlined,
+          if (selectedSpec.missing.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            Text(
+              'Missing: ${selectedSpec.missing.join(', ')}',
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: _WorkbenchColors.warning,
+                fontSize: 11,
+              ),
+            ),
+          ],
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 7,
+            runSpacing: 7,
+            children: _specArtifactChips(selectedSpec),
           ),
-          if (spec.diagrams.isNotEmpty)
-            const _TraceGroupLabel(label: 'Diagrams'),
-          ...List<Widget>.generate(spec.diagrams.length, (index) {
-            final diagram = spec.diagrams[index];
-            return _TraceArtifactTile(
-              label: diagram.title ?? '${diagram.diagramType} diagram',
-              path: diagram.path,
-              icon: Icons.account_tree_outlined,
-              indent: 18,
-              selected: _isSelected(_SpecArtifactKind.diagram, index),
-              onTap: () {
-                onSelected(
-                  _SpecArtifactSelection(
-                    specIndex: specIndex,
-                    kind: _SpecArtifactKind.diagram,
-                    artifactIndex: index,
-                  ),
-                );
-              },
-            );
-          }),
         ],
       ),
     );
   }
 
-  List<Widget> _planTraceTiles(
-    List<SddFile> planFiles,
-    List<SddFile> taskFiles,
-  ) {
-    return List<Widget>.generate(planFiles.length, (planIndex) {
-      final taskIndexes = taskFiles.length == planFiles.length
-          ? <int>[planIndex]
-          : planIndex == 0
-          ? List<int>.generate(taskFiles.length, (index) => index)
-          : const <int>[];
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          _TraceArtifactTile(
-            label: _artifactLabel(planFiles[planIndex], 'plan.md'),
-            path: planFiles[planIndex].path,
-            icon: Icons.route_outlined,
-            indent: 18,
-            selected: _isSelected(_SpecArtifactKind.plan, planIndex),
-            onTap: () {
-              onSelected(
-                _SpecArtifactSelection(
-                  specIndex: specIndex,
-                  kind: _SpecArtifactKind.plan,
-                  artifactIndex: planIndex,
-                ),
-              );
-            },
-          ),
-          ...taskIndexes.map((taskIndex) {
-            final file = taskFiles[taskIndex];
-            return _TraceArtifactTile(
-              label: _artifactLabel(file, 'tasks.md'),
-              path: file.path,
-              icon: Icons.checklist_rounded,
-              indent: 36,
-              selected: _isSelected(_SpecArtifactKind.tasks, taskIndex),
-              onTap: () {
-                onSelected(
-                  _SpecArtifactSelection(
-                    specIndex: specIndex,
-                    kind: _SpecArtifactKind.tasks,
-                    artifactIndex: taskIndex,
-                  ),
-                );
-              },
+  List<Widget> _specArtifactChips(SddSpec spec) {
+    return <Widget>[
+      ..._artifactChips(
+        kind: _SpecArtifactKind.spec,
+        files: spec.allSpecFiles,
+        fallbackLabel: 'spec.md',
+        icon: Icons.description_outlined,
+      ),
+      ..._artifactChips(
+        kind: _SpecArtifactKind.plan,
+        files: spec.allPlanFiles,
+        fallbackLabel: 'plan.md',
+        icon: Icons.route_outlined,
+      ),
+      ..._artifactChips(
+        kind: _SpecArtifactKind.tasks,
+        files: spec.allTaskFiles,
+        fallbackLabel: 'tasks.md',
+        icon: Icons.checklist_rounded,
+      ),
+      ..._artifactChips(
+        kind: _SpecArtifactKind.slice,
+        files: spec.sliceDocs,
+        fallbackLabel: 'slice.md',
+        icon: Icons.view_agenda_outlined,
+      ),
+      ...List<Widget>.generate(spec.diagrams.length, (index) {
+        final diagram = spec.diagrams[index];
+        return _SpecArtifactChoice(
+          label: _diagramDisplayLabel(diagram),
+          icon: _diagramIcon(diagram),
+          selected: _isSelected(_SpecArtifactKind.diagram, index),
+          onSelected: () {
+            onSelected(
+              _SpecArtifactSelection(
+                specIndex: selection.specIndex,
+                kind: _SpecArtifactKind.diagram,
+                artifactIndex: index,
+              ),
             );
-          }),
-        ],
-      );
-    });
+          },
+        );
+      }),
+    ];
   }
 
-  List<Widget> _traceFileTiles({
-    required int specIndex,
+  List<Widget> _artifactChips({
     required _SpecArtifactKind kind,
     required List<SddFile> files,
     required String fallbackLabel,
     required IconData icon,
-    double indent = 18,
   }) {
     return List<Widget>.generate(files.length, (index) {
-      final file = files[index];
-      return _TraceArtifactTile(
-        label: _artifactLabel(file, fallbackLabel),
-        path: file.path,
+      return _SpecArtifactChoice(
+        label: _artifactLabel(files[index], fallbackLabel),
         icon: icon,
-        indent: indent,
         selected: _isSelected(kind, index),
-        onTap: () {
+        onSelected: () {
           onSelected(
             _SpecArtifactSelection(
-              specIndex: specIndex,
+              specIndex: selection.specIndex,
               kind: kind,
               artifactIndex: index,
             ),
@@ -1480,103 +1288,115 @@ class _SpecTraceSpecNode extends StatelessWidget {
   }
 
   bool _isSelected(_SpecArtifactKind kind, int index) {
-    return selection.specIndex == specIndex &&
-        selection.kind == kind &&
-        selection.artifactIndex == index;
+    return selection.kind == kind && selection.artifactIndex == index;
   }
 }
 
-class _TraceGroupLabel extends StatelessWidget {
-  const _TraceGroupLabel({required this.label});
+class _SpecSelectorMenu extends StatelessWidget {
+  const _SpecSelectorMenu({
+    required this.specs,
+    required this.selectedIndex,
+    required this.onSelected,
+  });
 
-  final String label;
+  final List<SddSpec> specs;
+  final int selectedIndex;
+  final ValueChanged<int> onSelected;
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(18, 8, 0, 4),
-      child: Text(
-        label,
-        style: const TextStyle(
-          color: _WorkbenchColors.secondaryText,
-          fontSize: 11,
-          fontWeight: FontWeight.w900,
+    return PopupMenuButton<int>(
+      tooltip: 'Select spec',
+      onSelected: onSelected,
+      itemBuilder: (context) {
+        return List<PopupMenuEntry<int>>.generate(specs.length, (index) {
+          final spec = specs[index];
+          return PopupMenuItem<int>(
+            value: index,
+            child: Row(
+              children: <Widget>[
+                Icon(
+                  index == selectedIndex
+                      ? Icons.check_rounded
+                      : Icons.description_outlined,
+                  size: 16,
+                  color: index == selectedIndex
+                      ? _WorkbenchColors.primary
+                      : _WorkbenchColors.secondaryText,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    spec.title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: _WorkbenchColors.onBackground,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          );
+        });
+      },
+      child: const Padding(
+        padding: EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            Text(
+              'Switch',
+              style: TextStyle(
+                color: _WorkbenchColors.primary,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            Icon(
+              Icons.arrow_drop_down_rounded,
+              color: _WorkbenchColors.primary,
+            ),
+          ],
         ),
       ),
     );
   }
 }
 
-class _TraceArtifactTile extends StatelessWidget {
-  const _TraceArtifactTile({
+class _SpecArtifactChoice extends StatelessWidget {
+  const _SpecArtifactChoice({
     required this.label,
-    required this.path,
     required this.icon,
-    required this.indent,
     required this.selected,
-    required this.onTap,
+    required this.onSelected,
   });
 
   final String label;
-  final String path;
   final IconData icon;
-  final double indent;
   final bool selected;
-  final VoidCallback onTap;
+  final VoidCallback onSelected;
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: selected
-          ? _WorkbenchColors.primary.withValues(alpha: 0.14)
-          : Colors.transparent,
-      borderRadius: BorderRadius.circular(8),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(8),
-        onTap: onTap,
-        child: Padding(
-          padding: EdgeInsets.fromLTRB(indent, 7, 8, 7),
-          child: Row(
-            children: <Widget>[
-              Icon(
-                icon,
-                size: 16,
-                color: selected
-                    ? _WorkbenchColors.primary
-                    : _WorkbenchColors.secondaryText,
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: <Widget>[
-                    Text(
-                      label,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: selected
-                            ? FontWeight.w900
-                            : FontWeight.w700,
-                      ),
-                    ),
-                    Text(
-                      path,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: _WorkbenchColors.secondaryText,
-                        fontSize: 10,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
+    return ChoiceChip(
+      selected: selected,
+      onSelected: (_) => onSelected(),
+      avatar: Icon(
+        icon,
+        size: 15,
+        color: selected
+            ? _WorkbenchColors.onPrimary
+            : _WorkbenchColors.secondaryText,
       ),
+      label: Text(label, overflow: TextOverflow.ellipsis),
+      labelStyle: TextStyle(
+        color: selected
+            ? _WorkbenchColors.onPrimary
+            : _WorkbenchColors.onBackground,
+        fontWeight: FontWeight.w800,
+        fontSize: 12,
+      ),
+      visualDensity: VisualDensity.compact,
     );
   }
 }
@@ -1605,7 +1425,11 @@ class _SpecArtifactInspector extends StatelessWidget {
       children: <Widget>[
         Text(
           spec.title,
-          style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w900),
+          style: const TextStyle(
+            color: _WorkbenchColors.onBackground,
+            fontSize: 17,
+            fontWeight: FontWeight.w900,
+          ),
         ),
         const SizedBox(height: 3),
         Text(
@@ -1730,7 +1554,13 @@ class _TraceChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Chip(visualDensity: VisualDensity.compact, label: Text(label));
+    return Chip(
+      visualDensity: VisualDensity.compact,
+      label: Text(
+        label,
+        style: const TextStyle(color: _WorkbenchColors.onBackground),
+      ),
+    );
   }
 }
 
@@ -1826,7 +1656,9 @@ class _DiagramFilterMenu extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final selectedLabel = selectedType == 'all' ? 'All diagrams' : selectedType;
+    final selectedLabel = selectedType == 'all'
+        ? 'All diagrams'
+        : _diagramTypeLabel(selectedType);
     final menuItems = types
         .map(
           (type) => PopupMenuItem<String>(
@@ -1843,7 +1675,10 @@ class _DiagramFilterMenu extends StatelessWidget {
                       : _WorkbenchColors.secondaryText,
                 ),
                 const SizedBox(width: 8),
-                Text(type == 'all' ? 'All diagrams' : type),
+                Text(
+                  type == 'all' ? 'All diagrams' : _diagramTypeLabel(type),
+                  style: const TextStyle(color: _WorkbenchColors.onBackground),
+                ),
               ],
             ),
           ),
@@ -1871,9 +1706,16 @@ class _DiagramFilterMenu extends StatelessWidget {
             const SizedBox(width: 8),
             Text(
               selectedLabel,
-              style: const TextStyle(fontWeight: FontWeight.w800),
+              style: const TextStyle(
+                color: _WorkbenchColors.onBackground,
+                fontWeight: FontWeight.w800,
+              ),
             ),
-            const Icon(Icons.arrow_drop_down_rounded, size: 18),
+            const Icon(
+              Icons.arrow_drop_down_rounded,
+              size: 18,
+              color: _WorkbenchColors.onBackground,
+            ),
           ],
         ),
       ),
@@ -1918,7 +1760,11 @@ class _DiagramListGroup extends StatelessWidget {
           children: <Widget>[
             Text(
               title,
-              style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 15),
+              style: const TextStyle(
+                color: _WorkbenchColors.onBackground,
+                fontWeight: FontWeight.w900,
+                fontSize: 15,
+              ),
             ),
             const SizedBox(height: 8),
             ...items.map(
@@ -1960,7 +1806,7 @@ class _DiagramListTile extends StatelessWidget {
       spec: item.spec,
       diagram: diagram,
     );
-    final title = diagram.title ?? '${diagram.diagramType} diagram';
+    final title = _diagramDisplayLabel(diagram);
     return Material(
       color: Colors.transparent,
       child: InkWell(
@@ -1970,8 +1816,8 @@ class _DiagramListTile extends StatelessWidget {
           padding: const EdgeInsets.symmetric(vertical: 8),
           child: Row(
             children: <Widget>[
-              const Icon(
-                Icons.account_tree_outlined,
+              Icon(
+                _diagramIcon(diagram),
                 size: 18,
                 color: _WorkbenchColors.primary,
               ),
@@ -1984,7 +1830,10 @@ class _DiagramListTile extends StatelessWidget {
                       title,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontWeight: FontWeight.w900),
+                      style: const TextStyle(
+                        color: _WorkbenchColors.onBackground,
+                        fontWeight: FontWeight.w900,
+                      ),
                     ),
                     const SizedBox(height: 2),
                     Text(
@@ -2022,7 +1871,12 @@ class _DiagramListTile extends StatelessWidget {
                         .map(
                           (kind) => PopupMenuItem<SddCodexActionKind>(
                             value: kind,
-                            child: Text(kind.label),
+                            child: Text(
+                              kind.label,
+                              style: const TextStyle(
+                                color: _WorkbenchColors.onBackground,
+                              ),
+                            ),
                           ),
                         )
                         .toList(growable: false),
@@ -2058,52 +1912,75 @@ class _MetricTile extends StatelessWidget {
     required this.label,
     required this.value,
     this.warning = false,
+    this.onTap,
   });
 
   final String label;
   final String value;
   final bool warning;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: 132,
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: warning
-            ? _WorkbenchColors.warningSurface
-            : _WorkbenchColors.surfaceHigh,
+    final borderColor = warning
+        ? _WorkbenchColors.warning
+        : _WorkbenchColors.border;
+    final fillColor = warning
+        ? _WorkbenchColors.warningSurface
+        : _WorkbenchColors.surfaceHigh;
+    return Material(
+      color: fillColor,
+      borderRadius: BorderRadius.circular(8),
+      child: InkWell(
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(
-          color: warning ? _WorkbenchColors.warning : _WorkbenchColors.border,
+        onTap: onTap,
+        child: Container(
+          width: 132,
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: borderColor),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Row(
+                children: <Widget>[
+                  Expanded(
+                    child: Text(
+                      label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: _WorkbenchColors.secondaryText,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ),
+                  if (onTap != null)
+                    const Icon(
+                      Icons.chevron_right_rounded,
+                      size: 16,
+                      color: _WorkbenchColors.secondaryText,
+                    ),
+                ],
+              ),
+              const SizedBox(height: 6),
+              Text(
+                value,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: warning
+                      ? _WorkbenchColors.warning
+                      : _WorkbenchColors.onBackground,
+                  fontWeight: FontWeight.w900,
+                  fontSize: 16,
+                ),
+              ),
+            ],
+          ),
         ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          Text(
-            label,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              color: _WorkbenchColors.secondaryText,
-              fontSize: 12,
-            ),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            value,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              color: warning
-                  ? _WorkbenchColors.warning
-                  : _WorkbenchColors.onBackground,
-              fontWeight: FontWeight.w900,
-              fontSize: 16,
-            ),
-          ),
-        ],
       ),
     );
   }
@@ -2413,33 +2290,12 @@ SddFeedbackTarget _diagramFeedbackTarget({
     targetWorkspaceName: _projectDisplayName(project),
     artifactType: 'diagram',
     artifactPath: _safeMetadataPath(diagram.path),
-    artifactTitle: diagram.title ?? '${diagram.diagramType} diagram',
+    artifactTitle: _diagramDisplayLabel(diagram),
     sourceExcerpt: _sourceExcerpt(diagram.content),
     specId: spec?.id,
     specTitle: spec?.title,
     diagramType: diagram.diagramType,
     diagramScope: diagram.scope,
-  );
-}
-
-SddFeedbackTarget _overviewActionTarget(SddProject project) {
-  final progress = _projectTaskProgress(project);
-  final diagrams = _allDiagrams(project);
-  final source = <String>[
-    'workspace: ${project.workspacePath}',
-    'specs: ${project.specs.length}',
-    'diagrams: ${diagrams.length}',
-    'tasks: ${progress == null ? 'source only' : '${progress.completed}/${progress.total}'}',
-    if (project.missingRequired.isNotEmpty)
-      'missing: ${project.missingRequired.join(', ')}',
-  ].join('\n');
-  return SddFeedbackTarget(
-    workspacePath: project.workspacePath,
-    targetWorkspaceName: _projectDisplayName(project),
-    artifactType: 'overview',
-    artifactPath: '(project)',
-    artifactTitle: 'SDD project overview',
-    sourceExcerpt: source,
   );
 }
 
@@ -2454,6 +2310,75 @@ String _artifactLabel(SddFile? file, String fallback) {
   final path = file?.path.trim();
   if (path == null || path.isEmpty) return fallback;
   return path.split('/').last;
+}
+
+String _diagramDisplayLabel(SddDiagram diagram) {
+  final title = diagram.title?.trim();
+  if (title != null && title.isNotEmpty) return title;
+  return '${_diagramTypeLabel(diagram.diagramType, path: diagram.path, content: diagram.content)} diagram';
+}
+
+String _diagramTypeLabel(String rawType, {String? path, String? content}) {
+  final type = rawType.trim();
+  final normalized = type.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '');
+  final source = (content ?? '').trimLeft().toLowerCase();
+  final lowerPath = (path ?? '').toLowerCase();
+  if (source.startsWith('classdiagram') || normalized == 'classdiagram') {
+    return 'UML class';
+  }
+  if (source.startsWith('sequencediagram') || normalized == 'sequencediagram') {
+    return 'UML sequence';
+  }
+  if (source.startsWith('statediagram') || normalized == 'statediagram') {
+    return 'UML state';
+  }
+  if (source.startsWith('erdiagram') || normalized == 'erdiagram') {
+    return 'ER';
+  }
+  if (source.startsWith('c4component') || normalized == 'c4component') {
+    return 'C4 component';
+  }
+  if (normalized.contains('component') ||
+      lowerPath.contains('component') ||
+      lowerPath.contains('/components')) {
+    return 'UML component';
+  }
+  return switch (normalized) {
+    'flowchart' || 'graph' => 'Flowchart',
+    'architecture' => 'Architecture',
+    'journey' => 'User journey',
+    'gantt' => 'Gantt',
+    'mindmap' => 'Mind map',
+    'timeline' => 'Timeline',
+    '' || 'unknown' => 'Diagram',
+    _ => type,
+  };
+}
+
+IconData _diagramIcon(SddDiagram diagram) {
+  final label = _diagramTypeLabel(
+    diagram.diagramType,
+    path: diagram.path,
+    content: diagram.content,
+  ).toLowerCase();
+  if (label.contains('sequence')) return Icons.swap_horiz_rounded;
+  if (label.contains('class')) return Icons.schema_outlined;
+  if (label.contains('state')) return Icons.sync_alt_rounded;
+  if (label.contains('component') || label.contains('architecture')) {
+    return Icons.account_tree_outlined;
+  }
+  return Icons.hub_outlined;
+}
+
+String _diagramHeaderSubtitle(SddDiagram diagram) {
+  final type = _diagramTypeLabel(
+    diagram.diagramType,
+    path: diagram.path,
+    content: diagram.content,
+  );
+  final scope = diagram.scope.trim();
+  if (scope.isEmpty) return type;
+  return '$scope · $type';
 }
 
 String _safeMetadataPath(String path) {
@@ -2579,9 +2504,9 @@ class _DiagramCardState extends State<_DiagramCard> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
           _FileHeader(
-            title: '${diagram.diagramType} diagram',
+            title: _diagramDisplayLabel(diagram),
             file: diagram,
-            subtitle: diagram.scope,
+            subtitle: _diagramHeaderSubtitle(diagram),
           ),
           _ArtifactControls(
             target: widget.feedbackTarget,
@@ -2804,7 +2729,7 @@ class _FullscreenDiagramDialogState extends State<_FullscreenDiagramDialog> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
               Text(
-                widget.diagram.title ?? '${widget.diagram.diagramType} diagram',
+                _diagramDisplayLabel(widget.diagram),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
               ),
@@ -3094,7 +3019,10 @@ class _CodexActionMenuButton extends StatelessWidget {
           .map(
             (kind) => PopupMenuItem<SddCodexActionKind>(
               value: kind,
-              child: Text(kind.label),
+              child: Text(
+                kind.label,
+                style: const TextStyle(color: _WorkbenchColors.onBackground),
+              ),
             ),
           )
           .toList(growable: false),
@@ -3661,7 +3589,13 @@ class _FileHeader extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
-        Text(title, style: const TextStyle(fontWeight: FontWeight.w800)),
+        Text(
+          title,
+          style: const TextStyle(
+            color: _WorkbenchColors.onBackground,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
         const SizedBox(height: 3),
         Text(
           secondary,

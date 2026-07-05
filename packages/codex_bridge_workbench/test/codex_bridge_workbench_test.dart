@@ -111,6 +111,7 @@ void main() {
     expect(find.text('Dashboard'), findsNothing);
     expect(find.text('SDD files'), findsNothing);
     expect(find.text('Current Project Dashboard'), findsNothing);
+    expect(find.text('Audit SDD'), findsNothing);
     expect(find.text('Codex Bridge'), findsWidgets);
   });
 
@@ -129,7 +130,7 @@ void main() {
 
     expect(find.text('Architecture diagrams'), findsOneWidget);
     expect(find.textContaining('architecture/components.mmd'), findsOneWidget);
-    await tester.tap(find.text('flowchart diagram').first);
+    await tester.tap(find.text('UML component diagram').first);
     await tester.pumpAndSettle();
     expect(find.text('Diagram preview failed'), findsOneWidget);
     expect(find.text('invalid Mermaid syntax'), findsOneWidget);
@@ -150,13 +151,13 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Architecture diagrams'), findsOneWidget);
-    expect(find.text('flowchart diagram'), findsOneWidget);
+    expect(find.text('UML component diagram'), findsOneWidget);
     expect(
       find.textContaining('rendered architecture/components.mmd'),
       findsNothing,
     );
 
-    await tester.tap(find.text('flowchart diagram').first);
+    await tester.tap(find.text('UML component diagram').first);
     await tester.pumpAndSettle();
 
     expect(find.byTooltip('Close full screen diagram'), findsOneWidget);
@@ -356,7 +357,11 @@ void main() {
     _openWorkbench(tester);
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Audit SDD').first);
+    await tester.tap(find.text('Specs').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Codex').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Refine spec.md').first);
     await tester.pumpAndSettle();
     expect(find.text('Run against Workbench platform repo'), findsOneWidget);
     expect(find.text('Execution target: Current project'), findsOneWidget);
