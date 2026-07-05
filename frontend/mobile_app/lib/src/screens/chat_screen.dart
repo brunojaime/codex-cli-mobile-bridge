@@ -17,7 +17,6 @@ import '../models/agent_configuration.dart';
 import '../models/agent_profile.dart';
 import '../models/codex_tooling.dart';
 import '../models/server_capabilities.dart';
-import '../models/feedback_queue_item.dart';
 import '../models/server_health.dart';
 import '../models/server_profile.dart';
 import '../models/session_detail.dart';
@@ -65,7 +64,6 @@ enum _AppBarOverflowAction {
 
 enum _PinnedWorkspaceAction {
   newChat,
-  feedbackQueue,
   remove,
 }
 
@@ -91,9 +89,6 @@ class ChatScreen extends StatefulWidget {
     this.initialSidebarWorkspaces = const <Workspace>[],
     this.initialCodexTooling,
     this.codexMcpAppInstallerOverride,
-    this.feedbackQueueCountLoaderOverride,
-    this.feedbackQueueListLoaderOverride,
-    this.feedbackSourceWorkspaceAliases = const <String, String>{},
     this.onActiveServerBaseUrlChanged,
     this.audioRecorderFactoryOverride,
   });
@@ -107,12 +102,6 @@ class ChatScreen extends StatefulWidget {
   final CodexToolingSnapshot? initialCodexTooling;
   final Future<CodexToolingSnapshot?> Function(CodexMcpApp app)?
       codexMcpAppInstallerOverride;
-  final Future<int> Function(String baseUrl)? feedbackQueueCountLoaderOverride;
-  final Future<List<FeedbackQueueItem>> Function(
-    String baseUrl, {
-    required bool includeImages,
-  })? feedbackQueueListLoaderOverride;
-  final Map<String, String> feedbackSourceWorkspaceAliases;
   final ValueChanged<String>? onActiveServerBaseUrlChanged;
   @visibleForTesting
   final AudioNoteRecorder Function()? audioRecorderFactoryOverride;
@@ -150,8 +139,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   bool _isUpdatingFilteredMessagesView = false;
   String? _filteredMessagesViewErrorText;
   _ChatBodyView _chatBodyView = _ChatBodyView.conversation;
-  List<FeedbackQueueItem> _feedbackQueuePreviewItems = <FeedbackQueueItem>[];
-  bool _isRefreshingFeedbackQueueCount = false;
   static const double _compactAppBarBreakpoint = 640;
   static const int _sessionGroupPageSize = 5;
 
@@ -179,9 +166,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         _initializeServerProfiles();
       });
     }
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      unawaited(_refreshFeedbackQueueCount());
-    });
   }
 
   @override
@@ -201,7 +185,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       _chatController.handleAppResumed();
-      unawaited(_refreshFeedbackQueueCount());
     }
   }
 
@@ -1718,7 +1701,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         });
       }
       _replyPlaybackService.setCapabilities(capabilities);
-      unawaited(_refreshFeedbackQueueCount());
       didConnect = true;
     } catch (error) {
       _replyPlaybackService.setCapabilities(null);
@@ -1738,49 +1720,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         ..dispose();
     }
     return didConnect;
-  }
-
-  Future<void> _refreshFeedbackQueueCount() async {
-    if (_isRefreshingFeedbackQueueCount) return;
-    _isRefreshingFeedbackQueueCount = true;
-    final baseUrl = _activeServer?.baseUrl ?? widget.initialApiBaseUrl;
-    try {
-      final countLoader = widget.feedbackQueueCountLoaderOverride;
-      final listLoader = widget.feedbackQueueListLoaderOverride;
-      final previewItems = listLoader != null
-          ? await listLoader(baseUrl, includeImages: false)
-          : countLoader == null
-              ? await ApiClient(baseUrl: baseUrl).listFeedbackQueue()
-              : null;
-      if (previewItems == null) {
-        await countLoader!(baseUrl);
-      }
-      if (mounted) {
-        setState(() {
-          if (previewItems != null) {
-            _feedbackQueuePreviewItems = previewItems;
-          }
-        });
-      }
-    } catch (_) {
-      // Feedback should stay opportunistic; connection errors are surfaced
-      // when the user opens the queue.
-    } finally {
-      _isRefreshingFeedbackQueueCount = false;
-    }
-  }
-
-  Future<List<FeedbackQueueItem>> _listFeedbackQueue({
-    required bool includeImages,
-  }) {
-    final baseUrl = _activeServer?.baseUrl ?? widget.initialApiBaseUrl;
-    final override = widget.feedbackQueueListLoaderOverride;
-    if (override != null) {
-      return override(baseUrl, includeImages: includeImages);
-    }
-    return ApiClient(baseUrl: baseUrl).listFeedbackQueue(
-      includeImages: includeImages,
-    );
   }
 
   Future<void> _refreshCodexTooling({bool showLoading = false}) async {
@@ -2455,354 +2394,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     }
   }
 
-  Future<void> _openFeedbackQueueSheet({required Workspace workspace}) async {
-    final client = ApiClient(
-      baseUrl: _activeServer?.baseUrl ?? widget.initialApiBaseUrl,
-    );
-    List<FeedbackQueueItem> items;
-    try {
-      final allItems = await _listFeedbackQueue(includeImages: true);
-      items = _feedbackItemsForWorkspace(allItems, workspace);
-      if (mounted) {
-        setState(() {
-          _feedbackQueuePreviewItems = allItems;
-        });
-      }
-    } catch (error) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Feedback queue unavailable.\n$error')),
-      );
-      return;
-    }
-    if (!mounted) return;
-
-    final selectedIds = <String>{};
-
-    await showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      builder: (context) {
-        return StatefulBuilder(
-          builder: (context, setSheetState) {
-            Future<void> reload() async {
-              final refreshedAll =
-                  await _listFeedbackQueue(includeImages: true);
-              final refreshed = _feedbackItemsForWorkspace(
-                refreshedAll,
-                workspace,
-              );
-              selectedIds.removeWhere(
-                (id) => !refreshed.any((item) => item.id == id),
-              );
-              if (mounted) {
-                setState(() {
-                  _feedbackQueuePreviewItems = refreshedAll;
-                });
-              }
-              if (context.mounted) {
-                setSheetState(() => items = refreshed);
-              }
-            }
-
-            return SafeArea(
-              child: ConstrainedBox(
-                constraints: BoxConstraints(
-                  maxHeight: MediaQuery.sizeOf(context).height * 0.86,
-                ),
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: <Widget>[
-                      Row(
-                        children: <Widget>[
-                          const Expanded(
-                            child: Text(
-                              'Feedback queue',
-                              style: TextStyle(
-                                fontSize: 20,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                          ),
-                          IconButton(
-                            tooltip: 'Refresh',
-                            onPressed: () => unawaited(reload()),
-                            icon: const Icon(Icons.refresh),
-                          ),
-                          IconButton(
-                            tooltip: 'Close',
-                            onPressed: () => Navigator.of(context).pop(),
-                            icon: const Icon(Icons.close),
-                          ),
-                        ],
-                      ),
-                      if (items.isEmpty)
-                        Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 28),
-                          child: Text(
-                            'No feedback is pending for ${workspace.name}.',
-                          ),
-                        )
-                      else ...<Widget>[
-                        Row(
-                          children: <Widget>[
-                            Expanded(
-                              child: Text(
-                                '${workspace.name} · ${selectedIds.length} selected',
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  color: Color(0xFF8B97B5),
-                                ),
-                              ),
-                            ),
-                            TextButton(
-                              onPressed: () {
-                                setSheetState(() {
-                                  if (selectedIds.length == items.length) {
-                                    selectedIds.clear();
-                                  } else {
-                                    selectedIds
-                                      ..clear()
-                                      ..addAll(items.map((item) => item.id));
-                                  }
-                                });
-                              },
-                              child: Text(
-                                selectedIds.length == items.length
-                                    ? 'Unselect all'
-                                    : 'Select all',
-                              ),
-                            ),
-                          ],
-                        ),
-                        Flexible(
-                          child: ListView.separated(
-                            shrinkWrap: true,
-                            itemCount: items.length,
-                            separatorBuilder: (_, __) =>
-                                const SizedBox(height: 12),
-                            itemBuilder: (context, index) {
-                              final item = items[index];
-                              final imageBytes = item.screenshotBytes;
-                              final selected = selectedIds.contains(item.id);
-                              return Card(
-                                margin: EdgeInsets.zero,
-                                child: Padding(
-                                  padding: const EdgeInsets.all(12),
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.stretch,
-                                    children: <Widget>[
-                                      CheckboxListTile(
-                                        contentPadding: EdgeInsets.zero,
-                                        value: selected,
-                                        onChanged: (value) {
-                                          setSheetState(() {
-                                            if (value ?? false) {
-                                              selectedIds.add(item.id);
-                                            } else {
-                                              selectedIds.remove(item.id);
-                                            }
-                                          });
-                                        },
-                                        title: Text(
-                                          item.comment,
-                                          style: const TextStyle(
-                                            fontWeight: FontWeight.w600,
-                                          ),
-                                        ),
-                                        subtitle: Text(
-                                          '${_feedbackItemSourceLabel(item)} · ${item.status}'
-                                          '${item.hasScreenshot ? ' · image' : ''}'
-                                          '${item.hasAudio ? ' · audio' : ''}',
-                                        ),
-                                      ),
-                                      if (imageBytes != null)
-                                        ClipRRect(
-                                          borderRadius:
-                                              BorderRadius.circular(8),
-                                          child: Image.memory(
-                                            imageBytes,
-                                            height: 180,
-                                            fit: BoxFit.cover,
-                                          ),
-                                        ),
-                                      const SizedBox(height: 10),
-                                      Align(
-                                        alignment: Alignment.centerRight,
-                                        child: IconButton(
-                                          tooltip: 'Delete',
-                                          onPressed: () async {
-                                            await client
-                                                .deleteFeedbackQueueItem(
-                                              item.id,
-                                            );
-                                            await reload();
-                                          },
-                                          icon: const Icon(
-                                            Icons.delete_outline,
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              );
-                            },
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        FilledButton.icon(
-                          onPressed: selectedIds.isEmpty
-                              ? null
-                              : () async {
-                                  final selectedItems = items
-                                      .where(
-                                        (item) => selectedIds.contains(item.id),
-                                      )
-                                      .toList(growable: false);
-                                  Navigator.of(context).pop();
-                                  await _stageFeedbackItemsForChat(
-                                    workspace,
-                                    selectedItems,
-                                  );
-                                },
-                          icon: const Icon(Icons.arrow_forward),
-                          label: const Text('Next'),
-                        ),
-                      ],
-                    ],
-                  ),
-                ),
-              ),
-            );
-          },
-        );
-      },
-    );
-  }
-
-  Future<void> _stageFeedbackItemsForChat(
-    Workspace workspace,
-    List<FeedbackQueueItem> items,
-  ) async {
-    if (items.isEmpty) return;
-
-    await _pinWorkspaceToSidebar(workspace);
-    if (_chatController.currentSession?.workspacePath != workspace.path) {
-      await _createNewChatForWorkspace(workspace);
-      if (!mounted) return;
-      if (_chatController.currentSession?.workspacePath != workspace.path) {
-        return;
-      }
-    }
-
-    final attachments = <_PendingAttachmentDraft>[];
-    for (var index = 0; index < items.length; index += 1) {
-      final item = items[index];
-      final bytes = item.screenshotBytes;
-      if (bytes == null) continue;
-      final name = 'feedback-${index + 1}-${item.id}.png';
-      attachments.add(
-        _PendingAttachmentDraft(
-          file: XFile.fromData(
-            bytes,
-            name: name,
-            mimeType: item.screenshotMimeType,
-            path: name,
-          ),
-          name: name,
-          kind: _AttachmentDraftKind.image,
-          sizeBytes: bytes.length,
-          previewBytes: bytes,
-        ),
-      );
-    }
-
-    final currentDraft = _currentComposerDraft();
-    final metadata = _buildFeedbackComposerMetadata(workspace, items);
-    final currentText = currentDraft.text.trim();
-    final nextText =
-        currentText.isEmpty ? metadata : '$currentText\n\n$metadata';
-    final nextAttachments = <_PendingAttachmentDraft>[
-      ...currentDraft.attachments,
-      ...attachments,
-    ];
-
-    _textController.value = TextEditingValue(
-      text: nextText,
-      selection: TextSelection.collapsed(offset: nextText.length),
-    );
-    _updateCurrentComposerDraft(
-      _ComposerDraft(
-        text: nextText,
-        attachments: nextAttachments,
-        codexRunOptions: currentDraft.codexRunOptions,
-      ),
-    );
-    _setChatBodyView(_ChatBodyView.conversation);
-    _updateStickToBottom(true);
-
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          items.length == 1
-              ? 'Feedback staged in ${workspace.name}.'
-              : '${items.length} feedback items staged in ${workspace.name}.',
-        ),
-      ),
-    );
-  }
-
-  String _buildFeedbackComposerMetadata(
-    Workspace workspace,
-    List<FeedbackQueueItem> items,
-  ) {
-    final buffer = StringBuffer()
-      ..writeln('Feedback queue for ${workspace.name}')
-      ..writeln('Project path: ${workspace.path}')
-      ..writeln()
-      ..writeln('Selected feedback:');
-    for (var index = 0; index < items.length; index += 1) {
-      final item = items[index];
-      buffer
-        ..writeln()
-        ..writeln('${index + 1}. ${item.comment}')
-        ..writeln('- id: ${item.id}')
-        ..writeln('- source: ${_feedbackItemSourceLabel(item)}')
-        ..writeln('- source app: ${item.sourceApp}')
-        ..writeln('- status: ${item.status}')
-        ..writeln(
-            '- created: ${item.createdAt?.toIso8601String() ?? 'unknown'}')
-        ..writeln('- selection bounds: ${item.selectionBounds}')
-        ..writeln('- selection points: ${item.selectionPoints.length}')
-        ..writeln('- image attachment: feedback-${index + 1}-${item.id}.png')
-        ..writeln(
-          '- instruction: The attached screenshot contains the user\'s drawn mark. Treat the marked area as the primary target of this feedback, and use the associated comment to understand the requested change.',
-        );
-      if (item.hasAudio ||
-          item.audioMimeType != null ||
-          item.audioDurationMs != null ||
-          item.audioByteLength != null) {
-        buffer.writeln(
-          '- audio: ${item.audioMimeType ?? 'unknown type'}, '
-          '${item.audioDurationMs ?? 0} ms, '
-          '${item.audioByteLength ?? 0} bytes',
-        );
-      }
-    }
-    buffer
-      ..writeln()
-      ..write(
-        'Use the attached screenshots and the metadata above to decide the next implementation changes.',
-      );
-    return buffer.toString();
-  }
-
   int _codexSelectionCount(CodexRunOptions options) {
     var count = 0;
     if (options.profile?.trim().isNotEmpty ?? false) {
@@ -3109,7 +2700,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             (session) =>
                 archivedOnly ? session.isArchived : !session.isArchived,
           )
-          .toList(growable: false);
+          .toList(growable: false)
+        ..sort(_compareSessionSummariesByRecentActivity);
       final displayedSessionCount = _visibleSessionCountForGroup(
         workspace.path,
         archivedOnly: archivedOnly,
@@ -3157,7 +2749,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       final unreadChatsCount = visibleSessions
           .where((session) => _unreadCountForSession(session) > 0)
           .length;
-      final feedbackCount = _feedbackCountForWorkspace(workspace);
       final projectCardColor =
           hasSelected ? const Color(0xFF16213C) : const Color(0xFF121A31);
       final projectBorderColor = activeJobCount > 0
@@ -3289,26 +2880,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                         ),
                       ),
                     ),
-                  if (feedbackCount > 0)
-                    Container(
-                      margin: const EdgeInsets.only(right: 8),
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 4,
-                      ),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFFF6B6B),
-                        borderRadius: BorderRadius.circular(999),
-                      ),
-                      child: Text(
-                        '$feedbackCount feedback',
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w700,
-                          fontSize: 11,
-                        ),
-                      ),
-                    ),
                   PopupMenuButton<_PinnedWorkspaceAction>(
                     tooltip: 'Project actions for ${workspace.name}',
                     icon: const Icon(Icons.more_horiz_rounded),
@@ -3317,10 +2888,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                         case _PinnedWorkspaceAction.newChat:
                           Navigator.of(context).pop();
                           await _createNewChatForWorkspace(workspace);
-                          return;
-                        case _PinnedWorkspaceAction.feedbackQueue:
-                          Navigator.of(context).pop();
-                          await _openFeedbackQueueSheet(workspace: workspace);
                           return;
                         case _PinnedWorkspaceAction.remove:
                           await _removeWorkspaceFromSidebar(workspace);
@@ -3333,11 +2900,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                         value: _PinnedWorkspaceAction.newChat,
                         child: Text('New chat in ${workspace.name}'),
                       ),
-                      if (feedbackCount > 0)
-                        PopupMenuItem<_PinnedWorkspaceAction>(
-                          value: _PinnedWorkspaceAction.feedbackQueue,
-                          child: Text('Feedback queue ($feedbackCount)'),
-                        ),
                       const PopupMenuItem<_PinnedWorkspaceAction>(
                         value: _PinnedWorkspaceAction.remove,
                         child: Text('Remove project'),
@@ -3348,14 +2910,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
               ),
               children: visibleSessions.isEmpty
                   ? <Widget>[
-                      if (feedbackCount > 0)
-                        _ProjectFeedbackQueueButton(
-                          count: feedbackCount,
-                          onPressed: () async {
-                            Navigator.of(context).pop();
-                            await _openFeedbackQueueSheet(workspace: workspace);
-                          },
-                        ),
                       Padding(
                         padding: EdgeInsets.fromLTRB(24, 0, 24, 16),
                         child: Align(
@@ -3370,14 +2924,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                       ),
                     ]
                   : <Widget>[
-                      if (feedbackCount > 0)
-                        _ProjectFeedbackQueueButton(
-                          count: feedbackCount,
-                          onPressed: () async {
-                            Navigator.of(context).pop();
-                            await _openFeedbackQueueSheet(workspace: workspace);
-                          },
-                        ),
                       ...displayedSessions.map(
                         (session) => Padding(
                           padding: const EdgeInsets.only(left: 10, right: 10),
@@ -3480,6 +3026,21 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     return '${archivedOnly ? 'archived' : 'active'}::$workspacePath';
   }
 
+  int _compareSessionSummariesByRecentActivity(
+    ChatSessionSummary left,
+    ChatSessionSummary right,
+  ) {
+    final updatedComparison = right.updatedAt.compareTo(left.updatedAt);
+    if (updatedComparison != 0) {
+      return updatedComparison;
+    }
+    final createdComparison = right.createdAt.compareTo(left.createdAt);
+    if (createdComparison != 0) {
+      return createdComparison;
+    }
+    return right.id.compareTo(left.id);
+  }
+
   String _fallbackWorkspaceName(String workspacePath) {
     final trimmed = workspacePath.trim();
     if (trimmed.isEmpty) {
@@ -3490,82 +3051,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       return trimmed;
     }
     return parts.last;
-  }
-
-  int _feedbackCountForWorkspace(Workspace workspace) {
-    return _feedbackQueuePreviewItems
-        .where((item) => _feedbackItemMatchesWorkspace(item, workspace))
-        .length;
-  }
-
-  List<FeedbackQueueItem> _feedbackItemsForWorkspace(
-    List<FeedbackQueueItem> items,
-    Workspace workspace,
-  ) {
-    return items
-        .where((item) => _feedbackItemMatchesWorkspace(item, workspace))
-        .toList(growable: false);
-  }
-
-  bool _feedbackItemMatchesWorkspace(
-    FeedbackQueueItem item,
-    Workspace workspace,
-  ) {
-    final source = _normalizeFeedbackSource(item.sourceApp);
-    if (source.isEmpty) return false;
-    final aliases = _feedbackSourceWorkspaceAliases();
-    final aliasWorkspace = aliases[source];
-    if (aliasWorkspace != null) {
-      return _workspaceMatchesFeedbackAlias(workspace, aliasWorkspace);
-    }
-    return _workspaceFeedbackKeys(workspace).contains(source);
-  }
-
-  Map<String, String> _feedbackSourceWorkspaceAliases() {
-    final aliases = <String, String>{};
-    void addAliases(Map<String, String> values) {
-      for (final entry in values.entries) {
-        final source = _normalizeFeedbackSource(entry.key);
-        final workspace = entry.value.trim();
-        if (source.isNotEmpty && workspace.isNotEmpty) {
-          aliases[source] = workspace;
-        }
-      }
-    }
-
-    addAliases(_activeServerCapabilities?.feedbackSourceWorkspaceAliases ??
-        const <String, String>{});
-    addAliases(widget.feedbackSourceWorkspaceAliases);
-    return aliases;
-  }
-
-  bool _workspaceMatchesFeedbackAlias(Workspace workspace, String alias) {
-    final trimmedAlias = alias.trim();
-    if (trimmedAlias == workspace.path) return true;
-    return _normalizeFeedbackSource(trimmedAlias) ==
-            _normalizeFeedbackSource(workspace.path) ||
-        _normalizeFeedbackSource(_fallbackWorkspaceName(trimmedAlias)) ==
-            _normalizeFeedbackSource(_fallbackWorkspaceName(workspace.path)) ||
-        _normalizeFeedbackSource(trimmedAlias) ==
-            _normalizeFeedbackSource(workspace.name);
-  }
-
-  String _feedbackItemSourceLabel(FeedbackQueueItem item) {
-    final displayName = item.sourceDisplayName?.trim();
-    if (displayName != null && displayName.isNotEmpty) return displayName;
-    return item.sourceApp;
-  }
-
-  Set<String> _workspaceFeedbackKeys(Workspace workspace) {
-    final keys = <String>{
-      _normalizeFeedbackSource(workspace.name),
-      _normalizeFeedbackSource(_fallbackWorkspaceName(workspace.path)),
-    }..remove('');
-    return keys;
-  }
-
-  String _normalizeFeedbackSource(String value) {
-    return value.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '');
   }
 
   void _handleChatControllerChanged() {
@@ -3752,8 +3237,6 @@ class _SessionTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final activeJobPresentation =
-        _buildSessionActiveJobPresentation(activeJobSummary);
     final isActive = activeJobSummary != null;
     final isUploading = outgoingUploadSummary != null;
     final tileBackgroundColor = selected
@@ -3777,11 +3260,10 @@ class _SessionTile extends StatelessWidget {
             : isUploading
                 ? const Color(0xFFEAF0FF)
                 : null;
-    final previewColor = isActive || isUploading
+    final timelineColor = isActive || isUploading
         ? const Color(0xFFA8C7C0)
         : const Color(0xFF8B97B5);
-    final topicText = _sessionTopicDescription(session);
-    final previewText = _sessionPreviewText(session);
+    final displayTitle = _sessionDisplayTitle(session);
 
     return AnimatedContainer(
       duration: const Duration(milliseconds: 180),
@@ -3800,7 +3282,7 @@ class _SessionTile extends StatelessWidget {
             borderRadius: BorderRadius.circular(16),
           ),
           title: Text(
-            session.title,
+            displayTitle,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(
@@ -3813,109 +3295,24 @@ class _SessionTile extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
             children: <Widget>[
-              if (topicText != null) ...<Widget>[
-                const SizedBox(height: 4),
-                Text(
-                  topicText,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: session.isArchived
-                        ? const Color(0xFF9FB3D6)
-                        : const Color(0xFF55D6BE),
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                const SizedBox(height: 4),
-              ],
-              Text(
-                previewText,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: session.isArchived
-                      ? const Color(0xFF7F8EAF)
-                      : previewColor,
-                ),
+              const SizedBox(height: 6),
+              _SessionMomentLine(
+                icon: Icons.schedule_rounded,
+                label: 'Latest',
+                value: _formatSessionMoment(context, session.updatedAt),
+                color: session.isArchived
+                    ? const Color(0xFF7F8EAF)
+                    : timelineColor,
               ),
-              if (session.isArchived) ...<Widget>[
-                const SizedBox(height: 6),
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF1B2745),
-                    borderRadius: BorderRadius.circular(999),
-                  ),
-                  child: const Text(
-                    'Archived',
-                    style: TextStyle(
-                      color: Color(0xFF9FB3D6),
-                      fontSize: 11,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ),
-              ],
-              if (activeJobPresentation != null) ...<Widget>[
-                const SizedBox(height: 6),
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: activeJobPresentation.backgroundColor,
-                    borderRadius: BorderRadius.circular(999),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: <Widget>[
-                      Container(
-                        width: 8,
-                        height: 8,
-                        decoration: BoxDecoration(
-                          color: activeJobPresentation.foregroundColor,
-                          shape: BoxShape.circle,
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Flexible(
-                        child: Text(
-                          activeJobPresentation.label,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: activeJobPresentation.foregroundColor,
-                            fontSize: 11,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-              if (isUploading) ...<Widget>[
-                const SizedBox(height: 6),
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF15265A),
-                    borderRadius: BorderRadius.circular(999),
-                  ),
-                  child: Text(
-                    _formatOutgoingUploadLabel(outgoingUploadSummary!),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: Color(0xFFB8CCFF),
-                      fontSize: 11,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ),
-              ],
+              const SizedBox(height: 3),
+              _SessionMomentLine(
+                icon: Icons.flag_outlined,
+                label: 'Started',
+                value: _formatSessionMoment(context, session.createdAt),
+                color: session.isArchived
+                    ? const Color(0xFF7F8EAF)
+                    : const Color(0xFF8B97B5),
+              ),
             ],
           ),
           trailing: Row(
@@ -3988,37 +3385,63 @@ class _SessionTile extends StatelessWidget {
   }
 }
 
-String? _sessionTopicDescription(ChatSessionSummary session) {
-  final topic = session.topicDescription?.trim();
-  if (topic != null && topic.isNotEmpty) {
-    return topic;
+class _SessionMomentLine extends StatelessWidget {
+  const _SessionMomentLine({
+    required this.icon,
+    required this.label,
+    required this.value,
+    required this.color,
+  });
+
+  final IconData icon;
+  final String label;
+  final String value;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: <Widget>[
+        Icon(icon, size: 13, color: color),
+        const SizedBox(width: 6),
+        Text(
+          label,
+          style: TextStyle(
+            color: color,
+            fontSize: 11,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        const SizedBox(width: 6),
+        Expanded(
+          child: Text(
+            value,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: color,
+              fontSize: 12,
+            ),
+          ),
+        ),
+      ],
+    );
   }
-  final preview = session.lastMessagePreview?.trim();
-  if (preview == null || preview.isEmpty) {
-    return null;
-  }
-  final words = RegExp(r'[\w#+./-]+')
-      .allMatches(preview)
-      .map((match) => match.group(0) ?? '')
-      .where((word) => word.isNotEmpty)
-      .take(7)
-      .toList(growable: false);
-  if (words.isEmpty) {
-    return null;
-  }
-  return words.join(' ');
 }
 
-String _sessionPreviewText(ChatSessionSummary session) {
-  final productDescription = session.conversationProduct?.description.trim();
-  if (productDescription != null && productDescription.isNotEmpty) {
-    return productDescription;
+String _sessionDisplayTitle(ChatSessionSummary session) {
+  final title = session.title.trim();
+  if (title.isEmpty || title.toLowerCase() == 'new chat') {
+    return 'Untitled chat';
   }
-  final preview = session.lastMessagePreview?.trim();
-  if (preview != null && preview.isNotEmpty) {
-    return preview;
-  }
-  return 'No messages yet';
+  return title;
+}
+
+String _formatSessionMoment(BuildContext context, DateTime timestamp) {
+  final localTimestamp = timestamp.toLocal();
+  final dayLabel = formatChatDaySeparatorLabel(context, localTimestamp);
+  final timeLabel = formatChatMessageTime(context, localTimestamp);
+  return '$dayLabel, $timeLabel';
 }
 
 String _formatProjectActivityLabel({
@@ -4044,32 +3467,6 @@ String _formatProjectActivityLabel({
   return segments.join(' • ');
 }
 
-String _formatOutgoingUploadLabel(SessionOutgoingUploadSummary summary) {
-  if (summary.totalCount == 1) {
-    if (summary.audioCount == 1) {
-      return 'Sending audio';
-    }
-    if (summary.imageCount == 1) {
-      return 'Uploading image';
-    }
-    if (summary.fileCount == 1) {
-      return 'Uploading file';
-    }
-    return 'Uploading attachments';
-  }
-
-  if (summary.audioCount == summary.totalCount) {
-    return 'Sending ${summary.totalCount} audios';
-  }
-  if (summary.imageCount == summary.totalCount) {
-    return 'Uploading ${summary.totalCount} images';
-  }
-  if (summary.fileCount == summary.totalCount) {
-    return 'Uploading ${summary.totalCount} files';
-  }
-  return 'Uploading ${summary.totalCount} items';
-}
-
 IconData _outgoingUploadIcon(SessionOutgoingUploadSummary summary) {
   if (summary.audioCount == summary.totalCount) {
     return Icons.graphic_eq_rounded;
@@ -4078,58 +3475,6 @@ IconData _outgoingUploadIcon(SessionOutgoingUploadSummary summary) {
     return Icons.image_rounded;
   }
   return Icons.cloud_upload_rounded;
-}
-
-class _SessionActiveJobPresentation {
-  const _SessionActiveJobPresentation({
-    required this.label,
-    required this.backgroundColor,
-    required this.foregroundColor,
-  });
-
-  final String label;
-  final Color backgroundColor;
-  final Color foregroundColor;
-}
-
-_SessionActiveJobPresentation? _buildSessionActiveJobPresentation(
-  SessionActiveJobSummary? summary,
-) {
-  if (summary == null) {
-    return null;
-  }
-
-  final elapsedLabel = _formatElapsed(summary.maxElapsedSeconds);
-  if (elapsedLabel == null) {
-    return null;
-  }
-
-  final accentColor = _agentAccentColor(
-    summary.primaryAgentId,
-    seed: summary.primaryAgentSeed,
-  );
-  final agentLabel = summary.primaryAgentLabel.trim();
-  final label = summary.activeJobCount == 1
-      ? '$agentLabel running • $elapsedLabel'
-      : '$agentLabel +${summary.activeJobCount - 1} running • $elapsedLabel';
-
-  return _SessionActiveJobPresentation(
-    label: label,
-    backgroundColor: accentColor.withValues(alpha: 0.18),
-    foregroundColor: accentColor,
-  );
-}
-
-String? _formatElapsed(int? seconds) {
-  if (seconds == null) {
-    return null;
-  }
-  if (seconds < 60) {
-    return '${seconds}s';
-  }
-  final minutes = seconds ~/ 60;
-  final remainingSeconds = seconds % 60;
-  return '${minutes}m ${remainingSeconds}s';
 }
 
 class _MenuStatusBadge extends StatelessWidget {
@@ -4212,31 +3557,6 @@ class _ProjectStatusPill extends StatelessWidget {
               ),
             ),
           ],
-        ),
-      ),
-    );
-  }
-}
-
-class _ProjectFeedbackQueueButton extends StatelessWidget {
-  const _ProjectFeedbackQueueButton({
-    required this.count,
-    required this.onPressed,
-  });
-
-  final int count;
-  final VoidCallback onPressed;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
-      child: Align(
-        alignment: Alignment.centerLeft,
-        child: FilledButton.icon(
-          onPressed: onPressed,
-          icon: const Icon(Icons.feedback_outlined),
-          label: Text('Feedback queue ($count)'),
         ),
       ),
     );
@@ -6422,41 +5742,6 @@ Color _colorFromHex(String value) {
   return Color(0xFF000000 | parsed);
 }
 
-Color _agentAccentColor(
-  AgentId agentId, {
-  required String seed,
-}) {
-  switch (agentId) {
-    case AgentId.generator:
-      return const Color(0xFF55D6BE);
-    case AgentId.reviewer:
-      return const Color(0xFFFFC857);
-    case AgentId.summary:
-      return const Color(0xFFAED3FF);
-    case AgentId.supervisor:
-      return const Color(0xFF8FEAFF);
-    case AgentId.qa:
-      return const Color(0xFF7EE081);
-    case AgentId.ux:
-      return const Color(0xFFFF9AC6);
-    case AgentId.seniorEngineer:
-      return const Color(0xFFFFA15C);
-    case AgentId.scraper:
-      return const Color(0xFF55C5B8);
-    case AgentId.user:
-      return _hashedAccentColor(seed);
-  }
-}
-
-Color _hashedAccentColor(String seed) {
-  var hash = 0;
-  for (final codeUnit in seed.codeUnits) {
-    hash = (hash * 31 + codeUnit) & 0x7fffffff;
-  }
-  final hue = (hash % 360).toDouble();
-  return HSLColor.fromAHSL(1, hue, 0.68, 0.66).toColor();
-}
-
 String _presetLabel(AgentPreset preset) {
   return switch (preset) {
     AgentPreset.solo => 'Solo',
@@ -8109,6 +7394,7 @@ Widget buildComposerVoiceRecordingHarnessForTest({
                   Uint8List.fromList(const <int>[1, 2, 3]),
                   name: 'staged-note.txt',
                   mimeType: 'text/plain',
+                  path: 'staged-note.txt',
                 ),
                 name: 'staged-note.txt',
                 kind: _AttachmentDraftKind.file,
