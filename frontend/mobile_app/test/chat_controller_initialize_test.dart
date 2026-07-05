@@ -77,7 +77,7 @@ void main() {
     controller.dispose();
   });
 
-  test('refreshSessions sorts chats by most recent activity within projects',
+  test('refreshSessions sorts empty chats by creation, not metadata updates',
       () async {
     final controller = ChatController(
       apiClient: _UnsortedSessionsApiClient(),
@@ -238,7 +238,7 @@ class _UnsortedSessionsApiClient extends ApiClient {
         workspacePath: '/workspace/project-a',
         workspaceName: 'Project A',
         createdAt: _timestamp.subtract(const Duration(hours: 4)),
-        updatedAt: _timestamp.subtract(const Duration(hours: 3)),
+        updatedAt: _timestamp.add(const Duration(days: 1)),
       ),
       _summary(
         id: 'project-b-older-created',

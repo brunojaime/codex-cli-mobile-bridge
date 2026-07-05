@@ -2459,12 +2459,57 @@ def test_session_responses_include_short_sanitized_topic_description() -> None:
     summary = SessionSummaryResponse.from_domain(session, messages=messages)
     detail = SessionDetailResponse.from_domain(session, messages=messages)
 
+    assert summary.last_message_at == latest_user_message.created_at
     assert summary.topic_description == (
         "original image attachment is no longer available"
     )
     assert detail.topic_description == summary.topic_description
     assert "codex-remote-retry-assets" not in summary.topic_description
     assert len(summary.topic_description.split()) == 7
+
+
+def test_session_summary_last_message_at_uses_real_messages() -> None:
+    session = ChatSession(
+        id="session-last-message-at",
+        title="Last message timestamp",
+        workspace_path="/workspace/project",
+        workspace_name="project",
+        created_at=datetime(2026, 1, 1, 8, 0, tzinfo=timezone.utc),
+        updated_at=datetime(2026, 1, 2, 17, 43, tzinfo=timezone.utc),
+    )
+
+    empty_summary = SessionSummaryResponse.from_domain(session, messages=[])
+
+    assert empty_summary.last_message_at is None
+
+    old_message = ChatMessage(
+        id="message-old",
+        session_id=session.id,
+        role=ChatMessageRole.USER,
+        author_type=ChatMessageAuthorType.HUMAN,
+        content="Older message",
+        status=ChatMessageStatus.COMPLETED,
+        created_at=datetime(2026, 1, 1, 9, 0, tzinfo=timezone.utc),
+    )
+    latest_message = ChatMessage(
+        id="message-latest",
+        session_id=session.id,
+        role=ChatMessageRole.ASSISTANT,
+        author_type=ChatMessageAuthorType.ASSISTANT,
+        agent_id=AgentId.GENERATOR,
+        agent_type=AgentType.GENERATOR,
+        content="Newest message",
+        status=ChatMessageStatus.COMPLETED,
+        created_at=datetime(2026, 1, 1, 19, 26, tzinfo=timezone.utc),
+    )
+
+    summary = SessionSummaryResponse.from_domain(
+        session,
+        messages=[latest_message, old_message],
+    )
+
+    assert summary.last_message_at == latest_message.created_at
+    assert summary.last_message_preview == "Newest message"
 
 
 def test_session_summary_uses_messages_refreshed_by_terminal_job_sync() -> None:

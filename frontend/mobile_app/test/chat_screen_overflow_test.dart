@@ -158,7 +158,15 @@ void main() {
       (WidgetTester tester) async {
     final session = _buildSession(
       title: 'Sanitized Chat',
-      messages: const <ChatMessage>[],
+      createdAt: DateTime(2026, 1, 1, 8),
+      updatedAt: DateTime(2026, 1, 2, 17, 43),
+      messages: <ChatMessage>[
+        _message(
+          id: 'latest-real-message',
+          text: 'The actual latest chat message',
+          createdAt: DateTime(2026, 1, 1, 19, 26),
+        ),
+      ],
       topicDescription: 'Flaky snapshot tests',
       conversationProduct: const ConversationProduct(
         statusLine: 'Supervisor ready',
@@ -227,22 +235,42 @@ void main() {
     expect(
       find.descendant(
         of: drawer,
+        matching: find.textContaining('Jan 1', skipOffstage: false),
+      ),
+      findsWidgets,
+    );
+    expect(
+      find.descendant(
+        of: drawer,
+        matching: find.textContaining('Jan 2', skipOffstage: false),
+      ),
+      findsNothing,
+    );
+    expect(
+      find.descendant(
+        of: drawer,
         matching: find.text('Started', skipOffstage: false),
       ),
       findsWidgets,
     );
   });
 
-  testWidgets('sidebar session tiles sort by activity and hide extra metadata',
+  testWidgets('sidebar session tiles sort by last message and hide metadata',
       (WidgetTester tester) async {
-    final sameUpdatedAt = DateTime.utc(2026, 1, 1, 12);
+    final sameLastMessageAt = DateTime.utc(2026, 1, 1, 12);
     final sessions = <SessionDetail>[
       _buildSession(
         id: 'oldest',
         title: 'Oldest',
-        messages: const <ChatMessage>[],
+        messages: <ChatMessage>[
+          _message(
+            id: 'oldest-message',
+            text: 'Oldest latest message',
+            createdAt: DateTime.utc(2026, 1, 1, 9),
+          ),
+        ],
         createdAt: DateTime.utc(2026, 1, 1, 8),
-        updatedAt: DateTime.utc(2026, 1, 1, 9),
+        updatedAt: DateTime.utc(2026, 1, 1, 16),
         topicDescription: 'Hidden oldest topic',
         conversationProduct: const ConversationProduct(
           statusLine: 'Hidden oldest status',
@@ -252,9 +280,15 @@ void main() {
       _buildSession(
         id: 'a-id',
         title: 'Id A',
-        messages: const <ChatMessage>[],
+        messages: <ChatMessage>[
+          _message(
+            id: 'a-id-message',
+            text: 'A id latest message',
+            createdAt: sameLastMessageAt,
+          ),
+        ],
         createdAt: DateTime.utc(2026, 1, 1, 10),
-        updatedAt: sameUpdatedAt,
+        updatedAt: DateTime.utc(2026, 1, 1, 15),
         topicDescription: 'Hidden id a topic',
         conversationProduct: const ConversationProduct(
           statusLine: 'Hidden id a status',
@@ -264,9 +298,15 @@ void main() {
       _buildSession(
         id: 'z-id',
         title: 'Id Z',
-        messages: const <ChatMessage>[],
+        messages: <ChatMessage>[
+          _message(
+            id: 'z-id-message',
+            text: 'Z id latest message',
+            createdAt: sameLastMessageAt,
+          ),
+        ],
         createdAt: DateTime.utc(2026, 1, 1, 10),
-        updatedAt: sameUpdatedAt,
+        updatedAt: DateTime.utc(2026, 1, 1, 14),
         topicDescription: 'Hidden id z topic',
         conversationProduct: const ConversationProduct(
           statusLine: 'Hidden id z status',
@@ -276,9 +316,15 @@ void main() {
       _buildSession(
         id: 'created-newer',
         title: 'Created newer',
-        messages: const <ChatMessage>[],
+        messages: <ChatMessage>[
+          _message(
+            id: 'created-newer-message',
+            text: 'Created newer latest message',
+            createdAt: sameLastMessageAt,
+          ),
+        ],
         createdAt: DateTime.utc(2026, 1, 1, 11),
-        updatedAt: sameUpdatedAt,
+        updatedAt: DateTime.utc(2026, 1, 1, 13),
         topicDescription: 'Hidden created topic',
         conversationProduct: const ConversationProduct(
           statusLine: 'Hidden created status',
@@ -287,14 +333,32 @@ void main() {
       ),
       _buildSession(
         id: 'updated-newer',
-        title: 'Updated newer',
-        messages: const <ChatMessage>[],
+        title: 'Message latest',
+        messages: <ChatMessage>[
+          _message(
+            id: 'message-latest-message',
+            text: 'Actually newest message',
+            createdAt: DateTime.utc(2026, 1, 1, 13),
+          ),
+        ],
         createdAt: DateTime.utc(2026, 1, 1, 7),
-        updatedAt: DateTime.utc(2026, 1, 1, 13),
+        updatedAt: DateTime.utc(2026, 1, 1, 6),
         topicDescription: 'Hidden updated topic',
         conversationProduct: const ConversationProduct(
           statusLine: 'Hidden updated status',
           description: 'Hidden updated description',
+        ),
+      ),
+      _buildSession(
+        id: 'empty-metadata-newer',
+        title: 'Empty metadata newer',
+        messages: const <ChatMessage>[],
+        createdAt: DateTime.utc(2026, 1, 1, 10, 30),
+        updatedAt: DateTime.utc(2026, 1, 3, 8),
+        topicDescription: 'Hidden empty topic',
+        conversationProduct: const ConversationProduct(
+          statusLine: 'Hidden empty status',
+          description: 'Hidden empty description',
         ),
       ),
     ];
@@ -304,6 +368,7 @@ void main() {
       'z-id': 'Hidden id z preview',
       'created-newer': 'Hidden created preview',
       'updated-newer': 'Hidden updated preview',
+      'empty-metadata-newer': 'Hidden empty preview',
     };
 
     await _pumpChatScreen(
@@ -326,10 +391,11 @@ void main() {
 
     final drawer = find.byType(Drawer);
     final expectedOrder = <String>[
-      'Updated newer',
+      'Message latest',
       'Created newer',
       'Id Z',
       'Id A',
+      'Empty metadata newer',
       'Oldest',
     ];
     var previousTop = -1.0;
@@ -349,6 +415,8 @@ void main() {
       'Hidden id z description',
       'Hidden created preview',
       'Hidden updated preview',
+      'Hidden empty status',
+      'Hidden empty preview',
     ]) {
       expect(
         find.descendant(
@@ -364,6 +432,13 @@ void main() {
         matching: find.text('Latest', skipOffstage: false),
       ),
       findsNWidgets(expectedOrder.length),
+    );
+    expect(
+      find.descendant(
+        of: drawer,
+        matching: find.textContaining('Jan 3', skipOffstage: false),
+      ),
+      findsNothing,
     );
     expect(
       find.descendant(
@@ -1421,6 +1496,7 @@ class _ChatScreenOverflowApiClient extends ApiClient {
                 lastMessagePreviewBySession.containsKey(session.id)
                     ? lastMessagePreviewBySession[session.id]
                     : _defaultLastMessagePreview(session),
+            lastMessageAt: _defaultLastMessageAt(session),
             createdAt: session.createdAt,
             updatedAt: session.updatedAt,
             activeAgentRunId: session.activeAgentRunId,
@@ -1486,6 +1562,13 @@ class _ChatScreenOverflowApiClient extends ApiClient {
       }
     }
     return null;
+  }
+
+  DateTime? _defaultLastMessageAt(SessionDetail session) {
+    if (session.messages.isEmpty) {
+      return null;
+    }
+    return session.messages.last.createdAt;
   }
 }
 

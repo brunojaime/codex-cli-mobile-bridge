@@ -251,9 +251,10 @@ class ChatController extends ChangeNotifier {
     ChatSessionSummary left,
     ChatSessionSummary right,
   ) {
-    final updatedComparison = right.updatedAt.compareTo(left.updatedAt);
-    if (updatedComparison != 0) {
-      return updatedComparison;
+    final latestComparison =
+        right.latestActivityAt.compareTo(left.latestActivityAt);
+    if (latestComparison != 0) {
+      return latestComparison;
     }
     final createdComparison = right.createdAt.compareTo(left.createdAt);
     if (createdComparison != 0) {

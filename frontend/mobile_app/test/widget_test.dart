@@ -2350,13 +2350,33 @@ flowchart LR
         'workspace_name': 'Legacy',
         'created_at': DateTime.utc(2026, 1, 1).toIso8601String(),
         'updated_at': DateTime.utc(2026, 1, 1).toIso8601String(),
+        'last_message_at': DateTime.utc(2026, 1, 1, 2).toIso8601String(),
         'agent_configuration': 'broken',
       },
     );
 
     expect(summary.agentConfiguration.preset, AgentPreset.solo);
+    expect(summary.lastMessageAt, DateTime.utc(2026, 1, 1, 2));
+    expect(summary.latestActivityAt, DateTime.utc(2026, 1, 1, 2));
     expect(summary.agentConfiguration.byId(AgentId.generator)?.enabled, isTrue);
     expect(summary.agentConfiguration.byId(AgentId.reviewer)?.enabled, isFalse);
+  });
+
+  test('session summary latest activity falls back to creation time', () {
+    final summary = ChatSessionSummary.fromJson(
+      <String, dynamic>{
+        'id': 'session-empty',
+        'title': 'Empty',
+        'workspace_path': '/workspace/empty',
+        'workspace_name': 'Empty',
+        'created_at': DateTime.utc(2026, 1, 1).toIso8601String(),
+        'updated_at': DateTime.utc(2026, 1, 2).toIso8601String(),
+        'last_message_at': null,
+      },
+    );
+
+    expect(summary.lastMessageAt, isNull);
+    expect(summary.latestActivityAt, DateTime.utc(2026, 1, 1));
   });
 
   test('chat message parsing tolerates partial legacy recovery payloads', () {
@@ -3578,6 +3598,8 @@ class _FakeApiClient extends ApiClient {
           agentProfileColor: session.agentProfileColor,
           createdAt: session.createdAt,
           updatedAt: session.updatedAt,
+          lastMessageAt:
+              session.messages.isEmpty ? null : session.messages.last.createdAt,
         ),
     ];
   }

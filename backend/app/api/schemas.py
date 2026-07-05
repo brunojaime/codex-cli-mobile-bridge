@@ -1353,6 +1353,7 @@ class SessionSummaryResponse(BaseModel):
     topic_description: str | None = None
     created_at: datetime
     updated_at: datetime
+    last_message_at: datetime | None = None
     last_message_preview: str | None = None
     has_pending_messages: bool = False
 
@@ -1365,7 +1366,11 @@ class SessionSummaryResponse(BaseModel):
         turn_summaries: list[ChatTurnSummary] | None = None,
         jobs_by_id: dict[str, Job] | None = None,
     ) -> "SessionSummaryResponse":
-        last_message = messages[-1] if messages else None
+        last_message = (
+            max(messages, key=lambda message: (message.created_at, message.id))
+            if messages
+            else None
+        )
         has_pending = any(
             message.status
             in {
@@ -1424,6 +1429,7 @@ class SessionSummaryResponse(BaseModel):
             topic_description=_topic_description_for_messages(messages),
             created_at=session.created_at,
             updated_at=session.updated_at,
+            last_message_at=last_message.created_at if last_message else None,
             last_message_preview=last_message.content[:120] if last_message else None,
             has_pending_messages=has_pending,
         )

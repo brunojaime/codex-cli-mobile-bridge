@@ -3030,9 +3030,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     ChatSessionSummary left,
     ChatSessionSummary right,
   ) {
-    final updatedComparison = right.updatedAt.compareTo(left.updatedAt);
-    if (updatedComparison != 0) {
-      return updatedComparison;
+    final latestComparison =
+        right.latestActivityAt.compareTo(left.latestActivityAt);
+    if (latestComparison != 0) {
+      return latestComparison;
     }
     final createdComparison = right.createdAt.compareTo(left.createdAt);
     if (createdComparison != 0) {
@@ -3299,7 +3300,7 @@ class _SessionTile extends StatelessWidget {
               _SessionMomentLine(
                 icon: Icons.schedule_rounded,
                 label: 'Latest',
-                value: _formatSessionMoment(context, session.updatedAt),
+                value: _formatSessionMoment(context, session.latestActivityAt),
                 color: session.isArchived
                     ? const Color(0xFF7F8EAF)
                     : timelineColor,
