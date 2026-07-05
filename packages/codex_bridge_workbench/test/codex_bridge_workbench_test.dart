@@ -430,6 +430,29 @@ flowchart LR
     expect(html, contains("securityLevel: 'strict'"));
     expect(html, contains("connect-src 'none'"));
   });
+
+  test('Mermaid preview HTML includes UML component notation helpers', () {
+    const source = '''
+flowchart LR
+  Client["<<component>> Client"]
+  Api["<<component>> API"]
+  Client -->|HTTPS| Api
+  %% uml-interface: HTTPS consumer=Client provider=Api
+''';
+
+    final html = buildMermaidPreviewHtml(
+      mermaidJs: 'window.mermaid = {};',
+      source: source,
+      diagramPath: 'architecture/components.mmd',
+      diagramType: 'flowchart',
+    );
+
+    expect(html, contains('"architecture/components.mmd"'));
+    expect(html, contains('applyUmlComponentNotation'));
+    expect(html, contains('uml-component-glyph'));
+    expect(html, contains('uml-interface:'));
+    expect(html, contains('consumer=([A-Za-z0-9_.:-]+)'));
+  });
 }
 
 void _openWorkbench(WidgetTester tester) {

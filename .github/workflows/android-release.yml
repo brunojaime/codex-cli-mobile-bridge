@@ -71,12 +71,11 @@ jobs:
         env:
           API_BASE_URL: ${{ vars.API_BASE_URL }}
         run: |
+          bridge_url="${API_BASE_URL:-http://batata-default-string.tail0302c4.ts.net}"
           args=()
-          if [[ -n "$API_BASE_URL" ]]; then
-            args+=(--dart-define=API_BASE_URL="$API_BASE_URL")
-            args+=(--dart-define=CODEX_APP_UPDATER_ENABLED=true)
-            args+=(--dart-define=CODEX_APP_UPDATER_BRIDGE_URL="$API_BASE_URL")
-          fi
+          args+=(--dart-define=API_BASE_URL="$bridge_url")
+          args+=(--dart-define=CODEX_APP_UPDATER_ENABLED=true)
+          args+=(--dart-define=CODEX_APP_UPDATER_BRIDGE_URL="$bridge_url")
           args+=(--dart-define=CODEX_BRIDGE_DEV_MODE=true)
           args+=(--dart-define=CODEX_BRIDGE_WORKSPACE_PATH=codex-cli-mobile-bridge)
           flutter build apk --release "${args[@]}"

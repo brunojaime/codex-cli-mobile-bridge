@@ -1,41 +1,49 @@
 flowchart LR
     subgraph Mobile["Flutter mobile app"]
-        ProductUI["Product UI"]
-        DevWrapper["Codex dev wrapper"]
-        SddPanel["SDD visual panel"]
-        FeedbackCapture["Feedback capture"]
+        ProductUI["<<component>> Product UI"]
+        DevWrapper["<<component>> Codex dev wrapper"]
+        SddPanel["<<component>> SDD visual panel"]
+        FeedbackCapture["<<component>> Feedback capture"]
     end
 
     subgraph Backend["FastAPI bridge backend"]
-        SddRoutes["Read-only SDD routes"]
-        FeedbackRoutes["Feedback routes"]
-        ActionRoutes["Codex action routes"]
-        SddService["SddProjectService"]
-        Config["Real backend, updater, feedback, release config"]
+        SddRoutes["<<component>> Read-only SDD routes"]
+        FeedbackRoutes["<<component>> Feedback routes"]
+        ActionRoutes["<<component>> Codex action routes"]
+        SddService["<<component>> SddProjectService"]
+        Config["<<component>> Real release config"]
     end
 
     subgraph Workspace["Current project workspace"]
-        Manifest["codex-bridge.yaml"]
-        Constitution["Constitution"]
-        Specs["Specs, plans, tasks"]
-        Diagrams["Mermaid architecture and feature diagrams"]
+        Manifest["<<component>> codex-bridge.yaml"]
+        Constitution["<<component>> Constitution"]
+        Specs["<<component>> Specs, plans, tasks"]
+        Diagrams["<<component>> Mermaid diagrams"]
     end
 
     subgraph Tooling["Developer tooling"]
-        CodexCli["Codex CLI"]
-        Doctor["SDD doctor"]
-        GitHubRelease["Android release workflow"]
+        CodexCli["<<component>> Codex CLI"]
+        Doctor["<<component>> SDD doctor"]
+        GitHubRelease["<<component>> Android release workflow"]
     end
 
-    ProductUI --> DevWrapper
-    DevWrapper --> SddPanel
-    SddPanel --> SddRoutes
-    FeedbackCapture --> FeedbackRoutes
-    SddRoutes --> SddService
-    SddService --> Manifest
-    SddService --> Constitution
-    SddService --> Specs
-    SddService --> Diagrams
-    ActionRoutes --> CodexCli
-    ActionRoutes --> Doctor
-    Config --> GitHubRelease
+    ProductUI -->|Flutter builder| DevWrapper
+    DevWrapper -->|Workbench entry| SddPanel
+    SddPanel -->|HTTP SDD API| SddRoutes
+    FeedbackCapture -->|HTTP feedback API| FeedbackRoutes
+    SddRoutes -->|service call| SddService
+    SddService -->|file read| Manifest
+    SddService -->|file read| Constitution
+    SddService -->|file read| Specs
+    SddService -->|file read| Diagrams
+    ActionRoutes -->|Codex workflow| CodexCli
+    ActionRoutes -->|doctor command| Doctor
+    Config -->|release inputs| GitHubRelease
+
+    %% UML interface orientation: consumer is on the circle side; provider is on the C/socket side.
+    %% uml-interface: Flutter builder consumer=ProductUI provider=DevWrapper
+    %% uml-interface: Workbench entry consumer=DevWrapper provider=SddPanel
+    %% uml-interface: HTTP SDD API consumer=SddPanel provider=SddRoutes
+    %% uml-interface: HTTP feedback API consumer=FeedbackCapture provider=FeedbackRoutes
+    %% uml-interface: service call consumer=SddRoutes provider=SddService
+    %% uml-interface: Codex workflow consumer=ActionRoutes provider=CodexCli

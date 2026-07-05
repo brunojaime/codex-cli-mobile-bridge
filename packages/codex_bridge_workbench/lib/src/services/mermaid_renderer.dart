@@ -66,6 +66,8 @@ class WebViewMermaidDiagramRenderer implements MermaidDiagramRenderer {
         preview: MermaidWebViewPreview(
           mermaidJs: mermaidJs,
           source: source,
+          diagramPath: diagram.path,
+          diagramType: diagram.diagramType,
           renderTimeout: diagramRenderTimeout,
           width: previewWidth,
           height: previewHeight,
@@ -84,6 +86,8 @@ class MermaidWebViewPreview extends StatefulWidget {
     super.key,
     required this.mermaidJs,
     required this.source,
+    required this.diagramPath,
+    required this.diagramType,
     this.renderTimeout = WebViewMermaidDiagramRenderer.diagramRenderTimeout,
     this.width = 720,
     this.height = 300,
@@ -91,6 +95,8 @@ class MermaidWebViewPreview extends StatefulWidget {
 
   final String mermaidJs;
   final String source;
+  final String diagramPath;
+  final String diagramType;
   final Duration renderTimeout;
   final double width;
   final double height;
@@ -141,6 +147,8 @@ class _MermaidWebViewPreviewState extends State<MermaidWebViewPreview> {
       buildMermaidPreviewHtml(
         mermaidJs: widget.mermaidJs,
         source: widget.source,
+        diagramPath: widget.diagramPath,
+        diagramType: widget.diagramType,
         renderTimeout: widget.renderTimeout,
       ),
     );
@@ -175,9 +183,13 @@ void _hardenPlatformController(WebViewController controller) {
 String buildMermaidPreviewHtml({
   required String mermaidJs,
   required String source,
+  String diagramPath = '',
+  String diagramType = '',
   Duration renderTimeout = WebViewMermaidDiagramRenderer.diagramRenderTimeout,
 }) {
   final encodedSource = jsonEncode(base64Encode(utf8.encode(source)));
+  final encodedDiagramPath = jsonEncode(diagramPath);
+  final encodedDiagramType = jsonEncode(diagramType);
   final renderTimeoutMs = renderTimeout.inMilliseconds;
   return '''
 <!doctype html>
@@ -230,6 +242,8 @@ $mermaidJs
   </script>
   <script>
     const encodedSource = $encodedSource;
+    const diagramPath = $encodedDiagramPath;
+    const diagramType = $encodedDiagramType;
     const diagram = document.getElementById('diagram');
     const errorBox = document.getElementById('error');
     let finished = false;
@@ -249,6 +263,221 @@ $mermaidJs
       diagram.style.display = 'none';
       errorBox.style.display = 'block';
       errorBox.textContent = message;
+    }
+
+    function isComponentDiagramSource(source) {
+      const normalizedPath = String(diagramPath || '').toLowerCase();
+      const normalizedType = String(diagramType || '').toLowerCase();
+      return normalizedPath.endsWith('/components.mmd') ||
+        normalizedPath === 'components.mmd' ||
+        normalizedPath.endsWith('/component.mmd') ||
+        normalizedType.includes('component') ||
+        /<<\\s*component\\s*>>/i.test(source);
+    }
+
+    function parseUmlInterfaceAnnotations(source) {
+      const annotations = [];
+      const pattern = /^\\s*%%\\s*uml-interface:\\s*(.*?)\\s+consumer=([A-Za-z0-9_.:-]+)\\s+provider=([A-Za-z0-9_.:-]+)\\s*\$/gm;
+      let match;
+      while ((match = pattern.exec(source)) !== null) {
+        annotations.push({
+          label: match[1].trim(),
+          consumer: match[2].trim(),
+          provider: match[3].trim()
+        });
+      }
+      return annotations;
+    }
+
+    function svgElement(name) {
+      return document.createElementNS('http://www.w3.org/2000/svg', name);
+    }
+
+    function appendRect(parent, attrs) {
+      const rect = svgElement('rect');
+      for (const key of Object.keys(attrs)) {
+        rect.setAttribute(key, attrs[key]);
+      }
+      parent.appendChild(rect);
+      return rect;
+    }
+
+    function componentNodeShape(node) {
+      return node.querySelector(':scope > rect, :scope > path, :scope > polygon');
+    }
+
+    function nodeText(node) {
+      return Array.from(node.querySelectorAll('text, tspan'))
+        .map((item) => item.textContent || '')
+        .join(' ');
+    }
+
+    function isExplicitComponentNode(node) {
+      const classes = (node.getAttribute('class') || '').split(/\\s+/);
+      return classes.includes('component') ||
+        /<<\\s*component\\s*>>/i.test(nodeText(node));
+    }
+
+    function stripComponentStereotype(node) {
+      for (const text of node.querySelectorAll('text, tspan')) {
+        text.textContent = (text.textContent || '')
+          .replace(/<<\\s*component\\s*>>\\s*/gi, '')
+          .trim();
+      }
+    }
+
+    function addComponentGlyph(node) {
+      if (node.querySelector('.uml-component-glyph')) return;
+      const shape = componentNodeShape(node);
+      if (!shape || typeof shape.getBBox !== 'function') return;
+
+      let box;
+      try {
+        box = shape.getBBox();
+      } catch (_) {
+        return;
+      }
+      if (!Number.isFinite(box.width) || box.width < 32) return;
+
+      const group = svgElement('g');
+      group.setAttribute('class', 'uml-component-glyph');
+      group.setAttribute(
+        'transform',
+        'translate(' + (box.x + box.width - 28) + ' ' + (box.y + 8) + ')'
+      );
+
+      appendRect(group, {
+        x: '7',
+        y: '0',
+        width: '14',
+        height: '20',
+        fill: 'none',
+        stroke: '#9ca3af',
+        'stroke-width': '1.8'
+      });
+      appendRect(group, {
+        x: '0',
+        y: '3',
+        width: '11',
+        height: '5',
+        fill: '#0b1426',
+        stroke: '#9ca3af',
+        'stroke-width': '1.8'
+      });
+      appendRect(group, {
+        x: '0',
+        y: '12',
+        width: '11',
+        height: '5',
+        fill: '#0b1426',
+        stroke: '#9ca3af',
+        'stroke-width': '1.8'
+      });
+      node.appendChild(group);
+    }
+
+    function applyUmlComponentNodes(svg, source) {
+      if (!isComponentDiagramSource(source)) return;
+      const nodes = Array.from(svg.querySelectorAll('g.node'));
+      const explicitNodes = nodes.filter(isExplicitComponentNode);
+      const targetNodes = explicitNodes.length > 0
+        ? explicitNodes
+        : nodes.filter((node) => componentNodeShape(node) !== null);
+
+      for (const node of targetNodes) {
+        stripComponentStereotype(node);
+        addComponentGlyph(node);
+      }
+    }
+
+    function classTokens(element) {
+      return (element.getAttribute('class') || '').split(/\\s+/);
+    }
+
+    function findEdge(svg, consumer, provider) {
+      const direct = Array.from(svg.querySelectorAll('g.edgePath')).find((edge) => {
+        const classes = classTokens(edge);
+        return classes.includes('LS-' + consumer) && classes.includes('LE-' + provider);
+      });
+      if (direct) return direct;
+
+      return Array.from(svg.querySelectorAll('g.edgePath')).find((edge) => {
+        const classes = classTokens(edge);
+        return classes.includes('LS-' + provider) && classes.includes('LE-' + consumer);
+      });
+    }
+
+    function drawInterfaceSymbol(layer, path) {
+      if (!path || typeof path.getTotalLength !== 'function') return;
+
+      let length;
+      try {
+        length = path.getTotalLength();
+      } catch (_) {
+        return;
+      }
+      if (!Number.isFinite(length) || length <= 0) return;
+
+      const center = path.getPointAtLength(length / 2);
+      const before = path.getPointAtLength(Math.max(0, length / 2 - 18));
+      const after = path.getPointAtLength(Math.min(length, length / 2 + 18));
+      const angle = Math.atan2(after.y - before.y, after.x - before.x) * 180 / Math.PI;
+      const group = svgElement('g');
+      group.setAttribute('class', 'uml-interface-symbol');
+      group.setAttribute(
+        'transform',
+        'translate(' + center.x + ' ' + center.y + ') rotate(' + angle + ')'
+      );
+
+      const bridge = svgElement('line');
+      bridge.setAttribute('x1', '-24');
+      bridge.setAttribute('y1', '0');
+      bridge.setAttribute('x2', '24');
+      bridge.setAttribute('y2', '0');
+      bridge.setAttribute('stroke', '#9ca3af');
+      bridge.setAttribute('stroke-width', '2');
+      group.appendChild(bridge);
+
+      const consumerCircle = svgElement('circle');
+      consumerCircle.setAttribute('cx', '-8');
+      consumerCircle.setAttribute('cy', '0');
+      consumerCircle.setAttribute('r', '7');
+      consumerCircle.setAttribute('fill', '#0b1426');
+      consumerCircle.setAttribute('stroke', '#cbd5e1');
+      consumerCircle.setAttribute('stroke-width', '2');
+      group.appendChild(consumerCircle);
+
+      const providerSocket = svgElement('path');
+      providerSocket.setAttribute('d', 'M 13 -8 A 8 8 0 1 0 13 8');
+      providerSocket.setAttribute('fill', 'none');
+      providerSocket.setAttribute('stroke', '#cbd5e1');
+      providerSocket.setAttribute('stroke-width', '2');
+      providerSocket.setAttribute('stroke-linecap', 'round');
+      group.appendChild(providerSocket);
+
+      layer.appendChild(group);
+    }
+
+    function applyUmlInterfaces(svg, source) {
+      const annotations = parseUmlInterfaceAnnotations(source);
+      if (annotations.length === 0) return;
+
+      const layer = svgElement('g');
+      layer.setAttribute('class', 'uml-interface-layer');
+      svg.appendChild(layer);
+
+      for (const annotation of annotations) {
+        const edge = findEdge(svg, annotation.consumer, annotation.provider);
+        const path = edge ? edge.querySelector('path') : null;
+        drawInterfaceSymbol(layer, path);
+      }
+    }
+
+    function applyUmlComponentNotation(source) {
+      const svg = diagram.querySelector('svg');
+      if (!svg) return;
+      applyUmlComponentNodes(svg, source);
+      applyUmlInterfaces(svg, source);
     }
 
     async function renderDiagram() {
@@ -272,6 +501,7 @@ $mermaidJs
         finished = true;
         window.clearTimeout(timeout);
         diagram.innerHTML = result.svg;
+        applyUmlComponentNotation(source);
       } catch (error) {
         window.clearTimeout(timeout);
         showError(error && error.message ? error.message : String(error));

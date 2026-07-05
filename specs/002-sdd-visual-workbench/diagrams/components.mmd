@@ -2,46 +2,55 @@ flowchart LR
     User["Developer or product reviewer"]
 
     subgraph Mobile["Flutter mobile app"]
-        App["Product app"]
-        Wrapper["Codex dev wrapper"]
-        Workbench["SDD visual workbench"]
-        DiagramViewer["Mermaid diagram viewer"]
-        FeedbackCapture["Feedback capture"]
+        App["<<component>> Product app"]
+        Wrapper["<<component>> Codex dev wrapper"]
+        Workbench["<<component>> SDD visual workbench"]
+        DiagramViewer["<<component>> Mermaid diagram viewer"]
+        FeedbackCapture["<<component>> Feedback capture"]
     end
 
     subgraph Backend["Configured Bridge backend"]
-        SddApi["Read-only SDD API"]
-        FeedbackApi["Feedback API"]
-        ActionApi["Codex action API"]
-        SddService["SddProjectService"]
+        SddApi["<<component>> Read-only SDD API"]
+        FeedbackApi["<<component>> Feedback API"]
+        ActionApi["<<component>> Codex action API"]
+        SddService["<<component>> SddProjectService"]
     end
 
     subgraph Workspace["Current workspace"]
-        Manifest["codex-bridge.yaml"]
-        Specs["specs/<feature>/*.md"]
-        Architecture["architecture/*.mmd"]
-        FeatureDiagrams["specs/*/diagrams/*.mmd"]
-        RealConfig["Real backend, updater, feedback, release config"]
+        Manifest["<<component>> codex-bridge.yaml"]
+        Specs["<<component>> specs/<feature>/*.md"]
+        Architecture["<<component>> architecture/*.mmd"]
+        FeatureDiagrams["<<component>> specs/*/diagrams/*.mmd"]
+        RealConfig["<<component>> Real release config"]
     end
 
     subgraph Tooling["Developer tooling"]
-        Codex["Codex CLI workflows"]
-        Doctor["SDD doctor"]
+        Codex["<<component>> Codex CLI workflows"]
+        Doctor["<<component>> SDD doctor"]
     end
 
     User --> App
-    App --> Wrapper
-    Wrapper --> Workbench
-    Workbench --> DiagramViewer
-    Workbench --> SddApi
-    Workbench --> FeedbackApi
-    Workbench --> ActionApi
-    FeedbackCapture --> FeedbackApi
-    SddApi --> SddService
-    SddService --> Manifest
-    SddService --> Specs
-    SddService --> Architecture
-    SddService --> FeatureDiagrams
-    SddService --> RealConfig
-    ActionApi --> Codex
-    ActionApi --> Doctor
+    App -->|Flutter builder| Wrapper
+    Wrapper -->|Workbench entry| Workbench
+    Workbench -->|Mermaid preview| DiagramViewer
+    Workbench -->|HTTP SDD API| SddApi
+    Workbench -->|HTTP feedback API| FeedbackApi
+    Workbench -->|HTTP action API| ActionApi
+    FeedbackCapture -->|HTTP feedback API| FeedbackApi
+    SddApi -->|service call| SddService
+    SddService -->|file read| Manifest
+    SddService -->|file read| Specs
+    SddService -->|file read| Architecture
+    SddService -->|file read| FeatureDiagrams
+    SddService -->|file read| RealConfig
+    ActionApi -->|Codex workflow| Codex
+    ActionApi -->|doctor command| Doctor
+
+    %% UML interface orientation: consumer is on the circle side; provider is on the C/socket side.
+    %% uml-interface: Flutter builder consumer=App provider=Wrapper
+    %% uml-interface: Workbench entry consumer=Wrapper provider=Workbench
+    %% uml-interface: Mermaid preview consumer=Workbench provider=DiagramViewer
+    %% uml-interface: HTTP SDD API consumer=Workbench provider=SddApi
+    %% uml-interface: HTTP feedback API consumer=Workbench provider=FeedbackApi
+    %% uml-interface: HTTP action API consumer=Workbench provider=ActionApi
+    %% uml-interface: Codex workflow consumer=ActionApi provider=Codex
