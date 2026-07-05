@@ -921,6 +921,10 @@ void main() {
 
       final bridgeJson = submitted!.toBridgeJson();
       expect(bridgeJson['workspace_path'], 'codex-cli-mobile-bridge');
+      final releaseTarget = bridgeJson['releaseTarget'] as Map<String, Object?>;
+      expect(releaseTarget['sourceApp'], 'sat-catalogo-ropa');
+      expect(releaseTarget['workspaceLabel'], 'SAT');
+      expect(releaseTarget['workspacePath'], 'sat-catalogo-ropa');
       final items = bridgeJson['items'] as List<Object?>;
       final item = items.single as Map<String, Object?>;
       final contextMetadata = item['contextMetadata'] as Map<String, Object?>;
@@ -928,6 +932,10 @@ void main() {
           contextMetadata['executionTarget'] as Map<String, Object?>;
       expect(executionTarget['kind'], 'codexCli');
       expect(executionTarget['workspacePath'], 'codex-cli-mobile-bridge');
+      final itemReleaseTarget =
+          contextMetadata['releaseTarget'] as Map<String, Object?>;
+      expect(itemReleaseTarget['sourceApp'], 'sat-catalogo-ropa');
+      expect(itemReleaseTarget['workspacePath'], 'sat-catalogo-ropa');
     },
   );
 
@@ -976,7 +984,11 @@ void main() {
     expect(submittedWorkspaces, contains('sat-catalogo-ropa'));
     expect(submittedWorkspaces, contains('codex-cli-mobile-bridge'));
     for (final batch in submitted) {
-      final items = batch.toBridgeJson()['items'] as List<Object?>;
+      final batchJson = batch.toBridgeJson();
+      final releaseTarget = batchJson['releaseTarget'] as Map<String, Object?>;
+      expect(releaseTarget['sourceApp'], 'sat-catalogo-ropa');
+      expect(releaseTarget['workspacePath'], 'sat-catalogo-ropa');
+      final items = batchJson['items'] as List<Object?>;
       expect(items, hasLength(1));
     }
   });

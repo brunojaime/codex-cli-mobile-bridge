@@ -261,6 +261,10 @@ class FeedbackBatchStartRequest(BaseModel):
     message: str | None = Field(default=None, max_length=10000)
     session_id: str | None = None
     workspace_path: str | None = None
+    release_target: dict[str, Any] = Field(
+        default_factory=dict,
+        validation_alias=AliasChoices("release_target", "releaseTarget"),
+    )
     codex_options: "CodexRunOptionsRequest | None" = None
 
 
@@ -975,6 +979,8 @@ class FeedbackBatchStatusResponse(BaseModel):
     run_id: str | None = None
     runId: str | None = None
     workspace_path: str | None = None
+    release_target: dict[str, Any] = Field(default_factory=dict)
+    releaseTarget: dict[str, Any] | None = None
     quick_ask_id: str | None = None
     quickAskId: str | None = None
     job_status: JobStatus | None = None

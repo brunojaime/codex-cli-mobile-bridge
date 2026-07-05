@@ -773,6 +773,78 @@ def _feedback_batch_workspace_path(
     )
 
 
+def _feedback_batch_release_target(
+    payload: FeedbackBatchStartRequest,
+    *,
+    item_payloads: list[dict],
+    workspace_path: str | None,
+    container: AppContainer,
+) -> dict[str, Any]:
+    raw_target = payload.release_target if isinstance(payload.release_target, dict) else {}
+    source_app = _feedback_first_text(
+        raw_target.get("sourceApp"),
+        raw_target.get("source_app"),
+        payload.sourceApp,
+        *(item.get("sourceApp") for item in item_payloads),
+        *(item.get("source_app") for item in item_payloads),
+    )
+    source_display_name = _feedback_first_text(
+        raw_target.get("sourceDisplayName"),
+        raw_target.get("source_display_name"),
+        raw_target.get("workspaceLabel"),
+        raw_target.get("workspace_label"),
+        payload.sourceDisplayName,
+        *(item.get("sourceDisplayName") for item in item_payloads),
+        *(item.get("source_display_name") for item in item_payloads),
+    )
+    explicit_target_workspace = _feedback_first_text(
+        raw_target.get("workspacePath"),
+        raw_target.get("workspace_path"),
+    )
+    target_workspace_path = (
+        _resolve_explicit_feedback_workspace_path(
+            explicit_target_workspace,
+            container=container,
+        )
+        if explicit_target_workspace
+        else _feedback_workspace_path_for_source(
+            source_app=source_app,
+            source_display_name=source_display_name,
+            workspace_path=None,
+            item_payloads=item_payloads,
+            container=container,
+        )
+    )
+    if target_workspace_path is None and not source_app and workspace_path:
+        target_workspace_path = workspace_path
+
+    target: dict[str, Any] = {
+        "kind": _feedback_first_text(raw_target.get("kind")) or "app",
+    }
+    if source_app:
+        target["sourceApp"] = source_app
+    if source_display_name:
+        target["sourceDisplayName"] = source_display_name
+        target["workspaceLabel"] = source_display_name
+    elif source_app or target_workspace_path:
+        target["workspaceLabel"] = _feedback_source_label(
+            source_display_name=None,
+            source_app=source_app,
+            workspace_path=target_workspace_path,
+        )
+    if target_workspace_path:
+        target["workspacePath"] = target_workspace_path
+    return target
+
+
+def _feedback_first_text(*values: object | None) -> str | None:
+    for value in values:
+        text = str(value or "").strip()
+        if text and text.lower() != "unknown":
+            return text
+    return None
+
+
 def _feedback_workspace_path_for_source(
     *,
     source_app: str | None,
@@ -1103,6 +1175,8 @@ async def _feedback_batch_status_response(
         run_id=job.run_id if job else None,
         runId=job.run_id if job else None,
         workspace_path=record.workspace_path,
+        release_target=record.release_target,
+        releaseTarget=record.release_target,
         quick_ask_id=record.quick_ask_id,
         quickAskId=record.quick_ask_id,
         job_status=job.status if job else None,
@@ -1522,6 +1596,12 @@ async def start_feedback_batch_session(
         item_payloads=item_payloads,
         container=container,
     )
+    release_target = _feedback_batch_release_target(
+        payload,
+        item_payloads=item_payloads,
+        workspace_path=workspace_path,
+        container=container,
+    )
 
     stored_items = []
     try:
@@ -1620,6 +1700,7 @@ async def start_feedback_batch_session(
             if payload.release_when_complete
             else ""
         )
+        release_target_note = _feedback_release_target_note(release_target)
         quick_ask_context = (
             _quick_ask_batch_context(quick_ask_record)
             if quick_ask_record is not None
@@ -1631,6 +1712,7 @@ async def start_feedback_batch_session(
             f"Run target: {_feedback_target_instruction(preset.target_mode)}\n"
             f"Workflow preset: {preset.name}\n"
             f"Batch size: {len(stored_items)} feedback items.\n\n"
+            f"{release_target_note}"
             f"{quick_ask_context}" + "\n\n".join(item_sections) + release_note
         )
         job = await run_in_threadpool(
@@ -1659,6 +1741,7 @@ async def start_feedback_batch_session(
             job_id=job.id,
             session_id=job.session_id,
             workspace_path=workspace_path,
+            release_target=release_target,
             message=message,
             quick_ask_id=payload.quick_ask_id,
         )
@@ -1984,6 +2067,29 @@ def _quick_ask_screenshot_base64(record) -> str | None:
     if not path.exists():
         return None
     return base64.b64encode(path.read_bytes()).decode("ascii")
+
+
+def _feedback_release_target_note(release_target: dict[str, Any]) -> str:
+    if not release_target:
+        return ""
+    source_app = str(release_target.get("sourceApp") or "").strip()
+    workspace_path = str(release_target.get("workspacePath") or "").strip()
+    workspace_label = str(release_target.get("workspaceLabel") or "").strip()
+    if not source_app and not workspace_path and not workspace_label:
+        return ""
+    lines = ["Delivery/release target context:"]
+    if source_app:
+        lines.append(f"- source_app: {source_app}")
+    if workspace_label:
+        lines.append(f"- workspace_label: {workspace_label}")
+    if workspace_path:
+        lines.append(f"- workspace_path: {workspace_path}")
+    lines.append(
+        "- Use this as the app/repo that should consume shared Workbench changes "
+        "and receive any requested release; executionTarget/workspace_path only "
+        "selects where Codex runs."
+    )
+    return "\n".join(lines) + "\n\n"
 
 
 def _feedback_source_label(

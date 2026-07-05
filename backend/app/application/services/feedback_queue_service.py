@@ -142,6 +142,7 @@ class FeedbackBatchRecord:
     job_id: str | None = None
     session_id: str | None = None
     workspace_path: str | None = None
+    release_target: dict[str, Any] = field(default_factory=dict)
     message: str | None = None
     quick_ask_id: str | None = None
     summary: str | None = None
@@ -181,6 +182,7 @@ class FeedbackBatchRecord:
                 if payload.get("workspace_path") is not None
                 else None
             ),
+            release_target=dict(payload.get("release_target") or {}),
             message=(
                 str(payload["message"])
                 if payload.get("message") is not None
@@ -228,6 +230,7 @@ class FeedbackBatchRecord:
             "job_id": self.job_id,
             "session_id": self.session_id,
             "workspace_path": self.workspace_path,
+            "release_target": self.release_target,
             "message": self.message,
             "quick_ask_id": self.quick_ask_id,
             "summary": self.summary,
@@ -481,6 +484,7 @@ class FeedbackQueueService:
         job_id: str,
         session_id: str,
         workspace_path: str | None,
+        release_target: dict[str, Any] | None,
         message: str,
         quick_ask_id: str | None = None,
     ) -> FeedbackBatchRecord:
@@ -499,6 +503,7 @@ class FeedbackQueueService:
             job_id=job_id,
             session_id=session_id,
             workspace_path=workspace_path,
+            release_target=dict(release_target or {}),
             message=message,
             quick_ask_id=quick_ask_id,
             summary=None,
@@ -606,6 +611,7 @@ class FeedbackQueueService:
                     job_id=record.job_id,
                     session_id=record.session_id,
                     workspace_path=record.workspace_path,
+                    release_target=record.release_target,
                     message=record.message,
                     quick_ask_id=record.quick_ask_id,
                     summary=summary,
@@ -638,6 +644,7 @@ class FeedbackQueueService:
                     job_id=record.job_id,
                     session_id=record.session_id,
                     workspace_path=record.workspace_path,
+                    release_target=record.release_target,
                     message=record.message,
                     quick_ask_id=record.quick_ask_id,
                     summary=record.summary,
@@ -673,6 +680,7 @@ class FeedbackQueueService:
                     job_id=record.job_id,
                     session_id=record.session_id,
                     workspace_path=record.workspace_path,
+                    release_target=record.release_target,
                     message=record.message,
                     quick_ask_id=record.quick_ask_id,
                     summary=record.summary,

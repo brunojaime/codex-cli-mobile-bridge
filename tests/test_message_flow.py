@@ -7961,6 +7961,15 @@ def test_feedback_batch_start_session_uses_explicit_workspace_path(
     session = session_response.json()
     assert session["workspace_name"] == "codex-cli-mobile-bridge"
     assert session["workspace_path"] == str(bridge_workspace)
+    status_response = client.get(
+        f"/feedback-batches/{start_response.json()['feedback_batch_id']}"
+    )
+    assert status_response.status_code == 200
+    status = status_response.json()
+    assert status["workspace_path"] == str(bridge_workspace)
+    assert status["release_target"]["sourceApp"] == "sat-catalogo-ropa"
+    assert status["release_target"]["workspacePath"] == str(sat_workspace)
+    assert status["releaseTarget"]["workspacePath"] == str(sat_workspace)
 
 
 @pytest.mark.parametrize(

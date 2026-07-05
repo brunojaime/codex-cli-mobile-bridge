@@ -916,6 +916,16 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
         : widget.domainWorkspacePath.trim(),
   );
 
+  Map<String, Object?> _releaseTargetMetadata() {
+    final workspacePath = widget.domainWorkspacePath.trim();
+    return <String, Object?>{
+      'kind': 'app',
+      'sourceApp': widget.sourceApp,
+      'workspaceLabel': _feedbackDomainLabel,
+      if (workspacePath.isNotEmpty) 'workspacePath': workspacePath,
+    };
+  }
+
   _FeedbackExecutionTarget _codexCliExecutionTarget() =>
       _FeedbackExecutionTarget(
         kind: _FeedbackExecutionTargetKind.codexCli,
@@ -1479,6 +1489,7 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
         if (_feedbackExecutionWorkspacePath != null)
           'workspacePath': _feedbackExecutionWorkspacePath,
       },
+      'releaseTarget': _releaseTargetMetadata(),
     };
     final extra = widget.contextMetadataBuilder?.call(contextForMetadata);
     if (extra != null) metadata.addAll(extra);
@@ -2076,6 +2087,7 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
       releaseWhenComplete: releaseWhenComplete,
       quickAskId: includeQuickAskId ? _pendingQuickAskId : null,
       workspacePath: group.target.workspacePath,
+      releaseTarget: _releaseTargetMetadata(),
       items: List.of(group.items),
     );
     final customBatchSubmit = widget.bridgeSubmitBatch;
@@ -5078,6 +5090,7 @@ class DeveloperFeedbackBatch {
     required this.releaseWhenComplete,
     this.quickAskId,
     this.workspacePath,
+    this.releaseTarget = const <String, Object?>{},
     required this.items,
   });
 
@@ -5088,6 +5101,7 @@ class DeveloperFeedbackBatch {
   final bool releaseWhenComplete;
   final String? quickAskId;
   final String? workspacePath;
+  final Map<String, Object?> releaseTarget;
   final List<DeveloperFeedbackItem> items;
 
   Map<String, Object?> toBridgeJson() {
@@ -5103,6 +5117,7 @@ class DeveloperFeedbackBatch {
       if ((quickAskId ?? '').trim().isNotEmpty) 'quickAskId': quickAskId,
       if ((workspacePath ?? '').trim().isNotEmpty)
         'workspace_path': workspacePath!.trim(),
+      if (releaseTarget.isNotEmpty) 'releaseTarget': releaseTarget,
       'items': items.map((item) => item.toBridgeJson()).toList(),
     };
   }
