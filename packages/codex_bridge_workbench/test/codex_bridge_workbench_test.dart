@@ -108,6 +108,9 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('SDD Workbench'), findsOneWidget);
     expect(find.text('Overview'), findsOneWidget);
+    expect(find.text('Dashboard'), findsNothing);
+    expect(find.text('SDD files'), findsNothing);
+    expect(find.text('Current Project Dashboard'), findsNothing);
     expect(find.text('Codex Bridge'), findsWidgets);
   });
 
@@ -146,10 +149,28 @@ void main() {
     await tester.tap(find.text('Diagrams').first);
     await tester.pumpAndSettle();
 
+    expect(find.text('Architecture diagrams'), findsOneWidget);
+    expect(find.text('flowchart diagram'), findsOneWidget);
+    expect(
+      find.textContaining('rendered architecture/components.mmd'),
+      findsNothing,
+    );
+
     await tester.tap(find.text('flowchart diagram').first);
     await tester.pumpAndSettle();
 
     expect(find.byTooltip('Close full screen diagram'), findsOneWidget);
+    expect(
+      find.textContaining('rendered architecture/components.mmd'),
+      findsWidgets,
+    );
+
+    await tester.tap(find.text('Source').first);
+    await tester.pumpAndSettle();
+    expect(find.textContaining('flowchart LR'), findsOneWidget);
+
+    await tester.tap(find.text('Preview').first);
+    await tester.pumpAndSettle();
     expect(
       find.textContaining('rendered architecture/components.mmd'),
       findsWidgets,

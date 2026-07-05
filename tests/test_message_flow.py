@@ -2303,6 +2303,7 @@ def test_supervisor_summary_interval_can_publish_mid_run() -> None:
             )
             >= 2
         ),
+        timeout_seconds=10.0,
     )
 
     agent_order = [
