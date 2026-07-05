@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:codex_bridge_workbench/codex_bridge_workbench.dart';
 import 'package:flutter/material.dart';
@@ -431,28 +432,249 @@ flowchart LR
     expect(html, contains("connect-src 'none'"));
   });
 
-  test('Mermaid preview HTML includes UML component notation helpers', () {
-    const source = '''
+  test(
+    'custom UML component renderer emits integrated vector notation',
+    () async {
+      const source = '''
 flowchart LR
-  Client["<<component>> Client"]
-  Api["<<component>> API"]
-  Client -->|HTTPS| Api
-  %% uml-interface: HTTPS consumer=Client provider=Api
+  Browser["<<component>> Client UI"]
+  subgraph Core["Dominio de catalogo y administracion"]
+    direction LR
+    Api["<<component>> Catalog API"]
+    Admin["<<component>> Admin Console"]
+  end
+  Db[("MySQL")]
+  Browser -->|HTTPS API| Api
+  Api -->|TCP/IP| Db
+  %% uml-interface: HTTPS API consumer=Browser provider=Api
 ''';
 
-    final html = buildMermaidPreviewHtml(
-      mermaidJs: 'window.mermaid = {};',
-      source: source,
-      diagramPath: 'architecture/components.mmd',
-      diagramType: 'flowchart',
-    );
+      final html = buildMermaidPreviewHtml(
+        mermaidJs: _mermaidFallbackStub,
+        source: source,
+        diagramPath: 'architecture/components.mmd',
+        diagramType: 'flowchart',
+      );
+      final result = await _renderPreviewHtmlWithNode(html);
+      final svg = result.diagramHtml;
 
-    expect(html, contains('"architecture/components.mmd"'));
-    expect(html, contains('applyUmlComponentNotation'));
-    expect(html, contains('uml-component-glyph'));
-    expect(html, contains('uml-interface:'));
-    expect(html, contains('consumer=([A-Za-z0-9_.:-]+)'));
+      expect(result.usedMermaidFallback, isFalse);
+      expect(result.errorText, isEmpty);
+      expect(svg, contains('<svg class="uml-canvas"'));
+      expect(svg, contains('Dominio de catalogo y administracion'));
+      expect(svg, contains('Client UI'));
+      expect(svg, contains('Catalog API'));
+      expect(svg, contains('Admin Console'));
+      expect(svg, contains('MySQL'));
+      expect(svg, contains('class="component-glyph"'));
+      expect(svg, isNot(contains('class="uml-component-glyph"')));
+      expect(svg, isNot(contains('<image')));
+      expect(svg, contains('class="uml-interface"'));
+      expect(svg, contains('<circle cx="-9" cy="0" r="8"'));
+      expect(svg, contains('<path d="M 14 -9 A 9 9 0 1 0 14 9"'));
+      expect(svg, contains('HTTPS API'));
+
+      final browser = _svgRectForNode(svg, 'Browser');
+      final api = _svgRectForNode(svg, 'Api');
+      final browserGlyph = _svgGlyphForNode(svg, 'Browser');
+      expect(api.x, greaterThan(browser.x + browser.width));
+      expect(browserGlyph.x, greaterThan(browser.x));
+      expect(browserGlyph.x + 24, lessThan(browser.x + browser.width));
+      expect(browserGlyph.y, greaterThan(browser.y));
+      expect(browserGlyph.y + 22, lessThan(browser.y + browser.height));
+    },
+  );
+
+  test(
+    'non-component Mermaid diagrams use the Mermaid fallback path',
+    () async {
+      const source = '''
+sequenceDiagram
+  participant Client
+  participant API
+  Client->>API: HTTPS
+''';
+
+      final html = buildMermaidPreviewHtml(
+        mermaidJs: _mermaidFallbackStub,
+        source: source,
+        diagramPath: 'architecture/sequence.mmd',
+        diagramType: 'sequence',
+      );
+      final result = await _renderPreviewHtmlWithNode(html);
+
+      expect(result.usedMermaidFallback, isTrue);
+      expect(result.errorText, isEmpty);
+      expect(result.diagramHtml, contains('<svg class="fallback-mermaid"'));
+      expect(result.diagramHtml, isNot(contains('class="uml-canvas"')));
+    },
+  );
+}
+
+const _mermaidFallbackStub = '''
+globalThis.mermaidFallbackUsed = false;
+globalThis.mermaid = {
+  initialize: function() {},
+  render: async function() {
+    globalThis.mermaidFallbackUsed = true;
+    return { svg: '<svg class="fallback-mermaid"><text>fallback</text></svg>' };
+  }
+};
+''';
+
+Future<_RenderedPreview> _renderPreviewHtmlWithNode(String html) async {
+  final nodeCheck = await Process.run('node', const <String>['--version']);
+  if (nodeCheck.exitCode != 0) {
+    markTestSkipped('Node.js is required to execute the generated renderer.');
+  }
+
+  final scripts = RegExp(
+    r'<script>\s*([\s\S]*?)\s*</script>',
+  ).allMatches(html).map((match) => match.group(1)!).toList();
+  expect(scripts, hasLength(2));
+
+  final tempDir = await Directory.systemTemp.createTemp(
+    'codex_workbench_renderer_test_',
+  );
+  final scriptFile = File('${tempDir.path}/render_preview.js');
+  try {
+    await scriptFile.writeAsString('''
+const { TextDecoder } = require('util');
+const scripts = ${jsonEncode(scripts)};
+const elementChildren = [];
+const diagramElement = {
+  style: {},
+  innerHTML: '',
+  querySelector: function() { return null; }
+};
+const errorElement = {
+  style: {},
+  textContent: ''
+};
+
+globalThis.window = globalThis;
+globalThis.TextDecoder = TextDecoder;
+globalThis.atob = function(value) {
+  return Buffer.from(value, 'base64').toString('binary');
+};
+globalThis.document = {
+  getElementById: function(id) {
+    return id === 'diagram' ? diagramElement : errorElement;
+  },
+  createElementNS: function(_namespace, name) {
+    return {
+      name,
+      attributes: {},
+      children: [],
+      textContent: '',
+      setAttribute: function(key, value) {
+        this.attributes[key] = String(value);
+      },
+      appendChild: function(child) {
+        this.children.push(child);
+        elementChildren.push(child);
+      },
+      querySelector: function() { return null; },
+      querySelectorAll: function() { return []; }
+    };
+  }
+};
+
+(async () => {
+  for (const script of scripts) {
+    (0, eval)(script);
+  }
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  process.stdout.write(JSON.stringify({
+    diagramHtml: diagramElement.innerHTML,
+    errorText: errorElement.textContent,
+    usedMermaidFallback: globalThis.mermaidFallbackUsed === true
+  }));
+})().catch((error) => {
+  process.stderr.write(error && error.stack ? error.stack : String(error));
+  process.exit(1);
+});
+''');
+
+    final run = await Process.run('node', <String>[scriptFile.path]);
+    if (run.exitCode != 0) {
+      fail('Node renderer failed:\n${run.stderr}\n${run.stdout}');
+    }
+    final output = (run.stdout as String).trim();
+    expect(output, isNotEmpty);
+    return _RenderedPreview.fromJson(
+      jsonDecode(output) as Map<String, Object?>,
+    );
+  } finally {
+    await tempDir.delete(recursive: true);
+  }
+}
+
+_SvgRect _svgRectForNode(String svg, String id) {
+  final match = RegExp(
+    '<g id="uml-node-${RegExp.escape(id)}">[\\s\\S]*?'
+    '<rect x="([^"]+)" y="([^"]+)" width="([^"]+)" height="([^"]+)"',
+  ).firstMatch(svg);
+  expect(match, isNotNull, reason: 'Expected SVG rect for node $id.');
+  return _SvgRect(
+    x: double.parse(match!.group(1)!),
+    y: double.parse(match.group(2)!),
+    width: double.parse(match.group(3)!),
+    height: double.parse(match.group(4)!),
+  );
+}
+
+_SvgPoint _svgGlyphForNode(String svg, String id) {
+  final match = RegExp(
+    '<g id="uml-node-${RegExp.escape(id)}">[\\s\\S]*?'
+    '<g class="component-glyph" transform="translate\\(([^ ]+) ([^)]+)\\)"',
+  ).firstMatch(svg);
+  expect(match, isNotNull, reason: 'Expected component glyph for node $id.');
+  return _SvgPoint(
+    x: double.parse(match!.group(1)!),
+    y: double.parse(match.group(2)!),
+  );
+}
+
+class _RenderedPreview {
+  const _RenderedPreview({
+    required this.diagramHtml,
+    required this.errorText,
+    required this.usedMermaidFallback,
   });
+
+  factory _RenderedPreview.fromJson(Map<String, Object?> json) {
+    return _RenderedPreview(
+      diagramHtml: json['diagramHtml']! as String,
+      errorText: json['errorText']! as String,
+      usedMermaidFallback: json['usedMermaidFallback']! as bool,
+    );
+  }
+
+  final String diagramHtml;
+  final String errorText;
+  final bool usedMermaidFallback;
+}
+
+class _SvgRect {
+  const _SvgRect({
+    required this.x,
+    required this.y,
+    required this.width,
+    required this.height,
+  });
+
+  final double x;
+  final double y;
+  final double width;
+  final double height;
+}
+
+class _SvgPoint {
+  const _SvgPoint({required this.x, required this.y});
+
+  final double x;
+  final double y;
 }
 
 void _openWorkbench(WidgetTester tester) {
