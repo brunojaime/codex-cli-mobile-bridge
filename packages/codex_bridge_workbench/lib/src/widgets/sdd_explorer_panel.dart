@@ -276,6 +276,8 @@ class SddExplorerPanel extends StatefulWidget {
     required this.bridgeUrl,
     required this.onClose,
     this.workspacePath,
+    this.metaWorkspacePath,
+    this.metaWorkspaceLabel = 'Codex Bridge Workbench',
     this.diagramRenderer = const WebViewMermaidDiagramRenderer(),
     this.loader,
     this.feedbackSubmitter,
@@ -284,6 +286,8 @@ class SddExplorerPanel extends StatefulWidget {
 
   final String bridgeUrl;
   final String? workspacePath;
+  final String? metaWorkspacePath;
+  final String metaWorkspaceLabel;
   final VoidCallback onClose;
   final MermaidDiagramRenderer diagramRenderer;
   final SddExplorerLoader? loader;
@@ -309,6 +313,7 @@ class _SddExplorerPanelState extends State<SddExplorerPanel> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.bridgeUrl != widget.bridgeUrl ||
         oldWidget.workspacePath != widget.workspacePath ||
+        oldWidget.metaWorkspacePath != widget.metaWorkspacePath ||
         oldWidget.loader != widget.loader) {
       _projectFuture = _load();
     }
@@ -418,6 +423,8 @@ class _SddExplorerPanelState extends State<SddExplorerPanel> {
           child: _SddCodexActionDialog(
             bridgeUrl: widget.bridgeUrl,
             request: request,
+            metaWorkspacePath: widget.metaWorkspacePath,
+            metaWorkspaceLabel: widget.metaWorkspaceLabel,
             submitter: widget.actionSubmitter ?? _submitSddCodexAction,
             onActionSubmitted: _recordActionSubmitted,
           ),
@@ -3292,12 +3299,16 @@ class _SddCodexActionDialog extends StatefulWidget {
   const _SddCodexActionDialog({
     required this.bridgeUrl,
     required this.request,
+    required this.metaWorkspaceLabel,
     required this.submitter,
     required this.onActionSubmitted,
+    this.metaWorkspacePath,
   });
 
   final String bridgeUrl;
   final SddCodexActionRequest request;
+  final String? metaWorkspacePath;
+  final String metaWorkspaceLabel;
   final SddCodexActionSubmitter submitter;
   final void Function(
     SddCodexActionSubmissionResult accepted,
@@ -3312,8 +3323,33 @@ class _SddCodexActionDialog extends StatefulWidget {
 class _SddCodexActionDialogState extends State<_SddCodexActionDialog> {
   late final TextEditingController _promptController;
   bool _submitting = false;
+  bool _runInMetaWorkspace = false;
   SddCodexActionSubmissionResult? _accepted;
   String? _errorText;
+
+  String? get _configuredMetaWorkspacePath {
+    final value = widget.metaWorkspacePath?.trim();
+    if (value == null || value.isEmpty) {
+      return null;
+    }
+    return value;
+  }
+
+  String get _executionWorkspacePath {
+    final metaWorkspacePath = _configuredMetaWorkspacePath;
+    if (_runInMetaWorkspace && metaWorkspacePath != null) {
+      return metaWorkspacePath;
+    }
+    return widget.request.target.workspacePath;
+  }
+
+  String get _executionWorkspaceLabel {
+    final metaWorkspacePath = _configuredMetaWorkspacePath;
+    if (_runInMetaWorkspace && metaWorkspacePath != null) {
+      return widget.metaWorkspaceLabel;
+    }
+    return 'Current project';
+  }
 
   @override
   void initState() {
@@ -3344,7 +3380,12 @@ class _SddCodexActionDialogState extends State<_SddCodexActionDialog> {
     try {
       final accepted = await widget.submitter(
         widget.bridgeUrl,
-        SddCodexActionDraft(request: widget.request, prompt: prompt),
+        SddCodexActionDraft(
+          request: widget.request,
+          prompt: prompt,
+          executionWorkspacePath: _executionWorkspacePath,
+          executionWorkspaceLabel: _executionWorkspaceLabel,
+        ),
       );
       if (!mounted) return;
       widget.onActionSubmitted(accepted, widget.request);
@@ -3385,6 +3426,19 @@ class _SddCodexActionDialogState extends State<_SddCodexActionDialog> {
                   ),
                 ),
               ],
+              const SizedBox(height: 12),
+              _ExecutionWorkspaceSelector(
+                currentWorkspacePath: request.target.workspacePath,
+                metaWorkspacePath: _configuredMetaWorkspacePath,
+                metaWorkspaceLabel: widget.metaWorkspaceLabel,
+                runInMetaWorkspace: _runInMetaWorkspace,
+                enabled: !_submitting && accepted == null,
+                onChanged: (value) {
+                  setState(() {
+                    _runInMetaWorkspace = value;
+                  });
+                },
+              ),
               const SizedBox(height: 12),
               TextField(
                 controller: _promptController,
@@ -3456,6 +3510,80 @@ class _SddCodexActionDialogState extends State<_SddCodexActionDialog> {
           label: Text(_submitting ? 'Submitting' : 'Submit to Codex'),
         ),
       ],
+    );
+  }
+}
+
+class _ExecutionWorkspaceSelector extends StatelessWidget {
+  const _ExecutionWorkspaceSelector({
+    required this.currentWorkspacePath,
+    required this.metaWorkspacePath,
+    required this.metaWorkspaceLabel,
+    required this.runInMetaWorkspace,
+    required this.enabled,
+    required this.onChanged,
+  });
+
+  final String currentWorkspacePath;
+  final String? metaWorkspacePath;
+  final String metaWorkspaceLabel;
+  final bool runInMetaWorkspace;
+  final bool enabled;
+  final ValueChanged<bool> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final hasMetaTarget =
+        metaWorkspacePath != null && metaWorkspacePath!.isNotEmpty;
+    final effectiveLabel = runInMetaWorkspace && hasMetaTarget
+        ? metaWorkspaceLabel
+        : 'Current project';
+    final effectivePath = runInMetaWorkspace && hasMetaTarget
+        ? metaWorkspacePath!
+        : currentWorkspacePath;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: _WorkbenchColors.sourceBackground,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: _WorkbenchColors.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          SwitchListTile.adaptive(
+            contentPadding: EdgeInsets.zero,
+            dense: true,
+            value: hasMetaTarget && runInMetaWorkspace,
+            onChanged: enabled && hasMetaTarget ? onChanged : null,
+            title: const Text(
+              'Run against Workbench platform repo',
+              style: TextStyle(fontWeight: FontWeight.w800),
+            ),
+            subtitle: Text(
+              hasMetaTarget
+                  ? 'Off: change this project. On: change shared Workbench/Bridge behavior.'
+                  : 'No platform workspace was configured by this app.',
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Execution target: $effectiveLabel',
+            style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            effectivePath,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              color: _WorkbenchColors.secondaryText,
+              fontSize: 12,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

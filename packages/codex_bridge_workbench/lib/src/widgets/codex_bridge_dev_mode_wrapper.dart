@@ -10,6 +10,8 @@ class CodexBridgeDevModeWrapper extends StatefulWidget {
     required this.bridgeUrl,
     required this.child,
     this.workspacePath,
+    this.metaWorkspacePath,
+    this.metaWorkspaceLabel = 'Codex Bridge Workbench',
     this.diagramRenderer,
     this.explorerLoader,
     this.sddFeedbackSubmitter,
@@ -19,6 +21,8 @@ class CodexBridgeDevModeWrapper extends StatefulWidget {
   final bool enabled;
   final String bridgeUrl;
   final String? workspacePath;
+  final String? metaWorkspacePath;
+  final String metaWorkspaceLabel;
   final Widget child;
   final MermaidDiagramRenderer? diagramRenderer;
   final SddExplorerLoader? explorerLoader;
@@ -85,6 +89,8 @@ class _CodexBridgeDevModeWrapperState extends State<CodexBridgeDevModeWrapper> {
             child: SddExplorerPanel(
               bridgeUrl: widget.bridgeUrl,
               workspacePath: widget.workspacePath,
+              metaWorkspacePath: widget.metaWorkspacePath,
+              metaWorkspaceLabel: widget.metaWorkspaceLabel,
               diagramRenderer:
                   widget.diagramRenderer ??
                   const WebViewMermaidDiagramRenderer(),

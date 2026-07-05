@@ -321,8 +321,60 @@ void main() {
       request: request,
       prompt: 'Audit SDD',
     );
+    final metaDraft = SddCodexActionDraft(
+      request: request,
+      prompt: 'Audit Workbench',
+      executionWorkspacePath: '/workspace/codex-cli-mobile-bridge',
+      executionWorkspaceLabel: 'Codex Bridge Workbench',
+    );
 
     expect(defaultDraft.executionWorkspacePath, '/workspace/project');
+    expect(
+      metaDraft.executionWorkspacePath,
+      '/workspace/codex-cli-mobile-bridge',
+    );
+    expect(metaDraft.executionWorkspaceLabel, 'Codex Bridge Workbench');
+  });
+
+  testWidgets('Codex action composer can route execution to meta workspace', (
+    tester,
+  ) async {
+    SddCodexActionDraft? submittedDraft;
+    await _pumpWorkbench(
+      tester,
+      loader: (_) async => SddProject.fromJson(_projectJson()),
+      diagramRenderer: _FakeMermaidRenderer.success(),
+      metaWorkspacePath: '/workspace/codex-cli-mobile-bridge',
+      actionSubmitter: (_, draft) async {
+        submittedDraft = draft;
+        return const SddCodexActionSubmissionResult(
+          jobId: 'job-1',
+          sessionId: 'session-1',
+        );
+      },
+    );
+    _openWorkbench(tester);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Audit SDD').first);
+    await tester.pumpAndSettle();
+    expect(find.text('Run against Workbench platform repo'), findsOneWidget);
+    expect(find.text('Execution target: Current project'), findsOneWidget);
+
+    await tester.tap(find.byType(SwitchListTile).first);
+    await tester.pumpAndSettle();
+    expect(
+      find.text('Execution target: Codex Bridge Workbench'),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.text('Submit to Codex'));
+    await tester.pumpAndSettle();
+
+    expect(
+      submittedDraft?.executionWorkspacePath,
+      '/workspace/codex-cli-mobile-bridge',
+    );
   });
 
   testWidgets('production Mermaid renderer uses package-local asset path', (
@@ -385,15 +437,19 @@ Future<void> _pumpWorkbench(
   WidgetTester tester, {
   required Future<SddProject?> Function(String bridgeUrl) loader,
   String bridgeUrl = 'http://bridge.test',
+  String? metaWorkspacePath,
   MermaidDiagramRenderer? diagramRenderer,
+  SddCodexActionSubmitter? actionSubmitter,
 }) async {
   await tester.pumpWidget(
     MaterialApp(
       home: CodexBridgeDevModeWrapper(
         enabled: true,
         bridgeUrl: bridgeUrl,
+        metaWorkspacePath: metaWorkspacePath,
         explorerLoader: loader,
         diagramRenderer: diagramRenderer,
+        sddActionSubmitter: actionSubmitter,
         child: const Text('normal app'),
       ),
     ),

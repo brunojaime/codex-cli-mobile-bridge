@@ -77,6 +77,8 @@ jobs:
             args+=(--dart-define=CODEX_APP_UPDATER_ENABLED=true)
             args+=(--dart-define=CODEX_APP_UPDATER_BRIDGE_URL="$API_BASE_URL")
           fi
+          args+=(--dart-define=CODEX_BRIDGE_DEV_MODE=true)
+          args+=(--dart-define=CODEX_BRIDGE_WORKSPACE_PATH=codex-cli-mobile-bridge)
           flutter build apk --release "${args[@]}"
 
       - name: Prepare release artifacts

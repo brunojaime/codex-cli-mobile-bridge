@@ -20,6 +20,10 @@ const _configuredCodexBridgeDevMode = bool.fromEnvironment(
   'CODEX_BRIDGE_DEV_MODE',
   defaultValue: false,
 );
+const _configuredCodexBridgeWorkspacePath = String.fromEnvironment(
+  'CODEX_BRIDGE_WORKSPACE_PATH',
+  defaultValue: 'codex-cli-mobile-bridge',
+);
 const _codexMobileSourceApp = 'codex-mobile';
 const _fallbackAppVersion = '1.0.0';
 const _fallbackAppBuild = 41;
@@ -167,6 +171,7 @@ class _CodexMobileAppState extends State<CodexMobileApp> {
         return CodexBridgeDevModeWrapper(
           enabled: isCodexBridgeDevModeEnabled(),
           bridgeUrl: _activeBridgeUrl,
+          workspacePath: _configuredCodexBridgeWorkspacePath,
           sddFeedbackSubmitter: _submitBridgeSddFeedback,
           sddActionSubmitter: _submitBridgeSddCodexAction,
           child: CodexAppUpdater(
