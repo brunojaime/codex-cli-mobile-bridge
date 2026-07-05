@@ -446,6 +446,29 @@ void main() {
     _expectNoFlutterExceptions(tester);
   });
 
+  testWidgets('template toolbar can start collapsed', (tester) async {
+    _setViewport(tester, const Size(390, 844));
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(
+      const _Harness(enabled: true, initialToolbarExpanded: false),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(developerFeedbackToolbarExpandKey), findsOneWidget);
+    expect(find.byKey(developerFeedbackToolbarCollapseKey), findsNothing);
+    expect(find.byKey(developerFeedbackSwitchKey), findsNothing);
+
+    await tester.tap(find.byKey(developerFeedbackToolbarExpandKey));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(developerFeedbackToolbarExpandKey), findsNothing);
+    expect(find.byKey(developerFeedbackToolbarCollapseKey), findsOneWidget);
+    expect(find.byKey(developerFeedbackSwitchKey), findsOneWidget);
+    _expectNoFlutterExceptions(tester);
+  });
+
   testWidgets('template toolbar clamps when dragged past viewport edges', (
     tester,
   ) async {
@@ -2942,6 +2965,7 @@ class _Harness extends StatelessWidget {
     this.codexCliWorkspacePath = '',
     this.codexCliWorkspaceLabel = 'Codex CLI',
     this.httpClient,
+    this.initialToolbarExpanded = true,
     this.appUpdaterBridgeUrl = '',
     this.appUpdaterController,
     this.guidedTraceEnabled = true,
@@ -2965,6 +2989,7 @@ class _Harness extends StatelessWidget {
   final String codexCliWorkspacePath;
   final String codexCliWorkspaceLabel;
   final http.Client? httpClient;
+  final bool initialToolbarExpanded;
   final String appUpdaterBridgeUrl;
   final CodexAppUpdaterController? appUpdaterController;
   final bool guidedTraceEnabled;
@@ -2997,6 +3022,7 @@ class _Harness extends StatelessWidget {
         codexCliWorkspacePath: codexCliWorkspacePath,
         codexCliWorkspaceLabel: codexCliWorkspaceLabel,
         httpClient: httpClient,
+        initialToolbarExpanded: initialToolbarExpanded,
         appUpdaterBridgeUrl: appUpdaterBridgeUrl,
         appUpdaterController: appUpdaterController,
         guidedTraceEnabled: guidedTraceEnabled,

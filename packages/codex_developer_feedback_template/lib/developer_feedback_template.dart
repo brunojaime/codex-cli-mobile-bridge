@@ -527,6 +527,7 @@ class DeveloperFeedbackTemplate extends StatefulWidget {
     this.codexCliWorkspaceLabel = 'Codex CLI',
     this.httpClient,
     this.initialEditMode = false,
+    this.initialToolbarExpanded = true,
     this.appUpdaterEnabled = true,
     this.appUpdaterBridgeUrl = developerFeedbackAppUpdaterBridgeUrl,
     this.appUpdaterCurrentVersion,
@@ -563,6 +564,7 @@ class DeveloperFeedbackTemplate extends StatefulWidget {
   final String codexCliWorkspaceLabel;
   final http.Client? httpClient;
   final bool initialEditMode;
+  final bool initialToolbarExpanded;
   final bool appUpdaterEnabled;
   final String appUpdaterBridgeUrl;
   final String? appUpdaterCurrentVersion;
@@ -617,6 +619,7 @@ class CodexDeveloperFeedbackTemplate extends DeveloperFeedbackTemplate {
     super.codexCliWorkspaceLabel,
     super.httpClient,
     super.initialEditMode,
+    super.initialToolbarExpanded,
     super.appUpdaterEnabled,
     super.appUpdaterBridgeUrl,
     super.appUpdaterCurrentVersion,
@@ -654,7 +657,7 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
   var _runFeedbackInCodexCliWorkspace = false;
   var _dialogOpen = false;
   var _selectionReady = false;
-  var _toolbarExpanded = true;
+  late bool _toolbarExpanded;
   var _guidedTraceCaptureInProgress = false;
   var _guidedTraceStarting = false;
   var _guidedTraceStopping = false;
@@ -670,6 +673,7 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
   void initState() {
     super.initState();
     _editMode = widget.initialEditMode;
+    _toolbarExpanded = widget.initialToolbarExpanded;
   }
 
   @override
