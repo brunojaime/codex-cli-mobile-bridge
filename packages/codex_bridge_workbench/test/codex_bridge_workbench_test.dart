@@ -242,6 +242,21 @@ void main() {
             '/workspace/project',
           )
           .having(
+            (value) => value['targetWorkspacePath'],
+            'target workspace',
+            '/workspace/project',
+          )
+          .having(
+            (value) => value['invocationSource'],
+            'invocation source',
+            'codex_bridge_workbench',
+          )
+          .having(
+            (value) => value['releaseTarget'],
+            'release target',
+            'target_workspace',
+          )
+          .having(
             (value) => value['artifactPath'],
             'path',
             'architecture/components.mmd',
@@ -269,6 +284,22 @@ void main() {
 
     expect(prompt, contains('Action kind: sdd.address_feedback'));
     expect(prompt, contains('workspace_path: /workspace/project'));
+    expect(prompt, contains('target_workspace_path: /workspace/project'));
+    expect(prompt, contains('release_target: target_workspace'));
+    expect(
+      prompt,
+      contains(
+        'For release, deploy, publish, or installable build requests, use '
+        'target_workspace_path as the target repository by default.',
+      ),
+    );
+    expect(
+      prompt,
+      contains(
+        'Do not release the Bridge/Workbench host repository unless the user '
+        'explicitly asks for that host app.',
+      ),
+    );
     expect(prompt, contains('artifact_path: specs/001/spec.md'));
     expect(prompt, contains('linked_feedback_ids:'));
     expect(prompt, contains('feedback-1'));

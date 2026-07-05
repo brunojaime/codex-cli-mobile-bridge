@@ -554,6 +554,21 @@ void main() {
             (value) => value['artifactType'],
             'artifact type',
             'spec',
+          )
+          .having(
+            (value) => value['targetWorkspacePath'],
+            'target workspace',
+            '/workspace/codex-cli-mobile-bridge',
+          )
+          .having(
+            (value) => value['targetWorkspaceName'],
+            'target workspace name',
+            'Codex Bridge',
+          )
+          .having(
+            (value) => value['releaseTarget'],
+            'release target',
+            'target_workspace',
           ),
     );
   });
@@ -765,7 +780,14 @@ void main() {
 
     expect(prompt, contains('Action kind: sdd.address_feedback'));
     expect(
-        prompt, contains('workspace_path: /workspace/codex-cli-mobile-bridge'));
+      prompt,
+      contains('workspace_path: /workspace/codex-cli-mobile-bridge'),
+    );
+    expect(
+      prompt,
+      contains('target_workspace_path: /workspace/codex-cli-mobile-bridge'),
+    );
+    expect(prompt, contains('release_target: target_workspace'));
     expect(prompt, contains('artifact_path: architecture/components.mmd'));
     expect(prompt, contains('diagram_type: flowchart'));
     expect(prompt, contains('  - feedback-sdd-1'));

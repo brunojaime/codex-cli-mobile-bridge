@@ -31,6 +31,10 @@ class SddFeedbackTarget {
     required this.artifactPath,
     required this.artifactTitle,
     required this.sourceExcerpt,
+    this.invocationSource = 'codex_bridge_workbench',
+    this.releaseTarget = 'target_workspace',
+    this.targetWorkspaceName,
+    this.hostWorkspacePath,
     this.specId,
     this.specTitle,
     this.diagramType,
@@ -42,6 +46,10 @@ class SddFeedbackTarget {
   final String artifactPath;
   final String artifactTitle;
   final String sourceExcerpt;
+  final String invocationSource;
+  final String releaseTarget;
+  final String? targetWorkspaceName;
+  final String? hostWorkspacePath;
   final String? specId;
   final String? specTitle;
   final String? diagramType;
@@ -54,7 +62,13 @@ class SddFeedbackTarget {
   Map<String, Object?> toContextMetadata() {
     return <String, Object?>{
       'sdd': <String, Object?>{
+        'invocationSource': invocationSource,
         'workspacePath': workspacePath,
+        'targetWorkspacePath': workspacePath,
+        if (targetWorkspaceName != null)
+          'targetWorkspaceName': targetWorkspaceName,
+        if (hostWorkspacePath != null) 'hostWorkspacePath': hostWorkspacePath,
+        'releaseTarget': releaseTarget,
         'artifactType': artifactType,
         'artifactPath': artifactPath,
         'artifactTitle': artifactTitle,
@@ -195,16 +209,33 @@ String buildSddCodexActionPrompt(SddCodexActionRequest request) {
     ..writeln('Constraints:')
     ..writeln('- Use the real workspace and existing Codex/message flow.')
     ..writeln('- Treat paths below as metadata from the SDD snapshot.')
+    ..writeln(
+      '- For release, deploy, publish, or installable build requests, use '
+      'target_workspace_path as the target repository by default.',
+    )
+    ..writeln(
+      '- Do not release the Bridge/Workbench host repository unless the user '
+      'explicitly asks for that host app.',
+    )
     ..writeln('- Validate any path before reading or editing files.')
     ..writeln('- Do not invent mock data, placeholder URLs, or demo state.')
     ..writeln('- Keep SDD changes explicit and reviewable.')
     ..writeln()
     ..writeln('Context:')
     ..writeln('```yaml')
+    ..writeln('invocation_source: ${target.invocationSource}')
     ..writeln('workspace_path: ${target.workspacePath}')
+    ..writeln('target_workspace_path: ${target.workspacePath}')
+    ..writeln('release_target: ${target.releaseTarget}')
     ..writeln('artifact_type: ${target.artifactType}')
     ..writeln('artifact_path: ${target.artifactPath}')
     ..writeln('artifact_title: ${target.artifactTitle}');
+  if (target.targetWorkspaceName != null) {
+    buffer.writeln('target_workspace_name: ${target.targetWorkspaceName}');
+  }
+  if (target.hostWorkspacePath != null) {
+    buffer.writeln('host_workspace_path: ${target.hostWorkspacePath}');
+  }
   if (target.specId != null) {
     buffer.writeln('spec_id: ${target.specId}');
   }
@@ -2355,6 +2386,7 @@ SddFeedbackTarget? _fileFeedbackTarget({
   if (file == null) return null;
   return SddFeedbackTarget(
     workspacePath: project.workspacePath,
+    targetWorkspaceName: _projectDisplayName(project),
     artifactType: artifactType,
     artifactPath: _safeMetadataPath(file.path),
     artifactTitle: file.title ?? fallbackTitle,
@@ -2371,6 +2403,7 @@ SddFeedbackTarget _diagramFeedbackTarget({
 }) {
   return SddFeedbackTarget(
     workspacePath: project.workspacePath,
+    targetWorkspaceName: _projectDisplayName(project),
     artifactType: 'diagram',
     artifactPath: _safeMetadataPath(diagram.path),
     artifactTitle: diagram.title ?? '${diagram.diagramType} diagram',
@@ -2395,6 +2428,7 @@ SddFeedbackTarget _overviewActionTarget(SddProject project) {
   ].join('\n');
   return SddFeedbackTarget(
     workspacePath: project.workspacePath,
+    targetWorkspaceName: _projectDisplayName(project),
     artifactType: 'overview',
     artifactPath: '(project)',
     artifactTitle: 'SDD project overview',
