@@ -336,6 +336,9 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Inside this spec'), findsOneWidget);
+    expect(find.text('Artifact'), findsOneWidget);
+    await tester.tap(find.text('Artifact').first);
+    await tester.pumpAndSettle();
     expect(find.text('design-plan.md'), findsWidgets);
     expect(find.text('build-plan.md'), findsWidgets);
     expect(find.text('design-tasks.md'), findsWidgets);
@@ -349,21 +352,36 @@ void main() {
     expect(find.text('Show details'), findsWidgets);
     expect(find.textContaining('# Build Plan'), findsNothing);
 
+    await tester.tap(find.text('Artifact').first);
+    await tester.pumpAndSettle();
     await tester.tap(find.text('build-tasks.md').first);
     await tester.pumpAndSettle();
     expect(find.text('1/2 tasks complete'), findsOneWidget);
+    expect(find.text('Plan: build-plan.md'), findsWidgets);
     expect(find.text('Build Tasks'), findsWidgets);
     expect(find.text('Done'), findsWidgets);
     expect(find.text('Planned'), findsWidgets);
     expect(find.textContaining('# Build Tasks'), findsNothing);
   });
 
-  testWidgets('spec diagram detail preview does not offer full screen action', (
+  testWidgets('artifact fallbacks stay readable and heading plans do not repeat', (
     tester,
   ) async {
+    final project = _projectWithTraceJson();
+    final spec = (project['specs']! as List<Map<String, dynamic>>).single;
+    final plans = spec['plans']! as List<Map<String, dynamic>>;
+    final tasks = spec['task_files']! as List<Map<String, dynamic>>;
+    plans[1]['content'] =
+        '# Build Plan\n\n'
+        '## Describe the app components\n\n'
+        'Describe product catalog, product detail, cart, checkout, and loyalty.';
+    tasks[1]['content'] =
+        '# Build Tasks\n\n'
+        'Review generated tasks with the implementation team.';
+
     await _pumpWorkbench(
       tester,
-      loader: (_) async => SddProject.fromJson(_projectWithGovernanceJson()),
+      loader: (_) async => SddProject.fromJson(project),
       diagramRenderer: _FakeMermaidRenderer.success(),
     );
     _openWorkbench(tester);
@@ -373,13 +391,60 @@ void main() {
     await tester.tap(find.text('SAT SDD Onboarding').first);
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('UML class diagram').first);
+    await tester.tap(find.text('Artifact').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('build-plan.md').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Show details').first);
     await tester.pumpAndSettle();
 
-    expect(find.text('Preview'), findsOneWidget);
-    expect(find.text('Full screen'), findsNothing);
-    expect(find.byTooltip('Open diagram in full screen'), findsNothing);
+    expect(find.textContaining('# Build Plan'), findsNothing);
+    expect(
+      find.text(
+        'Describe product catalog, product detail, cart, checkout, and loyalty.',
+      ),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.text('Artifact').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('build-tasks.md').first);
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('# Build Tasks'), findsNothing);
+    expect(
+      find.text('Review generated tasks with the implementation team.'),
+      findsOneWidget,
+    );
   });
+
+  testWidgets(
+    'spec diagram detail opens full screen instead of inline preview',
+    (tester) async {
+      await _pumpWorkbench(
+        tester,
+        loader: (_) async => SddProject.fromJson(_projectWithGovernanceJson()),
+        diagramRenderer: _FakeMermaidRenderer.success(),
+      );
+      _openWorkbench(tester);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Specs').first);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('SAT SDD Onboarding').first);
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Artifact').first);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('UML class diagram').first);
+      await tester.pumpAndSettle();
+
+      expect(find.byTooltip('Close full screen diagram'), findsOneWidget);
+      expect(
+        find.textContaining('rendered specs/001/diagrams/domain-impact.mmd'),
+        findsWidgets,
+      );
+    },
+  );
 
   testWidgets('specs tab shows SCM metadata and task progress list', (
     tester,
@@ -403,7 +468,7 @@ void main() {
     );
     expect(find.text('Active'), findsOneWidget);
     expect(find.text('1/2 tasks'), findsOneWidget);
-    expect(find.text('linked'), findsOneWidget);
+    expect(find.text('Linked'), findsOneWidget);
     expect(find.text('2026-07-06'), findsOneWidget);
     expect(find.text('last run: queued'), findsOneWidget);
     expect(find.text('metadata stale'), findsOneWidget);
@@ -454,17 +519,15 @@ void main() {
       'Necesito exportar productos',
     );
     await tester.pump();
-    await tester.enterText(
-      find.widgetWithText(TextField, 'Spec id'),
-      '005-product-export',
-    );
-    await tester.pump();
     final previewButton = find.widgetWithText(FilledButton, 'Preview');
     await tester.ensureVisible(previewButton);
     await tester.tap(previewButton);
     await tester.pumpAndSettle();
 
     expect(intakeClient.lastDraft?.mode, SddSpecIntakeMode.newSpec);
+    expect(intakeClient.lastDraft?.specId, isNull);
+    expect(find.widgetWithText(TextField, 'Spec id'), findsNothing);
+    expect(find.widgetWithText(TextField, 'Workspace'), findsNothing);
     expect(find.text('Preview'), findsWidgets);
     expect(find.text('status: dry-run'), findsOneWidget);
     expect(find.text('title: Product Export'), findsOneWidget);
@@ -1471,7 +1534,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Planned'), findsOneWidget);
-      expect(find.text('linked'), findsOneWidget);
+      expect(find.text('Linked'), findsOneWidget);
 
       await tester.tap(find.text('Governance').first);
       await tester.pumpAndSettle();
@@ -2165,7 +2228,7 @@ void _openWorkbench(WidgetTester tester) {
 }
 
 Future<void> _openSpecIntake(WidgetTester tester) async {
-  final action = find.text('New functionality').first;
+  final action = find.byTooltip('New functionality').first;
   await tester.ensureVisible(action);
   await tester.pumpAndSettle();
   await tester.tap(action);

@@ -923,6 +923,26 @@ class _SddProjectViewState extends State<_SddProjectView> {
     });
   }
 
+  void _openSpecIntake() {
+    showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        return Theme(
+          data: _workbenchTheme(dialogContext),
+          child: _SpecIntakeDialog(
+            bridgeUrl: widget.bridgeUrl,
+            project: widget.project,
+            client: widget.specIntakeClient,
+            mediaAttachmentPicker: widget.mediaAttachmentPicker,
+            audioAttachmentPicker: widget.audioAttachmentPicker,
+            structuredAttachmentPicker: widget.structuredAttachmentPicker,
+            imageCropper: widget.imageCropper,
+          ),
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     const destinations = <_WorkbenchNavigationDestination>[
@@ -986,7 +1006,24 @@ class _SddProjectViewState extends State<_SddProjectView> {
                 selectedIndex: _selectedIndex,
                 onSelected: _selectTab,
               ),
-            Expanded(child: pages[_selectedIndex]),
+            Expanded(
+              child: Stack(
+                children: <Widget>[
+                  Positioned.fill(child: pages[_selectedIndex]),
+                  if (_selectedIndex == 1)
+                    Positioned(
+                      right: 16,
+                      bottom: 16,
+                      child: FloatingActionButton(
+                        heroTag: 'sdd-spec-intake-fab',
+                        tooltip: 'New functionality',
+                        onPressed: _openSpecIntake,
+                        child: const Icon(Icons.add_rounded),
+                      ),
+                    ),
+                ],
+              ),
+            ),
             if (useBottomNavigation)
               _WorkbenchBottomNavigation(
                 destinations: destinations,
@@ -1311,36 +1348,33 @@ class _SpecsTabState extends State<_SpecsTab> {
   }
 
   void _select(_SpecArtifactSelection selection, {bool showDetail = true}) {
+    final nextSelection = _validatedSelection(selection, widget.project.specs);
     setState(() {
-      _selection = _validatedSelection(selection, widget.project.specs);
+      _selection = nextSelection;
       _showDetail = showDetail;
     });
+    if (nextSelection.kind == _SpecArtifactKind.diagram) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        final spec = _fileAt(widget.project.specs, nextSelection.specIndex);
+        final diagram = spec == null
+            ? null
+            : _fileAt(spec.diagrams, nextSelection.artifactIndex);
+        if (diagram == null) return;
+        _openFullscreenDiagram(context, diagram, widget.diagramRenderer);
+      });
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     final specs = widget.project.specs;
     if (specs.isEmpty) {
-      return SingleChildScrollView(
-        padding: const EdgeInsets.fromLTRB(14, 12, 14, 24),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: <Widget>[
-            _SpecIntakeComposer(
-              bridgeUrl: widget.bridgeUrl,
-              project: widget.project,
-              client: widget.specIntakeClient,
-              mediaAttachmentPicker: widget.mediaAttachmentPicker,
-              audioAttachmentPicker: widget.audioAttachmentPicker,
-              structuredAttachmentPicker: widget.structuredAttachmentPicker,
-              imageCropper: widget.imageCropper,
-            ),
-            const SizedBox(height: 10),
-            const _InfoCard(
-              title: 'No specs',
-              detail: 'This project has no readable SDD specs yet.',
-            ),
-          ],
+      return const SingleChildScrollView(
+        padding: EdgeInsets.fromLTRB(14, 12, 14, 96),
+        child: _InfoCard(
+          title: 'No specs',
+          detail: 'This project has no readable SDD specs yet.',
         ),
       );
     }
@@ -1379,7 +1413,7 @@ class _SpecsTabState extends State<_SpecsTab> {
       );
     }
     return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(14, 12, 14, 24),
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 96),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: <Widget>[
@@ -1393,24 +1427,14 @@ class _SpecsTabState extends State<_SpecsTab> {
               ),
             ),
           ),
-          const SizedBox(height: 10),
-          _SpecIntakeComposer(
-            bridgeUrl: widget.bridgeUrl,
-            project: widget.project,
-            client: widget.specIntakeClient,
-            mediaAttachmentPicker: widget.mediaAttachmentPicker,
-            audioAttachmentPicker: widget.audioAttachmentPicker,
-            structuredAttachmentPicker: widget.structuredAttachmentPicker,
-            imageCropper: widget.imageCropper,
-          ),
         ],
       ),
     );
   }
 }
 
-class _SpecIntakeComposer extends StatefulWidget {
-  const _SpecIntakeComposer({
+class _SpecIntakeDialog extends StatelessWidget {
+  const _SpecIntakeDialog({
     required this.bridgeUrl,
     required this.project,
     this.client,
@@ -1429,13 +1453,79 @@ class _SpecIntakeComposer extends StatefulWidget {
   final SddImageCropper? imageCropper;
 
   @override
+  Widget build(BuildContext context) {
+    return Dialog.fullscreen(
+      backgroundColor: _WorkbenchColors.background,
+      child: Scaffold(
+        backgroundColor: _WorkbenchColors.background,
+        appBar: AppBar(
+          backgroundColor: _WorkbenchColors.surface,
+          surfaceTintColor: Colors.transparent,
+          title: const Text('Spec intake'),
+          actions: <Widget>[
+            IconButton(
+              tooltip: 'Close spec intake',
+              onPressed: () => Navigator.of(context).pop(),
+              icon: const Icon(Icons.close_rounded),
+            ),
+          ],
+        ),
+        body: SafeArea(
+          top: false,
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(14, 12, 14, 24),
+            child: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 760),
+                child: _SpecIntakeComposer(
+                  bridgeUrl: bridgeUrl,
+                  project: project,
+                  client: client,
+                  mediaAttachmentPicker: mediaAttachmentPicker,
+                  audioAttachmentPicker: audioAttachmentPicker,
+                  structuredAttachmentPicker: structuredAttachmentPicker,
+                  imageCropper: imageCropper,
+                  initiallyExpanded: true,
+                  showHeader: false,
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SpecIntakeComposer extends StatefulWidget {
+  const _SpecIntakeComposer({
+    required this.bridgeUrl,
+    required this.project,
+    this.client,
+    this.mediaAttachmentPicker,
+    this.audioAttachmentPicker,
+    this.structuredAttachmentPicker,
+    this.imageCropper,
+    this.initiallyExpanded = false,
+    this.showHeader = true,
+  });
+
+  final String bridgeUrl;
+  final SddProject project;
+  final SddExplorerClient? client;
+  final SddMediaAttachmentPicker? mediaAttachmentPicker;
+  final SddMediaAttachmentPicker? audioAttachmentPicker;
+  final SddStructuredAttachmentPicker? structuredAttachmentPicker;
+  final SddImageCropper? imageCropper;
+  final bool initiallyExpanded;
+  final bool showHeader;
+
+  @override
   State<_SpecIntakeComposer> createState() => _SpecIntakeComposerState();
 }
 
 class _SpecIntakeComposerState extends State<_SpecIntakeComposer> {
-  final TextEditingController _workspaceController = TextEditingController();
   final TextEditingController _textController = TextEditingController();
-  final TextEditingController _specIdController = TextEditingController();
   SddSpecIntakeMode _mode = SddSpecIntakeMode.newSpec;
   String _artifact = 'tasks';
   String? _selectedSpecId;
@@ -1450,7 +1540,7 @@ class _SpecIntakeComposerState extends State<_SpecIntakeComposer> {
   final List<SddStagedMediaAttachment> _attachments =
       <SddStagedMediaAttachment>[];
   String? _attachmentStatus;
-  bool _expanded = false;
+  late bool _expanded;
 
   SddExplorerClient get _client =>
       widget.client ?? SddExplorerClient(baseUrl: widget.bridgeUrl);
@@ -1458,7 +1548,7 @@ class _SpecIntakeComposerState extends State<_SpecIntakeComposer> {
   @override
   void initState() {
     super.initState();
-    _workspaceController.text = widget.project.workspacePath;
+    _expanded = widget.initiallyExpanded;
     _selectedSpecId = widget.project.specs.isEmpty
         ? null
         : widget.project.specs.first.id;
@@ -1467,9 +1557,6 @@ class _SpecIntakeComposerState extends State<_SpecIntakeComposer> {
   @override
   void didUpdateWidget(_SpecIntakeComposer oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.project.workspacePath != widget.project.workspacePath) {
-      _workspaceController.text = widget.project.workspacePath;
-    }
     if (!widget.project.specs.any((spec) => spec.id == _selectedSpecId)) {
       _selectedSpecId = widget.project.specs.isEmpty
           ? null
@@ -1479,9 +1566,7 @@ class _SpecIntakeComposerState extends State<_SpecIntakeComposer> {
 
   @override
   void dispose() {
-    _workspaceController.dispose();
     _textController.dispose();
-    _specIdController.dispose();
     super.dispose();
   }
 
@@ -1544,7 +1629,7 @@ class _SpecIntakeComposerState extends State<_SpecIntakeComposer> {
       final attachment = await picker();
       if (attachment == null) return;
       final staged = await _client.uploadSpecMedia(
-        workspacePath: _workspaceController.text.trim(),
+        workspacePath: widget.project.workspacePath,
         attachment: attachment,
         kind: kind,
       );
@@ -1564,7 +1649,7 @@ class _SpecIntakeComposerState extends State<_SpecIntakeComposer> {
     await _run(() async {
       if (stagedPath != null && stagedPath.isNotEmpty) {
         await _client.deleteSpecMedia(
-          workspacePath: _workspaceController.text.trim(),
+          workspacePath: widget.project.workspacePath,
           stagedPath: stagedPath,
         );
       }
@@ -1610,7 +1695,7 @@ class _SpecIntakeComposerState extends State<_SpecIntakeComposer> {
           region,
         );
         final crop = await _client.uploadSpecMedia(
-          workspacePath: _workspaceController.text.trim(),
+          workspacePath: widget.project.workspacePath,
           attachment: cropDraft,
           kind: 'crop',
           sourceRef: sourceRef,
@@ -1766,12 +1851,10 @@ class _SpecIntakeComposerState extends State<_SpecIntakeComposer> {
 
   SddSpecIntakeDraft _draft() {
     return SddSpecIntakeDraft(
-      workspacePath: _workspaceController.text.trim(),
+      workspacePath: widget.project.workspacePath,
       mode: _mode,
       requestText: _textController.text.trim(),
-      specId: _mode == SddSpecIntakeMode.newSpec
-          ? _emptyToNull(_specIdController.text)
-          : _selectedSpecId,
+      specId: _mode == SddSpecIntakeMode.newSpec ? null : _selectedSpecId,
       artifact: _mode == SddSpecIntakeMode.newSpec ? 'spec' : _artifact,
       attachments: List<SddStagedMediaAttachment>.unmodifiable(_attachments),
     );
@@ -1779,24 +1862,24 @@ class _SpecIntakeComposerState extends State<_SpecIntakeComposer> {
 
   bool get _canSubmit =>
       !_busy &&
-      _workspaceController.text.trim().isNotEmpty &&
+      widget.project.workspacePath.trim().isNotEmpty &&
       _textController.text.trim().isNotEmpty &&
       (_mode == SddSpecIntakeMode.newSpec || _selectedSpecId != null);
 
   bool get _canUploadImage =>
       !_busy &&
       widget.mediaAttachmentPicker != null &&
-      _workspaceController.text.trim().isNotEmpty;
+      widget.project.workspacePath.trim().isNotEmpty;
 
   bool get _canUploadAudio =>
       !_busy &&
       widget.audioAttachmentPicker != null &&
-      _workspaceController.text.trim().isNotEmpty;
+      widget.project.workspacePath.trim().isNotEmpty;
 
   bool get _canAttachStructured =>
       !_busy &&
       widget.structuredAttachmentPicker != null &&
-      _workspaceController.text.trim().isNotEmpty;
+      widget.project.workspacePath.trim().isNotEmpty;
 
   @override
   Widget build(BuildContext context) {
@@ -1804,36 +1887,37 @@ class _SpecIntakeComposerState extends State<_SpecIntakeComposer> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: <Widget>[
-          Row(
-            children: <Widget>[
-              const Icon(
-                Icons.add_task_rounded,
-                size: 17,
-                color: _WorkbenchColors.primary,
-              ),
-              const SizedBox(width: 8),
-              const Expanded(
-                child: Text(
-                  'Spec intake',
-                  style: TextStyle(fontWeight: FontWeight.w900),
+          if (widget.showHeader)
+            Row(
+              children: <Widget>[
+                const Icon(
+                  Icons.add_task_rounded,
+                  size: 17,
+                  color: _WorkbenchColors.primary,
                 ),
-              ),
-              if (!_expanded)
-                TextButton.icon(
-                  onPressed: () => setState(() => _expanded = true),
-                  icon: const Icon(Icons.add_rounded),
-                  label: const Text('New functionality'),
+                const SizedBox(width: 8),
+                const Expanded(
+                  child: Text(
+                    'Spec intake',
+                    style: TextStyle(fontWeight: FontWeight.w900),
+                  ),
                 ),
-              if (_busy)
-                const SizedBox(
-                  width: 16,
-                  height: 16,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                ),
-            ],
-          ),
+                if (!_expanded)
+                  TextButton.icon(
+                    onPressed: () => setState(() => _expanded = true),
+                    icon: const Icon(Icons.add_rounded),
+                    label: const Text('New functionality'),
+                  ),
+                if (_busy)
+                  const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+              ],
+            ),
           if (_expanded) ...[
-            const SizedBox(height: 10),
+            if (widget.showHeader) const SizedBox(height: 10),
             SegmentedButton<SddSpecIntakeMode>(
               segments: const <ButtonSegment<SddSpecIntakeMode>>[
                 ButtonSegment<SddSpecIntakeMode>(
@@ -1857,24 +1941,9 @@ class _SpecIntakeComposerState extends State<_SpecIntakeComposer> {
               },
             ),
             const SizedBox(height: 10),
-            TextField(
-              controller: _workspaceController,
-              onChanged: (_) => setState(() {}),
-              decoration: const InputDecoration(
-                labelText: 'Workspace',
-                prefixIcon: Icon(Icons.folder_open_outlined),
-              ),
-            ),
-            const SizedBox(height: 10),
             if (_mode == SddSpecIntakeMode.newSpec)
-              TextField(
-                controller: _specIdController,
-                onChanged: (_) => setState(() {}),
-                decoration: const InputDecoration(
-                  labelText: 'Spec id',
-                  hintText: 'optional-slug',
-                  prefixIcon: Icon(Icons.tag_outlined),
-                ),
+              _IntakeTargetSummary(
+                detail: 'A new spec id will be generated automatically.',
               )
             else
               _ExistingSpecTargetControls(
@@ -1897,20 +1966,20 @@ class _SpecIntakeComposerState extends State<_SpecIntakeComposer> {
               ),
             ),
             const SizedBox(height: 8),
-            Row(
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
               children: <Widget>[
                 OutlinedButton.icon(
                   onPressed: _canUploadAudio ? _attachAudio : null,
                   icon: const Icon(Icons.mic_none_rounded),
                   label: const Text('Audio'),
                 ),
-                const SizedBox(width: 8),
                 OutlinedButton.icon(
                   onPressed: _canUploadImage ? _attachImage : null,
                   icon: const Icon(Icons.image_outlined),
                   label: const Text('Image'),
                 ),
-                const SizedBox(width: 8),
                 OutlinedButton.icon(
                   onPressed: _canAttachStructured ? _attachStructured : null,
                   icon: const Icon(Icons.crop_free_rounded),
@@ -2187,6 +2256,56 @@ class _AttachmentList extends StatelessWidget {
                 ),
               ),
             ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _IntakeTargetSummary extends StatelessWidget {
+  const _IntakeTargetSummary({required this.detail});
+
+  final String detail;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: _WorkbenchColors.sourceBackground,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: _WorkbenchColors.border),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(10),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            const Icon(
+              Icons.auto_awesome_motion_outlined,
+              size: 18,
+              color: _WorkbenchColors.primary,
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  const Text(
+                    'New spec',
+                    style: TextStyle(fontWeight: FontWeight.w900),
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    detail,
+                    style: const TextStyle(
+                      color: _WorkbenchColors.secondaryText,
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
+              ),
+            ),
           ],
         ),
       ),
@@ -3032,6 +3151,8 @@ class _SpecListRow extends StatelessWidget {
     final updated = _formatShortDate(spec.updatedAt ?? spec.createdAt);
     final stale =
         spec.metadataStatus == 'stale' || spec.metadataStalePaths.isNotEmpty;
+    final lifecycle = _specLifecycleStatus(spec);
+    final traceability = _specTraceabilityStatus(spec);
     return Material(
       color: selected
           ? _WorkbenchColors.primary.withValues(alpha: 0.10)
@@ -3077,8 +3198,9 @@ class _SpecListRow extends StatelessWidget {
                         ),
                         const SizedBox(width: 8),
                         _TinyStatusPill(
-                          label: spec.lifecycleStatus,
-                          warning: stale || spec.lifecycleStatus == 'blocked',
+                          label: lifecycle,
+                          warning:
+                              stale || _normalizeStatus(lifecycle) == 'blocked',
                         ),
                       ],
                     ),
@@ -3109,8 +3231,8 @@ class _SpecListRow extends StatelessWidget {
                         ),
                         _TinyMetaChip(
                           icon: Icons.account_tree_outlined,
-                          label: spec.traceabilityStatus,
-                          warning: spec.traceabilityStatus != 'linked',
+                          label: _statusStyle(traceability).label,
+                          warning: _normalizeStatus(traceability) != 'linked',
                         ),
                         if (updated != null)
                           _TinyMetaChip(
@@ -3151,10 +3273,11 @@ class _SelectedSpecSummary extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final progress = _specTaskProgress(spec);
-    final description = _specDescription(spec);
     final updated = _formatShortDate(spec.updatedAt ?? spec.createdAt);
     final stale =
         spec.metadataStatus == 'stale' || spec.metadataStalePaths.isNotEmpty;
+    final lifecycle = _specLifecycleStatus(spec);
+    final traceability = _specTraceabilityStatus(spec);
     return _PanelCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -3195,21 +3318,12 @@ class _SelectedSpecSummary extends StatelessWidget {
               ),
               const SizedBox(width: 8),
               _TinyStatusPill(
-                label: _specLifecycleStatus(spec),
-                warning: stale || spec.lifecycleStatus == 'blocked',
+                label: lifecycle,
+                warning: stale || _normalizeStatus(lifecycle) == 'blocked',
               ),
             ],
           ),
-          const SizedBox(height: 8),
-          Text(
-            description,
-            style: const TextStyle(
-              color: _WorkbenchColors.secondaryText,
-              fontSize: 12,
-              height: 1.3,
-            ),
-          ),
-          const SizedBox(height: 9),
+          const SizedBox(height: 6),
           Wrap(
             spacing: 7,
             runSpacing: 5,
@@ -3224,18 +3338,8 @@ class _SelectedSpecSummary extends StatelessWidget {
               ),
               _TinyMetaChip(
                 icon: Icons.account_tree_outlined,
-                label: _specTraceabilityStatus(spec),
-                warning: _specTraceabilityStatus(spec) != 'linked',
-              ),
-              _TinyMetaChip(
-                icon: Icons.route_outlined,
-                label: '${spec.allPlanFiles.length} plans',
-                warning: spec.allPlanFiles.isEmpty,
-              ),
-              _TinyMetaChip(
-                icon: Icons.checklist_rounded,
-                label: '${spec.allTaskFiles.length} task files',
-                warning: spec.allTaskFiles.isEmpty,
+                label: _statusStyle(traceability).label,
+                warning: _normalizeStatus(traceability) != 'linked',
               ),
               if (spec.sliceDocs.isNotEmpty)
                 _TinyMetaChip(
@@ -3362,6 +3466,16 @@ _WorkbenchStatusStyle _statusStyle(String raw, {bool warning = false}) {
       icon: Icons.edit_note_rounded,
       color: Color(0xFF93C5FD),
     ),
+    'not_linked' => const _WorkbenchStatusStyle(
+      label: 'Not linked',
+      icon: Icons.link_off_rounded,
+      color: _WorkbenchColors.warning,
+    ),
+    'needs_metadata' => const _WorkbenchStatusStyle(
+      label: 'Needs metadata',
+      icon: Icons.warning_amber_rounded,
+      color: _WorkbenchColors.warning,
+    ),
     'stale' || 'incomplete' => const _WorkbenchStatusStyle(
       label: 'Needs attention',
       icon: Icons.warning_amber_rounded,
@@ -3414,6 +3528,10 @@ String _normalizeStatus(String raw) {
       lower == 'testing') {
     return 'validation';
   }
+  if (lower == 'not linked' || lower == 'unlinked') return 'not_linked';
+  if (lower == 'needs metadata' || lower == 'metadata missing') {
+    return 'needs_metadata';
+  }
   if (lower == 'linked' ||
       lower == 'draft' ||
       lower == 'stale' ||
@@ -3428,7 +3546,9 @@ String _humanStatusLabel(String raw) {
       .trim()
       .replaceAll(RegExp(r'[_-]+'), ' ')
       .replaceAll(RegExp(r'\s+'), ' ');
-  if (words.isEmpty) return 'Unknown';
+  if (words.isEmpty || words.toLowerCase() == 'unknown') {
+    return 'Needs metadata';
+  }
   return '${words.substring(0, 1).toUpperCase()}${words.substring(1)}';
 }
 
@@ -3520,21 +3640,33 @@ class _SpecTraceNavigator extends StatelessWidget {
                 ),
             ],
           ),
-          const SizedBox(height: 6),
-          Text(
-            '${selectedSpec.id} · ${selectedSpec.path}',
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              color: _WorkbenchColors.secondaryText,
-              fontSize: 12,
-            ),
+          const SizedBox(height: 8),
+          Row(
+            children: <Widget>[
+              Expanded(
+                child: Text(
+                  _artifactSelectionLabel(selectedSpec, selection),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: _WorkbenchColors.onBackground,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+              _ArtifactSelectorMenu(
+                spec: selectedSpec,
+                selection: selection,
+                onSelected: onSelected,
+              ),
+            ],
           ),
           if (selectedSpec.missing.isNotEmpty) ...[
-            const SizedBox(height: 6),
+            const SizedBox(height: 4),
             Text(
               'Missing: ${selectedSpec.missing.join(', ')}',
-              maxLines: 2,
+              maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(
                 color: _WorkbenchColors.warning,
@@ -3542,90 +3674,218 @@ class _SpecTraceNavigator extends StatelessWidget {
               ),
             ),
           ],
-          const SizedBox(height: 10),
-          Wrap(
-            spacing: 7,
-            runSpacing: 7,
-            children: _specArtifactChips(selectedSpec),
-          ),
         ],
       ),
     );
   }
+}
 
-  List<Widget> _specArtifactChips(SddSpec spec) {
-    return <Widget>[
-      ..._artifactChips(
-        kind: _SpecArtifactKind.spec,
-        files: spec.allSpecFiles,
-        fallbackLabel: 'spec.md',
-        icon: Icons.description_outlined,
-      ),
-      ..._artifactChips(
-        kind: _SpecArtifactKind.plan,
-        files: spec.allPlanFiles,
-        fallbackLabel: 'plan.md',
-        icon: Icons.route_outlined,
-      ),
-      ..._artifactChips(
-        kind: _SpecArtifactKind.tasks,
-        files: spec.allTaskFiles,
-        fallbackLabel: 'tasks.md',
-        icon: Icons.checklist_rounded,
-      ),
-      ..._artifactChips(
-        kind: _SpecArtifactKind.slice,
-        files: spec.sliceDocs,
-        fallbackLabel: 'slice.md',
-        icon: Icons.view_agenda_outlined,
-      ),
-      ...List<Widget>.generate(spec.diagrams.length, (index) {
-        final diagram = spec.diagrams[index];
-        return _SpecArtifactChoice(
-          label: _diagramDisplayLabel(diagram),
-          icon: _diagramIcon(diagram),
-          selected: _isSelected(_SpecArtifactKind.diagram, index),
-          onSelected: () {
-            onSelected(
-              _SpecArtifactSelection(
-                specIndex: selection.specIndex,
-                kind: _SpecArtifactKind.diagram,
-                artifactIndex: index,
+class _ArtifactSelectorMenu extends StatelessWidget {
+  const _ArtifactSelectorMenu({
+    required this.spec,
+    required this.selection,
+    required this.onSelected,
+  });
+
+  final SddSpec spec;
+  final _SpecArtifactSelection selection;
+  final ValueChanged<_SpecArtifactSelection> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    final items = _artifactMenuItems(spec, selection.specIndex);
+    return PopupMenuButton<_SpecArtifactSelection>(
+      tooltip: 'Select artifact',
+      onSelected: onSelected,
+      itemBuilder: (context) {
+        return items
+            .map((item) {
+              final selected = item.selection == selection;
+              return PopupMenuItem<_SpecArtifactSelection>(
+                value: item.selection,
+                child: Row(
+                  children: <Widget>[
+                    Icon(
+                      selected ? Icons.check_rounded : item.icon,
+                      size: 16,
+                      color: selected
+                          ? _WorkbenchColors.primary
+                          : _WorkbenchColors.secondaryText,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: <Widget>[
+                          Text(
+                            item.label,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          if (item.detail != null)
+                            Text(
+                              item.detail!,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: _WorkbenchColors.secondaryText,
+                                fontSize: 11,
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            })
+            .toList(growable: false);
+      },
+      child: const Padding(
+        padding: EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            Text(
+              'Artifact',
+              style: TextStyle(
+                color: _WorkbenchColors.primary,
+                fontWeight: FontWeight.w800,
               ),
-            );
-          },
-        );
-      }),
-    ];
+            ),
+            Icon(
+              Icons.arrow_drop_down_rounded,
+              color: _WorkbenchColors.primary,
+            ),
+          ],
+        ),
+      ),
+    );
   }
+}
 
-  List<Widget> _artifactChips({
+class _ArtifactMenuItem {
+  const _ArtifactMenuItem({
+    required this.selection,
+    required this.label,
+    required this.icon,
+    this.detail,
+  });
+
+  final _SpecArtifactSelection selection;
+  final String label;
+  final IconData icon;
+  final String? detail;
+}
+
+List<_ArtifactMenuItem> _artifactMenuItems(SddSpec spec, int specIndex) {
+  final items = <_ArtifactMenuItem>[];
+
+  void addFiles({
     required _SpecArtifactKind kind,
     required List<SddFile> files,
     required String fallbackLabel,
     required IconData icon,
+    String? Function(int index, SddFile file)? detail,
   }) {
-    return List<Widget>.generate(files.length, (index) {
-      return _SpecArtifactChoice(
-        label: _artifactLabel(files[index], fallbackLabel),
-        icon: icon,
-        selected: _isSelected(kind, index),
-        onSelected: () {
-          onSelected(
-            _SpecArtifactSelection(
-              specIndex: selection.specIndex,
-              kind: kind,
-              artifactIndex: index,
-            ),
-          );
-        },
+    for (final entry in files.indexed) {
+      items.add(
+        _ArtifactMenuItem(
+          selection: _SpecArtifactSelection(
+            specIndex: specIndex,
+            kind: kind,
+            artifactIndex: entry.$1,
+          ),
+          label: _artifactLabel(entry.$2, fallbackLabel),
+          icon: icon,
+          detail: detail?.call(entry.$1, entry.$2),
+        ),
       );
-    });
+    }
   }
 
-  bool _isSelected(_SpecArtifactKind kind, int index) {
-    return selection.kind == kind && selection.artifactIndex == index;
+  addFiles(
+    kind: _SpecArtifactKind.spec,
+    files: spec.allSpecFiles,
+    fallbackLabel: 'spec.md',
+    icon: Icons.description_outlined,
+  );
+  addFiles(
+    kind: _SpecArtifactKind.plan,
+    files: spec.allPlanFiles,
+    fallbackLabel: 'plan.md',
+    icon: Icons.route_outlined,
+  );
+  addFiles(
+    kind: _SpecArtifactKind.tasks,
+    files: spec.allTaskFiles,
+    fallbackLabel: 'tasks.md',
+    icon: Icons.checklist_rounded,
+    detail: (index, file) => _taskPlanAssociation(spec, index, file),
+  );
+  addFiles(
+    kind: _SpecArtifactKind.slice,
+    files: spec.sliceDocs,
+    fallbackLabel: 'slice.md',
+    icon: Icons.view_agenda_outlined,
+  );
+  for (final entry in spec.diagrams.indexed) {
+    final diagram = entry.$2;
+    items.add(
+      _ArtifactMenuItem(
+        selection: _SpecArtifactSelection(
+          specIndex: specIndex,
+          kind: _SpecArtifactKind.diagram,
+          artifactIndex: entry.$1,
+        ),
+        label: _diagramDisplayLabel(diagram),
+        icon: _diagramIcon(diagram),
+        detail: diagram.path,
+      ),
+    );
   }
+  return items;
+}
+
+String _artifactSelectionLabel(SddSpec spec, _SpecArtifactSelection selection) {
+  final items = _artifactMenuItems(spec, selection.specIndex);
+  for (final item in items) {
+    if (item.selection == selection) {
+      return item.detail == null
+          ? item.label
+          : '${item.label} · ${item.detail}';
+    }
+  }
+  return spec.title;
+}
+
+String? _taskPlanAssociation(SddSpec spec, int taskIndex, SddFile taskFile) {
+  if (spec.allPlanFiles.isEmpty) return 'Plan: Not linked';
+  final taskStem = _artifactStem(taskFile.path);
+  for (final plan in spec.allPlanFiles) {
+    final planStem = _artifactStem(plan.path);
+    if (taskStem.isNotEmpty &&
+        planStem.isNotEmpty &&
+        (taskStem.contains(planStem) || planStem.contains(taskStem))) {
+      return 'Plan: ${_artifactLabel(plan, 'plan.md')}';
+    }
+  }
+  if (taskIndex < spec.allPlanFiles.length) {
+    return 'Plan: ${_artifactLabel(spec.allPlanFiles[taskIndex], 'plan.md')}';
+  }
+  if (spec.allPlanFiles.length == 1) {
+    return 'Plan: ${_artifactLabel(spec.allPlanFiles.single, 'plan.md')}';
+  }
+  return 'Plan: Needs metadata';
+}
+
+String _artifactStem(String path) {
+  final filename = path.split('/').last.toLowerCase();
+  return filename
+      .replaceAll(RegExp(r'\.(md|markdown)$'), '')
+      .replaceAll(RegExp(r'[-_]*(plan|tasks?)$'), '')
+      .trim();
 }
 
 class _SpecSelectorMenu extends StatelessWidget {
@@ -3695,44 +3955,6 @@ class _SpecSelectorMenu extends StatelessWidget {
           ],
         ),
       ),
-    );
-  }
-}
-
-class _SpecArtifactChoice extends StatelessWidget {
-  const _SpecArtifactChoice({
-    required this.label,
-    required this.icon,
-    required this.selected,
-    required this.onSelected,
-  });
-
-  final String label;
-  final IconData icon;
-  final bool selected;
-  final VoidCallback onSelected;
-
-  @override
-  Widget build(BuildContext context) {
-    return ChoiceChip(
-      selected: selected,
-      onSelected: (_) => onSelected(),
-      avatar: Icon(
-        icon,
-        size: 15,
-        color: selected
-            ? _WorkbenchColors.onPrimary
-            : _WorkbenchColors.secondaryText,
-      ),
-      label: Text(label, overflow: TextOverflow.ellipsis),
-      labelStyle: TextStyle(
-        color: selected
-            ? _WorkbenchColors.onPrimary
-            : _WorkbenchColors.onBackground,
-        fontWeight: FontWeight.w800,
-        fontSize: 12,
-      ),
-      visualDensity: VisualDensity.compact,
     );
   }
 }
@@ -3839,6 +4061,9 @@ class _SpecArtifactInspector extends StatelessWidget {
         return _TaskFileSection(
           title: _artifactLabel(file, 'tasks.md'),
           file: file,
+          planAssociation: file == null
+              ? null
+              : _taskPlanAssociation(spec, selection.artifactIndex, file),
           feedbackTarget: _fileFeedbackTarget(
             project: project,
             spec: spec,
@@ -3874,7 +4099,7 @@ class _SpecArtifactInspector extends StatelessWidget {
             detail: 'No diagrams found',
           );
         }
-        return _DiagramCard(
+        return _SpecDiagramOpenCard(
           diagram: diagram,
           diagramRenderer: diagramRenderer,
           feedbackTarget: _diagramFeedbackTarget(
@@ -4252,7 +4477,7 @@ class _DiagramListTile extends StatelessWidget {
       color: Colors.transparent,
       child: InkWell(
         borderRadius: BorderRadius.circular(8),
-        onTap: () => _openFullscreen(context, diagram),
+        onTap: () => _openFullscreenDiagram(context, diagram, diagramRenderer),
         child: Padding(
           padding: const EdgeInsets.symmetric(vertical: 8),
           child: Row(
@@ -4327,23 +4552,6 @@ class _DiagramListTile extends StatelessWidget {
           ),
         ),
       ),
-    );
-  }
-
-  void _openFullscreen(BuildContext context, SddDiagram diagram) {
-    showDialog<void>(
-      context: context,
-      useSafeArea: false,
-      builder: (dialogContext) {
-        return Theme(
-          data: _workbenchTheme(dialogContext),
-          child: _FullscreenDiagramDialog(
-            diagram: diagram,
-            diagramRenderer: _fullscreenRenderer(diagramRenderer),
-            sourceText: diagram.content ?? '',
-          ),
-        );
-      },
     );
   }
 }
@@ -4612,10 +4820,6 @@ List<_PlanStage> _parseHeadingPlanStages(List<String> lines) {
         title: currentTitle,
         description: description,
         status: _statusFromPlanText('$currentTitle $description'),
-        details: body
-            .map(_cleanPlanText)
-            .where((detail) => detail.isNotEmpty)
-            .toList(growable: false),
       ),
     );
     body.clear();
@@ -4723,6 +4927,15 @@ String _cleanPlanText(String text) {
       .trim();
 }
 
+bool _sameDisplayText(String left, String right) {
+  String normalize(String value) => _cleanPlanText(
+    value,
+  ).toLowerCase().replaceAll(RegExp(r'[^a-z0-9]+'), ' ').trim();
+  final normalizedLeft = normalize(left);
+  final normalizedRight = normalize(right);
+  return normalizedLeft.isNotEmpty && normalizedLeft == normalizedRight;
+}
+
 String _planStageTitle(String text) {
   final cleaned = _cleanPlanText(text);
   if (cleaned.isEmpty) return 'Plan stage';
@@ -4803,7 +5016,9 @@ class _PlanFileSection extends StatelessWidget {
             _StructuredPlanView(plan: plan),
           ] else if (value.hasContent) ...[
             const SizedBox(height: 10),
-            _SourceBlock(text: value.content!),
+            _ReadableMarkdownView(text: value.content!),
+            const SizedBox(height: 8),
+            _SourceExcerptDisclosure(text: value.content!),
           ],
         ],
       ),
@@ -4899,6 +5114,16 @@ class _PlanStageRow extends StatelessWidget {
       stage.status,
       warning: _planStatusIsWarning(stage.status),
     );
+    final showDescription =
+        stage.description.isNotEmpty &&
+        !_sameDisplayText(stage.title, stage.description);
+    final detailItems = stage.details
+        .where(
+          (detail) =>
+              !_sameDisplayText(detail, stage.title) &&
+              !_sameDisplayText(detail, stage.description),
+        )
+        .toList(growable: false);
     return Material(
       color: expanded
           ? status.color.withValues(alpha: 0.08)
@@ -4934,7 +5159,7 @@ class _PlanStageRow extends StatelessWidget {
                       children: <Widget>[
                         Text(
                           stage.title,
-                          maxLines: expanded ? 4 : 2,
+                          maxLines: expanded ? null : 2,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
                             color: expanded
@@ -4944,12 +5169,14 @@ class _PlanStageRow extends StatelessWidget {
                             fontSize: 13,
                           ),
                         ),
-                        if (stage.description.isNotEmpty) ...[
+                        if (showDescription) ...[
                           const SizedBox(height: 3),
                           Text(
                             stage.description,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
+                            maxLines: expanded ? null : 2,
+                            overflow: expanded
+                                ? TextOverflow.visible
+                                : TextOverflow.ellipsis,
                             style: const TextStyle(
                               color: _WorkbenchColors.secondaryText,
                               fontSize: 12,
@@ -4993,13 +5220,11 @@ class _PlanStageRow extends StatelessWidget {
                   ),
                 ],
               ),
-              if (expanded &&
-                  (stage.description.isNotEmpty ||
-                      stage.details.isNotEmpty)) ...[
+              if (expanded && detailItems.isNotEmpty) ...[
                 const SizedBox(height: 10),
                 Padding(
                   padding: const EdgeInsets.only(left: 36),
-                  child: _PlanStageDetail(stage: stage),
+                  child: _PlanStageDetail(details: detailItems),
                 ),
               ],
             ],
@@ -5011,9 +5236,9 @@ class _PlanStageRow extends StatelessWidget {
 }
 
 class _PlanStageDetail extends StatelessWidget {
-  const _PlanStageDetail({required this.stage});
+  const _PlanStageDetail({required this.details});
 
-  final _PlanStage stage;
+  final List<String> details;
 
   @override
   Widget build(BuildContext context) {
@@ -5028,43 +5253,31 @@ class _PlanStageDetail extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
-            if (stage.description.isNotEmpty)
-              Text(
-                stage.description,
-                style: const TextStyle(
-                  color: _WorkbenchColors.onBackground,
-                  fontSize: 12,
-                  height: 1.35,
-                ),
-              ),
-            if (stage.details.isNotEmpty) ...[
-              if (stage.description.isNotEmpty) const SizedBox(height: 8),
-              ...stage.details.map(
-                (detail) => Padding(
-                  padding: const EdgeInsets.only(top: 4),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: <Widget>[
-                      const Icon(
-                        Icons.chevron_right_rounded,
-                        size: 16,
-                        color: _WorkbenchColors.primary,
-                      ),
-                      const SizedBox(width: 4),
-                      Expanded(
-                        child: Text(
-                          detail,
-                          style: const TextStyle(
-                            color: _WorkbenchColors.secondaryText,
-                            fontSize: 12,
-                          ),
+            ...details.map(
+              (detail) => Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    const Icon(
+                      Icons.chevron_right_rounded,
+                      size: 16,
+                      color: _WorkbenchColors.primary,
+                    ),
+                    const SizedBox(width: 4),
+                    Expanded(
+                      child: Text(
+                        detail,
+                        style: const TextStyle(
+                          color: _WorkbenchColors.secondaryText,
+                          fontSize: 12,
                         ),
                       ),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
               ),
-            ],
+            ),
           ],
         ),
       ),
@@ -5076,6 +5289,7 @@ class _TaskFileSection extends StatelessWidget {
   const _TaskFileSection({
     required this.file,
     this.title = 'tasks.md',
+    this.planAssociation,
     this.feedbackTarget,
     this.onFeedback,
     this.actions = const <SddCodexActionKind>[],
@@ -5084,6 +5298,7 @@ class _TaskFileSection extends StatelessWidget {
 
   final String title;
   final SddFile? file;
+  final String? planAssociation;
   final SddFeedbackTarget? feedbackTarget;
   final ValueChanged<SddFeedbackTarget>? onFeedback;
   final List<SddCodexActionKind> actions;
@@ -5118,6 +5333,13 @@ class _TaskFileSection extends StatelessWidget {
               const SizedBox(height: 10),
               _TaskProgressBar(progress: progress),
             ],
+            if (planAssociation != null) ...[
+              const SizedBox(height: 8),
+              _TinyMetaChip(
+                icon: Icons.route_outlined,
+                label: planAssociation!,
+              ),
+            ],
             if (file!.error != null) ...[
               const SizedBox(height: 8),
               Text(
@@ -5130,7 +5352,14 @@ class _TaskFileSection extends StatelessWidget {
               if (tasks != null)
                 _StructuredTaskListView(tasks: tasks)
               else
-                _SourceBlock(text: file!.content!),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    _ReadableMarkdownView(text: file!.content!),
+                    const SizedBox(height: 8),
+                    _SourceExcerptDisclosure(text: file!.content!),
+                  ],
+                ),
             ],
           ],
         ],
@@ -5167,13 +5396,32 @@ class _StructuredTask {
   final List<String> details;
 }
 
-class _StructuredTaskListView extends StatelessWidget {
+class _StructuredTaskListView extends StatefulWidget {
   const _StructuredTaskListView({required this.tasks});
 
   final _StructuredTaskList tasks;
 
   @override
+  State<_StructuredTaskListView> createState() =>
+      _StructuredTaskListViewState();
+}
+
+class _StructuredTaskListViewState extends State<_StructuredTaskListView> {
+  final Set<int> _expanded = <int>{};
+
+  @override
+  void didUpdateWidget(_StructuredTaskListView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.tasks != widget.tasks) {
+      _expanded.clear();
+    } else {
+      _expanded.removeWhere((index) => index >= widget.tasks.tasks.length);
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final tasks = widget.tasks;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
@@ -5203,7 +5451,17 @@ class _StructuredTaskListView extends StatelessWidget {
         for (final entry in tasks.tasks.indexed) ...[
           if (entry.$1 > 0)
             const Divider(height: 12, color: _WorkbenchColors.border),
-          _StructuredTaskRow(task: entry.$2),
+          _StructuredTaskRow(
+            task: entry.$2,
+            expanded: _expanded.contains(entry.$1),
+            onToggle: () {
+              setState(() {
+                if (!_expanded.remove(entry.$1)) {
+                  _expanded.add(entry.$1);
+                }
+              });
+            },
+          ),
         ],
       ],
     );
@@ -5211,62 +5469,110 @@ class _StructuredTaskListView extends StatelessWidget {
 }
 
 class _StructuredTaskRow extends StatelessWidget {
-  const _StructuredTaskRow({required this.task});
+  const _StructuredTaskRow({
+    required this.task,
+    required this.expanded,
+    required this.onToggle,
+  });
 
   final _StructuredTask task;
+  final bool expanded;
+  final VoidCallback onToggle;
 
   @override
   Widget build(BuildContext context) {
     final status = _statusStyle(task.status);
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 5),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          Container(
-            width: 24,
-            height: 24,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-              color: status.color.withValues(alpha: 0.16),
-              borderRadius: BorderRadius.circular(999),
-              border: Border.all(color: status.color.withValues(alpha: 0.5)),
-            ),
-            child: Icon(status.icon, size: 14, color: status.color),
-          ),
-          const SizedBox(width: 9),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: <Widget>[
-                Text(
-                  task.title,
-                  style: const TextStyle(
-                    color: _WorkbenchColors.onBackground,
-                    fontSize: 12,
-                    height: 1.25,
-                    fontWeight: FontWeight.w800,
+    return Material(
+      color: expanded
+          ? status.color.withValues(alpha: 0.08)
+          : Colors.transparent,
+      borderRadius: BorderRadius.circular(8),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(8),
+        onTap: onToggle,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 5),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Container(
+                width: 24,
+                height: 24,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: status.color.withValues(alpha: 0.16),
+                  borderRadius: BorderRadius.circular(999),
+                  border: Border.all(
+                    color: status.color.withValues(alpha: 0.5),
                   ),
                 ),
-                if (task.details.isNotEmpty) ...[
-                  const SizedBox(height: 3),
-                  Text(
-                    task.details.join(' '),
-                    maxLines: 3,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: _WorkbenchColors.secondaryText,
-                      fontSize: 11.5,
-                      height: 1.25,
+                child: Icon(status.icon, size: 14, color: status.color),
+              ),
+              const SizedBox(width: 9),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    Text(
+                      task.title,
+                      maxLines: expanded ? null : 2,
+                      overflow: expanded
+                          ? TextOverflow.visible
+                          : TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: _WorkbenchColors.onBackground,
+                        fontSize: 12,
+                        height: 1.25,
+                        fontWeight: FontWeight.w800,
+                      ),
                     ),
-                  ),
-                ],
-                const SizedBox(height: 5),
-                _TinyStatusPill(label: task.status),
-              ],
-            ),
+                    if (task.details.isNotEmpty) ...[
+                      const SizedBox(height: 3),
+                      Text(
+                        task.details.join(' '),
+                        maxLines: expanded ? null : 3,
+                        overflow: expanded
+                            ? TextOverflow.visible
+                            : TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: _WorkbenchColors.secondaryText,
+                          fontSize: 11.5,
+                          height: 1.25,
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 5),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 6,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: <Widget>[
+                        _TinyStatusPill(label: task.status),
+                        TextButton.icon(
+                          onPressed: onToggle,
+                          icon: Icon(
+                            expanded
+                                ? Icons.keyboard_arrow_up_rounded
+                                : Icons.keyboard_arrow_down_rounded,
+                            size: 17,
+                          ),
+                          label: Text(
+                            expanded ? 'Hide details' : 'Show details',
+                          ),
+                          style: TextButton.styleFrom(
+                            visualDensity: VisualDensity.compact,
+                            padding: const EdgeInsets.symmetric(horizontal: 8),
+                            minimumSize: const Size(0, 30),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }
@@ -5482,8 +5788,11 @@ String? _formatShortDate(String? value) {
 }
 
 String _specLifecycleStatus(SddSpec spec) {
-  if (spec.lifecycleStatus.trim().isNotEmpty) return spec.lifecycleStatus;
-  return _frontMatterValue(spec.spec?.content, 'status') ?? 'unknown';
+  final explicit = spec.lifecycleStatus.trim();
+  if (explicit.isNotEmpty && explicit.toLowerCase() != 'unknown') {
+    return explicit;
+  }
+  return _frontMatterValue(spec.spec?.content, 'status') ?? 'draft';
 }
 
 String _specTraceabilityStatus(SddSpec spec) {
@@ -5491,11 +5800,15 @@ String _specTraceabilityStatus(SddSpec spec) {
       spec.traceabilityStatus != 'unknown') {
     return spec.traceabilityStatus;
   }
+  if (spec.metadataStatus.trim().isEmpty ||
+      spec.metadataStatus.toLowerCase() == 'unknown') {
+    return 'needs metadata';
+  }
   if (spec.missing.isNotEmpty) return 'incomplete';
   if (spec.allSpecFiles.isEmpty ||
       spec.allPlanFiles.isEmpty ||
       spec.allTaskFiles.isEmpty) {
-    return 'incomplete';
+    return 'not linked';
   }
   return 'linked';
 }
@@ -5596,11 +5909,6 @@ String _workspaceFolderName(String workspacePath) {
       .toList(growable: false);
   if (parts.isEmpty) return workspacePath;
   return parts.last;
-}
-
-String? _emptyToNull(String value) {
-  final trimmed = value.trim();
-  return trimmed.isEmpty ? null : trimmed;
 }
 
 String? _manifestValue(SddFile? manifest, List<String> keys) {
@@ -5795,8 +6103,324 @@ class _SddFileSection extends StatelessWidget {
           ],
           if (value.hasContent) ...[
             const SizedBox(height: 10),
-            _SourceBlock(text: value.content!),
+            _ReadableMarkdownView(text: value.content!),
+            const SizedBox(height: 8),
+            _SourceExcerptDisclosure(text: value.content!),
           ],
+        ],
+      ),
+    );
+  }
+}
+
+class _ReadableMarkdownView extends StatelessWidget {
+  const _ReadableMarkdownView({required this.text});
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    final blocks = _markdownBlocks(text);
+    if (blocks.isEmpty) {
+      return const Text(
+        'No readable content yet.',
+        style: TextStyle(color: _WorkbenchColors.secondaryText),
+      );
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        for (final block in blocks) _MarkdownBlockView(block: block),
+      ],
+    );
+  }
+}
+
+class _MarkdownBlockView extends StatelessWidget {
+  const _MarkdownBlockView({required this.block});
+
+  final _MarkdownBlock block;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: EdgeInsets.only(
+        bottom: block.kind == _MarkdownBlockKind.heading ? 8 : 6,
+      ),
+      child: switch (block.kind) {
+        _MarkdownBlockKind.heading => Text(
+          block.text,
+          style: TextStyle(
+            color: _WorkbenchColors.onBackground,
+            fontSize: block.level <= 1 ? 16 : 14,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
+        _MarkdownBlockKind.bullet => _MarkdownBullet(text: block.text),
+        _MarkdownBlockKind.numbered => _MarkdownBullet(
+          text: block.text,
+          marker: '${block.level}.',
+        ),
+        _MarkdownBlockKind.check => _MarkdownBullet(
+          text: block.text,
+          icon: block.checked == true
+              ? Icons.check_circle_rounded
+              : Icons.radio_button_unchecked_rounded,
+          iconColor: block.checked == true
+              ? const Color(0xFF76E4A6)
+              : _WorkbenchColors.secondaryText,
+        ),
+        _MarkdownBlockKind.paragraph => Text(
+          block.text,
+          style: const TextStyle(
+            color: _WorkbenchColors.secondaryText,
+            fontSize: 12.5,
+            height: 1.35,
+          ),
+        ),
+      },
+    );
+  }
+}
+
+class _MarkdownBullet extends StatelessWidget {
+  const _MarkdownBullet({
+    required this.text,
+    this.marker,
+    this.icon,
+    this.iconColor,
+  });
+
+  final String text;
+  final String? marker;
+  final IconData? icon;
+  final Color? iconColor;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        SizedBox(
+          width: 22,
+          child: icon == null
+              ? Text(
+                  marker ?? '•',
+                  style: const TextStyle(
+                    color: _WorkbenchColors.primary,
+                    fontWeight: FontWeight.w900,
+                  ),
+                )
+              : Icon(icon, size: 15, color: iconColor),
+        ),
+        Expanded(
+          child: Text(
+            text,
+            style: const TextStyle(
+              color: _WorkbenchColors.secondaryText,
+              fontSize: 12.5,
+              height: 1.3,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _SourceExcerptDisclosure extends StatelessWidget {
+  const _SourceExcerptDisclosure({required this.text});
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return ExpansionTile(
+      tilePadding: EdgeInsets.zero,
+      childrenPadding: EdgeInsets.zero,
+      visualDensity: VisualDensity.compact,
+      title: const Text(
+        'Source excerpt',
+        style: TextStyle(fontSize: 12, fontWeight: FontWeight.w900),
+      ),
+      children: <Widget>[_SourceBlock(text: _sourceExcerpt(text))],
+    );
+  }
+}
+
+enum _MarkdownBlockKind { heading, paragraph, bullet, numbered, check }
+
+class _MarkdownBlock {
+  const _MarkdownBlock({
+    required this.kind,
+    required this.text,
+    this.level = 1,
+    this.checked,
+  });
+
+  final _MarkdownBlockKind kind;
+  final String text;
+  final int level;
+  final bool? checked;
+}
+
+List<_MarkdownBlock> _markdownBlocks(String source) {
+  final normalized = source.replaceAll('\r\n', '\n');
+  final blocks = <_MarkdownBlock>[];
+  final paragraph = StringBuffer();
+  var inFrontMatter = normalized.trimLeft().startsWith('---');
+  var frontMatterStarted = false;
+
+  void flushParagraph() {
+    final text = _cleanMarkdownText(paragraph.toString());
+    if (text.isNotEmpty) {
+      blocks.add(
+        _MarkdownBlock(kind: _MarkdownBlockKind.paragraph, text: text),
+      );
+    }
+    paragraph.clear();
+  }
+
+  for (final line in normalized.split('\n')) {
+    final trimmed = line.trim();
+    if (inFrontMatter) {
+      if (trimmed == '---' && frontMatterStarted) {
+        inFrontMatter = false;
+      } else if (trimmed == '---') {
+        frontMatterStarted = true;
+      }
+      continue;
+    }
+    if (trimmed.isEmpty) {
+      flushParagraph();
+      continue;
+    }
+    final heading = RegExp(r'^(#{1,6})\s+(.+)$').firstMatch(trimmed);
+    if (heading != null) {
+      flushParagraph();
+      blocks.add(
+        _MarkdownBlock(
+          kind: _MarkdownBlockKind.heading,
+          level: heading.group(1)!.length,
+          text: _cleanMarkdownText(heading.group(2)!),
+        ),
+      );
+      continue;
+    }
+    final check = RegExp(r'^[-*]\s+\[([ xX])\]\s+(.+)$').firstMatch(trimmed);
+    if (check != null) {
+      flushParagraph();
+      blocks.add(
+        _MarkdownBlock(
+          kind: _MarkdownBlockKind.check,
+          checked: check.group(1)!.toLowerCase() == 'x',
+          text: _cleanMarkdownText(check.group(2)!),
+        ),
+      );
+      continue;
+    }
+    final bullet = RegExp(r'^[-*]\s+(.+)$').firstMatch(trimmed);
+    if (bullet != null) {
+      flushParagraph();
+      blocks.add(
+        _MarkdownBlock(
+          kind: _MarkdownBlockKind.bullet,
+          text: _cleanMarkdownText(bullet.group(1)!),
+        ),
+      );
+      continue;
+    }
+    final numbered = RegExp(r'^(\d+)[\.)]\s+(.+)$').firstMatch(trimmed);
+    if (numbered != null) {
+      flushParagraph();
+      blocks.add(
+        _MarkdownBlock(
+          kind: _MarkdownBlockKind.numbered,
+          level: int.tryParse(numbered.group(1)!) ?? 1,
+          text: _cleanMarkdownText(numbered.group(2)!),
+        ),
+      );
+      continue;
+    }
+    if (paragraph.isNotEmpty) paragraph.write(' ');
+    paragraph.write(trimmed);
+  }
+  flushParagraph();
+  return blocks;
+}
+
+String _cleanMarkdownText(String text) {
+  return text
+      .replaceAllMapped(RegExp(r'`([^`]+)`'), (match) => match.group(1) ?? '')
+      .replaceAll(RegExp(r'\*\*([^*]+)\*\*'), r'$1')
+      .replaceAll(RegExp(r'\*([^*]+)\*'), r'$1')
+      .replaceAll(RegExp(r'\s+'), ' ')
+      .trim();
+}
+
+class _SpecDiagramOpenCard extends StatelessWidget {
+  const _SpecDiagramOpenCard({
+    required this.diagram,
+    required this.diagramRenderer,
+    required this.feedbackTarget,
+    required this.onFeedback,
+    required this.onCodexAction,
+  });
+
+  final SddDiagram diagram;
+  final MermaidDiagramRenderer diagramRenderer;
+  final SddFeedbackTarget feedbackTarget;
+  final ValueChanged<SddFeedbackTarget> onFeedback;
+  final ValueChanged<SddCodexActionRequest> onCodexAction;
+
+  @override
+  Widget build(BuildContext context) {
+    return _PanelCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          _FileHeader(
+            title: _diagramDisplayLabel(diagram),
+            file: diagram,
+            subtitle: _diagramHeaderSubtitle(diagram),
+          ),
+          _ArtifactControls(
+            target: feedbackTarget,
+            onFeedback: onFeedback,
+            actions: const <SddCodexActionKind>[
+              SddCodexActionKind.updateDiagram,
+              SddCodexActionKind.explainDiagramImpact,
+              SddCodexActionKind.alignDiagramWithSpec,
+            ],
+            onCodexAction: onCodexAction,
+          ),
+          if (diagram.error != null) ...[
+            const SizedBox(height: 8),
+            Text(
+              diagram.error!,
+              style: const TextStyle(color: _WorkbenchColors.warning),
+            ),
+          ],
+          const SizedBox(height: 10),
+          FilledButton.icon(
+            onPressed: diagram.hasContent
+                ? () =>
+                      _openFullscreenDiagram(context, diagram, diagramRenderer)
+                : null,
+            icon: const Icon(Icons.open_in_full_rounded),
+            label: const Text('Open diagram'),
+          ),
+          if (diagram.hasContent) ...[
+            const SizedBox(height: 8),
+            _SourceExcerptDisclosure(text: diagram.content!),
+          ] else
+            const Padding(
+              padding: EdgeInsets.only(top: 8),
+              child: Text(
+                'No diagram source available.',
+                style: TextStyle(color: _WorkbenchColors.secondaryText),
+              ),
+            ),
         ],
       ),
     );
@@ -6000,6 +6624,27 @@ MermaidDiagramRenderer _fullscreenRenderer(MermaidDiagramRenderer renderer) {
     );
   }
   return renderer;
+}
+
+void _openFullscreenDiagram(
+  BuildContext context,
+  SddDiagram diagram,
+  MermaidDiagramRenderer diagramRenderer,
+) {
+  showDialog<void>(
+    context: context,
+    useSafeArea: false,
+    builder: (dialogContext) {
+      return Theme(
+        data: _workbenchTheme(dialogContext),
+        child: _FullscreenDiagramDialog(
+          diagram: diagram,
+          diagramRenderer: _fullscreenRenderer(diagramRenderer),
+          sourceText: diagram.content ?? '',
+        ),
+      );
+    },
+  );
 }
 
 class _FullscreenDiagramDialog extends StatefulWidget {
