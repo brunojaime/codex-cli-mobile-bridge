@@ -209,6 +209,47 @@ void main() {
     expect(find.text('1/2 tasks complete'), findsOneWidget);
   });
 
+  testWidgets(
+    'workbench exposes governance baselines traceability and impact',
+    (tester) async {
+      await _pumpWorkbench(
+        tester,
+        loader: (_) async => SddProject.fromJson(_projectWithGovernanceJson()),
+        diagramRenderer: _FakeMermaidRenderer.success(),
+      );
+      _openWorkbench(tester);
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Specs').first);
+      await tester.pumpAndSettle();
+      expect(find.text('status: planned'), findsOneWidget);
+      expect(find.text('trace: linked'), findsOneWidget);
+
+      await tester.tap(find.text('Governance').first);
+      await tester.pumpAndSettle();
+
+      expect(
+        find.text('Architecture, domain, and data baselines'),
+        findsOneWidget,
+      );
+      expect(find.text('Traceability matrix'), findsOneWidget);
+      expect(
+        find.text('Architecture, domain, and data impact queue'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('architecture/components.mmd'), findsWidgets);
+      expect(
+        find.textContaining('Domain baseline files are not loaded'),
+        findsOneWidget,
+      );
+      expect(
+        find.textContaining('Data baseline files are not loaded'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('domain-impact'), findsOneWidget);
+    },
+  );
+
   test('SDD spec model parses plural plan and task history', () {
     final project = SddProject.fromJson(_projectWithTraceJson());
     final spec = project.specs.single;
@@ -509,6 +550,72 @@ sequenceDiagram
       expect(result.diagramHtml, isNot(contains('class="uml-canvas"')));
     },
   );
+
+  test('SAT-sized component diagram renders as responsive UML SVG', () async {
+    final html = buildMermaidPreviewHtml(
+      mermaidJs: _mermaidFallbackStub,
+      source: _satSizedComponentDiagramSource,
+      diagramPath: 'architecture/components.mmd',
+      diagramType: 'flowchart',
+    );
+    final result = await _renderPreviewHtmlWithNode(html, viewportWidth: 375);
+    final svg = result.diagramHtml;
+    final svgTag = RegExp(
+      r'<svg class="uml-canvas"[^>]+>',
+    ).firstMatch(svg)?.group(0);
+    final svgSize = _svgRootSize(svg);
+
+    expect(result.usedMermaidFallback, isFalse);
+    expect(result.errorText, isEmpty);
+    expect(svgTag, isNotNull);
+    expect(svgTag, contains('viewBox="0 0 '));
+    expect(svgSize.width, lessThan(900));
+    expect(svgSize.height, greaterThan(svgSize.width));
+    expect(svg, contains('Sistema SAT Catalogo Ropa'));
+    expect(svg, contains('Comprador SAT'));
+    expect(svg, contains('Sistema externo:'));
+    expect(svg, contains('WhatsApp'));
+    expect(svg, isNot(contains('mantenimiento catalogo')));
+    expect(_svgClassCount(svg, 'component-glyph'), 10);
+    expect(_svgClassCount(svg, 'uml-interface'), 12);
+    expect(_svgClassCount(svg, 'uml-edge-label'), 0);
+    _expectComponentTextFits(svg);
+    expect(html, contains('#diagram svg.uml-canvas'));
+    expect(html, contains('max-width: 100%;'));
+    expect(html, contains('width: 100%;'));
+    expect(html, isNot(contains('width: 100vw;')));
+    expect(html, isNot(contains('max-width: none;')));
+    expect(html, isNot(contains('width: auto;')));
+  });
+
+  test(
+    'SAT-sized component diagram preserves edge labels on wide layouts',
+    () async {
+      final html = buildMermaidPreviewHtml(
+        mermaidJs: _mermaidFallbackStub,
+        source: _satSizedComponentDiagramSource,
+        diagramPath: 'architecture/components.mmd',
+        diagramType: 'flowchart',
+      );
+      final result = await _renderPreviewHtmlWithNode(
+        html,
+        viewportWidth: 1366,
+      );
+      final svg = result.diagramHtml;
+      final svgSize = _svgRootSize(svg);
+
+      expect(result.usedMermaidFallback, isFalse);
+      expect(result.errorText, isEmpty);
+      expect(svgSize.width, greaterThan(900));
+      expect(svgSize.width, greaterThan(svgSize.height));
+      expect(_svgClassCount(svg, 'component-glyph'), 10);
+      expect(_svgClassCount(svg, 'uml-interface'), 12);
+      expect(_svgClassCount(svg, 'uml-edge-label'), greaterThanOrEqualTo(12));
+      expect(svg, contains('mantenimiento catalogo'));
+      expect(svg, contains('HTTP preview checkout'));
+      _expectComponentTextFits(svg);
+    },
+  );
 }
 
 const _mermaidFallbackStub = '''
@@ -522,7 +629,76 @@ globalThis.mermaid = {
 };
 ''';
 
-Future<_RenderedPreview> _renderPreviewHtmlWithNode(String html) async {
+const _satSizedComponentDiagramSource = '''
+flowchart LR
+    Customer["Comprador SAT"]
+    StaffUser["Personal SAT"]
+    WhatsApp["Sistema externo: WhatsApp"]
+
+    subgraph SATSystem["Sistema SAT Catalogo Ropa"]
+        direction LR
+
+        subgraph MobileBoundary["App catalogo Flutter"]
+            direction TB
+            CatalogUI["<<component>> Navegacion de catalogo"]
+            ProductDetail["<<component>> Ficha de producto"]
+            CartState["<<component>> Carrito y totales"]
+            CheckoutClient["<<component>> Preparacion de pedido"]
+            AdminConsole["<<component>> Panel interno SAT"]
+        end
+
+        subgraph DomainBoundary["Dominio de catalogo y administracion"]
+            direction TB
+            ProductCatalog["<<component>> Catalogo de prendas"]
+            StaffAccounts["<<component>> Usuarios y roles"]
+            LoyaltyRules["<<component>> Reglas de puntos y promociones"]
+        end
+
+        subgraph BackendBoundary["API SAT"]
+            direction TB
+            ProductApi["<<component>> Consulta de productos"]
+            CheckoutApi["<<component>> Vista previa de checkout"]
+        end
+
+        subgraph PersistenceBoundary["Persistencia SAT"]
+            direction TB
+            CatalogDatabase[("Base de datos SAT\\nclientes, productos, carrito y pedidos")]
+        end
+    end
+
+    Customer -->|usa catalogo| CatalogUI
+    StaffUser -->|administra| AdminConsole
+    CatalogUI -->|seleccion de prenda| ProductDetail
+    CatalogUI -->|consulta de catalogo local| ProductCatalog
+    ProductDetail -->|agregar item| CartState
+    CartState -->|preparar pedido| CheckoutClient
+    CheckoutClient -->|HTTP preview checkout| CheckoutApi
+    CheckoutClient -->|HTTPS deep link| WhatsApp
+    ProductApi -->|consulta de catalogo| ProductCatalog
+    ProductApi -->|TCP/IP catalogo persistido| CatalogDatabase
+    CheckoutApi -->|TCP/IP pedido persistido| CatalogDatabase
+    AdminConsole -->|mantenimiento catalogo| ProductCatalog
+    AdminConsole -->|gestion de usuarios| StaffAccounts
+    AdminConsole -->|gestion de promociones| LoyaltyRules
+
+    %% uml-interface: seleccion de prenda consumer=CatalogUI provider=ProductDetail
+    %% uml-interface: consulta de catalogo local consumer=CatalogUI provider=ProductCatalog
+    %% uml-interface: agregar item consumer=ProductDetail provider=CartState
+    %% uml-interface: preparar pedido consumer=CartState provider=CheckoutClient
+    %% uml-interface: HTTP preview checkout consumer=CheckoutClient provider=CheckoutApi
+    %% uml-interface: HTTPS deep link consumer=CheckoutClient provider=WhatsApp
+    %% uml-interface: consulta de catalogo consumer=ProductApi provider=ProductCatalog
+    %% uml-interface: TCP/IP catalogo persistido consumer=ProductApi provider=CatalogDatabase
+    %% uml-interface: TCP/IP pedido persistido consumer=CheckoutApi provider=CatalogDatabase
+    %% uml-interface: mantenimiento catalogo consumer=AdminConsole provider=ProductCatalog
+    %% uml-interface: gestion de usuarios consumer=AdminConsole provider=StaffAccounts
+    %% uml-interface: gestion de promociones consumer=AdminConsole provider=LoyaltyRules
+''';
+
+Future<_RenderedPreview> _renderPreviewHtmlWithNode(
+  String html, {
+  int viewportWidth = 1024,
+}) async {
   final nodeCheck = await Process.run('node', const <String>['--version']);
   if (nodeCheck.exitCode != 0) {
     markTestSkipped('Node.js is required to execute the generated renderer.');
@@ -553,6 +729,7 @@ const errorElement = {
 };
 
 globalThis.window = globalThis;
+globalThis.innerWidth = $viewportWidth;
 globalThis.TextDecoder = TextDecoder;
 globalThis.atob = function(value) {
   return Buffer.from(value, 'base64').toString('binary');
@@ -636,6 +813,49 @@ _SvgPoint _svgGlyphForNode(String svg, String id) {
   );
 }
 
+_SvgSize _svgRootSize(String svg) {
+  final match = RegExp(
+    r'<svg class="uml-canvas"[^>]* width="([^"]+)" height="([^"]+)"',
+  ).firstMatch(svg);
+  expect(match, isNotNull, reason: 'Expected root UML SVG dimensions.');
+  return _SvgSize(
+    width: double.parse(match!.group(1)!),
+    height: double.parse(match.group(2)!),
+  );
+}
+
+int _svgClassCount(String svg, String className) {
+  return RegExp('class="${RegExp.escape(className)}"').allMatches(svg).length;
+}
+
+void _expectComponentTextFits(String svg) {
+  final componentPattern = RegExp(
+    r'<g id="uml-node-([^"]+)">'
+    r'<rect x="([^"]+)" y="([^"]+)" width="([^"]+)" height="([^"]+)"[^>]*class="uml-node uml-node-component"/>'
+    r'<text[^>]*>([\s\S]*?)</text>',
+  );
+  final components = componentPattern.allMatches(svg).toList();
+  expect(components, hasLength(10));
+  for (final component in components) {
+    final id = component.group(1)!;
+    final rectX = double.parse(component.group(2)!);
+    final rectWidth = double.parse(component.group(4)!);
+    final text = component.group(6)!;
+    for (final line in RegExp(
+      r'<tspan x="([^"]+)" y="[^"]+">([^<]*)</tspan>',
+    ).allMatches(text)) {
+      final textX = double.parse(line.group(1)!);
+      final label = line.group(2)!;
+      final estimatedRight = textX + label.length * 8;
+      expect(
+        estimatedRight,
+        lessThanOrEqualTo(rectX + rectWidth - 44),
+        reason: 'Component text may clip into the UML glyph for $id: $label',
+      );
+    }
+  }
+}
+
 class _RenderedPreview {
   const _RenderedPreview({
     required this.diagramHtml,
@@ -675,6 +895,13 @@ class _SvgPoint {
 
   final double x;
   final double y;
+}
+
+class _SvgSize {
+  const _SvgSize({required this.width, required this.height});
+
+  final double width;
+  final double height;
 }
 
 void _openWorkbench(WidgetTester tester) {
@@ -775,7 +1002,7 @@ Map<String, dynamic> _projectWithTraceJson() {
         'path': 'specs/001/spec.md',
         'title': 'SAT SDD Onboarding',
         'size_bytes': 80,
-        'content': '# SAT SDD Onboarding',
+        'content': '---\nstatus: planned\n---\n\n# SAT SDD Onboarding',
       },
       'plans': <Map<String, dynamic>>[
         <String, dynamic>{
@@ -803,6 +1030,21 @@ Map<String, dynamic> _projectWithTraceJson() {
       ],
       'slice_docs': <Map<String, dynamic>>[],
       'diagrams': <Map<String, dynamic>>[],
+    },
+  ];
+  return project;
+}
+
+Map<String, dynamic> _projectWithGovernanceJson() {
+  final project = _projectWithTraceJson();
+  final specs = project['specs']! as List<Map<String, dynamic>>;
+  specs.single['diagrams'] = <Map<String, dynamic>>[
+    <String, dynamic>{
+      'path': 'specs/001/diagrams/domain-impact.mmd',
+      'size_bytes': 42,
+      'content': 'classDiagram\nCatalog --> Product',
+      'diagram_type': 'domain-impact',
+      'scope': '001-sat-sdd-onboarding',
     },
   ];
   return project;

@@ -208,7 +208,7 @@ String buildMermaidPreviewHtml({
       overflow: auto;
     }
     #diagram {
-      width: 100vw;
+      width: 100%;
       min-width: 0;
       min-height: 240px;
       padding: 12px;
@@ -221,9 +221,11 @@ String buildMermaidPreviewHtml({
       background: #0b1426;
     }
     #diagram svg.uml-canvas {
-      max-width: none;
-      width: auto;
+      max-width: 100%;
+      width: 100%;
+      height: auto;
       background: #f8fbff;
+      display: block;
     }
     #error {
       display: none;
@@ -669,11 +671,22 @@ $mermaidJs
       return result.length > 0 ? result : [''];
     }
 
-    function measureComponentDiagram(model) {
-      const nodeGap = 52;
-      const groupGap = 96;
-      const paddingX = 42;
-      const paddingY = 50;
+    function compactComponentLayout() {
+      return Number(window.innerWidth || 1024) < 700;
+    }
+
+    function groupDirection(group, compact) {
+      if (!compact) return group.direction;
+      if (group.id === 'root') return 'TB';
+      if (group.children.length > 2) return 'TB';
+      return group.direction;
+    }
+
+    function measureComponentDiagram(model, compact) {
+      const nodeGap = compact ? 38 : 52;
+      const groupGap = compact ? 52 : 96;
+      const paddingX = compact ? 30 : 42;
+      const paddingY = compact ? 42 : 50;
       const titleHeight = 30;
 
       for (const node of model.nodes.values()) {
@@ -703,7 +716,26 @@ $mermaidJs
             ? model.nodes.get(child.id)
             : measureGroup(model.groups.get(child.id));
         }).filter(Boolean);
-        const isHorizontal = group.direction === 'LR' || group.direction === 'RL';
+        if (compact && group.id === 'root') {
+          const looseNodes = childBoxes.filter((box) => model.nodes.has(box.id));
+          const nestedGroups = childBoxes.filter((box) => !model.nodes.has(box.id));
+          const nodeRowWidth = looseNodes.reduce((sum, box) => sum + box.width, 0) +
+            groupGap * Math.max(0, looseNodes.length - 1);
+          const nodeRowHeight = looseNodes.length > 0
+            ? Math.max(...looseNodes.map((box) => box.height))
+            : 0;
+          const groupWidth = nestedGroups.length > 0
+            ? Math.max(...nestedGroups.map((box) => box.width))
+            : 0;
+          const groupHeight = nestedGroups.reduce((sum, box) => sum + box.height, 0) +
+            nodeGap * Math.max(0, nestedGroups.length - 1);
+          group.width = Math.max(nodeRowWidth, groupWidth, 240) + paddingX * 2;
+          group.height = paddingY * 2 + nodeRowHeight + groupHeight +
+            (looseNodes.length > 0 && nestedGroups.length > 0 ? nodeGap : 0);
+          return group;
+        }
+        const direction = groupDirection(group, compact);
+        const isHorizontal = direction === 'LR' || direction === 'RL';
         if (isHorizontal) {
           group.width = childBoxes.reduce((sum, box) => sum + box.width, 0) +
             groupGap * Math.max(0, childBoxes.length - 1) +
@@ -721,11 +753,11 @@ $mermaidJs
       measureGroup(model.root);
     }
 
-    function placeComponentDiagram(model) {
-      const nodeGap = 52;
-      const groupGap = 96;
-      const paddingX = 42;
-      const paddingY = 50;
+    function placeComponentDiagram(model, compact) {
+      const nodeGap = compact ? 38 : 52;
+      const groupGap = compact ? 52 : 96;
+      const paddingX = compact ? 30 : 42;
+      const paddingY = compact ? 42 : 50;
       const titleHeight = 30;
 
       function placeGroup(group, x, y) {
@@ -734,7 +766,30 @@ $mermaidJs
         const children = group.children
           .map((child) => child.type === 'node' ? model.nodes.get(child.id) : model.groups.get(child.id))
           .filter(Boolean);
-        const isHorizontal = group.direction === 'LR' || group.direction === 'RL';
+        if (compact && group.id === 'root') {
+          const looseNodes = children.filter((child) => model.nodes.has(child.id));
+          const nestedGroups = children.filter((child) => !model.nodes.has(child.id));
+          let cursorY = y + paddingY;
+          if (looseNodes.length > 0) {
+            const rowWidth = looseNodes.reduce((sum, child) => sum + child.width, 0) +
+              groupGap * Math.max(0, looseNodes.length - 1);
+            const rowHeight = Math.max(...looseNodes.map((child) => child.height));
+            let cursorX = x + (group.width - rowWidth) / 2;
+            for (const child of looseNodes) {
+              child.x = cursorX;
+              child.y = cursorY + (rowHeight - child.height) / 2;
+              cursorX += child.width + groupGap;
+            }
+            cursorY += rowHeight + (nestedGroups.length > 0 ? nodeGap : 0);
+          }
+          for (const child of nestedGroups) {
+            placeGroup(child, x + (group.width - child.width) / 2, cursorY);
+            cursorY += child.height + nodeGap;
+          }
+          return;
+        }
+        const direction = groupDirection(group, compact);
+        const isHorizontal = direction === 'LR' || direction === 'RL';
         if (isHorizontal) {
           let cursorX = x + paddingX;
           const baseY = y + paddingY + titleHeight;
@@ -852,7 +907,7 @@ $mermaidJs
         '</g>';
     }
 
-    function renderEdges(model) {
+    function renderEdges(model, compact) {
       const marker = '<defs><marker id="uml-arrow" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#52627a"/></marker></defs>';
       const rendered = model.edges.map((edge) => {
         const from = model.nodes.get(edge.from);
@@ -865,7 +920,7 @@ $mermaidJs
         const angle = Math.atan2(end.y - start.y, end.x - start.x) * 180 / Math.PI;
         const iface = interfaceFor(model, edge);
         const markerEnd = iface ? '' : ' marker-end="url(#uml-arrow)"';
-        const label = edge.label
+        const label = edge.label && !compact
           ? '<text class="uml-edge-label" x="' + midX + '" y="' + (midY - 24) + '" text-anchor="middle">' + escapeXml(edge.label) + '</text>'
           : '';
         const symbol = iface ? renderInterfaceSymbol(midX, midY, angle) : '';
@@ -878,8 +933,9 @@ $mermaidJs
 
     function renderUmlComponentDiagram(source) {
       const model = parseComponentFlowchart(source);
-      measureComponentDiagram(model);
-      placeComponentDiagram(model);
+      const compact = compactComponentLayout();
+      measureComponentDiagram(model, compact);
+      placeComponentDiagram(model, compact);
       const width = Math.ceil(model.root.width + 48);
       const height = Math.ceil(model.root.height + 48);
       const style = '<style>' +
@@ -897,7 +953,7 @@ $mermaidJs
         '.uml-interface path{fill:none;stroke:#52627a;stroke-width:2.2;stroke-linecap:round;}' +
         '</style>';
       return '<svg class="uml-canvas" xmlns="http://www.w3.org/2000/svg" width="' + width + '" height="' + height + '" viewBox="0 0 ' + width + ' ' + height + '">' +
-        style + renderEdges(model) + renderGroups(model) +
+        style + renderEdges(model, compact) + renderGroups(model) +
         Array.from(model.nodes.values()).map(renderNode).join('') +
         '</svg>';
     }

@@ -823,7 +823,7 @@ class _SddProjectView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return DefaultTabController(
-      length: 3,
+      length: 4,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: <Widget>[
@@ -838,6 +838,7 @@ class _SddProjectView extends StatelessWidget {
                 Tab(height: 34, text: 'Overview'),
                 Tab(height: 34, text: 'Specs'),
                 Tab(height: 34, text: 'Diagrams'),
+                Tab(height: 34, text: 'Governance'),
               ],
             ),
           ),
@@ -857,6 +858,7 @@ class _SddProjectView extends StatelessWidget {
                   onFeedback: onFeedback,
                   onCodexAction: onCodexAction,
                 ),
+                _GovernanceTab(project: project),
               ],
             ),
           ),
@@ -1446,6 +1448,8 @@ class _SpecArtifactInspector extends StatelessWidget {
           spacing: 8,
           runSpacing: 8,
           children: <Widget>[
+            _TraceChip(label: 'status: ${_specLifecycleStatus(spec)}'),
+            _TraceChip(label: 'trace: ${_specTraceabilityStatus(spec)}'),
             _TraceChip(label: '${spec.allPlanFiles.length} plans'),
             _TraceChip(label: '${spec.allTaskFiles.length} task files'),
             _TraceChip(label: '${spec.sliceDocs.length} slices'),
@@ -1560,6 +1564,105 @@ class _TraceChip extends StatelessWidget {
         label,
         style: const TextStyle(color: _WorkbenchColors.onBackground),
       ),
+    );
+  }
+}
+
+class _GovernanceTab extends StatelessWidget {
+  const _GovernanceTab({required this.project});
+
+  final SddProject project;
+
+  @override
+  Widget build(BuildContext context) {
+    final baselines = _baselineArtifacts(project);
+    final traceRows = project.specs;
+    final impactItems = _impactQueueItems(project);
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 24),
+      children: <Widget>[
+        _PanelCard(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              const Text(
+                'Architecture, domain, and data baselines',
+                style: TextStyle(fontWeight: FontWeight.w900),
+              ),
+              const SizedBox(height: 8),
+              if (baselines.isEmpty)
+                const Text(
+                  'No baseline artifacts loaded',
+                  style: TextStyle(color: _WorkbenchColors.secondaryText),
+                )
+              else
+                ...baselines.map(
+                  (artifact) => _KeyValueLine(
+                    label: artifact.kind,
+                    value: artifact.label,
+                    warning: artifact.warning,
+                  ),
+                ),
+            ],
+          ),
+        ),
+        _PanelCard(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              const Text(
+                'Traceability matrix',
+                style: TextStyle(fontWeight: FontWeight.w900),
+              ),
+              const SizedBox(height: 8),
+              if (traceRows.isEmpty)
+                const Text(
+                  'No feature specs available',
+                  style: TextStyle(color: _WorkbenchColors.secondaryText),
+                )
+              else
+                ...traceRows.map(
+                  (spec) => _KeyValueLine(
+                    label: spec.id,
+                    value:
+                        '${_specLifecycleStatus(spec)} · ${_specTraceabilityStatus(spec)} · '
+                        '${spec.allPlanFiles.length} plan(s), '
+                        '${spec.allTaskFiles.length} task file(s), '
+                        '${spec.diagrams.length} diagram(s)',
+                    warning:
+                        spec.missing.isNotEmpty ||
+                        _specTraceabilityStatus(spec) != 'linked',
+                  ),
+                ),
+            ],
+          ),
+        ),
+        _PanelCard(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              const Text(
+                'Architecture, domain, and data impact queue',
+                style: TextStyle(fontWeight: FontWeight.w900),
+              ),
+              const SizedBox(height: 8),
+              if (impactItems.isEmpty)
+                const Text(
+                  'No baseline impact items pending',
+                  style: TextStyle(color: _WorkbenchColors.secondaryText),
+                )
+              else
+                ...impactItems.map(
+                  (item) => _KeyValueLine(
+                    label: item.kind,
+                    value: item.label,
+                    warning: true,
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 }
@@ -2223,6 +2326,98 @@ _TaskProgress? _taskProgress(String? content) {
   }
   if (total == 0) return null;
   return _TaskProgress(completed: completed, total: total);
+}
+
+String _specLifecycleStatus(SddSpec spec) {
+  return _frontMatterValue(spec.spec?.content, 'status') ?? 'unknown';
+}
+
+String _specTraceabilityStatus(SddSpec spec) {
+  if (spec.missing.isNotEmpty) return 'incomplete';
+  if (spec.allSpecFiles.isEmpty ||
+      spec.allPlanFiles.isEmpty ||
+      spec.allTaskFiles.isEmpty) {
+    return 'incomplete';
+  }
+  return 'linked';
+}
+
+List<_GovernanceItem> _baselineArtifacts(SddProject project) {
+  return <_GovernanceItem>[
+    ...project.architectureDiagrams.map(
+      (diagram) => _GovernanceItem(
+        kind: 'Architecture',
+        label: '${diagram.path} · ${_diagramTypeLabel(diagram.diagramType)}',
+        warning: false,
+      ),
+    ),
+    const _GovernanceItem(
+      kind: 'Domain',
+      label: 'Domain baseline files are not loaded by this snapshot',
+      warning: true,
+    ),
+    const _GovernanceItem(
+      kind: 'Data',
+      label: 'Data baseline files are not loaded by this snapshot',
+      warning: true,
+    ),
+  ];
+}
+
+List<_GovernanceItem> _impactQueueItems(SddProject project) {
+  final items = <_GovernanceItem>[
+    ...project.architectureDiagrams.map(
+      (diagram) => _GovernanceItem(
+        kind: 'Architecture',
+        label: '${diagram.path} requires baseline impact review before edits',
+        warning: true,
+      ),
+    ),
+  ];
+  for (final spec in project.specs) {
+    for (final diagram in spec.diagrams) {
+      if (diagram.diagramType == 'component-impact' ||
+          diagram.diagramType == 'domain-impact' ||
+          diagram.diagramType == 'data-impact') {
+        items.add(
+          _GovernanceItem(
+            kind: spec.id,
+            label:
+                '${diagram.path} · ${_diagramTypeLabel(diagram.diagramType)}',
+            warning: true,
+          ),
+        );
+      }
+    }
+  }
+  return items;
+}
+
+String? _frontMatterValue(String? content, String key) {
+  if (content == null || !content.startsWith('---')) return null;
+  final lines = content.split('\n');
+  for (final line in lines.skip(1)) {
+    if (line.trim() == '---') return null;
+    final separator = line.indexOf(':');
+    if (separator <= 0) continue;
+    final rawKey = line.substring(0, separator).trim();
+    if (rawKey != key) continue;
+    final value = line.substring(separator + 1).trim();
+    return value.isEmpty ? null : value;
+  }
+  return null;
+}
+
+class _GovernanceItem {
+  const _GovernanceItem({
+    required this.kind,
+    required this.label,
+    required this.warning,
+  });
+
+  final String kind;
+  final String label;
+  final bool warning;
 }
 
 String _projectDisplayName(SddProject project) {
