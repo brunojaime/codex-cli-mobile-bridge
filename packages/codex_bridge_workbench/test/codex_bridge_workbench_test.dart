@@ -225,6 +225,32 @@ void main() {
     expect(find.text('Codex Bridge'), findsWidgets);
   });
 
+  testWidgets('workbench uses bottom navigation on narrow layout', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 800);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(() {
+      tester.view.resetPhysicalSize();
+      tester.view.resetDevicePixelRatio();
+    });
+
+    await _pumpWorkbench(
+      tester,
+      loader: (_) async => SddProject.fromJson(_projectJson()),
+      diagramRenderer: _FakeMermaidRenderer.success(),
+    );
+    _openWorkbench(tester);
+    await tester.pumpAndSettle();
+
+    expect(find.byType(NavigationBar), findsOneWidget);
+    expect(find.text('Inside this spec'), findsNothing);
+
+    await tester.tap(find.text('Specs').first);
+    await tester.pumpAndSettle();
+    expect(find.text('Bridge Contract'), findsOneWidget);
+  });
+
   testWidgets('workbench renders diagram source and preview fallback', (
     tester,
   ) async {
@@ -303,11 +329,17 @@ void main() {
     await tester.tap(find.text('Specs').first);
     await tester.pumpAndSettle();
 
-    expect(find.text('SDD trace'), findsOneWidget);
-    expect(find.text('2 plans'), findsOneWidget);
-    expect(find.text('2 task files'), findsOneWidget);
+    expect(find.text('SAT SDD Onboarding'), findsOneWidget);
+    expect(find.text('Inside this spec'), findsNothing);
+
+    await tester.tap(find.text('SAT SDD Onboarding').first);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Inside this spec'), findsOneWidget);
     expect(find.text('design-plan.md'), findsWidgets);
     expect(find.text('build-plan.md'), findsWidgets);
+    expect(find.text('design-tasks.md'), findsWidgets);
+    expect(find.text('build-tasks.md'), findsWidgets);
 
     await tester.tap(find.text('build-plan.md').first);
     await tester.pumpAndSettle();
@@ -331,7 +363,8 @@ void main() {
     await tester.tap(find.text('Specs').first);
     await tester.pumpAndSettle();
 
-    expect(find.text('Feature specs'), findsOneWidget);
+    expect(find.text('Specs'), findsWidgets);
+    expect(find.text('Inside this spec'), findsNothing);
     expect(find.text('Bridge Contract'), findsWidgets);
     expect(
       find.text('Read-only inspection for Bridge SDD artifacts.'),
@@ -343,6 +376,11 @@ void main() {
     expect(find.text('2026-07-06'), findsOneWidget);
     expect(find.text('last run: queued'), findsOneWidget);
     expect(find.text('metadata stale'), findsOneWidget);
+
+    await tester.tap(find.text('Bridge Contract').first);
+    await tester.pumpAndSettle();
+    expect(find.text('Inside this spec'), findsOneWidget);
+    expect(find.byTooltip('Back to specs'), findsOneWidget);
   });
 
   testWidgets('spec intake previews and creates a text-first new spec', (
@@ -377,7 +415,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Specs').first);
     await tester.pumpAndSettle();
-    await tester.tap(find.text('New functionality').first);
+    await _openSpecIntake(tester);
     await tester.pumpAndSettle();
 
     await tester.enterText(
@@ -449,10 +487,10 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Specs').first);
     await tester.pumpAndSettle();
-    await tester.tap(find.text('New functionality').first);
+    await _openSpecIntake(tester);
     await tester.pumpAndSettle();
 
-    await tester.tap(find.widgetWithText(OutlinedButton, 'Image'));
+    await _tapVisible(tester, find.widgetWithText(OutlinedButton, 'Image'));
     await tester.pumpAndSettle();
     expect(find.textContaining('screen.png'), findsWidgets);
 
@@ -513,12 +551,12 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Specs').first);
     await tester.pumpAndSettle();
-    await tester.tap(find.text('New functionality').first);
+    await _openSpecIntake(tester);
     await tester.pumpAndSettle();
 
-    await tester.tap(find.widgetWithText(OutlinedButton, 'Image'));
+    await _tapVisible(tester, find.widgetWithText(OutlinedButton, 'Image'));
     await tester.pumpAndSettle();
-    await tester.tap(find.byTooltip('Mark region screen.png'));
+    await _tapVisible(tester, find.byTooltip('Mark region screen.png'));
     await tester.pumpAndSettle();
     await tester.drag(
       find.byKey(const Key('sdd-media-region-canvas')),
@@ -598,12 +636,12 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.text('Specs').first);
       await tester.pumpAndSettle();
-      await tester.tap(find.text('New functionality').first);
+      await _openSpecIntake(tester);
       await tester.pumpAndSettle();
 
-      await tester.tap(find.widgetWithText(OutlinedButton, 'Image'));
+      await _tapVisible(tester, find.widgetWithText(OutlinedButton, 'Image'));
       await tester.pumpAndSettle();
-      await tester.tap(find.byTooltip('Mark region screen.png'));
+      await _tapVisible(tester, find.byTooltip('Mark region screen.png'));
       await tester.pumpAndSettle();
       await tester.drag(
         find.byKey(const Key('sdd-media-region-canvas')),
@@ -674,12 +712,12 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.text('Specs').first);
       await tester.pumpAndSettle();
-      await tester.tap(find.text('New functionality').first);
+      await _openSpecIntake(tester);
       await tester.pumpAndSettle();
 
-      await tester.tap(find.widgetWithText(OutlinedButton, 'Image'));
+      await _tapVisible(tester, find.widgetWithText(OutlinedButton, 'Image'));
       await tester.pumpAndSettle();
-      await tester.tap(find.byTooltip('Mark region screen.png'));
+      await _tapVisible(tester, find.byTooltip('Mark region screen.png'));
       await tester.pumpAndSettle();
 
       expect(
@@ -722,12 +760,12 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Specs').first);
     await tester.pumpAndSettle();
-    await tester.tap(find.text('New functionality').first);
+    await _openSpecIntake(tester);
     await tester.pumpAndSettle();
 
-    await tester.tap(find.widgetWithText(OutlinedButton, 'Image'));
+    await _tapVisible(tester, find.widgetWithText(OutlinedButton, 'Image'));
     await tester.pumpAndSettle();
-    await tester.tap(find.byTooltip('Mark region screen.png'));
+    await _tapVisible(tester, find.byTooltip('Mark region screen.png'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('sdd-media-region-apply')));
     await tester.pumpAndSettle();
@@ -770,12 +808,12 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Specs').first);
     await tester.pumpAndSettle();
-    await tester.tap(find.text('New functionality').first);
+    await _openSpecIntake(tester);
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(OutlinedButton, 'Image'));
+    await _tapVisible(tester, find.widgetWithText(OutlinedButton, 'Image'));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byTooltip('Remove attachment screen.png'));
+    await _tapVisible(tester, find.byTooltip('Remove attachment screen.png'));
     await tester.pumpAndSettle();
     await tester.enterText(find.widgetWithText(TextField, 'Request'), 'x');
     await tester.pump();
@@ -823,12 +861,12 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Specs').first);
     await tester.pumpAndSettle();
-    await tester.tap(find.text('New functionality').first);
+    await _openSpecIntake(tester);
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(OutlinedButton, 'Image'));
+    await _tapVisible(tester, find.widgetWithText(OutlinedButton, 'Image'));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byTooltip('Remove attachment screen.png'));
+    await _tapVisible(tester, find.byTooltip('Remove attachment screen.png'));
     await tester.pumpAndSettle();
 
     expect(
@@ -874,10 +912,10 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Specs').first);
     await tester.pumpAndSettle();
-    await tester.tap(find.text('New functionality').first);
+    await _openSpecIntake(tester);
     await tester.pumpAndSettle();
 
-    await tester.tap(find.widgetWithText(OutlinedButton, 'Audio'));
+    await _tapVisible(tester, find.widgetWithText(OutlinedButton, 'Audio'));
     await tester.pumpAndSettle();
     await tester.enterText(find.widgetWithText(TextField, 'Request'), 'Audio');
     await tester.pump();
@@ -925,9 +963,12 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Specs').first);
     await tester.pumpAndSettle();
-    await tester.tap(find.text('New functionality').first);
+    await _openSpecIntake(tester);
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(OutlinedButton, 'Structured'));
+    await _tapVisible(
+      tester,
+      find.widgetWithText(OutlinedButton, 'Structured'),
+    );
     await tester.pumpAndSettle();
     await tester.enterText(find.widgetWithText(TextField, 'Request'), 'Region');
     await tester.pump();
@@ -982,9 +1023,12 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Specs').first);
     await tester.pumpAndSettle();
-    await tester.tap(find.text('New functionality').first);
+    await _openSpecIntake(tester);
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(OutlinedButton, 'Structured'));
+    await _tapVisible(
+      tester,
+      find.widgetWithText(OutlinedButton, 'Structured'),
+    );
     await tester.pumpAndSettle();
     await tester.enterText(
       find.widgetWithText(TextField, 'Request'),
@@ -1027,9 +1071,9 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Specs').first);
     await tester.pumpAndSettle();
-    await tester.tap(find.text('New functionality').first);
+    await _openSpecIntake(tester);
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(OutlinedButton, 'Image'));
+    await _tapVisible(tester, find.widgetWithText(OutlinedButton, 'Image'));
     await tester.pumpAndSettle();
 
     expect(find.textContaining('unsupported_image_mime_type'), findsOneWidget);
@@ -1098,7 +1142,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Specs').first);
     await tester.pumpAndSettle();
-    await tester.tap(find.text('New functionality').first);
+    await _openSpecIntake(tester);
     await tester.pumpAndSettle();
 
     await tester.tap(find.text('Existing').first);
@@ -1207,16 +1251,16 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Specs').first);
     await tester.pumpAndSettle();
-    await tester.tap(find.text('New functionality').first);
+    await _openSpecIntake(tester);
     await tester.pumpAndSettle();
 
     await tester.tap(find.text('Existing').first);
     await tester.pumpAndSettle();
     await tester.enterText(find.widgetWithText(TextField, 'Request'), 'Editar');
     await tester.pump();
-    await tester.tap(find.widgetWithText(FilledButton, 'Preview'));
+    await _tapVisible(tester, find.widgetWithText(FilledButton, 'Preview'));
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(FilledButton, 'Queue job'));
+    await _tapVisible(tester, find.widgetWithText(FilledButton, 'Queue job'));
     await tester.pumpAndSettle();
 
     expect(find.text('Activity · queued'), findsOneWidget);
@@ -1319,18 +1363,18 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Specs').first);
     await tester.pumpAndSettle();
-    await tester.tap(find.text('New functionality').first);
+    await _openSpecIntake(tester);
     await tester.pumpAndSettle();
 
     await tester.tap(find.text('Existing').first);
     await tester.pumpAndSettle();
     await tester.enterText(find.widgetWithText(TextField, 'Request'), 'Editar');
     await tester.pump();
-    await tester.tap(find.widgetWithText(FilledButton, 'Preview'));
+    await _tapVisible(tester, find.widgetWithText(FilledButton, 'Preview'));
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(FilledButton, 'Queue job'));
+    await _tapVisible(tester, find.widgetWithText(FilledButton, 'Queue job'));
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(OutlinedButton, 'Run job'));
+    await _tapVisible(tester, find.widgetWithText(OutlinedButton, 'Run job'));
     await tester.pumpAndSettle();
 
     expect(find.text('Activity · failed'), findsOneWidget);
@@ -1364,7 +1408,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Specs').first);
     await tester.pumpAndSettle();
-    await tester.tap(find.text('New functionality').first);
+    await _openSpecIntake(tester);
     await tester.pumpAndSettle();
     await tester.enterText(find.widgetWithText(TextField, 'Request'), 'x');
     await tester.pump();
@@ -1391,8 +1435,12 @@ void main() {
 
       await tester.tap(find.text('Specs').first);
       await tester.pumpAndSettle();
-      expect(find.text('status: planned'), findsOneWidget);
-      expect(find.text('trace: linked'), findsOneWidget);
+
+      await tester.tap(find.text('SAT SDD Onboarding').first);
+      await tester.pumpAndSettle();
+
+      expect(find.text('planned'), findsOneWidget);
+      expect(find.text('linked'), findsOneWidget);
 
       await tester.tap(find.text('Governance').first);
       await tester.pumpAndSettle();
@@ -1570,6 +1618,10 @@ void main() {
 
     await tester.tap(find.text('Specs').first);
     await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Bridge Contract').first);
+    await tester.pumpAndSettle();
+
     final codexButton = find.text('Codex').first;
     await tester.ensureVisible(codexButton);
     await tester.tap(codexButton);
@@ -2079,6 +2131,25 @@ void _openWorkbench(WidgetTester tester) {
   tester
       .widget<FloatingActionButton>(find.byType(FloatingActionButton))
       .onPressed!();
+}
+
+Future<void> _openSpecIntake(WidgetTester tester) async {
+  final action = find.text('New functionality').first;
+  await tester.ensureVisible(action);
+  await tester.pumpAndSettle();
+  await tester.tap(action);
+  await tester.pumpAndSettle();
+}
+
+Future<void> _tapVisible(WidgetTester tester, Finder finder) async {
+  await Scrollable.ensureVisible(
+    tester.element(finder),
+    alignment: 0.5,
+    duration: Duration.zero,
+  );
+  await tester.pumpAndSettle();
+  await tester.tap(finder);
+  await tester.pumpAndSettle();
 }
 
 Future<void> _pumpWorkbench(

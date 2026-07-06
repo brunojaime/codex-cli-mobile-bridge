@@ -369,11 +369,11 @@ class _SddExplorerPanelState extends State<SddExplorerPanel> {
         : 860.0;
     return Align(
       alignment: Alignment.centerRight,
-      child: Material(
-        color: _WorkbenchColors.background,
-        elevation: 18,
-        child: Theme(
-          data: _workbenchTheme(context),
+      child: Theme(
+        data: _workbenchTheme(context),
+        child: Material(
+          color: _WorkbenchColors.background,
+          elevation: 18,
           child: SizedBox(
             width: panelWidth,
             height: double.infinity,
@@ -508,13 +508,13 @@ class _WorkbenchColors {
   static const background = Color(0xFF08111F);
   static const surface = Color(0xFF111A2E);
   static const surfaceHigh = Color(0xFF17233A);
-  static const border = Color(0xFF334260);
+  static const border = Color(0xFF405173);
   static const primary = Color(0xFF5EEAD4);
   static const onPrimary = Color(0xFF03201C);
   static const onBackground = Color(0xFFF4F7FB);
-  static const secondaryText = Color(0xFFB2BED6);
+  static const secondaryText = Color(0xFFC1CBE0);
   static const warning = Color(0xFFFFD166);
-  static const warningSurface = Color(0xFF2C2414);
+  static const warningSurface = Color(0xFF342A14);
   static const sourceBackground = Color(0xFF050B15);
   static const sourceText = Color(0xFFE7EEF9);
 }
@@ -616,6 +616,8 @@ ThemeData _workbenchTheme(BuildContext context) {
       fillColor: _WorkbenchColors.sourceBackground,
       labelStyle: const TextStyle(color: _WorkbenchColors.secondaryText),
       hintStyle: const TextStyle(color: _WorkbenchColors.secondaryText),
+      prefixIconColor: _WorkbenchColors.secondaryText,
+      suffixIconColor: _WorkbenchColors.secondaryText,
       enabledBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(8),
         borderSide: const BorderSide(color: _WorkbenchColors.border),
@@ -643,8 +645,56 @@ ThemeData _workbenchTheme(BuildContext context) {
     popupMenuTheme: base.popupMenuTheme.copyWith(
       color: _WorkbenchColors.surfaceHigh,
       surfaceTintColor: Colors.transparent,
+      shadowColor: Colors.black,
       textStyle: const TextStyle(color: _WorkbenchColors.onBackground),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+    ),
+    navigationBarTheme: NavigationBarThemeData(
+      backgroundColor: _WorkbenchColors.surface,
+      surfaceTintColor: Colors.transparent,
+      indicatorColor: _WorkbenchColors.primary.withValues(alpha: 0.18),
+      iconTheme: WidgetStateProperty.resolveWith((states) {
+        final selected = states.contains(WidgetState.selected);
+        return IconThemeData(
+          color: selected
+              ? _WorkbenchColors.primary
+              : _WorkbenchColors.secondaryText,
+          size: selected ? 25 : 23,
+        );
+      }),
+      labelTextStyle: WidgetStateProperty.resolveWith((states) {
+        final selected = states.contains(WidgetState.selected);
+        return TextStyle(
+          color: selected
+              ? _WorkbenchColors.primary
+              : _WorkbenchColors.secondaryText,
+          fontSize: 10.5,
+          fontWeight: selected ? FontWeight.w900 : FontWeight.w700,
+        );
+      }),
+      height: 64,
+    ),
+    dropdownMenuTheme: DropdownMenuThemeData(
+      textStyle: const TextStyle(color: _WorkbenchColors.onBackground),
+      inputDecorationTheme: InputDecorationTheme(
+        filled: true,
+        fillColor: _WorkbenchColors.sourceBackground,
+        labelStyle: const TextStyle(color: _WorkbenchColors.secondaryText),
+        hintStyle: const TextStyle(color: _WorkbenchColors.secondaryText),
+        prefixIconColor: _WorkbenchColors.secondaryText,
+        suffixIconColor: _WorkbenchColors.secondaryText,
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(8),
+          borderSide: const BorderSide(color: _WorkbenchColors.border),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(8),
+          borderSide: const BorderSide(
+            color: _WorkbenchColors.primary,
+            width: 1.4,
+          ),
+        ),
+      ),
     ),
     segmentedButtonTheme: SegmentedButtonThemeData(
       style: ButtonStyle(
@@ -833,7 +883,7 @@ class _StateMessage extends StatelessWidget {
   }
 }
 
-class _SddProjectView extends StatelessWidget {
+class _SddProjectView extends StatefulWidget {
   const _SddProjectView({
     required this.bridgeUrl,
     required this.project,
@@ -861,53 +911,213 @@ class _SddProjectView extends StatelessWidget {
   final ValueChanged<SddCodexActionRequest> onCodexAction;
 
   @override
+  State<_SddProjectView> createState() => _SddProjectViewState();
+}
+
+class _SddProjectViewState extends State<_SddProjectView> {
+  int _selectedIndex = 0;
+
+  void _selectTab(int index) {
+    setState(() {
+      _selectedIndex = index;
+    });
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return DefaultTabController(
-      length: 4,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: <Widget>[
-          _WorkbenchProjectHeader(project: project),
-          const SizedBox(
-            height: 36,
-            child: TabBar(
-              isScrollable: true,
-              tabAlignment: TabAlignment.start,
-              labelPadding: EdgeInsets.symmetric(horizontal: 14),
-              tabs: <Widget>[
-                Tab(height: 34, text: 'Overview'),
-                Tab(height: 34, text: 'Specs'),
-                Tab(height: 34, text: 'Diagrams'),
-                Tab(height: 34, text: 'Governance'),
-              ],
-            ),
-          ),
-          Expanded(
-            child: TabBarView(
-              children: <Widget>[
-                _OverviewTab(project: project, activity: activity),
-                _SpecsTab(
-                  bridgeUrl: bridgeUrl,
-                  project: project,
-                  diagramRenderer: diagramRenderer,
-                  specIntakeClient: specIntakeClient,
-                  mediaAttachmentPicker: mediaAttachmentPicker,
-                  audioAttachmentPicker: audioAttachmentPicker,
-                  structuredAttachmentPicker: structuredAttachmentPicker,
-                  imageCropper: imageCropper,
-                  onFeedback: onFeedback,
-                  onCodexAction: onCodexAction,
+    const destinations = <_WorkbenchNavigationDestination>[
+      _WorkbenchNavigationDestination(
+        label: 'Overview',
+        icon: Icons.dashboard_outlined,
+        selectedIcon: Icons.dashboard_rounded,
+      ),
+      _WorkbenchNavigationDestination(
+        label: 'Specs',
+        icon: Icons.view_list_outlined,
+        selectedIcon: Icons.view_list_rounded,
+      ),
+      _WorkbenchNavigationDestination(
+        label: 'Diagrams',
+        icon: Icons.account_tree_outlined,
+        selectedIcon: Icons.account_tree_rounded,
+      ),
+      _WorkbenchNavigationDestination(
+        label: 'Governance',
+        icon: Icons.verified_outlined,
+        selectedIcon: Icons.verified_rounded,
+      ),
+    ];
+    final pages = <Widget>[
+      _OverviewTab(
+        project: widget.project,
+        activity: widget.activity,
+        onNavigate: _selectTab,
+      ),
+      _SpecsTab(
+        bridgeUrl: widget.bridgeUrl,
+        project: widget.project,
+        diagramRenderer: widget.diagramRenderer,
+        specIntakeClient: widget.specIntakeClient,
+        mediaAttachmentPicker: widget.mediaAttachmentPicker,
+        audioAttachmentPicker: widget.audioAttachmentPicker,
+        structuredAttachmentPicker: widget.structuredAttachmentPicker,
+        imageCropper: widget.imageCropper,
+        onFeedback: widget.onFeedback,
+        onCodexAction: widget.onCodexAction,
+      ),
+      _DiagramsTab(
+        project: widget.project,
+        diagramRenderer: widget.diagramRenderer,
+        onFeedback: widget.onFeedback,
+        onCodexAction: widget.onCodexAction,
+      ),
+      _GovernanceTab(project: widget.project),
+    ];
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final useBottomNavigation = constraints.maxWidth < 620;
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: <Widget>[
+            _WorkbenchProjectHeader(project: widget.project),
+            if (!useBottomNavigation)
+              _WorkbenchTopNavigation(
+                destinations: destinations,
+                selectedIndex: _selectedIndex,
+                onSelected: _selectTab,
+              ),
+            Expanded(child: pages[_selectedIndex]),
+            if (useBottomNavigation)
+              _WorkbenchBottomNavigation(
+                destinations: destinations,
+                selectedIndex: _selectedIndex,
+                onSelected: _selectTab,
+              ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _WorkbenchNavigationDestination {
+  const _WorkbenchNavigationDestination({
+    required this.label,
+    required this.icon,
+    required this.selectedIcon,
+  });
+
+  final String label;
+  final IconData icon;
+  final IconData selectedIcon;
+}
+
+class _WorkbenchTopNavigation extends StatelessWidget {
+  const _WorkbenchTopNavigation({
+    required this.destinations,
+    required this.selectedIndex,
+    required this.onSelected,
+  });
+
+  final List<_WorkbenchNavigationDestination> destinations;
+  final int selectedIndex;
+  final ValueChanged<int> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: const BoxDecoration(
+        border: Border(
+          top: BorderSide(color: _WorkbenchColors.border),
+          bottom: BorderSide(color: _WorkbenchColors.border),
+        ),
+      ),
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          child: Row(
+            children: <Widget>[
+              for (var index = 0; index < destinations.length; index++)
+                _WorkbenchTopNavigationButton(
+                  destination: destinations[index],
+                  selected: selectedIndex == index,
+                  onTap: () => onSelected(index),
                 ),
-                _DiagramsTab(
-                  project: project,
-                  diagramRenderer: diagramRenderer,
-                  onFeedback: onFeedback,
-                  onCodexAction: onCodexAction,
-                ),
-                _GovernanceTab(project: project),
-              ],
-            ),
+            ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+class _WorkbenchTopNavigationButton extends StatelessWidget {
+  const _WorkbenchTopNavigationButton({
+    required this.destination,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final _WorkbenchNavigationDestination destination;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = selected
+        ? _WorkbenchColors.primary
+        : _WorkbenchColors.secondaryText;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 2),
+      child: TextButton.icon(
+        onPressed: onTap,
+        icon: Icon(
+          selected ? destination.selectedIcon : destination.icon,
+          color: color,
+          size: 17,
+        ),
+        label: Text(destination.label),
+        style: TextButton.styleFrom(
+          foregroundColor: color,
+          minimumSize: const Size(0, 38),
+          padding: const EdgeInsets.symmetric(horizontal: 10),
+          textStyle: const TextStyle(fontWeight: FontWeight.w800),
+        ),
+      ),
+    );
+  }
+}
+
+class _WorkbenchBottomNavigation extends StatelessWidget {
+  const _WorkbenchBottomNavigation({
+    required this.destinations,
+    required this.selectedIndex,
+    required this.onSelected,
+  });
+
+  final List<_WorkbenchNavigationDestination> destinations;
+  final int selectedIndex;
+  final ValueChanged<int> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: const BoxDecoration(
+        color: _WorkbenchColors.surface,
+        border: Border(top: BorderSide(color: _WorkbenchColors.border)),
+      ),
+      child: NavigationBar(
+        selectedIndex: selectedIndex,
+        onDestinationSelected: onSelected,
+        labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
+        destinations: <NavigationDestination>[
+          for (final destination in destinations)
+            NavigationDestination(
+              icon: Icon(destination.icon),
+              selectedIcon: Icon(destination.selectedIcon),
+              label: destination.label,
+            ),
         ],
       ),
     );
@@ -930,7 +1140,11 @@ class _WorkbenchProjectHeader extends StatelessWidget {
               _projectDisplayName(project),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w900),
+              style: const TextStyle(
+                color: _WorkbenchColors.onBackground,
+                fontSize: 14,
+                fontWeight: FontWeight.w900,
+              ),
             ),
           ),
         ],
@@ -940,16 +1154,20 @@ class _WorkbenchProjectHeader extends StatelessWidget {
 }
 
 class _OverviewTab extends StatelessWidget {
-  const _OverviewTab({required this.project, required this.activity});
+  const _OverviewTab({
+    required this.project,
+    required this.activity,
+    required this.onNavigate,
+  });
 
   final SddProject project;
   final SddDashboardActivity activity;
+  final ValueChanged<int> onNavigate;
 
   @override
   Widget build(BuildContext context) {
     final diagrams = _allDiagrams(project);
     final progress = _projectTaskProgress(project);
-    final tabs = DefaultTabController.of(context);
     return ListView(
       padding: const EdgeInsets.fromLTRB(14, 12, 14, 24),
       children: <Widget>[
@@ -961,17 +1179,17 @@ class _OverviewTab extends StatelessWidget {
               label: 'Constitution',
               value: project.constitution == null ? 'Missing' : 'Present',
               warning: project.constitution == null,
-              onTap: () => tabs.animateTo(0),
+              onTap: () => onNavigate(0),
             ),
             _MetricTile(
               label: 'Specs',
               value: '${project.specs.length}',
-              onTap: () => tabs.animateTo(1),
+              onTap: () => onNavigate(1),
             ),
             _MetricTile(
               label: 'Diagrams',
               value: '${diagrams.length}',
-              onTap: () => tabs.animateTo(2),
+              onTap: () => onNavigate(2),
             ),
             _MetricTile(
               label: 'Tasks',
@@ -979,12 +1197,12 @@ class _OverviewTab extends StatelessWidget {
                   ? 'Source only'
                   : '${progress.completed}/${progress.total}',
               warning: progress == null || progress.completed < progress.total,
-              onTap: () => tabs.animateTo(1),
+              onTap: () => onNavigate(1),
             ),
             _MetricTile(
               label: 'Slice docs',
               value: '${_sliceDocCount(project)}',
-              onTap: () => tabs.animateTo(1),
+              onTap: () => onNavigate(1),
             ),
           ],
         ),
@@ -1081,18 +1299,21 @@ class _SpecsTabState extends State<_SpecsTab> {
     specIndex: 0,
     kind: _SpecArtifactKind.spec,
   );
+  bool _showDetail = false;
 
   @override
   void didUpdateWidget(_SpecsTab oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.project != widget.project) {
       _selection = _validatedSelection(_selection, widget.project.specs);
+      _showDetail = false;
     }
   }
 
-  void _select(_SpecArtifactSelection selection) {
+  void _select(_SpecArtifactSelection selection, {bool showDetail = true}) {
     setState(() {
       _selection = _validatedSelection(selection, widget.project.specs);
+      _showDetail = showDetail;
     });
   }
 
@@ -1125,21 +1346,43 @@ class _SpecsTabState extends State<_SpecsTab> {
     }
     final selection = _validatedSelection(_selection, specs);
     final selectedSpec = specs[selection.specIndex];
+    if (_showDetail) {
+      return SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(14, 12, 14, 24),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: <Widget>[
+            _SelectedSpecSummary(
+              spec: selectedSpec,
+              onBack: () => setState(() => _showDetail = false),
+            ),
+            const SizedBox(height: 10),
+            _SpecTraceNavigator(
+              specs: specs,
+              selection: selection,
+              onSelected: _select,
+              title: 'Inside this spec',
+              allowSpecSwitch: false,
+            ),
+            const SizedBox(height: 10),
+            _SpecArtifactInspector(
+              project: widget.project,
+              spec: selectedSpec,
+              selection: selection,
+              showHeading: false,
+              diagramRenderer: widget.diagramRenderer,
+              onFeedback: widget.onFeedback,
+              onCodexAction: widget.onCodexAction,
+            ),
+          ],
+        ),
+      );
+    }
     return SingleChildScrollView(
       padding: const EdgeInsets.fromLTRB(14, 12, 14, 24),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: <Widget>[
-          _SpecIntakeComposer(
-            bridgeUrl: widget.bridgeUrl,
-            project: widget.project,
-            client: widget.specIntakeClient,
-            mediaAttachmentPicker: widget.mediaAttachmentPicker,
-            audioAttachmentPicker: widget.audioAttachmentPicker,
-            structuredAttachmentPicker: widget.structuredAttachmentPicker,
-            imageCropper: widget.imageCropper,
-          ),
-          const SizedBox(height: 10),
           _SpecListOverview(
             specs: specs,
             selection: selection,
@@ -1151,19 +1394,14 @@ class _SpecsTabState extends State<_SpecsTab> {
             ),
           ),
           const SizedBox(height: 10),
-          _SpecTraceNavigator(
-            specs: specs,
-            selection: selection,
-            onSelected: _select,
-          ),
-          const SizedBox(height: 10),
-          _SpecArtifactInspector(
+          _SpecIntakeComposer(
+            bridgeUrl: widget.bridgeUrl,
             project: widget.project,
-            spec: selectedSpec,
-            selection: selection,
-            diagramRenderer: widget.diagramRenderer,
-            onFeedback: widget.onFeedback,
-            onCodexAction: widget.onCodexAction,
+            client: widget.specIntakeClient,
+            mediaAttachmentPicker: widget.mediaAttachmentPicker,
+            audioAttachmentPicker: widget.audioAttachmentPicker,
+            structuredAttachmentPicker: widget.structuredAttachmentPicker,
+            imageCropper: widget.imageCropper,
           ),
         ],
       ),
@@ -2751,7 +2989,7 @@ class _SpecListOverview extends StatelessWidget {
               SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  'Feature specs',
+                  'Specs',
                   style: TextStyle(
                     color: _WorkbenchColors.onBackground,
                     fontWeight: FontWeight.w900,
@@ -2794,105 +3032,227 @@ class _SpecListRow extends StatelessWidget {
     final updated = _formatShortDate(spec.updatedAt ?? spec.createdAt);
     final stale =
         spec.metadataStatus == 'stale' || spec.metadataStalePaths.isNotEmpty;
-    return InkWell(
+    return Material(
+      color: selected
+          ? _WorkbenchColors.primary.withValues(alpha: 0.10)
+          : Colors.transparent,
       borderRadius: BorderRadius.circular(8),
-      onTap: onTap,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 6),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: <Widget>[
-            Container(
-              width: 3,
-              height: 56,
-              decoration: BoxDecoration(
-                color: selected
-                    ? _WorkbenchColors.primary
-                    : _WorkbenchColors.border,
-                borderRadius: BorderRadius.circular(999),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(8),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Container(
+                width: 3,
+                height: 56,
+                decoration: BoxDecoration(
+                  color: selected
+                      ? _WorkbenchColors.primary
+                      : _WorkbenchColors.border,
+                  borderRadius: BorderRadius.circular(999),
+                ),
               ),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: <Widget>[
-                  Row(
-                    children: <Widget>[
-                      Expanded(
-                        child: Text(
-                          spec.title,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: _WorkbenchColors.onBackground,
-                            fontWeight: selected
-                                ? FontWeight.w900
-                                : FontWeight.w800,
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    Row(
+                      children: <Widget>[
+                        Expanded(
+                          child: Text(
+                            spec.title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: _WorkbenchColors.onBackground,
+                              fontWeight: selected
+                                  ? FontWeight.w900
+                                  : FontWeight.w800,
+                            ),
                           ),
                         ),
-                      ),
-                      const SizedBox(width: 8),
-                      _TinyStatusPill(
-                        label: spec.lifecycleStatus,
-                        warning: stale || spec.lifecycleStatus == 'blocked',
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    description,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: _WorkbenchColors.secondaryText,
-                      fontSize: 12,
-                      height: 1.25,
+                        const SizedBox(width: 8),
+                        _TinyStatusPill(
+                          label: spec.lifecycleStatus,
+                          warning: stale || spec.lifecycleStatus == 'blocked',
+                        ),
+                      ],
                     ),
-                  ),
-                  const SizedBox(height: 7),
-                  Wrap(
-                    spacing: 7,
-                    runSpacing: 5,
-                    children: <Widget>[
-                      _TinyMetaChip(
-                        icon: Icons.checklist_rounded,
-                        label: progress == null
-                            ? 'tasks: source only'
-                            : '${progress.completed}/${progress.total} tasks',
-                        warning:
-                            progress == null ||
-                            progress.completed < progress.total,
+                    const SizedBox(height: 4),
+                    Text(
+                      description,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: _WorkbenchColors.secondaryText,
+                        fontSize: 12,
+                        height: 1.25,
                       ),
-                      _TinyMetaChip(
-                        icon: Icons.account_tree_outlined,
-                        label: spec.traceabilityStatus,
-                        warning: spec.traceabilityStatus != 'linked',
-                      ),
-                      if (updated != null)
+                    ),
+                    const SizedBox(height: 7),
+                    Wrap(
+                      spacing: 7,
+                      runSpacing: 5,
+                      children: <Widget>[
                         _TinyMetaChip(
-                          icon: Icons.update_rounded,
-                          label: updated,
+                          icon: Icons.checklist_rounded,
+                          label: progress == null
+                              ? 'tasks: source only'
+                              : '${progress.completed}/${progress.total} tasks',
+                          warning:
+                              progress == null ||
+                              progress.completed < progress.total,
                         ),
-                      if ((spec.lastRunState ?? '').trim().isNotEmpty)
                         _TinyMetaChip(
-                          icon: Icons.play_circle_outline_rounded,
-                          label: 'last run: ${spec.lastRunState}',
-                          warning: spec.lastRunState == 'failed',
+                          icon: Icons.account_tree_outlined,
+                          label: spec.traceabilityStatus,
+                          warning: spec.traceabilityStatus != 'linked',
                         ),
-                      if (stale)
-                        const _TinyMetaChip(
-                          icon: Icons.warning_amber_rounded,
-                          label: 'metadata stale',
-                          warning: true,
-                        ),
-                    ],
-                  ),
-                ],
+                        if (updated != null)
+                          _TinyMetaChip(
+                            icon: Icons.update_rounded,
+                            label: updated,
+                          ),
+                        if ((spec.lastRunState ?? '').trim().isNotEmpty)
+                          _TinyMetaChip(
+                            icon: Icons.play_circle_outline_rounded,
+                            label: 'last run: ${spec.lastRunState}',
+                            warning: spec.lastRunState == 'failed',
+                          ),
+                        if (stale)
+                          const _TinyMetaChip(
+                            icon: Icons.warning_amber_rounded,
+                            label: 'metadata stale',
+                            warning: true,
+                          ),
+                      ],
+                    ),
+                  ],
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
+      ),
+    );
+  }
+}
+
+class _SelectedSpecSummary extends StatelessWidget {
+  const _SelectedSpecSummary({required this.spec, this.onBack});
+
+  final SddSpec spec;
+  final VoidCallback? onBack;
+
+  @override
+  Widget build(BuildContext context) {
+    final progress = _specTaskProgress(spec);
+    final description = _specDescription(spec);
+    final updated = _formatShortDate(spec.updatedAt ?? spec.createdAt);
+    final stale =
+        spec.metadataStatus == 'stale' || spec.metadataStalePaths.isNotEmpty;
+    return _PanelCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Row(
+            children: <Widget>[
+              if (onBack != null) ...[
+                IconButton(
+                  tooltip: 'Back to specs',
+                  onPressed: onBack,
+                  icon: const Icon(Icons.arrow_back_rounded),
+                  visualDensity: VisualDensity.compact,
+                  constraints: const BoxConstraints.tightFor(
+                    width: 34,
+                    height: 34,
+                  ),
+                  padding: EdgeInsets.zero,
+                ),
+                const SizedBox(width: 4),
+              ],
+              const Icon(
+                Icons.description_outlined,
+                size: 17,
+                color: _WorkbenchColors.primary,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  spec.title,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: _WorkbenchColors.onBackground,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              _TinyStatusPill(
+                label: _specLifecycleStatus(spec),
+                warning: stale || spec.lifecycleStatus == 'blocked',
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            description,
+            style: const TextStyle(
+              color: _WorkbenchColors.secondaryText,
+              fontSize: 12,
+              height: 1.3,
+            ),
+          ),
+          const SizedBox(height: 9),
+          Wrap(
+            spacing: 7,
+            runSpacing: 5,
+            children: <Widget>[
+              _TinyMetaChip(
+                icon: Icons.checklist_rounded,
+                label: progress == null
+                    ? 'tasks: source only'
+                    : '${progress.completed}/${progress.total} tasks',
+                warning:
+                    progress == null || progress.completed < progress.total,
+              ),
+              _TinyMetaChip(
+                icon: Icons.account_tree_outlined,
+                label: _specTraceabilityStatus(spec),
+                warning: _specTraceabilityStatus(spec) != 'linked',
+              ),
+              _TinyMetaChip(
+                icon: Icons.route_outlined,
+                label: '${spec.allPlanFiles.length} plans',
+                warning: spec.allPlanFiles.isEmpty,
+              ),
+              _TinyMetaChip(
+                icon: Icons.checklist_rounded,
+                label: '${spec.allTaskFiles.length} task files',
+                warning: spec.allTaskFiles.isEmpty,
+              ),
+              if (spec.sliceDocs.isNotEmpty)
+                _TinyMetaChip(
+                  icon: Icons.view_agenda_outlined,
+                  label: '${spec.sliceDocs.length} slices',
+                ),
+              if (updated != null)
+                _TinyMetaChip(icon: Icons.update_rounded, label: updated),
+              if (stale)
+                const _TinyMetaChip(
+                  icon: Icons.warning_amber_rounded,
+                  label: 'metadata stale',
+                  warning: true,
+                ),
+            ],
+          ),
+        ],
       ),
     );
   }
@@ -2909,8 +3269,13 @@ class _TinyStatusPill extends StatelessWidget {
     return DecoratedBox(
       decoration: BoxDecoration(
         color: warning
-            ? _WorkbenchColors.warning.withValues(alpha: 0.14)
-            : _WorkbenchColors.primary.withValues(alpha: 0.12),
+            ? _WorkbenchColors.warning.withValues(alpha: 0.18)
+            : _WorkbenchColors.primary.withValues(alpha: 0.16),
+        border: Border.all(
+          color: warning
+              ? _WorkbenchColors.warning.withValues(alpha: 0.62)
+              : _WorkbenchColors.primary.withValues(alpha: 0.48),
+        ),
         borderRadius: BorderRadius.circular(999),
       ),
       child: Padding(
@@ -2969,11 +3334,15 @@ class _SpecTraceNavigator extends StatelessWidget {
     required this.specs,
     required this.selection,
     required this.onSelected,
+    this.title = 'SDD trace',
+    this.allowSpecSwitch = true,
   });
 
   final List<SddSpec> specs;
   final _SpecArtifactSelection selection;
   final ValueChanged<_SpecArtifactSelection> onSelected;
+  final String title;
+  final bool allowSpecSwitch;
 
   @override
   Widget build(BuildContext context) {
@@ -2990,16 +3359,16 @@ class _SpecTraceNavigator extends StatelessWidget {
                 color: _WorkbenchColors.primary,
               ),
               const SizedBox(width: 8),
-              const Expanded(
+              Expanded(
                 child: Text(
-                  'SDD trace',
-                  style: TextStyle(
+                  title,
+                  style: const TextStyle(
                     color: _WorkbenchColors.onBackground,
                     fontWeight: FontWeight.w900,
                   ),
                 ),
               ),
-              if (specs.length > 1)
+              if (allowSpecSwitch && specs.length > 1)
                 _SpecSelectorMenu(
                   specs: specs,
                   selectedIndex: selection.specIndex,
@@ -3239,6 +3608,7 @@ class _SpecArtifactInspector extends StatelessWidget {
     required this.diagramRenderer,
     required this.onFeedback,
     required this.onCodexAction,
+    this.showHeading = true,
   });
 
   final SddProject project;
@@ -3247,43 +3617,46 @@ class _SpecArtifactInspector extends StatelessWidget {
   final MermaidDiagramRenderer diagramRenderer;
   final ValueChanged<SddFeedbackTarget> onFeedback;
   final ValueChanged<SddCodexActionRequest> onCodexAction;
+  final bool showHeading;
 
   @override
   Widget build(BuildContext context) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
-        Text(
-          spec.title,
-          style: const TextStyle(
-            color: _WorkbenchColors.onBackground,
-            fontSize: 17,
-            fontWeight: FontWeight.w900,
+        if (showHeading) ...[
+          Text(
+            spec.title,
+            style: const TextStyle(
+              color: _WorkbenchColors.onBackground,
+              fontSize: 17,
+              fontWeight: FontWeight.w900,
+            ),
           ),
-        ),
-        const SizedBox(height: 3),
-        Text(
-          spec.path,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: const TextStyle(
-            color: _WorkbenchColors.secondaryText,
-            fontSize: 12,
+          const SizedBox(height: 3),
+          Text(
+            spec.path,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              color: _WorkbenchColors.secondaryText,
+              fontSize: 12,
+            ),
           ),
-        ),
-        const SizedBox(height: 8),
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: <Widget>[
-            _TraceChip(label: 'status: ${_specLifecycleStatus(spec)}'),
-            _TraceChip(label: 'trace: ${_specTraceabilityStatus(spec)}'),
-            _TraceChip(label: '${spec.allPlanFiles.length} plans'),
-            _TraceChip(label: '${spec.allTaskFiles.length} task files'),
-            _TraceChip(label: '${spec.sliceDocs.length} slices'),
-          ],
-        ),
-        const SizedBox(height: 10),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: <Widget>[
+              _TraceChip(label: 'status: ${_specLifecycleStatus(spec)}'),
+              _TraceChip(label: 'trace: ${_specTraceabilityStatus(spec)}'),
+              _TraceChip(label: '${spec.allPlanFiles.length} plans'),
+              _TraceChip(label: '${spec.allTaskFiles.length} task files'),
+              _TraceChip(label: '${spec.sliceDocs.length} slices'),
+            ],
+          ),
+          const SizedBox(height: 10),
+        ],
         if (spec.missing.isNotEmpty) _MissingArtifacts(items: spec.missing),
         _buildSelectedArtifact(),
       ],
