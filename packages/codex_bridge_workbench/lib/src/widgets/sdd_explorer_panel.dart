@@ -2342,16 +2342,20 @@ class _AttachmentList extends StatelessWidget {
                     style: TextStyle(fontWeight: FontWeight.w800),
                   ),
                 ),
-                if (status != null)
-                  Text(
-                    status!,
-                    style: const TextStyle(
-                      color: _WorkbenchColors.secondaryText,
-                      fontSize: 12,
-                    ),
-                  ),
               ],
             ),
+            if (status != null) ...[
+              const SizedBox(height: 4),
+              Text(
+                status!,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: _WorkbenchColors.secondaryText,
+                  fontSize: 12,
+                ),
+              ),
+            ],
             for (final entry in attachments.indexed) ...[
               const SizedBox(height: 6),
               DecoratedBox(

@@ -329,10 +329,10 @@ void main() {
     await tester.tap(find.text('Specs').first);
     await tester.pumpAndSettle();
 
-    expect(find.text('SAT SDD Onboarding'), findsOneWidget);
+    expect(find.text('TRIGAL SPEC'), findsOneWidget);
     expect(find.text('Inside this spec'), findsNothing);
 
-    await tester.tap(find.text('SAT SDD Onboarding').first);
+    await tester.tap(find.text('TRIGAL SPEC').first);
     await tester.pumpAndSettle();
 
     expect(find.text('Inside this spec'), findsOneWidget);
@@ -382,7 +382,7 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.text('Specs').first);
       await tester.pumpAndSettle();
-      await tester.tap(find.text('SAT SDD Onboarding').first);
+      await tester.tap(find.text('TRIGAL SPEC').first);
       await tester.pumpAndSettle();
 
       await tester.tap(find.text('Spec trace').first);
@@ -434,7 +434,7 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.text('Specs').first);
       await tester.pumpAndSettle();
-      await tester.tap(find.text('SAT SDD Onboarding').first);
+      await tester.tap(find.text('TRIGAL SPEC').first);
       await tester.pumpAndSettle();
 
       await tester.tap(find.text('Spec trace').first);
@@ -583,7 +583,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Specs').first);
     await tester.pumpAndSettle();
-    await tester.tap(find.text('SAT SDD Onboarding').first);
+    await tester.tap(find.text('TRIGAL SPEC').first);
     await tester.pumpAndSettle();
 
     await tester.tap(find.text('Spec trace').first);
@@ -620,7 +620,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Specs').first);
     await tester.pumpAndSettle();
-    await tester.tap(find.text('SAT SDD Onboarding').first);
+    await tester.tap(find.text('TRIGAL SPEC').first);
     await tester.pumpAndSettle();
 
     await tester.tap(find.text('Spec trace').first);
@@ -632,7 +632,9 @@ void main() {
     expect(find.text('UML class diagram'), findsOneWidget);
     expect(find.byTooltip('Close full screen diagram'), findsNothing);
     expect(
-      find.textContaining('rendered specs/001/diagrams/domain-impact.mmd'),
+      find.textContaining(
+        'rendered specs/001-trigal-spec/diagrams/domain-impact.mmd',
+      ),
       findsNothing,
     );
 
@@ -641,7 +643,9 @@ void main() {
 
     expect(find.byTooltip('Close full screen diagram'), findsOneWidget);
     expect(
-      find.textContaining('rendered specs/001/diagrams/domain-impact.mmd'),
+      find.textContaining(
+        'rendered specs/001-trigal-spec/diagrams/domain-impact.mmd',
+      ),
       findsWidgets,
     );
   });
@@ -743,6 +747,13 @@ void main() {
   });
 
   testWidgets('spec intake explains unavailable media pickers', (tester) async {
+    tester.view.physicalSize = const Size(360, 780);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(() {
+      tester.view.resetPhysicalSize();
+      tester.view.resetDevicePixelRatio();
+    });
+
     await _pumpWorkbench(
       tester,
       loader: (_) async => SddProject.fromJson(_projectJson()),
@@ -763,6 +774,7 @@ void main() {
       find.textContaining('Audio capture is not configured'),
       findsOneWidget,
     );
+    expect(tester.getSize(find.text('Attachments')).width, greaterThan(80));
 
     await _tapVisible(tester, find.text('Image'));
     expect(
@@ -1737,7 +1749,7 @@ void main() {
       await tester.tap(find.text('Specs').first);
       await tester.pumpAndSettle();
 
-      await tester.tap(find.text('SAT SDD Onboarding').first);
+      await tester.tap(find.text('TRIGAL SPEC').first);
       await tester.pumpAndSettle();
 
       expect(find.text('Planned'), findsOneWidget);
@@ -1773,12 +1785,12 @@ void main() {
     final spec = project.specs.single;
 
     expect(spec.allPlanFiles.map((file) => file.path), <String>[
-      'specs/001/design-plan.md',
-      'specs/001/build-plan.md',
+      'specs/001-trigal-spec/design-plan.md',
+      'specs/001-trigal-spec/build-plan.md',
     ]);
     expect(spec.allTaskFiles.map((file) => file.path), <String>[
-      'specs/001/design-tasks.md',
-      'specs/001/build-tasks.md',
+      'specs/001-trigal-spec/design-tasks.md',
+      'specs/001-trigal-spec/build-tasks.md',
     ]);
   });
 
@@ -2574,24 +2586,24 @@ Map<String, dynamic> _projectWithTraceJson() {
   final project = _projectJson();
   project['specs'] = <Map<String, dynamic>>[
     <String, dynamic>{
-      'id': '001-sat-sdd-onboarding',
-      'title': 'SAT SDD Onboarding',
-      'path': 'specs/001-sat-sdd-onboarding',
+      'id': '001-trigal-spec',
+      'title': 'TRIGAL SPEC',
+      'path': 'specs/001-trigal-spec',
       'missing': <String>[],
       'spec': <String, dynamic>{
-        'path': 'specs/001/spec.md',
-        'title': 'SAT SDD Onboarding',
+        'path': 'specs/001-trigal-spec/spec.md',
+        'title': 'TRIGAL SPEC',
         'size_bytes': 80,
-        'content': '---\nstatus: planned\n---\n\n# SAT SDD Onboarding',
+        'content': '---\nstatus: planned\n---\n\n# TRIGAL SPEC',
       },
       'plans': <Map<String, dynamic>>[
         <String, dynamic>{
-          'path': 'specs/001/design-plan.md',
+          'path': 'specs/001-trigal-spec/design-plan.md',
           'size_bytes': 50,
           'content': '# Design Plan\n\n1. Map the current catalog flow.',
         },
         <String, dynamic>{
-          'path': 'specs/001/build-plan.md',
+          'path': 'specs/001-trigal-spec/build-plan.md',
           'size_bytes': 50,
           'content':
               '# Build Plan\n\n'
@@ -2601,12 +2613,12 @@ Map<String, dynamic> _projectWithTraceJson() {
       ],
       'task_files': <Map<String, dynamic>>[
         <String, dynamic>{
-          'path': 'specs/001/design-tasks.md',
+          'path': 'specs/001-trigal-spec/design-tasks.md',
           'size_bytes': 50,
           'content': '# Design Tasks\n\n- [x] Done',
         },
         <String, dynamic>{
-          'path': 'specs/001/build-tasks.md',
+          'path': 'specs/001-trigal-spec/build-tasks.md',
           'size_bytes': 50,
           'content':
               '# Build Tasks\n\n'
@@ -2626,11 +2638,11 @@ Map<String, dynamic> _projectWithGovernanceJson() {
   final specs = project['specs']! as List<Map<String, dynamic>>;
   specs.single['diagrams'] = <Map<String, dynamic>>[
     <String, dynamic>{
-      'path': 'specs/001/diagrams/domain-impact.mmd',
+      'path': 'specs/001-trigal-spec/diagrams/domain-impact.mmd',
       'size_bytes': 42,
       'content': 'classDiagram\nCatalog --> Product',
       'diagram_type': 'domain-impact',
-      'scope': '001-sat-sdd-onboarding',
+      'scope': '001-trigal-spec',
     },
   ];
   return project;
