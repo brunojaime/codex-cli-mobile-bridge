@@ -382,6 +382,8 @@ void main() {
         'Cover product browsing, filtering, and checkout handoff.\n\n'
         '## Non-Goals\n\n'
         'Do not include supplier inventory sync in this spec.\n\n'
+        '## Functional Requirements\n\n'
+        'Product filters keep color and size options available.\n\n'
         '## Domain Rules\n\n'
         'Every garment keeps one canonical SKU.\n\n'
         '## Acceptance Criteria\n\n'
@@ -404,6 +406,7 @@ void main() {
     expect(find.text('Intent'), findsOneWidget);
     expect(find.text('Scope'), findsOneWidget);
     expect(find.text('Non-Goals'), findsOneWidget);
+    expect(find.text('Functional Requirements'), findsOneWidget);
     expect(find.text('Domain Rules'), findsOneWidget);
     expect(find.text('Acceptance Criteria'), findsOneWidget);
     expect(
@@ -430,6 +433,10 @@ void main() {
       find.text('Do not include supplier inventory sync in this spec.'),
       findsNothing,
     );
+    expect(
+      find.text('Product filters keep color and size options available.'),
+      findsNothing,
+    );
 
     await tester.tap(find.text('Non-Goals'));
     await tester.pumpAndSettle();
@@ -440,6 +447,22 @@ void main() {
     );
     expect(
       find.text('Do not include supplier inventory sync in this spec.'),
+      findsOneWidget,
+    );
+    expect(
+      find.text('Product filters keep color and size options available.'),
+      findsNothing,
+    );
+
+    await tester.tap(find.text('Functional Requirements'));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text('Do not include supplier inventory sync in this spec.'),
+      findsNothing,
+    );
+    expect(
+      find.text('Product filters keep color and size options available.'),
       findsOneWidget,
     );
   });
