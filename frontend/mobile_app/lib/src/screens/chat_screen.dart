@@ -3640,7 +3640,8 @@ class _ServerManagerSheetState extends State<_ServerManagerSheet> {
                       controller: _urlController,
                       decoration: const InputDecoration(
                         labelText: 'Base URL',
-                        hintText: 'http://192.168.1.10:8000',
+                        hintText:
+                            'http://batata-default-string.tail0302c4.ts.net',
                       ),
                     ),
                   ),
