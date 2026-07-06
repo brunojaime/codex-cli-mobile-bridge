@@ -1353,17 +1353,6 @@ class _SpecsTabState extends State<_SpecsTab> {
       _selection = nextSelection;
       _showDetail = showDetail;
     });
-    if (nextSelection.kind == _SpecArtifactKind.diagram) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted) return;
-        final spec = _fileAt(widget.project.specs, nextSelection.specIndex);
-        final diagram = spec == null
-            ? null
-            : _fileAt(spec.diagrams, nextSelection.artifactIndex);
-        if (diagram == null) return;
-        _openFullscreenDiagram(context, diagram, widget.diagramRenderer);
-      });
-    }
   }
 
   @override
@@ -1596,19 +1585,28 @@ class _SpecIntakeComposerState extends State<_SpecIntakeComposer> {
 
   Future<void> _attachImage() async {
     final picker = widget.mediaAttachmentPicker;
-    if (picker == null) return;
+    if (picker == null) {
+      _showAttachmentUnavailable('Image upload');
+      return;
+    }
     await _attachMedia(picker: picker, kind: 'image');
   }
 
   Future<void> _attachAudio() async {
     final picker = widget.audioAttachmentPicker;
-    if (picker == null) return;
+    if (picker == null) {
+      _showAttachmentUnavailable('Audio capture');
+      return;
+    }
     await _attachMedia(picker: picker, kind: 'audio');
   }
 
   Future<void> _attachStructured() async {
     final picker = widget.structuredAttachmentPicker;
-    if (picker == null) return;
+    if (picker == null) {
+      _showAttachmentUnavailable('Structured media');
+      return;
+    }
     await _run(() async {
       final attachment = await picker();
       if (attachment == null) return;
@@ -1618,6 +1616,12 @@ class _SpecIntakeComposerState extends State<_SpecIntakeComposer> {
         _preview = null;
         _clearGeneratedOutput();
       });
+    });
+  }
+
+  void _showAttachmentUnavailable(String capability) {
+    setState(() {
+      _attachmentStatus = '$capability is not configured by this host app.';
     });
   }
 
@@ -1867,22 +1871,40 @@ class _SpecIntakeComposerState extends State<_SpecIntakeComposer> {
       (_mode == SddSpecIntakeMode.newSpec || _selectedSpecId != null);
 
   bool get _canUploadImage =>
-      !_busy &&
-      widget.mediaAttachmentPicker != null &&
-      widget.project.workspacePath.trim().isNotEmpty;
+      !_busy && widget.project.workspacePath.trim().isNotEmpty;
 
   bool get _canUploadAudio =>
-      !_busy &&
-      widget.audioAttachmentPicker != null &&
-      widget.project.workspacePath.trim().isNotEmpty;
+      !_busy && widget.project.workspacePath.trim().isNotEmpty;
 
   bool get _canAttachStructured =>
-      !_busy &&
-      widget.structuredAttachmentPicker != null &&
-      widget.project.workspacePath.trim().isNotEmpty;
+      !_busy && widget.project.workspacePath.trim().isNotEmpty;
+
+  List<_IntakeJobAction> get _jobActions {
+    return <_IntakeJobAction>[
+      if (_job?.status == 'queued') _IntakeJobAction.run,
+      if (_job?.status == 'completed') _IntakeJobAction.review,
+      if (_review?.canApply == true) _IntakeJobAction.applyReviewed,
+      if (_job?.id.isNotEmpty == true) _IntakeJobAction.refresh,
+      if (_job?.status == 'queued' || _job?.status == 'running')
+        _IntakeJobAction.cancel,
+      if (_isRetryableJob(_job)) _IntakeJobAction.retry,
+    ];
+  }
+
+  Future<void> _runJobAction(_IntakeJobAction action) {
+    return switch (action) {
+      _IntakeJobAction.run => _runJob(),
+      _IntakeJobAction.review => _reviewJob(),
+      _IntakeJobAction.applyReviewed => _applyReviewedJob(),
+      _IntakeJobAction.refresh => _refreshJobActivity(),
+      _IntakeJobAction.cancel => _cancelJob(),
+      _IntakeJobAction.retry => _retryJob(),
+    };
+  }
 
   @override
   Widget build(BuildContext context) {
+    final jobActions = _busy ? const <_IntakeJobAction>[] : _jobActions;
     return _PanelCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1955,37 +1977,15 @@ class _SpecIntakeComposerState extends State<_SpecIntakeComposer> {
                 onArtifactChanged: (value) => setState(() => _artifact = value),
               ),
             const SizedBox(height: 10),
-            TextField(
+            _IntakeRequestBox(
               controller: _textController,
               onChanged: (_) => setState(() {}),
-              minLines: 3,
-              maxLines: 6,
-              decoration: const InputDecoration(
-                labelText: 'Request',
-                prefixIcon: Icon(Icons.notes_rounded),
-              ),
-            ),
-            const SizedBox(height: 8),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: <Widget>[
-                OutlinedButton.icon(
-                  onPressed: _canUploadAudio ? _attachAudio : null,
-                  icon: const Icon(Icons.mic_none_rounded),
-                  label: const Text('Audio'),
-                ),
-                OutlinedButton.icon(
-                  onPressed: _canUploadImage ? _attachImage : null,
-                  icon: const Icon(Icons.image_outlined),
-                  label: const Text('Image'),
-                ),
-                OutlinedButton.icon(
-                  onPressed: _canAttachStructured ? _attachStructured : null,
-                  icon: const Icon(Icons.crop_free_rounded),
-                  label: const Text('Structured'),
-                ),
-              ],
+              onAudio: _canUploadAudio ? _attachAudio : null,
+              onImage: _canUploadImage ? _attachImage : null,
+              onStructured: _canAttachStructured ? _attachStructured : null,
+              audioConfigured: widget.audioAttachmentPicker != null,
+              imageConfigured: widget.mediaAttachmentPicker != null,
+              structuredConfigured: widget.structuredAttachmentPicker != null,
             ),
             if (_attachmentStatus != null || _attachments.isNotEmpty) ...[
               const SizedBox(height: 8),
@@ -1999,10 +1999,43 @@ class _SpecIntakeComposerState extends State<_SpecIntakeComposer> {
               ),
             ],
             const SizedBox(height: 10),
-            Wrap(
+            OverflowBar(
+              alignment: MainAxisAlignment.end,
               spacing: 8,
-              runSpacing: 8,
+              overflowSpacing: 8,
               children: <Widget>[
+                if (!widget.showHeader)
+                  TextButton.icon(
+                    onPressed: _busy ? null : () => Navigator.of(context).pop(),
+                    icon: const Icon(Icons.keyboard_return_rounded),
+                    label: const Text('Leave intake'),
+                  ),
+                if (jobActions.isNotEmpty)
+                  PopupMenuButton<_IntakeJobAction>(
+                    tooltip: 'More intake actions',
+                    onSelected: _runJobAction,
+                    itemBuilder: (context) {
+                      return jobActions
+                          .map(
+                            (action) => PopupMenuItem<_IntakeJobAction>(
+                              value: action,
+                              child: Row(
+                                children: <Widget>[
+                                  Icon(
+                                    action.icon,
+                                    size: 17,
+                                    color: _WorkbenchColors.primary,
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Text(action.label),
+                                ],
+                              ),
+                            ),
+                          )
+                          .toList(growable: false);
+                    },
+                    child: const _IntakeOverflowButton(),
+                  ),
                 FilledButton.icon(
                   onPressed: _canSubmit ? _dryRun : null,
                   icon: const Icon(Icons.fact_check_outlined),
@@ -2020,48 +2053,6 @@ class _SpecIntakeComposerState extends State<_SpecIntakeComposer> {
                   label: Text(
                     _mode == SddSpecIntakeMode.newSpec ? 'Create' : 'Queue job',
                   ),
-                ),
-                OutlinedButton.icon(
-                  onPressed: _job?.status == 'queued' && !_busy
-                      ? _runJob
-                      : null,
-                  icon: const Icon(Icons.play_arrow_rounded),
-                  label: const Text('Run job'),
-                ),
-                OutlinedButton.icon(
-                  onPressed: _job?.status == 'completed' && !_busy
-                      ? _reviewJob
-                      : null,
-                  icon: const Icon(Icons.rate_review_outlined),
-                  label: const Text('Review'),
-                ),
-                OutlinedButton.icon(
-                  onPressed: _review?.canApply == true && !_busy
-                      ? _applyReviewedJob
-                      : null,
-                  icon: const Icon(Icons.done_all_rounded),
-                  label: const Text('Apply reviewed'),
-                ),
-                OutlinedButton.icon(
-                  onPressed: _job?.id.isNotEmpty == true && !_busy
-                      ? _refreshJobActivity
-                      : null,
-                  icon: const Icon(Icons.refresh_rounded),
-                  label: const Text('Refresh'),
-                ),
-                OutlinedButton.icon(
-                  onPressed:
-                      (_job?.status == 'queued' || _job?.status == 'running') &&
-                          !_busy
-                      ? _cancelJob
-                      : null,
-                  icon: const Icon(Icons.cancel_outlined),
-                  label: const Text('Cancel'),
-                ),
-                OutlinedButton.icon(
-                  onPressed: _isRetryableJob(_job) && !_busy ? _retryJob : null,
-                  icon: const Icon(Icons.replay_rounded),
-                  label: const Text('Retry'),
                 ),
               ],
             ),
@@ -2110,6 +2101,201 @@ class _SpecIntakeComposerState extends State<_SpecIntakeComposer> {
               ),
             ],
           ],
+        ],
+      ),
+    );
+  }
+}
+
+enum _IntakeJobAction { run, review, applyReviewed, refresh, cancel, retry }
+
+extension _IntakeJobActionStyle on _IntakeJobAction {
+  String get label => switch (this) {
+    _IntakeJobAction.run => 'Run job',
+    _IntakeJobAction.review => 'Review',
+    _IntakeJobAction.applyReviewed => 'Apply reviewed',
+    _IntakeJobAction.refresh => 'Refresh',
+    _IntakeJobAction.cancel => 'Cancel',
+    _IntakeJobAction.retry => 'Retry',
+  };
+
+  IconData get icon => switch (this) {
+    _IntakeJobAction.run => Icons.play_arrow_rounded,
+    _IntakeJobAction.review => Icons.rate_review_outlined,
+    _IntakeJobAction.applyReviewed => Icons.done_all_rounded,
+    _IntakeJobAction.refresh => Icons.refresh_rounded,
+    _IntakeJobAction.cancel => Icons.cancel_outlined,
+    _IntakeJobAction.retry => Icons.replay_rounded,
+  };
+}
+
+class _IntakeRequestBox extends StatelessWidget {
+  const _IntakeRequestBox({
+    required this.controller,
+    required this.onChanged,
+    required this.onAudio,
+    required this.onImage,
+    required this.onStructured,
+    required this.audioConfigured,
+    required this.imageConfigured,
+    required this.structuredConfigured,
+  });
+
+  final TextEditingController controller;
+  final ValueChanged<String> onChanged;
+  final VoidCallback? onAudio;
+  final VoidCallback? onImage;
+  final VoidCallback? onStructured;
+  final bool audioConfigured;
+  final bool imageConfigured;
+  final bool structuredConfigured;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: _WorkbenchColors.sourceBackground,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: _WorkbenchColors.border),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: <Widget>[
+            TextField(
+              controller: controller,
+              onChanged: onChanged,
+              minLines: 4,
+              maxLines: 7,
+              decoration: const InputDecoration(
+                labelText: 'Request',
+                hintText: 'Describe the change or add context for Codex.',
+                prefixIcon: Icon(Icons.forum_outlined),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: <Widget>[
+                _IntakeAttachmentAction(
+                  tooltip: audioConfigured
+                      ? 'Attach audio note'
+                      : 'Audio capture is not configured',
+                  icon: Icons.mic_none_rounded,
+                  label: 'Audio',
+                  configured: audioConfigured,
+                  onPressed: onAudio,
+                ),
+                _IntakeAttachmentAction(
+                  tooltip: imageConfigured
+                      ? 'Attach image'
+                      : 'Image upload is not configured',
+                  icon: Icons.image_outlined,
+                  label: 'Image',
+                  configured: imageConfigured,
+                  onPressed: onImage,
+                ),
+                _IntakeAttachmentAction(
+                  tooltip: structuredConfigured
+                      ? 'Attach structured media'
+                      : 'Structured media is not configured',
+                  icon: Icons.crop_free_rounded,
+                  label: 'Structured',
+                  configured: structuredConfigured,
+                  onPressed: onStructured,
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _IntakeAttachmentAction extends StatelessWidget {
+  const _IntakeAttachmentAction({
+    required this.tooltip,
+    required this.icon,
+    required this.label,
+    required this.configured,
+    required this.onPressed,
+  });
+
+  final String tooltip;
+  final IconData icon;
+  final String label;
+  final bool configured;
+  final VoidCallback? onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = configured
+        ? _WorkbenchColors.primary
+        : _WorkbenchColors.secondaryText;
+    return Tooltip(
+      message: tooltip,
+      child: Material(
+        color: configured
+            ? _WorkbenchColors.primary.withValues(alpha: 0.10)
+            : _WorkbenchColors.surfaceHigh,
+        borderRadius: BorderRadius.circular(8),
+        child: InkWell(
+          onTap: onPressed,
+          borderRadius: BorderRadius.circular(8),
+          child: Container(
+            constraints: const BoxConstraints(minWidth: 92, minHeight: 38),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(
+                color: configured
+                    ? _WorkbenchColors.primary
+                    : _WorkbenchColors.border,
+              ),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                Icon(icon, size: 17, color: color),
+                const SizedBox(width: 7),
+                Text(
+                  label,
+                  style: TextStyle(
+                    color: color,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 12,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _IntakeOverflowButton extends StatelessWidget {
+  const _IntakeOverflowButton();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: _WorkbenchColors.surfaceHigh,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: _WorkbenchColors.border),
+      ),
+      child: const Row(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          Icon(Icons.more_horiz_rounded, size: 18),
+          SizedBox(width: 6),
+          Text('Job actions', style: TextStyle(fontWeight: FontWeight.w800)),
         ],
       ),
     );
@@ -3022,7 +3208,7 @@ class _StatusLines extends StatelessWidget {
   }
 }
 
-enum _SpecArtifactKind { spec, plan, tasks, slice, diagram }
+enum _SpecArtifactKind { spec, plan, tasks, slice, diagramGroup }
 
 class _SpecArtifactSelection {
   const _SpecArtifactSelection({
@@ -3059,7 +3245,7 @@ _SpecArtifactSelection _validatedSelection(
     _SpecArtifactKind.plan => spec.allPlanFiles.length - 1,
     _SpecArtifactKind.tasks => spec.allTaskFiles.length - 1,
     _SpecArtifactKind.slice => spec.sliceDocs.length - 1,
-    _SpecArtifactKind.diagram => spec.diagrams.length - 1,
+    _SpecArtifactKind.diagramGroup => spec.diagrams.isEmpty ? -1 : 0,
   };
   if (maxIndex >= 0) {
     return _SpecArtifactSelection(
@@ -3077,7 +3263,7 @@ _SpecArtifactKind _firstAvailableArtifact(SddSpec spec) {
   if (spec.allPlanFiles.isNotEmpty) return _SpecArtifactKind.plan;
   if (spec.allTaskFiles.isNotEmpty) return _SpecArtifactKind.tasks;
   if (spec.sliceDocs.isNotEmpty) return _SpecArtifactKind.slice;
-  if (spec.diagrams.isNotEmpty) return _SpecArtifactKind.diagram;
+  if (spec.diagrams.isNotEmpty) return _SpecArtifactKind.diagramGroup;
   return _SpecArtifactKind.spec;
 }
 
@@ -3695,7 +3881,7 @@ class _ArtifactSelectorMenu extends StatelessWidget {
   Widget build(BuildContext context) {
     final items = _artifactMenuItems(spec, selection.specIndex);
     return PopupMenuButton<_SpecArtifactSelection>(
-      tooltip: 'Select spec plan, tasks, or diagram',
+      tooltip: 'Select spec trace artifact',
       onSelected: onSelected,
       itemBuilder: (context) {
         return items
@@ -3748,7 +3934,7 @@ class _ArtifactSelectorMenu extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: <Widget>[
             Text(
-              'Plan / tasks',
+              'Spec trace',
               style: TextStyle(
                 color: _WorkbenchColors.primary,
                 fontWeight: FontWeight.w800,
@@ -3822,14 +4008,33 @@ List<_ArtifactMenuItem> _artifactMenuItems(SddSpec spec, int specIndex) {
     icon: Icons.route_outlined,
     label: (file) => 'Plan: ${_artifactPathLabel(file, 'plan.md')}',
   );
-  addFiles(
-    kind: _SpecArtifactKind.tasks,
-    files: spec.allTaskFiles,
-    fallbackLabel: 'tasks.md',
-    icon: Icons.checklist_rounded,
-    label: (file) => 'Tasks: ${_artifactPathLabel(file, 'tasks.md')}',
-    detail: (index, file) => _taskPlanAssociation(spec, index, file),
-  );
+  if (spec.allPlanFiles.isEmpty) {
+    addFiles(
+      kind: _SpecArtifactKind.tasks,
+      files: spec.allTaskFiles,
+      fallbackLabel: 'tasks.md',
+      icon: Icons.checklist_rounded,
+      label: (file) => 'Tasks: ${_artifactPathLabel(file, 'tasks.md')}',
+      detail: (index, file) => _taskPlanAssociation(spec, index, file),
+    );
+  } else {
+    for (final entry in spec.allTaskFiles.indexed) {
+      if (_taskPlanIndex(spec, entry.$1, entry.$2) != null) continue;
+      items.add(
+        _ArtifactMenuItem(
+          selection: _SpecArtifactSelection(
+            specIndex: specIndex,
+            kind: _SpecArtifactKind.tasks,
+            artifactIndex: entry.$1,
+          ),
+          label:
+              'Tasks needing plan: ${_artifactPathLabel(entry.$2, 'tasks.md')}',
+          icon: Icons.checklist_rtl_rounded,
+          detail: _taskPlanAssociation(spec, entry.$1, entry.$2),
+        ),
+      );
+    }
+  }
   addFiles(
     kind: _SpecArtifactKind.slice,
     files: spec.sliceDocs,
@@ -3837,18 +4042,16 @@ List<_ArtifactMenuItem> _artifactMenuItems(SddSpec spec, int specIndex) {
     icon: Icons.view_agenda_outlined,
     label: (file) => 'Slice: ${_artifactPathLabel(file, 'slice.md')}',
   );
-  for (final entry in spec.diagrams.indexed) {
-    final diagram = entry.$2;
+  if (spec.diagrams.isNotEmpty) {
     items.add(
       _ArtifactMenuItem(
         selection: _SpecArtifactSelection(
           specIndex: specIndex,
-          kind: _SpecArtifactKind.diagram,
-          artifactIndex: entry.$1,
+          kind: _SpecArtifactKind.diagramGroup,
         ),
-        label: 'Diagram: ${_diagramDisplayLabel(diagram)}',
-        icon: _diagramIcon(diagram),
-        detail: diagram.path,
+        label: 'Diagrams',
+        icon: Icons.account_tree_outlined,
+        detail: '${spec.diagrams.length} diagram(s)',
       ),
     );
   }
@@ -3869,22 +4072,40 @@ String _artifactSelectionLabel(SddSpec spec, _SpecArtifactSelection selection) {
 
 String? _taskPlanAssociation(SddSpec spec, int taskIndex, SddFile taskFile) {
   if (spec.allPlanFiles.isEmpty) return 'Plan: Not linked';
+  final planIndex = _taskPlanIndex(spec, taskIndex, taskFile);
+  if (planIndex != null) {
+    return 'Plan: ${_artifactLabel(spec.allPlanFiles[planIndex], 'plan.md')}';
+  }
+  return 'Plan: Needs metadata';
+}
+
+int? _taskPlanIndex(SddSpec spec, int taskIndex, SddFile taskFile) {
   final taskStem = _artifactStem(taskFile.path);
-  for (final plan in spec.allPlanFiles) {
+  for (final entry in spec.allPlanFiles.indexed) {
+    final plan = entry.$2;
     final planStem = _artifactStem(plan.path);
     if (taskStem.isNotEmpty &&
         planStem.isNotEmpty &&
         (taskStem.contains(planStem) || planStem.contains(taskStem))) {
-      return 'Plan: ${_artifactLabel(plan, 'plan.md')}';
+      return entry.$1;
+    }
+    if (taskStem.isEmpty &&
+        planStem.isEmpty &&
+        _artifactDirectory(taskFile.path) == _artifactDirectory(plan.path)) {
+      return entry.$1;
     }
   }
-  if (taskIndex < spec.allPlanFiles.length) {
-    return 'Plan: ${_artifactLabel(spec.allPlanFiles[taskIndex], 'plan.md')}';
+  if (spec.allPlanFiles.length == 1 && taskStem.isEmpty) {
+    return 0;
   }
-  if (spec.allPlanFiles.length == 1) {
-    return 'Plan: ${_artifactLabel(spec.allPlanFiles.single, 'plan.md')}';
-  }
-  return 'Plan: Needs metadata';
+  return null;
+}
+
+String _artifactDirectory(String path) {
+  final normalized = path.trim();
+  final slash = normalized.lastIndexOf('/');
+  if (slash <= 0) return '';
+  return normalized.substring(0, slash).toLowerCase();
 }
 
 String _artifactStem(String path) {
@@ -4050,9 +4271,15 @@ class _SpecArtifactInspector extends StatelessWidget {
         );
       case _SpecArtifactKind.plan:
         final file = _fileAt(spec.allPlanFiles, selection.artifactIndex);
+        final taskSections = _taskSectionsForPlan(
+          project: project,
+          spec: spec,
+          planIndex: selection.artifactIndex,
+        );
         return _PlanFileSection(
           title: _artifactLabel(file, 'plan.md'),
           file: file,
+          taskSections: taskSections,
           feedbackTarget: _fileFeedbackTarget(
             project: project,
             spec: spec,
@@ -4099,27 +4326,59 @@ class _SpecArtifactInspector extends StatelessWidget {
           actions: const <SddCodexActionKind>[SddCodexActionKind.reviewSlice],
           onCodexAction: onCodexAction,
         );
-      case _SpecArtifactKind.diagram:
-        final diagram = _fileAt(spec.diagrams, selection.artifactIndex);
-        if (diagram == null) {
-          return const _InfoCard(
-            title: 'Spec diagrams',
-            detail: 'No diagrams found',
-          );
-        }
-        return _SpecDiagramOpenCard(
-          diagram: diagram,
+      case _SpecArtifactKind.diagramGroup:
+        return _SpecDiagramListCard(
+          project: project,
+          spec: spec,
           diagramRenderer: diagramRenderer,
-          feedbackTarget: _diagramFeedbackTarget(
-            project: project,
-            spec: spec,
-            diagram: diagram,
-          ),
           onFeedback: onFeedback,
           onCodexAction: onCodexAction,
         );
     }
   }
+}
+
+class _PlanTaskSectionData {
+  const _PlanTaskSectionData({
+    required this.index,
+    required this.file,
+    required this.planAssociation,
+    required this.feedbackTarget,
+  });
+
+  final int index;
+  final SddFile file;
+  final String planAssociation;
+  final SddFeedbackTarget? feedbackTarget;
+}
+
+List<_PlanTaskSectionData> _taskSectionsForPlan({
+  required SddProject project,
+  required SddSpec spec,
+  required int planIndex,
+}) {
+  final taskSections = <_PlanTaskSectionData>[];
+  for (final entry in spec.allTaskFiles.indexed) {
+    final ownerIndex = _taskPlanIndex(spec, entry.$1, entry.$2);
+    if (ownerIndex != planIndex) continue;
+    taskSections.add(
+      _PlanTaskSectionData(
+        index: entry.$1,
+        file: entry.$2,
+        planAssociation:
+            _taskPlanAssociation(spec, entry.$1, entry.$2) ??
+            'Plan: Not linked',
+        feedbackTarget: _fileFeedbackTarget(
+          project: project,
+          spec: spec,
+          file: entry.$2,
+          artifactType: 'tasks',
+          fallbackTitle: 'tasks.md',
+        ),
+      ),
+    );
+  }
+  return taskSections;
 }
 
 class _TraceChip extends StatelessWidget {
@@ -4981,6 +5240,7 @@ class _PlanFileSection extends StatelessWidget {
   const _PlanFileSection({
     required this.file,
     this.title = 'plan.md',
+    this.taskSections = const <_PlanTaskSectionData>[],
     this.feedbackTarget,
     this.onFeedback,
     this.actions = const <SddCodexActionKind>[],
@@ -4989,6 +5249,7 @@ class _PlanFileSection extends StatelessWidget {
 
   final String title;
   final SddFile? file;
+  final List<_PlanTaskSectionData> taskSections;
   final SddFeedbackTarget? feedbackTarget;
   final ValueChanged<SddFeedbackTarget>? onFeedback;
   final List<SddCodexActionKind> actions;
@@ -5027,6 +5288,48 @@ class _PlanFileSection extends StatelessWidget {
             _ReadableMarkdownView(text: value.content!),
             const SizedBox(height: 8),
             _SourceExcerptDisclosure(text: value.content!),
+          ],
+          if (taskSections.isNotEmpty) ...[
+            const SizedBox(height: 14),
+            const Divider(height: 1, color: _WorkbenchColors.border),
+            const SizedBox(height: 12),
+            Row(
+              children: <Widget>[
+                const Icon(
+                  Icons.checklist_rounded,
+                  size: 16,
+                  color: _WorkbenchColors.primary,
+                ),
+                const SizedBox(width: 8),
+                const Expanded(
+                  child: Text(
+                    'Tasks in this plan',
+                    style: TextStyle(fontWeight: FontWeight.w900),
+                  ),
+                ),
+                _TinyMetaChip(
+                  icon: Icons.account_tree_outlined,
+                  label: '${taskSections.length} task file(s)',
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            for (final task in taskSections) ...[
+              _TaskFileSection(
+                title: _artifactLabel(task.file, 'tasks.md'),
+                file: task.file,
+                planAssociation: task.planAssociation,
+                feedbackTarget: task.feedbackTarget,
+                onFeedback: onFeedback,
+                actions: const <SddCodexActionKind>[
+                  SddCodexActionKind.updateTasks,
+                ],
+                onCodexAction: onCodexAction,
+                embedded: true,
+              ),
+              if (task.index != taskSections.last.index)
+                const SizedBox(height: 8),
+            ],
           ],
         ],
       ),
@@ -5302,6 +5605,7 @@ class _TaskFileSection extends StatelessWidget {
     this.onFeedback,
     this.actions = const <SddCodexActionKind>[],
     this.onCodexAction,
+    this.embedded = false,
   });
 
   final String title;
@@ -5311,67 +5615,74 @@ class _TaskFileSection extends StatelessWidget {
   final ValueChanged<SddFeedbackTarget>? onFeedback;
   final List<SddCodexActionKind> actions;
   final ValueChanged<SddCodexActionRequest>? onCodexAction;
+  final bool embedded;
 
   @override
   Widget build(BuildContext context) {
     final tasks = _parseStructuredTasks(file?.content);
     final progress = tasks?.progress ?? _taskProgress(file?.content);
-    return _PanelCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          _FileHeader(
-            title: title,
-            file: file ?? const SddFile(path: 'tasks.md', sizeBytes: 0),
+    final body = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        _FileHeader(
+          title: title,
+          file: file ?? const SddFile(path: 'tasks.md', sizeBytes: 0),
+        ),
+        _ArtifactControls(
+          target: feedbackTarget,
+          onFeedback: onFeedback,
+          actions: actions,
+          onCodexAction: onCodexAction,
+        ),
+        if (file == null) ...[
+          const SizedBox(height: 8),
+          const Text(
+            'Missing file',
+            style: TextStyle(color: _WorkbenchColors.warning),
           ),
-          _ArtifactControls(
-            target: feedbackTarget,
-            onFeedback: onFeedback,
-            actions: actions,
-            onCodexAction: onCodexAction,
-          ),
-          if (file == null) ...[
+        ] else ...[
+          if (progress != null) ...[
+            const SizedBox(height: 10),
+            _TaskProgressBar(progress: progress),
+          ],
+          if (planAssociation != null) ...[
             const SizedBox(height: 8),
-            const Text(
-              'Missing file',
-              style: TextStyle(color: _WorkbenchColors.warning),
+            _TinyMetaChip(icon: Icons.route_outlined, label: planAssociation!),
+          ],
+          if (file!.error != null) ...[
+            const SizedBox(height: 8),
+            Text(
+              file!.error!,
+              style: const TextStyle(color: _WorkbenchColors.warning),
             ),
-          ] else ...[
-            if (progress != null) ...[
-              const SizedBox(height: 10),
-              _TaskProgressBar(progress: progress),
-            ],
-            if (planAssociation != null) ...[
-              const SizedBox(height: 8),
-              _TinyMetaChip(
-                icon: Icons.route_outlined,
-                label: planAssociation!,
+          ],
+          if (file!.hasContent) ...[
+            const SizedBox(height: 10),
+            if (tasks != null)
+              _StructuredTaskListView(tasks: tasks)
+            else
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  _ReadableMarkdownView(text: file!.content!),
+                  const SizedBox(height: 8),
+                  _SourceExcerptDisclosure(text: file!.content!),
+                ],
               ),
-            ],
-            if (file!.error != null) ...[
-              const SizedBox(height: 8),
-              Text(
-                file!.error!,
-                style: const TextStyle(color: _WorkbenchColors.warning),
-              ),
-            ],
-            if (file!.hasContent) ...[
-              const SizedBox(height: 10),
-              if (tasks != null)
-                _StructuredTaskListView(tasks: tasks)
-              else
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: <Widget>[
-                    _ReadableMarkdownView(text: file!.content!),
-                    const SizedBox(height: 8),
-                    _SourceExcerptDisclosure(text: file!.content!),
-                  ],
-                ),
-            ],
           ],
         ],
+      ],
+    );
+    if (!embedded) {
+      return _PanelCard(child: body);
+    }
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: _WorkbenchColors.background,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: _WorkbenchColors.border),
       ),
+      child: Padding(padding: const EdgeInsets.all(10), child: body),
     );
   }
 }
@@ -6248,6 +6559,9 @@ String? _commonSpecSectionTitle(String raw) {
   return switch (normalized) {
     'intent' => 'Intent',
     'scope' => 'Scope',
+    'functional requirements' ||
+    'functional requirement' ||
+    'requirements' => 'Functional Requirements',
     'domain rules' || 'domain rule' || 'rules' => 'Domain Rules',
     'acceptance criteria' || 'acceptance' => 'Acceptance Criteria',
     _ => null,
@@ -6520,68 +6834,61 @@ String _cleanMarkdownText(String text) {
       .trim();
 }
 
-class _SpecDiagramOpenCard extends StatelessWidget {
-  const _SpecDiagramOpenCard({
-    required this.diagram,
+class _SpecDiagramListCard extends StatelessWidget {
+  const _SpecDiagramListCard({
+    required this.project,
+    required this.spec,
     required this.diagramRenderer,
-    required this.feedbackTarget,
     required this.onFeedback,
     required this.onCodexAction,
   });
 
-  final SddDiagram diagram;
+  final SddProject project;
+  final SddSpec spec;
   final MermaidDiagramRenderer diagramRenderer;
-  final SddFeedbackTarget feedbackTarget;
   final ValueChanged<SddFeedbackTarget> onFeedback;
   final ValueChanged<SddCodexActionRequest> onCodexAction;
 
   @override
   Widget build(BuildContext context) {
+    if (spec.diagrams.isEmpty) {
+      return const _InfoCard(
+        title: 'Spec diagrams',
+        detail: 'No diagrams found',
+      );
+    }
     return _PanelCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
-          _FileHeader(
-            title: _diagramDisplayLabel(diagram),
-            file: diagram,
-            subtitle: _diagramHeaderSubtitle(diagram),
-          ),
-          _ArtifactControls(
-            target: feedbackTarget,
-            onFeedback: onFeedback,
-            actions: const <SddCodexActionKind>[
-              SddCodexActionKind.updateDiagram,
-              SddCodexActionKind.explainDiagramImpact,
-              SddCodexActionKind.alignDiagramWithSpec,
-            ],
-            onCodexAction: onCodexAction,
-          ),
-          if (diagram.error != null) ...[
-            const SizedBox(height: 8),
-            Text(
-              diagram.error!,
-              style: const TextStyle(color: _WorkbenchColors.warning),
-            ),
-          ],
-          const SizedBox(height: 10),
-          FilledButton.icon(
-            onPressed: diagram.hasContent
-                ? () =>
-                      _openFullscreenDiagram(context, diagram, diagramRenderer)
-                : null,
-            icon: const Icon(Icons.open_in_full_rounded),
-            label: const Text('Open diagram'),
-          ),
-          if (diagram.hasContent) ...[
-            const SizedBox(height: 8),
-            _SourceExcerptDisclosure(text: diagram.content!),
-          ] else
-            const Padding(
-              padding: EdgeInsets.only(top: 8),
-              child: Text(
-                'No diagram source available.',
-                style: TextStyle(color: _WorkbenchColors.secondaryText),
+          Row(
+            children: <Widget>[
+              const Icon(
+                Icons.account_tree_outlined,
+                size: 16,
+                color: _WorkbenchColors.primary,
               ),
+              const SizedBox(width: 8),
+              const Expanded(
+                child: Text(
+                  'Diagrams in this spec',
+                  style: TextStyle(fontWeight: FontWeight.w900),
+                ),
+              ),
+              _TinyMetaChip(
+                icon: Icons.open_in_full_rounded,
+                label: 'tap to open',
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          for (final diagram in spec.diagrams)
+            _DiagramListTile(
+              item: _DiagramListItem(diagram: diagram, spec: spec),
+              project: project,
+              diagramRenderer: diagramRenderer,
+              onFeedback: onFeedback,
+              onCodexAction: onCodexAction,
             ),
         ],
       ),

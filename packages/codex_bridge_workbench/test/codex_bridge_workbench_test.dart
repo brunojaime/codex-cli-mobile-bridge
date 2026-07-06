@@ -261,7 +261,7 @@ void main() {
     );
     _openWorkbench(tester);
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Diagrams').first);
+    await tester.tap(find.text('Diagrams').last);
     await tester.pumpAndSettle();
 
     expect(find.text('Architecture diagrams'), findsOneWidget);
@@ -283,7 +283,7 @@ void main() {
     );
     _openWorkbench(tester);
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Diagrams').first);
+    await tester.tap(find.text('Diagrams').last);
     await tester.pumpAndSettle();
 
     expect(find.text('Architecture diagrams'), findsOneWidget);
@@ -336,14 +336,14 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Inside this spec'), findsOneWidget);
-    expect(find.text('Plan / tasks'), findsOneWidget);
+    expect(find.text('Spec trace'), findsOneWidget);
     expect(find.text('Artifact'), findsNothing);
-    await tester.tap(find.text('Plan / tasks').first);
+    await tester.tap(find.text('Spec trace').first);
     await tester.pumpAndSettle();
     expect(find.text('Plan: design-plan.md'), findsWidgets);
     expect(find.text('Plan: build-plan.md'), findsWidgets);
-    expect(find.text('Tasks: design-tasks.md'), findsWidgets);
-    expect(find.text('Tasks: build-tasks.md'), findsWidgets);
+    expect(find.text('Tasks: design-tasks.md'), findsNothing);
+    expect(find.text('Tasks: build-tasks.md'), findsNothing);
 
     await tester.tap(find.text('Plan: build-plan.md').first);
     await tester.pumpAndSettle();
@@ -352,11 +352,7 @@ void main() {
     expect(find.text('Build the catalog shell'), findsWidgets);
     expect(find.text('Show details'), findsWidgets);
     expect(find.textContaining('# Build Plan'), findsNothing);
-
-    await tester.tap(find.text('Plan / tasks').first);
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Tasks: build-tasks.md').first);
-    await tester.pumpAndSettle();
+    expect(find.text('Tasks in this plan'), findsOneWidget);
     expect(find.text('1/2 tasks complete'), findsOneWidget);
     expect(find.text('Plan: build-plan.md'), findsWidgets);
     expect(find.text('Build Tasks'), findsWidgets);
@@ -364,6 +360,102 @@ void main() {
     expect(find.text('Planned'), findsWidgets);
     expect(find.textContaining('# Build Tasks'), findsNothing);
   });
+
+  testWidgets(
+    'unlinked task files remain reachable and show missing plan metadata',
+    (tester) async {
+      final project = _projectWithTraceJson();
+      final spec = (project['specs']! as List<Map<String, dynamic>>).single;
+      final taskFiles = spec['task_files']! as List<Map<String, dynamic>>;
+      taskFiles.insert(0, <String, dynamic>{
+        'path': 'specs/001/ops-tasks.md',
+        'size_bytes': 50,
+        'content': '# Ops Tasks\n\n- [ ] Wire deployment checks',
+      });
+
+      await _pumpWorkbench(
+        tester,
+        loader: (_) async => SddProject.fromJson(project),
+        diagramRenderer: _FakeMermaidRenderer.success(),
+      );
+      _openWorkbench(tester);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Specs').first);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('SAT SDD Onboarding').first);
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Spec trace').first);
+      await tester.pumpAndSettle();
+
+      expect(find.text('Tasks: build-tasks.md'), findsNothing);
+      expect(find.text('Tasks needing plan: ops-tasks.md'), findsOneWidget);
+
+      await tester.tap(find.text('Tasks needing plan: ops-tasks.md').first);
+      await tester.pumpAndSettle();
+
+      expect(find.text('Ops Tasks'), findsWidgets);
+      expect(find.text('Plan: Needs metadata'), findsWidgets);
+      expect(find.text('0/1 tasks complete'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'named task files beside generic plans still require plan metadata',
+    (tester) async {
+      final project = _projectWithTraceJson();
+      final spec = (project['specs']! as List<Map<String, dynamic>>).single;
+      spec['plans'] = <Map<String, dynamic>>[
+        <String, dynamic>{
+          'path': 'specs/001/plan.md',
+          'size_bytes': 50,
+          'content': '# Generic Plan\n\n1. Plan the main flow.',
+        },
+      ];
+      spec['task_files'] = <Map<String, dynamic>>[
+        <String, dynamic>{
+          'path': 'specs/001/ops-tasks.md',
+          'size_bytes': 50,
+          'content': '# Ops Tasks\n\n- [ ] Wire deployment checks',
+        },
+        <String, dynamic>{
+          'path': 'specs/001/tasks.md',
+          'size_bytes': 50,
+          'content': '# Generic Tasks\n\n- [ ] Follow generic plan',
+        },
+      ];
+
+      await _pumpWorkbench(
+        tester,
+        loader: (_) async => SddProject.fromJson(project),
+        diagramRenderer: _FakeMermaidRenderer.success(),
+      );
+      _openWorkbench(tester);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Specs').first);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('SAT SDD Onboarding').first);
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Spec trace').first);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Plan: plan.md').first);
+      await tester.pumpAndSettle();
+
+      expect(find.text('Follow generic plan'), findsWidgets);
+      expect(find.text('Ops Tasks'), findsNothing);
+
+      await tester.tap(find.text('Spec trace').first);
+      await tester.pumpAndSettle();
+      expect(find.text('Tasks needing plan: ops-tasks.md'), findsOneWidget);
+
+      await tester.tap(find.text('Tasks needing plan: ops-tasks.md').first);
+      await tester.pumpAndSettle();
+
+      expect(find.text('Ops Tasks'), findsWidgets);
+      expect(find.text('Plan: Needs metadata'), findsWidgets);
+    },
+  );
 
   testWidgets('spec detail keeps one title and switches common spec sections', (
     tester,
@@ -494,7 +586,7 @@ void main() {
     await tester.tap(find.text('SAT SDD Onboarding').first);
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Plan / tasks').first);
+    await tester.tap(find.text('Spec trace').first);
     await tester.pumpAndSettle();
     await tester.tap(find.text('Plan: build-plan.md').first);
     await tester.pumpAndSettle();
@@ -509,11 +601,6 @@ void main() {
       findsOneWidget,
     );
 
-    await tester.tap(find.text('Plan / tasks').first);
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Tasks: build-tasks.md').first);
-    await tester.pumpAndSettle();
-
     expect(find.textContaining('# Build Tasks'), findsNothing);
     expect(
       find.text('Review generated tasks with the implementation team.'),
@@ -521,33 +608,43 @@ void main() {
     );
   });
 
-  testWidgets(
-    'spec diagram detail opens full screen instead of inline preview',
-    (tester) async {
-      await _pumpWorkbench(
-        tester,
-        loader: (_) async => SddProject.fromJson(_projectWithGovernanceJson()),
-        diagramRenderer: _FakeMermaidRenderer.success(),
-      );
-      _openWorkbench(tester);
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Specs').first);
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('SAT SDD Onboarding').first);
-      await tester.pumpAndSettle();
+  testWidgets('spec diagram detail shows list before full screen preview', (
+    tester,
+  ) async {
+    await _pumpWorkbench(
+      tester,
+      loader: (_) async => SddProject.fromJson(_projectWithGovernanceJson()),
+      diagramRenderer: _FakeMermaidRenderer.success(),
+    );
+    _openWorkbench(tester);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Specs').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('SAT SDD Onboarding').first);
+    await tester.pumpAndSettle();
 
-      await tester.tap(find.text('Plan / tasks').first);
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Diagram: UML class diagram').first);
-      await tester.pumpAndSettle();
+    await tester.tap(find.text('Spec trace').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Diagrams').last);
+    await tester.pumpAndSettle();
 
-      expect(find.byTooltip('Close full screen diagram'), findsOneWidget);
-      expect(
-        find.textContaining('rendered specs/001/diagrams/domain-impact.mmd'),
-        findsWidgets,
-      );
-    },
-  );
+    expect(find.text('Diagrams in this spec'), findsOneWidget);
+    expect(find.text('UML class diagram'), findsOneWidget);
+    expect(find.byTooltip('Close full screen diagram'), findsNothing);
+    expect(
+      find.textContaining('rendered specs/001/diagrams/domain-impact.mmd'),
+      findsNothing,
+    );
+
+    await tester.tap(find.text('UML class diagram').first);
+    await tester.pumpAndSettle();
+
+    expect(find.byTooltip('Close full screen diagram'), findsOneWidget);
+    expect(
+      find.textContaining('rendered specs/001/diagrams/domain-impact.mmd'),
+      findsWidgets,
+    );
+  });
 
   testWidgets('specs tab shows SCM metadata and task progress list', (
     tester,
@@ -645,6 +742,41 @@ void main() {
     expect(find.textContaining('Run SDD doctor'), findsOneWidget);
   });
 
+  testWidgets('spec intake explains unavailable media pickers', (tester) async {
+    await _pumpWorkbench(
+      tester,
+      loader: (_) async => SddProject.fromJson(_projectJson()),
+      diagramRenderer: _FakeMermaidRenderer.success(),
+      specIntakeClient: _FakeSpecIntakeClient(
+        dryRunPlan: const SddSpecIntakePlan(status: 'dry-run'),
+      ),
+    );
+    _openWorkbench(tester);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Specs').first);
+    await tester.pumpAndSettle();
+    await _openSpecIntake(tester);
+    await tester.pumpAndSettle();
+
+    await _tapVisible(tester, find.text('Audio'));
+    expect(
+      find.textContaining('Audio capture is not configured'),
+      findsOneWidget,
+    );
+
+    await _tapVisible(tester, find.text('Image'));
+    expect(
+      find.textContaining('Image upload is not configured'),
+      findsOneWidget,
+    );
+
+    await _tapVisible(tester, find.text('Structured'));
+    expect(
+      find.textContaining('Structured media is not configured'),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('spec intake stages image attachment before preview', (
     tester,
   ) async {
@@ -687,7 +819,7 @@ void main() {
     await _openSpecIntake(tester);
     await tester.pumpAndSettle();
 
-    await _tapVisible(tester, find.widgetWithText(OutlinedButton, 'Image'));
+    await _tapVisible(tester, find.text('Image'));
     await tester.pumpAndSettle();
     expect(find.textContaining('screen.png'), findsWidgets);
 
@@ -751,7 +883,7 @@ void main() {
     await _openSpecIntake(tester);
     await tester.pumpAndSettle();
 
-    await _tapVisible(tester, find.widgetWithText(OutlinedButton, 'Image'));
+    await _tapVisible(tester, find.text('Image'));
     await tester.pumpAndSettle();
     await _tapVisible(tester, find.byTooltip('Mark region screen.png'));
     await tester.pumpAndSettle();
@@ -836,7 +968,7 @@ void main() {
       await _openSpecIntake(tester);
       await tester.pumpAndSettle();
 
-      await _tapVisible(tester, find.widgetWithText(OutlinedButton, 'Image'));
+      await _tapVisible(tester, find.text('Image'));
       await tester.pumpAndSettle();
       await _tapVisible(tester, find.byTooltip('Mark region screen.png'));
       await tester.pumpAndSettle();
@@ -912,7 +1044,7 @@ void main() {
       await _openSpecIntake(tester);
       await tester.pumpAndSettle();
 
-      await _tapVisible(tester, find.widgetWithText(OutlinedButton, 'Image'));
+      await _tapVisible(tester, find.text('Image'));
       await tester.pumpAndSettle();
       await _tapVisible(tester, find.byTooltip('Mark region screen.png'));
       await tester.pumpAndSettle();
@@ -960,7 +1092,7 @@ void main() {
     await _openSpecIntake(tester);
     await tester.pumpAndSettle();
 
-    await _tapVisible(tester, find.widgetWithText(OutlinedButton, 'Image'));
+    await _tapVisible(tester, find.text('Image'));
     await tester.pumpAndSettle();
     await _tapVisible(tester, find.byTooltip('Mark region screen.png'));
     await tester.pumpAndSettle();
@@ -1007,7 +1139,7 @@ void main() {
     await tester.pumpAndSettle();
     await _openSpecIntake(tester);
     await tester.pumpAndSettle();
-    await _tapVisible(tester, find.widgetWithText(OutlinedButton, 'Image'));
+    await _tapVisible(tester, find.text('Image'));
     await tester.pumpAndSettle();
 
     await _tapVisible(tester, find.byTooltip('Remove attachment screen.png'));
@@ -1060,7 +1192,7 @@ void main() {
     await tester.pumpAndSettle();
     await _openSpecIntake(tester);
     await tester.pumpAndSettle();
-    await _tapVisible(tester, find.widgetWithText(OutlinedButton, 'Image'));
+    await _tapVisible(tester, find.text('Image'));
     await tester.pumpAndSettle();
 
     await _tapVisible(tester, find.byTooltip('Remove attachment screen.png'));
@@ -1112,7 +1244,7 @@ void main() {
     await _openSpecIntake(tester);
     await tester.pumpAndSettle();
 
-    await _tapVisible(tester, find.widgetWithText(OutlinedButton, 'Audio'));
+    await _tapVisible(tester, find.text('Audio'));
     await tester.pumpAndSettle();
     await tester.enterText(find.widgetWithText(TextField, 'Request'), 'Audio');
     await tester.pump();
@@ -1162,10 +1294,7 @@ void main() {
     await tester.pumpAndSettle();
     await _openSpecIntake(tester);
     await tester.pumpAndSettle();
-    await _tapVisible(
-      tester,
-      find.widgetWithText(OutlinedButton, 'Structured'),
-    );
+    await _tapVisible(tester, find.text('Structured'));
     await tester.pumpAndSettle();
     await tester.enterText(find.widgetWithText(TextField, 'Request'), 'Region');
     await tester.pump();
@@ -1222,10 +1351,7 @@ void main() {
     await tester.pumpAndSettle();
     await _openSpecIntake(tester);
     await tester.pumpAndSettle();
-    await _tapVisible(
-      tester,
-      find.widgetWithText(OutlinedButton, 'Structured'),
-    );
+    await _tapVisible(tester, find.text('Structured'));
     await tester.pumpAndSettle();
     await tester.enterText(
       find.widgetWithText(TextField, 'Request'),
@@ -1270,7 +1396,7 @@ void main() {
     await tester.pumpAndSettle();
     await _openSpecIntake(tester);
     await tester.pumpAndSettle();
-    await _tapVisible(tester, find.widgetWithText(OutlinedButton, 'Image'));
+    await _tapVisible(tester, find.text('Image'));
     await tester.pumpAndSettle();
 
     expect(find.textContaining('unsupported_image_mime_type'), findsOneWidget);
@@ -1362,25 +1488,13 @@ void main() {
     expect(find.text('status: queued'), findsWidgets);
     expect(find.text('Activity · queued'), findsOneWidget);
 
-    final runButton = find.widgetWithText(OutlinedButton, 'Run job');
-    await tester.ensureVisible(runButton);
-    await tester.tap(runButton);
-    await tester.pumpAndSettle();
+    await _tapIntakeJobAction(tester, 'Run job');
     expect(find.text('status: completed'), findsOneWidget);
 
-    final reviewButton = find.widgetWithText(OutlinedButton, 'Review');
-    await tester.ensureVisible(reviewButton);
-    await tester.tap(reviewButton);
-    await tester.pumpAndSettle();
+    await _tapIntakeJobAction(tester, 'Review');
     expect(find.text('validation: pass'), findsOneWidget);
 
-    final applyReviewedButton = find.widgetWithText(
-      OutlinedButton,
-      'Apply reviewed',
-    );
-    await tester.ensureVisible(applyReviewedButton);
-    await tester.tap(applyReviewedButton);
-    await tester.pumpAndSettle();
+    await _tapIntakeJobAction(tester, 'Apply reviewed');
     expect(find.text('Reviewed apply'), findsOneWidget);
     expect(find.text('status: applied'), findsWidgets);
   });
@@ -1461,18 +1575,12 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Activity · queued'), findsOneWidget);
-    final refreshButton = find.widgetWithText(OutlinedButton, 'Refresh');
-    await tester.ensureVisible(refreshButton);
-    await tester.tap(refreshButton);
-    await tester.pumpAndSettle();
+    await _tapIntakeJobAction(tester, 'Refresh');
     expect(intakeClient.activityRequests, 1);
     expect(find.text('Activity · running-codex'), findsOneWidget);
     expect(find.text('Codex running'), findsOneWidget);
 
-    final cancelButton = find.widgetWithText(OutlinedButton, 'Cancel');
-    await tester.ensureVisible(cancelButton);
-    await tester.tap(cancelButton);
-    await tester.pumpAndSettle();
+    await _tapIntakeJobAction(tester, 'Cancel');
     expect(intakeClient.cancelRequests, 1);
     expect(find.text('Activity · cancelled'), findsOneWidget);
   });
@@ -1571,14 +1679,10 @@ void main() {
     await tester.pumpAndSettle();
     await _tapVisible(tester, find.widgetWithText(FilledButton, 'Queue job'));
     await tester.pumpAndSettle();
-    await _tapVisible(tester, find.widgetWithText(OutlinedButton, 'Run job'));
-    await tester.pumpAndSettle();
+    await _tapIntakeJobAction(tester, 'Run job');
 
     expect(find.text('Activity · failed'), findsOneWidget);
-    final retryButton = find.widgetWithText(OutlinedButton, 'Retry');
-    await tester.ensureVisible(retryButton);
-    await tester.tap(retryButton);
-    await tester.pumpAndSettle();
+    await _tapIntakeJobAction(tester, 'Retry');
 
     expect(intakeClient.retryRequests, 1);
     expect(find.text('Activity · queued'), findsOneWidget);
@@ -2346,6 +2450,15 @@ Future<void> _tapVisible(WidgetTester tester, Finder finder) async {
   );
   await tester.pumpAndSettle();
   await tester.tap(finder);
+  await tester.pumpAndSettle();
+}
+
+Future<void> _tapIntakeJobAction(WidgetTester tester, String label) async {
+  final menu = find.text('Job actions');
+  await tester.ensureVisible(menu);
+  await tester.tap(menu);
+  await tester.pumpAndSettle();
+  await tester.tap(find.text(label).last);
   await tester.pumpAndSettle();
 }
 
