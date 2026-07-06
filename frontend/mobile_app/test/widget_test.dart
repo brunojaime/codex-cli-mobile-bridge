@@ -251,6 +251,7 @@ void main() {
     await tester.tap(find.text('Tasks').first);
     await tester.pumpAndSettle();
     expect(find.text('1/2 tasks complete'), findsOneWidget);
+    await tester.ensureVisible(find.text('Slice One').first);
     await tester.tap(find.text('Slice One').first);
     await tester.pumpAndSettle();
     expect(find.textContaining('# Slice One'), findsOneWidget);
@@ -325,6 +326,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Specs').first);
     await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Codex').first);
     await tester.tap(find.text('Codex').first);
     await tester.pumpAndSettle();
     await tester.tap(find.text('Refine spec.md').first);
@@ -378,6 +380,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.textContaining('# Tasks'), findsOneWidget);
     expect(find.text('1/2 tasks complete'), findsOneWidget);
+    await tester.ensureVisible(find.text('Slice One').first);
     await tester.tap(find.text('Slice One').first);
     await tester.pumpAndSettle();
     expect(find.textContaining('# Slice One'), findsOneWidget);

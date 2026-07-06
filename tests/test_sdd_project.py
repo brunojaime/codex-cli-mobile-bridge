@@ -44,6 +44,11 @@ def test_sdd_endpoints_return_project_snapshot_and_capabilities(
     assert payload["manifest"]["path"] == "codex-bridge.yaml"
     assert payload["constitution"]["path"] == ".specify/memory/constitution.md"
     assert payload["specs"][0]["id"] == "001-demo"
+    assert payload["specs"][0]["description"] == ""
+    assert payload["specs"][0]["lifecycle_status"] == "draft"
+    assert payload["specs"][0]["traceability_status"] == "linked"
+    assert payload["specs"][0]["metadata_status"] == "missing"
+    assert payload["specs"][0]["task_total"] == 0
     assert payload["specs"][0]["missing"] == []
     assert [item["path"] for item in payload["specs"][0]["plan_files"]] == [
         "specs/001-demo/plan.md",
@@ -343,9 +348,7 @@ def _write_sdd_project(project: Path) -> None:
     (project / "specs/001-demo/tasks/02-implementation.md").write_text(
         "# Implementation Tasks\n"
     )
-    (project / "specs/001-demo/slices/01-demo-slice.md").write_text(
-        "# Demo Slice\n"
-    )
+    (project / "specs/001-demo/slices/01-demo-slice.md").write_text("# Demo Slice\n")
     (project / "specs/001-demo/diagrams/sequence.mmd").write_text(
         "sequenceDiagram\nA->>B: hi\n"
     )

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../services/mermaid_renderer.dart';
+import '../services/sdd_explorer_client.dart';
 import 'sdd_explorer_panel.dart';
 
 class CodexBridgeDevModeWrapper extends StatefulWidget {
@@ -14,6 +15,11 @@ class CodexBridgeDevModeWrapper extends StatefulWidget {
     this.metaWorkspaceLabel = 'Codex Bridge Workbench',
     this.diagramRenderer,
     this.explorerLoader,
+    this.specIntakeClient,
+    this.mediaAttachmentPicker,
+    this.audioAttachmentPicker,
+    this.structuredAttachmentPicker,
+    this.imageCropper,
     this.sddFeedbackSubmitter,
     this.sddActionSubmitter,
   });
@@ -26,6 +32,11 @@ class CodexBridgeDevModeWrapper extends StatefulWidget {
   final Widget child;
   final MermaidDiagramRenderer? diagramRenderer;
   final SddExplorerLoader? explorerLoader;
+  final SddExplorerClient? specIntakeClient;
+  final SddMediaAttachmentPicker? mediaAttachmentPicker;
+  final SddMediaAttachmentPicker? audioAttachmentPicker;
+  final SddStructuredAttachmentPicker? structuredAttachmentPicker;
+  final SddImageCropper? imageCropper;
   final SddFeedbackSubmitter? sddFeedbackSubmitter;
   final SddCodexActionSubmitter? sddActionSubmitter;
 
@@ -95,6 +106,11 @@ class _CodexBridgeDevModeWrapperState extends State<CodexBridgeDevModeWrapper> {
                   widget.diagramRenderer ??
                   const WebViewMermaidDiagramRenderer(),
               loader: widget.explorerLoader,
+              specIntakeClient: widget.specIntakeClient,
+              mediaAttachmentPicker: widget.mediaAttachmentPicker,
+              audioAttachmentPicker: widget.audioAttachmentPicker,
+              structuredAttachmentPicker: widget.structuredAttachmentPicker,
+              imageCropper: widget.imageCropper,
               feedbackSubmitter: widget.sddFeedbackSubmitter,
               actionSubmitter: widget.sddActionSubmitter,
               onClose: _closeExplorer,

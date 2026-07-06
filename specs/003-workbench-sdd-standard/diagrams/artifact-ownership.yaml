@@ -1,0 +1,6 @@
+diagram_id: artifact-ownership
+diagram_type: component-impact
+scope: feature
+status: draft
+owner: project
+source: specs/003-workbench-sdd-standard/diagrams/artifact-ownership.mmd

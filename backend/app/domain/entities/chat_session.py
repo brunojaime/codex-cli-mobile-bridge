@@ -22,7 +22,9 @@ class ChatSession:
     agent_profile_color: str = "#55D6BE"
     provider_session_id: str | None = None
     reviewer_provider_session_id: str | None = None
-    agent_configuration: AgentConfiguration = field(default_factory=AgentConfiguration.default)
+    agent_configuration: AgentConfiguration = field(
+        default_factory=AgentConfiguration.default
+    )
     active_agent_run_id: str | None = None
     active_agent_turn_index: int = 0
     auto_mode_enabled: bool = False

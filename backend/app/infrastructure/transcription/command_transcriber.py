@@ -32,7 +32,9 @@ class CommandAudioTranscriber(AudioTranscriber):
             )
 
         executable = shlex.split(self._command)[0]
-        has_executable = executable.startswith(("/", "./", "../")) or shutil.which(executable)
+        has_executable = executable.startswith(("/", "./", "../")) or shutil.which(
+            executable
+        )
         return AudioTranscriberStatus(
             backend="command",
             ready=bool(has_executable),
@@ -91,5 +93,7 @@ class CommandAudioTranscriber(AudioTranscriber):
 
         transcript = result.stdout.strip()
         if not transcript:
-            raise AudioTranscriptionError("Transcription command returned an empty transcript.")
+            raise AudioTranscriptionError(
+                "Transcription command returned an empty transcript."
+            )
         return transcript

@@ -1,0 +1,154 @@
+kind: codex.workbenchSddStandard
+id: workbench-sdd/v1
+version: 1
+compatibility:
+  supported_ids:
+    - workbench-sdd/v1
+artifact_types:
+  required:
+    - manifest
+    - constitution
+    - architecture
+    - domain
+    - data
+    - spec
+    - plan
+    - tasks
+    - traceability
+    - diagram
+    - generated_index
+  optional:
+    - architecture-decision
+    - diagram-metadata
+ownership:
+  allowed_owners:
+    - workbench
+    - project
+  workbench_owned:
+    - standard
+    - template
+    - taxonomy
+    - validation_rule
+  project_owned:
+    - manifest
+    - constitution
+    - architecture
+    - domain
+    - data
+    - spec
+    - plan
+    - tasks
+    - traceability
+    - diagram
+    - generated_index
+diagram_taxonomy:
+  required_metadata:
+    - diagram_id
+    - diagram_type
+    - scope
+    - status
+    - owner
+    - source
+  baseline:
+    - system-context
+    - components
+    - deployment
+    - sequence
+    - domain-model
+    - entity-relationship
+  feature:
+    - sequence
+    - state
+    - component-impact
+    - domain-impact
+    - data-impact
+  notation:
+    system-context: mermaid.flowchart
+    components: mermaid.flowchart
+    deployment: mermaid.flowchart
+    domain-model: mermaid.classDiagram
+    entity-relationship: mermaid.erDiagram
+    sequence: mermaid.sequenceDiagram
+    state: mermaid.stateDiagram-v2
+    component-impact: mermaid.flowchart
+    domain-impact: mermaid.classDiagram
+    data-impact: mermaid.erDiagram
+  source_directives:
+    mermaid.flowchart:
+      - flowchart
+      - graph
+    mermaid.sequenceDiagram:
+      - sequenceDiagram
+    mermaid.stateDiagram-v2:
+      - stateDiagram
+      - stateDiagram-v2
+    mermaid.classDiagram:
+      - classDiagram
+    mermaid.erDiagram:
+      - erDiagram
+diagram_governance:
+  baseline_scope: baseline
+  feature_scope: feature
+  protected_baseline_policy: baseline_impact_required
+  baseline_path_prefixes:
+    - architecture/
+  feature_path_prefixes:
+    - specs/
+  missing_metadata_policy: warn
+  render_validation_policy: not_available_without_configured_renderer
+  syntax_validation_policy: source_directive_and_basic_structure
+context_rules:
+  required_safety_rules:
+    - manifest_first_resolution
+    - baseline_impact_gates
+    - no_broad_read
+    - unknown_version_hard_failure
+  allowed_override_keys:
+    - domains
+    - excluded_paths
+    - candidate_limits
+    - protected_baseline
+    - preferred_context
+candidate_limits:
+  related_specs: 5
+  related_diagrams: 3
+templates:
+  required_metadata:
+    - template_id
+    - artifact_type
+    - destination
+    - source
+  required:
+    - constitution
+    - architecture-overview
+    - domain-glossary
+    - data-persistence-model
+  catalog:
+    constitution:
+      template_id: constitution
+      artifact_type: constitution
+      destination: .specify/memory/constitution.md
+      source: templates/constitution.md
+    architecture-overview:
+      template_id: architecture-overview
+      artifact_type: architecture
+      destination: architecture/overview.md
+      source: templates/architecture-overview.md
+    domain-glossary:
+      template_id: domain-glossary
+      artifact_type: domain
+      destination: domain/glossary.md
+      source: templates/domain-glossary.md
+    data-persistence-model:
+      template_id: data-persistence-model
+      artifact_type: data
+      destination: data/persistence-model.md
+      source: templates/data-persistence-model.md
+scaffold:
+  required_artifacts:
+    - .specify/memory/constitution.md
+    - architecture/overview.md
+    - domain/glossary.md
+    - data/persistence-model.md
+    - specs
+    - .sdd

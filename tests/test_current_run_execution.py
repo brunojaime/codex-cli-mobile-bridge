@@ -188,7 +188,9 @@ def test_session_detail_response_exposes_current_run_stages() -> None:
     )
 
 
-def test_current_run_marks_missing_reviewer_after_completed_generator_as_not_scheduled() -> None:
+def test_current_run_marks_missing_reviewer_after_completed_generator_as_not_scheduled() -> (
+    None
+):
     session = build_session(summary_enabled=False)
     messages = [
         build_message(
@@ -232,7 +234,10 @@ def test_current_run_marks_missing_reviewer_after_completed_generator_as_not_sch
     reviewer_stage = response.current_run.stages[1]
     assert generator_stage.attempt_count == 2
     assert reviewer_stage.state == RunStageState.NOT_SCHEDULED
-    assert generator_stage.max_turns == session.agent_configuration.agents[AgentId.GENERATOR].max_turns
+    assert (
+        generator_stage.max_turns
+        == session.agent_configuration.agents[AgentId.GENERATOR].max_turns
+    )
 
 
 def test_current_run_uses_stale_state_for_uncertain_follow_up_messages() -> None:
@@ -284,7 +289,9 @@ def test_current_run_is_omitted_when_there_is_no_active_run() -> None:
     assert response.recent_runs[0].is_active is False
 
 
-def test_recent_runs_keep_completed_review_runs_visible_after_active_run_clears() -> None:
+def test_recent_runs_keep_completed_review_runs_visible_after_active_run_clears() -> (
+    None
+):
     session = build_session(active_run_id=None, reviewer_enabled=True)
     base = _ts()
     messages = [
@@ -432,7 +439,10 @@ def test_recent_runs_preserve_multi_turn_reviewer_loop_counters() -> None:
     reviewer_stage = runs[0].stages[1]
     assert runs[0].state == RunStageState.COMPLETED
     assert generator_stage.attempt_count == 2
-    assert generator_stage.max_turns == session.agent_configuration.agents[AgentId.GENERATOR].max_turns
+    assert (
+        generator_stage.max_turns
+        == session.agent_configuration.agents[AgentId.GENERATOR].max_turns
+    )
     assert reviewer_stage.attempt_count == 2
     assert reviewer_stage.max_turns == 6
 

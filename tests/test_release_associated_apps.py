@@ -29,8 +29,7 @@ def test_build_plan_reports_complete_json_shape(tmp_path: Path) -> None:
     assert plan.current_dependency_ref == "codex-app-updater-v0.1.1"
     assert plan.next_dependency_ref == "codex-app-updater-v0.1.2"
     assert plan.release_branch == (
-        "release/ambientando-calendar/"
-        "android-local-demo-feedback-v1.0.0-build.57"
+        "release/ambientando-calendar/android-local-demo-feedback-v1.0.0-build.57"
     )
     assert plan.release_tag == "android-local-demo-feedback-v1.0.0-build.57"
 
@@ -103,9 +102,9 @@ def test_execute_plan_updates_only_target_dependency_ref_commits_branch_and_tags
     assert _git(["branch", "--show-current"], fixture.app_repos[0]).stdout.strip() == (
         plan.release_branch
     )
-    assert _git(["tag", "--points-at", "HEAD"], fixture.app_repos[0]).stdout.strip() == (
-        "android-local-demo-feedback-v1.0.0-build.57"
-    )
+    assert _git(
+        ["tag", "--points-at", "HEAD"], fixture.app_repos[0]
+    ).stdout.strip() == ("android-local-demo-feedback-v1.0.0-build.57")
 
 
 def test_preflight_aborts_dirty_staged_worktree_before_any_mutation(
@@ -149,7 +148,9 @@ def test_preflight_aborts_existing_tag_or_branch(tmp_path: Path) -> None:
     _git(["tag", "-d", plan.release_tag], fixture.app_repos[0])
     _git(["branch", plan.release_branch], fixture.app_repos[0])
 
-    with pytest.raises(releases.ReleasePlanError, match="Release branch already exists"):
+    with pytest.raises(
+        releases.ReleasePlanError, match="Release branch already exists"
+    ):
         releases.preflight([plan])
 
 
@@ -278,11 +279,15 @@ def _write_fixture(
     tmp_path.mkdir(parents=True, exist_ok=True)
     dependency_repo = tmp_path / "codex-cli-mobile-bridge"
     _init_dependency_repo(dependency_repo)
-    app_repos = [tmp_path / f"ambientando-calendar-{index}" for index in range(app_count)]
+    app_repos = [
+        tmp_path / f"ambientando-calendar-{index}" for index in range(app_count)
+    ]
     apps = []
     registry = {}
     for index, app_repo in enumerate(app_repos):
-        source_app = "ambientando-calendar" if index == 0 else f"ambientando-calendar-{index}"
+        source_app = (
+            "ambientando-calendar" if index == 0 else f"ambientando-calendar-{index}"
+        )
         display_name = "Ambientando Calendar" if index == 0 else f"Ambientando {index}"
         _write_app_pubspec(
             app_repo,

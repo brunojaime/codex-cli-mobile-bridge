@@ -132,7 +132,9 @@ def main() -> int:
 def load_component(path: Path, name: str) -> Component:
     raw = read_json(path)
     if name not in raw:
-        raise FeedbackIntegrationError(f"Component {name!r} is not configured in {path}.")
+        raise FeedbackIntegrationError(
+            f"Component {name!r} is not configured in {path}."
+        )
     payload = raw[name]
     apps = tuple(
         AssociatedApp(
@@ -305,7 +307,9 @@ def check_pubspec(component: Component, app: AssociatedApp) -> list[Check]:
     return checks
 
 
-def check_coordinated_dependencies(component: Component, pubspec_text: str) -> list[Check]:
+def check_coordinated_dependencies(
+    component: Component, pubspec_text: str
+) -> list[Check]:
     checks: list[Check] = []
     requirements = COORDINATED_DEPENDENCIES.get(component.name, {})
     for dependency_name, requirement in requirements.items():
@@ -322,7 +326,9 @@ def check_coordinated_dependencies(component: Component, pubspec_text: str) -> l
 
         expected_ref = str(requirement["ref"])
         actual_ref = yaml_scalar(block, "ref")
-        allowed_refs = tuple(str(item) for item in requirement.get("allowedRefs", [expected_ref]))
+        allowed_refs = tuple(
+            str(item) for item in requirement.get("allowedRefs", [expected_ref])
+        )
         if actual_ref in allowed_refs:
             checks.append(Check(f"{dependency_name}_ref", "pass", actual_ref or ""))
         else:
@@ -393,13 +399,21 @@ def check_app_code(app: AssociatedApp) -> list[Check]:
     if not dart_files:
         return [Check("app_code", "fail", f"No Dart files under {lib_dir}")]
     text = "\n".join(path.read_text(errors="ignore") for path in dart_files)
-    checks = [Check("app_code", "pass", f"{len(dart_files)} Dart file(s) under {lib_dir}")]
-    if "package:codex_developer_feedback_template/developer_feedback_template.dart" in text:
+    checks = [
+        Check("app_code", "pass", f"{len(dart_files)} Dart file(s) under {lib_dir}")
+    ]
+    if (
+        "package:codex_developer_feedback_template/developer_feedback_template.dart"
+        in text
+    ):
         checks.append(Check("import", "pass", "feedback package import"))
     else:
         checks.append(Check("import", "fail", "Missing feedback package import"))
 
-    if "DeveloperFeedbackTemplate(" in text or "CodexDeveloperFeedbackTemplate(" in text:
+    if (
+        "DeveloperFeedbackTemplate(" in text
+        or "CodexDeveloperFeedbackTemplate(" in text
+    ):
         checks.append(Check("wrapper", "pass", "feedback template wrapper"))
         checks.append(check_wrapper_placement(text))
         checks.append(check_template_always_mounted(text))
@@ -479,7 +493,9 @@ def check_app_code(app: AssociatedApp) -> list[Check]:
             )
         )
     else:
-        checks.append(Check("app_level_updater", "pass", "no app-level updater wrapper"))
+        checks.append(
+            Check("app_level_updater", "pass", "no app-level updater wrapper")
+        )
 
     if "CodexDeveloperRoleGate(" in text:
         checks.append(Check("role_gate", "pass", "reusable role gate wrapper"))
@@ -598,7 +614,9 @@ def check_workspace_alias(app: AssociatedApp, aliases: dict[str, str]) -> Check:
             f"Alias for {app.source_app} points to missing path {path}",
         )
     if app.local_path.exists():
-        return Check("workspace_alias", "pass", f"registered localPath {app.local_path}")
+        return Check(
+            "workspace_alias", "pass", f"registered localPath {app.local_path}"
+        )
     normalized_source = normalize_key(app.source_app)
     local_parts = {normalize_key(part) for part in app.local_path.parts}
     if normalized_source in local_parts:

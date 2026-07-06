@@ -1,0 +1,8 @@
+diagram_id: feature-diagram-id
+diagram_type: sequence
+scope: feature
+status: draft
+owner: project
+source: specs/feature/diagrams/diagram.mmd
+related_specs: []
+baseline_impact: none

@@ -112,6 +112,10 @@ class FeedbackQueueItemRequest(BaseModel):
         default_factory=dict,
         validation_alias=AliasChoices("guidedTrace", "guided_trace"),
     )
+    specTarget: dict[str, Any] = Field(
+        default_factory=dict,
+        validation_alias=AliasChoices("specTarget", "spec_target"),
+    )
 
     @model_validator(mode="after")
     def require_feedback_content(self) -> "FeedbackQueueItemRequest":
@@ -142,6 +146,7 @@ class FeedbackQueueItemResponse(BaseModel):
     feedback_kind: str | None = None
     image_capture: dict[str, Any] = Field(default_factory=dict)
     guided_trace: dict[str, Any] = Field(default_factory=dict)
+    spec_target: dict[str, Any] = Field(default_factory=dict)
     audio_mime_type: str | None = None
     audio_duration_ms: int | None = None
     audio_byte_length: int | None = None
@@ -470,6 +475,500 @@ class CodexMcpAppResponse(BaseModel):
     protocol_error: str | None = None
 
 
+class SpecTargetRequest(BaseModel):
+    mode: Literal["none", "new_spec", "existing_spec"]
+    spec_id: str | None = Field(
+        default=None,
+        max_length=160,
+        validation_alias=AliasChoices("spec_id", "specId"),
+    )
+    artifact: Literal["auto", "spec", "plan", "tasks", "diagram"] = "auto"
+
+
+class SpecIntakeRegionRequest(BaseModel):
+    x: float
+    y: float
+    width: float
+    height: float
+
+
+class SpecIntakeMediaItemRequest(BaseModel):
+    kind: Literal[
+        "text",
+        "audio",
+        "image",
+        "crop",
+        "marked_region",
+        "screenshot_batch",
+        "image_sequence",
+    ]
+    mime_type: str | None = Field(
+        default=None,
+        max_length=120,
+        validation_alias=AliasChoices("mime_type", "mimeType"),
+    )
+    byte_size: int | None = Field(
+        default=None,
+        ge=0,
+        validation_alias=AliasChoices("byte_size", "byteSize"),
+    )
+    filename: str | None = Field(default=None, max_length=255)
+    sha256: str | None = Field(default=None, max_length=128)
+    text: str | None = Field(default=None, max_length=65536)
+    transcript: str | None = Field(default=None, max_length=20000)
+    duration_ms: int | None = Field(
+        default=None,
+        ge=0,
+        validation_alias=AliasChoices("duration_ms", "durationMs"),
+    )
+    source_ref: str | None = Field(
+        default=None,
+        max_length=255,
+        validation_alias=AliasChoices("source_ref", "sourceRef"),
+    )
+    payload_ref: str | None = Field(
+        default=None,
+        max_length=500,
+        validation_alias=AliasChoices("payload_ref", "payloadRef"),
+    )
+    region: SpecIntakeRegionRequest | None = None
+    image_count: int | None = Field(
+        default=None,
+        ge=0,
+        validation_alias=AliasChoices("image_count", "imageCount"),
+    )
+    frame_count: int | None = Field(
+        default=None,
+        ge=0,
+        validation_alias=AliasChoices("frame_count", "frameCount"),
+    )
+    audio_track_count: int | None = Field(
+        default=None,
+        ge=0,
+        validation_alias=AliasChoices("audio_track_count", "audioTrackCount"),
+    )
+    timeline_ms: list[int] = Field(
+        default_factory=list,
+        validation_alias=AliasChoices("timeline_ms", "timelineMs"),
+    )
+    references: list[str] = Field(default_factory=list)
+
+
+class SpecIntakeValidationRequest(BaseModel):
+    workspace_path: str = Field(
+        ...,
+        min_length=1,
+        max_length=4096,
+        validation_alias=AliasChoices("workspace_path", "workspacePath"),
+    )
+    spec_target: SpecTargetRequest = Field(
+        ...,
+        validation_alias=AliasChoices("spec_target", "specTarget"),
+    )
+    intake_items: list[SpecIntakeMediaItemRequest] = Field(
+        default_factory=list,
+        validation_alias=AliasChoices("intake_items", "intakeItems"),
+    )
+    title_seed: str | None = Field(
+        default=None,
+        max_length=240,
+        validation_alias=AliasChoices("title_seed", "titleSeed"),
+    )
+    workbench_spec_target: SpecTargetRequest | None = Field(
+        default=None,
+        validation_alias=AliasChoices("workbench_spec_target", "workbenchSpecTarget"),
+    )
+    bridge_spec_target: SpecTargetRequest | None = Field(
+        default=None,
+        validation_alias=AliasChoices("bridge_spec_target", "bridgeSpecTarget"),
+    )
+
+
+class SpecIntakeValidationErrorResponse(BaseModel):
+    code: str
+    field: str
+    message: str
+
+
+class SpecIntakeValidationResponse(BaseModel):
+    kind: str = "codex.sddSpecIntakeValidation"
+    version: int = 1
+    ok: bool
+    status: Literal["valid", "blocked"]
+    workspace_path: str | None = None
+    mode: str | None = None
+    spec_id: str | None = None
+    artifact: str | None = None
+    spec_root: str | None = None
+    media_count: int = 0
+    errors: list[SpecIntakeValidationErrorResponse] = Field(default_factory=list)
+    next_actions: list[str] = Field(default_factory=list)
+
+
+class SddIntakeItemRequest(SpecIntakeMediaItemRequest):
+    pass
+
+
+class SddIntakeRequest(BaseModel):
+    workspace_path: str = Field(
+        ...,
+        min_length=1,
+        max_length=4096,
+        validation_alias=AliasChoices("workspace_path", "workspacePath"),
+    )
+    spec_target: SpecTargetRequest = Field(
+        ...,
+        validation_alias=AliasChoices("spec_target", "specTarget"),
+    )
+    items: list[SddIntakeItemRequest] = Field(default_factory=list)
+    title_seed: str | None = Field(
+        default=None,
+        max_length=240,
+        validation_alias=AliasChoices("title_seed", "titleSeed"),
+    )
+    job_id: str = Field(
+        default="dry-run",
+        max_length=120,
+        validation_alias=AliasChoices("job_id", "jobId"),
+    )
+
+
+class SddIntakePlannedArtifactResponse(BaseModel):
+    item_index: int
+    kind: str
+    target_path: str
+    staging_path: str
+    byte_size: int | None = None
+    sha256: str | None = None
+    retention: str
+
+
+class SddIntakeDryRunResponse(BaseModel):
+    kind: str = "codex.sddIntakeDryRun"
+    version: int = 1
+    status: Literal["dry-run", "blocked"]
+    workspace_path: str | None = None
+    spec_id: str | None = None
+    target_root: str | None = None
+    staging_root: str
+    retention_hours: int = 24
+    would_create: list[SddIntakePlannedArtifactResponse] = Field(default_factory=list)
+    existing: list[str] = Field(default_factory=list)
+    blocked: list[str] = Field(default_factory=list)
+    rejected_media: list[SpecIntakeValidationErrorResponse] = Field(
+        default_factory=list
+    )
+    next_actions: list[str] = Field(default_factory=list)
+
+
+class SddSpecDryRunRequest(SpecIntakeValidationRequest):
+    job_id: str = Field(
+        default="dry-run",
+        max_length=120,
+        validation_alias=AliasChoices("job_id", "jobId"),
+    )
+
+
+class SddSpecMetadataProposalResponse(BaseModel):
+    title: str
+    description: str
+    generated_title: bool
+    generated_description: bool
+    preserve_pinned_title: bool = False
+    preserve_pinned_description: bool = False
+
+
+class SddSpecCreationDryRunResponse(BaseModel):
+    kind: str = "codex.sddSpecCreationDryRun"
+    version: int = 1
+    status: Literal["dry-run", "blocked"]
+    workspace_path: str | None = None
+    spec_id: str | None = None
+    spec_root: str | None = None
+    target_files: list[str] = Field(default_factory=list)
+    metadata_proposal: SddSpecMetadataProposalResponse | None = None
+    metadata_refresh_plan: list[str] = Field(default_factory=list)
+    intended_artifact_updates: list[str] = Field(default_factory=list)
+    conflicts: list[str] = Field(default_factory=list)
+    blocked_reasons: list[str] = Field(default_factory=list)
+    rejected_media: list[SpecIntakeValidationErrorResponse] = Field(
+        default_factory=list
+    )
+    existing_artifacts: list[str] = Field(default_factory=list)
+    validation_errors: list[SpecIntakeValidationErrorResponse] = Field(
+        default_factory=list
+    )
+    intake_plan: SddIntakeDryRunResponse | None = None
+    next_actions: list[str] = Field(default_factory=list)
+
+
+class SddSpecApplyResponse(BaseModel):
+    kind: str = "codex.sddSpecApply"
+    version: int = 1
+    status: Literal["applied", "blocked"]
+    workspace_path: str | None = None
+    spec_id: str | None = None
+    spec_root: str | None = None
+    created: list[str] = Field(default_factory=list)
+    existing: list[str] = Field(default_factory=list)
+    blocked: list[str] = Field(default_factory=list)
+    conflicts: list[str] = Field(default_factory=list)
+    metadata_result: SddSpecMetadataProposalResponse | None = None
+    intake_references: list[str] = Field(default_factory=list)
+    post_apply_refresh: dict[str, Any] = Field(default_factory=dict)
+    dry_run: SddSpecCreationDryRunResponse
+    next_actions: list[str] = Field(default_factory=list)
+
+
+class SddSpecEditDryRunResponse(BaseModel):
+    kind: str = "codex.sddSpecEditDryRun"
+    version: int = 1
+    status: Literal["dry-run", "blocked"]
+    workspace_path: str | None = None
+    spec_id: str | None = None
+    spec_root: str | None = None
+    selected_artifact: str | None = None
+    intended_artifact_updates: list[str] = Field(default_factory=list)
+    metadata_proposal: SddSpecMetadataProposalResponse | None = None
+    metadata_refresh_plan: list[str] = Field(default_factory=list)
+    conflicts: list[str] = Field(default_factory=list)
+    blocked_reasons: list[str] = Field(default_factory=list)
+    rejected_media: list[SpecIntakeValidationErrorResponse] = Field(
+        default_factory=list
+    )
+    existing_artifacts: list[str] = Field(default_factory=list)
+    validation_errors: list[SpecIntakeValidationErrorResponse] = Field(
+        default_factory=list
+    )
+    next_actions: list[str] = Field(default_factory=list)
+
+
+class SddSpecEditApplyResponse(BaseModel):
+    kind: str = "codex.sddSpecEditApply"
+    version: int = 1
+    status: Literal["applied", "blocked", "queued"]
+    workspace_path: str | None = None
+    spec_id: str | None = None
+    spec_root: str | None = None
+    selected_artifact: str | None = None
+    created: list[str] = Field(default_factory=list)
+    updated: list[str] = Field(default_factory=list)
+    existing: list[str] = Field(default_factory=list)
+    blocked: list[str] = Field(default_factory=list)
+    conflicts: list[str] = Field(default_factory=list)
+    dry_run: SddSpecEditDryRunResponse
+    job: dict[str, Any] | None = None
+    next_actions: list[str] = Field(default_factory=list)
+
+
+class SddCodexJobResponse(BaseModel):
+    kind: str = "codex.sddCodexJob"
+    version: int = 1
+    job_id: str = Field(validation_alias=AliasChoices("job_id", "jobId"))
+    jobId: str | None = None
+    activity_state: str | None = None
+    activity: dict[str, Any] = Field(default_factory=dict)
+    status: Literal[
+        "queued",
+        "running",
+        "completed",
+        "failed",
+        "blocked",
+        "cancelled",
+        "timed_out",
+    ]
+    process_state: str
+    workspace_path: str
+    job_root: str
+    sandbox_root: str = ""
+    target_spec_id: str
+    target_artifact: str | None = None
+    context_pack_id: str
+    command_argv: list[str] = Field(default_factory=list)
+    redacted_argv: list[str] = Field(default_factory=list)
+    env_keys: list[str] = Field(default_factory=list)
+    intake_references: list[str] = Field(default_factory=list)
+    media_persistence: dict[str, Any] = Field(default_factory=dict)
+    required_files: list[str] = Field(default_factory=list)
+    blocked_reads: list[str] = Field(default_factory=list)
+    routing_decisions: list[str] = Field(default_factory=list)
+    logs: list[str] = Field(default_factory=list)
+    stdout: str = ""
+    stderr: str = ""
+    exit_code: int | None = None
+    timeout_seconds: int
+    created_at_epoch: int
+    started_at_epoch: int | None = None
+    completed_at_epoch: int | None = None
+    blocked_reasons: list[str] = Field(default_factory=list)
+    next_actions: list[str] = Field(default_factory=list)
+    retry_source_job_id: str | None = None
+
+
+class SddActivityResponse(BaseModel):
+    kind: str = "codex.sddActivity"
+    version: int = 1
+    state: str
+    job_id: str = Field(validation_alias=AliasChoices("job_id", "jobId"))
+    events: list[dict[str, Any]] = Field(default_factory=list)
+    next_actions: list[str] = Field(default_factory=list)
+
+
+class SddCodexJobRetryResponse(BaseModel):
+    kind: str = "codex.sddCodexJobRetry"
+    version: int = 1
+    status: Literal["queued", "blocked"]
+    activity_state: str | None = None
+    activity: dict[str, Any] = Field(default_factory=dict)
+    original_job_id: str
+    retry_job_id: str | None = None
+    retry_eligible: bool = False
+    copied_references: list[str] = Field(default_factory=list)
+    blocked_reasons: list[str] = Field(default_factory=list)
+    job: SddCodexJobResponse | None = None
+    next_actions: list[str] = Field(default_factory=list)
+
+
+class SddCodexGeneratedChangeResponse(BaseModel):
+    path: str
+    change_type: str
+    patch_path: str | None = None
+    staged_path: str | None = None
+    byte_size: int = 0
+    sha256: str | None = None
+    blocked_reason: str | None = None
+    protected_baseline: bool = False
+    conflict: str | None = None
+
+
+class SddCodexJobReviewResponse(BaseModel):
+    kind: str = "codex.sddCodexJobReview"
+    version: int = 1
+    job_id: str = Field(validation_alias=AliasChoices("job_id", "jobId"))
+    jobId: str | None = None
+    activity_state: str | None = None
+    activity: dict[str, Any] = Field(default_factory=dict)
+    status: Literal["ready", "blocked", "no_changes"]
+    workspace_path: str
+    job_root: str
+    sandbox_root: str
+    target_spec_id: str
+    target_artifact: str | None = None
+    changed_files: list[SddCodexGeneratedChangeResponse] = Field(default_factory=list)
+    patch_references: list[str] = Field(default_factory=list)
+    blocked_paths: list[str] = Field(default_factory=list)
+    protected_baseline_impacts: list[str] = Field(default_factory=list)
+    conflicts: list[str] = Field(default_factory=list)
+    validation_status: str
+    next_actions: list[str] = Field(default_factory=list)
+
+
+class SddCodexJobApplyResponse(BaseModel):
+    kind: str = "codex.sddCodexJobApply"
+    version: int = 1
+    job_id: str = Field(validation_alias=AliasChoices("job_id", "jobId"))
+    jobId: str | None = None
+    activity_state: str | None = None
+    activity: dict[str, Any] = Field(default_factory=dict)
+    status: Literal["applied", "blocked"]
+    workspace_path: str
+    target_spec_id: str
+    target_artifact: str | None = None
+    applied: list[str] = Field(default_factory=list)
+    blocked: list[str] = Field(default_factory=list)
+    conflicts: list[str] = Field(default_factory=list)
+    post_apply_refresh: dict[str, Any] = Field(default_factory=dict)
+    review: SddCodexJobReviewResponse
+    next_actions: list[str] = Field(default_factory=list)
+
+
+class SddMediaUploadResponse(BaseModel):
+    kind: str = "codex.sddMediaUpload"
+    version: int = 1
+    status: Literal["staged", "blocked"]
+    workspace_path: str
+    intake_item: dict[str, Any] | None = None
+    staged_path: str | None = None
+    metadata_path: str | None = None
+    blocked: list[str] = Field(default_factory=list)
+    cleanup: list[str] = Field(default_factory=list)
+    next_actions: list[str] = Field(default_factory=list)
+
+
+class SddMediaDeleteRequest(BaseModel):
+    workspace_path: str = Field(
+        validation_alias=AliasChoices("workspace_path", "workspacePath")
+    )
+    staged_path: str = Field(validation_alias=AliasChoices("staged_path", "stagedPath"))
+
+
+class SddMediaCleanupRequest(BaseModel):
+    workspace_path: str = Field(
+        validation_alias=AliasChoices("workspace_path", "workspacePath")
+    )
+    dry_run: bool = Field(
+        default=True,
+        validation_alias=AliasChoices("dry_run", "dryRun"),
+    )
+    older_than_hours: int = Field(
+        default=24,
+        ge=0,
+        validation_alias=AliasChoices("older_than_hours", "olderThanHours"),
+    )
+
+
+class SddMediaLifecycleResponse(BaseModel):
+    kind: str = "codex.sddMediaLifecycle"
+    version: int = 1
+    status: Literal["deleted", "dry-run", "applied", "blocked", "consumed"]
+    workspace_path: str
+    staged_path: str | None = None
+    lifecycle: str
+    deleted: list[str] = Field(default_factory=list)
+    would_delete: list[str] = Field(default_factory=list)
+    blocked: list[str] = Field(default_factory=list)
+    cleanup: list[str] = Field(default_factory=list)
+    next_actions: list[str] = Field(default_factory=list)
+
+
+class SddBridgeCaptureIntakeRequest(BaseModel):
+    workspace_path: str = Field(
+        ...,
+        min_length=1,
+        max_length=4096,
+        validation_alias=AliasChoices("workspace_path", "workspacePath"),
+    )
+    spec_target: SpecTargetRequest | None = Field(
+        default=None,
+        validation_alias=AliasChoices("spec_target", "specTarget"),
+    )
+    feedback_item_ids: list[str] = Field(
+        default_factory=list,
+        validation_alias=AliasChoices("feedback_item_ids", "feedbackItemIds"),
+    )
+    artifact: Literal["auto", "spec", "plan", "tasks", "diagram"] = "auto"
+    job_id: str = Field(
+        default="bridge-capture",
+        max_length=120,
+        validation_alias=AliasChoices("job_id", "jobId"),
+    )
+
+
+class SddBridgeCaptureIntakeResponse(BaseModel):
+    kind: str = "codex.sddBridgeCaptureIntake"
+    version: int = 1
+    status: str
+    workspace_path: str
+    target_mode: str
+    feedback_item_ids: list[str] = Field(default_factory=list)
+    intake_items: list[dict[str, Any]] = Field(default_factory=list)
+    staged_media: list[dict[str, Any]] = Field(default_factory=list)
+    dry_run: dict[str, Any] | None = None
+    apply_result: dict[str, Any] | None = None
+    blocked: list[str] = Field(default_factory=list)
+    next_actions: list[str] = Field(default_factory=list)
+
+
 class SddFileResponse(BaseModel):
     path: str
     title: str | None = None
@@ -486,7 +985,23 @@ class SddDiagramResponse(SddFileResponse):
 class SddSpecResponse(BaseModel):
     id: str
     title: str
+    description: str = ""
     path: str
+    lifecycle_status: str = "draft"
+    traceability_status: str = "unknown"
+    created_at: str | None = None
+    updated_at: str | None = None
+    generated_title: bool = False
+    generated_description: bool = False
+    user_pinned_title: bool = False
+    user_pinned_description: bool = False
+    task_total: int = 0
+    task_completed: int = 0
+    task_pending: int = 0
+    last_run_state: str | None = None
+    metadata_status: str = "missing"
+    metadata_warnings: list[str] = Field(default_factory=list)
+    metadata_stale_paths: list[str] = Field(default_factory=list)
     spec: SddFileResponse | None = None
     plan: SddFileResponse | None = None
     tasks: SddFileResponse | None = None
@@ -533,6 +1048,126 @@ class SddProjectDiagramsResponse(BaseModel):
     version: int = 1
     workspace_path: str
     diagrams: list[SddDiagramResponse] = Field(default_factory=list)
+
+
+class SddWorkbenchCheckResponse(BaseModel):
+    name: str
+    status: str
+    detail: str
+
+
+class SddWorkbenchHealthResponse(BaseModel):
+    status: str
+    spec_count: int
+    diagram_count: int
+    missing_required: list[str] = Field(default_factory=list)
+    checks: list[SddWorkbenchCheckResponse] = Field(default_factory=list)
+    next_actions: list[str] = Field(default_factory=list)
+
+
+class SddWorkbenchStandardsComplianceResponse(BaseModel):
+    status: str
+    standard_id: str | None = None
+    checks: list[SddWorkbenchCheckResponse] = Field(default_factory=list)
+
+
+class SddWorkbenchContextCandidateResponse(BaseModel):
+    path: str
+    reason: str
+    rank: int
+
+
+class SddWorkbenchContextPreviewResponse(BaseModel):
+    status: str
+    preset: str
+    mode: str
+    index_status: str
+    error: str | None = None
+    prompt: str
+    required_files: list[str] = Field(default_factory=list)
+    related_specs: list[SddWorkbenchContextCandidateResponse] = Field(
+        default_factory=list,
+    )
+    related_diagrams: list[SddWorkbenchContextCandidateResponse] = Field(
+        default_factory=list,
+    )
+    blocked_reads: list[str] = Field(default_factory=list)
+    routing_decisions: list[str] = Field(default_factory=list)
+    next_actions: list[str] = Field(default_factory=list)
+
+
+class SddWorkbenchFeatureSpecResponse(BaseModel):
+    id: str
+    title: str
+    description: str = ""
+    path: str
+    lifecycle_status: str
+    traceability_status: str
+    created_at: str | None = None
+    updated_at: str | None = None
+    generated_title: bool = False
+    generated_description: bool = False
+    user_pinned_title: bool = False
+    user_pinned_description: bool = False
+    task_total: int = 0
+    task_completed: int = 0
+    task_pending: int = 0
+    last_run_state: str | None = None
+    metadata_status: str = "missing"
+    metadata_warnings: list[str] = Field(default_factory=list)
+    metadata_stale_paths: list[str] = Field(default_factory=list)
+    available_files: list[str] = Field(default_factory=list)
+    missing: list[str] = Field(default_factory=list)
+    plan_count: int
+    task_file_count: int
+    diagram_count: int
+
+
+class SddWorkbenchBaselineResponse(BaseModel):
+    artifact_type: str
+    path: str
+    title: str
+    status: str
+    protected: bool
+    diagram_type: str | None = None
+
+
+class SddWorkbenchTraceabilityRowResponse(BaseModel):
+    spec_id: str
+    spec_path: str
+    status: str
+    requirement_count: int
+    task_count: int
+    diagram_count: int
+    missing_links: list[str] = Field(default_factory=list)
+
+
+class SddWorkbenchImpactQueueItemResponse(BaseModel):
+    scope: str
+    artifact_path: str
+    artifact_type: str
+    impact_type: str
+    status: str
+    requires_review: bool
+    reason: str
+
+
+class SddWorkbenchViewResponse(BaseModel):
+    kind: str = "codex.sddWorkbenchView"
+    version: int = 1
+    workspace_name: str
+    workspace_path: str
+    health: SddWorkbenchHealthResponse
+    standards_compliance: SddWorkbenchStandardsComplianceResponse
+    context_preview: SddWorkbenchContextPreviewResponse
+    feature_specs: list[SddWorkbenchFeatureSpecResponse] = Field(default_factory=list)
+    baselines: list[SddWorkbenchBaselineResponse] = Field(default_factory=list)
+    traceability_matrix: list[SddWorkbenchTraceabilityRowResponse] = Field(
+        default_factory=list,
+    )
+    impact_queue: list[SddWorkbenchImpactQueueItemResponse] = Field(
+        default_factory=list,
+    )
 
 
 class CodexMcpAppInstallResponse(BaseModel):

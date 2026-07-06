@@ -74,11 +74,14 @@ class OpenAIAudioTranscriber(AudioTranscriber):
                 f"OpenAI transcription timed out after {self._timeout_seconds} seconds."
             ) from exc
         except httpx.HTTPError as exc:
-            raise AudioTranscriptionError(f"OpenAI transcription request failed: {exc}") from exc
+            raise AudioTranscriptionError(
+                f"OpenAI transcription request failed: {exc}"
+            ) from exc
 
         if response.status_code >= 400:
             raise AudioTranscriptionError(
-                _extract_openai_error(response) or "OpenAI transcription request failed."
+                _extract_openai_error(response)
+                or "OpenAI transcription request failed."
             )
 
         transcript = _extract_transcript(response)

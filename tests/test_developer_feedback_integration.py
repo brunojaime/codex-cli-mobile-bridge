@@ -43,7 +43,9 @@ def test_doctor_passes_for_complete_registered_app(tmp_path: Path) -> None:
 
 def test_doctor_fails_when_dependency_is_missing(tmp_path: Path) -> None:
     fixture = _write_fixture(tmp_path, include_dependency=False)
-    component = feedback.load_component(fixture.associations, "codex_developer_feedback_template")
+    component = feedback.load_component(
+        fixture.associations, "codex_developer_feedback_template"
+    )
     report = feedback.build_report(
         component=component,
         app=component.apps[0],
@@ -58,7 +60,9 @@ def test_doctor_fails_when_dependency_is_missing(tmp_path: Path) -> None:
 
 def test_doctor_fails_when_wrapper_is_missing(tmp_path: Path) -> None:
     fixture = _write_fixture(tmp_path, include_wrapper=False)
-    component = feedback.load_component(fixture.associations, "codex_developer_feedback_template")
+    component = feedback.load_component(
+        fixture.associations, "codex_developer_feedback_template"
+    )
     report = feedback.build_report(
         component=component,
         app=component.apps[0],
@@ -72,8 +76,12 @@ def test_doctor_fails_when_wrapper_is_missing(tmp_path: Path) -> None:
 
 
 def test_doctor_fails_when_template_ref_is_too_old(tmp_path: Path) -> None:
-    fixture = _write_fixture(tmp_path, dependency_ref="codex-developer-feedback-template-v0.3.10")
-    component = feedback.load_component(fixture.associations, "codex_developer_feedback_template")
+    fixture = _write_fixture(
+        tmp_path, dependency_ref="codex-developer-feedback-template-v0.3.10"
+    )
+    component = feedback.load_component(
+        fixture.associations, "codex_developer_feedback_template"
+    )
     report = feedback.build_report(
         component=component,
         app=component.apps[0],
@@ -88,8 +96,12 @@ def test_doctor_fails_when_template_ref_is_too_old(tmp_path: Path) -> None:
 
 
 def test_doctor_fails_when_template_ref_is_not_latest(tmp_path: Path) -> None:
-    fixture = _write_fixture(tmp_path, dependency_ref="codex-developer-feedback-template-v0.4.2")
-    component = feedback.load_component(fixture.associations, "codex_developer_feedback_template")
+    fixture = _write_fixture(
+        tmp_path, dependency_ref="codex-developer-feedback-template-v0.4.2"
+    )
+    component = feedback.load_component(
+        fixture.associations, "codex_developer_feedback_template"
+    )
     report = feedback.build_report(
         component=component,
         app=component.apps[0],
@@ -110,7 +122,9 @@ def test_doctor_fails_when_direct_updater_ref_is_not_coordinated(
         include_updater_dependency=True,
         updater_dependency_ref="codex-app-updater-v0.1.2",
     )
-    component = feedback.load_component(fixture.associations, "codex_developer_feedback_template")
+    component = feedback.load_component(
+        fixture.associations, "codex_developer_feedback_template"
+    )
     report = feedback.build_report(
         component=component,
         app=component.apps[0],
@@ -125,7 +139,9 @@ def test_doctor_fails_when_direct_updater_ref_is_not_coordinated(
 
 def test_doctor_fails_when_role_gate_is_missing(tmp_path: Path) -> None:
     fixture = _write_fixture(tmp_path, include_role_gate=False)
-    component = feedback.load_component(fixture.associations, "codex_developer_feedback_template")
+    component = feedback.load_component(
+        fixture.associations, "codex_developer_feedback_template"
+    )
     report = feedback.build_report(
         component=component,
         app=component.apps[0],
@@ -144,7 +160,9 @@ def test_doctor_fails_when_local_demo_skips_package_contract(tmp_path: Path) -> 
         include_local_demo_contract=False,
         legacy_local_demo_without_contract=True,
     )
-    component = feedback.load_component(fixture.associations, "codex_developer_feedback_template")
+    component = feedback.load_component(
+        fixture.associations, "codex_developer_feedback_template"
+    )
     report = feedback.build_report(
         component=component,
         app=component.apps[0],
@@ -159,7 +177,9 @@ def test_doctor_fails_when_local_demo_skips_package_contract(tmp_path: Path) -> 
 
 def test_doctor_fails_when_template_is_conditionally_mounted(tmp_path: Path) -> None:
     fixture = _write_fixture(tmp_path, conditional_wrapper=True)
-    component = feedback.load_component(fixture.associations, "codex_developer_feedback_template")
+    component = feedback.load_component(
+        fixture.associations, "codex_developer_feedback_template"
+    )
     report = feedback.build_report(
         component=component,
         app=component.apps[0],

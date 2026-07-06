@@ -1,0 +1,29 @@
+kind: codex.workbenchSddStandard
+id: workbench-sdd/v1
+version: 1
+compatibility:
+  supported_ids:
+    - workbench-sdd/v1
+context_rules:
+  required_safety_rules:
+    - manifest_first_resolution
+    - baseline_impact_gates
+    - no_broad_read
+    - unknown_version_hard_failure
+  allowed_override_keys:
+    - domains
+    - excluded_paths
+    - candidate_limits
+    - protected_baseline
+    - preferred_context
+candidate_limits:
+  related_specs: 5
+  related_diagrams: 3
+scaffold:
+  required_artifacts:
+    - .specify/memory/constitution.md
+    - architecture/overview.md
+    - domain/glossary.md
+    - data/persistence-model.md
+    - specs
+    - .sdd

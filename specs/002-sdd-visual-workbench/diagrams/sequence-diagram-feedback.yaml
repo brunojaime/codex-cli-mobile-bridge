@@ -1,0 +1,6 @@
+diagram_id: sequence-diagram-feedback
+diagram_type: sequence
+scope: feature
+status: draft
+owner: project
+source: specs/002-sdd-visual-workbench/diagrams/sequence-diagram-feedback.mmd

@@ -178,10 +178,7 @@ def validate_requested_mcp_server_ids(
     snapshot: CodexMcpServerSelectionSnapshot,
     requested_server_ids: tuple[str, ...] | list[str],
 ) -> tuple[CodexMcpServerSelectionIssue, ...]:
-    servers_by_id = {
-        server.server_id: server
-        for server in snapshot.servers
-    }
+    servers_by_id = {server.server_id: server for server in snapshot.servers}
     issues: list[CodexMcpServerSelectionIssue] = []
     for server_id in requested_server_ids:
         server = servers_by_id.get(server_id)
@@ -313,8 +310,7 @@ def query_codex_status(command: str) -> CodexStatus:
         usage_summary = _format_rate_limit_summary(rate_limits)
     elif rate_limit_error:
         usage_summary = (
-            "Codex app-server rate limits were unavailable. "
-            f"{rate_limit_error}"
+            f"Codex app-server rate limits were unavailable. {rate_limit_error}"
         )
 
     return CodexStatus(
@@ -376,7 +372,9 @@ def query_codex_rate_limits(
     return _parse_rate_limit_snapshot(rate_limits), None
 
 
-def query_codex_mcp_servers(command: str) -> tuple[list[CodexMcpServer], str | None, str | None]:
+def query_codex_mcp_servers(
+    command: str,
+) -> tuple[list[CodexMcpServer], str | None, str | None]:
     output, error = _run_codex_command(command, ["mcp", "list"])
     if output is None:
         return [], None, error
@@ -412,10 +410,7 @@ def _decorate_mcp_servers(
     servers: list[CodexMcpServer],
     mcp_apps: list[CodexMcpApp],
 ) -> list[CodexMcpServer]:
-    apps_by_server_id = {
-        app.recommended_server_id: app
-        for app in mcp_apps
-    }
+    apps_by_server_id = {app.recommended_server_id: app for app in mcp_apps}
     decorated: list[CodexMcpServer] = []
     for server in servers:
         backing_app = apps_by_server_id.get(server.server_id)
@@ -571,7 +566,11 @@ def _external_server_unreadable_reason(
 
 
 def _mcp_server_inventory_incomplete_reason(mcp_error: str | None) -> str:
-    detail = mcp_error.strip() if mcp_error is not None else "Codex MCP inventory is incomplete."
+    detail = (
+        mcp_error.strip()
+        if mcp_error is not None
+        else "Codex MCP inventory is incomplete."
+    )
     return (
         "Codex MCP inventory is incomplete, so direct MCP server selection is "
         f"temporarily unavailable. {detail}"
@@ -691,7 +690,10 @@ def _run_codex_command(command: str, args: list[str]) -> tuple[str | None, str |
     stdout = completed.stdout.strip()
     stderr = completed.stderr.strip()
     if completed.returncode != 0:
-        return stdout or None, stderr or f"Command failed with exit code {completed.returncode}."
+        return (
+            stdout or None,
+            stderr or f"Command failed with exit code {completed.returncode}.",
+        )
     return stdout or stderr or "", None
 
 
@@ -722,7 +724,10 @@ def _run_codex_app_server_requests(
 
     if completed.returncode != 0:
         stderr = completed.stderr.strip()
-        return {}, stderr or f"Codex app-server exited with code {completed.returncode}."
+        return (
+            {},
+            stderr or f"Codex app-server exited with code {completed.returncode}.",
+        )
 
     responses: dict[int, dict[str, object]] = {}
     for raw_line in completed.stdout.splitlines():
@@ -849,7 +854,9 @@ def _format_window_duration(window_duration_mins: int | None) -> str:
 def _format_reset_time(timestamp: int | None) -> str:
     if timestamp is None:
         return "later"
-    return datetime.fromtimestamp(timestamp, tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    return datetime.fromtimestamp(timestamp, tz=timezone.utc).strftime(
+        "%Y-%m-%d %H:%M UTC"
+    )
 
 
 def _as_optional_str(value: object) -> str | None:

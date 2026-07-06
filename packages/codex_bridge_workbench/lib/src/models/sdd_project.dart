@@ -91,10 +91,26 @@ class SddSpec {
   const SddSpec({
     required this.id,
     required this.title,
+    this.description = '',
     required this.path,
     required this.diagrams,
     required this.sliceDocs,
     required this.missing,
+    this.lifecycleStatus = 'draft',
+    this.traceabilityStatus = 'unknown',
+    this.createdAt,
+    this.updatedAt,
+    this.generatedTitle = false,
+    this.generatedDescription = false,
+    this.userPinnedTitle = false,
+    this.userPinnedDescription = false,
+    this.taskTotal = 0,
+    this.taskCompleted = 0,
+    this.taskPending = 0,
+    this.lastRunState,
+    this.metadataStatus = 'missing',
+    this.metadataWarnings = const <String>[],
+    this.metadataStalePaths = const <String>[],
     this.spec,
     this.plan,
     this.tasks,
@@ -105,7 +121,23 @@ class SddSpec {
 
   final String id;
   final String title;
+  final String description;
   final String path;
+  final String lifecycleStatus;
+  final String traceabilityStatus;
+  final String? createdAt;
+  final String? updatedAt;
+  final bool generatedTitle;
+  final bool generatedDescription;
+  final bool userPinnedTitle;
+  final bool userPinnedDescription;
+  final int taskTotal;
+  final int taskCompleted;
+  final int taskPending;
+  final String? lastRunState;
+  final String metadataStatus;
+  final List<String> metadataWarnings;
+  final List<String> metadataStalePaths;
   final SddFile? spec;
   final SddFile? plan;
   final SddFile? tasks;
@@ -124,11 +156,64 @@ class SddSpec {
     final spec = _fileFromJson(json['spec']);
     final plan = _fileFromJson(json['plan']);
     final tasks = _fileFromJson(json['tasks']);
+    final fallbackProgress = _taskProgressFromMarkdown(tasks?.content);
+    final taskTotal =
+        _intValue(json['task_total'] ?? json['taskTotal']) ??
+        fallbackProgress?.total ??
+        0;
+    final taskCompleted =
+        _intValue(json['task_completed'] ?? json['taskCompleted']) ??
+        fallbackProgress?.completed ??
+        0;
     return SddSpec(
       id: json['id'] as String? ?? '',
       title:
           json['title'] as String? ?? json['id'] as String? ?? 'Untitled spec',
+      description: _trimmedString(json['description']) ?? '',
       path: json['path'] as String? ?? '',
+      lifecycleStatus:
+          _trimmedString(json['lifecycle_status'] ?? json['lifecycleStatus']) ??
+          '',
+      traceabilityStatus:
+          _trimmedString(
+            json['traceability_status'] ?? json['traceabilityStatus'],
+          ) ??
+          'unknown',
+      createdAt: _trimmedString(json['created_at'] ?? json['createdAt']),
+      updatedAt: _trimmedString(json['updated_at'] ?? json['updatedAt']),
+      generatedTitle:
+          _boolValue(json['generated_title'] ?? json['generatedTitle']) ??
+          false,
+      generatedDescription:
+          _boolValue(
+            json['generated_description'] ?? json['generatedDescription'],
+          ) ??
+          false,
+      userPinnedTitle:
+          _boolValue(json['user_pinned_title'] ?? json['userPinnedTitle']) ??
+          false,
+      userPinnedDescription:
+          _boolValue(
+            json['user_pinned_description'] ?? json['userPinnedDescription'],
+          ) ??
+          false,
+      taskTotal: taskTotal,
+      taskCompleted: taskCompleted,
+      taskPending:
+          _intValue(json['task_pending'] ?? json['taskPending']) ??
+          (taskTotal - taskCompleted).clamp(0, taskTotal).toInt(),
+      lastRunState: _trimmedString(
+        json['last_run_state'] ?? json['lastRunState'],
+      ),
+      metadataStatus:
+          _trimmedString(json['metadata_status'] ?? json['metadataStatus']) ??
+          'missing',
+      metadataWarnings: _stringList(
+        json['metadata_warnings'] ?? json['metadataWarnings'],
+      ),
+      metadataStalePaths: _stringList(
+        json['metadata_stale_paths'] ?? json['metadataStalePaths'],
+      ),
       spec: spec,
       plan: plan,
       tasks: tasks,
@@ -256,6 +341,42 @@ List<String> _stringList(Object? value) {
       .map((item) => item?.toString() ?? '')
       .where((item) => item.trim().isNotEmpty)
       .toList(growable: false);
+}
+
+int? _intValue(Object? value) {
+  if (value is int) return value;
+  if (value is num) return value.toInt();
+  return int.tryParse(value?.toString() ?? '');
+}
+
+bool? _boolValue(Object? value) {
+  if (value is bool) return value;
+  final normalized = value?.toString().trim().toLowerCase();
+  if (normalized == 'true') return true;
+  if (normalized == 'false') return false;
+  return null;
+}
+
+_SddTaskSummary? _taskProgressFromMarkdown(String? content) {
+  if (content == null || content.trim().isEmpty) return null;
+  var completed = 0;
+  var total = 0;
+  final checkbox = RegExp(r'^\s*-\s+\[([ xX])\]');
+  for (final line in content.split('\n')) {
+    final match = checkbox.firstMatch(line);
+    if (match == null) continue;
+    total += 1;
+    if ((match.group(1) ?? '').toLowerCase() == 'x') completed += 1;
+  }
+  if (total == 0) return null;
+  return _SddTaskSummary(completed: completed, total: total);
+}
+
+class _SddTaskSummary {
+  const _SddTaskSummary({required this.completed, required this.total});
+
+  final int completed;
+  final int total;
 }
 
 String? _trimmedString(Object? value) {

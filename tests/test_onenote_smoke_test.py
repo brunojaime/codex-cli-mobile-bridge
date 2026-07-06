@@ -7,10 +7,7 @@ from pathlib import Path
 import sys
 
 _SKILL_SCRIPTS = (
-    Path(__file__).resolve().parents[1]
-    / "skills"
-    / "onenote-connect"
-    / "scripts"
+    Path(__file__).resolve().parents[1] / "skills" / "onenote-connect" / "scripts"
 )
 if str(_SKILL_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SKILL_SCRIPTS))
@@ -105,7 +102,9 @@ class _FakeGraphClient:
 
 class _FailingGraphClient(_FakeGraphClient):
     def list_notebooks(self):
-        raise GraphRequestError(status_code=503, code="serviceUnavailable", message="backend down")
+        raise GraphRequestError(
+            status_code=503, code="serviceUnavailable", message="backend down"
+        )
 
 
 def test_smoke_test_fails_fast_when_client_id_is_missing(monkeypatch) -> None:
@@ -145,7 +144,10 @@ def test_smoke_test_read_only_orchestrates_auth_and_discovery(monkeypatch) -> No
     assert stderr.getvalue() == ""
     assert "Smoke test: PASS" in stdout.getvalue()
     assert "- auth: PASS" in stdout.getvalue()
-    assert "- notebooks: PASS (count=1 first_id=nb-1 first_displayName=Notebook)" in stdout.getvalue()
+    assert (
+        "- notebooks: PASS (count=1 first_id=nb-1 first_displayName=Notebook)"
+        in stdout.getvalue()
+    )
     assert _FakeAuthenticator.instances[0].calls == [("auto", None, False)]
     assert _FakeGraphClient.instances[0].calls == [
         ("get_me", None),
@@ -175,7 +177,9 @@ def test_smoke_test_refuses_write_targets_without_explicit_write(monkeypatch) ->
     assert "Refusing write-target arguments without --write" in stderr.getvalue()
 
 
-def test_smoke_test_write_mode_runs_mutations_only_when_explicitly_enabled(monkeypatch) -> None:
+def test_smoke_test_write_mode_runs_mutations_only_when_explicitly_enabled(
+    monkeypatch,
+) -> None:
     monkeypatch.delenv("ONENOTE_CLIENT_ID", raising=False)
     _FakeGraphClient.instances.clear()
 

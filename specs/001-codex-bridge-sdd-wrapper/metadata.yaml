@@ -1,0 +1,29 @@
+id: 001-codex-bridge-sdd-wrapper
+slug: 001-codex-bridge-sdd-wrapper
+title: Codex Bridge SDD Wrapper
+description: Codex Mobile Bridge projects must expose a mandatory SDD structure that can be
+status: draft
+last_run_state: metadata-refreshed
+generated:
+  title: true
+  description: true
+  user_pinned_title: false
+  user_pinned_description: false
+tasks:
+  total: 7
+  completed: 7
+  pending: 0
+diagrams:
+  total: 1
+  items:
+    diagrams-read-model-mmd:
+      path: diagrams/read-model.mmd
+      diagram_type: component-impact
+      metadata_path: diagrams/read-model.yaml
+source_digests:
+  diagrams/read-model.mmd: c6e3d2f7c7f5d9ae836c068ee1dd5dc9051c48d8767161043a1f40527d874a89
+  diagrams/read-model.yaml: 06f28bb599914007a42a23b5b62b1ee900e14e577eabd3b827c85fddaa981b40
+  plan.md: cd2b352ec6cea6a8301182c49fa402c4058f4262a42878788433b71f552a05fe
+  spec.md: 0f8fc1e900fddab86bbceca9c0b36c5810b55cff245c77eec4a1c5b18ee579d1
+  tasks.md: 97bb87d11fbf441b4898ba8ecf00cfa3147c5b9efc021d0b2724740ed77cab15
+  traceability.yaml: bb09f6fb589a5963bd49da693aa1c65ce5cce0e68aea1bb74260b5411e3ad738

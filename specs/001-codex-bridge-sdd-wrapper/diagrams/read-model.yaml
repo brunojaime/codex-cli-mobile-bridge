@@ -1,0 +1,6 @@
+diagram_id: read-model
+diagram_type: component-impact
+scope: feature
+status: draft
+owner: project
+source: specs/001-codex-bridge-sdd-wrapper/diagrams/read-model.mmd

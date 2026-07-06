@@ -217,7 +217,9 @@ def install_repo_mcp_app(
             f"MCP app `{app_id}` failed protocol inspection and is not installable yet. "
             f"{inspected.protocol_error}"
         )
-    installed_lookup = get_installed_mcp_server_lookup(command, app.recommended_server_id)
+    installed_lookup = get_installed_mcp_server_lookup(
+        command, app.recommended_server_id
+    )
     if installed_lookup.status == "unreadable":
         raise RuntimeError(
             "Cannot determine the existing Codex server state for "
@@ -302,9 +304,9 @@ def install_repo_mcp_app(
             and drift_summary is None
             and not installed_config.enabled
             else (
-            f"Reconciled MCP app `{app.name}` as `{app.recommended_server_id}`."
-            if reconciled
-            else f"Installed MCP app `{app.name}` as `{app.recommended_server_id}`."
+                f"Reconciled MCP app `{app.name}` as `{app.recommended_server_id}`."
+                if reconciled
+                else f"Installed MCP app `{app.name}` as `{app.recommended_server_id}`."
             )
         ),
     )
@@ -351,9 +353,7 @@ def _discover_repo_mcp_apps(
         unique_invalid_specs: dict[str, CodexMcpAppSpec] = {}
         for duplicate_value, specs in collisions_by_app_id.items():
             spec_paths = ", ".join(spec.spec_path for spec in specs)
-            message = (
-                f"Duplicate app_id `{duplicate_value}` declared by {spec_paths}."
-            )
+            message = f"Duplicate app_id `{duplicate_value}` declared by {spec_paths}."
             for spec in specs:
                 unique_invalid_specs[spec.spec_path] = spec
                 invalid_apps.append(
@@ -536,8 +536,7 @@ def _load_app_spec_result(
         preview = CodexMcpAppPreviewConfig(
             tool_name=tool_name,
             arguments={
-                str(key): _json_ready(value)
-                for key, value in arguments.items()
+                str(key): _json_ready(value) for key, value in arguments.items()
             },
         )
 
@@ -588,9 +587,7 @@ def _load_app_spec_result(
         args=resolved_args,
         env=resolved_env,
         tags=tuple(
-            str(item).strip()
-            for item in (tags_payload or [])
-            if str(item).strip()
+            str(item).strip() for item in (tags_payload or []) if str(item).strip()
         ),
         supports_ui_extension=bool(payload.get("supports_ui_extension", False)),
         ui_entry_uri=_as_optional_str(payload.get("ui_entry_uri")),
@@ -638,9 +635,9 @@ def _remove_server(command: str, server_id: str) -> None:
         raise RuntimeError(command_error)
     if completed.returncode != 0:
         detail = _sanitize_diagnostic_text(
-            completed.stderr.strip() or completed.stdout.strip() or (
-            f"`codex mcp remove` exited with code {completed.returncode}."
-            )
+            completed.stderr.strip()
+            or completed.stdout.strip()
+            or (f"`codex mcp remove` exited with code {completed.returncode}.")
         )
         raise RuntimeError(detail)
 
@@ -662,7 +659,7 @@ def _add_stdio_server(
 
     completed, command_error = _run_mcp_subprocess(
         command,
-        process_args[len(shlex.split(command)):],
+        process_args[len(shlex.split(command)) :],
         timeout=_MCP_ADD_SERVER_TIMEOUT_SECONDS,
         timeout_message=(
             "`codex mcp add` timed out while installing the desired server config."
@@ -677,9 +674,9 @@ def _add_stdio_server(
         raise RuntimeError(command_error)
     if completed.returncode != 0:
         detail = _sanitize_diagnostic_text(
-            completed.stderr.strip() or completed.stdout.strip() or (
-            f"`codex mcp add` exited with code {completed.returncode}."
-            )
+            completed.stderr.strip()
+            or completed.stdout.strip()
+            or (f"`codex mcp add` exited with code {completed.returncode}.")
         )
         raise RuntimeError(detail)
 
@@ -889,9 +886,13 @@ def _diff_installed_config(
             f"command stored as `{installed_config.command}` but repo app expects `{app.command}`"
         )
     if installed_config.args != app.args:
-        diffs.append("args differ between the stored Codex config and the repo app spec")
+        diffs.append(
+            "args differ between the stored Codex config and the repo app spec"
+        )
     if installed_config.env != app.env:
-        diffs.append("env differs between the stored Codex config and the repo app spec")
+        diffs.append(
+            "env differs between the stored Codex config and the repo app spec"
+        )
     if not diffs:
         return None
     return "; ".join(diffs)
@@ -987,7 +988,9 @@ def _inspect_app(
         prompts=prompts,
         preview=preview,
         drift_summary=drift_summary,
-        disabled_reason=installed_config.disabled_reason if installed_config is not None else None,
+        disabled_reason=installed_config.disabled_reason
+        if installed_config is not None
+        else None,
         lookup_error=installed_lookup.error,
         protocol_error=protocol_error,
     )
@@ -1042,11 +1045,16 @@ async def _inspect_app_async(
                         else _json_ready(tool_result.content)
                     ),
                     is_error=tool_result.isError,
-                    error="Tool call returned an error." if tool_result.isError else None,
+                    error="Tool call returned an error."
+                    if tool_result.isError
+                    else None,
                 )
             return (
                 tuple(_tool_from_sdk(tool) for tool in tools_result.tools),
-                tuple(_resource_from_sdk(resource) for resource in resources_result.resources),
+                tuple(
+                    _resource_from_sdk(resource)
+                    for resource in resources_result.resources
+                ),
                 tuple(_prompt_from_sdk(prompt) for prompt in prompts_result.prompts),
                 preview,
             )
@@ -1141,10 +1149,7 @@ def _json_ready(value: Any) -> Any:
     if value is None or isinstance(value, (bool, int, float, str)):
         return value
     if isinstance(value, dict):
-        return {
-            str(key): _json_ready(item)
-            for key, item in value.items()
-        }
+        return {str(key): _json_ready(item) for key, item in value.items()}
     if isinstance(value, (list, tuple)):
         return [_json_ready(item) for item in value]
     if hasattr(value, "model_dump"):
@@ -1291,8 +1296,7 @@ def _looks_like_missing_server(message: str) -> bool:
     normalized = message.lower()
     return (
         "no mcp server named" in normalized
-        or
-        "unknown mcp server" in normalized
+        or "unknown mcp server" in normalized
         or "no such mcp server" in normalized
         or "mcp server not found" in normalized
         or "server not found" in normalized
@@ -1319,7 +1323,7 @@ def _sanitize_diagnostic_text(text: str) -> str:
     )
     sanitized = re.sub(
         r'("Authorization"\s*:\s*")([^"]+)(")',
-        r'\1[redacted]\3',
+        r"\1[redacted]\3",
         sanitized,
         flags=re.IGNORECASE,
     )

@@ -1,3 +1,6 @@
+import 'dart:typed_data';
+import 'dart:ui' as ui;
+
 import 'package:flutter/material.dart';
 
 import '../models/sdd_project.dart';
@@ -6,6 +9,14 @@ import '../services/mermaid_renderer.dart';
 import '../services/sdd_explorer_client.dart';
 
 typedef SddExplorerLoader = Future<SddProject?> Function(String bridgeUrl);
+typedef SddMediaAttachmentPicker = Future<SddMediaAttachmentDraft?> Function();
+typedef SddStructuredAttachmentPicker =
+    Future<SddStagedMediaAttachment?> Function();
+typedef SddImageCropper =
+    Future<SddMediaAttachmentDraft> Function(
+      SddStagedMediaAttachment source,
+      SddMediaCropSelection selection,
+    );
 typedef SddFeedbackSubmitter =
     Future<SddFeedbackSubmissionResult> Function(
       String bridgeUrl,
@@ -280,6 +291,11 @@ class SddExplorerPanel extends StatefulWidget {
     this.metaWorkspaceLabel = 'Codex Bridge Workbench',
     this.diagramRenderer = const WebViewMermaidDiagramRenderer(),
     this.loader,
+    this.specIntakeClient,
+    this.mediaAttachmentPicker,
+    this.audioAttachmentPicker,
+    this.structuredAttachmentPicker,
+    this.imageCropper,
     this.feedbackSubmitter,
     this.actionSubmitter,
   });
@@ -291,6 +307,11 @@ class SddExplorerPanel extends StatefulWidget {
   final VoidCallback onClose;
   final MermaidDiagramRenderer diagramRenderer;
   final SddExplorerLoader? loader;
+  final SddExplorerClient? specIntakeClient;
+  final SddMediaAttachmentPicker? mediaAttachmentPicker;
+  final SddMediaAttachmentPicker? audioAttachmentPicker;
+  final SddStructuredAttachmentPicker? structuredAttachmentPicker;
+  final SddImageCropper? imageCropper;
   final SddFeedbackSubmitter? feedbackSubmitter;
   final SddCodexActionSubmitter? actionSubmitter;
 
@@ -378,9 +399,16 @@ class _SddExplorerPanelState extends State<SddExplorerPanel> {
                           return _SddExplorerEmpty(onRetry: _retry);
                         }
                         return _SddProjectView(
+                          bridgeUrl: widget.bridgeUrl,
                           project: project,
                           activity: _activity,
                           diagramRenderer: widget.diagramRenderer,
+                          specIntakeClient: widget.specIntakeClient,
+                          mediaAttachmentPicker: widget.mediaAttachmentPicker,
+                          audioAttachmentPicker: widget.audioAttachmentPicker,
+                          structuredAttachmentPicker:
+                              widget.structuredAttachmentPicker,
+                          imageCropper: widget.imageCropper,
                           onFeedback: _openFeedback,
                           onCodexAction: _openCodexAction,
                         );
@@ -807,16 +835,28 @@ class _StateMessage extends StatelessWidget {
 
 class _SddProjectView extends StatelessWidget {
   const _SddProjectView({
+    required this.bridgeUrl,
     required this.project,
     required this.activity,
     required this.diagramRenderer,
+    required this.specIntakeClient,
+    required this.mediaAttachmentPicker,
+    required this.audioAttachmentPicker,
+    required this.structuredAttachmentPicker,
+    required this.imageCropper,
     required this.onFeedback,
     required this.onCodexAction,
   });
 
+  final String bridgeUrl;
   final SddProject project;
   final SddDashboardActivity activity;
   final MermaidDiagramRenderer diagramRenderer;
+  final SddExplorerClient? specIntakeClient;
+  final SddMediaAttachmentPicker? mediaAttachmentPicker;
+  final SddMediaAttachmentPicker? audioAttachmentPicker;
+  final SddStructuredAttachmentPicker? structuredAttachmentPicker;
+  final SddImageCropper? imageCropper;
   final ValueChanged<SddFeedbackTarget> onFeedback;
   final ValueChanged<SddCodexActionRequest> onCodexAction;
 
@@ -847,8 +887,14 @@ class _SddProjectView extends StatelessWidget {
               children: <Widget>[
                 _OverviewTab(project: project, activity: activity),
                 _SpecsTab(
+                  bridgeUrl: bridgeUrl,
                   project: project,
                   diagramRenderer: diagramRenderer,
+                  specIntakeClient: specIntakeClient,
+                  mediaAttachmentPicker: mediaAttachmentPicker,
+                  audioAttachmentPicker: audioAttachmentPicker,
+                  structuredAttachmentPicker: structuredAttachmentPicker,
+                  imageCropper: imageCropper,
                   onFeedback: onFeedback,
                   onCodexAction: onCodexAction,
                 ),
@@ -1003,14 +1049,26 @@ class _OverviewTab extends StatelessWidget {
 
 class _SpecsTab extends StatefulWidget {
   const _SpecsTab({
+    required this.bridgeUrl,
     required this.project,
     required this.diagramRenderer,
+    required this.specIntakeClient,
+    required this.mediaAttachmentPicker,
+    required this.audioAttachmentPicker,
+    required this.structuredAttachmentPicker,
+    required this.imageCropper,
     required this.onFeedback,
     required this.onCodexAction,
   });
 
+  final String bridgeUrl;
   final SddProject project;
   final MermaidDiagramRenderer diagramRenderer;
+  final SddExplorerClient? specIntakeClient;
+  final SddMediaAttachmentPicker? mediaAttachmentPicker;
+  final SddMediaAttachmentPicker? audioAttachmentPicker;
+  final SddStructuredAttachmentPicker? structuredAttachmentPicker;
+  final SddImageCropper? imageCropper;
   final ValueChanged<SddFeedbackTarget> onFeedback;
   final ValueChanged<SddCodexActionRequest> onCodexAction;
 
@@ -1042,11 +1100,26 @@ class _SpecsTabState extends State<_SpecsTab> {
   Widget build(BuildContext context) {
     final specs = widget.project.specs;
     if (specs.isEmpty) {
-      return const Padding(
-        padding: EdgeInsets.all(18),
-        child: _InfoCard(
-          title: 'No specs',
-          detail: 'This project has no readable SDD specs yet.',
+      return SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(14, 12, 14, 24),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: <Widget>[
+            _SpecIntakeComposer(
+              bridgeUrl: widget.bridgeUrl,
+              project: widget.project,
+              client: widget.specIntakeClient,
+              mediaAttachmentPicker: widget.mediaAttachmentPicker,
+              audioAttachmentPicker: widget.audioAttachmentPicker,
+              structuredAttachmentPicker: widget.structuredAttachmentPicker,
+              imageCropper: widget.imageCropper,
+            ),
+            const SizedBox(height: 10),
+            const _InfoCard(
+              title: 'No specs',
+              detail: 'This project has no readable SDD specs yet.',
+            ),
+          ],
         ),
       );
     }
@@ -1057,6 +1130,27 @@ class _SpecsTabState extends State<_SpecsTab> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: <Widget>[
+          _SpecIntakeComposer(
+            bridgeUrl: widget.bridgeUrl,
+            project: widget.project,
+            client: widget.specIntakeClient,
+            mediaAttachmentPicker: widget.mediaAttachmentPicker,
+            audioAttachmentPicker: widget.audioAttachmentPicker,
+            structuredAttachmentPicker: widget.structuredAttachmentPicker,
+            imageCropper: widget.imageCropper,
+          ),
+          const SizedBox(height: 10),
+          _SpecListOverview(
+            specs: specs,
+            selection: selection,
+            onSelected: (index) => _select(
+              _SpecArtifactSelection(
+                specIndex: index,
+                kind: _firstAvailableArtifact(specs[index]),
+              ),
+            ),
+          ),
+          const SizedBox(height: 10),
           _SpecTraceNavigator(
             specs: specs,
             selection: selection,
@@ -1071,6 +1165,1500 @@ class _SpecsTabState extends State<_SpecsTab> {
             onFeedback: widget.onFeedback,
             onCodexAction: widget.onCodexAction,
           ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SpecIntakeComposer extends StatefulWidget {
+  const _SpecIntakeComposer({
+    required this.bridgeUrl,
+    required this.project,
+    this.client,
+    this.mediaAttachmentPicker,
+    this.audioAttachmentPicker,
+    this.structuredAttachmentPicker,
+    this.imageCropper,
+  });
+
+  final String bridgeUrl;
+  final SddProject project;
+  final SddExplorerClient? client;
+  final SddMediaAttachmentPicker? mediaAttachmentPicker;
+  final SddMediaAttachmentPicker? audioAttachmentPicker;
+  final SddStructuredAttachmentPicker? structuredAttachmentPicker;
+  final SddImageCropper? imageCropper;
+
+  @override
+  State<_SpecIntakeComposer> createState() => _SpecIntakeComposerState();
+}
+
+class _SpecIntakeComposerState extends State<_SpecIntakeComposer> {
+  final TextEditingController _workspaceController = TextEditingController();
+  final TextEditingController _textController = TextEditingController();
+  final TextEditingController _specIdController = TextEditingController();
+  SddSpecIntakeMode _mode = SddSpecIntakeMode.newSpec;
+  String _artifact = 'tasks';
+  String? _selectedSpecId;
+  bool _busy = false;
+  String? _error;
+  SddSpecIntakePlan? _preview;
+  SddSpecIntakeApplyResult? _apply;
+  SddCodexJobStatus? _job;
+  SddCodexJobReview? _review;
+  SddCodexJobApplyResult? _reviewApply;
+  SddActivitySnapshot? _activity;
+  final List<SddStagedMediaAttachment> _attachments =
+      <SddStagedMediaAttachment>[];
+  String? _attachmentStatus;
+  bool _expanded = false;
+
+  SddExplorerClient get _client =>
+      widget.client ?? SddExplorerClient(baseUrl: widget.bridgeUrl);
+
+  @override
+  void initState() {
+    super.initState();
+    _workspaceController.text = widget.project.workspacePath;
+    _selectedSpecId = widget.project.specs.isEmpty
+        ? null
+        : widget.project.specs.first.id;
+  }
+
+  @override
+  void didUpdateWidget(_SpecIntakeComposer oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.project.workspacePath != widget.project.workspacePath) {
+      _workspaceController.text = widget.project.workspacePath;
+    }
+    if (!widget.project.specs.any((spec) => spec.id == _selectedSpecId)) {
+      _selectedSpecId = widget.project.specs.isEmpty
+          ? null
+          : widget.project.specs.first.id;
+    }
+  }
+
+  @override
+  void dispose() {
+    _workspaceController.dispose();
+    _textController.dispose();
+    _specIdController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _dryRun() async {
+    await _run(() async {
+      final result = await _client.dryRunSpecIntake(_draft());
+      setState(() {
+        _preview = result;
+        _clearGeneratedOutput();
+      });
+    });
+  }
+
+  Future<void> _applyPreview() async {
+    await _run(() async {
+      final result = await _client.applySpecIntake(_draft());
+      setState(() {
+        _apply = result;
+        _job = result.job;
+        _activity =
+            result.job?.activity ?? _localActivity('apply', result.status);
+        _review = null;
+        _reviewApply = null;
+      });
+    });
+  }
+
+  Future<void> _attachImage() async {
+    final picker = widget.mediaAttachmentPicker;
+    if (picker == null) return;
+    await _attachMedia(picker: picker, kind: 'image');
+  }
+
+  Future<void> _attachAudio() async {
+    final picker = widget.audioAttachmentPicker;
+    if (picker == null) return;
+    await _attachMedia(picker: picker, kind: 'audio');
+  }
+
+  Future<void> _attachStructured() async {
+    final picker = widget.structuredAttachmentPicker;
+    if (picker == null) return;
+    await _run(() async {
+      final attachment = await picker();
+      if (attachment == null) return;
+      setState(() {
+        _attachments.add(attachment);
+        _attachmentStatus = 'staged: ${attachment.mediaKind}';
+        _preview = null;
+        _clearGeneratedOutput();
+      });
+    });
+  }
+
+  Future<void> _attachMedia({
+    required SddMediaAttachmentPicker picker,
+    required String kind,
+  }) async {
+    await _run(() async {
+      final attachment = await picker();
+      if (attachment == null) return;
+      final staged = await _client.uploadSpecMedia(
+        workspacePath: _workspaceController.text.trim(),
+        attachment: attachment,
+        kind: kind,
+      );
+      setState(() {
+        _attachments.add(staged);
+        _attachmentStatus = 'staged: ${staged.filename}';
+        _preview = null;
+        _clearGeneratedOutput();
+      });
+    });
+  }
+
+  Future<void> _removeAttachment(int index) async {
+    if (index < 0 || index >= _attachments.length) return;
+    final attachment = _attachments[index];
+    final stagedPath = attachment.stagedPath;
+    await _run(() async {
+      if (stagedPath != null && stagedPath.isNotEmpty) {
+        await _client.deleteSpecMedia(
+          workspacePath: _workspaceController.text.trim(),
+          stagedPath: stagedPath,
+        );
+      }
+      setState(() {
+        if (index < _attachments.length && _attachments[index] == attachment) {
+          _attachments.removeAt(index);
+        } else {
+          _attachments.remove(attachment);
+        }
+        _attachmentStatus = 'deleted: ${attachment.filename}';
+        _preview = null;
+        _clearGeneratedOutput();
+      });
+    });
+  }
+
+  Future<void> _annotateAttachment(int index) async {
+    if (index < 0 || index >= _attachments.length) return;
+    final source = _attachments[index];
+    if (!source.isImage || source.previewBytes.isEmpty) {
+      setState(() {
+        _attachmentStatus = 'blocked: image preview unavailable';
+      });
+      return;
+    }
+    final region = await showDialog<SddMediaCropSelection>(
+      context: context,
+      builder: (context) => _MediaRegionDialog(source: source),
+    );
+    if (region == null) return;
+    final sourceRef =
+        source.intakeItem['payload_ref']?.toString() ?? source.stagedPath;
+    if (sourceRef == null || sourceRef.isEmpty) {
+      setState(() {
+        _attachmentStatus = 'blocked: image payload_ref missing';
+      });
+      return;
+    }
+    if (region.generateCrop) {
+      await _run(() async {
+        final cropDraft = await (widget.imageCropper ?? _cropImageDraft)(
+          source,
+          region,
+        );
+        final crop = await _client.uploadSpecMedia(
+          workspacePath: _workspaceController.text.trim(),
+          attachment: cropDraft,
+          kind: 'crop',
+          sourceRef: sourceRef,
+          region: region.toJson(),
+        );
+        setState(() {
+          _attachments.removeWhere(
+            (attachment) =>
+                attachment.mediaKind == 'crop' &&
+                attachment.intakeItem['source_ref'] == sourceRef,
+          );
+          final sourceIndex = _attachments.indexOf(source);
+          _attachments.insert(
+            sourceIndex < 0 ? _attachments.length : sourceIndex + 1,
+            crop,
+          );
+          _attachmentStatus = 'staged: crop image';
+          _preview = null;
+          _clearGeneratedOutput();
+        });
+      });
+      return;
+    }
+    final marker = _markedRegionAttachment(source, sourceRef, region);
+    setState(() {
+      _attachments.removeWhere(
+        (attachment) =>
+            attachment.mediaKind == 'marked_region' &&
+            attachment.intakeItem['source_ref'] == sourceRef,
+      );
+      final sourceIndex = _attachments.indexOf(source);
+      _attachments.insert(
+        sourceIndex < 0 ? _attachments.length : sourceIndex + 1,
+        marker,
+      );
+      _attachmentStatus = 'staged: marked region';
+      _preview = null;
+      _clearGeneratedOutput();
+    });
+  }
+
+  void _clearGeneratedOutput() {
+    _apply = null;
+    _job = null;
+    _review = null;
+    _reviewApply = null;
+    _activity = null;
+  }
+
+  Future<void> _runJob() async {
+    final jobId = _job?.id;
+    if (jobId == null || jobId.isEmpty) return;
+    await _run(() async {
+      final job = await _client.runCodexJob(jobId);
+      setState(() {
+        _job = job;
+        _activity = job.activity ?? _localActivity('job', job.status);
+        _review = null;
+        _reviewApply = null;
+      });
+    });
+  }
+
+  Future<void> _refreshJobActivity() async {
+    final jobId = _job?.id;
+    if (jobId == null || jobId.isEmpty) return;
+    await _run(() async {
+      final activity = await _client.getCodexJobActivity(jobId);
+      setState(() {
+        _activity = activity;
+      });
+    });
+  }
+
+  Future<void> _cancelJob() async {
+    final jobId = _job?.id;
+    if (jobId == null || jobId.isEmpty) return;
+    await _run(() async {
+      final job = await _client.cancelCodexJob(jobId);
+      setState(() {
+        _job = job;
+        _activity = job.activity ?? _localActivity('cancelled', job.status);
+      });
+    });
+  }
+
+  Future<void> _retryJob() async {
+    final jobId = _job?.id;
+    if (jobId == null || jobId.isEmpty) return;
+    await _run(() async {
+      final result = await _client.retryCodexJob(jobId);
+      setState(() {
+        _job = result.job ?? _job;
+        _activity =
+            result.activity ??
+            _mergeActivity(_activity, _localActivity('retry', result.status));
+        _review = null;
+        _reviewApply = null;
+      });
+    });
+  }
+
+  Future<void> _reviewJob() async {
+    final jobId = _job?.id;
+    if (jobId == null || jobId.isEmpty) return;
+    await _run(() async {
+      final review = await _client.reviewCodexJob(jobId);
+      setState(() {
+        _review = review;
+        _activity = _mergeActivity(
+          _activity,
+          _localActivity('review-ready', review.status),
+        );
+        _reviewApply = null;
+      });
+    });
+  }
+
+  Future<void> _applyReviewedJob() async {
+    final jobId = _job?.id;
+    if (jobId == null || jobId.isEmpty) return;
+    await _run(() async {
+      final result = await _client.applyCodexJob(jobId);
+      setState(() {
+        _reviewApply = result;
+        _activity = _mergeActivity(
+          _activity,
+          _localActivity('reviewed-apply', result.status),
+        );
+      });
+    });
+  }
+
+  Future<void> _run(Future<void> Function() action) async {
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      await action();
+    } catch (error) {
+      setState(() {
+        _error = error.toString();
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _busy = false;
+        });
+      }
+    }
+  }
+
+  SddSpecIntakeDraft _draft() {
+    return SddSpecIntakeDraft(
+      workspacePath: _workspaceController.text.trim(),
+      mode: _mode,
+      requestText: _textController.text.trim(),
+      specId: _mode == SddSpecIntakeMode.newSpec
+          ? _emptyToNull(_specIdController.text)
+          : _selectedSpecId,
+      artifact: _mode == SddSpecIntakeMode.newSpec ? 'spec' : _artifact,
+      attachments: List<SddStagedMediaAttachment>.unmodifiable(_attachments),
+    );
+  }
+
+  bool get _canSubmit =>
+      !_busy &&
+      _workspaceController.text.trim().isNotEmpty &&
+      _textController.text.trim().isNotEmpty &&
+      (_mode == SddSpecIntakeMode.newSpec || _selectedSpecId != null);
+
+  bool get _canUploadImage =>
+      !_busy &&
+      widget.mediaAttachmentPicker != null &&
+      _workspaceController.text.trim().isNotEmpty;
+
+  bool get _canUploadAudio =>
+      !_busy &&
+      widget.audioAttachmentPicker != null &&
+      _workspaceController.text.trim().isNotEmpty;
+
+  bool get _canAttachStructured =>
+      !_busy &&
+      widget.structuredAttachmentPicker != null &&
+      _workspaceController.text.trim().isNotEmpty;
+
+  @override
+  Widget build(BuildContext context) {
+    return _PanelCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          Row(
+            children: <Widget>[
+              const Icon(
+                Icons.add_task_rounded,
+                size: 17,
+                color: _WorkbenchColors.primary,
+              ),
+              const SizedBox(width: 8),
+              const Expanded(
+                child: Text(
+                  'Spec intake',
+                  style: TextStyle(fontWeight: FontWeight.w900),
+                ),
+              ),
+              if (!_expanded)
+                TextButton.icon(
+                  onPressed: () => setState(() => _expanded = true),
+                  icon: const Icon(Icons.add_rounded),
+                  label: const Text('New functionality'),
+                ),
+              if (_busy)
+                const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+            ],
+          ),
+          if (_expanded) ...[
+            const SizedBox(height: 10),
+            SegmentedButton<SddSpecIntakeMode>(
+              segments: const <ButtonSegment<SddSpecIntakeMode>>[
+                ButtonSegment<SddSpecIntakeMode>(
+                  value: SddSpecIntakeMode.newSpec,
+                  icon: Icon(Icons.note_add_outlined),
+                  label: Text('New spec'),
+                ),
+                ButtonSegment<SddSpecIntakeMode>(
+                  value: SddSpecIntakeMode.existingSpec,
+                  icon: Icon(Icons.edit_document),
+                  label: Text('Existing'),
+                ),
+              ],
+              selected: <SddSpecIntakeMode>{_mode},
+              onSelectionChanged: (values) {
+                setState(() {
+                  _mode = values.single;
+                  _preview = null;
+                  _clearGeneratedOutput();
+                });
+              },
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _workspaceController,
+              onChanged: (_) => setState(() {}),
+              decoration: const InputDecoration(
+                labelText: 'Workspace',
+                prefixIcon: Icon(Icons.folder_open_outlined),
+              ),
+            ),
+            const SizedBox(height: 10),
+            if (_mode == SddSpecIntakeMode.newSpec)
+              TextField(
+                controller: _specIdController,
+                onChanged: (_) => setState(() {}),
+                decoration: const InputDecoration(
+                  labelText: 'Spec id',
+                  hintText: 'optional-slug',
+                  prefixIcon: Icon(Icons.tag_outlined),
+                ),
+              )
+            else
+              _ExistingSpecTargetControls(
+                specs: widget.project.specs,
+                selectedSpecId: _selectedSpecId,
+                artifact: _artifact,
+                onSpecChanged: (value) =>
+                    setState(() => _selectedSpecId = value),
+                onArtifactChanged: (value) => setState(() => _artifact = value),
+              ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _textController,
+              onChanged: (_) => setState(() {}),
+              minLines: 3,
+              maxLines: 6,
+              decoration: const InputDecoration(
+                labelText: 'Request',
+                prefixIcon: Icon(Icons.notes_rounded),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: <Widget>[
+                OutlinedButton.icon(
+                  onPressed: _canUploadAudio ? _attachAudio : null,
+                  icon: const Icon(Icons.mic_none_rounded),
+                  label: const Text('Audio'),
+                ),
+                const SizedBox(width: 8),
+                OutlinedButton.icon(
+                  onPressed: _canUploadImage ? _attachImage : null,
+                  icon: const Icon(Icons.image_outlined),
+                  label: const Text('Image'),
+                ),
+                const SizedBox(width: 8),
+                OutlinedButton.icon(
+                  onPressed: _canAttachStructured ? _attachStructured : null,
+                  icon: const Icon(Icons.crop_free_rounded),
+                  label: const Text('Structured'),
+                ),
+              ],
+            ),
+            if (_attachmentStatus != null || _attachments.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              _AttachmentList(
+                status: _attachmentStatus,
+                attachments: _attachments,
+                onRemove: _busy ? null : (index) => _removeAttachment(index),
+                onAnnotate: _busy
+                    ? null
+                    : (index) => _annotateAttachment(index),
+              ),
+            ],
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: <Widget>[
+                FilledButton.icon(
+                  onPressed: _canSubmit ? _dryRun : null,
+                  icon: const Icon(Icons.fact_check_outlined),
+                  label: const Text('Preview'),
+                ),
+                FilledButton.icon(
+                  onPressed: _preview?.status == 'dry-run' && _canSubmit
+                      ? _applyPreview
+                      : null,
+                  icon: Icon(
+                    _mode == SddSpecIntakeMode.newSpec
+                        ? Icons.create_new_folder_outlined
+                        : Icons.playlist_add_check_rounded,
+                  ),
+                  label: Text(
+                    _mode == SddSpecIntakeMode.newSpec ? 'Create' : 'Queue job',
+                  ),
+                ),
+                OutlinedButton.icon(
+                  onPressed: _job?.status == 'queued' && !_busy
+                      ? _runJob
+                      : null,
+                  icon: const Icon(Icons.play_arrow_rounded),
+                  label: const Text('Run job'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: _job?.status == 'completed' && !_busy
+                      ? _reviewJob
+                      : null,
+                  icon: const Icon(Icons.rate_review_outlined),
+                  label: const Text('Review'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: _review?.canApply == true && !_busy
+                      ? _applyReviewedJob
+                      : null,
+                  icon: const Icon(Icons.done_all_rounded),
+                  label: const Text('Apply reviewed'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: _job?.id.isNotEmpty == true && !_busy
+                      ? _refreshJobActivity
+                      : null,
+                  icon: const Icon(Icons.refresh_rounded),
+                  label: const Text('Refresh'),
+                ),
+                OutlinedButton.icon(
+                  onPressed:
+                      (_job?.status == 'queued' || _job?.status == 'running') &&
+                          !_busy
+                      ? _cancelJob
+                      : null,
+                  icon: const Icon(Icons.cancel_outlined),
+                  label: const Text('Cancel'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: _isRetryableJob(_job) && !_busy ? _retryJob : null,
+                  icon: const Icon(Icons.replay_rounded),
+                  label: const Text('Retry'),
+                ),
+              ],
+            ),
+            if (_error != null) ...[
+              const SizedBox(height: 10),
+              _StatusLines(
+                title: 'Error',
+                icon: Icons.error_outline,
+                items: <String>[_error!],
+                warning: true,
+              ),
+            ],
+            if (_preview != null) ...[
+              const SizedBox(height: 10),
+              _SpecIntakePlanView(title: 'Preview', plan: _preview!),
+            ],
+            if (_apply != null) ...[
+              const SizedBox(height: 10),
+              _SpecIntakePlanView(title: 'Apply', plan: _apply!),
+            ],
+            if (_job != null) ...[
+              const SizedBox(height: 10),
+              _JobStatusView(job: _job!),
+            ],
+            if (_activity != null) ...[
+              const SizedBox(height: 10),
+              _ActivityTimelineView(activity: _activity!),
+            ],
+            if (_review != null) ...[
+              const SizedBox(height: 10),
+              _ReviewStatusView(review: _review!),
+            ],
+            if (_reviewApply != null) ...[
+              const SizedBox(height: 10),
+              _StatusLines(
+                title: 'Reviewed apply',
+                icon: Icons.done_all_rounded,
+                items: <String>[
+                  'status: ${_reviewApply!.status}',
+                  ..._reviewApply!.applied,
+                  ..._reviewApply!.blocked,
+                  ..._reviewApply!.conflicts,
+                  ..._reviewApply!.nextActions,
+                ],
+                warning: _reviewApply!.status != 'applied',
+              ),
+            ],
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _AttachmentList extends StatelessWidget {
+  const _AttachmentList({
+    required this.status,
+    required this.attachments,
+    required this.onRemove,
+    required this.onAnnotate,
+  });
+
+  final String? status;
+  final List<SddStagedMediaAttachment> attachments;
+  final void Function(int index)? onRemove;
+  final void Function(int index)? onAnnotate;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: _WorkbenchColors.sourceBackground,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: _WorkbenchColors.border),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(8),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Row(
+              children: <Widget>[
+                const Icon(
+                  Icons.attach_file_rounded,
+                  size: 16,
+                  color: _WorkbenchColors.primary,
+                ),
+                const SizedBox(width: 6),
+                const Expanded(
+                  child: Text(
+                    'Attachments',
+                    style: TextStyle(fontWeight: FontWeight.w800),
+                  ),
+                ),
+                if (status != null)
+                  Text(
+                    status!,
+                    style: const TextStyle(
+                      color: _WorkbenchColors.secondaryText,
+                      fontSize: 12,
+                    ),
+                  ),
+              ],
+            ),
+            for (final entry in attachments.indexed) ...[
+              const SizedBox(height: 6),
+              DecoratedBox(
+                decoration: BoxDecoration(
+                  color: _WorkbenchColors.background,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: _WorkbenchColors.border),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(8, 6, 4, 6),
+                  child: Row(
+                    children: <Widget>[
+                      Icon(_attachmentIcon(entry.$2), size: 16),
+                      const SizedBox(width: 7),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: <Widget>[
+                            Text(
+                              '${entry.$2.filename} · ${entry.$2.mediaKind}',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              entry.$2.stagedPath ?? entry.$2.status,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: _WorkbenchColors.secondaryText,
+                                fontSize: 11,
+                              ),
+                            ),
+                            if (entry.$2.blocked.isNotEmpty ||
+                                entry.$2.nextActions.isNotEmpty) ...[
+                              const SizedBox(height: 4),
+                              Text(
+                                <String>[
+                                  ...entry.$2.blocked,
+                                  ...entry.$2.nextActions,
+                                ].take(2).join(' · '),
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: entry.$2.blocked.isEmpty
+                                      ? _WorkbenchColors.secondaryText
+                                      : _WorkbenchColors.warning,
+                                  fontSize: 11,
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                      if (entry.$2.isImage &&
+                          entry.$2.mediaKind == 'image' &&
+                          onAnnotate != null)
+                        IconButton(
+                          tooltip: 'Mark region ${entry.$2.filename}',
+                          onPressed: () => onAnnotate!(entry.$1),
+                          visualDensity: VisualDensity.compact,
+                          constraints: const BoxConstraints.tightFor(
+                            width: 32,
+                            height: 30,
+                          ),
+                          padding: EdgeInsets.zero,
+                          icon: const Icon(Icons.crop_free_rounded, size: 18),
+                        ),
+                      IconButton(
+                        tooltip: 'Remove attachment ${entry.$2.filename}',
+                        onPressed: onRemove == null
+                            ? null
+                            : () => onRemove!(entry.$1),
+                        visualDensity: VisualDensity.compact,
+                        constraints: const BoxConstraints.tightFor(
+                          width: 32,
+                          height: 30,
+                        ),
+                        padding: EdgeInsets.zero,
+                        icon: const Icon(Icons.close_rounded, size: 18),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _MediaRegionDialog extends StatefulWidget {
+  const _MediaRegionDialog({required this.source});
+
+  final SddStagedMediaAttachment source;
+
+  @override
+  State<_MediaRegionDialog> createState() => _MediaRegionDialogState();
+}
+
+class _MediaRegionDialogState extends State<_MediaRegionDialog> {
+  Rect? _region;
+  Offset? _dragStart;
+  Size? _canvasSize;
+  String? _error;
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      insetPadding: const EdgeInsets.all(20),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 420),
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              Row(
+                children: <Widget>[
+                  const Icon(
+                    Icons.crop_free_rounded,
+                    size: 18,
+                    color: _WorkbenchColors.primary,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Mark region',
+                      style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              AspectRatio(
+                aspectRatio: 16 / 10,
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    final size = Size(
+                      constraints.maxWidth,
+                      constraints.maxHeight,
+                    );
+                    _canvasSize = size;
+                    return GestureDetector(
+                      key: const Key('sdd-media-region-canvas'),
+                      onPanStart: (details) {
+                        setState(() {
+                          _dragStart = _clampOffset(
+                            details.localPosition,
+                            size,
+                          );
+                          _region = Rect.fromPoints(_dragStart!, _dragStart!);
+                          _error = null;
+                        });
+                      },
+                      onPanUpdate: (details) {
+                        final start = _dragStart;
+                        if (start == null) return;
+                        setState(() {
+                          _region = Rect.fromPoints(
+                            start,
+                            _clampOffset(details.localPosition, size),
+                          );
+                          _error = null;
+                        });
+                      },
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(8),
+                        child: Stack(
+                          fit: StackFit.expand,
+                          children: <Widget>[
+                            Image.memory(
+                              Uint8List.fromList(widget.source.previewBytes),
+                              fit: BoxFit.cover,
+                              errorBuilder: (context, error, stackTrace) =>
+                                  Container(
+                                    color: _WorkbenchColors.sourceBackground,
+                                    alignment: Alignment.center,
+                                    child: const Icon(
+                                      Icons.image_outlined,
+                                      color: _WorkbenchColors.secondaryText,
+                                      size: 32,
+                                    ),
+                                  ),
+                            ),
+                            CustomPaint(painter: _MediaRegionPainter(_region)),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+              if (_error != null) ...[
+                const SizedBox(height: 8),
+                Text(
+                  _error!,
+                  key: const Key('sdd-media-region-error'),
+                  style: const TextStyle(
+                    color: _WorkbenchColors.warning,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+              const SizedBox(height: 12),
+              Wrap(
+                alignment: WrapAlignment.end,
+                spacing: 8,
+                runSpacing: 8,
+                children: <Widget>[
+                  TextButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    child: const Text('Cancel'),
+                  ),
+                  FilledButton.icon(
+                    key: const Key('sdd-media-region-apply'),
+                    onPressed: () => _applyRegion(generateCrop: false),
+                    icon: const Icon(Icons.check_rounded),
+                    label: const Text('Use region'),
+                  ),
+                  FilledButton.icon(
+                    key: const Key('sdd-media-crop-apply'),
+                    onPressed: () => _applyRegion(generateCrop: true),
+                    icon: const Icon(Icons.crop_rounded),
+                    label: const Text('Crop image'),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _applyRegion({required bool generateCrop}) {
+    final region = _region;
+    if (region == null || region.width < 2 || region.height < 2) {
+      setState(() {
+        _error = 'Draw a non-empty region before submitting.';
+      });
+      return;
+    }
+    Navigator.of(context).pop(
+      SddMediaCropSelection(
+        x: region.left.round(),
+        y: region.top.round(),
+        width: region.width.round(),
+        height: region.height.round(),
+        canvasWidth: _canvasSize?.width ?? region.right,
+        canvasHeight: _canvasSize?.height ?? region.bottom,
+        generateCrop: generateCrop,
+      ),
+    );
+  }
+}
+
+class _MediaRegionPainter extends CustomPainter {
+  const _MediaRegionPainter(this.region);
+
+  final Rect? region;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final rect = region;
+    final overlay = Paint()..color = Colors.black.withValues(alpha: 0.20);
+    canvas.drawRect(Offset.zero & size, overlay);
+    if (rect == null || rect.width <= 0 || rect.height <= 0) return;
+
+    final selected = RRect.fromRectAndRadius(rect, const Radius.circular(8));
+    final fill = Paint()
+      ..color = _WorkbenchColors.primary.withValues(alpha: 0.12)
+      ..style = PaintingStyle.fill;
+    final border = Paint()
+      ..color = _WorkbenchColors.primary
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2;
+    canvas.drawRRect(selected, fill);
+    canvas.drawRRect(selected, border);
+  }
+
+  @override
+  bool shouldRepaint(covariant _MediaRegionPainter oldDelegate) {
+    return oldDelegate.region != region;
+  }
+}
+
+class SddMediaCropSelection {
+  const SddMediaCropSelection({
+    required this.x,
+    required this.y,
+    required this.width,
+    required this.height,
+    required this.canvasWidth,
+    required this.canvasHeight,
+    this.generateCrop = false,
+  });
+
+  final int x;
+  final int y;
+  final int width;
+  final int height;
+  final double canvasWidth;
+  final double canvasHeight;
+  final bool generateCrop;
+
+  Map<String, Object?> toJson() {
+    return <String, Object?>{'x': x, 'y': y, 'width': width, 'height': height};
+  }
+}
+
+SddStagedMediaAttachment _markedRegionAttachment(
+  SddStagedMediaAttachment source,
+  String sourceRef,
+  SddMediaCropSelection region,
+) {
+  final sourceItem = source.intakeItem;
+  return SddStagedMediaAttachment(
+    status: 'staged',
+    intakeItem: <String, Object?>{
+      'kind': 'marked_region',
+      'mime_type': sourceItem['mime_type'] ?? 'image/png',
+      'byte_size': sourceItem['byte_size'] ?? 0,
+      'filename': '${_filenameStem(source.filename)}-region.png',
+      if (sourceItem['sha256'] != null) 'sha256': sourceItem['sha256'],
+      'source_ref': sourceRef,
+      'payload_ref': sourceRef,
+      'region': region.toJson(),
+    },
+    nextActions: const <String>[
+      'Region metadata is staged; pixel crop generation is pending.',
+    ],
+  );
+}
+
+Future<SddMediaAttachmentDraft> _cropImageDraft(
+  SddStagedMediaAttachment source,
+  SddMediaCropSelection region,
+) async {
+  if (source.previewBytes.isEmpty) {
+    throw StateError('image preview unavailable for crop generation');
+  }
+  final codec = await ui.instantiateImageCodec(
+    Uint8List.fromList(source.previewBytes),
+  );
+  final frame = await codec.getNextFrame();
+  final image = frame.image;
+  try {
+    final scaleX = image.width / region.canvasWidth;
+    final scaleY = image.height / region.canvasHeight;
+    final sourceRect =
+        Rect.fromLTWH(
+          (region.x * scaleX).clamp(0, image.width - 1).toDouble(),
+          (region.y * scaleY).clamp(0, image.height - 1).toDouble(),
+          (region.width * scaleX).clamp(1, image.width).toDouble(),
+          (region.height * scaleY).clamp(1, image.height).toDouble(),
+        ).intersect(
+          Rect.fromLTWH(0, 0, image.width.toDouble(), image.height.toDouble()),
+        );
+    if (sourceRect.width < 1 || sourceRect.height < 1) {
+      throw StateError('selected crop region is outside image bounds');
+    }
+    final cropWidth = sourceRect.width.round().clamp(1, image.width);
+    final cropHeight = sourceRect.height.round().clamp(1, image.height);
+    final recorder = ui.PictureRecorder();
+    final canvas = Canvas(recorder);
+    canvas.drawImageRect(
+      image,
+      sourceRect,
+      Rect.fromLTWH(0, 0, cropWidth.toDouble(), cropHeight.toDouble()),
+      Paint(),
+    );
+    final cropped = await recorder.endRecording().toImage(
+      cropWidth,
+      cropHeight,
+    );
+    try {
+      final byteData = await cropped.toByteData(format: ui.ImageByteFormat.png);
+      if (byteData == null) {
+        throw StateError('crop image encoding failed');
+      }
+      return SddMediaAttachmentDraft(
+        filename: '${_filenameStem(source.filename)}-crop.png',
+        mimeType: 'image/png',
+        bytes: byteData.buffer.asUint8List(),
+      );
+    } finally {
+      cropped.dispose();
+    }
+  } finally {
+    image.dispose();
+  }
+}
+
+String _filenameStem(String filename) {
+  final dot = filename.lastIndexOf('.');
+  if (dot <= 0) return filename;
+  return filename.substring(0, dot);
+}
+
+IconData _attachmentIcon(SddStagedMediaAttachment attachment) {
+  return switch (attachment.mediaKind) {
+    'audio' => Icons.mic_none_rounded,
+    'marked_region' => Icons.crop_free_rounded,
+    'crop' => Icons.crop_rounded,
+    'screenshot_batch' => Icons.collections_outlined,
+    'image_sequence' => Icons.video_library_outlined,
+    _ when attachment.isImage => Icons.image_outlined,
+    _ => Icons.attach_file_rounded,
+  };
+}
+
+Offset _clampOffset(Offset value, Size size) {
+  return Offset(
+    value.dx.clamp(0, size.width).toDouble(),
+    value.dy.clamp(0, size.height).toDouble(),
+  );
+}
+
+class _ExistingSpecTargetControls extends StatelessWidget {
+  const _ExistingSpecTargetControls({
+    required this.specs,
+    required this.selectedSpecId,
+    required this.artifact,
+    required this.onSpecChanged,
+    required this.onArtifactChanged,
+  });
+
+  final List<SddSpec> specs;
+  final String? selectedSpecId;
+  final String artifact;
+  final ValueChanged<String?> onSpecChanged;
+  final ValueChanged<String> onArtifactChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: <Widget>[
+        DropdownButtonFormField<String>(
+          initialValue: selectedSpecId,
+          decoration: const InputDecoration(
+            labelText: 'Spec',
+            prefixIcon: Icon(Icons.description_outlined),
+          ),
+          items: specs
+              .map(
+                (spec) => DropdownMenuItem<String>(
+                  value: spec.id,
+                  child: Text(spec.title, overflow: TextOverflow.ellipsis),
+                ),
+              )
+              .toList(growable: false),
+          onChanged: specs.isEmpty ? null : onSpecChanged,
+        ),
+        const SizedBox(height: 10),
+        SegmentedButton<String>(
+          segments: const <ButtonSegment<String>>[
+            ButtonSegment<String>(
+              value: 'spec',
+              icon: Icon(Icons.description_outlined),
+              label: Text('Spec'),
+            ),
+            ButtonSegment<String>(
+              value: 'plan',
+              icon: Icon(Icons.route_outlined),
+              label: Text('Plan'),
+            ),
+            ButtonSegment<String>(
+              value: 'tasks',
+              icon: Icon(Icons.checklist_rounded),
+              label: Text('Tasks'),
+            ),
+          ],
+          selected: <String>{artifact},
+          onSelectionChanged: (values) => onArtifactChanged(values.single),
+        ),
+      ],
+    );
+  }
+}
+
+class _SpecIntakePlanView extends StatelessWidget {
+  const _SpecIntakePlanView({required this.title, required this.plan});
+
+  final String title;
+  final SddSpecIntakePlan plan;
+
+  @override
+  Widget build(BuildContext context) {
+    final details = <String>[
+      'status: ${plan.status}',
+      if (plan.specId != null) 'spec: ${plan.specId}',
+      if (plan.selectedArtifact != null) 'artifact: ${plan.selectedArtifact}',
+      if (plan.metadataTitle != null) 'title: ${plan.metadataTitle}',
+      if (plan.metadataDescription != null)
+        'description: ${plan.metadataDescription}',
+      ...plan.plannedFiles,
+      ...plan.blocked,
+      ...plan.conflicts,
+      ...plan.rejectedMedia,
+      ...plan.nextActions,
+    ];
+    return _StatusLines(
+      title: title,
+      icon: plan.status == 'dry-run'
+          ? Icons.fact_check_outlined
+          : Icons.task_alt_rounded,
+      items: details,
+      warning: plan.status == 'blocked',
+    );
+  }
+}
+
+class _JobStatusView extends StatelessWidget {
+  const _JobStatusView({required this.job});
+
+  final SddCodexJobStatus job;
+
+  @override
+  Widget build(BuildContext context) {
+    return _StatusLines(
+      title: 'Job',
+      icon: Icons.terminal_rounded,
+      items: <String>[
+        'status: ${job.status}',
+        if (job.id.isNotEmpty) 'id: ${job.id}',
+        if (job.targetArtifact != null) 'artifact: ${job.targetArtifact}',
+        if (job.sandboxRoot != null) 'sandbox: ${job.sandboxRoot}',
+        ...job.blockedReasons,
+        ...job.nextActions,
+      ],
+      warning: job.status == 'blocked' || job.status == 'failed',
+    );
+  }
+}
+
+class _ReviewStatusView extends StatelessWidget {
+  const _ReviewStatusView({required this.review});
+
+  final SddCodexJobReview review;
+
+  @override
+  Widget build(BuildContext context) {
+    return _StatusLines(
+      title: 'Review',
+      icon: Icons.rate_review_outlined,
+      items: <String>[
+        'status: ${review.status}',
+        'validation: ${review.validationStatus}',
+        ...review.changedFiles.map(
+          (change) =>
+              '${change.changeType}: ${change.path}${change.patchPath == null ? '' : ' · ${change.patchPath}'}',
+        ),
+        ...review.blockedPaths.map((path) => 'blocked: $path'),
+        ...review.protectedBaselineImpacts.map((path) => 'protected: $path'),
+        ...review.conflicts.map((conflict) => 'conflict: $conflict'),
+        ...review.nextActions,
+      ],
+      warning: review.status != 'ready',
+    );
+  }
+}
+
+class _ActivityTimelineView extends StatelessWidget {
+  const _ActivityTimelineView({required this.activity});
+
+  final SddActivitySnapshot activity;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: _WorkbenchColors.sourceBackground,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: _WorkbenchColors.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Row(
+            children: <Widget>[
+              const Icon(
+                Icons.timeline_rounded,
+                size: 15,
+                color: _WorkbenchColors.primary,
+              ),
+              const SizedBox(width: 7),
+              Expanded(
+                child: Text(
+                  'Activity · ${activity.state}',
+                  style: const TextStyle(
+                    color: _WorkbenchColors.primary,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          for (final event in activity.events.take(8)) ...[
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Padding(
+                  padding: const EdgeInsets.only(top: 2),
+                  child: Icon(
+                    _activityIcon(event.status),
+                    size: 14,
+                    color: _activityColor(event.status),
+                  ),
+                ),
+                const SizedBox(width: 7),
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.only(bottom: 6),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: <Widget>[
+                        Text(
+                          event.label,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                        if (event.detail != null &&
+                            event.detail!.trim().isNotEmpty)
+                          Text(
+                            event.detail!,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: _WorkbenchColors.secondaryText,
+                              fontSize: 11,
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+          if (activity.nextActions.isNotEmpty)
+            Text(
+              activity.nextActions.take(2).join(' · '),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: _WorkbenchColors.secondaryText,
+                fontSize: 11,
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+IconData _activityIcon(String status) {
+  return switch (status) {
+    'completed' => Icons.check_circle_outline,
+    'active' => Icons.sync_rounded,
+    'blocked' || 'failed' => Icons.error_outline,
+    _ => Icons.radio_button_unchecked,
+  };
+}
+
+Color _activityColor(String status) {
+  return switch (status) {
+    'completed' || 'active' => _WorkbenchColors.primary,
+    'blocked' || 'failed' => _WorkbenchColors.warning,
+    _ => _WorkbenchColors.secondaryText,
+  };
+}
+
+SddActivitySnapshot _localActivity(String state, String status) {
+  final normalizedStatus = switch (status) {
+    'applied' || 'completed' || 'ready' => 'completed',
+    'queued' || 'running' || 'dry-run' => 'active',
+    'blocked' || 'failed' || 'timed_out' || 'cancelled' => 'blocked',
+    _ => status,
+  };
+  final label = switch (state) {
+    'apply' => 'Apply ${status.replaceAll('_', ' ')}',
+    'job' => 'Job ${status.replaceAll('_', ' ')}',
+    'cancelled' => 'Job cancelled',
+    'retry' => status == 'queued' ? 'Retry queued' : 'Retry blocked',
+    'review-ready' => status == 'ready' ? 'Review ready' : 'Review blocked',
+    'reviewed-apply' =>
+      status == 'applied'
+          ? 'Reviewed apply completed'
+          : 'Reviewed apply blocked',
+    _ => state.replaceAll('_', ' '),
+  };
+  final detail = switch (state) {
+    'review-ready' => 'Generated output still requires explicit apply.',
+    'reviewed-apply' => 'Only reviewed generated output was applied.',
+    'retry' => 'Retry creates a new sandboxed job from the original handoff.',
+    _ => 'Status reported by the spec intake flow.',
+  };
+  return SddActivitySnapshot(
+    state: state,
+    events: <SddActivityEvent>[
+      SddActivityEvent(
+        state: state,
+        status: normalizedStatus,
+        label: label,
+        detail: detail,
+      ),
+    ],
+  );
+}
+
+SddActivitySnapshot _mergeActivity(
+  SddActivitySnapshot? current,
+  SddActivitySnapshot next,
+) {
+  return SddActivitySnapshot(
+    state: next.state,
+    jobId: next.jobId ?? current?.jobId,
+    events: <SddActivityEvent>[...?current?.events, ...next.events],
+    nextActions: next.nextActions.isNotEmpty
+        ? next.nextActions
+        : current?.nextActions ?? const <String>[],
+  );
+}
+
+bool _isRetryableJob(SddCodexJobStatus? job) {
+  return switch (job?.status) {
+    'failed' || 'timed_out' || 'cancelled' => true,
+    _ => false,
+  };
+}
+
+class _StatusLines extends StatelessWidget {
+  const _StatusLines({
+    required this.title,
+    required this.icon,
+    required this.items,
+    this.warning = false,
+  });
+
+  final String title;
+  final IconData icon;
+  final List<String> items;
+  final bool warning;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = warning ? _WorkbenchColors.warning : _WorkbenchColors.primary;
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: warning
+            ? _WorkbenchColors.warningSurface
+            : _WorkbenchColors.sourceBackground,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: warning ? color : _WorkbenchColors.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Row(
+            children: <Widget>[
+              Icon(icon, size: 15, color: color),
+              const SizedBox(width: 7),
+              Text(
+                title,
+                style: TextStyle(color: color, fontWeight: FontWeight.w900),
+              ),
+            ],
+          ),
+          const SizedBox(height: 7),
+          ...items
+              .take(10)
+              .map(
+                (item) => Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: Text(
+                    item,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                ),
+              ),
         ],
       ),
     );
@@ -1134,6 +2722,246 @@ _SpecArtifactKind _firstAvailableArtifact(SddSpec spec) {
   if (spec.sliceDocs.isNotEmpty) return _SpecArtifactKind.slice;
   if (spec.diagrams.isNotEmpty) return _SpecArtifactKind.diagram;
   return _SpecArtifactKind.spec;
+}
+
+class _SpecListOverview extends StatelessWidget {
+  const _SpecListOverview({
+    required this.specs,
+    required this.selection,
+    required this.onSelected,
+  });
+
+  final List<SddSpec> specs;
+  final _SpecArtifactSelection selection;
+  final ValueChanged<int> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    return _PanelCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          const Row(
+            children: <Widget>[
+              Icon(
+                Icons.view_list_rounded,
+                size: 17,
+                color: _WorkbenchColors.primary,
+              ),
+              SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Feature specs',
+                  style: TextStyle(
+                    color: _WorkbenchColors.onBackground,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          for (final entry in specs.indexed) ...[
+            if (entry.$1 > 0)
+              const Divider(height: 18, color: _WorkbenchColors.border),
+            _SpecListRow(
+              spec: entry.$2,
+              selected: entry.$1 == selection.specIndex,
+              onTap: () => onSelected(entry.$1),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _SpecListRow extends StatelessWidget {
+  const _SpecListRow({
+    required this.spec,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final SddSpec spec;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final progress = _specTaskProgress(spec);
+    final description = _specDescription(spec);
+    final updated = _formatShortDate(spec.updatedAt ?? spec.createdAt);
+    final stale =
+        spec.metadataStatus == 'stale' || spec.metadataStalePaths.isNotEmpty;
+    return InkWell(
+      borderRadius: BorderRadius.circular(8),
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 6),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Container(
+              width: 3,
+              height: 56,
+              decoration: BoxDecoration(
+                color: selected
+                    ? _WorkbenchColors.primary
+                    : _WorkbenchColors.border,
+                borderRadius: BorderRadius.circular(999),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Row(
+                    children: <Widget>[
+                      Expanded(
+                        child: Text(
+                          spec.title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: _WorkbenchColors.onBackground,
+                            fontWeight: selected
+                                ? FontWeight.w900
+                                : FontWeight.w800,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      _TinyStatusPill(
+                        label: spec.lifecycleStatus,
+                        warning: stale || spec.lifecycleStatus == 'blocked',
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    description,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: _WorkbenchColors.secondaryText,
+                      fontSize: 12,
+                      height: 1.25,
+                    ),
+                  ),
+                  const SizedBox(height: 7),
+                  Wrap(
+                    spacing: 7,
+                    runSpacing: 5,
+                    children: <Widget>[
+                      _TinyMetaChip(
+                        icon: Icons.checklist_rounded,
+                        label: progress == null
+                            ? 'tasks: source only'
+                            : '${progress.completed}/${progress.total} tasks',
+                        warning:
+                            progress == null ||
+                            progress.completed < progress.total,
+                      ),
+                      _TinyMetaChip(
+                        icon: Icons.account_tree_outlined,
+                        label: spec.traceabilityStatus,
+                        warning: spec.traceabilityStatus != 'linked',
+                      ),
+                      if (updated != null)
+                        _TinyMetaChip(
+                          icon: Icons.update_rounded,
+                          label: updated,
+                        ),
+                      if ((spec.lastRunState ?? '').trim().isNotEmpty)
+                        _TinyMetaChip(
+                          icon: Icons.play_circle_outline_rounded,
+                          label: 'last run: ${spec.lastRunState}',
+                          warning: spec.lastRunState == 'failed',
+                        ),
+                      if (stale)
+                        const _TinyMetaChip(
+                          icon: Icons.warning_amber_rounded,
+                          label: 'metadata stale',
+                          warning: true,
+                        ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _TinyStatusPill extends StatelessWidget {
+  const _TinyStatusPill({required this.label, this.warning = false});
+
+  final String label;
+  final bool warning;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: warning
+            ? _WorkbenchColors.warning.withValues(alpha: 0.14)
+            : _WorkbenchColors.primary.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        child: Text(
+          label.isEmpty ? 'unknown' : label,
+          style: TextStyle(
+            color: warning
+                ? _WorkbenchColors.warning
+                : _WorkbenchColors.primary,
+            fontWeight: FontWeight.w900,
+            fontSize: 11,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _TinyMetaChip extends StatelessWidget {
+  const _TinyMetaChip({
+    required this.icon,
+    required this.label,
+    this.warning = false,
+  });
+
+  final IconData icon;
+  final String label;
+  final bool warning;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = warning
+        ? _WorkbenchColors.warning
+        : _WorkbenchColors.secondaryText;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: <Widget>[
+        Icon(icon, size: 13, color: color),
+        const SizedBox(width: 4),
+        Text(
+          label,
+          style: TextStyle(
+            color: color,
+            fontWeight: FontWeight.w700,
+            fontSize: 11,
+          ),
+        ),
+      ],
+    );
+  }
 }
 
 class _SpecTraceNavigator extends StatelessWidget {
@@ -2311,6 +4139,22 @@ _TaskProgress? _projectTaskProgress(SddProject project) {
   return _TaskProgress(completed: completed, total: total);
 }
 
+_TaskProgress? _specTaskProgress(SddSpec spec) {
+  if (spec.taskTotal > 0) {
+    return _TaskProgress(completed: spec.taskCompleted, total: spec.taskTotal);
+  }
+  var completed = 0;
+  var total = 0;
+  for (final file in spec.allTaskFiles) {
+    final progress = _taskProgress(file.content);
+    if (progress == null) continue;
+    completed += progress.completed;
+    total += progress.total;
+  }
+  if (total == 0) return null;
+  return _TaskProgress(completed: completed, total: total);
+}
+
 _TaskProgress? _taskProgress(String? content) {
   if (content == null || content.trim().isEmpty) return null;
   var completed = 0;
@@ -2328,11 +4172,42 @@ _TaskProgress? _taskProgress(String? content) {
   return _TaskProgress(completed: completed, total: total);
 }
 
+String _specDescription(SddSpec spec) {
+  final explicit = spec.description.trim();
+  if (explicit.isNotEmpty) return explicit;
+  final content = spec.spec?.content?.trim();
+  if (content == null || content.isEmpty) return 'No description yet.';
+  final lines = content
+      .split('\n')
+      .map((line) => line.trim())
+      .where((line) => line.isNotEmpty && !line.startsWith('#'))
+      .toList(growable: false);
+  if (lines.isEmpty) return 'No description yet.';
+  return lines.first.length > 180
+      ? '${lines.first.substring(0, 177)}...'
+      : lines.first;
+}
+
+String? _formatShortDate(String? value) {
+  final trimmed = value?.trim();
+  if (trimmed == null || trimmed.isEmpty) return null;
+  final parsed = DateTime.tryParse(trimmed);
+  if (parsed == null) return trimmed;
+  final local = parsed.toLocal();
+  String twoDigits(int number) => number.toString().padLeft(2, '0');
+  return '${local.year}-${twoDigits(local.month)}-${twoDigits(local.day)}';
+}
+
 String _specLifecycleStatus(SddSpec spec) {
+  if (spec.lifecycleStatus.trim().isNotEmpty) return spec.lifecycleStatus;
   return _frontMatterValue(spec.spec?.content, 'status') ?? 'unknown';
 }
 
 String _specTraceabilityStatus(SddSpec spec) {
+  if (spec.traceabilityStatus.trim().isNotEmpty &&
+      spec.traceabilityStatus != 'unknown') {
+    return spec.traceabilityStatus;
+  }
   if (spec.missing.isNotEmpty) return 'incomplete';
   if (spec.allSpecFiles.isEmpty ||
       spec.allPlanFiles.isEmpty ||
@@ -2438,6 +4313,11 @@ String _workspaceFolderName(String workspacePath) {
       .toList(growable: false);
   if (parts.isEmpty) return workspacePath;
   return parts.last;
+}
+
+String? _emptyToNull(String value) {
+  final trimmed = value.trim();
+  return trimmed.isEmpty ? null : trimmed;
 }
 
 String? _manifestValue(SddFile? manifest, List<String> keys) {

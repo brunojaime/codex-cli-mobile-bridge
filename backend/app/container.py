@@ -9,7 +9,11 @@ from backend.app.application.services.app_update_service import (
     HttpGitHubReleaseClient,
 )
 from backend.app.application.services.message_service import MessageService
+from backend.app.application.services.sdd_codex_job_service import SddCodexJobService
 from backend.app.application.services.sdd_project_service import SddProjectService
+from backend.app.application.services.sdd_workbench_view_service import (
+    SddWorkbenchViewService,
+)
 from backend.app.application.services.feedback_queue_service import FeedbackQueueService
 from backend.app.domain.repositories.chat_repository import (
     ChatRepository,
@@ -19,8 +23,12 @@ from backend.app.infrastructure.config.settings import Settings
 from backend.app.infrastructure.execution.base import ExecutionProvider
 from backend.app.infrastructure.execution.lambda_provider import LambdaExecutionProvider
 from backend.app.infrastructure.execution.local_provider import LocalExecutionProvider
-from backend.app.infrastructure.persistence.in_memory_chat_repository import InMemoryChatRepository
-from backend.app.infrastructure.persistence.sqlite_chat_repository import SqliteChatRepository
+from backend.app.infrastructure.persistence.in_memory_chat_repository import (
+    InMemoryChatRepository,
+)
+from backend.app.infrastructure.persistence.sqlite_chat_repository import (
+    SqliteChatRepository,
+)
 from backend.app.infrastructure.persistence.unavailable_chat_repository import (
     UnavailableChatRepository,
 )
@@ -36,12 +44,18 @@ from backend.app.infrastructure.speech.openai_synthesizer import (
     OpenAISpeechSynthesizer,
 )
 from backend.app.infrastructure.transcription.base import AudioTranscriber
-from backend.app.infrastructure.transcription.command_transcriber import CommandAudioTranscriber
-from backend.app.infrastructure.transcription.disabled_transcriber import DisabledAudioTranscriber
+from backend.app.infrastructure.transcription.command_transcriber import (
+    CommandAudioTranscriber,
+)
+from backend.app.infrastructure.transcription.disabled_transcriber import (
+    DisabledAudioTranscriber,
+)
 from backend.app.infrastructure.transcription.faster_whisper_transcriber import (
     FasterWhisperAudioTranscriber,
 )
-from backend.app.infrastructure.transcription.openai_transcriber import OpenAIAudioTranscriber
+from backend.app.infrastructure.transcription.openai_transcriber import (
+    OpenAIAudioTranscriber,
+)
 
 
 @dataclass(slots=True)
@@ -51,6 +65,8 @@ class AppContainer:
     feedback_queue_service: FeedbackQueueService
     app_update_service: AppUpdateService
     sdd_project_service: SddProjectService
+    sdd_workbench_view_service: SddWorkbenchViewService
+    sdd_codex_job_service: SddCodexJobService
     job_stream_hub: JobStreamHub
     audio_transcriber: AudioTranscriber
     speech_synthesizer: SpeechSynthesizer
@@ -103,12 +119,21 @@ def build_container(settings: Settings | None = None) -> AppContainer:
         workspace_aliases=resolved_settings.feedback_source_workspace_alias_map,
         file_max_bytes=resolved_settings.sdd_file_max_bytes,
     )
+    sdd_workbench_view_service = SddWorkbenchViewService()
+    sdd_codex_job_service = SddCodexJobService(
+        projects_root=resolved_settings.projects_root,
+        workspace_aliases=resolved_settings.feedback_source_workspace_alias_map,
+        codex_command=resolved_settings.codex_command,
+        timeout_seconds=resolved_settings.execution_timeout_seconds,
+    )
     return AppContainer(
         settings=resolved_settings,
         message_service=message_service,
         feedback_queue_service=feedback_queue_service,
         app_update_service=app_update_service,
         sdd_project_service=sdd_project_service,
+        sdd_workbench_view_service=sdd_workbench_view_service,
+        sdd_codex_job_service=sdd_codex_job_service,
         job_stream_hub=job_stream_hub,
         audio_transcriber=audio_transcriber,
         speech_synthesizer=speech_synthesizer,

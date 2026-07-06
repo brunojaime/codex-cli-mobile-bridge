@@ -1,0 +1,6 @@
+diagram_id: security-suspicious-content
+diagram_type: component-impact
+scope: feature
+status: draft
+owner: project
+source: specs/002-sdd-visual-workbench/diagrams/security-suspicious-content.mmd

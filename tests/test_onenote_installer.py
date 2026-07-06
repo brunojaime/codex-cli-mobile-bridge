@@ -8,15 +8,17 @@ import pytest
 
 
 _SKILL_SCRIPTS = (
-    Path(__file__).resolve().parents[1]
-    / "skills"
-    / "onenote-connect"
-    / "scripts"
+    Path(__file__).resolve().parents[1] / "skills" / "onenote-connect" / "scripts"
 )
 if str(_SKILL_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SKILL_SCRIPTS))
 
-from install_skill import SkillInstallError, install_skill, main as install_main, uninstall_skill  # noqa: E402
+from install_skill import (  # noqa: E402
+    SkillInstallError,
+    install_skill,
+    main as install_main,
+    uninstall_skill,
+)
 from install_skill import _should_skip_copy_path  # noqa: E402
 
 
@@ -54,7 +56,9 @@ def test_install_skill_creates_symlink(tmp_path: Path) -> None:
     assert target.resolve() == source.resolve()
 
 
-def test_install_skill_returns_already_linked_for_expected_symlink(tmp_path: Path) -> None:
+def test_install_skill_returns_already_linked_for_expected_symlink(
+    tmp_path: Path,
+) -> None:
     source = tmp_path / "source-skill"
     source.mkdir()
     skills_dir = tmp_path / "skills-root"
@@ -72,7 +76,9 @@ def test_install_skill_returns_already_linked_for_expected_symlink(tmp_path: Pat
     assert result.changed is False
 
 
-def test_install_skill_fails_on_conflicting_existing_target_without_overwrite(tmp_path: Path) -> None:
+def test_install_skill_fails_on_conflicting_existing_target_without_overwrite(
+    tmp_path: Path,
+) -> None:
     source = tmp_path / "source-skill"
     source.mkdir()
     skills_dir = tmp_path / "skills-root"
@@ -86,7 +92,9 @@ def test_install_skill_fails_on_conflicting_existing_target_without_overwrite(tm
     assert "Target exists and is not the expected symlink" in str(excinfo.value)
 
 
-def test_install_skill_overwrites_conflicting_symlink_when_requested(tmp_path: Path) -> None:
+def test_install_skill_overwrites_conflicting_symlink_when_requested(
+    tmp_path: Path,
+) -> None:
     source = tmp_path / "source-skill"
     source.mkdir()
     other_source = tmp_path / "other-skill"
@@ -130,7 +138,9 @@ def test_install_skill_copy_mode_creates_directory_snapshot(tmp_path: Path) -> N
     assert not (target / "scripts" / "run.pyc").exists()
 
 
-def test_install_skill_copy_mode_overwrites_existing_directory_when_requested(tmp_path: Path) -> None:
+def test_install_skill_copy_mode_overwrites_existing_directory_when_requested(
+    tmp_path: Path,
+) -> None:
     source = _create_source_skill(tmp_path)
     skills_dir = tmp_path / "skills-root"
     target = skills_dir / source.name
@@ -150,7 +160,9 @@ def test_install_skill_copy_mode_overwrites_existing_directory_when_requested(tm
     assert (target / "scripts" / "run.py").read_text() == "print('ok')\n"
 
 
-def test_install_skill_copy_mode_dry_run_does_not_create_directory(tmp_path: Path) -> None:
+def test_install_skill_copy_mode_dry_run_does_not_create_directory(
+    tmp_path: Path,
+) -> None:
     source = _create_source_skill(tmp_path)
     skills_dir = tmp_path / "skills-root"
 
@@ -167,7 +179,9 @@ def test_install_skill_copy_mode_dry_run_does_not_create_directory(tmp_path: Pat
     assert not (skills_dir / source.name).exists()
 
 
-def test_copy_mode_returns_already_copied_when_target_matches_snapshot(tmp_path: Path) -> None:
+def test_copy_mode_returns_already_copied_when_target_matches_snapshot(
+    tmp_path: Path,
+) -> None:
     source = _create_source_skill(tmp_path)
     skills_dir = tmp_path / "skills-root"
 
@@ -246,7 +260,9 @@ def test_uninstall_skill_fails_when_target_is_missing(tmp_path: Path) -> None:
     assert "Installed skill target does not exist" in str(excinfo.value)
 
 
-def test_uninstall_skill_fails_for_unexpected_target_without_force(tmp_path: Path) -> None:
+def test_uninstall_skill_fails_for_unexpected_target_without_force(
+    tmp_path: Path,
+) -> None:
     source = _create_source_skill(tmp_path)
     other_source = tmp_path / "other-skill"
     other_source.mkdir()
@@ -280,7 +296,9 @@ def test_uninstall_skill_force_removes_unexpected_target(tmp_path: Path) -> None
     assert not target.exists()
 
 
-def test_install_main_json_output_for_normal_install(tmp_path: Path, monkeypatch, capsys) -> None:
+def test_install_main_json_output_for_normal_install(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
     skills_dir = tmp_path / "skills-root"
 
     exit_code = install_main(

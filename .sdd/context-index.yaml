@@ -1,0 +1,16 @@
+kind: codex.sdd.index
+standard_id: workbench-sdd/v1
+standard_version: 1
+fingerprint: 9b82c99e557f9e65e3909492f0c2ab5004c3324541602e6fa288ae2d2d70fcac
+generated_at_epoch: 1783339315
+read_policy: prefix_only_no_full_spec_body
+index_type: context
+candidate_limits:
+  related_specs: 5
+  related_diagrams: 3
+indexes:
+  spec-index.yaml: .sdd/spec-index.yaml
+  diagram-index.yaml: .sdd/diagram-index.yaml
+  module-index.yaml: .sdd/module-index.yaml
+  context-index.yaml: .sdd/context-index.yaml
+index_status: regenerated

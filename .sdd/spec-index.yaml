@@ -1,0 +1,28 @@
+kind: codex.sdd.index
+standard_id: workbench-sdd/v1
+standard_version: 1
+fingerprint: 9b82c99e557f9e65e3909492f0c2ab5004c3324541602e6fa288ae2d2d70fcac
+generated_at_epoch: 1783339315
+read_policy: prefix_only_no_full_spec_body
+index_type: spec
+specs:
+  001-codex-bridge-sdd-wrapper:
+    path: specs/001-codex-bridge-sdd-wrapper/spec.md
+    title: Codex Bridge SDD Wrapper
+    status: unknown
+    summary: Codex Mobile Bridge projects must expose a mandatory SDD structure that can be
+  002-sdd-visual-workbench:
+    path: specs/002-sdd-visual-workbench/spec.md
+    title: SDD Visual Workbench
+    status: unknown
+    summary: Build the development-mode visual workbench for Codex Mobile Bridge. The
+  003-workbench-sdd-standard:
+    path: specs/003-workbench-sdd-standard/spec.md
+    title: Workbench SDD Standard And Context Routing
+    status: validated
+    summary: "id: 003-workbench-sdd-standard"
+  004-workbench-scm-spec-intake:
+    path: specs/004-workbench-scm-spec-intake/spec.md
+    title: Workbench SCM Spec Intake
+    status: draft
+    summary: "id: 004-workbench-scm-spec-intake"

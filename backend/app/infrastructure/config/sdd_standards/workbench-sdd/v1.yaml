@@ -1,0 +1,287 @@
+kind: codex.workbenchSddStandard
+id: workbench-sdd/v1
+version: 1
+name: Workbench SDD Standard
+
+compatibility:
+  supported_ids:
+    - workbench-sdd/v1
+  unknown_version_policy: hard_error_for_write_context_indexing_and_actions
+  legacy_read_only_policy: warn_and_allow_read_only_inspection
+
+artifact_types:
+  required:
+    - manifest
+    - constitution
+    - architecture
+    - domain
+    - data
+    - spec
+    - plan
+    - tasks
+    - traceability
+    - diagram
+    - generated_index
+  optional:
+    - architecture-decision
+    - diagram-metadata
+    - domain-model
+    - data-model
+
+ownership:
+  allowed_owners:
+    - workbench
+    - project
+  workbench_owned:
+    - standard
+    - template
+    - taxonomy
+    - validation_rule
+  project_owned:
+    - manifest
+    - constitution
+    - architecture
+    - domain
+    - data
+    - spec
+    - plan
+    - tasks
+    - traceability
+    - diagram
+    - generated_index
+
+spec_lifecycle:
+  states:
+    - draft
+    - clarified
+    - planned
+    - task-ready
+    - in-progress
+    - implemented
+    - validated
+    - archived
+
+metadata:
+  required_fields:
+    - id
+    - title
+    - status
+    - type
+
+diagram_taxonomy:
+  required_metadata:
+    - diagram_id
+    - diagram_type
+    - scope
+    - status
+    - owner
+    - source
+  baseline:
+    - system-context
+    - components
+    - deployment
+    - sequence
+    - domain-model
+    - entity-relationship
+  feature:
+    - sequence
+    - state
+    - component-impact
+    - domain-impact
+    - data-impact
+  notation:
+    system-context: mermaid.flowchart
+    components: mermaid.flowchart
+    deployment: mermaid.flowchart
+    domain-model: mermaid.classDiagram
+    entity-relationship: mermaid.erDiagram
+    sequence: mermaid.sequenceDiagram
+    state: mermaid.stateDiagram-v2
+    component-impact: mermaid.flowchart
+    domain-impact: mermaid.classDiagram
+    data-impact: mermaid.erDiagram
+  source_directives:
+    mermaid.flowchart:
+      - flowchart
+      - graph
+    mermaid.sequenceDiagram:
+      - sequenceDiagram
+    mermaid.stateDiagram-v2:
+      - stateDiagram
+      - stateDiagram-v2
+    mermaid.classDiagram:
+      - classDiagram
+    mermaid.erDiagram:
+      - erDiagram
+
+diagram_governance:
+  baseline_scope: baseline
+  feature_scope: feature
+  protected_baseline_policy: baseline_impact_required
+  baseline_path_prefixes:
+    - architecture/
+  feature_path_prefixes:
+    - specs/
+  missing_metadata_policy: warn
+  render_validation_policy: not_available_without_configured_renderer
+  syntax_validation_policy: source_directive_and_basic_structure
+
+traceability:
+  required_link_types:
+    - requirement_to_acceptance_criteria
+    - requirement_to_task
+    - requirement_to_diagram
+    - task_to_test
+
+index_schemas:
+  generated_root: .sdd
+  files:
+    - spec-index.yaml
+    - diagram-index.yaml
+    - module-index.yaml
+    - context-index.yaml
+
+context_rules:
+  precedence:
+    - workbench_default
+    - project_profile
+    - project_override
+  required_safety_rules:
+    - manifest_first_resolution
+    - baseline_impact_gates
+    - no_broad_read
+    - unknown_version_hard_failure
+  allowed_override_keys:
+    - domains
+    - excluded_paths
+    - candidate_limits
+    - protected_baseline
+    - preferred_context
+
+candidate_limits:
+  related_specs: 5
+  related_diagrams: 3
+
+context_packs:
+  presets:
+    - new-feature
+    - modify-existing-feature
+    - bugfix
+    - architecture-change
+    - data-model-change
+    - domain-model-change
+    - implementation-from-spec
+    - diagram-update
+    - sdd-audit
+
+templates:
+  required_metadata:
+    - template_id
+    - artifact_type
+    - destination
+    - source
+  required:
+    - constitution
+    - architecture-overview
+    - adr
+    - domain-glossary
+    - domain-model-notes
+    - data-model
+    - entity-relationship-notes
+    - data-persistence-model
+    - feature-spec
+    - feature-plan
+    - feature-tasks
+    - traceability
+    - baseline-diagram-metadata
+    - feature-diagram-metadata
+  catalog:
+    constitution:
+      template_id: constitution
+      artifact_type: constitution
+      destination: .specify/memory/constitution.md
+      source: templates/constitution.md
+    architecture-overview:
+      template_id: architecture-overview
+      artifact_type: architecture
+      destination: architecture/overview.md
+      source: templates/architecture-overview.md
+    adr:
+      template_id: adr
+      artifact_type: architecture-decision
+      destination: architecture/adrs/0000-decision-title.md
+      source: templates/adr.md
+    domain-glossary:
+      template_id: domain-glossary
+      artifact_type: domain
+      destination: domain/glossary.md
+      source: templates/domain-glossary.md
+    domain-model-notes:
+      template_id: domain-model-notes
+      artifact_type: domain
+      destination: domain/model.md
+      source: templates/domain-model-notes.md
+    data-model:
+      template_id: data-model
+      artifact_type: data
+      destination: data/model.md
+      source: templates/data-model.md
+    entity-relationship-notes:
+      template_id: entity-relationship-notes
+      artifact_type: data
+      destination: data/entity-relationship.md
+      source: templates/entity-relationship-notes.md
+    data-persistence-model:
+      template_id: data-persistence-model
+      artifact_type: data
+      destination: data/persistence-model.md
+      source: templates/data-persistence-model.md
+    feature-spec:
+      template_id: feature-spec
+      artifact_type: spec
+      destination: specs/<feature>/spec.md
+      source: templates/feature-spec.md
+    feature-plan:
+      template_id: feature-plan
+      artifact_type: plan
+      destination: specs/<feature>/plan.md
+      source: templates/feature-plan.md
+    feature-tasks:
+      template_id: feature-tasks
+      artifact_type: tasks
+      destination: specs/<feature>/tasks.md
+      source: templates/feature-tasks.md
+    traceability:
+      template_id: traceability
+      artifact_type: traceability
+      destination: specs/<feature>/traceability.yaml
+      source: templates/traceability.yaml
+    baseline-diagram-metadata:
+      template_id: baseline-diagram-metadata
+      artifact_type: diagram-metadata
+      destination: architecture/diagrams/<diagram>.yaml
+      source: templates/baseline-diagram-metadata.yaml
+    feature-diagram-metadata:
+      template_id: feature-diagram-metadata
+      artifact_type: diagram-metadata
+      destination: specs/<feature>/diagrams/<diagram>.yaml
+      source: templates/feature-diagram-metadata.yaml
+
+scaffold:
+  required_artifacts:
+    - .specify/memory/constitution.md
+    - architecture/overview.md
+    - domain/glossary.md
+    - data/persistence-model.md
+    - specs
+    - .sdd
+
+llm_rules:
+  required_first_reads:
+    - codex-bridge.yaml
+    - standard_payload
+    - .specify/memory/constitution.md
+  blocked_behaviors:
+    - read_all_specs_without_context_pack
+    - edit_baseline_without_impact
+    - ignore_project_context_rules

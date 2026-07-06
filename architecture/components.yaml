@@ -1,0 +1,7 @@
+diagram_id: components
+diagram_type: components
+scope: baseline
+status: draft
+owner: project
+source: architecture/components.mmd
+change_policy: baseline_impact_required

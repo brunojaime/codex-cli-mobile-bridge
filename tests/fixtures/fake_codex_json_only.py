@@ -25,7 +25,11 @@ def main() -> int:
             }
         )
     )
-    print(json.dumps({"type": "turn.completed", "usage": {"input_tokens": 1, "output_tokens": 1}}))
+    print(
+        json.dumps(
+            {"type": "turn.completed", "usage": {"input_tokens": 1, "output_tokens": 1}}
+        )
+    )
     return 0
 
 

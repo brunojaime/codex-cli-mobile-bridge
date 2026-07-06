@@ -1,0 +1,35 @@
+id: 003-workbench-sdd-standard
+slug: 003-workbench-sdd-standard
+title: Workbench SDD Standard And Context Routing
+description: Codex Bridge Workbench must become the built-in SDD operating model for any
+status: draft
+last_run_state: metadata-refreshed
+generated:
+  title: true
+  description: true
+  user_pinned_title: false
+  user_pinned_description: false
+tasks:
+  total: 95
+  completed: 95
+  pending: 0
+diagrams:
+  total: 2
+  items:
+    diagrams-artifact-ownership-mmd:
+      path: diagrams/artifact-ownership.mmd
+      diagram_type: component-impact
+      metadata_path: diagrams/artifact-ownership.yaml
+    diagrams-context-pack-sequence-mmd:
+      path: diagrams/context-pack-sequence.mmd
+      diagram_type: sequence
+      metadata_path: diagrams/context-pack-sequence.yaml
+source_digests:
+  diagrams/artifact-ownership.mmd: d7639b1ca8ff2f66b5f979b9e00f0b0daf75c8ab7b663c56c7791b5433e83567
+  diagrams/artifact-ownership.yaml: ef366fdc86379563ea8d06d0339df4881a53ec499171b0b7834c83f5656e8fe6
+  diagrams/context-pack-sequence.mmd: 311427dff72a35a83b4a778caf2b15d32886a8a65cf1893e6e6f0eb8488db70f
+  diagrams/context-pack-sequence.yaml: 1584f3dc09ca185282cda992d7ab2a7d59ee2fbf8dfcc77e7d2e90caf9dc5c9d
+  plan.md: a4e35d2719e2d42b72b558d7f8f18b345bb8b374b3bb2ae3a231b7065f83b27b
+  spec.md: e969bd2014a5947e19d81d39c1894324aea2c7c24782d982fd4e53e9af7dec84
+  tasks.md: d0d6715857fef280231ead3c6242933bff58fb06fb67db91e84a4723cdcf630e
+  traceability.yaml: dd3ffbd87907d7e80aaff782f68df0a56b151e73846a9308298373794cef755e

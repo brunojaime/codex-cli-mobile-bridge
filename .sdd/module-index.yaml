@@ -1,0 +1,11 @@
+kind: codex.sdd.index
+standard_id: workbench-sdd/v1
+standard_version: 1
+fingerprint: 9b82c99e557f9e65e3909492f0c2ab5004c3324541602e6fa288ae2d2d70fcac
+generated_at_epoch: 1783339315
+read_policy: prefix_only_no_full_spec_body
+index_type: module
+modules:
+  workbench:
+    modules: "backend/app/application/services, backend/app/api, packages/codex_bridge_workbench/lib"
+    preferred_context: "specs/003-workbench-sdd-standard/spec.md, specs/003-workbench-sdd-standard/tasks.md"

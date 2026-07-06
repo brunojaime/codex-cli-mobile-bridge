@@ -7,10 +7,7 @@ from types import SimpleNamespace
 
 
 _SKILL_SCRIPTS = (
-    Path(__file__).resolve().parents[1]
-    / "skills"
-    / "onenote-connect"
-    / "scripts"
+    Path(__file__).resolve().parents[1] / "skills" / "onenote-connect" / "scripts"
 )
 if str(_SKILL_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SKILL_SCRIPTS))
@@ -133,7 +130,7 @@ class FakeGraphClient:
                         "href": "https://example.com/page-3",
                     }
                 },
-            }
+            },
         ]
 
     def get_page_content(self, *, page_id: str, include_ids: bool = True):
@@ -210,7 +207,9 @@ class FakeGraphClient:
             "treat_as_plain_text": treat_as_plain_text,
         }
 
-    def attach_to_page(self, *, page_id: str, asset_paths: list[str], target: str = "body") -> None:
+    def attach_to_page(
+        self, *, page_id: str, asset_paths: list[str], target: str = "body"
+    ) -> None:
         self.attached_calls.append(
             {"page_id": page_id, "asset_paths": list(asset_paths), "target": target}
         )
@@ -239,7 +238,9 @@ def test_list_cached_accounts_formats_human_output_without_graph_client() -> Non
 
     class UnusedGraphClient:
         def __init__(self, *args, **kwargs) -> None:
-            raise AssertionError("list-cached-accounts should not construct the Graph client")
+            raise AssertionError(
+                "list-cached-accounts should not construct the Graph client"
+            )
 
     exit_code = main(
         ["list-cached-accounts", "--client-id", "client-1"],
@@ -250,7 +251,10 @@ def test_list_cached_accounts_formats_human_output_without_graph_client() -> Non
     )
 
     assert exit_code == 0
-    assert stdout.getvalue() == "alice@example.com  Alice Example\nbob@example.com  Bob Example\n"
+    assert (
+        stdout.getvalue()
+        == "alice@example.com  Alice Example\nbob@example.com  Bob Example\n"
+    )
     assert stderr.getvalue() == ""
 
 
@@ -836,7 +840,9 @@ def test_replace_page_content_reports_success() -> None:
     )
 
     assert exit_code == 0
-    assert stdout.getvalue() == "Replaced content at target element-42 on page page-1.\n"
+    assert (
+        stdout.getvalue() == "Replaced content at target element-42 on page page-1.\n"
+    )
     assert FakeGraphClient.last_instance.replaced == {
         "page_id": "page-1",
         "target": "element-42",
@@ -881,7 +887,9 @@ def test_replace_page_content_plain_text_sets_flag_and_json_output() -> None:
     assert stderr.getvalue() == ""
 
 
-def test_replace_page_with_assets_accepts_mixed_content_and_assets(tmp_path: Path) -> None:
+def test_replace_page_with_assets_accepts_mixed_content_and_assets(
+    tmp_path: Path,
+) -> None:
     asset_path = tmp_path / "diagram.png"
     asset_path.write_text("placeholder")
     stdout = io.StringIO()
@@ -908,8 +916,9 @@ def test_replace_page_with_assets_accepts_mixed_content_and_assets(tmp_path: Pat
     )
 
     assert exit_code == 0
-    assert stdout.getvalue() == (
-        f"Replaced content at target element-42 on page page-1 with 1 asset(s).\n"
+    assert (
+        stdout.getvalue()
+        == "Replaced content at target element-42 on page page-1 with 1 asset(s).\n"
     )
     assert FakeGraphClient.last_instance.replaced_with_assets == {
         "page_id": "page-1",
@@ -921,7 +930,9 @@ def test_replace_page_with_assets_accepts_mixed_content_and_assets(tmp_path: Pat
     assert stderr.getvalue() == ""
 
 
-def test_replace_page_with_assets_supports_asset_only_json_output(tmp_path: Path) -> None:
+def test_replace_page_with_assets_supports_asset_only_json_output(
+    tmp_path: Path,
+) -> None:
     asset_path = tmp_path / "attachment.pdf"
     asset_path.write_text("placeholder")
     stdout = io.StringIO()
@@ -988,4 +999,6 @@ def test_cli_returns_one_for_graph_transport_failure() -> None:
     )
 
     assert exit_code == 1
-    assert "Graph transport_error: GET /me failed: connection refused" in stderr.getvalue()
+    assert (
+        "Graph transport_error: GET /me failed: connection refused" in stderr.getvalue()
+    )

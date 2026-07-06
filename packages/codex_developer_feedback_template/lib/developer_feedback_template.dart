@@ -94,6 +94,22 @@ const developerFeedbackReleaseWhenCompleteKey = Key(
   'developer-feedback-release-when-complete',
 );
 const developerFeedbackSendBatchKey = Key('developer-feedback-send-batch');
+const developerFeedbackSddTargetDropdownKey = Key(
+  'developer-feedback-sdd-target-dropdown',
+);
+const developerFeedbackSddWorkspaceKey = Key(
+  'developer-feedback-sdd-workspace',
+);
+const developerFeedbackSddSpecDropdownKey = Key(
+  'developer-feedback-sdd-spec-dropdown',
+);
+const developerFeedbackSddSpecIdKey = Key('developer-feedback-sdd-spec-id');
+const developerFeedbackSddArtifactDropdownKey = Key(
+  'developer-feedback-sdd-artifact-dropdown',
+);
+const developerFeedbackSddDryRunKey = Key('developer-feedback-sdd-dry-run');
+const developerFeedbackSddApplyKey = Key('developer-feedback-sdd-apply');
+const developerFeedbackSddStatusKey = Key('developer-feedback-sdd-status');
 const developerFeedbackQueueTabsKey = Key('developer-feedback-queue-tabs');
 const developerFeedbackQueueDomainTabKey = Key(
   'developer-feedback-queue-domain-tab',
@@ -106,6 +122,24 @@ const developerFeedbackPreviewCommentKey = Key(
   'developer-feedback-preview-comment',
 );
 const developerFeedbackEditCommentKey = Key('developer-feedback-edit-comment');
+const developerFeedbackEditRegionKey = Key('developer-feedback-edit-region');
+const developerFeedbackRegionEditorKey = Key(
+  'developer-feedback-region-editor',
+);
+const developerFeedbackRegionCanvasKey = Key(
+  'developer-feedback-region-canvas',
+);
+const developerFeedbackRegionLeftKey = Key('developer-feedback-region-left');
+const developerFeedbackRegionTopKey = Key('developer-feedback-region-top');
+const developerFeedbackRegionWidthKey = Key('developer-feedback-region-width');
+const developerFeedbackRegionHeightKey = Key(
+  'developer-feedback-region-height',
+);
+const developerFeedbackRegionApplyKey = Key('developer-feedback-region-apply');
+const developerFeedbackRegionRemoveKey = Key(
+  'developer-feedback-region-remove',
+);
+const developerFeedbackRegionErrorKey = Key('developer-feedback-region-error');
 const developerFeedbackPreviewThumbnailKey = Key(
   'developer-feedback-preview-thumbnail',
 );
@@ -543,6 +577,7 @@ class DeveloperFeedbackTemplate extends StatefulWidget {
     this.guidedTraceMaxFrames = 8,
     this.guidedTraceMaxEvents = 160,
     this.guidedTraceMaxDuration = const Duration(minutes: 2),
+    this.initialSddSpecTarget,
     super.key,
   });
 
@@ -594,6 +629,11 @@ class DeveloperFeedbackTemplate extends StatefulWidget {
   /// Maximum recording duration before the guided trace auto-stops.
   final Duration guidedTraceMaxDuration;
 
+  /// Optional SDD target embedded into newly captured feedback payloads.
+  ///
+  /// Leaving this null preserves the legacy feedback contract.
+  final DeveloperFeedbackSddSpecTarget? initialSddSpecTarget;
+
   @override
   State<DeveloperFeedbackTemplate> createState() =>
       _DeveloperFeedbackTemplateState();
@@ -635,6 +675,7 @@ class CodexDeveloperFeedbackTemplate extends DeveloperFeedbackTemplate {
     super.guidedTraceMaxFrames,
     super.guidedTraceMaxEvents,
     super.guidedTraceMaxDuration,
+    super.initialSddSpecTarget,
     super.key,
   });
 }
@@ -1210,6 +1251,7 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
             selectionPoints: points,
             audio: draft.audio,
             contextMetadata: _currentContextMetadata(),
+            sddSpecTarget: widget.initialSddSpecTarget,
           );
           setState(() {
             _items.add(item);
@@ -1836,6 +1878,7 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
       contextMetadata: _currentContextMetadata(),
       screen: _currentScreenSnapshot(),
       guidedTrace: trace,
+      sddSpecTarget: widget.initialSddSpecTarget,
     );
     setState(() => _items.add(item));
     _showMessage('Recorrido agregado a la cola.');
@@ -2150,12 +2193,157 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
     }
   }
 
+  Future<List<_SddProjectSpecOption>> _loadSddProjectSpecs(
+    String workspacePath,
+  ) async {
+    final normalizedWorkspace = workspacePath.trim();
+    if (normalizedWorkspace.isEmpty || _effectiveBridgeUrl.isEmpty) {
+      return const <_SddProjectSpecOption>[];
+    }
+    final baseUrl = _effectiveBridgeUrl.replaceAll(RegExp(r'/$'), '');
+    final ownsClient = widget.httpClient == null;
+    final client = widget.httpClient ?? http.Client();
+    try {
+      final uri = Uri.parse('$baseUrl/sdd/project').replace(
+        queryParameters: <String, String>{
+          'workspace_path': normalizedWorkspace,
+        },
+      );
+      final response = await client.get(uri);
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw Exception('HTTP ${response.statusCode}: ${response.body}');
+      }
+      final decoded = jsonDecode(response.body) as Map<String, Object?>;
+      final specs = decoded['specs'];
+      if (specs is! List) return const <_SddProjectSpecOption>[];
+      return specs
+          .whereType<Map>()
+          .map((spec) => _SddProjectSpecOption.fromJson(spec))
+          .where((spec) => spec.id.isNotEmpty)
+          .toList(growable: false);
+    } finally {
+      if (ownsClient) client.close();
+    }
+  }
+
+  Future<_SddBridgeCaptureResult> _runSddBridgeCapture({
+    required _SddSpecTargetMode mode,
+    required String workspacePath,
+    required String? specId,
+    required String artifact,
+    required List<DeveloperFeedbackItem> items,
+    required bool apply,
+  }) async {
+    final normalizedWorkspace = workspacePath.trim();
+    if (normalizedWorkspace.isEmpty) {
+      return const _SddBridgeCaptureResult(
+        status: 'blocked',
+        blocked: <String>['workspace_path is required'],
+        nextActions: <String>['Choose a workspace before using spec intake.'],
+      );
+    }
+    if (mode == _SddSpecTargetMode.existingSpec &&
+        (specId ?? '').trim().isEmpty) {
+      return const _SddBridgeCaptureResult(
+        status: 'blocked',
+        blocked: <String>['spec_id is required for existing_spec'],
+        nextActions: <String>['Choose a target spec.'],
+      );
+    }
+    if (_effectiveBridgeUrl.isEmpty) {
+      return const _SddBridgeCaptureResult(
+        status: 'blocked',
+        blocked: <String>['Bridge URL is not configured'],
+        nextActions: <String>['Configure CODEX_FEEDBACK_BRIDGE_URL.'],
+      );
+    }
+    final effectiveArtifact = mode == _SddSpecTargetMode.newSpec
+        ? 'auto'
+        : artifact;
+    final requestedTarget = DeveloperFeedbackSddSpecTarget(
+      mode: mode.apiValue,
+      specId: specId,
+      artifact: effectiveArtifact,
+    );
+    final targetConflict = _embeddedTargetConflict(items, requestedTarget);
+    if (targetConflict != null) {
+      return _SddBridgeCaptureResult(
+        status: 'blocked',
+        blocked: <String>['spec_target_conflict: $targetConflict'],
+        nextActions: const <String>[
+          'Use the embedded target or create a separate feedback item.',
+        ],
+      );
+    }
+
+    final baseUrl = _effectiveBridgeUrl.replaceAll(RegExp(r'/$'), '');
+    final ownsClient = widget.httpClient == null;
+    final client = widget.httpClient ?? http.Client();
+    try {
+      final feedbackItemIds = <String>[];
+      for (final item in items) {
+        final response = await client.post(
+          Uri.parse('$baseUrl/feedback-queue'),
+          headers: const <String, String>{'Content-Type': 'application/json'},
+          body: jsonEncode(item.toBridgeJson()),
+        );
+        if (response.statusCode < 200 || response.statusCode >= 300) {
+          return _SddBridgeCaptureResult(
+            status: 'blocked',
+            blocked: <String>['feedback_queue_create_failed'],
+            nextActions: <String>[response.body],
+          );
+        }
+        final decoded = jsonDecode(response.body) as Map<String, Object?>;
+        feedbackItemIds.add(decoded['id']?.toString() ?? item.id);
+      }
+
+      final path = apply
+          ? '/sdd/bridge-captures/apply'
+          : '/sdd/bridge-captures/dry-run';
+      final response = await client.post(
+        Uri.parse('$baseUrl$path'),
+        headers: const <String, String>{'Content-Type': 'application/json'},
+        body: jsonEncode(<String, Object?>{
+          'workspacePath': normalizedWorkspace,
+          'specTarget': <String, Object?>{
+            'mode': mode.apiValue,
+            if ((specId ?? '').trim().isNotEmpty) 'specId': specId!.trim(),
+            'artifact': effectiveArtifact,
+          },
+          'feedbackItemIds': feedbackItemIds,
+          'jobId': 'bridge-capture-${DateTime.now().microsecondsSinceEpoch}',
+        }),
+      );
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        return _SddBridgeCaptureResult(
+          status: 'blocked',
+          blocked: <String>['sdd_bridge_capture_failed'],
+          nextActions: <String>[response.body],
+        );
+      }
+      return _SddBridgeCaptureResult.fromJson(
+        jsonDecode(response.body) as Map<String, Object?>,
+      );
+    } finally {
+      if (ownsClient) client.close();
+    }
+  }
+
   void _openPendingDialog() {
     final presetsFuture = _loadWorkflowPresets();
     var selectedPresetId = '';
     _FeedbackExecutionTargetKind? selectedExecutionTargetKind;
     var releaseWhenComplete = false;
     var sending = false;
+    final initialEmbeddedTarget = _commonEmbeddedSddTarget(_items);
+    var selectedSddTargetMode = _modeFromEmbeddedTarget(initialEmbeddedTarget);
+    var selectedSddWorkspacePath = '';
+    var selectedSddSpecId = initialEmbeddedTarget?.specId ?? '';
+    var selectedSddArtifact = initialEmbeddedTarget?.artifact ?? 'tasks';
+    var sddBusy = false;
+    var sddResult = const _SddBridgeCaptureResult(status: 'idle');
+    Future<List<_SddProjectSpecOption>>? specsFuture;
     showDialog<void>(
       context: widget.navigatorKey?.currentContext ?? context,
       builder: (context) => StatefulBuilder(
@@ -2192,6 +2380,13 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
                 );
           final selectedItems =
               selectedExecutionGroup?.items ?? const <DeveloperFeedbackItem>[];
+          final defaultSddWorkspace =
+              selectedExecutionGroup?.target.workspacePath?.trim() ??
+              widget.domainWorkspacePath.trim();
+          if (selectedSddWorkspacePath.trim().isEmpty &&
+              defaultSddWorkspace.isNotEmpty) {
+            selectedSddWorkspacePath = defaultSddWorkspace;
+          }
           final showExecutionTabs =
               _feedbackExecutionTargetEnabled && executionGroups.length > 1;
           return AlertDialog(
@@ -2202,256 +2397,525 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
               width: dialogWidth,
               child: _items.isEmpty
                   ? const Text('No hay feedback pendiente.')
-                  : Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: <Widget>[
-                        if (showExecutionTabs) ...[
-                          DefaultTabController(
-                            length: executionGroups.length,
-                            initialIndex: executionGroups.indexWhere(
-                              (group) =>
-                                  group.target.kind ==
-                                  selectedExecutionTargetKind,
+                  : SingleChildScrollView(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: <Widget>[
+                          if (showExecutionTabs) ...[
+                            DefaultTabController(
+                              length: executionGroups.length,
+                              initialIndex: executionGroups.indexWhere(
+                                (group) =>
+                                    group.target.kind ==
+                                    selectedExecutionTargetKind,
+                              ),
+                              child: TabBar(
+                                key: developerFeedbackQueueTabsKey,
+                                isScrollable: true,
+                                onTap: (index) {
+                                  setDialogState(() {
+                                    selectedExecutionTargetKind =
+                                        executionGroups[index].target.kind;
+                                  });
+                                },
+                                tabs: executionGroups
+                                    .map(
+                                      (group) => Tab(
+                                        key:
+                                            group.target.kind ==
+                                                _FeedbackExecutionTargetKind
+                                                    .codexCli
+                                            ? developerFeedbackQueueCodexCliTabKey
+                                            : developerFeedbackQueueDomainTabKey,
+                                        text:
+                                            '${group.target.label} (${group.items.length})',
+                                      ),
+                                    )
+                                    .toList(),
+                              ),
                             ),
-                            child: TabBar(
-                              key: developerFeedbackQueueTabsKey,
-                              isScrollable: true,
-                              onTap: (index) {
-                                setDialogState(() {
-                                  selectedExecutionTargetKind =
-                                      executionGroups[index].target.kind;
-                                });
-                              },
-                              tabs: executionGroups
-                                  .map(
-                                    (group) => Tab(
-                                      key:
-                                          group.target.kind ==
-                                              _FeedbackExecutionTargetKind
-                                                  .codexCli
-                                          ? developerFeedbackQueueCodexCliTabKey
-                                          : developerFeedbackQueueDomainTabKey,
-                                      text:
-                                          '${group.target.label} (${group.items.length})',
+                            const SizedBox(height: 12),
+                          ],
+                          ConstrainedBox(
+                            constraints: BoxConstraints(
+                              maxHeight: math.min(
+                                240.0,
+                                MediaQuery.sizeOf(context).height * 0.32,
+                              ),
+                            ),
+                            child: selectedItems.isEmpty
+                                ? Center(
+                                    child: Text(
+                                      'No hay feedback pendiente para ${selectedExecutionGroup!.target.label}.',
+                                      textAlign: TextAlign.center,
                                     ),
                                   )
-                                  .toList(),
-                            ),
-                          ),
-                          const SizedBox(height: 12),
-                        ],
-                        ConstrainedBox(
-                          constraints: BoxConstraints(
-                            maxHeight: math.min(
-                              240.0,
-                              MediaQuery.sizeOf(context).height * 0.32,
-                            ),
-                          ),
-                          child: selectedItems.isEmpty
-                              ? Center(
-                                  child: Text(
-                                    'No hay feedback pendiente para ${selectedExecutionGroup!.target.label}.',
-                                    textAlign: TextAlign.center,
-                                  ),
-                                )
-                              : ListView.separated(
-                                  shrinkWrap: true,
-                                  cacheExtent: 1000,
-                                  itemCount: selectedItems.length,
-                                  separatorBuilder: (_, _) =>
-                                      const Divider(height: 20),
-                                  itemBuilder: (context, index) {
-                                    final item = selectedItems[index];
-                                    return Container(
-                                      key: developerFeedbackPreviewItemKey,
-                                      padding: const EdgeInsets.all(10),
-                                      decoration: BoxDecoration(
-                                        border: Border.all(
+                                : ListView.separated(
+                                    shrinkWrap: true,
+                                    cacheExtent: 1000,
+                                    itemCount: selectedItems.length,
+                                    separatorBuilder: (_, _) =>
+                                        const Divider(height: 20),
+                                    itemBuilder: (context, index) {
+                                      final item = selectedItems[index];
+                                      return Container(
+                                        key: developerFeedbackPreviewItemKey,
+                                        padding: const EdgeInsets.all(10),
+                                        decoration: BoxDecoration(
+                                          border: Border.all(
+                                            color: Theme.of(
+                                              context,
+                                            ).colorScheme.outlineVariant,
+                                          ),
+                                          borderRadius: BorderRadius.circular(
+                                            8,
+                                          ),
                                           color: Theme.of(
                                             context,
-                                          ).colorScheme.outlineVariant,
+                                          ).colorScheme.surfaceContainerHighest,
                                         ),
-                                        borderRadius: BorderRadius.circular(8),
-                                        color: Theme.of(
-                                          context,
-                                        ).colorScheme.surfaceContainerHighest,
-                                      ),
-                                      child: Row(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
-                                        children: <Widget>[
-                                          _FeedbackPreviewThumbnail(item: item),
-                                          const SizedBox(width: 12),
-                                          Expanded(
-                                            child: Column(
-                                              crossAxisAlignment:
-                                                  CrossAxisAlignment.start,
-                                              children: <Widget>[
-                                                SelectableText(
-                                                  _feedbackPreviewComment(item),
-                                                  key:
-                                                      developerFeedbackPreviewCommentKey,
-                                                  maxLines: 4,
-                                                  style: Theme.of(
-                                                    context,
-                                                  ).textTheme.bodyMedium,
-                                                ),
-                                                const SizedBox(height: 8),
-                                                Wrap(
-                                                  spacing: 8,
-                                                  runSpacing: 4,
-                                                  children: <Widget>[
-                                                    _PreviewMetaChip(
-                                                      key:
-                                                          developerFeedbackPreviewBoundsKey,
-                                                      icon: Icons.crop_free,
-                                                      label:
-                                                          _formatSelectionBounds(
-                                                            item.selectionBounds,
-                                                          ),
+                                        child: Row(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: <Widget>[
+                                            _FeedbackPreviewThumbnail(
+                                              item: item,
+                                            ),
+                                            const SizedBox(width: 12),
+                                            Expanded(
+                                              child: Column(
+                                                crossAxisAlignment:
+                                                    CrossAxisAlignment.start,
+                                                children: <Widget>[
+                                                  SelectableText(
+                                                    _feedbackPreviewComment(
+                                                      item,
                                                     ),
-                                                    _PreviewMetaChip(
-                                                      key:
-                                                          developerFeedbackPreviewAudioKey,
-                                                      icon: item.audio == null
-                                                          ? Icons
-                                                                .mic_off_outlined
-                                                          : Icons
-                                                                .mic_none_outlined,
-                                                      label:
-                                                          _formatAudioSummary(
-                                                            item.audio,
-                                                          ),
-                                                    ),
-                                                    if (item.guidedTrace !=
-                                                        null)
+                                                    key:
+                                                        developerFeedbackPreviewCommentKey,
+                                                    maxLines: 4,
+                                                    style: Theme.of(
+                                                      context,
+                                                    ).textTheme.bodyMedium,
+                                                  ),
+                                                  const SizedBox(height: 8),
+                                                  Wrap(
+                                                    spacing: 8,
+                                                    runSpacing: 4,
+                                                    children: <Widget>[
                                                       _PreviewMetaChip(
-                                                        icon: Icons.timeline,
-                                                        label:
-                                                            '${item.guidedTrace!.frames.length} pantallas · '
-                                                            '${item.guidedTrace!.timeline.length} eventos',
+                                                        key:
+                                                            developerFeedbackPreviewBoundsKey,
+                                                        icon: Icons.crop_free,
+                                                        label: _formatSelectionBounds(
+                                                          item.selectionBounds,
+                                                        ),
                                                       ),
-                                                  ],
+                                                      _PreviewMetaChip(
+                                                        key:
+                                                            developerFeedbackPreviewAudioKey,
+                                                        icon: item.audio == null
+                                                            ? Icons
+                                                                  .mic_off_outlined
+                                                            : Icons
+                                                                  .mic_none_outlined,
+                                                        label:
+                                                            _formatAudioSummary(
+                                                              item.audio,
+                                                            ),
+                                                      ),
+                                                      if (item.guidedTrace !=
+                                                          null)
+                                                        _PreviewMetaChip(
+                                                          icon: Icons.timeline,
+                                                          label:
+                                                              '${item.guidedTrace!.frames.length} pantallas · '
+                                                              '${item.guidedTrace!.timeline.length} eventos',
+                                                        ),
+                                                    ],
+                                                  ),
+                                                ],
+                                              ),
+                                            ),
+                                            Column(
+                                              mainAxisSize: MainAxisSize.min,
+                                              children: <Widget>[
+                                                IconButton(
+                                                  key:
+                                                      developerFeedbackEditCommentKey,
+                                                  tooltip: 'Editar comentario',
+                                                  onPressed: sending
+                                                      ? null
+                                                      : () async {
+                                                          await _editQueuedComment(
+                                                            item,
+                                                          );
+                                                          if (context.mounted) {
+                                                            setDialogState(
+                                                              () {},
+                                                            );
+                                                          }
+                                                        },
+                                                  icon: const Icon(
+                                                    Icons.edit_outlined,
+                                                  ),
+                                                ),
+                                                IconButton(
+                                                  key:
+                                                      developerFeedbackEditRegionKey,
+                                                  tooltip: 'Editar región',
+                                                  onPressed: sending
+                                                      ? null
+                                                      : () async {
+                                                          await _editQueuedRegion(
+                                                            item,
+                                                          );
+                                                          if (context.mounted) {
+                                                            setDialogState(
+                                                              () {},
+                                                            );
+                                                          }
+                                                        },
+                                                  icon: const Icon(
+                                                    Icons.crop_free_outlined,
+                                                  ),
+                                                ),
+                                                IconButton(
+                                                  tooltip: 'Eliminar',
+                                                  onPressed: sending
+                                                      ? null
+                                                      : () {
+                                                          setState(() {
+                                                            _items.remove(item);
+                                                            if (_items
+                                                                .isEmpty) {
+                                                              _pendingQuickAskId =
+                                                                  null;
+                                                            }
+                                                          });
+                                                          setDialogState(() {});
+                                                        },
+                                                  icon: const Icon(
+                                                    Icons.delete_outline,
+                                                  ),
                                                 ),
                                               ],
                                             ),
-                                          ),
-                                          Column(
-                                            mainAxisSize: MainAxisSize.min,
-                                            children: <Widget>[
-                                              IconButton(
-                                                key:
-                                                    developerFeedbackEditCommentKey,
-                                                tooltip: 'Editar comentario',
-                                                onPressed: sending
-                                                    ? null
-                                                    : () async {
-                                                        await _editQueuedComment(
-                                                          item,
-                                                        );
-                                                        if (context.mounted) {
-                                                          setDialogState(() {});
-                                                        }
-                                                      },
-                                                icon: const Icon(
-                                                  Icons.edit_outlined,
-                                                ),
-                                              ),
-                                              IconButton(
-                                                tooltip: 'Eliminar',
-                                                onPressed: sending
-                                                    ? null
-                                                    : () {
-                                                        setState(() {
-                                                          _items.remove(item);
-                                                          if (_items.isEmpty) {
-                                                            _pendingQuickAskId =
-                                                                null;
-                                                          }
-                                                        });
-                                                        setDialogState(() {});
-                                                      },
-                                                icon: const Icon(
-                                                  Icons.delete_outline,
-                                                ),
-                                              ),
-                                            ],
-                                          ),
-                                        ],
-                                      ),
-                                    );
-                                  },
+                                          ],
+                                        ),
+                                      );
+                                    },
+                                  ),
+                          ),
+                          const SizedBox(height: 16),
+                          FutureBuilder<_DeveloperFeedbackWorkflowPresets>(
+                            future: presetsFuture,
+                            builder: (context, snapshot) {
+                              final presets =
+                                  snapshot.data ??
+                                  _DeveloperFeedbackWorkflowPresets.fallback();
+                              final presetIds = presets.presets
+                                  .map((preset) => preset.id)
+                                  .toSet();
+                              final value =
+                                  selectedPresetId.isNotEmpty &&
+                                      presetIds.contains(selectedPresetId)
+                                  ? selectedPresetId
+                                  : presets.defaultPresetId;
+                              return DropdownButtonFormField<String>(
+                                key: developerFeedbackPresetDropdownKey,
+                                initialValue: value,
+                                decoration: const InputDecoration(
+                                  labelText: 'Preset',
+                                  border: OutlineInputBorder(),
                                 ),
-                        ),
-                        const SizedBox(height: 16),
-                        FutureBuilder<_DeveloperFeedbackWorkflowPresets>(
-                          future: presetsFuture,
-                          builder: (context, snapshot) {
-                            final presets =
-                                snapshot.data ??
-                                _DeveloperFeedbackWorkflowPresets.fallback();
-                            final presetIds = presets.presets
-                                .map((preset) => preset.id)
-                                .toSet();
-                            final value =
-                                selectedPresetId.isNotEmpty &&
-                                    presetIds.contains(selectedPresetId)
-                                ? selectedPresetId
-                                : presets.defaultPresetId;
-                            return DropdownButtonFormField<String>(
-                              key: developerFeedbackPresetDropdownKey,
-                              initialValue: value,
+                                isExpanded: true,
+                                items: presets.presets
+                                    .map(
+                                      (preset) => DropdownMenuItem<String>(
+                                        value: preset.id,
+                                        child: Text(
+                                          preset.name,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                      ),
+                                    )
+                                    .toList(),
+                                onChanged: sending
+                                    ? null
+                                    : (value) {
+                                        if (value == null) return;
+                                        setDialogState(() {
+                                          selectedPresetId = value;
+                                        });
+                                      },
+                              );
+                            },
+                          ),
+                          Row(
+                            children: <Widget>[
+                              Checkbox(
+                                key: developerFeedbackReleaseWhenCompleteKey,
+                                value: releaseWhenComplete,
+                                onChanged: sending
+                                    ? null
+                                    : (value) {
+                                        setDialogState(() {
+                                          releaseWhenComplete = value ?? false;
+                                        });
+                                      },
+                              ),
+                              Expanded(
+                                child: Text(
+                                  compactActions
+                                      ? 'Release al finalizar'
+                                      : 'Generar release al finalizar',
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 12),
+                          DropdownButtonFormField<_SddSpecTargetMode>(
+                            key: developerFeedbackSddTargetDropdownKey,
+                            initialValue: selectedSddTargetMode,
+                            isExpanded: true,
+                            decoration: const InputDecoration(
+                              labelText: 'Spec',
+                              border: OutlineInputBorder(),
+                            ),
+                            items: _SddSpecTargetMode.values
+                                .map(
+                                  (mode) =>
+                                      DropdownMenuItem<_SddSpecTargetMode>(
+                                        value: mode,
+                                        child: Text(mode.label),
+                                      ),
+                                )
+                                .toList(),
+                            onChanged: sending || sddBusy
+                                ? null
+                                : (value) {
+                                    if (value == null) return;
+                                    setDialogState(() {
+                                      selectedSddTargetMode = value;
+                                      sddResult = const _SddBridgeCaptureResult(
+                                        status: 'idle',
+                                      );
+                                      specsFuture = null;
+                                    });
+                                  },
+                          ),
+                          if (selectedSddTargetMode !=
+                              _SddSpecTargetMode.none) ...[
+                            const SizedBox(height: 12),
+                            TextFormField(
+                              key: developerFeedbackSddWorkspaceKey,
+                              initialValue: selectedSddWorkspacePath,
+                              enabled: !sending && !sddBusy,
                               decoration: const InputDecoration(
-                                labelText: 'Preset',
+                                labelText: 'Workspace',
                                 border: OutlineInputBorder(),
                               ),
-                              isExpanded: true,
-                              items: presets.presets
-                                  .map(
-                                    (preset) => DropdownMenuItem<String>(
-                                      value: preset.id,
-                                      child: Text(
-                                        preset.name,
-                                        overflow: TextOverflow.ellipsis,
-                                      ),
+                              onChanged: (value) {
+                                selectedSddWorkspacePath = value;
+                                specsFuture = null;
+                              },
+                            ),
+                            const SizedBox(height: 12),
+                            if (selectedSddTargetMode ==
+                                _SddSpecTargetMode.existingSpec)
+                              FutureBuilder<List<_SddProjectSpecOption>>(
+                                future: specsFuture ??= _loadSddProjectSpecs(
+                                  selectedSddWorkspacePath,
+                                ),
+                                builder: (context, snapshot) {
+                                  final specs =
+                                      snapshot.data ??
+                                      const <_SddProjectSpecOption>[];
+                                  final values = specs
+                                      .map((spec) => spec.id)
+                                      .toSet();
+                                  final value =
+                                      values.contains(selectedSddSpecId)
+                                      ? selectedSddSpecId
+                                      : (specs.isEmpty ? null : specs.first.id);
+                                  if ((selectedSddSpecId.isEmpty ||
+                                          !values.contains(
+                                            selectedSddSpecId,
+                                          )) &&
+                                      value != null) {
+                                    selectedSddSpecId = value;
+                                  }
+                                  if (snapshot.connectionState ==
+                                      ConnectionState.waiting) {
+                                    return const LinearProgressIndicator();
+                                  }
+                                  if (snapshot.hasError || specs.isEmpty) {
+                                    return const Text(
+                                      'No se pudieron cargar specs para este workspace.',
+                                    );
+                                  }
+                                  return DropdownButtonFormField<String>(
+                                    key: developerFeedbackSddSpecDropdownKey,
+                                    initialValue: value,
+                                    decoration: const InputDecoration(
+                                      labelText: 'Spec existente',
+                                      border: OutlineInputBorder(),
                                     ),
-                                  )
-                                  .toList(),
-                              onChanged: sending
+                                    isExpanded: true,
+                                    items: specs
+                                        .map(
+                                          (spec) => DropdownMenuItem<String>(
+                                            value: spec.id,
+                                            child: Text(
+                                              spec.label,
+                                              overflow: TextOverflow.ellipsis,
+                                            ),
+                                          ),
+                                        )
+                                        .toList(),
+                                    onChanged: sending || sddBusy
+                                        ? null
+                                        : (value) {
+                                            if (value == null) return;
+                                            setDialogState(() {
+                                              selectedSddSpecId = value;
+                                              sddResult =
+                                                  const _SddBridgeCaptureResult(
+                                                    status: 'idle',
+                                                  );
+                                            });
+                                          },
+                                  );
+                                },
+                              )
+                            else
+                              TextFormField(
+                                key: developerFeedbackSddSpecIdKey,
+                                initialValue: selectedSddSpecId,
+                                enabled: !sending && !sddBusy,
+                                decoration: const InputDecoration(
+                                  labelText: 'Nuevo spec id',
+                                  border: OutlineInputBorder(),
+                                ),
+                                onChanged: (value) => selectedSddSpecId = value,
+                              ),
+                            const SizedBox(height: 12),
+                            DropdownButtonFormField<String>(
+                              key: developerFeedbackSddArtifactDropdownKey,
+                              initialValue: selectedSddArtifact,
+                              isExpanded: true,
+                              decoration: const InputDecoration(
+                                labelText: 'Artifact',
+                                border: OutlineInputBorder(),
+                              ),
+                              items: const <DropdownMenuItem<String>>[
+                                DropdownMenuItem(
+                                  value: 'tasks',
+                                  child: Text('Tasks'),
+                                ),
+                                DropdownMenuItem(
+                                  value: 'spec',
+                                  child: Text('Spec'),
+                                ),
+                                DropdownMenuItem(
+                                  value: 'plan',
+                                  child: Text('Plan'),
+                                ),
+                                DropdownMenuItem(
+                                  value: 'diagram',
+                                  child: Text('Diagram'),
+                                ),
+                                DropdownMenuItem(
+                                  value: 'auto',
+                                  child: Text('Auto'),
+                                ),
+                              ],
+                              onChanged: sending || sddBusy
                                   ? null
                                   : (value) {
                                       if (value == null) return;
                                       setDialogState(() {
-                                        selectedPresetId = value;
-                                      });
-                                    },
-                            );
-                          },
-                        ),
-                        Row(
-                          children: <Widget>[
-                            Checkbox(
-                              key: developerFeedbackReleaseWhenCompleteKey,
-                              value: releaseWhenComplete,
-                              onChanged: sending
-                                  ? null
-                                  : (value) {
-                                      setDialogState(() {
-                                        releaseWhenComplete = value ?? false;
+                                        selectedSddArtifact = value;
+                                        sddResult =
+                                            const _SddBridgeCaptureResult(
+                                              status: 'idle',
+                                            );
                                       });
                                     },
                             ),
-                            Expanded(
-                              child: Text(
-                                compactActions
-                                    ? 'Release al finalizar'
-                                    : 'Generar release al finalizar',
-                                overflow: TextOverflow.ellipsis,
-                              ),
+                            const SizedBox(height: 12),
+                            Row(
+                              children: <Widget>[
+                                OutlinedButton.icon(
+                                  key: developerFeedbackSddDryRunKey,
+                                  onPressed:
+                                      selectedItems.isEmpty ||
+                                          sending ||
+                                          sddBusy
+                                      ? null
+                                      : () async {
+                                          setDialogState(() => sddBusy = true);
+                                          final result =
+                                              await _runSddBridgeCapture(
+                                                mode: selectedSddTargetMode,
+                                                workspacePath:
+                                                    selectedSddWorkspacePath,
+                                                specId: selectedSddSpecId,
+                                                artifact: selectedSddArtifact,
+                                                items: selectedItems,
+                                                apply: false,
+                                              );
+                                          if (!context.mounted) return;
+                                          setDialogState(() {
+                                            sddResult = result;
+                                            sddBusy = false;
+                                          });
+                                        },
+                                  icon: const Icon(Icons.preview_outlined),
+                                  label: const Text('Preview'),
+                                ),
+                                const SizedBox(width: 8),
+                                FilledButton.icon(
+                                  key: developerFeedbackSddApplyKey,
+                                  onPressed:
+                                      selectedItems.isEmpty ||
+                                          sending ||
+                                          sddBusy
+                                      ? null
+                                      : () async {
+                                          setDialogState(() => sddBusy = true);
+                                          final result =
+                                              await _runSddBridgeCapture(
+                                                mode: selectedSddTargetMode,
+                                                workspacePath:
+                                                    selectedSddWorkspacePath,
+                                                specId: selectedSddSpecId,
+                                                artifact: selectedSddArtifact,
+                                                items: selectedItems,
+                                                apply: true,
+                                              );
+                                          if (!context.mounted) return;
+                                          setDialogState(() {
+                                            sddResult = result;
+                                            sddBusy = false;
+                                          });
+                                        },
+                                  icon: const Icon(Icons.task_alt),
+                                  label: Text(
+                                    sddBusy ? 'Procesando' : 'Aplicar',
+                                  ),
+                                ),
+                              ],
                             ),
+                            if (sddResult.status != 'idle') ...[
+                              const SizedBox(height: 8),
+                              _SddBridgeCaptureStatus(result: sddResult),
+                            ],
                           ],
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
             ),
             actions: <Widget>[
@@ -2479,7 +2943,10 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
                 IconButton.filled(
                   key: developerFeedbackSendBatchKey,
                   tooltip: sending ? 'Enviando' : 'Enviar',
-                  onPressed: _items.isEmpty || sending
+                  onPressed:
+                      _items.isEmpty ||
+                          sending ||
+                          selectedSddTargetMode != _SddSpecTargetMode.none
                       ? null
                       : () async {
                           setDialogState(() => sending = true);
@@ -2521,7 +2988,10 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
                 ),
                 FilledButton.icon(
                   key: developerFeedbackSendBatchKey,
-                  onPressed: _items.isEmpty || sending
+                  onPressed:
+                      _items.isEmpty ||
+                          sending ||
+                          selectedSddTargetMode != _SddSpecTargetMode.none
                       ? null
                       : () async {
                           setDialogState(() => sending = true);
@@ -2560,6 +3030,23 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
     setState(() {
       final index = _items.indexWhere((candidate) => candidate.id == item.id);
       if (index != -1) _items[index] = item.copyWith(comment: updated);
+    });
+  }
+
+  Future<void> _editQueuedRegion(DeveloperFeedbackItem item) async {
+    final updated = await showDialog<List<Offset>>(
+      context: widget.navigatorKey?.currentContext ?? context,
+      builder: (context) => _EditFeedbackRegionDialog(
+        screenshotPngBase64: item.screenshotPngBase64,
+        initialBounds: item.selectionBounds,
+      ),
+    );
+    if (updated == null || !mounted) return;
+    setState(() {
+      final index = _items.indexWhere((candidate) => candidate.id == item.id);
+      if (index != -1) {
+        _items[index] = item.copyWith(selectionPoints: updated);
+      }
     });
   }
 
@@ -3539,6 +4026,226 @@ class _DeveloperFeedbackAppUpdaterState
 
 enum _FeedbackExecutionTargetKind { domain, codexCli }
 
+enum _SddSpecTargetMode {
+  none,
+  newSpec,
+  existingSpec;
+
+  String get apiValue => switch (this) {
+    _SddSpecTargetMode.none => 'none',
+    _SddSpecTargetMode.newSpec => 'new_spec',
+    _SddSpecTargetMode.existingSpec => 'existing_spec',
+  };
+
+  String get label => switch (this) {
+    _SddSpecTargetMode.none => 'Sin spec',
+    _SddSpecTargetMode.newSpec => 'Nuevo spec',
+    _SddSpecTargetMode.existingSpec => 'Spec existente',
+  };
+}
+
+class _SddProjectSpecOption {
+  const _SddProjectSpecOption({required this.id, required this.title});
+
+  final String id;
+  final String title;
+
+  String get label => title.trim().isEmpty || title == id ? id : '$id · $title';
+
+  factory _SddProjectSpecOption.fromJson(Map<dynamic, dynamic> json) {
+    final id = json['id']?.toString() ?? '';
+    return _SddProjectSpecOption(
+      id: id,
+      title: json['title']?.toString() ?? id,
+    );
+  }
+}
+
+class _SddBridgeCaptureResult {
+  const _SddBridgeCaptureResult({
+    required this.status,
+    this.targetMode = '',
+    this.plannedFiles = const <String>[],
+    this.blocked = const <String>[],
+    this.rejectedMedia = const <String>[],
+    this.nextActions = const <String>[],
+    this.jobStatus,
+    this.activityState,
+    this.activityEvents = const <String>[],
+  });
+
+  final String status;
+  final String targetMode;
+  final List<String> plannedFiles;
+  final List<String> blocked;
+  final List<String> rejectedMedia;
+  final List<String> nextActions;
+  final String? jobStatus;
+  final String? activityState;
+  final List<String> activityEvents;
+
+  bool get retryAvailable =>
+      jobStatus == 'failed' ||
+      jobStatus == 'timed_out' ||
+      jobStatus == 'cancelled';
+
+  factory _SddBridgeCaptureResult.fromJson(Map<String, Object?> json) {
+    final dryRun = _objectMap(json['dry_run']);
+    final apply = _objectMap(json['apply_result']);
+    final job = _objectMap(apply['job']);
+    final activity = _objectMap(job['activity']);
+    return _SddBridgeCaptureResult(
+      status: json['status']?.toString() ?? 'unknown',
+      targetMode: json['target_mode']?.toString() ?? '',
+      plannedFiles: <String>[
+        ..._stringList(dryRun['target_files']),
+        ..._stringList(dryRun['intended_artifact_updates']),
+      ],
+      blocked: <String>[
+        ..._stringList(json['blocked']),
+        ..._stringList(dryRun['blocked_reasons']),
+        ..._stringList(apply['blocked']),
+      ],
+      rejectedMedia: _rejectedMediaList(dryRun['rejected_media']),
+      nextActions: <String>[
+        ..._stringList(json['next_actions']),
+        ..._stringList(dryRun['next_actions']),
+        ..._stringList(apply['next_actions']),
+      ],
+      jobStatus: job['status']?.toString(),
+      activityState: activity['state']?.toString(),
+      activityEvents: _sddActivityLabels(activity['events']),
+    );
+  }
+}
+
+class _SddBridgeCaptureStatus extends StatelessWidget {
+  const _SddBridgeCaptureStatus({required this.result});
+
+  final _SddBridgeCaptureResult result;
+
+  @override
+  Widget build(BuildContext context) {
+    final details = <String>[
+      'Status: ${result.status}',
+      if ((result.jobStatus ?? '').isNotEmpty) 'Job: ${result.jobStatus}',
+      if ((result.activityState ?? '').isNotEmpty)
+        'Activity: ${result.activityState}',
+      if (result.activityEvents.isNotEmpty)
+        'Events: ${result.activityEvents.take(3).join(', ')}',
+      if (result.retryAvailable) 'Retry: available from Workbench job controls',
+      if (result.plannedFiles.isNotEmpty)
+        'Plan: ${result.plannedFiles.take(3).join(', ')}',
+      if (result.blocked.isNotEmpty) 'Blocked: ${result.blocked.join(', ')}',
+      if (result.rejectedMedia.isNotEmpty)
+        'Rejected media: ${result.rejectedMedia.join(', ')}',
+      if (result.nextActions.isNotEmpty)
+        'Next: ${result.nextActions.take(2).join(' ')}',
+    ];
+    final colorScheme = Theme.of(context).colorScheme;
+    return Container(
+      key: developerFeedbackSddStatusKey,
+      width: double.infinity,
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: colorScheme.surfaceContainerHighest,
+        border: Border.all(color: colorScheme.outlineVariant),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Text(
+        details.join('\n'),
+        style: Theme.of(context).textTheme.bodySmall,
+      ),
+    );
+  }
+}
+
+List<String> _sddActivityLabels(Object? value) {
+  if (value is! List) return const <String>[];
+  return value
+      .whereType<Map<dynamic, dynamic>>()
+      .map((event) => event['label']?.toString() ?? event['state']?.toString())
+      .whereType<String>()
+      .where((item) => item.trim().isNotEmpty)
+      .toList(growable: false);
+}
+
+Map<String, Object?> _objectMap(Object? value) {
+  if (value is! Map) return const <String, Object?>{};
+  return value.map((key, raw) => MapEntry(key.toString(), raw));
+}
+
+List<String> _stringList(Object? value) {
+  if (value is! List) return const <String>[];
+  return value
+      .map((item) => item?.toString() ?? '')
+      .where((item) => item.trim().isNotEmpty)
+      .toList(growable: false);
+}
+
+List<String> _rejectedMediaList(Object? value) {
+  if (value is! List) return const <String>[];
+  return value
+      .map((item) {
+        if (item is Map) {
+          return '${item['field'] ?? 'media'}: ${item['message'] ?? item['code'] ?? 'rejected'}';
+        }
+        return item?.toString() ?? '';
+      })
+      .where((item) => item.trim().isNotEmpty)
+      .toList(growable: false);
+}
+
+DeveloperFeedbackSddSpecTarget? _commonEmbeddedSddTarget(
+  List<DeveloperFeedbackItem> items,
+) {
+  final targets = items
+      .map((item) => item.sddSpecTarget)
+      .whereType<DeveloperFeedbackSddSpecTarget>()
+      .where((target) => !target.isNone)
+      .toList(growable: false);
+  if (targets.isEmpty) return null;
+  final firstKey = _sddTargetKey(targets.first);
+  if (targets.every((target) => _sddTargetKey(target) == firstKey)) {
+    return targets.first;
+  }
+  return null;
+}
+
+String? _embeddedTargetConflict(
+  List<DeveloperFeedbackItem> items,
+  DeveloperFeedbackSddSpecTarget requested,
+) {
+  final targets = items
+      .map((item) => item.sddSpecTarget)
+      .whereType<DeveloperFeedbackSddSpecTarget>()
+      .where((target) => !target.isNone)
+      .toList(growable: false);
+  if (targets.isEmpty) return null;
+  final unique = targets.map(_sddTargetKey).toSet();
+  if (unique.length > 1) {
+    return 'feedback items contain different embedded spec_target values';
+  }
+  if (_sddTargetKey(targets.first) != _sddTargetKey(requested)) {
+    return 'UI target does not match embedded feedback spec_target';
+  }
+  return null;
+}
+
+String _sddTargetKey(DeveloperFeedbackSddSpecTarget target) {
+  return <String>[target.mode, target.specId ?? '', target.artifact].join('|');
+}
+
+_SddSpecTargetMode _modeFromEmbeddedTarget(
+  DeveloperFeedbackSddSpecTarget? target,
+) {
+  return switch (target?.mode) {
+    'new_spec' => _SddSpecTargetMode.newSpec,
+    'existing_spec' => _SddSpecTargetMode.existingSpec,
+    _ => _SddSpecTargetMode.none,
+  };
+}
+
 class _FeedbackExecutionTarget {
   const _FeedbackExecutionTarget({
     required this.kind,
@@ -4472,6 +5179,282 @@ class _EditFeedbackCommentDialogState
       ],
     );
   }
+}
+
+class _EditFeedbackRegionDialog extends StatefulWidget {
+  const _EditFeedbackRegionDialog({
+    required this.screenshotPngBase64,
+    required this.initialBounds,
+  });
+
+  final String screenshotPngBase64;
+  final Map<String, double> initialBounds;
+
+  @override
+  State<_EditFeedbackRegionDialog> createState() =>
+      _EditFeedbackRegionDialogState();
+}
+
+class _EditFeedbackRegionDialogState extends State<_EditFeedbackRegionDialog> {
+  static const Size _canvasSize = Size(320, 220);
+
+  late final TextEditingController _leftController = TextEditingController(
+    text: _initialValue('left'),
+  );
+  late final TextEditingController _topController = TextEditingController(
+    text: _initialValue('top'),
+  );
+  late final TextEditingController _widthController = TextEditingController(
+    text: _initialValue('width'),
+  );
+  late final TextEditingController _heightController = TextEditingController(
+    text: _initialValue('height'),
+  );
+  Offset? _dragStart;
+  Rect? _draftRect;
+  String? _error;
+
+  String _initialValue(String key) {
+    final value = widget.initialBounds[key] ?? 0;
+    return value <= 0 ? '' : value.round().toString();
+  }
+
+  @override
+  void dispose() {
+    _leftController.dispose();
+    _topController.dispose();
+    _widthController.dispose();
+    _heightController.dispose();
+    super.dispose();
+  }
+
+  void _updateRectFromDrag(Offset start, Offset current) {
+    final clampedStart = _clampToCanvas(start);
+    final clampedCurrent = _clampToCanvas(current);
+    final rect = Rect.fromPoints(clampedStart, clampedCurrent);
+    setState(() {
+      _draftRect = rect;
+      _leftController.text = rect.left.round().toString();
+      _topController.text = rect.top.round().toString();
+      _widthController.text = rect.width.round().toString();
+      _heightController.text = rect.height.round().toString();
+      _error = null;
+    });
+  }
+
+  Offset _clampToCanvas(Offset value) {
+    return Offset(
+      value.dx.clamp(0.0, _canvasSize.width),
+      value.dy.clamp(0.0, _canvasSize.height),
+    );
+  }
+
+  Map<String, double>? _readBounds() {
+    double? parse(TextEditingController controller) =>
+        double.tryParse(controller.text.trim());
+    final left = parse(_leftController);
+    final top = parse(_topController);
+    final width = parse(_widthController);
+    final height = parse(_heightController);
+    if (left == null || top == null || width == null || height == null) {
+      return null;
+    }
+    return <String, double>{
+      'left': left,
+      'top': top,
+      'width': width,
+      'height': height,
+    };
+  }
+
+  String? _validateBounds(Map<String, double>? bounds) {
+    if (bounds == null) return 'Completá x, y, ancho y alto.';
+    final left = bounds['left']!;
+    final top = bounds['top']!;
+    final width = bounds['width']!;
+    final height = bounds['height']!;
+    if (width <= 0 || height <= 0) return 'La región debe tener tamaño.';
+    if (left < 0 || top < 0) return 'La región no puede salir de la imagen.';
+    if (left + width > _canvasSize.width || top + height > _canvasSize.height) {
+      return 'La región debe quedar dentro de la imagen.';
+    }
+    return null;
+  }
+
+  void _apply() {
+    final bounds = _readBounds();
+    final error = _validateBounds(bounds);
+    if (error != null) {
+      setState(() => _error = error);
+      return;
+    }
+    Navigator.of(context).pop(_pointsFromBounds(bounds!));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final previewBytes = _decodePreviewImage(widget.screenshotPngBase64);
+    final currentBounds = _readBounds();
+    final errorBounds = _validateBounds(currentBounds) == null
+        ? currentBounds
+        : null;
+    return AlertDialog(
+      title: const Text('Editar región'),
+      content: SingleChildScrollView(
+        child: Column(
+          key: developerFeedbackRegionEditorKey,
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: <Widget>[
+            SizedBox(
+              width: _canvasSize.width,
+              height: _canvasSize.height,
+              child: GestureDetector(
+                key: developerFeedbackRegionCanvasKey,
+                behavior: HitTestBehavior.opaque,
+                onPanStart: (details) {
+                  _dragStart = details.localPosition;
+                  _updateRectFromDrag(_dragStart!, details.localPosition);
+                },
+                onPanUpdate: (details) {
+                  final start = _dragStart;
+                  if (start == null) return;
+                  _updateRectFromDrag(start, details.localPosition);
+                },
+                onPanEnd: (_) => _dragStart = null,
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: <Widget>[
+                    Image.memory(previewBytes, fit: BoxFit.cover),
+                    CustomPaint(
+                      painter: _FeedbackRegionPainter(
+                        bounds: _draftRect != null
+                            ? _boundsFromRect(_draftRect!)
+                            : errorBounds,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: <Widget>[
+                Expanded(
+                  child: TextField(
+                    key: developerFeedbackRegionLeftKey,
+                    controller: _leftController,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(labelText: 'X'),
+                    onChanged: (_) => setState(() => _error = null),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: TextField(
+                    key: developerFeedbackRegionTopKey,
+                    controller: _topController,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(labelText: 'Y'),
+                    onChanged: (_) => setState(() => _error = null),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: <Widget>[
+                Expanded(
+                  child: TextField(
+                    key: developerFeedbackRegionWidthKey,
+                    controller: _widthController,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(labelText: 'Ancho'),
+                    onChanged: (_) => setState(() => _error = null),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: TextField(
+                    key: developerFeedbackRegionHeightKey,
+                    controller: _heightController,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(labelText: 'Alto'),
+                    onChanged: (_) => setState(() => _error = null),
+                  ),
+                ),
+              ],
+            ),
+            if (_error != null) ...[
+              const SizedBox(height: 8),
+              Text(
+                _error!,
+                key: developerFeedbackRegionErrorKey,
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
+            ],
+          ],
+        ),
+      ),
+      actions: <Widget>[
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancelar'),
+        ),
+        TextButton(
+          key: developerFeedbackRegionRemoveKey,
+          onPressed: () => Navigator.of(context).pop(const <Offset>[]),
+          child: const Text('Quitar región'),
+        ),
+        FilledButton(
+          key: developerFeedbackRegionApplyKey,
+          onPressed: _apply,
+          child: const Text('Guardar región'),
+        ),
+      ],
+    );
+  }
+
+  Map<String, double> _boundsFromRect(Rect rect) {
+    return <String, double>{
+      'left': rect.left,
+      'top': rect.top,
+      'width': rect.width,
+      'height': rect.height,
+    };
+  }
+}
+
+class _FeedbackRegionPainter extends CustomPainter {
+  const _FeedbackRegionPainter({required this.bounds});
+
+  final Map<String, double>? bounds;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final bounds = this.bounds;
+    if (bounds == null) return;
+    final rect = Rect.fromLTWH(
+      bounds['left'] ?? 0,
+      bounds['top'] ?? 0,
+      bounds['width'] ?? 0,
+      bounds['height'] ?? 0,
+    );
+    if (rect.width <= 0 || rect.height <= 0) return;
+    final fill = Paint()
+      ..color = Colors.cyanAccent.withValues(alpha: 0.18)
+      ..style = PaintingStyle.fill;
+    final stroke = Paint()
+      ..color = Colors.cyanAccent
+      ..strokeWidth = 2
+      ..style = PaintingStyle.stroke;
+    canvas.drawRect(rect, fill);
+    canvas.drawRect(rect, stroke);
+  }
+
+  @override
+  bool shouldRepaint(covariant _FeedbackRegionPainter oldDelegate) =>
+      oldDelegate.bounds != bounds;
 }
 
 class _FeedbackPreviewThumbnail extends StatelessWidget {
@@ -5486,6 +6469,28 @@ class DeveloperFeedbackGuidedTrace {
   };
 }
 
+class DeveloperFeedbackSddSpecTarget {
+  const DeveloperFeedbackSddSpecTarget({
+    required this.mode,
+    this.specId,
+    this.artifact = 'auto',
+  });
+
+  final String mode;
+  final String? specId;
+  final String artifact;
+
+  bool get isNone => mode == 'none';
+
+  Map<String, Object?> toJson() {
+    return <String, Object?>{
+      'mode': mode,
+      if ((specId ?? '').trim().isNotEmpty) 'specId': specId!.trim(),
+      'artifact': artifact,
+    };
+  }
+}
+
 class DeveloperFeedbackItem {
   const DeveloperFeedbackItem({
     required this.id,
@@ -5501,6 +6506,7 @@ class DeveloperFeedbackItem {
     this.uiMap,
     this.imageCapture,
     this.guidedTrace,
+    this.sddSpecTarget,
   });
 
   final String id;
@@ -5516,6 +6522,7 @@ class DeveloperFeedbackItem {
   final DeveloperFeedbackUiMapSnapshot? uiMap;
   final DeveloperFeedbackImageCapture? imageCapture;
   final DeveloperFeedbackGuidedTrace? guidedTrace;
+  final DeveloperFeedbackSddSpecTarget? sddSpecTarget;
 
   Map<String, double> get selectionBounds => _selectionBounds(selectionPoints);
 
@@ -5525,11 +6532,13 @@ class DeveloperFeedbackItem {
 
   DeveloperFeedbackItem copyWith({
     String? comment,
+    List<Offset>? selectionPoints,
     Map<String, Object?>? contextMetadata,
     DeveloperFeedbackScreenSnapshot? screen,
     DeveloperFeedbackUiMapSnapshot? uiMap,
     DeveloperFeedbackImageCapture? imageCapture,
     DeveloperFeedbackGuidedTrace? guidedTrace,
+    DeveloperFeedbackSddSpecTarget? sddSpecTarget,
   }) {
     return DeveloperFeedbackItem(
       id: id,
@@ -5538,13 +6547,14 @@ class DeveloperFeedbackItem {
       sourceDisplayName: sourceDisplayName,
       comment: comment ?? this.comment,
       screenshotPngBase64: screenshotPngBase64,
-      selectionPoints: selectionPoints,
+      selectionPoints: selectionPoints ?? this.selectionPoints,
       audio: audio,
       contextMetadata: contextMetadata ?? this.contextMetadata,
       screen: screen ?? this.screen,
       uiMap: uiMap ?? this.uiMap,
       imageCapture: imageCapture ?? this.imageCapture,
       guidedTrace: guidedTrace ?? this.guidedTrace,
+      sddSpecTarget: sddSpecTarget ?? this.sddSpecTarget,
     );
   }
 
@@ -5569,6 +6579,7 @@ class DeveloperFeedbackItem {
           .toList(),
       'selectionBounds': bounds,
       if (contextMetadata.isNotEmpty) 'contextMetadata': contextMetadata,
+      if (sddSpecTarget != null) 'specTarget': sddSpecTarget!.toJson(),
       'feedbackKind': feedbackKind,
       'imageCapture': _imageCaptureJson(),
       if (guidedTrace != null) 'guidedTrace': guidedTrace!.toJson(),
@@ -5600,6 +6611,7 @@ class DeveloperFeedbackItem {
           .toList(),
       'selectionBounds': selectionBounds,
       if (contextMetadata.isNotEmpty) 'contextMetadata': contextMetadata,
+      if (sddSpecTarget != null) 'specTarget': sddSpecTarget!.toJson(),
       'feedbackKind': feedbackKind,
       'imageCapture': _imageCaptureJson(),
       if (guidedTrace != null) 'guidedTrace': guidedTrace!.toJson(),

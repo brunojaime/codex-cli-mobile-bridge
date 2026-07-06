@@ -63,7 +63,9 @@ class FasterWhisperAudioTranscriber(AudioTranscriber):
 
         transcript = " ".join(segment.text.strip() for segment in segments).strip()
         if not transcript:
-            raise AudioTranscriptionError("Local faster-whisper returned an empty transcript.")
+            raise AudioTranscriptionError(
+                "Local faster-whisper returned an empty transcript."
+            )
         return transcript
 
     def _get_model(self):

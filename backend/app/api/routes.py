@@ -76,13 +76,30 @@ from backend.app.api.schemas import (
     SessionDetailResponse,
     SessionSummaryResponse,
     SpeechRequest,
+    SddActivityResponse,
+    SddBridgeCaptureIntakeRequest,
+    SddBridgeCaptureIntakeResponse,
+    SddCodexJobApplyResponse,
+    SddCodexJobReviewResponse,
+    SddCodexJobResponse,
+    SddCodexJobRetryResponse,
     SddDiagramResponse,
     SddFileResponse,
+    SddMediaCleanupRequest,
+    SddMediaDeleteRequest,
+    SddMediaLifecycleResponse,
+    SddMediaUploadResponse,
     SddProjectDiagramsResponse,
     SddProjectResponse,
     SddProjectsResponse,
     SddProjectSummaryResponse,
+    SddSpecApplyResponse,
+    SddSpecCreationDryRunResponse,
+    SddSpecDryRunRequest,
+    SddSpecEditApplyResponse,
+    SddSpecEditDryRunResponse,
     SddSpecResponse,
+    SddWorkbenchViewResponse,
     TurnSummaryConfigRequest,
     WorkspaceResponse,
 )
@@ -107,6 +124,21 @@ from backend.app.application.services.sdd_project_service import (
     SddProjectSummary,
     SddSpec,
     SddWorkspacePathError,
+)
+from backend.app.application.services.sdd_media_upload_service import (
+    SddMediaUploadService,
+)
+from backend.app.application.services.sdd_bridge_capture_service import (
+    SddBridgeCaptureService,
+)
+from backend.app.application.services.sdd_spec_creation_service import (
+    SddSpecCreationService,
+)
+from backend.app.application.services.sdd_spec_edit_service import SddSpecEditService
+from backend.app.application.services.sdd_spec_target_service import (
+    SpecIntakeMediaItemInput,
+    SpecIntakeValidationInput,
+    SpecTargetInput,
 )
 from backend.app.domain.entities.chat_message import ChatMessage
 from backend.app.domain.entities.agent_configuration import AgentId
@@ -303,6 +335,542 @@ async def get_sdd_project_diagrams(
     )
 
 
+@router.get("/sdd/workbench/view", response_model=SddWorkbenchViewResponse)
+async def get_sdd_workbench_view(
+    workspace_path: str = Query(...),
+    preset: str = Query("new-feature"),
+    selected_artifact: str | None = Query(default=None),
+    query: str = Query(default=""),
+    auto_regenerate_indexes: bool = Query(default=True),
+    allow_degraded: bool = Query(default=True),
+    container: AppContainer = Depends(get_container),
+) -> SddWorkbenchViewResponse:
+    try:
+        project = await run_in_threadpool(
+            container.sdd_project_service.get_project,
+            workspace_path,
+        )
+    except SddWorkspacePathError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    view = await run_in_threadpool(
+        container.sdd_workbench_view_service.build_view,
+        workspace=Path(project.workspace_path),
+        project=project,
+        preset=preset,
+        selected_artifact=selected_artifact,
+        query=query,
+        auto_regenerate_indexes=auto_regenerate_indexes,
+        allow_degraded=allow_degraded,
+    )
+    return SddWorkbenchViewResponse(**view.to_payload())
+
+
+@router.post("/sdd/specs/dry-run", response_model=SddSpecCreationDryRunResponse)
+async def dry_run_sdd_spec_creation(
+    request: SddSpecDryRunRequest,
+    container: AppContainer = Depends(get_container),
+) -> SddSpecCreationDryRunResponse:
+    service = SddSpecCreationService(
+        projects_root=container.settings.projects_root,
+        workspace_aliases=container.settings.feedback_source_workspace_alias_map,
+    )
+    plan = await run_in_threadpool(
+        service.dry_run_new_spec,
+        _spec_intake_validation_input(request),
+        job_id=request.job_id,
+    )
+    return SddSpecCreationDryRunResponse(**plan.to_payload())
+
+
+@router.post("/sdd/specs/apply", response_model=SddSpecApplyResponse)
+async def apply_sdd_spec_creation(
+    request: SddSpecDryRunRequest,
+    container: AppContainer = Depends(get_container),
+) -> SddSpecApplyResponse:
+    service = SddSpecCreationService(
+        projects_root=container.settings.projects_root,
+        workspace_aliases=container.settings.feedback_source_workspace_alias_map,
+    )
+    result = await run_in_threadpool(
+        service.apply_new_spec,
+        _spec_intake_validation_input(request),
+        job_id=request.job_id,
+    )
+    return SddSpecApplyResponse(**result.to_payload())
+
+
+@router.post(
+    "/sdd/specs/edit/dry-run",
+    response_model=SddSpecEditDryRunResponse,
+)
+async def dry_run_sdd_spec_edit(
+    request: SddSpecDryRunRequest,
+    container: AppContainer = Depends(get_container),
+) -> SddSpecEditDryRunResponse:
+    service = SddSpecEditService(
+        projects_root=container.settings.projects_root,
+        workspace_aliases=container.settings.feedback_source_workspace_alias_map,
+    )
+    plan = await run_in_threadpool(
+        service.dry_run_existing_spec_edit,
+        _spec_intake_validation_input(request),
+    )
+    return SddSpecEditDryRunResponse(**plan.to_payload())
+
+
+@router.post(
+    "/sdd/specs/edit/apply",
+    response_model=SddSpecEditApplyResponse,
+)
+async def apply_sdd_spec_edit(
+    request: SddSpecDryRunRequest,
+    container: AppContainer = Depends(get_container),
+) -> SddSpecEditApplyResponse:
+    service = SddSpecEditService(
+        projects_root=container.settings.projects_root,
+        workspace_aliases=container.settings.feedback_source_workspace_alias_map,
+        codex_job_service=container.sdd_codex_job_service,
+    )
+    result = await run_in_threadpool(
+        service.apply_existing_spec_edit,
+        _spec_intake_validation_input(request),
+    )
+    return SddSpecEditApplyResponse(**result.to_payload())
+
+
+@router.get("/sdd/codex-jobs/{job_id}", response_model=SddCodexJobResponse)
+async def get_sdd_codex_job(
+    job_id: str,
+    container: AppContainer = Depends(get_container),
+) -> SddCodexJobResponse:
+    job = await run_in_threadpool(container.sdd_codex_job_service.get_job, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="SDD Codex job not found.")
+    return SddCodexJobResponse(**job.to_payload())
+
+
+@router.get(
+    "/sdd/codex-jobs/{job_id}/activity",
+    response_model=SddActivityResponse,
+)
+async def get_sdd_codex_job_activity(
+    job_id: str,
+    container: AppContainer = Depends(get_container),
+) -> SddActivityResponse:
+    job = await run_in_threadpool(container.sdd_codex_job_service.get_job, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="SDD Codex job not found.")
+    return SddActivityResponse(**job.to_payload()["activity"])
+
+
+@router.post("/sdd/codex-jobs/{job_id}/run", response_model=SddCodexJobResponse)
+async def run_sdd_codex_job(
+    job_id: str,
+    container: AppContainer = Depends(get_container),
+) -> SddCodexJobResponse:
+    try:
+        job = await run_in_threadpool(container.sdd_codex_job_service.run_job, job_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="SDD Codex job not found.") from exc
+    return SddCodexJobResponse(**job.to_payload())
+
+
+@router.post("/sdd/codex-jobs/{job_id}/cancel", response_model=SddCodexJobResponse)
+async def cancel_sdd_codex_job(
+    job_id: str,
+    container: AppContainer = Depends(get_container),
+) -> SddCodexJobResponse:
+    try:
+        job = await run_in_threadpool(
+            container.sdd_codex_job_service.cancel_job,
+            job_id,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="SDD Codex job not found.") from exc
+    return SddCodexJobResponse(**job.to_payload())
+
+
+@router.post(
+    "/sdd/codex-jobs/{job_id}/retry",
+    response_model=SddCodexJobRetryResponse,
+)
+async def retry_sdd_codex_job(
+    job_id: str,
+    container: AppContainer = Depends(get_container),
+) -> SddCodexJobRetryResponse:
+    try:
+        result = await run_in_threadpool(
+            container.sdd_codex_job_service.retry_job,
+            job_id,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="SDD Codex job not found.") from exc
+    return SddCodexJobRetryResponse(**result.to_payload())
+
+
+@router.get(
+    "/sdd/codex-jobs/{job_id}/review",
+    response_model=SddCodexJobReviewResponse,
+)
+async def review_sdd_codex_job(
+    job_id: str,
+    container: AppContainer = Depends(get_container),
+) -> SddCodexJobReviewResponse:
+    try:
+        review = await run_in_threadpool(
+            container.sdd_codex_job_service.review_job,
+            job_id,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="SDD Codex job not found.") from exc
+    return SddCodexJobReviewResponse(**review.to_payload())
+
+
+@router.post(
+    "/sdd/codex-jobs/{job_id}/apply",
+    response_model=SddCodexJobApplyResponse,
+)
+async def apply_sdd_codex_job(
+    job_id: str,
+    container: AppContainer = Depends(get_container),
+) -> SddCodexJobApplyResponse:
+    try:
+        result = await run_in_threadpool(
+            container.sdd_codex_job_service.apply_reviewed_job,
+            job_id,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="SDD Codex job not found.") from exc
+    return SddCodexJobApplyResponse(**result.to_payload())
+
+
+@router.post(
+    "/sdd/specs/intake/media",
+    response_model=SddMediaUploadResponse,
+)
+async def upload_sdd_spec_intake_media(
+    media: UploadFile = File(...),
+    workspace_path: str = Form(...),
+    kind: str = Form(default="image"),
+    mime_type: str | None = Form(default=None),
+    sha256: str | None = Form(default=None),
+    duration_ms: int | None = Form(default=None),
+    source_ref: str | None = Form(default=None),
+    region: str | None = Form(default=None),
+    container: AppContainer = Depends(get_container),
+) -> SddMediaUploadResponse:
+    content = await media.read()
+    region_payload = _parse_region_form(region)
+    service = SddMediaUploadService(
+        projects_root=container.settings.projects_root,
+        workspace_aliases=container.settings.feedback_source_workspace_alias_map,
+    )
+    result = await run_in_threadpool(
+        service.stage_media,
+        workspace_path=workspace_path,
+        kind=kind,
+        filename=media.filename or "image.png",
+        mime_type=mime_type or media.content_type,
+        content=content,
+        sha256=sha256,
+        duration_ms=duration_ms,
+        source_ref=source_ref,
+        region=region_payload,
+    )
+    return SddMediaUploadResponse(**result.to_payload())
+
+
+@router.post(
+    "/sdd/specs/intake/media/delete",
+    response_model=SddMediaLifecycleResponse,
+)
+async def delete_sdd_spec_intake_media(
+    request: SddMediaDeleteRequest,
+    container: AppContainer = Depends(get_container),
+) -> SddMediaLifecycleResponse:
+    service = SddMediaUploadService(
+        projects_root=container.settings.projects_root,
+        workspace_aliases=container.settings.feedback_source_workspace_alias_map,
+    )
+    result = await run_in_threadpool(
+        service.delete_staged_media,
+        workspace_path=request.workspace_path,
+        staged_path=request.staged_path,
+    )
+    return SddMediaLifecycleResponse(**result.to_payload())
+
+
+@router.post(
+    "/sdd/specs/intake/media/cleanup",
+    response_model=SddMediaLifecycleResponse,
+)
+async def cleanup_sdd_spec_intake_media(
+    request: SddMediaCleanupRequest,
+    container: AppContainer = Depends(get_container),
+) -> SddMediaLifecycleResponse:
+    service = SddMediaUploadService(
+        projects_root=container.settings.projects_root,
+        workspace_aliases=container.settings.feedback_source_workspace_alias_map,
+    )
+    result = await run_in_threadpool(
+        service.cleanup_staged_media,
+        workspace_path=request.workspace_path,
+        dry_run=request.dry_run,
+        older_than_hours=request.older_than_hours,
+    )
+    return SddMediaLifecycleResponse(**result.to_payload())
+
+
+async def _feedback_items_for_sdd_capture(
+    item_ids: list[str],
+    *,
+    container: AppContainer,
+):
+    items = []
+    for item_id in item_ids:
+        try:
+            items.append(
+                await run_in_threadpool(
+                    container.feedback_queue_service.get_item,
+                    item_id,
+                    include_image=False,
+                )
+            )
+        except KeyError as exc:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Feedback item not found: {item_id}",
+            ) from exc
+    return tuple(items)
+
+
+def _resolve_sdd_bridge_capture_target(
+    request_target: object | None,
+    feedback_items: tuple[object, ...],
+) -> tuple[SpecTargetInput | None, list[str]]:
+    embedded_targets = [
+        _spec_target_from_payload(getattr(item, "spec_target", {}))
+        for item in feedback_items
+    ]
+    embedded_targets = [
+        target
+        for target in embedded_targets
+        if target is not None and target.mode != "none"
+    ]
+    unique_embedded = {_spec_target_key(target) for target in embedded_targets}
+    if len(unique_embedded) > 1:
+        return (
+            None,
+            [
+                "spec_target_conflict: feedback items contain different embedded spec_target values"
+            ],
+        )
+
+    embedded_target = embedded_targets[0] if embedded_targets else None
+    explicit_target = (
+        _spec_target_input(request_target) if request_target is not None else None
+    )
+    if explicit_target is None or explicit_target.mode == "none":
+        return (embedded_target or explicit_target or SpecTargetInput(mode="none"), [])
+    if embedded_target is not None and _spec_target_key(
+        explicit_target
+    ) != _spec_target_key(embedded_target):
+        return (
+            explicit_target,
+            [
+                "spec_target_conflict: request spec_target does not match embedded feedback spec_target"
+            ],
+        )
+    return (explicit_target, [])
+
+
+def _spec_target_from_payload(payload: object) -> SpecTargetInput | None:
+    if not isinstance(payload, dict) or not payload:
+        return None
+    return SpecTargetInput(
+        mode=str(payload.get("mode") or "none"),
+        spec_id=(
+            str(payload.get("spec_id") or payload.get("specId"))
+            if payload.get("spec_id") or payload.get("specId")
+            else None
+        ),
+        artifact=str(payload.get("artifact") or "auto"),
+    )
+
+
+def _spec_target_key(target: SpecTargetInput) -> tuple[str, str, str]:
+    return (
+        target.mode,
+        target.spec_id or "",
+        target.artifact or "auto",
+    )
+
+
+def _blocked_sdd_bridge_capture_payload(
+    *,
+    request: SddBridgeCaptureIntakeRequest,
+    target: SpecTargetInput | None,
+    errors: list[str],
+) -> dict[str, object]:
+    return {
+        "kind": "codex.sddBridgeCaptureIntake",
+        "version": 1,
+        "status": "blocked",
+        "workspace_path": request.workspace_path,
+        "target_mode": (target.mode if target is not None else "unknown"),
+        "feedback_item_ids": list(request.feedback_item_ids),
+        "intake_items": [],
+        "staged_media": [],
+        "dry_run": None,
+        "apply_result": None,
+        "blocked": errors,
+        "next_actions": ["Resolve spec_target conflicts before SDD intake."],
+    }
+
+
+@router.post(
+    "/sdd/bridge-captures/dry-run",
+    response_model=SddBridgeCaptureIntakeResponse,
+)
+async def dry_run_sdd_bridge_capture(
+    request: SddBridgeCaptureIntakeRequest,
+    container: AppContainer = Depends(get_container),
+) -> SddBridgeCaptureIntakeResponse:
+    feedback_items = await _feedback_items_for_sdd_capture(
+        request.feedback_item_ids,
+        container=container,
+    )
+    resolved_target, target_errors = _resolve_sdd_bridge_capture_target(
+        request.spec_target,
+        feedback_items,
+    )
+    if target_errors:
+        return SddBridgeCaptureIntakeResponse(
+            **_blocked_sdd_bridge_capture_payload(
+                request=request,
+                target=resolved_target,
+                errors=target_errors,
+            )
+        )
+    service = SddBridgeCaptureService(
+        projects_root=container.settings.projects_root,
+        workspace_aliases=container.settings.feedback_source_workspace_alias_map,
+        codex_job_service=container.sdd_codex_job_service,
+    )
+    result = await run_in_threadpool(
+        service.dry_run_capture,
+        workspace_path=request.workspace_path,
+        spec_target=resolved_target or SpecTargetInput(mode="none"),
+        feedback_items=feedback_items,
+        artifact=None if request.artifact == "auto" else request.artifact,
+        job_id=request.job_id,
+    )
+    return SddBridgeCaptureIntakeResponse(**result.to_payload())
+
+
+@router.post(
+    "/sdd/bridge-captures/apply",
+    response_model=SddBridgeCaptureIntakeResponse,
+)
+async def apply_sdd_bridge_capture(
+    request: SddBridgeCaptureIntakeRequest,
+    container: AppContainer = Depends(get_container),
+) -> SddBridgeCaptureIntakeResponse:
+    feedback_items = await _feedback_items_for_sdd_capture(
+        request.feedback_item_ids,
+        container=container,
+    )
+    resolved_target, target_errors = _resolve_sdd_bridge_capture_target(
+        request.spec_target,
+        feedback_items,
+    )
+    if target_errors:
+        return SddBridgeCaptureIntakeResponse(
+            **_blocked_sdd_bridge_capture_payload(
+                request=request,
+                target=resolved_target,
+                errors=target_errors,
+            )
+        )
+    service = SddBridgeCaptureService(
+        projects_root=container.settings.projects_root,
+        workspace_aliases=container.settings.feedback_source_workspace_alias_map,
+        codex_job_service=container.sdd_codex_job_service,
+    )
+    result = await run_in_threadpool(
+        service.apply_capture,
+        workspace_path=request.workspace_path,
+        spec_target=resolved_target or SpecTargetInput(mode="none"),
+        feedback_items=feedback_items,
+        artifact=None if request.artifact == "auto" else request.artifact,
+        job_id=request.job_id,
+    )
+    return SddBridgeCaptureIntakeResponse(**result.to_payload())
+
+
+def _spec_intake_validation_input(
+    request: SddSpecDryRunRequest,
+) -> SpecIntakeValidationInput:
+    return SpecIntakeValidationInput(
+        workspace_path=request.workspace_path,
+        spec_target=_spec_target_input(request.spec_target),
+        intake_items=tuple(
+            _spec_intake_item_input(item) for item in request.intake_items
+        ),
+        title_seed=request.title_seed,
+        workbench_spec_target=_spec_target_input(request.workbench_spec_target)
+        if request.workbench_spec_target is not None
+        else None,
+        bridge_spec_target=_spec_target_input(request.bridge_spec_target)
+        if request.bridge_spec_target is not None
+        else None,
+    )
+
+
+def _parse_region_form(region: str | None) -> dict[str, object] | None:
+    if region is None or not region.strip():
+        return None
+    try:
+        payload = json.loads(region)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(
+            status_code=400, detail="Invalid crop region JSON."
+        ) from exc
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="Crop region must be an object.")
+    return payload
+
+
+def _spec_target_input(target: object) -> SpecTargetInput:
+    return SpecTargetInput(
+        mode=getattr(target, "mode"),
+        spec_id=getattr(target, "spec_id"),
+        artifact=getattr(target, "artifact"),
+    )
+
+
+def _spec_intake_item_input(item: object) -> SpecIntakeMediaItemInput:
+    region = getattr(item, "region", None)
+    return SpecIntakeMediaItemInput(
+        kind=getattr(item, "kind"),
+        mime_type=getattr(item, "mime_type"),
+        byte_size=getattr(item, "byte_size"),
+        filename=getattr(item, "filename"),
+        sha256=getattr(item, "sha256"),
+        text=getattr(item, "text"),
+        transcript=getattr(item, "transcript"),
+        duration_ms=getattr(item, "duration_ms"),
+        source_ref=getattr(item, "source_ref"),
+        payload_ref=getattr(item, "payload_ref"),
+        region=region.model_dump() if region is not None else None,
+        image_count=getattr(item, "image_count"),
+        frame_count=getattr(item, "frame_count"),
+        audio_track_count=getattr(item, "audio_track_count"),
+        timeline_ms=tuple(getattr(item, "timeline_ms")),
+        references=tuple(getattr(item, "references")),
+    )
+
+
 def _sdd_file_response(file_value: SddFile | None) -> SddFileResponse | None:
     if file_value is None:
         return None
@@ -328,10 +896,36 @@ def _sdd_diagram_response(diagram: SddDiagram) -> SddDiagramResponse:
 
 
 def _sdd_spec_response(spec: SddSpec) -> SddSpecResponse:
+    metadata = spec.metadata
     return SddSpecResponse(
         id=spec.id,
         title=spec.title,
+        description=metadata.description,
         path=spec.path,
+        lifecycle_status=metadata.lifecycle_status,
+        traceability_status=(
+            "incomplete"
+            if (
+                spec.missing
+                or spec.spec is None
+                or spec.plan is None
+                or spec.tasks is None
+            )
+            else "linked"
+        ),
+        created_at=metadata.created_at,
+        updated_at=metadata.updated_at,
+        generated_title=metadata.generated.title,
+        generated_description=metadata.generated.description,
+        user_pinned_title=metadata.generated.user_pinned_title,
+        user_pinned_description=metadata.generated.user_pinned_description,
+        task_total=metadata.tasks.total,
+        task_completed=metadata.tasks.completed,
+        task_pending=metadata.tasks.pending,
+        last_run_state=metadata.last_run_state,
+        metadata_status=metadata.metadata_status,
+        metadata_warnings=list(metadata.metadata_warnings),
+        metadata_stale_paths=list(metadata.metadata_stale_paths),
         spec=_sdd_file_response(spec.spec),
         plan=_sdd_file_response(spec.plan),
         tasks=_sdd_file_response(spec.tasks),
@@ -384,8 +978,7 @@ def _sdd_project_response(
         manifest=_sdd_file_response(project.manifest),
         constitution=_sdd_file_response(project.constitution),
         architecture_diagrams=[
-            _sdd_diagram_response(diagram)
-            for diagram in project.architecture_diagrams
+            _sdd_diagram_response(diagram) for diagram in project.architecture_diagrams
         ],
         specs=[_sdd_spec_response(spec) for spec in project.specs],
         missing_required=list(project.missing_required),
@@ -780,7 +1373,9 @@ def _feedback_batch_release_target(
     workspace_path: str | None,
     container: AppContainer,
 ) -> dict[str, Any]:
-    raw_target = payload.release_target if isinstance(payload.release_target, dict) else {}
+    raw_target = (
+        payload.release_target if isinstance(payload.release_target, dict) else {}
+    )
     source_app = _feedback_first_text(
         raw_target.get("sourceApp"),
         raw_target.get("source_app"),

@@ -82,6 +82,115 @@ void main() {
     expect(project.workspaceName, 'Codex Bridge');
   });
 
+  test('SDD project model parses spec SCM metadata', () {
+    final project = SddProject.fromJson(_projectJson());
+    final spec = project.specs.single;
+
+    expect(spec.description, 'Read-only inspection for Bridge SDD artifacts.');
+    expect(spec.lifecycleStatus, 'active');
+    expect(spec.traceabilityStatus, 'linked');
+    expect(spec.updatedAt, '2026-07-06T10:15:00Z');
+    expect(spec.taskTotal, 2);
+    expect(spec.taskCompleted, 1);
+    expect(spec.taskPending, 1);
+    expect(spec.lastRunState, 'queued');
+    expect(spec.metadataStatus, 'stale');
+    expect(spec.metadataStalePaths, contains('tasks.md'));
+  });
+
+  test('SDD client uploads intake media as multipart', () async {
+    final client = SddExplorerClient(
+      baseUrl: 'http://bridge.test',
+      client: MockClient((request) async {
+        expect(request.method, 'POST');
+        expect(request.url.path, '/sdd/specs/intake/media');
+        expect(
+          request.headers['content-type'],
+          contains('multipart/form-data'),
+        );
+        expect(request.body, contains('workspace_path'));
+        expect(request.body, contains('/workspace/project'));
+        expect(request.body, contains('mime_type'));
+        expect(request.body, contains('image/png'));
+        expect(request.body, contains('screen.png'));
+        return http.Response(
+          jsonEncode(<String, Object?>{
+            'status': 'staged',
+            'workspace_path': '/workspace/project',
+            'intake_item': <String, Object?>{
+              'kind': 'image',
+              'mime_type': 'image/png',
+              'byte_size': 5,
+              'filename': 'screen.png',
+              'sha256':
+                  '2d4566582844690f8634a8b2534ea5221560038c6c0650c99140759bad603ae2',
+              'payload_ref': '.codex-bridge/sdd-media/abc-screen.png',
+            },
+            'staged_path': '.codex-bridge/sdd-media/abc-screen.png',
+            'metadata_path': '.codex-bridge/sdd-media/abc-screen.png.json',
+            'blocked': <String>[],
+            'cleanup': <String>[],
+            'next_actions': <String>[
+              'Run visual extraction before relying on image content.',
+            ],
+          }),
+          200,
+        );
+      }),
+    );
+
+    final staged = await client.uploadSpecMedia(
+      workspacePath: '/workspace/project',
+      attachment: const SddMediaAttachmentDraft(
+        filename: 'screen.png',
+        mimeType: 'image/png',
+        bytes: <int>[1, 2, 3, 4, 5],
+      ),
+    );
+
+    expect(staged.status, 'staged');
+    expect(staged.filename, 'screen.png');
+    expect(staged.stagedPath, '.codex-bridge/sdd-media/abc-screen.png');
+    expect(staged.previewBytes, <int>[1, 2, 3, 4, 5]);
+  });
+
+  test('SDD client deletes staged intake media', () async {
+    final client = SddExplorerClient(
+      baseUrl: 'http://bridge.test',
+      client: MockClient((request) async {
+        expect(request.method, 'POST');
+        expect(request.url.path, '/sdd/specs/intake/media/delete');
+        expect(request.body, contains('workspacePath'));
+        expect(request.body, contains('stagedPath'));
+        return http.Response(
+          jsonEncode(<String, Object?>{
+            'status': 'deleted',
+            'workspace_path': '/workspace/project',
+            'staged_path': '.codex-bridge/sdd-media/abc-screen.png',
+            'lifecycle': 'deleted',
+            'deleted': <String>[
+              '.codex-bridge/sdd-media/abc-screen.png',
+              '.codex-bridge/sdd-media/abc-screen.png.json',
+            ],
+            'would_delete': <String>[],
+            'blocked': <String>[],
+            'cleanup': <String>[],
+            'next_actions': <String>[],
+          }),
+          200,
+        );
+      }),
+    );
+
+    final result = await client.deleteSpecMedia(
+      workspacePath: '/workspace/project',
+      stagedPath: '.codex-bridge/sdd-media/abc-screen.png',
+    );
+
+    expect(result.status, 'deleted');
+    expect(result.deleted, contains('.codex-bridge/sdd-media/abc-screen.png'));
+  });
+
   testWidgets('workbench shows loading, error, empty, and project states', (
     tester,
   ) async {
@@ -207,6 +316,1066 @@ void main() {
     await tester.tap(find.text('build-tasks.md').first);
     await tester.pumpAndSettle();
     expect(find.text('1/2 tasks complete'), findsOneWidget);
+  });
+
+  testWidgets('specs tab shows SCM metadata and task progress list', (
+    tester,
+  ) async {
+    await _pumpWorkbench(
+      tester,
+      loader: (_) async => SddProject.fromJson(_projectJson()),
+      diagramRenderer: _FakeMermaidRenderer.success(),
+    );
+    _openWorkbench(tester);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Specs').first);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Feature specs'), findsOneWidget);
+    expect(find.text('Bridge Contract'), findsWidgets);
+    expect(
+      find.text('Read-only inspection for Bridge SDD artifacts.'),
+      findsOneWidget,
+    );
+    expect(find.text('active'), findsOneWidget);
+    expect(find.text('1/2 tasks'), findsOneWidget);
+    expect(find.text('linked'), findsOneWidget);
+    expect(find.text('2026-07-06'), findsOneWidget);
+    expect(find.text('last run: queued'), findsOneWidget);
+    expect(find.text('metadata stale'), findsOneWidget);
+  });
+
+  testWidgets('spec intake previews and creates a text-first new spec', (
+    tester,
+  ) async {
+    final intakeClient = _FakeSpecIntakeClient(
+      dryRunPlan: const SddSpecIntakePlan(
+        status: 'dry-run',
+        specId: '005-product-export',
+        metadataTitle: 'Product Export',
+        metadataDescription: 'Export product catalog.',
+        plannedFiles: <String>[
+          'specs/005-product-export/spec.md',
+          'specs/005-product-export/tasks.md',
+        ],
+        nextActions: <String>['Review generated spec artifacts.'],
+      ),
+      applyResult: const SddSpecIntakeApplyResult(
+        status: 'applied',
+        specId: '005-product-export',
+        plannedFiles: <String>['specs/005-product-export/spec.md'],
+        nextActions: <String>['Run SDD doctor before committing.'],
+      ),
+    );
+    await _pumpWorkbench(
+      tester,
+      loader: (_) async => SddProject.fromJson(_projectJson()),
+      diagramRenderer: _FakeMermaidRenderer.success(),
+      specIntakeClient: intakeClient,
+    );
+    _openWorkbench(tester);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Specs').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('New functionality').first);
+    await tester.pumpAndSettle();
+
+    await tester.enterText(
+      find.widgetWithText(TextField, 'Request'),
+      'Necesito exportar productos',
+    );
+    await tester.pump();
+    await tester.enterText(
+      find.widgetWithText(TextField, 'Spec id'),
+      '005-product-export',
+    );
+    await tester.pump();
+    final previewButton = find.widgetWithText(FilledButton, 'Preview');
+    await tester.ensureVisible(previewButton);
+    await tester.tap(previewButton);
+    await tester.pumpAndSettle();
+
+    expect(intakeClient.lastDraft?.mode, SddSpecIntakeMode.newSpec);
+    expect(find.text('Preview'), findsWidgets);
+    expect(find.text('status: dry-run'), findsOneWidget);
+    expect(find.text('title: Product Export'), findsOneWidget);
+
+    final createButton = find.widgetWithText(FilledButton, 'Create');
+    await tester.ensureVisible(createButton);
+    await tester.tap(createButton);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Apply'), findsOneWidget);
+    expect(find.text('status: applied'), findsOneWidget);
+    expect(find.textContaining('Run SDD doctor'), findsOneWidget);
+  });
+
+  testWidgets('spec intake stages image attachment before preview', (
+    tester,
+  ) async {
+    final intakeClient = _FakeSpecIntakeClient(
+      dryRunPlan: const SddSpecIntakePlan(
+        status: 'dry-run',
+        specId: '005-image-spec',
+        plannedFiles: <String>['specs/005-image-spec/spec.md'],
+        nextActions: <String>['Review generated spec artifacts.'],
+      ),
+      stagedMedia: const SddStagedMediaAttachment(
+        status: 'staged',
+        stagedPath: '.codex-bridge/sdd-media/abc-screen.png',
+        intakeItem: <String, Object?>{
+          'kind': 'image',
+          'mime_type': 'image/png',
+          'byte_size': 5,
+          'filename': 'screen.png',
+          'sha256':
+              '2d4566582844690f8634a8b2534ea5221560038c6c0650c99140759bad603ae2',
+          'payload_ref': '.codex-bridge/sdd-media/abc-screen.png',
+        },
+      ),
+    );
+    await _pumpWorkbench(
+      tester,
+      loader: (_) async => SddProject.fromJson(_projectJson()),
+      diagramRenderer: _FakeMermaidRenderer.success(),
+      specIntakeClient: intakeClient,
+      mediaAttachmentPicker: () async => const SddMediaAttachmentDraft(
+        filename: 'screen.png',
+        mimeType: 'image/png',
+        bytes: <int>[1, 2, 3, 4, 5],
+      ),
+    );
+    _openWorkbench(tester);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Specs').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('New functionality').first);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Image'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('screen.png'), findsWidgets);
+
+    await tester.enterText(
+      find.widgetWithText(TextField, 'Request'),
+      'Usar la captura para describir el cambio',
+    );
+    await tester.pump();
+    final previewButton = find.widgetWithText(FilledButton, 'Preview');
+    await tester.ensureVisible(previewButton);
+    await tester.tap(previewButton);
+    await tester.pumpAndSettle();
+
+    expect(
+      intakeClient.uploadedWorkspacePath,
+      '/workspace/codex-cli-mobile-bridge',
+    );
+    expect(intakeClient.uploadedAttachment?.filename, 'screen.png');
+    expect(intakeClient.lastDraft?.attachments, hasLength(1));
+    expect(
+      intakeClient.lastDraft?.toJson()['intakeItems'].toString(),
+      contains('payload_ref'),
+    );
+  });
+
+  testWidgets('spec intake marks a rectangular region on an image attachment', (
+    tester,
+  ) async {
+    final intakeClient = _FakeSpecIntakeClient(
+      dryRunPlan: const SddSpecIntakePlan(status: 'dry-run'),
+      stagedMedia: const SddStagedMediaAttachment(
+        status: 'staged',
+        stagedPath: '.codex-bridge/sdd-media/abc-screen.png',
+        previewBytes: <int>[1, 2, 3, 4, 5],
+        intakeItem: <String, Object?>{
+          'kind': 'image',
+          'mime_type': 'image/png',
+          'byte_size': 5,
+          'filename': 'screen.png',
+          'sha256':
+              '2d4566582844690f8634a8b2534ea5221560038c6c0650c99140759bad603ae2',
+          'payload_ref': '.codex-bridge/sdd-media/abc-screen.png',
+        },
+      ),
+    );
+    await _pumpWorkbench(
+      tester,
+      loader: (_) async => SddProject.fromJson(_projectJson()),
+      diagramRenderer: _FakeMermaidRenderer.success(),
+      specIntakeClient: intakeClient,
+      mediaAttachmentPicker: () async => const SddMediaAttachmentDraft(
+        filename: 'screen.png',
+        mimeType: 'image/png',
+        bytes: <int>[1, 2, 3, 4, 5],
+      ),
+    );
+    _openWorkbench(tester);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Specs').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('New functionality').first);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Image'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Mark region screen.png'));
+    await tester.pumpAndSettle();
+    await tester.drag(
+      find.byKey(const Key('sdd-media-region-canvas')),
+      const Offset(80, 64),
+    );
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('sdd-media-region-apply')));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.widgetWithText(TextField, 'Request'),
+      'Usar region marcada',
+    );
+    await tester.pump();
+    final previewButton = find.widgetWithText(FilledButton, 'Preview');
+    await tester.ensureVisible(previewButton);
+    await tester.tap(previewButton);
+    await tester.pumpAndSettle();
+
+    final attachments = intakeClient.lastDraft?.attachments;
+    expect(attachments, hasLength(2));
+    expect(attachments?.last.mediaKind, 'marked_region');
+    expect(
+      attachments?.last.intakeItem['source_ref'],
+      attachments?.first.stagedPath,
+    );
+    expect(
+      attachments?.last.intakeItem['payload_ref'],
+      attachments?.first.stagedPath,
+    );
+    expect(
+      attachments?.last.intakeItem['region'].toString(),
+      contains('width'),
+    );
+    expect(
+      find.textContaining('pixel crop generation is pending'),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets(
+    'spec intake generates and stages a real cropped image artifact',
+    (tester) async {
+      const imageBytes = <int>[1, 2, 3, 4, 5];
+      final intakeClient = _FakeSpecIntakeClient(
+        dryRunPlan: const SddSpecIntakePlan(status: 'dry-run'),
+        stagedMedia: SddStagedMediaAttachment(
+          status: 'staged',
+          stagedPath: '.codex-bridge/sdd-media/abc-screen.png',
+          previewBytes: imageBytes,
+          intakeItem: const <String, Object?>{
+            'kind': 'image',
+            'mime_type': 'image/png',
+            'byte_size': 5,
+            'filename': 'screen.png',
+            'payload_ref': '.codex-bridge/sdd-media/abc-screen.png',
+          },
+        ),
+      );
+      await _pumpWorkbench(
+        tester,
+        loader: (_) async => SddProject.fromJson(_projectJson()),
+        diagramRenderer: _FakeMermaidRenderer.success(),
+        specIntakeClient: intakeClient,
+        imageCropper: (source, selection) async =>
+            const SddMediaAttachmentDraft(
+              filename: 'screen-crop.png',
+              mimeType: 'image/png',
+              bytes: <int>[137, 80, 78, 71, 1, 2, 3],
+            ),
+        mediaAttachmentPicker: () async => SddMediaAttachmentDraft(
+          filename: 'screen.png',
+          mimeType: 'image/png',
+          bytes: imageBytes,
+        ),
+      );
+      _openWorkbench(tester);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Specs').first);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('New functionality').first);
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.widgetWithText(OutlinedButton, 'Image'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('Mark region screen.png'));
+      await tester.pumpAndSettle();
+      await tester.drag(
+        find.byKey(const Key('sdd-media-region-canvas')),
+        const Offset(70, 50),
+      );
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('sdd-media-crop-apply')));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.widgetWithText(TextField, 'Request'),
+        'Usar crop generado',
+      );
+      await tester.pump();
+      final previewButton = find.widgetWithText(FilledButton, 'Preview');
+      await tester.ensureVisible(previewButton);
+      await tester.tap(previewButton);
+      await tester.pumpAndSettle();
+
+      final attachments = intakeClient.lastDraft?.attachments;
+      expect(intakeClient.uploadedKind, 'crop');
+      expect(intakeClient.uploadedAttachment?.filename, 'screen-crop.png');
+      expect(intakeClient.uploadedAttachment?.mimeType, 'image/png');
+      expect(intakeClient.uploadedAttachment?.bytes, isNotEmpty);
+      expect(
+        intakeClient.uploadedSourceRef,
+        '.codex-bridge/sdd-media/abc-screen.png',
+      );
+      expect(intakeClient.uploadedRegion, containsPair('width', isA<int>()));
+      expect(attachments, hasLength(2));
+      expect(attachments?.last.mediaKind, 'crop');
+      expect(
+        attachments?.last.intakeItem['source_ref'],
+        attachments?.first.stagedPath,
+      );
+      expect(find.textContaining('screen-crop.png'), findsWidgets);
+    },
+  );
+
+  testWidgets(
+    'spec intake blocks region selection without image preview bytes',
+    (tester) async {
+      final intakeClient = _FakeSpecIntakeClient(
+        dryRunPlan: const SddSpecIntakePlan(status: 'dry-run'),
+        stagedMedia: const SddStagedMediaAttachment(
+          status: 'staged',
+          stagedPath: '.codex-bridge/sdd-media/abc-screen.png',
+          intakeItem: <String, Object?>{
+            'kind': 'image',
+            'mime_type': 'image/png',
+            'byte_size': 5,
+            'filename': 'screen.png',
+            'payload_ref': '.codex-bridge/sdd-media/abc-screen.png',
+          },
+        ),
+      );
+      await _pumpWorkbench(
+        tester,
+        loader: (_) async => SddProject.fromJson(_projectJson()),
+        diagramRenderer: _FakeMermaidRenderer.success(),
+        specIntakeClient: intakeClient,
+        mediaAttachmentPicker: () async => const SddMediaAttachmentDraft(
+          filename: 'screen.png',
+          mimeType: 'image/png',
+          bytes: <int>[1, 2, 3],
+        ),
+      );
+      _openWorkbench(tester);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Specs').first);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('New functionality').first);
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.widgetWithText(OutlinedButton, 'Image'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('Mark region screen.png'));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.textContaining('blocked: image preview unavailable'),
+        findsOneWidget,
+      );
+    },
+  );
+
+  testWidgets('spec intake validates empty native region before submit', (
+    tester,
+  ) async {
+    final intakeClient = _FakeSpecIntakeClient(
+      dryRunPlan: const SddSpecIntakePlan(status: 'dry-run'),
+      stagedMedia: const SddStagedMediaAttachment(
+        status: 'staged',
+        stagedPath: '.codex-bridge/sdd-media/abc-screen.png',
+        previewBytes: <int>[1, 2, 3, 4, 5],
+        intakeItem: <String, Object?>{
+          'kind': 'image',
+          'mime_type': 'image/png',
+          'byte_size': 5,
+          'filename': 'screen.png',
+          'payload_ref': '.codex-bridge/sdd-media/abc-screen.png',
+        },
+      ),
+    );
+    await _pumpWorkbench(
+      tester,
+      loader: (_) async => SddProject.fromJson(_projectJson()),
+      diagramRenderer: _FakeMermaidRenderer.success(),
+      specIntakeClient: intakeClient,
+      mediaAttachmentPicker: () async => const SddMediaAttachmentDraft(
+        filename: 'screen.png',
+        mimeType: 'image/png',
+        bytes: <int>[1, 2, 3],
+      ),
+    );
+    _openWorkbench(tester);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Specs').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('New functionality').first);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Image'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Mark region screen.png'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('sdd-media-region-apply')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('sdd-media-region-error')), findsOneWidget);
+    expect(find.textContaining('Draw a non-empty region'), findsOneWidget);
+  });
+
+  testWidgets('spec intake can remove a staged attachment from the draft', (
+    tester,
+  ) async {
+    final intakeClient = _FakeSpecIntakeClient(
+      dryRunPlan: const SddSpecIntakePlan(status: 'dry-run'),
+      stagedMedia: const SddStagedMediaAttachment(
+        status: 'staged',
+        stagedPath: '.codex-bridge/sdd-media/abc-screen.png',
+        intakeItem: <String, Object?>{
+          'kind': 'image',
+          'mime_type': 'image/png',
+          'byte_size': 5,
+          'filename': 'screen.png',
+          'sha256':
+              '2d4566582844690f8634a8b2534ea5221560038c6c0650c99140759bad603ae2',
+          'payload_ref': '.codex-bridge/sdd-media/abc-screen.png',
+        },
+      ),
+    );
+    await _pumpWorkbench(
+      tester,
+      loader: (_) async => SddProject.fromJson(_projectJson()),
+      diagramRenderer: _FakeMermaidRenderer.success(),
+      specIntakeClient: intakeClient,
+      mediaAttachmentPicker: () async => const SddMediaAttachmentDraft(
+        filename: 'screen.png',
+        mimeType: 'image/png',
+        bytes: <int>[1, 2, 3, 4, 5],
+      ),
+    );
+    _openWorkbench(tester);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Specs').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('New functionality').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Image'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Remove attachment screen.png'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.widgetWithText(TextField, 'Request'), 'x');
+    await tester.pump();
+    final previewButton = find.widgetWithText(FilledButton, 'Preview');
+    await tester.ensureVisible(previewButton);
+    await tester.tap(previewButton);
+    await tester.pumpAndSettle();
+
+    expect(intakeClient.lastDraft?.attachments, isEmpty);
+    expect(find.textContaining('deleted: screen.png'), findsOneWidget);
+  });
+
+  testWidgets('spec intake keeps attachment visible when backend delete blocks', (
+    tester,
+  ) async {
+    final intakeClient = _FakeSpecIntakeClient(
+      dryRunPlan: const SddSpecIntakePlan(status: 'dry-run'),
+      stagedMedia: const SddStagedMediaAttachment(
+        status: 'staged',
+        stagedPath: '.codex-bridge/sdd-media/abc-screen.png',
+        intakeItem: <String, Object?>{
+          'kind': 'image',
+          'mime_type': 'image/png',
+          'byte_size': 5,
+          'filename': 'screen.png',
+          'sha256':
+              '2d4566582844690f8634a8b2534ea5221560038c6c0650c99140759bad603ae2',
+          'payload_ref': '.codex-bridge/sdd-media/abc-screen.png',
+        },
+      ),
+      deleteError: Exception('staged media has already been consumed'),
+    );
+    await _pumpWorkbench(
+      tester,
+      loader: (_) async => SddProject.fromJson(_projectJson()),
+      diagramRenderer: _FakeMermaidRenderer.success(),
+      specIntakeClient: intakeClient,
+      mediaAttachmentPicker: () async => const SddMediaAttachmentDraft(
+        filename: 'screen.png',
+        mimeType: 'image/png',
+        bytes: <int>[1, 2, 3, 4, 5],
+      ),
+    );
+    _openWorkbench(tester);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Specs').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('New functionality').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Image'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Remove attachment screen.png'));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.textContaining('staged media has already been consumed'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('screen.png'), findsWidgets);
+  });
+
+  testWidgets('spec intake stages audio attachment before preview', (
+    tester,
+  ) async {
+    final intakeClient = _FakeSpecIntakeClient(
+      dryRunPlan: const SddSpecIntakePlan(status: 'dry-run'),
+      stagedMedia: const SddStagedMediaAttachment(
+        status: 'staged',
+        stagedPath: '.codex-bridge/sdd-media/abc-note.m4a',
+        intakeItem: <String, Object?>{
+          'kind': 'audio',
+          'mime_type': 'audio/mp4',
+          'byte_size': 5,
+          'filename': 'note.m4a',
+          'duration_ms': 1000,
+          'sha256':
+              '2d4566582844690f8634a8b2534ea5221560038c6c0650c99140759bad603ae2',
+          'payload_ref': '.codex-bridge/sdd-media/abc-note.m4a',
+        },
+      ),
+    );
+    await _pumpWorkbench(
+      tester,
+      loader: (_) async => SddProject.fromJson(_projectJson()),
+      diagramRenderer: _FakeMermaidRenderer.success(),
+      specIntakeClient: intakeClient,
+      audioAttachmentPicker: () async => const SddMediaAttachmentDraft(
+        filename: 'note.m4a',
+        mimeType: 'audio/mp4',
+        bytes: <int>[1, 2, 3, 4, 5],
+        durationMs: 1000,
+      ),
+    );
+    _openWorkbench(tester);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Specs').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('New functionality').first);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Audio'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.widgetWithText(TextField, 'Request'), 'Audio');
+    await tester.pump();
+    final previewButton = find.widgetWithText(FilledButton, 'Preview');
+    await tester.ensureVisible(previewButton);
+    await tester.tap(previewButton);
+    await tester.pumpAndSettle();
+
+    expect(intakeClient.uploadedKind, 'audio');
+    expect(intakeClient.uploadedAttachment?.durationMs, 1000);
+    expect(intakeClient.lastDraft?.attachments.single.mediaKind, 'audio');
+  });
+
+  testWidgets('spec intake accepts host-injected structured attachment', (
+    tester,
+  ) async {
+    final intakeClient = _FakeSpecIntakeClient(
+      dryRunPlan: const SddSpecIntakePlan(status: 'dry-run'),
+    );
+    await _pumpWorkbench(
+      tester,
+      loader: (_) async => SddProject.fromJson(_projectJson()),
+      diagramRenderer: _FakeMermaidRenderer.success(),
+      specIntakeClient: intakeClient,
+      structuredAttachmentPicker: () async => const SddStagedMediaAttachment(
+        status: 'staged',
+        stagedPath: '.codex-bridge/sdd-media/marked.png',
+        intakeItem: <String, Object?>{
+          'kind': 'marked_region',
+          'mime_type': 'image/png',
+          'byte_size': 6,
+          'filename': 'marked.png',
+          'source_ref': '.codex-bridge/sdd-media/source.png',
+          'payload_ref': '.codex-bridge/sdd-media/marked.png',
+          'region': <String, Object?>{
+            'x': 1,
+            'y': 2,
+            'width': 30,
+            'height': 40,
+          },
+        },
+      ),
+    );
+    _openWorkbench(tester);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Specs').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('New functionality').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Structured'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.widgetWithText(TextField, 'Request'), 'Region');
+    await tester.pump();
+    final previewButton = find.widgetWithText(FilledButton, 'Preview');
+    await tester.ensureVisible(previewButton);
+    await tester.tap(previewButton);
+    await tester.pumpAndSettle();
+
+    expect(
+      intakeClient.lastDraft?.attachments.single.mediaKind,
+      'marked_region',
+    );
+    expect(
+      intakeClient.lastDraft?.toJson()['intakeItems'].toString(),
+      contains('source_ref'),
+    );
+  });
+
+  testWidgets('spec intake carries host-injected image sequence attachments', (
+    tester,
+  ) async {
+    final intakeClient = _FakeSpecIntakeClient(
+      dryRunPlan: const SddSpecIntakePlan(status: 'dry-run'),
+    );
+    await _pumpWorkbench(
+      tester,
+      loader: (_) async => SddProject.fromJson(_projectJson()),
+      diagramRenderer: _FakeMermaidRenderer.success(),
+      specIntakeClient: intakeClient,
+      structuredAttachmentPicker: () async => const SddStagedMediaAttachment(
+        status: 'staged',
+        intakeItem: <String, Object?>{
+          'kind': 'image_sequence',
+          'mime_type': 'application/json',
+          'byte_size': 0,
+          'filename': 'walkthrough-sequence.json',
+          'frame_count': 2,
+          'audio_track_count': 1,
+          'references': <String>[
+            '.codex-bridge/sdd-media/frame-001.png',
+            '.codex-bridge/sdd-media/frame-002.png',
+            '.codex-bridge/sdd-media/narration.m4a',
+          ],
+          'timeline_ms': <int>[0, 1200],
+        },
+        nextActions: <String>[
+          'Sequence metadata is ready for dry-run validation.',
+        ],
+      ),
+    );
+    _openWorkbench(tester);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Specs').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('New functionality').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Structured'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.widgetWithText(TextField, 'Request'),
+      'Crear spec desde walkthrough',
+    );
+    await tester.pump();
+    final previewButton = find.widgetWithText(FilledButton, 'Preview');
+    await tester.ensureVisible(previewButton);
+    await tester.tap(previewButton);
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('walkthrough-sequence.json'), findsWidgets);
+    expect(
+      intakeClient.lastDraft?.attachments.single.mediaKind,
+      'image_sequence',
+    );
+    expect(
+      intakeClient.lastDraft?.toJson()['intakeItems'].toString(),
+      contains('timeline_ms'),
+    );
+  });
+
+  testWidgets('spec intake renders media upload errors', (tester) async {
+    final intakeClient = _FakeSpecIntakeClient(
+      dryRunPlan: const SddSpecIntakePlan(status: 'dry-run'),
+      uploadError: Exception('unsupported_image_mime_type'),
+    );
+    await _pumpWorkbench(
+      tester,
+      loader: (_) async => SddProject.fromJson(_projectJson()),
+      diagramRenderer: _FakeMermaidRenderer.success(),
+      specIntakeClient: intakeClient,
+      mediaAttachmentPicker: () async => const SddMediaAttachmentDraft(
+        filename: 'screen.gif',
+        mimeType: 'image/gif',
+        bytes: <int>[1, 2, 3],
+      ),
+    );
+    _openWorkbench(tester);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Specs').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('New functionality').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Image'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('unsupported_image_mime_type'), findsOneWidget);
+  });
+
+  testWidgets('spec intake queues reviews and applies existing spec job', (
+    tester,
+  ) async {
+    final intakeClient = _FakeSpecIntakeClient(
+      dryRunPlan: const SddSpecIntakePlan(
+        status: 'dry-run',
+        specId: '001-codex-bridge-sdd-wrapper',
+        selectedArtifact: 'specs/001-codex-bridge-sdd-wrapper/tasks.md',
+        plannedFiles: <String>['specs/001-codex-bridge-sdd-wrapper/tasks.md'],
+        nextActions: <String>['Queue a sandboxed Codex job.'],
+      ),
+      applyResult: const SddSpecIntakeApplyResult(
+        status: 'queued',
+        specId: '001-codex-bridge-sdd-wrapper',
+        job: SddCodexJobStatus(
+          id: 'sddjob-001',
+          status: 'queued',
+          targetArtifact: 'specs/001-codex-bridge-sdd-wrapper/tasks.md',
+          sandboxRoot: '.codex-bridge/sdd-jobs/sddjob-001/sandbox',
+          activity: SddActivitySnapshot(
+            state: 'queued',
+            events: <SddActivityEvent>[
+              SddActivityEvent(
+                state: 'queued',
+                status: 'active',
+                label: 'Job queued',
+              ),
+            ],
+          ),
+        ),
+      ),
+      runJob: const SddCodexJobStatus(
+        id: 'sddjob-001',
+        status: 'completed',
+        targetArtifact: 'specs/001-codex-bridge-sdd-wrapper/tasks.md',
+      ),
+      review: const SddCodexJobReview(
+        status: 'ready',
+        validationStatus: 'pass',
+        changedFiles: <SddGeneratedChange>[
+          SddGeneratedChange(
+            path: 'specs/001-codex-bridge-sdd-wrapper/tasks.md',
+            changeType: 'modified',
+            patchPath: '.codex-bridge/sdd-jobs/sddjob-001/review/tasks.diff',
+          ),
+        ],
+        nextActions: <String>['Apply reviewed generated changes when ready.'],
+      ),
+      applyJob: const SddCodexJobApplyResult(
+        status: 'applied',
+        applied: <String>['specs/001-codex-bridge-sdd-wrapper/tasks.md'],
+      ),
+    );
+    await _pumpWorkbench(
+      tester,
+      loader: (_) async => SddProject.fromJson(_projectJson()),
+      diagramRenderer: _FakeMermaidRenderer.success(),
+      specIntakeClient: intakeClient,
+    );
+    _openWorkbench(tester);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Specs').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('New functionality').first);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Existing').first);
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.widgetWithText(TextField, 'Request'),
+      'Actualizar tasks',
+    );
+    await tester.pump();
+    final previewButton = find.widgetWithText(FilledButton, 'Preview');
+    await tester.ensureVisible(previewButton);
+    await tester.tap(previewButton);
+    await tester.pumpAndSettle();
+    final queueButton = find.widgetWithText(FilledButton, 'Queue job');
+    await tester.ensureVisible(queueButton);
+    await tester.tap(queueButton);
+    await tester.pumpAndSettle();
+
+    expect(intakeClient.lastDraft?.mode, SddSpecIntakeMode.existingSpec);
+    expect(find.text('status: queued'), findsWidgets);
+    expect(find.text('Activity · queued'), findsOneWidget);
+
+    final runButton = find.widgetWithText(OutlinedButton, 'Run job');
+    await tester.ensureVisible(runButton);
+    await tester.tap(runButton);
+    await tester.pumpAndSettle();
+    expect(find.text('status: completed'), findsOneWidget);
+
+    final reviewButton = find.widgetWithText(OutlinedButton, 'Review');
+    await tester.ensureVisible(reviewButton);
+    await tester.tap(reviewButton);
+    await tester.pumpAndSettle();
+    expect(find.text('validation: pass'), findsOneWidget);
+
+    final applyReviewedButton = find.widgetWithText(
+      OutlinedButton,
+      'Apply reviewed',
+    );
+    await tester.ensureVisible(applyReviewedButton);
+    await tester.tap(applyReviewedButton);
+    await tester.pumpAndSettle();
+    expect(find.text('Reviewed apply'), findsOneWidget);
+    expect(find.text('status: applied'), findsWidgets);
+  });
+
+  testWidgets('spec intake refreshes and cancels queued activity', (
+    tester,
+  ) async {
+    final intakeClient = _FakeSpecIntakeClient(
+      dryRunPlan: const SddSpecIntakePlan(
+        status: 'dry-run',
+        specId: '001-codex-bridge-sdd-wrapper',
+        selectedArtifact: 'specs/001-codex-bridge-sdd-wrapper/spec.md',
+      ),
+      applyResult: const SddSpecIntakeApplyResult(
+        status: 'queued',
+        specId: '001-codex-bridge-sdd-wrapper',
+        job: SddCodexJobStatus(
+          id: 'sddjob-activity',
+          status: 'queued',
+          activity: SddActivitySnapshot(
+            state: 'queued',
+            events: <SddActivityEvent>[
+              SddActivityEvent(
+                state: 'queued',
+                status: 'active',
+                label: 'Job queued',
+              ),
+            ],
+          ),
+        ),
+      ),
+      activity: const SddActivitySnapshot(
+        state: 'running-codex',
+        jobId: 'sddjob-activity',
+        events: <SddActivityEvent>[
+          SddActivityEvent(
+            state: 'running-codex',
+            status: 'active',
+            label: 'Codex running',
+          ),
+        ],
+      ),
+      cancelJob: const SddCodexJobStatus(
+        id: 'sddjob-activity',
+        status: 'cancelled',
+        activity: SddActivitySnapshot(
+          state: 'cancelled',
+          events: <SddActivityEvent>[
+            SddActivityEvent(
+              state: 'cancelled',
+              status: 'blocked',
+              label: 'Job cancelled',
+            ),
+          ],
+        ),
+      ),
+    );
+    await _pumpWorkbench(
+      tester,
+      loader: (_) async => SddProject.fromJson(_projectJson()),
+      diagramRenderer: _FakeMermaidRenderer.success(),
+      specIntakeClient: intakeClient,
+    );
+    _openWorkbench(tester);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Specs').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('New functionality').first);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Existing').first);
+    await tester.pumpAndSettle();
+    await tester.enterText(find.widgetWithText(TextField, 'Request'), 'Editar');
+    await tester.pump();
+    await tester.tap(find.widgetWithText(FilledButton, 'Preview'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Queue job'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Activity · queued'), findsOneWidget);
+    final refreshButton = find.widgetWithText(OutlinedButton, 'Refresh');
+    await tester.ensureVisible(refreshButton);
+    await tester.tap(refreshButton);
+    await tester.pumpAndSettle();
+    expect(intakeClient.activityRequests, 1);
+    expect(find.text('Activity · running-codex'), findsOneWidget);
+    expect(find.text('Codex running'), findsOneWidget);
+
+    final cancelButton = find.widgetWithText(OutlinedButton, 'Cancel');
+    await tester.ensureVisible(cancelButton);
+    await tester.tap(cancelButton);
+    await tester.pumpAndSettle();
+    expect(intakeClient.cancelRequests, 1);
+    expect(find.text('Activity · cancelled'), findsOneWidget);
+  });
+
+  testWidgets('spec intake retries a failed sandbox job as a new queued job', (
+    tester,
+  ) async {
+    final intakeClient = _FakeSpecIntakeClient(
+      dryRunPlan: const SddSpecIntakePlan(
+        status: 'dry-run',
+        specId: '001-codex-bridge-sdd-wrapper',
+        selectedArtifact: 'specs/001-codex-bridge-sdd-wrapper/tasks.md',
+      ),
+      applyResult: const SddSpecIntakeApplyResult(
+        status: 'queued',
+        specId: '001-codex-bridge-sdd-wrapper',
+        job: SddCodexJobStatus(id: 'sddjob-retry', status: 'queued'),
+      ),
+      runJob: const SddCodexJobStatus(
+        id: 'sddjob-retry',
+        status: 'failed',
+        blockedReasons: <String>['Codex CLI exited with code 2.'],
+        activity: SddActivitySnapshot(
+          state: 'failed',
+          events: <SddActivityEvent>[
+            SddActivityEvent(
+              state: 'failed',
+              status: 'failed',
+              label: 'Failed',
+            ),
+          ],
+        ),
+      ),
+      retryJob: const SddCodexJobRetryResult(
+        status: 'queued',
+        originalJobId: 'sddjob-retry',
+        retryJobId: 'sddjob-retry-01',
+        retryEligible: true,
+        copiedReferences: <String>['request.json', 'context-pack.json'],
+        job: SddCodexJobStatus(
+          id: 'sddjob-retry-01',
+          status: 'queued',
+          activity: SddActivitySnapshot(
+            state: 'queued',
+            jobId: 'sddjob-retry-01',
+            events: <SddActivityEvent>[
+              SddActivityEvent(
+                state: 'retry-created',
+                status: 'completed',
+                label: 'Retry job created',
+              ),
+              SddActivityEvent(
+                state: 'queued',
+                status: 'active',
+                label: 'Retry queued',
+              ),
+            ],
+          ),
+        ),
+        activity: SddActivitySnapshot(
+          state: 'queued',
+          jobId: 'sddjob-retry-01',
+          events: <SddActivityEvent>[
+            SddActivityEvent(
+              state: 'retry-created',
+              status: 'completed',
+              label: 'Retry job created',
+            ),
+            SddActivityEvent(
+              state: 'queued',
+              status: 'active',
+              label: 'Retry queued',
+            ),
+          ],
+        ),
+      ),
+    );
+    await _pumpWorkbench(
+      tester,
+      loader: (_) async => SddProject.fromJson(_projectJson()),
+      diagramRenderer: _FakeMermaidRenderer.success(),
+      specIntakeClient: intakeClient,
+    );
+    _openWorkbench(tester);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Specs').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('New functionality').first);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Existing').first);
+    await tester.pumpAndSettle();
+    await tester.enterText(find.widgetWithText(TextField, 'Request'), 'Editar');
+    await tester.pump();
+    await tester.tap(find.widgetWithText(FilledButton, 'Preview'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Queue job'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Run job'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Activity · failed'), findsOneWidget);
+    final retryButton = find.widgetWithText(OutlinedButton, 'Retry');
+    await tester.ensureVisible(retryButton);
+    await tester.tap(retryButton);
+    await tester.pumpAndSettle();
+
+    expect(intakeClient.retryRequests, 1);
+    expect(find.text('Activity · queued'), findsOneWidget);
+    expect(find.text('Retry job created'), findsOneWidget);
+    expect(find.text('status: queued'), findsWidgets);
+  });
+
+  testWidgets('spec intake renders blocked dry-run errors', (tester) async {
+    final intakeClient = _FakeSpecIntakeClient(
+      dryRunPlan: const SddSpecIntakePlan(
+        status: 'blocked',
+        blocked: <String>['spec_target.spec_id: invalid_spec_id'],
+        rejectedMedia: <String>['intake_items[0]: missing text'],
+        nextActions: <String>['Fix validation errors before writing.'],
+      ),
+    );
+    await _pumpWorkbench(
+      tester,
+      loader: (_) async => SddProject.fromJson(_projectJson()),
+      diagramRenderer: _FakeMermaidRenderer.success(),
+      specIntakeClient: intakeClient,
+    );
+    _openWorkbench(tester);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Specs').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('New functionality').first);
+    await tester.pumpAndSettle();
+    await tester.enterText(find.widgetWithText(TextField, 'Request'), 'x');
+    await tester.pump();
+    final previewButton = find.widgetWithText(FilledButton, 'Preview');
+    await tester.ensureVisible(previewButton);
+    await tester.tap(previewButton);
+    await tester.pumpAndSettle();
+
+    expect(find.text('status: blocked'), findsOneWidget);
+    expect(find.text('spec_target.spec_id: invalid_spec_id'), findsOneWidget);
+    expect(find.text('intake_items[0]: missing text'), findsOneWidget);
   });
 
   testWidgets(
@@ -401,7 +1570,9 @@ void main() {
 
     await tester.tap(find.text('Specs').first);
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Codex').first);
+    final codexButton = find.text('Codex').first;
+    await tester.ensureVisible(codexButton);
+    await tester.tap(codexButton);
     await tester.pumpAndSettle();
     await tester.tap(find.text('Refine spec.md').first);
     await tester.pumpAndSettle();
@@ -917,6 +2088,11 @@ Future<void> _pumpWorkbench(
   String? metaWorkspacePath,
   MermaidDiagramRenderer? diagramRenderer,
   SddCodexActionSubmitter? actionSubmitter,
+  SddExplorerClient? specIntakeClient,
+  SddMediaAttachmentPicker? mediaAttachmentPicker,
+  SddMediaAttachmentPicker? audioAttachmentPicker,
+  SddStructuredAttachmentPicker? structuredAttachmentPicker,
+  SddImageCropper? imageCropper,
 }) async {
   await tester.pumpWidget(
     MaterialApp(
@@ -926,6 +2102,11 @@ Future<void> _pumpWorkbench(
         metaWorkspacePath: metaWorkspacePath,
         explorerLoader: loader,
         diagramRenderer: diagramRenderer,
+        specIntakeClient: specIntakeClient,
+        mediaAttachmentPicker: mediaAttachmentPicker,
+        audioAttachmentPicker: audioAttachmentPicker,
+        structuredAttachmentPicker: structuredAttachmentPicker,
+        imageCropper: imageCropper,
         sddActionSubmitter: actionSubmitter,
         child: const Text('normal app'),
       ),
@@ -964,7 +2145,25 @@ Map<String, dynamic> _projectJson() {
       <String, dynamic>{
         'id': '001-codex-bridge-sdd-wrapper',
         'title': 'Bridge Contract',
+        'description': 'Read-only inspection for Bridge SDD artifacts.',
         'path': 'specs/001-codex-bridge-sdd-wrapper',
+        'lifecycle_status': 'active',
+        'traceability_status': 'linked',
+        'created_at': '2026-07-01T09:00:00Z',
+        'updated_at': '2026-07-06T10:15:00Z',
+        'generated_title': false,
+        'generated_description': true,
+        'user_pinned_title': true,
+        'user_pinned_description': false,
+        'task_total': 2,
+        'task_completed': 1,
+        'task_pending': 1,
+        'last_run_state': 'queued',
+        'metadata_status': 'stale',
+        'metadata_warnings': <String>[
+          'metadata.yaml source digests are stale.',
+        ],
+        'metadata_stale_paths': <String>['tasks.md'],
         'missing': <String>[],
         'spec': <String, dynamic>{
           'path': 'specs/001-codex-bridge-sdd-wrapper/spec.md',
@@ -1077,6 +2276,229 @@ class _FakeMermaidRenderer implements MermaidDiagramRenderer {
   @override
   Future<MermaidRenderResult> render(SddDiagram diagram) {
     return _render(diagram);
+  }
+}
+
+class _FakeSpecIntakeClient extends SddExplorerClient {
+  _FakeSpecIntakeClient({
+    required this.dryRunPlan,
+    this.applyResult,
+    this.stagedMedia,
+    this.uploadError,
+    this.deleteError,
+    this.runJob,
+    this.review,
+    this.applyJob,
+    this.activity,
+    this.cancelJob,
+    this.retryJob,
+  }) : super(baseUrl: 'http://bridge.test');
+
+  final SddSpecIntakePlan dryRunPlan;
+  final SddSpecIntakeApplyResult? applyResult;
+  final SddStagedMediaAttachment? stagedMedia;
+  final Object? uploadError;
+  final Object? deleteError;
+  final SddCodexJobStatus? runJob;
+  final SddCodexJobReview? review;
+  final SddCodexJobApplyResult? applyJob;
+  final SddActivitySnapshot? activity;
+  final SddCodexJobStatus? cancelJob;
+  final SddCodexJobRetryResult? retryJob;
+  SddSpecIntakeDraft? lastDraft;
+  String? uploadedWorkspacePath;
+  SddMediaAttachmentDraft? uploadedAttachment;
+  String? uploadedKind;
+  String? uploadedSourceRef;
+  Map<String, Object?>? uploadedRegion;
+  String? deletedStagedPath;
+  int activityRequests = 0;
+  int cancelRequests = 0;
+  int retryRequests = 0;
+
+  @override
+  Future<SddSpecIntakePlan> dryRunSpecIntake(SddSpecIntakeDraft draft) async {
+    lastDraft = draft;
+    return dryRunPlan;
+  }
+
+  @override
+  Future<SddSpecIntakeApplyResult> applySpecIntake(
+    SddSpecIntakeDraft draft,
+  ) async {
+    lastDraft = draft;
+    return applyResult ?? const SddSpecIntakeApplyResult(status: 'blocked');
+  }
+
+  @override
+  Future<SddStagedMediaAttachment> uploadSpecMedia({
+    required String workspacePath,
+    required SddMediaAttachmentDraft attachment,
+    String kind = 'image',
+    String? sourceRef,
+    Map<String, Object?>? region,
+  }) async {
+    uploadedWorkspacePath = workspacePath;
+    uploadedAttachment = attachment;
+    uploadedKind = kind;
+    uploadedSourceRef = sourceRef;
+    uploadedRegion = region;
+    final error = uploadError;
+    if (error != null) {
+      throw error;
+    }
+    if (kind == 'crop') {
+      return SddStagedMediaAttachment(
+        status: 'staged',
+        stagedPath: '.codex-bridge/sdd-media/crop.png',
+        previewBytes: attachment.bytes,
+        intakeItem: <String, Object?>{
+          'kind': 'crop',
+          'mime_type': attachment.mimeType,
+          'byte_size': attachment.bytes.length,
+          'filename': attachment.filename,
+          'sha256':
+              'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+          'source_ref': sourceRef,
+          'payload_ref': '.codex-bridge/sdd-media/crop.png',
+          'region': region,
+        },
+      );
+    }
+    return stagedMedia ??
+        const SddStagedMediaAttachment(
+          status: 'staged',
+          intakeItem: <String, Object?>{
+            'kind': 'image',
+            'mime_type': 'image/png',
+            'byte_size': 0,
+            'filename': 'image.png',
+            'sha256':
+                'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+            'payload_ref': '.codex-bridge/sdd-media/image.png',
+          },
+        );
+  }
+
+  @override
+  Future<SddMediaLifecycleResult> deleteSpecMedia({
+    required String workspacePath,
+    required String stagedPath,
+  }) async {
+    deletedStagedPath = stagedPath;
+    final error = deleteError;
+    if (error != null) {
+      throw error;
+    }
+    return SddMediaLifecycleResult(
+      status: 'deleted',
+      lifecycle: 'deleted',
+      stagedPath: stagedPath,
+      deleted: <String>[stagedPath],
+    );
+  }
+
+  @override
+  Future<SddCodexJobStatus> runCodexJob(String jobId) async {
+    return runJob ?? SddCodexJobStatus(id: jobId, status: 'blocked');
+  }
+
+  @override
+  Future<SddActivitySnapshot> getCodexJobActivity(String jobId) async {
+    activityRequests += 1;
+    return activity ??
+        SddActivitySnapshot(
+          state: 'queued',
+          jobId: jobId,
+          events: const <SddActivityEvent>[
+            SddActivityEvent(
+              state: 'queued',
+              status: 'active',
+              label: 'Job queued',
+            ),
+          ],
+        );
+  }
+
+  @override
+  Future<SddCodexJobStatus> cancelCodexJob(String jobId) async {
+    cancelRequests += 1;
+    return cancelJob ??
+        SddCodexJobStatus(
+          id: jobId,
+          status: 'cancelled',
+          activity: SddActivitySnapshot(
+            state: 'cancelled',
+            jobId: jobId,
+            events: const <SddActivityEvent>[
+              SddActivityEvent(
+                state: 'cancelled',
+                status: 'blocked',
+                label: 'Job cancelled',
+              ),
+            ],
+          ),
+        );
+  }
+
+  @override
+  Future<SddCodexJobRetryResult> retryCodexJob(String jobId) async {
+    retryRequests += 1;
+    return retryJob ??
+        SddCodexJobRetryResult(
+          status: 'queued',
+          originalJobId: jobId,
+          retryJobId: '$jobId-retry-01',
+          retryEligible: true,
+          copiedReferences: const <String>['request.json', 'context-pack.json'],
+          job: SddCodexJobStatus(
+            id: '$jobId-retry-01',
+            status: 'queued',
+            activity: SddActivitySnapshot(
+              state: 'queued',
+              jobId: '$jobId-retry-01',
+              events: const <SddActivityEvent>[
+                SddActivityEvent(
+                  state: 'retry-created',
+                  status: 'completed',
+                  label: 'Retry job created',
+                ),
+                SddActivityEvent(
+                  state: 'queued',
+                  status: 'active',
+                  label: 'Retry queued',
+                ),
+              ],
+            ),
+          ),
+          activity: SddActivitySnapshot(
+            state: 'queued',
+            jobId: '$jobId-retry-01',
+            events: const <SddActivityEvent>[
+              SddActivityEvent(
+                state: 'retry-created',
+                status: 'completed',
+                label: 'Retry job created',
+              ),
+              SddActivityEvent(
+                state: 'queued',
+                status: 'active',
+                label: 'Retry queued',
+              ),
+            ],
+          ),
+        );
+  }
+
+  @override
+  Future<SddCodexJobReview> reviewCodexJob(String jobId) async {
+    return review ??
+        const SddCodexJobReview(status: 'blocked', validationStatus: 'not_run');
+  }
+
+  @override
+  Future<SddCodexJobApplyResult> applyCodexJob(String jobId) async {
+    return applyJob ?? const SddCodexJobApplyResult(status: 'blocked');
   }
 }
 

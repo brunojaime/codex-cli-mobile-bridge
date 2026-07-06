@@ -1,0 +1,31 @@
+sequenceDiagram
+  participant User
+  participant App as Workbench or Bridge
+  participant Backend
+  participant Target as Target Validator
+  participant Context as Context Pack Service
+  participant Jobs as Job Store
+  participant Codex as Codex CLI
+  participant Repo as Target Repo
+
+  User->>App: Submit intake and spec target
+  App->>Backend: Create spec action request
+  Backend->>Target: Validate workspace spec target and media
+  Target-->>Backend: Validated target or blocked error
+  Backend->>Jobs: Create job received
+  Backend->>Repo: Persist raw intake after dry-run
+  Backend->>Context: Build context pack
+  Context-->>Backend: Required files and blocked reads
+  Backend->>Jobs: running-codex
+  Backend->>Codex: Run argv in validated cwd with context files
+  Codex->>Repo: Create or update spec artifacts
+  Codex-->>Backend: Job result
+  alt success
+    Backend->>Jobs: refreshing-metadata
+    Backend->>Repo: Refresh metadata traceability and indexes
+    Backend->>Jobs: ready
+  else failed cancelled or timeout
+    Backend->>Jobs: failed blocked or cancelled with next actions
+  end
+  Backend-->>App: Updated job and spec state
+  App-->>User: Show ready, failed, or blocked state

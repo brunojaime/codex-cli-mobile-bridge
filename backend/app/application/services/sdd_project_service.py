@@ -1,7 +1,13 @@
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from pathlib import Path
+
+from backend.app.application.services.sdd_standard_service import (
+    SddStandardError,
+    parse_simple_yaml,
+)
 
 
 ALLOWED_SDD_EXTENSIONS = frozenset({".md", ".mmd", ".yaml", ".yml", ".json"})
@@ -13,6 +19,10 @@ class SddProjectError(RuntimeError):
 
 
 class SddWorkspacePathError(SddProjectError):
+    pass
+
+
+class SddSpecNotFoundError(SddProjectError):
     pass
 
 
@@ -37,6 +47,39 @@ class SddDiagram:
 
 
 @dataclass(frozen=True, slots=True)
+class SddSpecTaskSummary:
+    total: int
+    completed: int
+    pending: int
+
+
+@dataclass(frozen=True, slots=True)
+class SddSpecGeneratedMetadata:
+    title: bool
+    description: bool
+    user_pinned_title: bool
+    user_pinned_description: bool
+
+
+@dataclass(frozen=True, slots=True)
+class SddSpecMetadata:
+    id: str
+    title: str
+    description: str
+    lifecycle_status: str
+    created_at: str | None
+    updated_at: str | None
+    generated: SddSpecGeneratedMetadata
+    tasks: SddSpecTaskSummary
+    last_run_state: str | None
+    metadata_status: str
+    metadata_warnings: tuple[str, ...]
+    metadata_stale_paths: tuple[str, ...]
+    available_files: tuple[str, ...]
+    diagrams: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class SddSpec:
     id: str
     title: str
@@ -50,6 +93,7 @@ class SddSpec:
     slice_docs: tuple[SddFile, ...]
     diagrams: tuple[SddDiagram, ...]
     missing: tuple[str, ...]
+    metadata: SddSpecMetadata
 
 
 @dataclass(frozen=True, slots=True)
@@ -94,7 +138,9 @@ class SddProjectService:
     def list_projects(self) -> tuple[SddProjectSummary, ...]:
         roots: list[Path] = []
         if self._projects_root.is_dir():
-            for child in sorted(self._projects_root.iterdir(), key=lambda item: item.name):
+            for child in sorted(
+                self._projects_root.iterdir(), key=lambda item: item.name
+            ):
                 if child.is_dir():
                     try:
                         roots.append(self._validate_workspace_path(str(child)))
@@ -108,6 +154,16 @@ class SddProjectService:
     def get_project(self, workspace_path: str) -> SddProject:
         return self._project_snapshot(self._validate_workspace_path(workspace_path))
 
+    def list_spec_metadata(self, workspace_path: str) -> tuple[SddSpecMetadata, ...]:
+        project = self.get_project(workspace_path)
+        return tuple(spec.metadata for spec in project.specs)
+
+    def get_spec_metadata(self, workspace_path: str, spec_id: str) -> SddSpecMetadata:
+        for metadata in self.list_spec_metadata(workspace_path):
+            if metadata.id == spec_id:
+                return metadata
+        raise SddSpecNotFoundError(f"Spec not found: {spec_id}")
+
     def get_diagrams(self, workspace_path: str) -> tuple[SddDiagram, ...]:
         project = self.get_project(workspace_path)
         diagrams = list(project.architecture_diagrams)
@@ -120,7 +176,9 @@ class SddProjectService:
         if not raw_path:
             raise SddWorkspacePathError("workspace_path is required.")
         alias_path = self._workspace_aliases.get(raw_path)
-        candidate = alias_path if alias_path is not None else Path(raw_path).expanduser()
+        candidate = (
+            alias_path if alias_path is not None else Path(raw_path).expanduser()
+        )
         if not candidate.is_absolute():
             candidate = self._projects_root / candidate
         resolved = candidate.resolve()
@@ -135,7 +193,9 @@ class SddProjectService:
     def _is_allowed_workspace(self, path: Path) -> bool:
         if _is_relative_to(path, self._projects_root):
             return True
-        return any(path == alias_path for alias_path in self._workspace_aliases.values())
+        return any(
+            path == alias_path for alias_path in self._workspace_aliases.values()
+        )
 
     def _project_summary(self, workspace: Path) -> SddProjectSummary:
         architecture_diagram_count = len(
@@ -292,6 +352,11 @@ class SddProjectService:
                 )
                 if file_value is None
             ]
+            diagrams = self._read_diagrams(
+                workspace,
+                f"{rel_dir}/diagrams",
+                scope=feature_dir.name,
+            )
             specs.append(
                 SddSpec(
                     id=feature_dir.name,
@@ -308,15 +373,95 @@ class SddProjectService:
                     plan_files=plan_files,
                     task_files=task_files,
                     slice_docs=slice_docs,
-                    diagrams=self._read_diagrams(
-                        workspace,
-                        f"{rel_dir}/diagrams",
-                        scope=feature_dir.name,
-                    ),
+                    diagrams=diagrams,
                     missing=tuple(missing),
+                    metadata=self._read_spec_metadata(
+                        workspace=workspace,
+                        spec_id=feature_dir.name,
+                        rel_dir=rel_dir,
+                        spec_file=spec_file,
+                        plan_file=plan_file,
+                        tasks_file=tasks_file,
+                        diagrams=diagrams,
+                    ),
                 )
             )
         return tuple(specs)
+
+    def _read_spec_metadata(
+        self,
+        *,
+        workspace: Path,
+        spec_id: str,
+        rel_dir: str,
+        spec_file: SddFile | None,
+        plan_file: SddFile | None,
+        tasks_file: SddFile | None,
+        diagrams: tuple[SddDiagram, ...],
+    ) -> SddSpecMetadata:
+        metadata_file = self._read_optional_file(workspace, f"{rel_dir}/metadata.yaml")
+        available_files = tuple(
+            path
+            for path, file_value in (
+                (f"{rel_dir}/metadata.yaml", metadata_file),
+                (f"{rel_dir}/spec.md", spec_file),
+                (f"{rel_dir}/plan.md", plan_file),
+                (f"{rel_dir}/tasks.md", tasks_file),
+                (
+                    f"{rel_dir}/traceability.yaml",
+                    self._read_optional_file(workspace, f"{rel_dir}/traceability.yaml"),
+                ),
+            )
+            if file_value is not None
+        )
+        diagram_paths = tuple(diagram.path for diagram in diagrams)
+        parsed: dict[str, object] = {}
+        warnings: list[str] = []
+        metadata_status = "present"
+        if metadata_file is None:
+            metadata_status = "missing"
+            warnings.append("metadata.yaml is missing; fallback metadata is used.")
+        elif metadata_file.error is not None:
+            metadata_status = "malformed"
+            warnings.append(f"metadata.yaml could not be read: {metadata_file.error}")
+        else:
+            try:
+                loaded = parse_simple_yaml(metadata_file.content or "")
+            except SddStandardError as exc:
+                loaded = None
+                metadata_status = "malformed"
+                warnings.append(f"metadata.yaml is malformed: {exc}")
+            if isinstance(loaded, dict):
+                parsed = loaded
+            else:
+                metadata_status = "malformed"
+                warnings.append("metadata.yaml must contain a mapping.")
+
+        task_summary = _task_summary_from_metadata_or_file(parsed, tasks_file)
+        generated = _generated_metadata(parsed)
+        stale_paths = _metadata_stale_paths(workspace, rel_dir, parsed)
+        if stale_paths and metadata_status == "present":
+            metadata_status = "stale"
+            warnings.append("metadata.yaml source digests are stale.")
+
+        return SddSpecMetadata(
+            id=spec_id,
+            title=str(parsed.get("title") or _fallback_title(spec_id, spec_file)),
+            description=str(
+                parsed.get("description") or _fallback_description(spec_file)
+            ),
+            lifecycle_status=str(parsed.get("status") or "draft"),
+            created_at=_optional_str(parsed.get("created_at")),
+            updated_at=_optional_str(parsed.get("updated_at")),
+            generated=generated,
+            tasks=task_summary,
+            last_run_state=_optional_str(parsed.get("last_run_state")),
+            metadata_status=metadata_status,
+            metadata_warnings=tuple(warnings),
+            metadata_stale_paths=stale_paths,
+            available_files=available_files + diagram_paths,
+            diagrams=diagram_paths,
+        )
 
     def _read_history_files(
         self,
@@ -336,9 +481,8 @@ class SddProjectService:
             ):
                 if path.name == primary_name:
                     continue
-                if (
-                    relative_dir == feature_rel_dir
-                    and not path.name.startswith((f"{root_prefix}-", f"{root_prefix}_"))
+                if relative_dir == feature_rel_dir and not path.name.startswith(
+                    (f"{root_prefix}-", f"{root_prefix}_")
                 ):
                     continue
                 rel_path = path.relative_to(workspace).as_posix()
@@ -400,7 +544,9 @@ class SddProjectService:
             )
         return tuple(diagrams)
 
-    def _read_optional_file(self, workspace: Path, relative_path: str) -> SddFile | None:
+    def _read_optional_file(
+        self, workspace: Path, relative_path: str
+    ) -> SddFile | None:
         path = _safe_resolve(workspace / relative_path)
         if path is None or not _is_relative_to(path, workspace) or not path.is_file():
             return None
@@ -500,6 +646,126 @@ def _first_markdown_heading(content: str | None) -> str | None:
         if stripped.startswith("#"):
             return stripped.lstrip("#").strip() or None
     return None
+
+
+def _fallback_title(spec_id: str, spec_file: SddFile | None) -> str:
+    if spec_file is not None and spec_file.title:
+        return spec_file.title
+    return spec_id
+
+
+def _fallback_description(spec_file: SddFile | None) -> str:
+    if spec_file is None or not spec_file.content:
+        return ""
+    in_frontmatter = False
+    for line in spec_file.content.splitlines():
+        stripped = line.strip()
+        if stripped == "---":
+            in_frontmatter = not in_frontmatter
+            continue
+        if in_frontmatter or not stripped or stripped.startswith("#"):
+            continue
+        if ":" in stripped and len(stripped.split(":", 1)[0].split()) <= 3:
+            continue
+        return stripped[:240]
+    return ""
+
+
+def _task_summary_from_metadata_or_file(
+    metadata: dict[str, object],
+    tasks_file: SddFile | None,
+) -> SddSpecTaskSummary:
+    raw_tasks = metadata.get("tasks")
+    if isinstance(raw_tasks, dict):
+        total = _safe_int(raw_tasks.get("total"))
+        completed = _safe_int(raw_tasks.get("completed"))
+        pending = _safe_int(raw_tasks.get("pending"))
+        if total is not None and completed is not None and pending is not None:
+            return SddSpecTaskSummary(total=total, completed=completed, pending=pending)
+    return _task_summary_from_markdown(tasks_file.content if tasks_file else None)
+
+
+def _task_summary_from_markdown(content: str | None) -> SddSpecTaskSummary:
+    if not content:
+        return SddSpecTaskSummary(total=0, completed=0, pending=0)
+    total = 0
+    completed = 0
+    for line in content.splitlines():
+        stripped = line.strip().lower()
+        if stripped.startswith(("- [ ]", "* [ ]")):
+            total += 1
+        elif stripped.startswith(("- [x]", "* [x]")):
+            total += 1
+            completed += 1
+    return SddSpecTaskSummary(
+        total=total,
+        completed=completed,
+        pending=max(total - completed, 0),
+    )
+
+
+def _generated_metadata(metadata: dict[str, object]) -> SddSpecGeneratedMetadata:
+    generated = metadata.get("generated")
+    if not isinstance(generated, dict):
+        generated = {}
+    return SddSpecGeneratedMetadata(
+        title=_safe_bool(generated.get("title")),
+        description=_safe_bool(generated.get("description")),
+        user_pinned_title=_safe_bool(generated.get("user_pinned_title")),
+        user_pinned_description=_safe_bool(generated.get("user_pinned_description")),
+    )
+
+
+def _metadata_stale_paths(
+    workspace: Path,
+    rel_dir: str,
+    metadata: dict[str, object],
+) -> tuple[str, ...]:
+    raw_digests = metadata.get("source_digests")
+    if not isinstance(raw_digests, dict):
+        return ()
+    stale: list[str] = []
+    for relative_name, expected_digest in raw_digests.items():
+        relative_name_str = str(relative_name)
+        if "/" in relative_name_str or "\\" in relative_name_str:
+            continue
+        if relative_name_str not in {
+            "spec.md",
+            "plan.md",
+            "tasks.md",
+            "traceability.yaml",
+        }:
+            continue
+        path = _safe_resolve(workspace / rel_dir / relative_name_str)
+        if path is None or not _is_relative_to(path, workspace) or not path.is_file():
+            stale.append(relative_name_str)
+            continue
+        actual_digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        if actual_digest != str(expected_digest):
+            stale.append(relative_name_str)
+    return tuple(stale)
+
+
+def _safe_int(value: object) -> int | None:
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.strip().isdigit():
+        return int(value.strip())
+    return None
+
+
+def _safe_bool(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"true", "yes", "1"}
+    return False
+
+
+def _optional_str(value: object) -> str | None:
+    if value is None:
+        return None
+    return str(value)
 
 
 def _diagram_type(content: str | None) -> str:

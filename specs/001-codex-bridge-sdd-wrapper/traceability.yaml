@@ -1,0 +1,9 @@
+spec_id: 001-codex-bridge-sdd-wrapper
+requirements:
+  FR-001:
+    acceptance_criteria:
+      - AC-001
+    tasks:
+      - T001
+    diagrams:
+      - specs/001-codex-bridge-sdd-wrapper/diagrams/read-model.mmd

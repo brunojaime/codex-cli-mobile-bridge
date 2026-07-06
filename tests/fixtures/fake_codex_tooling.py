@@ -8,7 +8,9 @@ import time
 
 
 def _state_path() -> Path:
-    return Path(os.environ.get("HOME", ".")).resolve() / ".codex" / "fake_mcp_state.json"
+    return (
+        Path(os.environ.get("HOME", ".")).resolve() / ".codex" / "fake_mcp_state.json"
+    )
 
 
 def _load_servers() -> dict[str, dict[str, object]]:
@@ -153,7 +155,7 @@ def main() -> int:
             return 1
         separator_index = args.index("--")
         flags = args[3:separator_index]
-        command_parts = args[separator_index + 1:]
+        command_parts = args[separator_index + 1 :]
         if not command_parts:
             print("Missing MCP server command", file=sys.stderr)
             return 1
@@ -210,7 +212,13 @@ def main() -> int:
         _save_servers(servers)
         print(f"Removed MCP server {server_id}")
         return 0
-    if args == ["-c", 'sandbox_mode="danger-full-access"', "app-server", "--listen", "stdio://"]:
+    if args == [
+        "-c",
+        'sandbox_mode="danger-full-access"',
+        "app-server",
+        "--listen",
+        "stdio://",
+    ]:
         for raw_line in sys.stdin:
             line = raw_line.strip()
             if not line:

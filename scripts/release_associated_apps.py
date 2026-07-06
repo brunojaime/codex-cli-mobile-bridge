@@ -105,7 +105,9 @@ def main() -> int:
                     push=args.push,
                     allow_existing_branch=args.allow_existing_branch,
                 )
-        emit(plans, json_output=args.json_output, executed=args.execute, pushed=args.push)
+        emit(
+            plans, json_output=args.json_output, executed=args.execute, pushed=args.push
+        )
     except ReleasePlanError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
@@ -496,10 +498,13 @@ def checkout_release_branch(
     *,
     allow_existing_branch: bool,
 ) -> None:
-    if allow_existing_branch and run(
-        ["git", "branch", "--list", branch],
-        cwd=repo,
-    ).stdout.strip():
+    if (
+        allow_existing_branch
+        and run(
+            ["git", "branch", "--list", branch],
+            cwd=repo,
+        ).stdout.strip()
+    ):
         run(["git", "checkout", branch], cwd=repo)
         return
     run(["git", "checkout", "-b", branch], cwd=repo)
@@ -568,7 +573,9 @@ def run(command: list[str], *, cwd: Path) -> subprocess.CompletedProcess[str]:
         )
     except subprocess.CalledProcessError as exc:
         detail = exc.stderr.strip() or exc.stdout.strip()
-        raise ReleasePlanError(f"{' '.join(command)} failed in {cwd}: {detail}") from exc
+        raise ReleasePlanError(
+            f"{' '.join(command)} failed in {cwd}: {detail}"
+        ) from exc
 
 
 def emit(

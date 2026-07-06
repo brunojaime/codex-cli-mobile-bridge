@@ -26,10 +26,19 @@ from backend.app.domain.entities.chat_turn_summary import (
 from backend.app.domain.entities.codex_options import CodexRunOptions
 from backend.app.domain.entities.job import utc_now
 from backend.app.domain.entities.job import JobStatus
-from backend.app.infrastructure.execution.base import ExecutionProvider, ExecutionSnapshot
-from backend.app.infrastructure.persistence.in_memory_chat_repository import InMemoryChatRepository
-from backend.app.infrastructure.persistence.sqlite_chat_repository import SqliteChatRepository
-from backend.app.infrastructure.transcription.disabled_transcriber import DisabledAudioTranscriber
+from backend.app.infrastructure.execution.base import (
+    ExecutionProvider,
+    ExecutionSnapshot,
+)
+from backend.app.infrastructure.persistence.in_memory_chat_repository import (
+    InMemoryChatRepository,
+)
+from backend.app.infrastructure.persistence.sqlite_chat_repository import (
+    SqliteChatRepository,
+)
+from backend.app.infrastructure.transcription.disabled_transcriber import (
+    DisabledAudioTranscriber,
+)
 
 
 _TITLE_GENERATION_PROMPT_PREFIX = "Create a concise, specific chat title"
@@ -260,6 +269,7 @@ class _DelayedTurnSummaryExecutionProvider(ExecutionProvider):
     def get_latest_activity(self, job_id: str) -> str | None:
         return self.get_snapshot(job_id).latest_activity
 
+
 def _build_service(
     projects_root: str,
     *,
@@ -391,7 +401,9 @@ def test_sqlite_session_round_trip_preserves_optional_archived_at() -> None:
         assert restored.archived_at == archived_at
 
 
-def test_repositories_list_sessions_by_recent_activity_with_deterministic_ties() -> None:
+def test_repositories_list_sessions_by_recent_activity_with_deterministic_ties() -> (
+    None
+):
     with TemporaryDirectory() as temp_dir:
         workspace_a = Path(temp_dir) / "project-a"
         workspace_b = Path(temp_dir) / "project-b"
@@ -539,7 +551,9 @@ def test_sqlite_turn_summary_round_trip_preserves_source_message_snapshot() -> N
         assert restored[0].source_messages == summary.source_messages
 
 
-def test_turn_summary_response_falls_back_to_live_message_content_for_legacy_summaries() -> None:
+def test_turn_summary_response_falls_back_to_live_message_content_for_legacy_summaries() -> (
+    None
+):
     timestamp = utc_now()
     summary = ChatTurnSummary(
         id="legacy-summary",
@@ -650,7 +664,9 @@ def test_turn_summary_prompt_sanitizes_stale_image_attachment_errors() -> None:
         ) in prompt
 
 
-def test_turn_summary_waits_longer_than_four_seconds_for_hidden_summary_completion() -> None:
+def test_turn_summary_waits_longer_than_four_seconds_for_hidden_summary_completion() -> (
+    None
+):
     with TemporaryDirectory() as temp_dir:
         workspace = Path(temp_dir) / "repo"
         workspace.mkdir()
@@ -713,8 +729,10 @@ def test_placeholder_session_title_is_generated_after_four_user_turns() -> None:
         )
 
         _wait_until(
-            lambda: (service.get_session(session.id) or session).title
-            == "Release checklist"
+            lambda: (
+                (service.get_session(session.id) or session).title
+                == "Release checklist"
+            )
         )
         updated = service.get_session(session.id)
         assert updated is not None
@@ -809,8 +827,10 @@ def test_implicit_session_starts_with_placeholder_title_before_generation() -> N
 
         service._maybe_finalize_session_title(job.session_id)
         _wait_until(
-            lambda: (service.get_session(job.session_id) or created).title
-            == "Release checklist"
+            lambda: (
+                (service.get_session(job.session_id) or created).title
+                == "Release checklist"
+            )
         )
         updated = service.get_session(job.session_id)
         assert updated is not None
@@ -872,7 +892,9 @@ def test_turn_summary_toggle_can_be_updated() -> None:
         assert updated.turn_summary_checkpoint_initialized is True
 
 
-def test_new_session_created_enabled_still_summarizes_first_four_terminal_messages() -> None:
+def test_new_session_created_enabled_still_summarizes_first_four_terminal_messages() -> (
+    None
+):
     with TemporaryDirectory() as temp_dir:
         workspace = Path(temp_dir) / "repo"
         workspace.mkdir()
@@ -929,7 +951,9 @@ def test_new_session_created_enabled_still_summarizes_first_four_terminal_messag
         }
 
 
-def test_failed_visible_jobs_still_trigger_turn_summary_after_four_terminal_messages() -> None:
+def test_failed_visible_jobs_still_trigger_turn_summary_after_four_terminal_messages() -> (
+    None
+):
     with TemporaryDirectory() as temp_dir:
         workspace = Path(temp_dir) / "repo"
         workspace.mkdir()
@@ -958,9 +982,7 @@ def test_failed_visible_jobs_still_trigger_turn_summary_after_four_terminal_mess
         summary_message_ids = set(summaries[0].source_message_ids)
         all_messages = service.list_messages(session.id)
         summarized_messages = [
-            message
-            for message in all_messages
-            if message.id in summary_message_ids
+            message for message in all_messages if message.id in summary_message_ids
         ]
         assert {message.content for message in summarized_messages} == {
             "Failed turn one",
@@ -968,10 +990,18 @@ def test_failed_visible_jobs_still_trigger_turn_summary_after_four_terminal_mess
             "Failed turn two",
             "Visible job failed.",
         }
-        assert sum(message.status == ChatMessageStatus.FAILED for message in summarized_messages) == 2
+        assert (
+            sum(
+                message.status == ChatMessageStatus.FAILED
+                for message in summarized_messages
+            )
+            == 2
+        )
 
 
-def test_turn_summary_provenance_snapshot_is_immutable_after_source_message_mutation() -> None:
+def test_turn_summary_provenance_snapshot_is_immutable_after_source_message_mutation() -> (
+    None
+):
     with TemporaryDirectory() as temp_dir:
         workspace = Path(temp_dir) / "repo"
         workspace.mkdir()
@@ -988,9 +1018,13 @@ def test_turn_summary_provenance_snapshot_is_immutable_after_source_message_muta
             turn_summaries_enabled=True,
         )
 
-        first_job = service.submit_message("Immutable snapshot turn one", session_id=session.id)
+        first_job = service.submit_message(
+            "Immutable snapshot turn one", session_id=session.id
+        )
         service.get_job(first_job.id)
-        second_job = service.submit_message("Immutable snapshot turn two", session_id=session.id)
+        second_job = service.submit_message(
+            "Immutable snapshot turn two", session_id=session.id
+        )
         service.get_job(second_job.id)
 
         summaries = service.list_turn_summaries(session.id)
@@ -998,7 +1032,9 @@ def test_turn_summary_provenance_snapshot_is_immutable_after_source_message_muta
         original_summary = summaries[0]
         original_response = TurnSummaryResponse.from_domain(
             original_summary,
-            messages_by_id={message.id: message for message in service.list_messages(session.id)},
+            messages_by_id={
+                message.id: message for message in service.list_messages(session.id)
+            },
         )
 
         mutated_message_id = original_summary.source_message_ids[-1]
@@ -1014,13 +1050,17 @@ def test_turn_summary_provenance_snapshot_is_immutable_after_source_message_muta
         updated_summary = service.list_turn_summaries(session.id)[0]
         updated_response = TurnSummaryResponse.from_domain(
             updated_summary,
-            messages_by_id={message.id: message for message in service.list_messages(session.id)},
+            messages_by_id={
+                message.id: message for message in service.list_messages(session.id)
+            },
         )
 
         assert updated_response.source_messages == original_response.source_messages
 
 
-def test_enable_mid_chat_does_not_summarize_old_history_and_waits_for_new_window() -> None:
+def test_enable_mid_chat_does_not_summarize_old_history_and_waits_for_new_window() -> (
+    None
+):
     with TemporaryDirectory() as temp_dir:
         workspace = Path(temp_dir) / "repo"
         workspace.mkdir()
@@ -1069,7 +1109,9 @@ def test_enable_mid_chat_does_not_summarize_old_history_and_waits_for_new_window
         assert len(summaries) == 1
         assert len(summaries[0].source_message_ids) == 4
         assert any(
-            call[0].startswith("Summarize these recent chat updates for future context.")
+            call[0].startswith(
+                "Summarize these recent chat updates for future context."
+            )
             for call in provider.calls
         )
 
@@ -1155,7 +1197,9 @@ def test_disable_then_reenable_turn_summaries_resets_window() -> None:
         }
 
 
-def test_sqlite_legacy_enabled_session_is_repaired_without_backfilling_history() -> None:
+def test_sqlite_legacy_enabled_session_is_repaired_without_backfilling_history() -> (
+    None
+):
     with TemporaryDirectory() as temp_dir:
         workspace = Path(temp_dir) / "repo"
         workspace.mkdir()
@@ -1168,9 +1212,13 @@ def test_sqlite_legacy_enabled_session_is_repaired_without_backfilling_history()
         )
 
         session = service.create_session(workspace_path=str(workspace))
-        history_job_1 = service.submit_message("Legacy history turn one", session_id=session.id)
+        history_job_1 = service.submit_message(
+            "Legacy history turn one", session_id=session.id
+        )
         service.get_job(history_job_1.id)
-        history_job_2 = service.submit_message("Legacy history turn two", session_id=session.id)
+        history_job_2 = service.submit_message(
+            "Legacy history turn two", session_id=session.id
+        )
         service.get_job(history_job_2.id)
 
         repository = SqliteChatRepository(
@@ -1230,7 +1278,9 @@ def test_sqlite_legacy_enabled_session_is_repaired_without_backfilling_history()
         }
 
 
-def test_sqlite_legacy_enabled_session_with_existing_summary_keeps_unsummarized_tail() -> None:
+def test_sqlite_legacy_enabled_session_with_existing_summary_keeps_unsummarized_tail() -> (
+    None
+):
     with TemporaryDirectory() as temp_dir:
         workspace = Path(temp_dir) / "repo"
         workspace.mkdir()
@@ -1247,14 +1297,20 @@ def test_sqlite_legacy_enabled_session_with_existing_summary_keeps_unsummarized_
             turn_summaries_enabled=True,
         )
 
-        first_job = service.submit_message("First summary turn one", session_id=session.id)
+        first_job = service.submit_message(
+            "First summary turn one", session_id=session.id
+        )
         service.get_job(first_job.id)
-        second_job = service.submit_message("First summary turn two", session_id=session.id)
+        second_job = service.submit_message(
+            "First summary turn two", session_id=session.id
+        )
         service.get_job(second_job.id)
         initial_summaries = service.list_turn_summaries(session.id)
         assert len(initial_summaries) == 1
 
-        tail_job = service.submit_message("Unsummarized tail turn", session_id=session.id)
+        tail_job = service.submit_message(
+            "Unsummarized tail turn", session_id=session.id
+        )
         service.get_job(tail_job.id)
         assert len(service.list_turn_summaries(session.id)) == 1
 

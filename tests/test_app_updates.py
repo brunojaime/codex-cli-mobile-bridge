@@ -315,15 +315,11 @@ def test_default_registry_resolves_smart_nienfos_from_flutter_app_release() -> N
     assert config.latest_asset_name == "smart-nienfos.apk"
     assert config.expected_package_id == "com.example.client"
     assert (
-        config.verified_package_ids[
-            "smart-nienfos-admin-android-v1.0.0-build.12"
-        ]
+        config.verified_package_ids["smart-nienfos-admin-android-v1.0.0-build.12"]
         == "com.smartnienfos.admin"
     )
     assert (
-        config.verified_package_ids[
-            "smart-nienfos-admin-android-v1.0.0-build.13"
-        ]
+        config.verified_package_ids["smart-nienfos-admin-android-v1.0.0-build.13"]
         == "com.example.client"
     )
     assert config.verified_package_ids["android-smart-nienfos-v*"] == (
@@ -466,9 +462,7 @@ def test_smart_nienfos_discards_package_mismatch_and_chooses_compat_build(
         latest_asset_name="smart-nienfos.apk",
         expected_package_id="com.example.client",
         verified_package_ids={
-            "smart-nienfos-admin-android-v1.0.0-build.12": (
-                "com.smartnienfos.admin"
-            ),
+            "smart-nienfos-admin-android-v1.0.0-build.12": ("com.smartnienfos.admin"),
             "android-smart-nienfos-v*": "com.example.client",
         },
         releases=[
