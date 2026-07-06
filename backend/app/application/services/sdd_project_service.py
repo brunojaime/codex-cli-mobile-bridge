@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -44,6 +45,41 @@ class SddDiagram:
     diagram_type: str
     scope: str
     error: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class SddTaskNode:
+    id: str
+    title: str
+    number: int
+    status: str
+    description: str
+    file: SddFile | None
+    diagrams: tuple[SddDiagram, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class SddPlanNode:
+    id: str
+    title: str
+    number: int
+    status: str
+    description: str
+    file: SddFile | None
+    diagrams: tuple[SddDiagram, ...]
+    tasks: tuple[SddTaskNode, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class SddSpecTree:
+    file: SddFile | None
+    diagrams: tuple[SddDiagram, ...]
+    plans: tuple[SddPlanNode, ...]
+    missing: tuple[str, ...]
+
+    @property
+    def complete(self) -> bool:
+        return not self.missing
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,6 +128,7 @@ class SddSpec:
     task_files: tuple[SddFile, ...]
     slice_docs: tuple[SddFile, ...]
     diagrams: tuple[SddDiagram, ...]
+    tree: SddSpecTree | None
     missing: tuple[str, ...]
     metadata: SddSpecMetadata
 
@@ -343,20 +380,30 @@ class SddProjectService:
                 ),
             )
             slice_docs = self._read_slice_docs(workspace, f"{rel_dir}/slices")
-            missing = [
-                filename
-                for filename, file_value in (
-                    ("spec.md", spec_file),
-                    ("plan.md", plan_file),
-                    ("tasks.md", tasks_file),
-                )
-                if file_value is None
-            ]
             diagrams = self._read_diagrams(
                 workspace,
                 f"{rel_dir}/diagrams",
                 scope=feature_dir.name,
             )
+            tree = self._read_spec_tree(
+                workspace=workspace,
+                rel_dir=rel_dir,
+                scope=feature_dir.name,
+                spec_file=spec_file,
+            )
+            diagrams = _unique_diagrams((*diagrams, *_tree_diagrams(tree)))
+            if tree is None:
+                missing = [
+                    filename
+                    for filename, file_value in (
+                        ("spec.md", spec_file),
+                        ("plan.md", plan_file),
+                        ("tasks.md", tasks_file),
+                    )
+                    if file_value is None
+                ]
+            else:
+                missing = list(tree.missing)
             specs.append(
                 SddSpec(
                     id=feature_dir.name,
@@ -374,6 +421,7 @@ class SddProjectService:
                     task_files=task_files,
                     slice_docs=slice_docs,
                     diagrams=diagrams,
+                    tree=tree,
                     missing=tuple(missing),
                     metadata=self._read_spec_metadata(
                         workspace=workspace,
@@ -387,6 +435,218 @@ class SddProjectService:
                 )
             )
         return tuple(specs)
+
+    def _read_spec_tree(
+        self,
+        *,
+        workspace: Path,
+        rel_dir: str,
+        scope: str,
+        spec_file: SddFile | None,
+    ) -> SddSpecTree | None:
+        tree_file = self._read_optional_file(workspace, f"{rel_dir}/tree.json")
+        if tree_file is None:
+            tree_file = self._read_optional_file(workspace, f"{rel_dir}/tree.yaml")
+        if tree_file is None or tree_file.error is not None:
+            return None
+        raw_content = tree_file.content or ""
+        try:
+            payload = (
+                json.loads(raw_content)
+                if tree_file.path.endswith(".json")
+                else parse_simple_yaml(raw_content)
+            )
+        except (json.JSONDecodeError, SddStandardError):
+            return None
+        if not isinstance(payload, dict):
+            return None
+        spec_payload = payload.get("spec")
+        spec_map = spec_payload if isinstance(spec_payload, dict) else {}
+        missing: list[str] = []
+        spec_path = _optional_str(spec_map.get("file")) or "spec.md"
+        tree_spec_file = self._read_tree_file(
+            workspace,
+            rel_dir,
+            spec_path,
+        )
+        resolved_spec_file = tree_spec_file or spec_file
+        if resolved_spec_file is None:
+            missing.append(_tree_path_label(rel_dir, spec_path, "spec.md"))
+        plans: list[SddPlanNode] = []
+        raw_plans = payload.get("plans")
+        if isinstance(raw_plans, list):
+            for index, raw_plan in enumerate(raw_plans):
+                if not isinstance(raw_plan, dict):
+                    continue
+                plan, plan_missing = self._read_plan_node(
+                    workspace=workspace,
+                    rel_dir=rel_dir,
+                    scope=scope,
+                    payload=raw_plan,
+                    fallback_number=index + 1,
+                )
+                plans.append(plan)
+                missing.extend(plan_missing)
+        if not plans:
+            missing.append(f"{rel_dir}/tree.json: plans")
+        return SddSpecTree(
+            file=resolved_spec_file,
+            diagrams=self._read_tree_diagrams(
+                workspace,
+                rel_dir,
+                _string_items(spec_map.get("diagrams")),
+                scope=scope,
+            ),
+            plans=tuple(plans),
+            missing=tuple(missing),
+        )
+
+    def _read_plan_node(
+        self,
+        *,
+        workspace: Path,
+        rel_dir: str,
+        scope: str,
+        payload: dict[str, object],
+        fallback_number: int,
+    ) -> tuple[SddPlanNode, tuple[str, ...]]:
+        plan_number = _positive_int(payload.get("number"), fallback_number)
+        plan_path = _optional_str(payload.get("file"))
+        plan_file = self._read_tree_file(
+            workspace,
+            rel_dir,
+            plan_path,
+        )
+        missing: list[str] = []
+        if plan_file is None:
+            missing.append(
+                _tree_path_label(
+                    rel_dir,
+                    plan_path,
+                    f"plan {plan_number} file",
+                )
+            )
+        tasks: list[SddTaskNode] = []
+        raw_tasks = payload.get("tasks")
+        if isinstance(raw_tasks, list):
+            for index, raw_task in enumerate(raw_tasks):
+                if not isinstance(raw_task, dict):
+                    continue
+                task, task_missing = self._read_task_node(
+                    workspace=workspace,
+                    rel_dir=rel_dir,
+                    scope=scope,
+                    payload=raw_task,
+                    fallback_number=index + 1,
+                )
+                tasks.append(task)
+                missing.extend(task_missing)
+        if not tasks:
+            missing.append(f"plan {plan_number}: tasks")
+        return (
+            SddPlanNode(
+                id=_tree_node_id(payload, f"plan-{plan_number}"),
+                title=_tree_node_title(payload, plan_file, f"Plan {plan_number}"),
+                number=plan_number,
+                status=_tree_node_status(payload),
+                description=_tree_node_description(payload),
+                file=plan_file,
+                diagrams=self._read_tree_diagrams(
+                    workspace,
+                    rel_dir,
+                    _string_items(payload.get("diagrams")),
+                    scope=f"{scope} / plan {plan_number}",
+                ),
+                tasks=tuple(tasks),
+            ),
+            tuple(missing),
+        )
+
+    def _read_task_node(
+        self,
+        *,
+        workspace: Path,
+        rel_dir: str,
+        scope: str,
+        payload: dict[str, object],
+        fallback_number: int,
+    ) -> tuple[SddTaskNode, tuple[str, ...]]:
+        task_number = _positive_int(payload.get("number"), fallback_number)
+        task_path = _optional_str(payload.get("file"))
+        task_file = self._read_tree_file(
+            workspace,
+            rel_dir,
+            task_path,
+        )
+        missing = (
+            (
+                _tree_path_label(
+                    rel_dir,
+                    task_path,
+                    f"task {task_number} file",
+                ),
+            )
+            if task_file is None
+            else ()
+        )
+        return (
+            SddTaskNode(
+                id=_tree_node_id(payload, f"task-{task_number}"),
+                title=_tree_node_title(payload, task_file, f"Task {task_number}"),
+                number=task_number,
+                status=_tree_node_status(payload),
+                description=_tree_node_description(payload),
+                file=task_file,
+                diagrams=self._read_tree_diagrams(
+                    workspace,
+                    rel_dir,
+                    _string_items(payload.get("diagrams")),
+                    scope=f"{scope} / task {task_number}",
+                ),
+            ),
+            missing,
+        )
+
+    def _read_tree_file(
+        self,
+        workspace: Path,
+        rel_dir: str,
+        relative_path: str | None,
+    ) -> SddFile | None:
+        if relative_path is None:
+            return None
+        path = relative_path.strip().lstrip("/")
+        if not path or ".." in Path(path).parts:
+            return None
+        if path.startswith("specs/"):
+            return self._read_optional_file(workspace, path)
+        return self._read_optional_file(workspace, f"{rel_dir}/{path}")
+
+    def _read_tree_diagrams(
+        self,
+        workspace: Path,
+        rel_dir: str,
+        paths: tuple[str, ...],
+        *,
+        scope: str,
+    ) -> tuple[SddDiagram, ...]:
+        diagrams: list[SddDiagram] = []
+        for item in paths:
+            file_value = self._read_tree_file(workspace, rel_dir, item)
+            if file_value is None:
+                continue
+            diagrams.append(
+                SddDiagram(
+                    path=file_value.path,
+                    title=file_value.title,
+                    size_bytes=file_value.size_bytes,
+                    content=file_value.content,
+                    diagram_type=_diagram_type(file_value.content),
+                    scope=scope,
+                    error=file_value.error,
+                )
+            )
+        return tuple(diagrams)
 
     def _read_spec_metadata(
         self,
@@ -636,6 +896,85 @@ def _safe_is_file(path: Path) -> bool:
         return path.is_file()
     except OSError:
         return False
+
+
+def _string_items(value: object) -> tuple[str, ...]:
+    if not isinstance(value, list):
+        return ()
+    items: list[str] = []
+    for item in value:
+        if isinstance(item, str) and item.strip():
+            items.append(item.strip())
+    return tuple(items)
+
+
+def _positive_int(value: object, fallback: int) -> int:
+    if isinstance(value, int) and value > 0:
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = int(value.strip())
+        except ValueError:
+            return fallback
+        return parsed if parsed > 0 else fallback
+    return fallback
+
+
+def _tree_node_id(payload: dict[str, object], fallback: str) -> str:
+    raw = _optional_str(payload.get("id"))
+    return raw or fallback
+
+
+def _tree_node_title(
+    payload: dict[str, object],
+    file_value: SddFile | None,
+    fallback: str,
+) -> str:
+    raw = _optional_str(payload.get("title") or payload.get("name"))
+    if raw:
+        return raw
+    if file_value is not None and file_value.title:
+        return file_value.title
+    return fallback
+
+
+def _tree_node_status(payload: dict[str, object]) -> str:
+    return _optional_str(payload.get("status")) or "planned"
+
+
+def _tree_node_description(payload: dict[str, object]) -> str:
+    return _optional_str(payload.get("description")) or ""
+
+
+def _tree_path_label(rel_dir: str, relative_path: str | None, fallback: str) -> str:
+    path = (relative_path or "").strip().lstrip("/")
+    if not path or ".." in Path(path).parts:
+        return fallback
+    if path.startswith("specs/"):
+        return path
+    return f"{rel_dir}/{path}"
+
+
+def _tree_diagrams(tree: SddSpecTree | None) -> tuple[SddDiagram, ...]:
+    if tree is None:
+        return ()
+    diagrams: list[SddDiagram] = list(tree.diagrams)
+    for plan in tree.plans:
+        diagrams.extend(plan.diagrams)
+        for task in plan.tasks:
+            diagrams.extend(task.diagrams)
+    return tuple(diagrams)
+
+
+def _unique_diagrams(diagrams: tuple[SddDiagram, ...]) -> tuple[SddDiagram, ...]:
+    unique: list[SddDiagram] = []
+    seen: set[str] = set()
+    for diagram in diagrams:
+        if diagram.path in seen:
+            continue
+        seen.add(diagram.path)
+        unique.append(diagram)
+    return tuple(unique)
 
 
 def _first_markdown_heading(content: str | None) -> str | None:

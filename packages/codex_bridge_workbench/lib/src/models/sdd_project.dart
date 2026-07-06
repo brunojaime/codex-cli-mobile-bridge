@@ -117,6 +117,7 @@ class SddSpec {
     this.specFiles = const <SddFile>[],
     this.planFiles = const <SddFile>[],
     this.taskFiles = const <SddFile>[],
+    this.tree,
   });
 
   final String id;
@@ -146,6 +147,7 @@ class SddSpec {
   final List<SddFile> taskFiles;
   final List<SddFile> sliceDocs;
   final List<SddDiagram> diagrams;
+  final SddSpecTree? tree;
   final List<String> missing;
 
   List<SddFile> get allSpecFiles => _preferredFiles(specFiles, spec);
@@ -235,7 +237,108 @@ class SddSpec {
       ),
       sliceDocs: _fileList(json['slice_docs']),
       diagrams: _diagramList(json['diagrams']),
+      tree: _specTreeFromJson(json['tree']),
       missing: _stringList(json['missing']),
+    );
+  }
+}
+
+class SddSpecTree {
+  const SddSpecTree({
+    required this.plans,
+    required this.diagrams,
+    required this.complete,
+    this.file,
+    this.missing = const <String>[],
+  });
+
+  final SddFile? file;
+  final List<SddDiagram> diagrams;
+  final List<SddPlanNode> plans;
+  final bool complete;
+  final List<String> missing;
+
+  bool get isComplete => complete && missing.isEmpty;
+
+  factory SddSpecTree.fromJson(Map<String, dynamic> json) {
+    final file = _fileFromJson(json['file']);
+    final plans = _planNodeList(json['plans']);
+    final missing = _stringList(json['missing']);
+    final explicitComplete = _boolValue(json['complete']);
+    return SddSpecTree(
+      file: file,
+      diagrams: _diagramList(json['diagrams']),
+      plans: plans,
+      complete:
+          explicitComplete ?? _computedTreeComplete(file: file, plans: plans),
+      missing: missing,
+    );
+  }
+}
+
+class SddPlanNode {
+  const SddPlanNode({
+    required this.id,
+    required this.title,
+    required this.number,
+    required this.status,
+    required this.description,
+    required this.diagrams,
+    required this.tasks,
+    this.file,
+  });
+
+  final String id;
+  final String title;
+  final int number;
+  final String status;
+  final String description;
+  final SddFile? file;
+  final List<SddDiagram> diagrams;
+  final List<SddTaskNode> tasks;
+
+  factory SddPlanNode.fromJson(Map<String, dynamic> json) {
+    return SddPlanNode(
+      id: json['id'] as String? ?? '',
+      title: json['title'] as String? ?? 'Plan',
+      number: json['number'] as int? ?? 0,
+      status: json['status'] as String? ?? 'planned',
+      description: _trimmedString(json['description']) ?? '',
+      file: _fileFromJson(json['file']),
+      diagrams: _diagramList(json['diagrams']),
+      tasks: _taskNodeList(json['tasks']),
+    );
+  }
+}
+
+class SddTaskNode {
+  const SddTaskNode({
+    required this.id,
+    required this.title,
+    required this.number,
+    required this.status,
+    required this.description,
+    required this.diagrams,
+    this.file,
+  });
+
+  final String id;
+  final String title;
+  final int number;
+  final String status;
+  final String description;
+  final SddFile? file;
+  final List<SddDiagram> diagrams;
+
+  factory SddTaskNode.fromJson(Map<String, dynamic> json) {
+    return SddTaskNode(
+      id: json['id'] as String? ?? '',
+      title: json['title'] as String? ?? 'Task',
+      number: json['number'] as int? ?? 0,
+      status: json['status'] as String? ?? 'planned',
+      description: _trimmedString(json['description']) ?? '',
+      file: _fileFromJson(json['file']),
+      diagrams: _diagramList(json['diagrams']),
     );
   }
 }
@@ -298,6 +401,41 @@ class SddDiagram extends SddFile {
 SddFile? _fileFromJson(Object? value) {
   if (value is! Map<String, dynamic>) return null;
   return SddFile.fromJson(value);
+}
+
+SddSpecTree? _specTreeFromJson(Object? value) {
+  if (value is! Map<String, dynamic>) return null;
+  return SddSpecTree.fromJson(value);
+}
+
+List<SddPlanNode> _planNodeList(Object? value) {
+  if (value is! List) return const <SddPlanNode>[];
+  return value
+      .whereType<Map<String, dynamic>>()
+      .map(SddPlanNode.fromJson)
+      .toList(growable: false);
+}
+
+List<SddTaskNode> _taskNodeList(Object? value) {
+  if (value is! List) return const <SddTaskNode>[];
+  return value
+      .whereType<Map<String, dynamic>>()
+      .map(SddTaskNode.fromJson)
+      .toList(growable: false);
+}
+
+bool _computedTreeComplete({
+  required SddFile? file,
+  required List<SddPlanNode> plans,
+}) {
+  if (file == null || plans.isEmpty) return false;
+  for (final plan in plans) {
+    if (plan.file == null || plan.tasks.isEmpty) return false;
+    for (final task in plan.tasks) {
+      if (task.file == null) return false;
+    }
+  }
+  return true;
 }
 
 List<SddDiagram> _diagramList(Object? value) {

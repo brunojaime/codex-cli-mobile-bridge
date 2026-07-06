@@ -329,10 +329,10 @@ void main() {
     await tester.tap(find.text('Specs').first);
     await tester.pumpAndSettle();
 
-    expect(find.text('TRIGAL SPEC'), findsOneWidget);
+    expect(find.text('SAT Catalog Flow'), findsOneWidget);
     expect(find.text('Inside this spec'), findsNothing);
 
-    await tester.tap(find.text('TRIGAL SPEC').first);
+    await tester.tap(find.text('SAT Catalog Flow').first);
     await tester.pumpAndSettle();
 
     expect(find.text('Inside this spec'), findsOneWidget);
@@ -361,6 +361,65 @@ void main() {
     expect(find.textContaining('# Build Tasks'), findsNothing);
   });
 
+  testWidgets('spec tree switches task lists when selecting different plans', (
+    tester,
+  ) async {
+    await _pumpWorkbench(
+      tester,
+      loader: (_) async => SddProject.fromJson(_projectWithTreeJson()),
+      diagramRenderer: _FakeMermaidRenderer.success(),
+    );
+    _openWorkbench(tester);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Specs').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('SAT Stock Reservation').first);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Inside this spec'), findsOneWidget);
+    expect(find.text('Spec'), findsWidgets);
+    expect(find.text('Plan 1'), findsOneWidget);
+    expect(find.text('Task 1'), findsNWidgets(2));
+    expect(find.text('Task 3'), findsOneWidget);
+
+    await tester.tap(find.text('Plan 1').first);
+    await tester.pumpAndSettle();
+    expect(find.text('Plan 1: Catalog readiness'), findsWidgets);
+    expect(find.text('Task 1: Normalize catalog variants'), findsWidgets);
+    expect(find.text('Task 2: Validate stock thresholds'), findsWidgets);
+    expect(find.text('Task 3: Persist reservation audit'), findsNothing);
+
+    await tester.tap(find.text('Plan 2').first);
+    await tester.pumpAndSettle();
+    expect(find.text('Plan 2: Checkout reservation'), findsWidgets);
+    expect(find.text('Task 1: Reserve cart units'), findsWidgets);
+    expect(find.text('Task 2: Reconcile payment expiry'), findsWidgets);
+    expect(find.text('Task 3: Persist reservation audit'), findsWidgets);
+    expect(find.text('Task 1: Normalize catalog variants'), findsNothing);
+  });
+
+  testWidgets('spec tree fallback marks incomplete trees as incomplete', (
+    tester,
+  ) async {
+    await _pumpWorkbench(
+      tester,
+      loader: (_) async =>
+          SddProject.fromJson(_projectWithIncompleteTreeJson()),
+      diagramRenderer: _FakeMermaidRenderer.success(),
+    );
+    _openWorkbench(tester);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Governance').last);
+    await tester.pumpAndSettle();
+
+    expect(
+      find.textContaining('active · incomplete · 1 plan(s), 0 task(s)'),
+      findsOneWidget,
+    );
+  });
+
   testWidgets(
     'unlinked task files remain reachable and show missing plan metadata',
     (tester) async {
@@ -382,7 +441,7 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.text('Specs').first);
       await tester.pumpAndSettle();
-      await tester.tap(find.text('TRIGAL SPEC').first);
+      await tester.tap(find.text('SAT Catalog Flow').first);
       await tester.pumpAndSettle();
 
       await tester.tap(find.text('Spec trace').first);
@@ -434,7 +493,7 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.text('Specs').first);
       await tester.pumpAndSettle();
-      await tester.tap(find.text('TRIGAL SPEC').first);
+      await tester.tap(find.text('SAT Catalog Flow').first);
       await tester.pumpAndSettle();
 
       await tester.tap(find.text('Spec trace').first);
@@ -583,7 +642,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Specs').first);
     await tester.pumpAndSettle();
-    await tester.tap(find.text('TRIGAL SPEC').first);
+    await tester.tap(find.text('SAT Catalog Flow').first);
     await tester.pumpAndSettle();
 
     await tester.tap(find.text('Spec trace').first);
@@ -620,7 +679,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Specs').first);
     await tester.pumpAndSettle();
-    await tester.tap(find.text('TRIGAL SPEC').first);
+    await tester.tap(find.text('SAT Catalog Flow').first);
     await tester.pumpAndSettle();
 
     await tester.tap(find.text('Spec trace').first);
@@ -633,7 +692,7 @@ void main() {
     expect(find.byTooltip('Close full screen diagram'), findsNothing);
     expect(
       find.textContaining(
-        'rendered specs/001-trigal-spec/diagrams/domain-impact.mmd',
+        'rendered specs/001-sat-catalog-flow/diagrams/domain-impact.mmd',
       ),
       findsNothing,
     );
@@ -644,7 +703,7 @@ void main() {
     expect(find.byTooltip('Close full screen diagram'), findsOneWidget);
     expect(
       find.textContaining(
-        'rendered specs/001-trigal-spec/diagrams/domain-impact.mmd',
+        'rendered specs/001-sat-catalog-flow/diagrams/domain-impact.mmd',
       ),
       findsWidgets,
     );
@@ -1749,7 +1808,7 @@ void main() {
       await tester.tap(find.text('Specs').first);
       await tester.pumpAndSettle();
 
-      await tester.tap(find.text('TRIGAL SPEC').first);
+      await tester.tap(find.text('SAT Catalog Flow').first);
       await tester.pumpAndSettle();
 
       expect(find.text('Planned'), findsOneWidget);
@@ -1785,12 +1844,12 @@ void main() {
     final spec = project.specs.single;
 
     expect(spec.allPlanFiles.map((file) => file.path), <String>[
-      'specs/001-trigal-spec/design-plan.md',
-      'specs/001-trigal-spec/build-plan.md',
+      'specs/001-sat-catalog-flow/design-plan.md',
+      'specs/001-sat-catalog-flow/build-plan.md',
     ]);
     expect(spec.allTaskFiles.map((file) => file.path), <String>[
-      'specs/001-trigal-spec/design-tasks.md',
-      'specs/001-trigal-spec/build-tasks.md',
+      'specs/001-sat-catalog-flow/design-tasks.md',
+      'specs/001-sat-catalog-flow/build-tasks.md',
     ]);
   });
 
@@ -2586,24 +2645,24 @@ Map<String, dynamic> _projectWithTraceJson() {
   final project = _projectJson();
   project['specs'] = <Map<String, dynamic>>[
     <String, dynamic>{
-      'id': '001-trigal-spec',
-      'title': 'TRIGAL SPEC',
-      'path': 'specs/001-trigal-spec',
+      'id': '001-sat-catalog-flow',
+      'title': 'SAT Catalog Flow',
+      'path': 'specs/001-sat-catalog-flow',
       'missing': <String>[],
       'spec': <String, dynamic>{
-        'path': 'specs/001-trigal-spec/spec.md',
-        'title': 'TRIGAL SPEC',
+        'path': 'specs/001-sat-catalog-flow/spec.md',
+        'title': 'SAT Catalog Flow',
         'size_bytes': 80,
-        'content': '---\nstatus: planned\n---\n\n# TRIGAL SPEC',
+        'content': '---\nstatus: planned\n---\n\n# SAT Catalog Flow',
       },
       'plans': <Map<String, dynamic>>[
         <String, dynamic>{
-          'path': 'specs/001-trigal-spec/design-plan.md',
+          'path': 'specs/001-sat-catalog-flow/design-plan.md',
           'size_bytes': 50,
           'content': '# Design Plan\n\n1. Map the current catalog flow.',
         },
         <String, dynamic>{
-          'path': 'specs/001-trigal-spec/build-plan.md',
+          'path': 'specs/001-sat-catalog-flow/build-plan.md',
           'size_bytes': 50,
           'content':
               '# Build Plan\n\n'
@@ -2613,12 +2672,12 @@ Map<String, dynamic> _projectWithTraceJson() {
       ],
       'task_files': <Map<String, dynamic>>[
         <String, dynamic>{
-          'path': 'specs/001-trigal-spec/design-tasks.md',
+          'path': 'specs/001-sat-catalog-flow/design-tasks.md',
           'size_bytes': 50,
           'content': '# Design Tasks\n\n- [x] Done',
         },
         <String, dynamic>{
-          'path': 'specs/001-trigal-spec/build-tasks.md',
+          'path': 'specs/001-sat-catalog-flow/build-tasks.md',
           'size_bytes': 50,
           'content':
               '# Build Tasks\n\n'
@@ -2633,16 +2692,193 @@ Map<String, dynamic> _projectWithTraceJson() {
   return project;
 }
 
+Map<String, dynamic> _projectWithTreeJson() {
+  final project = _projectJson();
+  project['specs'] = <Map<String, dynamic>>[
+    <String, dynamic>{
+      'id': '001-sat-stock-reservation',
+      'title': 'SAT Stock Reservation',
+      'description':
+          'Reserve available stock while a customer completes checkout.',
+      'path': 'specs/001-sat-stock-reservation',
+      'lifecycle_status': 'active',
+      'traceability_status': 'linked',
+      'task_total': 5,
+      'task_completed': 1,
+      'task_pending': 4,
+      'missing': <String>[],
+      'spec': <String, dynamic>{
+        'path': 'specs/001-sat-stock-reservation/spec.md',
+        'title': 'SAT Stock Reservation',
+        'size_bytes': 80,
+        'content': '# SAT Stock Reservation',
+      },
+      'tree': <String, dynamic>{
+        'file': <String, dynamic>{
+          'path': 'specs/001-sat-stock-reservation/spec.md',
+          'title': 'SAT Stock Reservation',
+          'size_bytes': 80,
+          'content': '# SAT Stock Reservation',
+        },
+        'diagrams': <Map<String, dynamic>>[
+          <String, dynamic>{
+            'path': 'specs/001-sat-stock-reservation/diagrams/spec-flow.mmd',
+            'size_bytes': 42,
+            'content': 'flowchart LR\nCatalog --> Checkout',
+            'diagram_type': 'flowchart',
+            'scope': '001-sat-stock-reservation',
+          },
+        ],
+        'plans': <Map<String, dynamic>>[
+          <String, dynamic>{
+            'id': 'plan-1',
+            'title': 'Catalog readiness',
+            'number': 1,
+            'status': 'done',
+            'description': 'Prepare inventory data before reservations.',
+            'file': <String, dynamic>{
+              'path':
+                  'specs/001-sat-stock-reservation/plans/01-catalog/plan.md',
+              'title': 'Catalog readiness',
+              'size_bytes': 50,
+              'content': '# Catalog readiness\n\n1. Prepare stock inputs.',
+            },
+            'diagrams': <Map<String, dynamic>>[],
+            'tasks': <Map<String, dynamic>>[
+              <String, dynamic>{
+                'id': 'plan-1-task-1',
+                'title': 'Normalize catalog variants',
+                'number': 1,
+                'status': 'done',
+                'file': <String, dynamic>{
+                  'path':
+                      'specs/001-sat-stock-reservation/tasks/plan-1-task-1/task.md',
+                  'title': 'Normalize catalog variants',
+                  'size_bytes': 60,
+                  'content': '# Normalize catalog variants\n\n- [x] Done',
+                },
+                'diagrams': <Map<String, dynamic>>[],
+              },
+              <String, dynamic>{
+                'id': 'plan-1-task-2',
+                'title': 'Validate stock thresholds',
+                'number': 2,
+                'status': 'done',
+                'file': <String, dynamic>{
+                  'path':
+                      'specs/001-sat-stock-reservation/tasks/plan-1-task-2/task.md',
+                  'title': 'Validate stock thresholds',
+                  'size_bytes': 60,
+                  'content': '# Validate stock thresholds\n\n- [x] Done',
+                },
+                'diagrams': <Map<String, dynamic>>[],
+              },
+            ],
+          },
+          <String, dynamic>{
+            'id': 'plan-2',
+            'title': 'Checkout reservation',
+            'number': 2,
+            'status': 'in_progress',
+            'description': 'Reserve cart units during checkout.',
+            'file': <String, dynamic>{
+              'path':
+                  'specs/001-sat-stock-reservation/plans/02-checkout/plan.md',
+              'title': 'Checkout reservation',
+              'size_bytes': 50,
+              'content': '# Checkout reservation\n\n1. Hold stock.',
+            },
+            'diagrams': <Map<String, dynamic>>[],
+            'tasks': <Map<String, dynamic>>[
+              <String, dynamic>{
+                'id': 'plan-2-task-1',
+                'title': 'Reserve cart units',
+                'number': 1,
+                'status': 'in_progress',
+                'file': <String, dynamic>{
+                  'path':
+                      'specs/001-sat-stock-reservation/tasks/plan-2-task-1/task.md',
+                  'title': 'Reserve cart units',
+                  'size_bytes': 60,
+                  'content': '# Reserve cart units\n\n- [ ] Reserve units',
+                },
+                'diagrams': <Map<String, dynamic>>[],
+              },
+              <String, dynamic>{
+                'id': 'plan-2-task-2',
+                'title': 'Reconcile payment expiry',
+                'number': 2,
+                'status': 'planned',
+                'file': <String, dynamic>{
+                  'path':
+                      'specs/001-sat-stock-reservation/tasks/plan-2-task-2/task.md',
+                  'title': 'Reconcile payment expiry',
+                  'size_bytes': 60,
+                  'content': '# Reconcile payment expiry\n\n- [ ] Expire hold',
+                },
+                'diagrams': <Map<String, dynamic>>[],
+              },
+              <String, dynamic>{
+                'id': 'plan-2-task-3',
+                'title': 'Persist reservation audit',
+                'number': 3,
+                'status': 'planned',
+                'file': <String, dynamic>{
+                  'path':
+                      'specs/001-sat-stock-reservation/tasks/plan-2-task-3/task.md',
+                  'title': 'Persist reservation audit',
+                  'size_bytes': 60,
+                  'content': '# Persist reservation audit\n\n- [ ] Audit',
+                },
+                'diagrams': <Map<String, dynamic>>[],
+              },
+            ],
+          },
+        ],
+      },
+      'slice_docs': <Map<String, dynamic>>[],
+      'diagrams': <Map<String, dynamic>>[],
+    },
+  ];
+  return project;
+}
+
+Map<String, dynamic> _projectWithIncompleteTreeJson() {
+  final project = _projectWithTreeJson();
+  final spec = (project['specs']! as List<Map<String, dynamic>>).single;
+  spec.remove('traceability_status');
+  spec['metadata_status'] = 'present';
+  final tree = spec['tree']! as Map<String, dynamic>;
+  tree.remove('complete');
+  tree['missing'] = <String>[];
+  tree['plans'] = <Map<String, dynamic>>[
+    <String, dynamic>{
+      'id': 'plan-1',
+      'title': 'Incomplete plan',
+      'number': 1,
+      'status': 'planned',
+      'file': <String, dynamic>{
+        'path': 'specs/001-sat-stock-reservation/plans/01-plan/plan.md',
+        'size_bytes': 40,
+        'content': '# Incomplete plan',
+      },
+      'diagrams': <Map<String, dynamic>>[],
+      'tasks': <Map<String, dynamic>>[],
+    },
+  ];
+  return project;
+}
+
 Map<String, dynamic> _projectWithGovernanceJson() {
   final project = _projectWithTraceJson();
   final specs = project['specs']! as List<Map<String, dynamic>>;
   specs.single['diagrams'] = <Map<String, dynamic>>[
     <String, dynamic>{
-      'path': 'specs/001-trigal-spec/diagrams/domain-impact.mmd',
+      'path': 'specs/001-sat-catalog-flow/diagrams/domain-impact.mmd',
       'size_bytes': 42,
       'content': 'classDiagram\nCatalog --> Product',
       'diagram_type': 'domain-impact',
-      'scope': '001-trigal-spec',
+      'scope': '001-sat-catalog-flow',
     },
   ];
   return project;

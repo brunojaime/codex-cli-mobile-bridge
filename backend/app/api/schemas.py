@@ -982,6 +982,35 @@ class SddDiagramResponse(SddFileResponse):
     scope: str
 
 
+class SddTaskNodeResponse(BaseModel):
+    id: str
+    title: str
+    number: int
+    status: str = "planned"
+    description: str = ""
+    file: SddFileResponse | None = None
+    diagrams: list[SddDiagramResponse] = Field(default_factory=list)
+
+
+class SddPlanNodeResponse(BaseModel):
+    id: str
+    title: str
+    number: int
+    status: str = "planned"
+    description: str = ""
+    file: SddFileResponse | None = None
+    diagrams: list[SddDiagramResponse] = Field(default_factory=list)
+    tasks: list[SddTaskNodeResponse] = Field(default_factory=list)
+
+
+class SddSpecTreeResponse(BaseModel):
+    file: SddFileResponse | None = None
+    diagrams: list[SddDiagramResponse] = Field(default_factory=list)
+    plans: list[SddPlanNodeResponse] = Field(default_factory=list)
+    complete: bool = False
+    missing: list[str] = Field(default_factory=list)
+
+
 class SddSpecResponse(BaseModel):
     id: str
     title: str
@@ -1010,6 +1039,7 @@ class SddSpecResponse(BaseModel):
     task_files: list[SddFileResponse] = Field(default_factory=list)
     slice_docs: list[SddFileResponse] = Field(default_factory=list)
     diagrams: list[SddDiagramResponse] = Field(default_factory=list)
+    tree: SddSpecTreeResponse | None = None
     missing: list[str] = Field(default_factory=list)
 
 

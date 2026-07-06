@@ -3212,29 +3212,41 @@ class _StatusLines extends StatelessWidget {
   }
 }
 
-enum _SpecArtifactKind { spec, plan, tasks, slice, diagramGroup }
+enum _SpecArtifactKind {
+  spec,
+  plan,
+  tasks,
+  slice,
+  diagramGroup,
+  treeSpec,
+  treePlan,
+  treeTask,
+}
 
 class _SpecArtifactSelection {
   const _SpecArtifactSelection({
     required this.specIndex,
     required this.kind,
     this.artifactIndex = 0,
+    this.taskIndex = 0,
   });
 
   final int specIndex;
   final _SpecArtifactKind kind;
   final int artifactIndex;
+  final int taskIndex;
 
   @override
   bool operator ==(Object other) {
     return other is _SpecArtifactSelection &&
         other.specIndex == specIndex &&
         other.kind == kind &&
-        other.artifactIndex == artifactIndex;
+        other.artifactIndex == artifactIndex &&
+        other.taskIndex == taskIndex;
   }
 
   @override
-  int get hashCode => Object.hash(specIndex, kind, artifactIndex);
+  int get hashCode => Object.hash(specIndex, kind, artifactIndex, taskIndex);
 }
 
 _SpecArtifactSelection _validatedSelection(
@@ -3244,12 +3256,57 @@ _SpecArtifactSelection _validatedSelection(
   if (specs.isEmpty) return selection;
   final specIndex = selection.specIndex.clamp(0, specs.length - 1).toInt();
   final spec = specs[specIndex];
+  final tree = spec.tree;
+  if (tree != null) {
+    if (selection.kind == _SpecArtifactKind.treeSpec) {
+      return _SpecArtifactSelection(
+        specIndex: specIndex,
+        kind: _SpecArtifactKind.treeSpec,
+      );
+    }
+    if (selection.kind == _SpecArtifactKind.treePlan ||
+        selection.kind == _SpecArtifactKind.treeTask) {
+      if (tree.plans.isEmpty) {
+        return _SpecArtifactSelection(
+          specIndex: specIndex,
+          kind: _SpecArtifactKind.treeSpec,
+        );
+      }
+      final planIndex = selection.artifactIndex
+          .clamp(0, tree.plans.length - 1)
+          .toInt();
+      if (selection.kind == _SpecArtifactKind.treePlan) {
+        return _SpecArtifactSelection(
+          specIndex: specIndex,
+          kind: _SpecArtifactKind.treePlan,
+          artifactIndex: planIndex,
+        );
+      }
+      final plan = tree.plans[planIndex];
+      if (plan.tasks.isEmpty) {
+        return _SpecArtifactSelection(
+          specIndex: specIndex,
+          kind: _SpecArtifactKind.treePlan,
+          artifactIndex: planIndex,
+        );
+      }
+      return _SpecArtifactSelection(
+        specIndex: specIndex,
+        kind: _SpecArtifactKind.treeTask,
+        artifactIndex: planIndex,
+        taskIndex: selection.taskIndex.clamp(0, plan.tasks.length - 1).toInt(),
+      );
+    }
+  }
   final maxIndex = switch (selection.kind) {
     _SpecArtifactKind.spec => spec.allSpecFiles.length - 1,
     _SpecArtifactKind.plan => spec.allPlanFiles.length - 1,
     _SpecArtifactKind.tasks => spec.allTaskFiles.length - 1,
     _SpecArtifactKind.slice => spec.sliceDocs.length - 1,
     _SpecArtifactKind.diagramGroup => spec.diagrams.isEmpty ? -1 : 0,
+    _SpecArtifactKind.treeSpec ||
+    _SpecArtifactKind.treePlan ||
+    _SpecArtifactKind.treeTask => -1,
   };
   if (maxIndex >= 0) {
     return _SpecArtifactSelection(
@@ -3263,6 +3320,7 @@ _SpecArtifactSelection _validatedSelection(
 }
 
 _SpecArtifactKind _firstAvailableArtifact(SddSpec spec) {
+  if (spec.tree != null) return _SpecArtifactKind.treeSpec;
   if (spec.allSpecFiles.isNotEmpty) return _SpecArtifactKind.spec;
   if (spec.allPlanFiles.isNotEmpty) return _SpecArtifactKind.plan;
   if (spec.allTaskFiles.isNotEmpty) return _SpecArtifactKind.tasks;
@@ -3794,6 +3852,18 @@ class _SpecTraceNavigator extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final selectedSpec = specs[selection.specIndex];
+    final tree = selectedSpec.tree;
+    if (tree != null) {
+      return _SpecTreeNavigator(
+        specs: specs,
+        spec: selectedSpec,
+        tree: tree,
+        selection: selection,
+        onSelected: onSelected,
+        title: title,
+        allowSpecSwitch: allowSpecSwitch,
+      );
+    }
     return _PanelCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -3865,6 +3935,232 @@ class _SpecTraceNavigator extends StatelessWidget {
             ),
           ],
         ],
+      ),
+    );
+  }
+}
+
+class _SpecTreeNavigator extends StatelessWidget {
+  const _SpecTreeNavigator({
+    required this.specs,
+    required this.spec,
+    required this.tree,
+    required this.selection,
+    required this.onSelected,
+    required this.title,
+    required this.allowSpecSwitch,
+  });
+
+  final List<SddSpec> specs;
+  final SddSpec spec;
+  final SddSpecTree tree;
+  final _SpecArtifactSelection selection;
+  final ValueChanged<_SpecArtifactSelection> onSelected;
+  final String title;
+  final bool allowSpecSwitch;
+
+  @override
+  Widget build(BuildContext context) {
+    return _PanelCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Row(
+            children: <Widget>[
+              const Icon(
+                Icons.account_tree_outlined,
+                size: 16,
+                color: _WorkbenchColors.primary,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  title,
+                  style: const TextStyle(
+                    color: _WorkbenchColors.onBackground,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+              if (allowSpecSwitch && specs.length > 1)
+                _SpecSelectorMenu(
+                  specs: specs,
+                  selectedIndex: selection.specIndex,
+                  onSelected: (index) {
+                    onSelected(
+                      _SpecArtifactSelection(
+                        specIndex: index,
+                        kind: _firstAvailableArtifact(specs[index]),
+                      ),
+                    );
+                  },
+                ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          _TreeNodeRow(
+            icon: Icons.description_outlined,
+            label: 'Spec',
+            title: spec.title,
+            selected: selection.kind == _SpecArtifactKind.treeSpec,
+            level: 0,
+            status: _specLifecycleStatus(spec),
+            onTap: () => onSelected(
+              _SpecArtifactSelection(
+                specIndex: selection.specIndex,
+                kind: _SpecArtifactKind.treeSpec,
+              ),
+            ),
+          ),
+          for (final planEntry in tree.plans.indexed) ...[
+            _TreeNodeRow(
+              icon: Icons.route_outlined,
+              label: 'Plan ${planEntry.$2.number}',
+              title: planEntry.$2.title,
+              selected:
+                  selection.kind == _SpecArtifactKind.treePlan &&
+                  selection.artifactIndex == planEntry.$1,
+              level: 1,
+              status: planEntry.$2.status,
+              trailing: '${planEntry.$2.tasks.length} tasks',
+              onTap: () => onSelected(
+                _SpecArtifactSelection(
+                  specIndex: selection.specIndex,
+                  kind: _SpecArtifactKind.treePlan,
+                  artifactIndex: planEntry.$1,
+                ),
+              ),
+            ),
+            for (final taskEntry in planEntry.$2.tasks.indexed)
+              _TreeNodeRow(
+                icon: Icons.checklist_rounded,
+                label: 'Task ${taskEntry.$2.number}',
+                title: taskEntry.$2.title,
+                selected:
+                    selection.kind == _SpecArtifactKind.treeTask &&
+                    selection.artifactIndex == planEntry.$1 &&
+                    selection.taskIndex == taskEntry.$1,
+                level: 2,
+                status: taskEntry.$2.status,
+                onTap: () => onSelected(
+                  _SpecArtifactSelection(
+                    specIndex: selection.specIndex,
+                    kind: _SpecArtifactKind.treeTask,
+                    artifactIndex: planEntry.$1,
+                    taskIndex: taskEntry.$1,
+                  ),
+                ),
+              ),
+          ],
+          if (tree.plans.isEmpty) ...[
+            const SizedBox(height: 6),
+            const Text(
+              'No plans defined in this spec tree.',
+              style: TextStyle(
+                color: _WorkbenchColors.secondaryText,
+                fontSize: 12,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _TreeNodeRow extends StatelessWidget {
+  const _TreeNodeRow({
+    required this.icon,
+    required this.label,
+    required this.title,
+    required this.selected,
+    required this.level,
+    required this.onTap,
+    this.status,
+    this.trailing,
+  });
+
+  final IconData icon;
+  final String label;
+  final String title;
+  final bool selected;
+  final int level;
+  final VoidCallback onTap;
+  final String? status;
+  final String? trailing;
+
+  @override
+  Widget build(BuildContext context) {
+    final statusValue = status ?? '';
+    return Material(
+      color: selected
+          ? _WorkbenchColors.primary.withValues(alpha: 0.10)
+          : Colors.transparent,
+      borderRadius: BorderRadius.circular(8),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(8),
+        onTap: onTap,
+        child: Padding(
+          padding: EdgeInsets.fromLTRB(8 + (level * 18), 8, 8, 8),
+          child: Row(
+            children: <Widget>[
+              Icon(
+                icon,
+                size: 16,
+                color: selected
+                    ? _WorkbenchColors.primary
+                    : _WorkbenchColors.secondaryText,
+              ),
+              const SizedBox(width: 8),
+              SizedBox(
+                width: 52,
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: selected
+                        ? _WorkbenchColors.primary
+                        : _WorkbenchColors.secondaryText,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  title,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: _WorkbenchColors.onBackground,
+                    fontSize: 12,
+                    fontWeight: selected ? FontWeight.w900 : FontWeight.w800,
+                  ),
+                ),
+              ),
+              if (trailing != null) ...[
+                const SizedBox(width: 6),
+                Text(
+                  trailing!,
+                  style: const TextStyle(
+                    color: _WorkbenchColors.secondaryText,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ],
+              if (statusValue.trim().isNotEmpty) ...[
+                const SizedBox(width: 6),
+                _TinyStatusPill(
+                  label: statusValue,
+                  warning: _normalizeStatus(statusValue) == 'blocked',
+                ),
+              ],
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -4241,8 +4537,8 @@ class _SpecArtifactInspector extends StatelessWidget {
             children: <Widget>[
               _TraceChip(label: 'status: ${_specLifecycleStatus(spec)}'),
               _TraceChip(label: 'trace: ${_specTraceabilityStatus(spec)}'),
-              _TraceChip(label: '${spec.allPlanFiles.length} plans'),
-              _TraceChip(label: '${spec.allTaskFiles.length} task files'),
+              _TraceChip(label: '${_specPlanCount(spec)} plans'),
+              _TraceChip(label: '${_specTaskCount(spec)} tasks'),
               _TraceChip(label: '${spec.sliceDocs.length} slices'),
             ],
           ),
@@ -4256,6 +4552,12 @@ class _SpecArtifactInspector extends StatelessWidget {
 
   Widget _buildSelectedArtifact() {
     switch (selection.kind) {
+      case _SpecArtifactKind.treeSpec:
+        return _buildSelectedTreeSpec();
+      case _SpecArtifactKind.treePlan:
+        return _buildSelectedTreePlan();
+      case _SpecArtifactKind.treeTask:
+        return _buildSelectedTreeTask();
       case _SpecArtifactKind.spec:
         final file = _fileAt(spec.allSpecFiles, selection.artifactIndex);
         return _SddFileSection(
@@ -4340,6 +4642,147 @@ class _SpecArtifactInspector extends StatelessWidget {
         );
     }
   }
+
+  Widget _buildSelectedTreeSpec() {
+    final tree = spec.tree;
+    final file = tree?.file ?? spec.spec;
+    final diagrams = tree?.diagrams ?? const <SddDiagram>[];
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        _SddFileSection(
+          title: _artifactPathLabel(file, 'spec.md'),
+          file: file,
+          specBodyMode: true,
+          feedbackTarget: _fileFeedbackTarget(
+            project: project,
+            spec: spec,
+            file: file,
+            artifactType: 'spec',
+            fallbackTitle: 'spec.md',
+          ),
+          onFeedback: onFeedback,
+          actions: const <SddCodexActionKind>[SddCodexActionKind.refineSpec],
+          onCodexAction: onCodexAction,
+        ),
+        if (diagrams.isNotEmpty) ...[
+          const SizedBox(height: 10),
+          _ScopedDiagramListCard(
+            title: 'Spec diagrams',
+            diagrams: diagrams,
+            project: project,
+            spec: spec,
+            diagramRenderer: diagramRenderer,
+            onFeedback: onFeedback,
+            onCodexAction: onCodexAction,
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildSelectedTreePlan() {
+    final tree = spec.tree;
+    final plan = tree == null
+        ? null
+        : _fileAt(tree.plans, selection.artifactIndex);
+    if (plan == null) {
+      return const _InfoCard(title: 'Plan', detail: 'Missing plan node');
+    }
+    final taskSections = plan.tasks.indexed
+        .where((entry) => entry.$2.file != null)
+        .map(
+          (entry) => _PlanTaskSectionData(
+            index: entry.$1,
+            file: entry.$2.file!,
+            title: 'Task ${entry.$2.number}: ${entry.$2.title}',
+            planAssociation: 'Plan ${plan.number}: ${plan.title}',
+            feedbackTarget: _fileFeedbackTarget(
+              project: project,
+              spec: spec,
+              file: entry.$2.file,
+              artifactType: 'tasks',
+              fallbackTitle: entry.$2.title,
+            ),
+          ),
+        )
+        .toList(growable: false);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        _PlanFileSection(
+          title: 'Plan ${plan.number}: ${plan.title}',
+          file: plan.file,
+          taskSections: taskSections,
+          feedbackTarget: _fileFeedbackTarget(
+            project: project,
+            spec: spec,
+            file: plan.file,
+            artifactType: 'plan',
+            fallbackTitle: plan.title,
+          ),
+          onFeedback: onFeedback,
+          actions: const <SddCodexActionKind>[SddCodexActionKind.updatePlan],
+          onCodexAction: onCodexAction,
+        ),
+        if (plan.diagrams.isNotEmpty) ...[
+          const SizedBox(height: 10),
+          _ScopedDiagramListCard(
+            title: 'Plan ${plan.number} diagrams',
+            diagrams: plan.diagrams,
+            project: project,
+            spec: spec,
+            diagramRenderer: diagramRenderer,
+            onFeedback: onFeedback,
+            onCodexAction: onCodexAction,
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildSelectedTreeTask() {
+    final tree = spec.tree;
+    final plan = tree == null
+        ? null
+        : _fileAt(tree.plans, selection.artifactIndex);
+    final task = plan == null ? null : _fileAt(plan.tasks, selection.taskIndex);
+    if (plan == null || task == null) {
+      return const _InfoCard(title: 'Task', detail: 'Missing task node');
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        _TaskFileSection(
+          title: 'Task ${task.number}: ${task.title}',
+          file: task.file,
+          planAssociation: 'Plan ${plan.number}: ${plan.title}',
+          feedbackTarget: _fileFeedbackTarget(
+            project: project,
+            spec: spec,
+            file: task.file,
+            artifactType: 'tasks',
+            fallbackTitle: task.title,
+          ),
+          onFeedback: onFeedback,
+          actions: const <SddCodexActionKind>[SddCodexActionKind.updateTasks],
+          onCodexAction: onCodexAction,
+        ),
+        if (task.diagrams.isNotEmpty) ...[
+          const SizedBox(height: 10),
+          _ScopedDiagramListCard(
+            title: 'Task ${task.number} diagrams',
+            diagrams: task.diagrams,
+            project: project,
+            spec: spec,
+            diagramRenderer: diagramRenderer,
+            onFeedback: onFeedback,
+            onCodexAction: onCodexAction,
+          ),
+        ],
+      ],
+    );
+  }
 }
 
 class _PlanTaskSectionData {
@@ -4348,12 +4791,14 @@ class _PlanTaskSectionData {
     required this.file,
     required this.planAssociation,
     required this.feedbackTarget,
+    this.title,
   });
 
   final int index;
   final SddFile file;
   final String planAssociation;
   final SddFeedbackTarget? feedbackTarget;
+  final String? title;
 }
 
 List<_PlanTaskSectionData> _taskSectionsForPlan({
@@ -4460,8 +4905,8 @@ class _GovernanceTab extends StatelessWidget {
                     label: spec.id,
                     value:
                         '${_specLifecycleStatus(spec)} · ${_specTraceabilityStatus(spec)} · '
-                        '${spec.allPlanFiles.length} plan(s), '
-                        '${spec.allTaskFiles.length} task file(s), '
+                        '${_specPlanCount(spec)} plan(s), '
+                        '${_specTaskCount(spec)} task(s), '
                         '${spec.diagrams.length} diagram(s)',
                     warning:
                         spec.missing.isNotEmpty ||
@@ -5313,14 +5758,14 @@ class _PlanFileSection extends StatelessWidget {
                 ),
                 _TinyMetaChip(
                   icon: Icons.account_tree_outlined,
-                  label: '${taskSections.length} task file(s)',
+                  label: '${taskSections.length} task(s)',
                 ),
               ],
             ),
             const SizedBox(height: 8),
             for (final task in taskSections) ...[
               _TaskFileSection(
-                title: _artifactLabel(task.file, 'tasks.md'),
+                title: task.title ?? _artifactLabel(task.file, 'tasks.md'),
                 file: task.file,
                 planAssociation: task.planAssociation,
                 feedbackTarget: task.feedbackTarget,
@@ -6000,6 +6445,18 @@ _TaskProgress? _specTaskProgress(SddSpec spec) {
   return _TaskProgress(completed: completed, total: total);
 }
 
+int _specPlanCount(SddSpec spec) {
+  return spec.tree?.plans.length ?? spec.allPlanFiles.length;
+}
+
+int _specTaskCount(SddSpec spec) {
+  final tree = spec.tree;
+  if (tree != null) {
+    return tree.plans.fold<int>(0, (total, plan) => total + plan.tasks.length);
+  }
+  return spec.allTaskFiles.length;
+}
+
 _TaskProgress? _taskProgress(String? content) {
   return _parseStructuredTasks(content)?.progress;
 }
@@ -6128,6 +6585,10 @@ String _specTraceabilityStatus(SddSpec spec) {
     return 'needs metadata';
   }
   if (spec.missing.isNotEmpty) return 'incomplete';
+  final tree = spec.tree;
+  if (tree != null) {
+    return tree.isComplete ? 'linked' : 'incomplete';
+  }
   if (spec.allSpecFiles.isEmpty ||
       spec.allPlanFiles.isEmpty ||
       spec.allTaskFiles.isEmpty) {
@@ -6887,6 +7348,66 @@ class _SpecDiagramListCard extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           for (final diagram in spec.diagrams)
+            _DiagramListTile(
+              item: _DiagramListItem(diagram: diagram, spec: spec),
+              project: project,
+              diagramRenderer: diagramRenderer,
+              onFeedback: onFeedback,
+              onCodexAction: onCodexAction,
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ScopedDiagramListCard extends StatelessWidget {
+  const _ScopedDiagramListCard({
+    required this.title,
+    required this.diagrams,
+    required this.project,
+    required this.spec,
+    required this.diagramRenderer,
+    required this.onFeedback,
+    required this.onCodexAction,
+  });
+
+  final String title;
+  final List<SddDiagram> diagrams;
+  final SddProject project;
+  final SddSpec spec;
+  final MermaidDiagramRenderer diagramRenderer;
+  final ValueChanged<SddFeedbackTarget> onFeedback;
+  final ValueChanged<SddCodexActionRequest> onCodexAction;
+
+  @override
+  Widget build(BuildContext context) {
+    return _PanelCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Row(
+            children: <Widget>[
+              const Icon(
+                Icons.account_tree_outlined,
+                size: 16,
+                color: _WorkbenchColors.primary,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  title,
+                  style: const TextStyle(fontWeight: FontWeight.w900),
+                ),
+              ),
+              _TinyMetaChip(
+                icon: Icons.open_in_full_rounded,
+                label: '${diagrams.length} diagram(s)',
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          for (final diagram in diagrams)
             _DiagramListTile(
               item: _DiagramListItem(diagram: diagram, spec: spec),
               project: project,

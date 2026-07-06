@@ -89,6 +89,7 @@ from backend.app.api.schemas import (
     SddMediaDeleteRequest,
     SddMediaLifecycleResponse,
     SddMediaUploadResponse,
+    SddPlanNodeResponse,
     SddProjectDiagramsResponse,
     SddProjectResponse,
     SddProjectsResponse,
@@ -99,6 +100,8 @@ from backend.app.api.schemas import (
     SddSpecEditApplyResponse,
     SddSpecEditDryRunResponse,
     SddSpecResponse,
+    SddSpecTreeResponse,
+    SddTaskNodeResponse,
     SddWorkbenchViewResponse,
     TurnSummaryConfigRequest,
     WorkspaceResponse,
@@ -120,9 +123,12 @@ from backend.app.application.services.message_service import (
 from backend.app.application.services.sdd_project_service import (
     SddDiagram,
     SddFile,
+    SddPlanNode,
     SddProject,
     SddProjectSummary,
     SddSpec,
+    SddSpecTree,
+    SddTaskNode,
     SddWorkspacePathError,
 )
 from backend.app.application.services.sdd_media_upload_service import (
@@ -895,8 +901,46 @@ def _sdd_diagram_response(diagram: SddDiagram) -> SddDiagramResponse:
     )
 
 
+def _sdd_task_node_response(task: SddTaskNode) -> SddTaskNodeResponse:
+    return SddTaskNodeResponse(
+        id=task.id,
+        title=task.title,
+        number=task.number,
+        status=task.status,
+        description=task.description,
+        file=_sdd_file_response(task.file),
+        diagrams=[_sdd_diagram_response(diagram) for diagram in task.diagrams],
+    )
+
+
+def _sdd_plan_node_response(plan: SddPlanNode) -> SddPlanNodeResponse:
+    return SddPlanNodeResponse(
+        id=plan.id,
+        title=plan.title,
+        number=plan.number,
+        status=plan.status,
+        description=plan.description,
+        file=_sdd_file_response(plan.file),
+        diagrams=[_sdd_diagram_response(diagram) for diagram in plan.diagrams],
+        tasks=[_sdd_task_node_response(task) for task in plan.tasks],
+    )
+
+
+def _sdd_spec_tree_response(tree: SddSpecTree | None) -> SddSpecTreeResponse | None:
+    if tree is None:
+        return None
+    return SddSpecTreeResponse(
+        file=_sdd_file_response(tree.file),
+        diagrams=[_sdd_diagram_response(diagram) for diagram in tree.diagrams],
+        plans=[_sdd_plan_node_response(plan) for plan in tree.plans],
+        complete=tree.complete,
+        missing=list(tree.missing),
+    )
+
+
 def _sdd_spec_response(spec: SddSpec) -> SddSpecResponse:
     metadata = spec.metadata
+    tree_linked = spec.tree is not None and spec.tree.complete
     return SddSpecResponse(
         id=spec.id,
         title=spec.title,
@@ -907,9 +951,9 @@ def _sdd_spec_response(spec: SddSpec) -> SddSpecResponse:
             "incomplete"
             if (
                 spec.missing
-                or spec.spec is None
-                or spec.plan is None
-                or spec.tasks is None
+                or (not tree_linked and spec.spec is None)
+                or (not tree_linked and spec.plan is None)
+                or (not tree_linked and spec.tasks is None)
             )
             else "linked"
         ),
@@ -950,6 +994,7 @@ def _sdd_spec_response(spec: SddSpec) -> SddSpecResponse:
             if (file_response := _sdd_file_response(file_value)) is not None
         ],
         diagrams=[_sdd_diagram_response(diagram) for diagram in spec.diagrams],
+        tree=_sdd_spec_tree_response(spec.tree),
         missing=list(spec.missing),
     )
 

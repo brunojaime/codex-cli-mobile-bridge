@@ -71,6 +71,230 @@ def test_sdd_endpoints_return_project_snapshot_and_capabilities(
     assert "specs/001-demo/diagrams/ignored.txt" not in diagram_paths
 
 
+def test_sdd_project_returns_explicit_spec_plan_task_tree(tmp_path: Path) -> None:
+    projects_root = tmp_path / "projects"
+    project = projects_root / "demo"
+    _write_sdd_project(project)
+    spec_dir = project / "specs/001-demo"
+    (spec_dir / "plans/01-foundation").mkdir(parents=True)
+    (spec_dir / "plans/02-checkout").mkdir(parents=True)
+    (spec_dir / "tasks/plan-1-task-1").mkdir(parents=True)
+    (spec_dir / "tasks/plan-1-task-2").mkdir(parents=True)
+    (spec_dir / "tasks/plan-2-task-1").mkdir(parents=True)
+    (spec_dir / "tasks/plan-2-task-2").mkdir(parents=True)
+    (spec_dir / "tasks/plan-2-task-3").mkdir(parents=True)
+    (spec_dir / "plans/01-foundation/plan.md").write_text("# Foundation Plan\n")
+    (spec_dir / "plans/02-checkout/plan.md").write_text("# Checkout Plan\n")
+    for path, title in (
+        ("tasks/plan-1-task-1/task.md", "Catalog import"),
+        ("tasks/plan-1-task-2/task.md", "Size normalization"),
+        ("tasks/plan-2-task-1/task.md", "Cart reservation"),
+        ("tasks/plan-2-task-2/task.md", "Checkout validation"),
+        ("tasks/plan-2-task-3/task.md", "Audit trail"),
+    ):
+        (spec_dir / path).write_text(f"# {title}\n")
+    (spec_dir / "plans/02-checkout/checkout-flow.mmd").write_text(
+        "flowchart LR\nCart --> Order\n"
+    )
+    (spec_dir / "tree.json").write_text(
+        json.dumps(
+            {
+                "spec": {"file": "spec.md", "diagrams": ["diagrams/sequence.mmd"]},
+                "plans": [
+                    {
+                        "id": "plan-1",
+                        "number": 1,
+                        "title": "Foundation",
+                        "status": "done",
+                        "file": "plans/01-foundation/plan.md",
+                        "tasks": [
+                            {
+                                "id": "plan-1-task-1",
+                                "number": 1,
+                                "title": "Catalog import",
+                                "status": "done",
+                                "file": "tasks/plan-1-task-1/task.md",
+                            },
+                            {
+                                "id": "plan-1-task-2",
+                                "number": 2,
+                                "title": "Size normalization",
+                                "status": "done",
+                                "file": "tasks/plan-1-task-2/task.md",
+                            },
+                        ],
+                    },
+                    {
+                        "id": "plan-2",
+                        "number": 2,
+                        "title": "Checkout",
+                        "status": "in_progress",
+                        "file": "plans/02-checkout/plan.md",
+                        "diagrams": ["plans/02-checkout/checkout-flow.mmd"],
+                        "tasks": [
+                            {
+                                "id": "plan-2-task-1",
+                                "number": 1,
+                                "title": "Cart reservation",
+                                "status": "in_progress",
+                                "file": "tasks/plan-2-task-1/task.md",
+                            },
+                            {
+                                "id": "plan-2-task-2",
+                                "number": 2,
+                                "title": "Checkout validation",
+                                "status": "planned",
+                                "file": "tasks/plan-2-task-2/task.md",
+                            },
+                            {
+                                "id": "plan-2-task-3",
+                                "number": 3,
+                                "title": "Audit trail",
+                                "status": "planned",
+                                "file": "tasks/plan-2-task-3/task.md",
+                            },
+                        ],
+                    },
+                ],
+            }
+        )
+    )
+    client = _client(projects_root)
+
+    response = client.get("/sdd/project", params={"workspace_path": str(project)})
+
+    assert response.status_code == 200
+    spec = response.json()["specs"][0]
+    assert spec["traceability_status"] == "linked"
+    assert spec["tree"]["plans"][0]["tasks"][0]["number"] == 1
+    assert spec["tree"]["plans"][1]["tasks"][0]["number"] == 1
+    assert [task["title"] for task in spec["tree"]["plans"][1]["tasks"]] == [
+        "Cart reservation",
+        "Checkout validation",
+        "Audit trail",
+    ]
+    assert "specs/001-demo/plans/02-checkout/checkout-flow.mmd" in {
+        diagram["path"] for diagram in spec["diagrams"]
+    }
+
+
+def test_sdd_project_tree_reports_missing_plan_file(tmp_path: Path) -> None:
+    projects_root = tmp_path / "projects"
+    project = projects_root / "demo"
+    _write_sdd_project(project)
+    spec_dir = project / "specs/001-demo"
+    (spec_dir / "tasks/plan-1-task-1").mkdir(parents=True)
+    (spec_dir / "tasks/plan-1-task-1/task.md").write_text("# Task\n")
+    (spec_dir / "tree.json").write_text(
+        json.dumps(
+            {
+                "spec": {"file": "spec.md"},
+                "plans": [
+                    {
+                        "id": "plan-1",
+                        "number": 1,
+                        "title": "Missing plan file",
+                        "file": "plans/missing/plan.md",
+                        "tasks": [
+                            {
+                                "id": "plan-1-task-1",
+                                "number": 1,
+                                "title": "Task",
+                                "file": "tasks/plan-1-task-1/task.md",
+                            }
+                        ],
+                    }
+                ],
+            }
+        )
+    )
+    client = _client(projects_root)
+
+    response = client.get("/sdd/project", params={"workspace_path": str(project)})
+
+    assert response.status_code == 200
+    spec = response.json()["specs"][0]
+    assert spec["traceability_status"] != "linked"
+    assert "specs/001-demo/plans/missing/plan.md" in spec["missing"]
+    assert spec["tree"]["complete"] is False
+    assert "specs/001-demo/plans/missing/plan.md" in spec["tree"]["missing"]
+
+
+def test_sdd_project_tree_reports_missing_task_file(tmp_path: Path) -> None:
+    projects_root = tmp_path / "projects"
+    project = projects_root / "demo"
+    _write_sdd_project(project)
+    spec_dir = project / "specs/001-demo"
+    (spec_dir / "plans/01-foundation").mkdir(parents=True)
+    (spec_dir / "plans/01-foundation/plan.md").write_text("# Plan\n")
+    (spec_dir / "tree.json").write_text(
+        json.dumps(
+            {
+                "spec": {"file": "spec.md"},
+                "plans": [
+                    {
+                        "id": "plan-1",
+                        "number": 1,
+                        "title": "Plan",
+                        "file": "plans/01-foundation/plan.md",
+                        "tasks": [
+                            {
+                                "id": "plan-1-task-1",
+                                "number": 1,
+                                "title": "Missing task file",
+                                "file": "tasks/plan-1-task-1/task.md",
+                            }
+                        ],
+                    }
+                ],
+            }
+        )
+    )
+    client = _client(projects_root)
+
+    response = client.get("/sdd/project", params={"workspace_path": str(project)})
+
+    assert response.status_code == 200
+    spec = response.json()["specs"][0]
+    assert spec["traceability_status"] != "linked"
+    assert "specs/001-demo/tasks/plan-1-task-1/task.md" in spec["missing"]
+    assert spec["tree"]["complete"] is False
+
+
+def test_sdd_project_tree_reports_plan_without_tasks(tmp_path: Path) -> None:
+    projects_root = tmp_path / "projects"
+    project = projects_root / "demo"
+    _write_sdd_project(project)
+    spec_dir = project / "specs/001-demo"
+    (spec_dir / "plans/01-foundation").mkdir(parents=True)
+    (spec_dir / "plans/01-foundation/plan.md").write_text("# Plan\n")
+    (spec_dir / "tree.json").write_text(
+        json.dumps(
+            {
+                "spec": {"file": "spec.md"},
+                "plans": [
+                    {
+                        "id": "plan-1",
+                        "number": 1,
+                        "title": "Plan",
+                        "file": "plans/01-foundation/plan.md",
+                        "tasks": [],
+                    }
+                ],
+            }
+        )
+    )
+    client = _client(projects_root)
+
+    response = client.get("/sdd/project", params={"workspace_path": str(project)})
+
+    assert response.status_code == 200
+    spec = response.json()["specs"][0]
+    assert spec["traceability_status"] != "linked"
+    assert "plan 1: tasks" in spec["missing"]
+    assert spec["tree"]["complete"] is False
+
+
 def test_sdd_project_rejects_traversal_and_symlink_escape(tmp_path: Path) -> None:
     projects_root = tmp_path / "projects"
     projects_root.mkdir()
