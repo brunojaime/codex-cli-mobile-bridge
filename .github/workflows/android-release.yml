@@ -71,12 +71,11 @@ jobs:
         env:
           API_BASE_URL: ${{ vars.API_BASE_URL }}
         run: |
+          bridge_url="${API_BASE_URL:-http://batata-default-string.tail0302c4.ts.net}"
           args=()
-          if [[ -n "$API_BASE_URL" ]]; then
-            args+=(--dart-define=API_BASE_URL="$API_BASE_URL")
-            args+=(--dart-define=CODEX_APP_UPDATER_ENABLED=true)
-            args+=(--dart-define=CODEX_APP_UPDATER_BRIDGE_URL="$API_BASE_URL")
-          fi
+          args+=(--dart-define=API_BASE_URL="$bridge_url")
+          args+=(--dart-define=CODEX_APP_UPDATER_ENABLED=true)
+          args+=(--dart-define=CODEX_APP_UPDATER_BRIDGE_URL="$bridge_url")
           flutter build apk --release "${args[@]}"
 
       - name: Prepare release artifacts
@@ -87,11 +86,13 @@ jobs:
           cp frontend/mobile_app/build/app/outputs/flutter-apk/app-release.apk "release-artifacts/codex-mobile-${{ steps.app_version.outputs.safe }}.apk"
 
       - name: Upload workflow artifact
+        continue-on-error: true
         uses: actions/upload-artifact@v7
         with:
           name: codex-mobile-${{ steps.app_version.outputs.safe }}
           path: release-artifacts/*
           if-no-files-found: error
+          retention-days: 3
 
       - name: Publish GitHub release
         if: startsWith(github.ref, 'refs/tags/')
