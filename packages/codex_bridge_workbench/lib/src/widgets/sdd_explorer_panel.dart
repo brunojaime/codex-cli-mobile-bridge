@@ -3695,7 +3695,7 @@ class _ArtifactSelectorMenu extends StatelessWidget {
   Widget build(BuildContext context) {
     final items = _artifactMenuItems(spec, selection.specIndex);
     return PopupMenuButton<_SpecArtifactSelection>(
-      tooltip: 'Select artifact',
+      tooltip: 'Select spec plan, tasks, or diagram',
       onSelected: onSelected,
       itemBuilder: (context) {
         return items
@@ -3748,7 +3748,7 @@ class _ArtifactSelectorMenu extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: <Widget>[
             Text(
-              'Artifact',
+              'Plan / tasks',
               style: TextStyle(
                 color: _WorkbenchColors.primary,
                 fontWeight: FontWeight.w800,
@@ -3787,6 +3787,7 @@ List<_ArtifactMenuItem> _artifactMenuItems(SddSpec spec, int specIndex) {
     required List<SddFile> files,
     required String fallbackLabel,
     required IconData icon,
+    String Function(SddFile file)? label,
     String? Function(int index, SddFile file)? detail,
   }) {
     for (final entry in files.indexed) {
@@ -3797,7 +3798,8 @@ List<_ArtifactMenuItem> _artifactMenuItems(SddSpec spec, int specIndex) {
             kind: kind,
             artifactIndex: entry.$1,
           ),
-          label: _artifactLabel(entry.$2, fallbackLabel),
+          label:
+              label?.call(entry.$2) ?? _artifactLabel(entry.$2, fallbackLabel),
           icon: icon,
           detail: detail?.call(entry.$1, entry.$2),
         ),
@@ -3810,18 +3812,22 @@ List<_ArtifactMenuItem> _artifactMenuItems(SddSpec spec, int specIndex) {
     files: spec.allSpecFiles,
     fallbackLabel: 'spec.md',
     icon: Icons.description_outlined,
+    label: (file) => 'Spec: ${_artifactPathLabel(file, 'spec.md')}',
+    detail: (index, file) => 'Spec body',
   );
   addFiles(
     kind: _SpecArtifactKind.plan,
     files: spec.allPlanFiles,
     fallbackLabel: 'plan.md',
     icon: Icons.route_outlined,
+    label: (file) => 'Plan: ${_artifactPathLabel(file, 'plan.md')}',
   );
   addFiles(
     kind: _SpecArtifactKind.tasks,
     files: spec.allTaskFiles,
     fallbackLabel: 'tasks.md',
     icon: Icons.checklist_rounded,
+    label: (file) => 'Tasks: ${_artifactPathLabel(file, 'tasks.md')}',
     detail: (index, file) => _taskPlanAssociation(spec, index, file),
   );
   addFiles(
@@ -3829,6 +3835,7 @@ List<_ArtifactMenuItem> _artifactMenuItems(SddSpec spec, int specIndex) {
     files: spec.sliceDocs,
     fallbackLabel: 'slice.md',
     icon: Icons.view_agenda_outlined,
+    label: (file) => 'Slice: ${_artifactPathLabel(file, 'slice.md')}',
   );
   for (final entry in spec.diagrams.indexed) {
     final diagram = entry.$2;
@@ -3839,7 +3846,7 @@ List<_ArtifactMenuItem> _artifactMenuItems(SddSpec spec, int specIndex) {
           kind: _SpecArtifactKind.diagram,
           artifactIndex: entry.$1,
         ),
-        label: _diagramDisplayLabel(diagram),
+        label: 'Diagram: ${_diagramDisplayLabel(diagram)}',
         icon: _diagramIcon(diagram),
         detail: diagram.path,
       ),
@@ -4027,8 +4034,9 @@ class _SpecArtifactInspector extends StatelessWidget {
       case _SpecArtifactKind.spec:
         final file = _fileAt(spec.allSpecFiles, selection.artifactIndex);
         return _SddFileSection(
-          title: _artifactLabel(file, 'spec.md'),
+          title: _artifactPathLabel(file, 'spec.md'),
           file: file,
+          specBodyMode: true,
           feedbackTarget: _fileFeedbackTarget(
             project: project,
             spec: spec,
@@ -5973,6 +5981,10 @@ T? _fileAt<T>(List<T> files, int index) {
 String _artifactLabel(SddFile? file, String fallback) {
   final title = file?.title?.trim();
   if (title != null && title.isNotEmpty) return title;
+  return _artifactPathLabel(file, fallback);
+}
+
+String _artifactPathLabel(SddFile? file, String fallback) {
   final path = file?.path.trim();
   if (path == null || path.isEmpty) return fallback;
   return path.split('/').last;
@@ -6064,6 +6076,7 @@ class _SddFileSection extends StatelessWidget {
   const _SddFileSection({
     required this.title,
     required this.file,
+    this.specBodyMode = false,
     this.feedbackTarget,
     this.onFeedback,
     this.actions = const <SddCodexActionKind>[],
@@ -6072,6 +6085,7 @@ class _SddFileSection extends StatelessWidget {
 
   final String title;
   final SddFile? file;
+  final bool specBodyMode;
   final SddFeedbackTarget? feedbackTarget;
   final ValueChanged<SddFeedbackTarget>? onFeedback;
   final List<SddCodexActionKind> actions;
@@ -6103,7 +6117,10 @@ class _SddFileSection extends StatelessWidget {
           ],
           if (value.hasContent) ...[
             const SizedBox(height: 10),
-            _ReadableMarkdownView(text: value.content!),
+            if (specBodyMode)
+              _SpecBodySectionSelector(text: value.content!)
+            else
+              _ReadableMarkdownView(text: value.content!),
             const SizedBox(height: 8),
             _SourceExcerptDisclosure(text: value.content!),
           ],
@@ -6113,20 +6130,165 @@ class _SddFileSection extends StatelessWidget {
   }
 }
 
-class _ReadableMarkdownView extends StatelessWidget {
-  const _ReadableMarkdownView({required this.text});
+class _SpecBodySectionSelector extends StatefulWidget {
+  const _SpecBodySectionSelector({required this.text});
 
   final String text;
 
   @override
+  State<_SpecBodySectionSelector> createState() =>
+      _SpecBodySectionSelectorState();
+}
+
+class _SpecBodySectionSelectorState extends State<_SpecBodySectionSelector> {
+  int _selectedIndex = 0;
+
+  @override
+  void didUpdateWidget(_SpecBodySectionSelector oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.text != widget.text) {
+      _selectedIndex = 0;
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final blocks = _markdownBlocks(text);
-    if (blocks.isEmpty) {
+    final sections = _specBodySections(widget.text);
+    if (sections.isEmpty) {
+      return _ReadableMarkdownView(text: widget.text, skipFirstHeading: true);
+    }
+    final selectedIndex = _selectedIndex.clamp(0, sections.length - 1).toInt();
+    final selected = sections[selectedIndex];
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Wrap(
+          spacing: 6,
+          runSpacing: 6,
+          children: <Widget>[
+            for (final entry in sections.indexed)
+              ChoiceChip(
+                label: Text(entry.$2.title),
+                selected: entry.$1 == selectedIndex,
+                visualDensity: VisualDensity.compact,
+                onSelected: (_) {
+                  setState(() {
+                    _selectedIndex = entry.$1;
+                  });
+                },
+              ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            color: _WorkbenchColors.sourceBackground.withValues(alpha: 0.42),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: _WorkbenchColors.border),
+          ),
+          child: _MarkdownBlocksView(blocks: selected.blocks),
+        ),
+      ],
+    );
+  }
+}
+
+class _SpecBodySection {
+  const _SpecBodySection({required this.title, required this.blocks});
+
+  final String title;
+  final List<_MarkdownBlock> blocks;
+}
+
+List<_SpecBodySection> _specBodySections(String source) {
+  final sections = <_SpecBodySection>[];
+  final blocks = _markdownBlocks(source);
+  String? activeTitle;
+  final activeBlocks = <_MarkdownBlock>[];
+
+  void flush() {
+    if (activeTitle == null) return;
+    sections.add(
+      _SpecBodySection(
+        title: activeTitle,
+        blocks: List<_MarkdownBlock>.unmodifiable(activeBlocks),
+      ),
+    );
+    activeBlocks.clear();
+  }
+
+  for (final entry in blocks.indexed) {
+    final block = entry.$2;
+    if (block.kind == _MarkdownBlockKind.heading) {
+      if (entry.$1 == 0 && block.level <= 1) {
+        continue;
+      }
+      flush();
+      activeTitle = _commonSpecSectionTitle(block.text) ?? block.text;
+      continue;
+    }
+    if (activeTitle != null) {
+      activeBlocks.add(block);
+    }
+  }
+  flush();
+  return sections
+      .where((section) => section.blocks.isNotEmpty)
+      .toList(growable: false);
+}
+
+String? _commonSpecSectionTitle(String raw) {
+  final normalized = raw
+      .trim()
+      .toLowerCase()
+      .replaceAll(RegExp(r'[^a-z0-9]+'), ' ')
+      .trim();
+  return switch (normalized) {
+    'intent' => 'Intent',
+    'scope' => 'Scope',
+    'domain rules' || 'domain rule' || 'rules' => 'Domain Rules',
+    'acceptance criteria' || 'acceptance' => 'Acceptance Criteria',
+    _ => null,
+  };
+}
+
+class _ReadableMarkdownView extends StatelessWidget {
+  const _ReadableMarkdownView({
+    required this.text,
+    this.skipFirstHeading = false,
+  });
+
+  final String text;
+  final bool skipFirstHeading;
+
+  @override
+  Widget build(BuildContext context) {
+    final blocks = _markdownBlocks(text).toList(growable: false);
+    final visibleBlocks =
+        skipFirstHeading &&
+            blocks.isNotEmpty &&
+            blocks.first.kind == _MarkdownBlockKind.heading
+        ? blocks.skip(1).toList(growable: false)
+        : blocks;
+    if (visibleBlocks.isEmpty) {
       return const Text(
         'No readable content yet.',
         style: TextStyle(color: _WorkbenchColors.secondaryText),
       );
     }
+    return _MarkdownBlocksView(blocks: visibleBlocks);
+  }
+}
+
+class _MarkdownBlocksView extends StatelessWidget {
+  const _MarkdownBlocksView({required this.blocks});
+
+  final List<_MarkdownBlock> blocks;
+
+  @override
+  Widget build(BuildContext context) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[

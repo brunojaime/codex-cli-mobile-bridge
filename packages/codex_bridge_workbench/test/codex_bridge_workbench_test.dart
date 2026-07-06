@@ -336,15 +336,16 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Inside this spec'), findsOneWidget);
-    expect(find.text('Artifact'), findsOneWidget);
-    await tester.tap(find.text('Artifact').first);
+    expect(find.text('Plan / tasks'), findsOneWidget);
+    expect(find.text('Artifact'), findsNothing);
+    await tester.tap(find.text('Plan / tasks').first);
     await tester.pumpAndSettle();
-    expect(find.text('design-plan.md'), findsWidgets);
-    expect(find.text('build-plan.md'), findsWidgets);
-    expect(find.text('design-tasks.md'), findsWidgets);
-    expect(find.text('build-tasks.md'), findsWidgets);
+    expect(find.text('Plan: design-plan.md'), findsWidgets);
+    expect(find.text('Plan: build-plan.md'), findsWidgets);
+    expect(find.text('Tasks: design-tasks.md'), findsWidgets);
+    expect(find.text('Tasks: build-tasks.md'), findsWidgets);
 
-    await tester.tap(find.text('build-plan.md').first);
+    await tester.tap(find.text('Plan: build-plan.md').first);
     await tester.pumpAndSettle();
     expect(find.text('Build Plan'), findsWidgets);
     expect(find.text('2 stages'), findsOneWidget);
@@ -352,9 +353,9 @@ void main() {
     expect(find.text('Show details'), findsWidgets);
     expect(find.textContaining('# Build Plan'), findsNothing);
 
-    await tester.tap(find.text('Artifact').first);
+    await tester.tap(find.text('Plan / tasks').first);
     await tester.pumpAndSettle();
-    await tester.tap(find.text('build-tasks.md').first);
+    await tester.tap(find.text('Tasks: build-tasks.md').first);
     await tester.pumpAndSettle();
     expect(find.text('1/2 tasks complete'), findsOneWidget);
     expect(find.text('Plan: build-plan.md'), findsWidgets);
@@ -362,6 +363,85 @@ void main() {
     expect(find.text('Done'), findsWidgets);
     expect(find.text('Planned'), findsWidgets);
     expect(find.textContaining('# Build Tasks'), findsNothing);
+  });
+
+  testWidgets('spec detail keeps one title and switches common spec sections', (
+    tester,
+  ) async {
+    final project = _projectWithTraceJson();
+    final spec = (project['specs']! as List<Map<String, dynamic>>).single;
+    spec['title'] = 'SAT Catalog Domain';
+    final specFile = spec['spec']! as Map<String, dynamic>;
+    specFile['title'] = 'SAT Catalog Domain';
+    specFile['content'] =
+        '---\nstatus: planned\n---\n\n'
+        '# SAT Catalog Domain\n\n'
+        '## Intent\n\n'
+        'Keep catalog data aligned with SAT fields.\n\n'
+        '## Scope\n\n'
+        'Cover product browsing, filtering, and checkout handoff.\n\n'
+        '## Non-Goals\n\n'
+        'Do not include supplier inventory sync in this spec.\n\n'
+        '## Domain Rules\n\n'
+        'Every garment keeps one canonical SKU.\n\n'
+        '## Acceptance Criteria\n\n'
+        'Catalog edits preserve existing products.';
+
+    await _pumpWorkbench(
+      tester,
+      loader: (_) async => SddProject.fromJson(project),
+      diagramRenderer: _FakeMermaidRenderer.success(),
+    );
+    _openWorkbench(tester);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Specs').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('SAT Catalog Domain').first);
+    await tester.pumpAndSettle();
+
+    expect(find.text('SAT Catalog Domain'), findsOneWidget);
+    expect(find.text('spec.md'), findsOneWidget);
+    expect(find.text('Intent'), findsOneWidget);
+    expect(find.text('Scope'), findsOneWidget);
+    expect(find.text('Non-Goals'), findsOneWidget);
+    expect(find.text('Domain Rules'), findsOneWidget);
+    expect(find.text('Acceptance Criteria'), findsOneWidget);
+    expect(
+      find.text('Keep catalog data aligned with SAT fields.'),
+      findsOneWidget,
+    );
+    expect(
+      find.text('Cover product browsing, filtering, and checkout handoff.'),
+      findsNothing,
+    );
+
+    await tester.tap(find.text('Scope'));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text('Keep catalog data aligned with SAT fields.'),
+      findsNothing,
+    );
+    expect(
+      find.text('Cover product browsing, filtering, and checkout handoff.'),
+      findsOneWidget,
+    );
+    expect(
+      find.text('Do not include supplier inventory sync in this spec.'),
+      findsNothing,
+    );
+
+    await tester.tap(find.text('Non-Goals'));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text('Cover product browsing, filtering, and checkout handoff.'),
+      findsNothing,
+    );
+    expect(
+      find.text('Do not include supplier inventory sync in this spec.'),
+      findsOneWidget,
+    );
   });
 
   testWidgets('artifact fallbacks stay readable and heading plans do not repeat', (
@@ -391,9 +471,9 @@ void main() {
     await tester.tap(find.text('SAT SDD Onboarding').first);
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Artifact').first);
+    await tester.tap(find.text('Plan / tasks').first);
     await tester.pumpAndSettle();
-    await tester.tap(find.text('build-plan.md').first);
+    await tester.tap(find.text('Plan: build-plan.md').first);
     await tester.pumpAndSettle();
     await tester.tap(find.text('Show details').first);
     await tester.pumpAndSettle();
@@ -406,9 +486,9 @@ void main() {
       findsOneWidget,
     );
 
-    await tester.tap(find.text('Artifact').first);
+    await tester.tap(find.text('Plan / tasks').first);
     await tester.pumpAndSettle();
-    await tester.tap(find.text('build-tasks.md').first);
+    await tester.tap(find.text('Tasks: build-tasks.md').first);
     await tester.pumpAndSettle();
 
     expect(find.textContaining('# Build Tasks'), findsNothing);
@@ -433,9 +513,9 @@ void main() {
       await tester.tap(find.text('SAT SDD Onboarding').first);
       await tester.pumpAndSettle();
 
-      await tester.tap(find.text('Artifact').first);
+      await tester.tap(find.text('Plan / tasks').first);
       await tester.pumpAndSettle();
-      await tester.tap(find.text('UML class diagram').first);
+      await tester.tap(find.text('Diagram: UML class diagram').first);
       await tester.pumpAndSettle();
 
       expect(find.byTooltip('Close full screen diagram'), findsOneWidget);
