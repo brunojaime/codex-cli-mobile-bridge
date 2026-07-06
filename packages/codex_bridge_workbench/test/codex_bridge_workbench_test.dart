@@ -346,12 +346,16 @@ void main() {
     expect(find.text('Build Plan'), findsWidgets);
     expect(find.text('2 stages'), findsOneWidget);
     expect(find.text('Build the catalog shell'), findsWidgets);
-    expect(find.text('Enter stage'), findsWidgets);
+    expect(find.text('Show details'), findsWidgets);
     expect(find.textContaining('# Build Plan'), findsNothing);
 
     await tester.tap(find.text('build-tasks.md').first);
     await tester.pumpAndSettle();
     expect(find.text('1/2 tasks complete'), findsOneWidget);
+    expect(find.text('Build Tasks'), findsWidgets);
+    expect(find.text('Done'), findsWidgets);
+    expect(find.text('Planned'), findsWidgets);
+    expect(find.textContaining('# Build Tasks'), findsNothing);
   });
 
   testWidgets('spec diagram detail preview does not offer full screen action', (
@@ -397,7 +401,7 @@ void main() {
       find.text('Read-only inspection for Bridge SDD artifacts.'),
       findsOneWidget,
     );
-    expect(find.text('active'), findsOneWidget);
+    expect(find.text('Active'), findsOneWidget);
     expect(find.text('1/2 tasks'), findsOneWidget);
     expect(find.text('linked'), findsOneWidget);
     expect(find.text('2026-07-06'), findsOneWidget);
@@ -1466,7 +1470,7 @@ void main() {
       await tester.tap(find.text('SAT SDD Onboarding').first);
       await tester.pumpAndSettle();
 
-      expect(find.text('planned'), findsOneWidget);
+      expect(find.text('Planned'), findsOneWidget);
       expect(find.text('linked'), findsOneWidget);
 
       await tester.tap(find.text('Governance').first);
@@ -2325,7 +2329,10 @@ Map<String, dynamic> _projectWithTraceJson() {
         <String, dynamic>{
           'path': 'specs/001/build-tasks.md',
           'size_bytes': 50,
-          'content': '# Build Tasks\n\n- [x] Done\n- [ ] Pending',
+          'content':
+              '# Build Tasks\n\n'
+              '- [status: done] Done\n'
+              '- [status: planned] Pending',
         },
       ],
       'slice_docs': <Map<String, dynamic>>[],

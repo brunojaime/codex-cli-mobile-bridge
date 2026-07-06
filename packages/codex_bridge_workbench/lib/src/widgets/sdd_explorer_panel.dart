@@ -3266,33 +3266,170 @@ class _TinyStatusPill extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final status = _statusStyle(label, warning: warning);
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: warning
-            ? _WorkbenchColors.warning.withValues(alpha: 0.18)
-            : _WorkbenchColors.primary.withValues(alpha: 0.16),
-        border: Border.all(
-          color: warning
-              ? _WorkbenchColors.warning.withValues(alpha: 0.62)
-              : _WorkbenchColors.primary.withValues(alpha: 0.48),
-        ),
+        color: status.color.withValues(alpha: 0.16),
+        border: Border.all(color: status.color.withValues(alpha: 0.56)),
         borderRadius: BorderRadius.circular(999),
       ),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-        child: Text(
-          label.isEmpty ? 'unknown' : label,
-          style: TextStyle(
-            color: warning
-                ? _WorkbenchColors.warning
-                : _WorkbenchColors.primary,
-            fontWeight: FontWeight.w900,
-            fontSize: 11,
-          ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            Icon(status.icon, size: 12, color: status.color),
+            const SizedBox(width: 4),
+            Text(
+              status.label,
+              style: TextStyle(
+                color: status.color,
+                fontWeight: FontWeight.w900,
+                fontSize: 11,
+              ),
+            ),
+          ],
         ),
       ),
     );
   }
+}
+
+class _WorkbenchStatusStyle {
+  const _WorkbenchStatusStyle({
+    required this.label,
+    required this.icon,
+    required this.color,
+  });
+
+  final String label;
+  final IconData icon;
+  final Color color;
+}
+
+_WorkbenchStatusStyle _statusStyle(String raw, {bool warning = false}) {
+  final normalized = _normalizeStatus(raw);
+  if (warning && normalized == 'unknown') {
+    return const _WorkbenchStatusStyle(
+      label: 'Needs attention',
+      icon: Icons.warning_amber_rounded,
+      color: _WorkbenchColors.warning,
+    );
+  }
+  return switch (normalized) {
+    'done' => const _WorkbenchStatusStyle(
+      label: 'Done',
+      icon: Icons.check_circle_rounded,
+      color: Color(0xFF76E4A6),
+    ),
+    'planned' => const _WorkbenchStatusStyle(
+      label: 'Planned',
+      icon: Icons.radio_button_unchecked_rounded,
+      color: Color(0xFF93C5FD),
+    ),
+    'ongoing' => const _WorkbenchStatusStyle(
+      label: 'Ongoing',
+      icon: Icons.autorenew_rounded,
+      color: _WorkbenchColors.primary,
+    ),
+    'in_progress' => const _WorkbenchStatusStyle(
+      label: 'In progress',
+      icon: Icons.pending_actions_rounded,
+      color: Color(0xFFA78BFA),
+    ),
+    'blocked' => const _WorkbenchStatusStyle(
+      label: 'Blocked',
+      icon: Icons.block_rounded,
+      color: Color(0xFFFF8A8A),
+    ),
+    'validation' => const _WorkbenchStatusStyle(
+      label: 'Validation',
+      icon: Icons.fact_check_rounded,
+      color: _WorkbenchColors.warning,
+    ),
+    'linked' => const _WorkbenchStatusStyle(
+      label: 'Linked',
+      icon: Icons.account_tree_rounded,
+      color: Color(0xFF76E4A6),
+    ),
+    'active' => const _WorkbenchStatusStyle(
+      label: 'Active',
+      icon: Icons.play_circle_fill_rounded,
+      color: _WorkbenchColors.primary,
+    ),
+    'draft' => const _WorkbenchStatusStyle(
+      label: 'Draft',
+      icon: Icons.edit_note_rounded,
+      color: Color(0xFF93C5FD),
+    ),
+    'stale' || 'incomplete' => const _WorkbenchStatusStyle(
+      label: 'Needs attention',
+      icon: Icons.warning_amber_rounded,
+      color: _WorkbenchColors.warning,
+    ),
+    _ => _WorkbenchStatusStyle(
+      label: _humanStatusLabel(raw),
+      icon: warning ? Icons.warning_amber_rounded : Icons.help_outline_rounded,
+      color: warning
+          ? _WorkbenchColors.warning
+          : _WorkbenchColors.secondaryText,
+    ),
+  };
+}
+
+String _normalizeStatus(String raw) {
+  final lower = raw
+      .trim()
+      .toLowerCase()
+      .replaceAll(RegExp(r'[_-]+'), ' ')
+      .replaceAll(RegExp(r'\s+'), ' ');
+  if (lower.isEmpty || lower == 'unknown') return 'unknown';
+  if (lower == 'x' ||
+      lower == 'done' ||
+      lower == 'complete' ||
+      lower == 'completed' ||
+      lower == 'validated' ||
+      lower == 'applied') {
+    return 'done';
+  }
+  if (lower == 'todo' ||
+      lower == 'to do' ||
+      lower == 'pending' ||
+      lower == 'queued' ||
+      lower == 'open' ||
+      lower == 'planned') {
+    return 'planned';
+  }
+  if (lower == 'in progress' || lower == 'running' || lower == 'started') {
+    return 'in_progress';
+  }
+  if (lower == 'ongoing' || lower == 'active') return lower;
+  if (lower == 'blocked' || lower == 'failed' || lower == 'missing') {
+    return 'blocked';
+  }
+  if (lower == 'validation' ||
+      lower == 'validate' ||
+      lower == 'review' ||
+      lower == 'ready' ||
+      lower == 'testing') {
+    return 'validation';
+  }
+  if (lower == 'linked' ||
+      lower == 'draft' ||
+      lower == 'stale' ||
+      lower == 'incomplete') {
+    return lower;
+  }
+  return 'unknown';
+}
+
+String _humanStatusLabel(String raw) {
+  final words = raw
+      .trim()
+      .replaceAll(RegExp(r'[_-]+'), ' ')
+      .replaceAll(RegExp(r'\s+'), ' ');
+  if (words.isEmpty) return 'Unknown';
+  return '${words.substring(0, 1).toUpperCase()}${words.substring(1)}';
 }
 
 class _TinyMetaChip extends StatelessWidget {
@@ -4684,22 +4821,21 @@ class _StructuredPlanView extends StatefulWidget {
 }
 
 class _StructuredPlanViewState extends State<_StructuredPlanView> {
-  int _selectedIndex = 0;
+  final Set<int> _expanded = <int>{};
 
   @override
   void didUpdateWidget(_StructuredPlanView oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.plan != widget.plan) {
-      _selectedIndex = 0;
-    } else if (_selectedIndex >= widget.plan.stages.length) {
-      _selectedIndex = widget.plan.stages.length - 1;
+      _expanded.clear();
+    } else {
+      _expanded.removeWhere((index) => index >= widget.plan.stages.length);
     }
   }
 
   @override
   Widget build(BuildContext context) {
     final stages = widget.plan.stages;
-    final selected = stages[_selectedIndex];
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
@@ -4731,16 +4867,16 @@ class _StructuredPlanViewState extends State<_StructuredPlanView> {
             const Divider(height: 12, color: _WorkbenchColors.border),
           _PlanStageRow(
             stage: entry.$2,
-            selected: entry.$1 == _selectedIndex,
-            onEnter: () {
+            expanded: _expanded.contains(entry.$1),
+            onToggle: () {
               setState(() {
-                _selectedIndex = entry.$1;
+                if (!_expanded.remove(entry.$1)) {
+                  _expanded.add(entry.$1);
+                }
               });
             },
           ),
         ],
-        const SizedBox(height: 12),
-        _PlanStageDetail(stage: selected),
       ],
     );
   }
@@ -4749,98 +4885,123 @@ class _StructuredPlanViewState extends State<_StructuredPlanView> {
 class _PlanStageRow extends StatelessWidget {
   const _PlanStageRow({
     required this.stage,
-    required this.selected,
-    required this.onEnter,
+    required this.expanded,
+    required this.onToggle,
   });
 
   final _PlanStage stage;
-  final bool selected;
-  final VoidCallback onEnter;
+  final bool expanded;
+  final VoidCallback onToggle;
 
   @override
   Widget build(BuildContext context) {
-    final color = selected
-        ? _WorkbenchColors.primary
-        : _WorkbenchColors.secondaryText;
+    final status = _statusStyle(
+      stage.status,
+      warning: _planStatusIsWarning(stage.status),
+    );
     return Material(
-      color: selected
-          ? _WorkbenchColors.primary.withValues(alpha: 0.08)
+      color: expanded
+          ? status.color.withValues(alpha: 0.08)
           : Colors.transparent,
       borderRadius: BorderRadius.circular(8),
       child: InkWell(
         borderRadius: BorderRadius.circular(8),
-        onTap: onEnter,
+        onTap: onToggle,
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-          child: Row(
+          child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
-              CircleAvatar(
-                radius: 13,
-                backgroundColor: color.withValues(alpha: 0.18),
-                child: Text(
-                  '${stage.order}',
-                  style: TextStyle(
-                    color: color,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: <Widget>[
-                    Text(
-                      stage.title,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  CircleAvatar(
+                    radius: 13,
+                    backgroundColor: status.color.withValues(alpha: 0.18),
+                    child: Text(
+                      '${stage.order}',
                       style: TextStyle(
-                        color: selected
-                            ? _WorkbenchColors.onBackground
-                            : _WorkbenchColors.secondaryText,
+                        color: status.color,
+                        fontSize: 11,
                         fontWeight: FontWeight.w900,
-                        fontSize: 13,
                       ),
                     ),
-                    if (stage.description.isNotEmpty) ...[
-                      const SizedBox(height: 3),
-                      Text(
-                        stage.description,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: _WorkbenchColors.secondaryText,
-                          fontSize: 12,
-                          height: 1.25,
-                        ),
-                      ),
-                    ],
-                    const SizedBox(height: 6),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 6,
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: <Widget>[
-                        _TinyStatusPill(
-                          label: stage.status,
-                          warning: _planStatusIsWarning(stage.status),
-                        ),
-                        TextButton.icon(
-                          onPressed: onEnter,
-                          icon: const Icon(Icons.login_rounded, size: 15),
-                          label: const Text('Enter stage'),
-                          style: TextButton.styleFrom(
-                            visualDensity: VisualDensity.compact,
-                            padding: const EdgeInsets.symmetric(horizontal: 8),
-                            minimumSize: const Size(0, 30),
+                        Text(
+                          stage.title,
+                          maxLines: expanded ? 4 : 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: expanded
+                                ? _WorkbenchColors.onBackground
+                                : _WorkbenchColors.secondaryText,
+                            fontWeight: FontWeight.w900,
+                            fontSize: 13,
                           ),
+                        ),
+                        if (stage.description.isNotEmpty) ...[
+                          const SizedBox(height: 3),
+                          Text(
+                            stage.description,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: _WorkbenchColors.secondaryText,
+                              fontSize: 12,
+                              height: 1.25,
+                            ),
+                          ),
+                        ],
+                        const SizedBox(height: 6),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 6,
+                          crossAxisAlignment: WrapCrossAlignment.center,
+                          children: <Widget>[
+                            _TinyStatusPill(
+                              label: stage.status,
+                              warning: _planStatusIsWarning(stage.status),
+                            ),
+                            TextButton.icon(
+                              onPressed: onToggle,
+                              icon: Icon(
+                                expanded
+                                    ? Icons.keyboard_arrow_up_rounded
+                                    : Icons.keyboard_arrow_down_rounded,
+                                size: 17,
+                              ),
+                              label: Text(
+                                expanded ? 'Hide details' : 'Show details',
+                              ),
+                              style: TextButton.styleFrom(
+                                visualDensity: VisualDensity.compact,
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                ),
+                                minimumSize: const Size(0, 30),
+                              ),
+                            ),
+                          ],
                         ),
                       ],
                     ),
-                  ],
-                ),
+                  ),
+                ],
               ),
+              if (expanded &&
+                  (stage.description.isNotEmpty ||
+                      stage.details.isNotEmpty)) ...[
+                const SizedBox(height: 10),
+                Padding(
+                  padding: const EdgeInsets.only(left: 36),
+                  child: _PlanStageDetail(stage: stage),
+                ),
+              ],
             ],
           ),
         ),
@@ -4856,74 +5017,56 @@ class _PlanStageDetail extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(12),
+    return DecoratedBox(
       decoration: BoxDecoration(
         color: _WorkbenchColors.sourceBackground,
         borderRadius: BorderRadius.circular(8),
         border: Border.all(color: _WorkbenchColors.border),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          Row(
-            children: <Widget>[
-              Expanded(
-                child: Text(
-                  'Stage ${stage.order}: ${stage.title}',
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontWeight: FontWeight.w900),
+      child: Padding(
+        padding: const EdgeInsets.all(10),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            if (stage.description.isNotEmpty)
+              Text(
+                stage.description,
+                style: const TextStyle(
+                  color: _WorkbenchColors.onBackground,
+                  fontSize: 12,
+                  height: 1.35,
                 ),
               ),
-              const SizedBox(width: 8),
-              _TinyStatusPill(
-                label: stage.status,
-                warning: _planStatusIsWarning(stage.status),
-              ),
-            ],
-          ),
-          if (stage.description.isNotEmpty) ...[
-            const SizedBox(height: 8),
-            Text(
-              stage.description,
-              style: const TextStyle(
-                color: _WorkbenchColors.onBackground,
-                fontSize: 12,
-                height: 1.35,
-              ),
-            ),
-          ],
-          if (stage.details.isNotEmpty) ...[
-            const SizedBox(height: 10),
-            ...stage.details.map(
-              (detail) => Padding(
-                padding: const EdgeInsets.only(top: 4),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: <Widget>[
-                    const Icon(
-                      Icons.chevron_right_rounded,
-                      size: 16,
-                      color: _WorkbenchColors.primary,
-                    ),
-                    const SizedBox(width: 4),
-                    Expanded(
-                      child: Text(
-                        detail,
-                        style: const TextStyle(
-                          color: _WorkbenchColors.secondaryText,
-                          fontSize: 12,
+            if (stage.details.isNotEmpty) ...[
+              if (stage.description.isNotEmpty) const SizedBox(height: 8),
+              ...stage.details.map(
+                (detail) => Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      const Icon(
+                        Icons.chevron_right_rounded,
+                        size: 16,
+                        color: _WorkbenchColors.primary,
+                      ),
+                      const SizedBox(width: 4),
+                      Expanded(
+                        child: Text(
+                          detail,
+                          style: const TextStyle(
+                            color: _WorkbenchColors.secondaryText,
+                            fontSize: 12,
+                          ),
                         ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
-            ),
+            ],
           ],
-        ],
+        ),
       ),
     );
   }
@@ -4948,7 +5091,8 @@ class _TaskFileSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final progress = _taskProgress(file?.content);
+    final tasks = _parseStructuredTasks(file?.content);
+    final progress = tasks?.progress ?? _taskProgress(file?.content);
     return _PanelCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -4983,9 +5127,145 @@ class _TaskFileSection extends StatelessWidget {
             ],
             if (file!.hasContent) ...[
               const SizedBox(height: 10),
-              _SourceBlock(text: file!.content!),
+              if (tasks != null)
+                _StructuredTaskListView(tasks: tasks)
+              else
+                _SourceBlock(text: file!.content!),
             ],
           ],
+        ],
+      ),
+    );
+  }
+}
+
+class _StructuredTaskList {
+  const _StructuredTaskList({required this.title, required this.tasks});
+
+  final String title;
+  final List<_StructuredTask> tasks;
+
+  _TaskProgress get progress {
+    final completed = tasks
+        .where((task) => _taskStatusIsComplete(task.status))
+        .length;
+    return _TaskProgress(completed: completed, total: tasks.length);
+  }
+}
+
+class _StructuredTask {
+  const _StructuredTask({
+    required this.order,
+    required this.title,
+    required this.status,
+    this.details = const <String>[],
+  });
+
+  final int order;
+  final String title;
+  final String status;
+  final List<String> details;
+}
+
+class _StructuredTaskListView extends StatelessWidget {
+  const _StructuredTaskListView({required this.tasks});
+
+  final _StructuredTaskList tasks;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Row(
+          children: <Widget>[
+            const Icon(
+              Icons.task_alt_rounded,
+              size: 16,
+              color: _WorkbenchColors.primary,
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                tasks.title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontWeight: FontWeight.w900),
+              ),
+            ),
+            _TinyMetaChip(
+              icon: Icons.checklist_rounded,
+              label: '${tasks.tasks.length} tasks',
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        for (final entry in tasks.tasks.indexed) ...[
+          if (entry.$1 > 0)
+            const Divider(height: 12, color: _WorkbenchColors.border),
+          _StructuredTaskRow(task: entry.$2),
+        ],
+      ],
+    );
+  }
+}
+
+class _StructuredTaskRow extends StatelessWidget {
+  const _StructuredTaskRow({required this.task});
+
+  final _StructuredTask task;
+
+  @override
+  Widget build(BuildContext context) {
+    final status = _statusStyle(task.status);
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 5),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Container(
+            width: 24,
+            height: 24,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: status.color.withValues(alpha: 0.16),
+              borderRadius: BorderRadius.circular(999),
+              border: Border.all(color: status.color.withValues(alpha: 0.5)),
+            ),
+            child: Icon(status.icon, size: 14, color: status.color),
+          ),
+          const SizedBox(width: 9),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Text(
+                  task.title,
+                  style: const TextStyle(
+                    color: _WorkbenchColors.onBackground,
+                    fontSize: 12,
+                    height: 1.25,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                if (task.details.isNotEmpty) ...[
+                  const SizedBox(height: 3),
+                  Text(
+                    task.details.join(' '),
+                    maxLines: 3,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: _WorkbenchColors.secondaryText,
+                      fontSize: 11.5,
+                      height: 1.25,
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 5),
+                _TinyStatusPill(label: task.status),
+              ],
+            ),
+          ),
         ],
       ),
     );
@@ -5092,20 +5372,87 @@ _TaskProgress? _specTaskProgress(SddSpec spec) {
 }
 
 _TaskProgress? _taskProgress(String? content) {
-  if (content == null || content.trim().isEmpty) return null;
-  var completed = 0;
-  var total = 0;
-  final checkbox = RegExp(r'^\s*-\s+\[([ xX])\]');
-  for (final line in content.split('\n')) {
-    final match = checkbox.firstMatch(line);
-    if (match == null) continue;
-    total += 1;
-    if ((match.group(1) ?? '').toLowerCase() == 'x') {
-      completed += 1;
+  return _parseStructuredTasks(content)?.progress;
+}
+
+_StructuredTaskList? _parseStructuredTasks(String? content) {
+  final normalized = content?.replaceAll('\r\n', '\n').trim();
+  if (normalized == null || normalized.isEmpty) return null;
+  final lines = normalized.split('\n');
+  final tasks = <_StructuredTask>[];
+  final details = <String>[];
+  var title = 'Tasks';
+  String? taskTitle;
+  String? status;
+  final taskStart = RegExp(
+    r'^\s*[-*]\s+(?:\[([ xX])\]|\[status:\s*([^\]]+)\])\s*(.*)$',
+  );
+
+  void flush() {
+    final currentTitle = taskTitle?.trim();
+    final currentStatus = status?.trim();
+    if (currentTitle == null ||
+        currentTitle.isEmpty ||
+        currentStatus == null ||
+        currentStatus.isEmpty) {
+      return;
+    }
+    tasks.add(
+      _StructuredTask(
+        order: tasks.length + 1,
+        title: _cleanTaskText(currentTitle),
+        status: currentStatus,
+        details: details
+            .map(_cleanTaskText)
+            .where((detail) => detail.isNotEmpty)
+            .toList(growable: false),
+      ),
+    );
+    taskTitle = null;
+    status = null;
+    details.clear();
+  }
+
+  for (final line in lines) {
+    final trimmed = line.trim();
+    if (trimmed.isEmpty) continue;
+    if (trimmed.startsWith('#')) {
+      if (title == 'Tasks') {
+        final heading = trimmed.replaceFirst(RegExp(r'^#+\s*'), '').trim();
+        if (heading.isNotEmpty) title = heading;
+      }
+      continue;
+    }
+    final match = taskStart.firstMatch(line);
+    if (match != null) {
+      flush();
+      final checkbox = match.group(1);
+      status = checkbox == null
+          ? match.group(2)!.trim()
+          : checkbox.toLowerCase() == 'x'
+          ? 'done'
+          : 'planned';
+      taskTitle = match.group(3)!.trim();
+      continue;
+    }
+    if (taskTitle != null) {
+      details.add(trimmed.replaceFirst(RegExp(r'^[-*]\s+'), ''));
     }
   }
-  if (total == 0) return null;
-  return _TaskProgress(completed: completed, total: total);
+  flush();
+  if (tasks.isEmpty) return null;
+  return _StructuredTaskList(title: title, tasks: tasks);
+}
+
+String _cleanTaskText(String text) {
+  return text
+      .replaceAllMapped(RegExp(r'`([^`]+)`'), (match) => match.group(1) ?? '')
+      .replaceAll(RegExp(r'\s+'), ' ')
+      .trim();
+}
+
+bool _taskStatusIsComplete(String status) {
+  return _normalizeStatus(status) == 'done';
 }
 
 String _specDescription(SddSpec spec) {

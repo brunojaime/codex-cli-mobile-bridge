@@ -244,6 +244,8 @@ void main() {
     await tester.tap(find.text('Specs').first);
     await tester.pumpAndSettle();
     expect(find.text('Bridge Contract'), findsWidgets);
+    await tester.tap(find.text('Bridge Contract').first);
+    await tester.pumpAndSettle();
     expect(find.textContaining('# Bridge Contract'), findsOneWidget);
     await tester.tap(find.text('Plan').first);
     await tester.pumpAndSettle();
@@ -251,6 +253,10 @@ void main() {
     await tester.tap(find.text('Tasks').first);
     await tester.pumpAndSettle();
     expect(find.text('1/2 tasks complete'), findsOneWidget);
+    expect(find.text('Tasks'), findsWidgets);
+    expect(find.text('Done'), findsWidgets);
+    expect(find.text('Planned'), findsWidgets);
+    expect(find.textContaining('# Tasks'), findsNothing);
     await tester.ensureVisible(find.text('Slice One').first);
     await tester.tap(find.text('Slice One').first);
     await tester.pumpAndSettle();
@@ -326,6 +332,8 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Specs').first);
     await tester.pumpAndSettle();
+    await tester.tap(find.text('Bridge Contract').first);
+    await tester.pumpAndSettle();
     await tester.ensureVisible(find.text('Codex').first);
     await tester.tap(find.text('Codex').first);
     await tester.pumpAndSettle();
@@ -372,14 +380,18 @@ void main() {
     await tester.tap(find.text('Specs').first);
     await tester.pumpAndSettle();
 
+    await tester.tap(find.text('Bridge Contract').first);
+    await tester.pumpAndSettle();
     expect(find.textContaining('# Bridge Contract'), findsOneWidget);
     await tester.tap(find.text('Plan').first);
     await tester.pumpAndSettle();
     expect(find.textContaining('# Plan'), findsOneWidget);
     await tester.tap(find.text('Tasks').first);
     await tester.pumpAndSettle();
-    expect(find.textContaining('# Tasks'), findsOneWidget);
     expect(find.text('1/2 tasks complete'), findsOneWidget);
+    expect(find.text('Done'), findsWidgets);
+    expect(find.text('Planned'), findsWidgets);
+    expect(find.textContaining('# Tasks'), findsNothing);
     await tester.ensureVisible(find.text('Slice One').first);
     await tester.tap(find.text('Slice One').first);
     await tester.pumpAndSettle();
@@ -512,6 +524,8 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Specs').first);
     await tester.pumpAndSettle();
+    await tester.tap(find.text('Bridge Contract').first);
+    await tester.pumpAndSettle();
     await tester.ensureVisible(
       find.byTooltip(
         'Add SDD feedback for specs/001-codex-bridge-sdd-wrapper/spec.md',
@@ -595,6 +609,8 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Specs').first);
     await tester.pumpAndSettle();
+    await tester.tap(find.text('Bridge Contract').first);
+    await tester.pumpAndSettle();
     await tester.ensureVisible(
       find.byTooltip(
         'Add SDD feedback for specs/001-codex-bridge-sdd-wrapper/spec.md',
@@ -629,6 +645,8 @@ void main() {
     await tester.tap(find.byTooltip('Open SDD Explorer'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Specs').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Bridge Contract').first);
     await tester.pumpAndSettle();
     await tester.ensureVisible(
       find.byTooltip(
@@ -811,6 +829,8 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Specs').first);
     await tester.pumpAndSettle();
+    await tester.tap(find.text('Bridge Contract').first);
+    await tester.pumpAndSettle();
     await tester.ensureVisible(
       find.byTooltip(
         'Open Codex actions for specs/001-codex-bridge-sdd-wrapper/spec.md',
@@ -854,6 +874,8 @@ void main() {
     await tester.tap(find.byTooltip('Open SDD Explorer'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Specs').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Bridge Contract').first);
     await tester.pumpAndSettle();
     await tester.ensureVisible(
       find.byTooltip(
