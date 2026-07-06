@@ -382,6 +382,8 @@ void main() {
     expect(find.text('Plan 1'), findsOneWidget);
     expect(find.text('Task 1'), findsNWidgets(2));
     expect(find.text('Task 3'), findsOneWidget);
+    expect(find.textContaining('Plan:'), findsNothing);
+    expect(find.textContaining('Tasks:'), findsNothing);
 
     await tester.tap(find.text('Plan 1').first);
     await tester.pumpAndSettle();
@@ -389,6 +391,7 @@ void main() {
     expect(find.text('Task 1: Normalize catalog variants'), findsWidgets);
     expect(find.text('Task 2: Validate stock thresholds'), findsWidgets);
     expect(find.text('Task 3: Persist reservation audit'), findsNothing);
+    expect(find.text('Task 1: Reserve cart units.'), findsNothing);
 
     await tester.tap(find.text('Plan 2').first);
     await tester.pumpAndSettle();
@@ -397,6 +400,14 @@ void main() {
     expect(find.text('Task 2: Reconcile payment expiry'), findsWidgets);
     expect(find.text('Task 3: Persist reservation audit'), findsWidgets);
     expect(find.text('Task 1: Normalize catalog variants'), findsNothing);
+    expect(find.text('Task 1: Normalize catalog variants.'), findsNothing);
+
+    await tester.tap(find.text('Reconcile payment expiry').first);
+    await tester.pumpAndSettle();
+    expect(find.text('Task 2: Reconcile payment expiry'), findsWidgets);
+    expect(find.text('Task 1: Reserve cart units'), findsNothing);
+    expect(find.text('Task 3: Persist reservation audit'), findsNothing);
+    expect(find.text('Task 1: Normalize catalog variants.'), findsNothing);
   });
 
   testWidgets('spec tree fallback marks incomplete trees as incomplete', (
@@ -2693,6 +2704,15 @@ Map<String, dynamic> _projectWithTraceJson() {
 }
 
 Map<String, dynamic> _projectWithTreeJson() {
+  const globalTaskIndex =
+      '# SAT Stock Reservation Task Index\n\n'
+      '## Plan 1: Catalog readiness\n\n'
+      '- [x] Task 1: Normalize catalog variants.\n'
+      '- [x] Task 2: Validate stock thresholds.\n\n'
+      '## Plan 2: Checkout reservation\n\n'
+      '- [ ] Task 1: Reserve cart units.\n'
+      '- [ ] Task 2: Reconcile payment expiry.\n'
+      '- [ ] Task 3: Persist reservation audit.';
   final project = _projectJson();
   project['specs'] = <Map<String, dynamic>>[
     <String, dynamic>{
@@ -2755,7 +2775,7 @@ Map<String, dynamic> _projectWithTreeJson() {
                       'specs/001-sat-stock-reservation/tasks/plan-1-task-1/task.md',
                   'title': 'Normalize catalog variants',
                   'size_bytes': 60,
-                  'content': '# Normalize catalog variants\n\n- [x] Done',
+                  'content': globalTaskIndex,
                 },
                 'diagrams': <Map<String, dynamic>>[],
               },
@@ -2769,7 +2789,7 @@ Map<String, dynamic> _projectWithTreeJson() {
                       'specs/001-sat-stock-reservation/tasks/plan-1-task-2/task.md',
                   'title': 'Validate stock thresholds',
                   'size_bytes': 60,
-                  'content': '# Validate stock thresholds\n\n- [x] Done',
+                  'content': globalTaskIndex,
                 },
                 'diagrams': <Map<String, dynamic>>[],
               },
@@ -2800,7 +2820,7 @@ Map<String, dynamic> _projectWithTreeJson() {
                       'specs/001-sat-stock-reservation/tasks/plan-2-task-1/task.md',
                   'title': 'Reserve cart units',
                   'size_bytes': 60,
-                  'content': '# Reserve cart units\n\n- [ ] Reserve units',
+                  'content': globalTaskIndex,
                 },
                 'diagrams': <Map<String, dynamic>>[],
               },
@@ -2814,7 +2834,7 @@ Map<String, dynamic> _projectWithTreeJson() {
                       'specs/001-sat-stock-reservation/tasks/plan-2-task-2/task.md',
                   'title': 'Reconcile payment expiry',
                   'size_bytes': 60,
-                  'content': '# Reconcile payment expiry\n\n- [ ] Expire hold',
+                  'content': globalTaskIndex,
                 },
                 'diagrams': <Map<String, dynamic>>[],
               },
@@ -2828,7 +2848,7 @@ Map<String, dynamic> _projectWithTreeJson() {
                       'specs/001-sat-stock-reservation/tasks/plan-2-task-3/task.md',
                   'title': 'Persist reservation audit',
                   'size_bytes': 60,
-                  'content': '# Persist reservation audit\n\n- [ ] Audit',
+                  'content': globalTaskIndex,
                 },
                 'diagrams': <Map<String, dynamic>>[],
               },

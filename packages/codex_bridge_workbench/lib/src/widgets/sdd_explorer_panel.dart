@@ -4268,6 +4268,51 @@ class _ArtifactMenuItem {
 List<_ArtifactMenuItem> _artifactMenuItems(SddSpec spec, int specIndex) {
   final items = <_ArtifactMenuItem>[];
 
+  void addTreeItems(SddSpecTree tree) {
+    items.add(
+      _ArtifactMenuItem(
+        selection: _SpecArtifactSelection(
+          specIndex: specIndex,
+          kind: _SpecArtifactKind.treeSpec,
+        ),
+        label: 'Spec: ${spec.title}',
+        icon: Icons.description_outlined,
+        detail: '${tree.plans.length} plan(s)',
+      ),
+    );
+    for (final planEntry in tree.plans.indexed) {
+      final plan = planEntry.$2;
+      items.add(
+        _ArtifactMenuItem(
+          selection: _SpecArtifactSelection(
+            specIndex: specIndex,
+            kind: _SpecArtifactKind.treePlan,
+            artifactIndex: planEntry.$1,
+          ),
+          label: 'Plan ${plan.number}: ${plan.title}',
+          icon: Icons.route_outlined,
+          detail: '${plan.tasks.length} task(s)',
+        ),
+      );
+      for (final taskEntry in plan.tasks.indexed) {
+        final task = taskEntry.$2;
+        items.add(
+          _ArtifactMenuItem(
+            selection: _SpecArtifactSelection(
+              specIndex: specIndex,
+              kind: _SpecArtifactKind.treeTask,
+              artifactIndex: planEntry.$1,
+              taskIndex: taskEntry.$1,
+            ),
+            label: 'Task ${task.number}: ${task.title}',
+            icon: Icons.checklist_rounded,
+            detail: 'Plan ${plan.number}',
+          ),
+        );
+      }
+    }
+  }
+
   void addFiles({
     required _SpecArtifactKind kind,
     required List<SddFile> files,
@@ -4291,6 +4336,32 @@ List<_ArtifactMenuItem> _artifactMenuItems(SddSpec spec, int specIndex) {
         ),
       );
     }
+  }
+
+  final tree = spec.tree;
+  if (tree != null) {
+    addTreeItems(tree);
+    addFiles(
+      kind: _SpecArtifactKind.slice,
+      files: spec.sliceDocs,
+      fallbackLabel: 'slice.md',
+      icon: Icons.view_agenda_outlined,
+      label: (file) => 'Slice: ${_artifactPathLabel(file, 'slice.md')}',
+    );
+    if (spec.diagrams.isNotEmpty) {
+      items.add(
+        _ArtifactMenuItem(
+          selection: _SpecArtifactSelection(
+            specIndex: specIndex,
+            kind: _SpecArtifactKind.diagramGroup,
+          ),
+          label: 'Diagrams',
+          icon: Icons.account_tree_outlined,
+          detail: '${spec.diagrams.length} diagram(s)',
+        ),
+      );
+    }
+    return items;
   }
 
   addFiles(
@@ -4689,31 +4760,12 @@ class _SpecArtifactInspector extends StatelessWidget {
     if (plan == null) {
       return const _InfoCard(title: 'Plan', detail: 'Missing plan node');
     }
-    final taskSections = plan.tasks.indexed
-        .where((entry) => entry.$2.file != null)
-        .map(
-          (entry) => _PlanTaskSectionData(
-            index: entry.$1,
-            file: entry.$2.file!,
-            title: 'Task ${entry.$2.number}: ${entry.$2.title}',
-            planAssociation: 'Plan ${plan.number}: ${plan.title}',
-            feedbackTarget: _fileFeedbackTarget(
-              project: project,
-              spec: spec,
-              file: entry.$2.file,
-              artifactType: 'tasks',
-              fallbackTitle: entry.$2.title,
-            ),
-          ),
-        )
-        .toList(growable: false);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
         _PlanFileSection(
           title: 'Plan ${plan.number}: ${plan.title}',
           file: plan.file,
-          taskSections: taskSections,
           feedbackTarget: _fileFeedbackTarget(
             project: project,
             spec: spec,
@@ -4723,6 +4775,14 @@ class _SpecArtifactInspector extends StatelessWidget {
           ),
           onFeedback: onFeedback,
           actions: const <SddCodexActionKind>[SddCodexActionKind.updatePlan],
+          onCodexAction: onCodexAction,
+        ),
+        const SizedBox(height: 10),
+        _TreeTaskListCard(
+          project: project,
+          spec: spec,
+          plan: plan,
+          onFeedback: onFeedback,
           onCodexAction: onCodexAction,
         ),
         if (plan.diagrams.isNotEmpty) ...[
@@ -4753,19 +4813,12 @@ class _SpecArtifactInspector extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
-        _TaskFileSection(
-          title: 'Task ${task.number}: ${task.title}',
-          file: task.file,
-          planAssociation: 'Plan ${plan.number}: ${plan.title}',
-          feedbackTarget: _fileFeedbackTarget(
-            project: project,
-            spec: spec,
-            file: task.file,
-            artifactType: 'tasks',
-            fallbackTitle: task.title,
-          ),
+        _TreeTaskNodeSection(
+          project: project,
+          spec: spec,
+          plan: plan,
+          task: task,
           onFeedback: onFeedback,
-          actions: const <SddCodexActionKind>[SddCodexActionKind.updateTasks],
           onCodexAction: onCodexAction,
         ),
         if (task.diagrams.isNotEmpty) ...[
@@ -4791,14 +4844,209 @@ class _PlanTaskSectionData {
     required this.file,
     required this.planAssociation,
     required this.feedbackTarget,
-    this.title,
   });
 
   final int index;
   final SddFile file;
   final String planAssociation;
   final SddFeedbackTarget? feedbackTarget;
-  final String? title;
+}
+
+class _TreeTaskListCard extends StatelessWidget {
+  const _TreeTaskListCard({
+    required this.project,
+    required this.spec,
+    required this.plan,
+    this.onFeedback,
+    this.onCodexAction,
+  });
+
+  final SddProject project;
+  final SddSpec spec;
+  final SddPlanNode plan;
+  final ValueChanged<SddFeedbackTarget>? onFeedback;
+  final ValueChanged<SddCodexActionRequest>? onCodexAction;
+
+  @override
+  Widget build(BuildContext context) {
+    final completed = plan.tasks
+        .where((task) => _taskStatusIsComplete(task.status))
+        .length;
+    return _PanelCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Row(
+            children: <Widget>[
+              const Icon(
+                Icons.checklist_rounded,
+                size: 16,
+                color: _WorkbenchColors.primary,
+              ),
+              const SizedBox(width: 8),
+              const Expanded(
+                child: Text(
+                  'Tasks in this plan',
+                  style: TextStyle(fontWeight: FontWeight.w900),
+                ),
+              ),
+              _TinyMetaChip(
+                icon: Icons.account_tree_outlined,
+                label: '$completed/${plan.tasks.length} done',
+                warning: completed < plan.tasks.length,
+              ),
+            ],
+          ),
+          if (plan.description.trim().isNotEmpty) ...[
+            const SizedBox(height: 6),
+            Text(
+              plan.description,
+              style: const TextStyle(
+                color: _WorkbenchColors.secondaryText,
+                fontSize: 12,
+                height: 1.3,
+              ),
+            ),
+          ],
+          if (plan.tasks.isEmpty) ...[
+            const SizedBox(height: 8),
+            const Text(
+              'No tasks defined for this plan.',
+              style: TextStyle(
+                color: _WorkbenchColors.secondaryText,
+                fontSize: 12,
+              ),
+            ),
+          ] else ...[
+            const SizedBox(height: 8),
+            for (final entry in plan.tasks.indexed) ...[
+              if (entry.$1 > 0)
+                const Divider(height: 14, color: _WorkbenchColors.border),
+              _TreeTaskNodeSection(
+                project: project,
+                spec: spec,
+                plan: plan,
+                task: entry.$2,
+                onFeedback: onFeedback,
+                onCodexAction: onCodexAction,
+                embedded: true,
+              ),
+            ],
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _TreeTaskNodeSection extends StatefulWidget {
+  const _TreeTaskNodeSection({
+    required this.project,
+    required this.spec,
+    required this.plan,
+    required this.task,
+    this.onFeedback,
+    this.onCodexAction,
+    this.embedded = false,
+  });
+
+  final SddProject project;
+  final SddSpec spec;
+  final SddPlanNode plan;
+  final SddTaskNode task;
+  final ValueChanged<SddFeedbackTarget>? onFeedback;
+  final ValueChanged<SddCodexActionRequest>? onCodexAction;
+  final bool embedded;
+
+  @override
+  State<_TreeTaskNodeSection> createState() => _TreeTaskNodeSectionState();
+}
+
+class _TreeTaskNodeSectionState extends State<_TreeTaskNodeSection> {
+  bool _expanded = false;
+
+  @override
+  void didUpdateWidget(_TreeTaskNodeSection oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.task.id != widget.task.id ||
+        oldWidget.plan.id != widget.plan.id) {
+      _expanded = false;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final task = widget.task;
+    final taskRow = _StructuredTask(
+      order: task.number,
+      title: 'Task ${task.number}: ${task.title}',
+      status: task.status,
+      details: task.description.trim().isEmpty
+          ? const <String>[]
+          : <String>[task.description],
+    );
+    final body = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        _FileHeader(
+          title: 'Task ${task.number}: ${task.title}',
+          file: task.file ?? const SddFile(path: 'task.md', sizeBytes: 0),
+        ),
+        _ArtifactControls(
+          target: _fileFeedbackTarget(
+            project: widget.project,
+            spec: widget.spec,
+            file: task.file,
+            artifactType: 'tasks',
+            fallbackTitle: task.title,
+          ),
+          onFeedback: widget.onFeedback,
+          actions: const <SddCodexActionKind>[SddCodexActionKind.updateTasks],
+          onCodexAction: widget.onCodexAction,
+        ),
+        const SizedBox(height: 8),
+        _TinyMetaChip(
+          icon: Icons.route_outlined,
+          label: 'Plan ${widget.plan.number}: ${widget.plan.title}',
+        ),
+        if (task.file == null) ...[
+          const SizedBox(height: 8),
+          const Text(
+            'Missing file',
+            style: TextStyle(color: _WorkbenchColors.warning),
+          ),
+        ],
+        if (task.file?.error != null) ...[
+          const SizedBox(height: 8),
+          Text(
+            task.file!.error!,
+            style: const TextStyle(color: _WorkbenchColors.warning),
+          ),
+        ],
+        const SizedBox(height: 8),
+        _StructuredTaskRow(
+          task: taskRow,
+          expanded: _expanded,
+          onToggle: () => setState(() => _expanded = !_expanded),
+        ),
+        if (task.file?.hasContent ?? false) ...[
+          const SizedBox(height: 8),
+          _SourceExcerptDisclosure(text: task.file!.content!),
+        ],
+      ],
+    );
+    if (!widget.embedded) {
+      return _PanelCard(child: body);
+    }
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: _WorkbenchColors.background,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: _WorkbenchColors.border),
+      ),
+      child: Padding(padding: const EdgeInsets.all(10), child: body),
+    );
+  }
 }
 
 List<_PlanTaskSectionData> _taskSectionsForPlan({
@@ -5765,7 +6013,7 @@ class _PlanFileSection extends StatelessWidget {
             const SizedBox(height: 8),
             for (final task in taskSections) ...[
               _TaskFileSection(
-                title: task.title ?? _artifactLabel(task.file, 'tasks.md'),
+                title: _artifactLabel(task.file, 'tasks.md'),
                 file: task.file,
                 planAssociation: task.planAssociation,
                 feedbackTarget: task.feedbackTarget,
