@@ -3683,7 +3683,7 @@ class _SpecArtifactInspector extends StatelessWidget {
         );
       case _SpecArtifactKind.plan:
         final file = _fileAt(spec.allPlanFiles, selection.artifactIndex);
-        return _SddFileSection(
+        return _PlanFileSection(
           title: _artifactLabel(file, 'plan.md'),
           file: file,
           feedbackTarget: _fileFeedbackTarget(
@@ -4366,6 +4366,569 @@ class _MissingArtifacts extends StatelessWidget {
   }
 }
 
+class _StructuredPlan {
+  const _StructuredPlan({required this.title, required this.stages});
+
+  final String title;
+  final List<_PlanStage> stages;
+}
+
+class _PlanStage {
+  const _PlanStage({
+    required this.order,
+    required this.title,
+    required this.description,
+    required this.status,
+    this.details = const <String>[],
+  });
+
+  final int order;
+  final String title;
+  final String description;
+  final String status;
+  final List<String> details;
+}
+
+_StructuredPlan? _parseStructuredPlan(String? content) {
+  final normalized = content?.replaceAll('\r\n', '\n').trim();
+  if (normalized == null || normalized.isEmpty) return null;
+  final lines = normalized.split('\n');
+  final title = _planTitle(lines);
+  final yamlStages = _parseYamlLikePlanStages(lines);
+  if (yamlStages.isNotEmpty) {
+    return _StructuredPlan(title: title, stages: yamlStages);
+  }
+  final numberedStages = _parseNumberedPlanStages(lines);
+  if (numberedStages.isNotEmpty) {
+    return _StructuredPlan(title: title, stages: numberedStages);
+  }
+  final headingStages = _parseHeadingPlanStages(lines);
+  if (headingStages.isNotEmpty) {
+    return _StructuredPlan(title: title, stages: headingStages);
+  }
+  return null;
+}
+
+String _planTitle(List<String> lines) {
+  for (final line in lines) {
+    final trimmed = line.trim();
+    if (!trimmed.startsWith('#')) continue;
+    final title = trimmed.replaceFirst(RegExp(r'^#+\s*'), '').trim();
+    if (title.isNotEmpty) return title;
+  }
+  return 'Plan';
+}
+
+List<_PlanStage> _parseNumberedPlanStages(List<String> lines) {
+  final stages = <_PlanStage>[];
+  final numbered = RegExp(r'^\s*(\d+)[\.)]\s+(.+)$');
+  int? order;
+  final buffer = StringBuffer();
+
+  void flush() {
+    final currentOrder = order;
+    final text = buffer.toString().trim();
+    if (currentOrder == null || text.isEmpty) return;
+    final cleaned = _cleanPlanText(text);
+    stages.add(
+      _PlanStage(
+        order: currentOrder,
+        title: _planStageTitle(cleaned),
+        description: cleaned,
+        status: _statusFromPlanText(cleaned),
+      ),
+    );
+    buffer.clear();
+  }
+
+  for (final line in lines) {
+    final trimmed = line.trim();
+    if (trimmed.isEmpty || trimmed.startsWith('#')) continue;
+    final match = numbered.firstMatch(line);
+    if (match != null) {
+      flush();
+      order = int.tryParse(match.group(1) ?? '') ?? (stages.length + 1);
+      buffer.write(match.group(2)!.trim());
+      continue;
+    }
+    if (order != null) {
+      buffer.write(' ');
+      buffer.write(trimmed.replaceFirst(RegExp(r'^[-*]\s+'), ''));
+    }
+  }
+  flush();
+  return stages;
+}
+
+List<_PlanStage> _parseHeadingPlanStages(List<String> lines) {
+  final stages = <_PlanStage>[];
+  String? title;
+  final body = <String>[];
+
+  void flush() {
+    final currentTitle = title?.trim();
+    if (currentTitle == null || currentTitle.isEmpty) return;
+    final description = _cleanPlanText(body.join(' '));
+    stages.add(
+      _PlanStage(
+        order: stages.length + 1,
+        title: currentTitle,
+        description: description,
+        status: _statusFromPlanText('$currentTitle $description'),
+        details: body
+            .map(_cleanPlanText)
+            .where((detail) => detail.isNotEmpty)
+            .toList(growable: false),
+      ),
+    );
+    body.clear();
+  }
+
+  for (final line in lines) {
+    final trimmed = line.trim();
+    if (trimmed.startsWith('## ')) {
+      flush();
+      title = trimmed.replaceFirst(RegExp(r'^#+\s*'), '').trim();
+    } else if (title != null &&
+        trimmed.isNotEmpty &&
+        !trimmed.startsWith('#')) {
+      body.add(trimmed.replaceFirst(RegExp(r'^[-*]\s+'), ''));
+    }
+  }
+  flush();
+  return stages;
+}
+
+List<_PlanStage> _parseYamlLikePlanStages(List<String> lines) {
+  final stages = <_PlanStage>[];
+  final hasYamlShape = lines.any((line) {
+    final trimmed = line.trimLeft();
+    return trimmed.startsWith('- ') &&
+        RegExp(
+          r'\b(title|name|stage|status|description|task):',
+        ).hasMatch(trimmed);
+  });
+  if (!hasYamlShape) return stages;
+
+  final current = <String, String>{};
+  final details = <String>[];
+
+  void flush() {
+    final title =
+        current['title'] ??
+        current['name'] ??
+        current['stage'] ??
+        current['id'];
+    final description = current['description'] ?? current['task'] ?? '';
+    if (title == null && description.trim().isEmpty && details.isEmpty) return;
+    final fallbackTitle = description.trim().isNotEmpty
+        ? _planStageTitle(description)
+        : 'Stage ${stages.length + 1}';
+    stages.add(
+      _PlanStage(
+        order: stages.length + 1,
+        title: _cleanPlanText(title ?? fallbackTitle),
+        description: _cleanPlanText(description),
+        status: _cleanPlanText(current['status'] ?? 'planned'),
+        details: details
+            .map(_cleanPlanText)
+            .where((detail) => detail.isNotEmpty)
+            .toList(growable: false),
+      ),
+    );
+    current.clear();
+    details.clear();
+  }
+
+  for (final line in lines) {
+    final trimmed = line.trim();
+    if (trimmed.isEmpty || trimmed.startsWith('#')) continue;
+    if (trimmed.startsWith('- ')) {
+      final body = trimmed.substring(2).trim();
+      final keyValue = _yamlKeyValue(body);
+      if (keyValue == null) {
+        if (current.isNotEmpty) {
+          details.add(body);
+        }
+        continue;
+      }
+      if (current.isNotEmpty) flush();
+      current[keyValue.$1] = keyValue.$2;
+      continue;
+    }
+    final keyValue = _yamlKeyValue(trimmed);
+    if (keyValue != null && current.isNotEmpty) {
+      current[keyValue.$1] = keyValue.$2;
+    } else if (current.isNotEmpty) {
+      details.add(trimmed.replaceFirst(RegExp(r'^[-*]\s+'), ''));
+    }
+  }
+  flush();
+  return stages;
+}
+
+(String, String)? _yamlKeyValue(String text) {
+  final separator = text.indexOf(':');
+  if (separator <= 0) return null;
+  final key = text.substring(0, separator).trim().toLowerCase();
+  if (key.isEmpty || key.contains(' ')) return null;
+  final value = text
+      .substring(separator + 1)
+      .trim()
+      .replaceAll(RegExp(r'''^['"]|['"]$'''), '');
+  return (key, value);
+}
+
+String _cleanPlanText(String text) {
+  return text
+      .replaceAllMapped(RegExp(r'`([^`]+)`'), (match) => match.group(1) ?? '')
+      .replaceAll(RegExp(r'\s+'), ' ')
+      .trim();
+}
+
+String _planStageTitle(String text) {
+  final cleaned = _cleanPlanText(text);
+  if (cleaned.isEmpty) return 'Plan stage';
+  final sentenceEnd = cleaned.indexOf(RegExp(r'[.:;]'));
+  final end = sentenceEnd > 10 ? sentenceEnd : cleaned.length;
+  final title = cleaned.substring(0, end).trim();
+  if (title.length <= 72) return title;
+  return '${title.substring(0, 69).trimRight()}...';
+}
+
+String _statusFromPlanText(String text) {
+  final lower = text.toLowerCase();
+  if (lower.contains('[x]') ||
+      lower.contains('done') ||
+      lower.contains('complete') ||
+      lower.contains('validated')) {
+    return 'complete';
+  }
+  if (lower.contains('blocked') || lower.contains('missing')) return 'blocked';
+  if (lower.contains('validate') || lower.contains('test')) return 'validation';
+  if (lower.contains('maintain') || lower.contains('preserve')) {
+    return 'ongoing';
+  }
+  return 'planned';
+}
+
+bool _planStatusIsWarning(String status) {
+  final normalized = status.toLowerCase();
+  return normalized.contains('blocked') ||
+      normalized.contains('missing') ||
+      normalized.contains('failed');
+}
+
+class _PlanFileSection extends StatelessWidget {
+  const _PlanFileSection({
+    required this.file,
+    this.title = 'plan.md',
+    this.feedbackTarget,
+    this.onFeedback,
+    this.actions = const <SddCodexActionKind>[],
+    this.onCodexAction,
+  });
+
+  final String title;
+  final SddFile? file;
+  final SddFeedbackTarget? feedbackTarget;
+  final ValueChanged<SddFeedbackTarget>? onFeedback;
+  final List<SddCodexActionKind> actions;
+  final ValueChanged<SddCodexActionRequest>? onCodexAction;
+
+  @override
+  Widget build(BuildContext context) {
+    final value = file;
+    if (value == null) {
+      return _InfoCard(title: title, detail: 'Missing file');
+    }
+    final plan = _parseStructuredPlan(value.content);
+    return _PanelCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          _FileHeader(title: title, file: value),
+          _ArtifactControls(
+            target: feedbackTarget,
+            onFeedback: onFeedback,
+            actions: actions,
+            onCodexAction: onCodexAction,
+          ),
+          if (value.error != null) ...[
+            const SizedBox(height: 8),
+            Text(
+              value.error!,
+              style: const TextStyle(color: _WorkbenchColors.warning),
+            ),
+          ],
+          if (plan != null) ...[
+            const SizedBox(height: 10),
+            _StructuredPlanView(plan: plan),
+          ] else if (value.hasContent) ...[
+            const SizedBox(height: 10),
+            _SourceBlock(text: value.content!),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _StructuredPlanView extends StatefulWidget {
+  const _StructuredPlanView({required this.plan});
+
+  final _StructuredPlan plan;
+
+  @override
+  State<_StructuredPlanView> createState() => _StructuredPlanViewState();
+}
+
+class _StructuredPlanViewState extends State<_StructuredPlanView> {
+  int _selectedIndex = 0;
+
+  @override
+  void didUpdateWidget(_StructuredPlanView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.plan != widget.plan) {
+      _selectedIndex = 0;
+    } else if (_selectedIndex >= widget.plan.stages.length) {
+      _selectedIndex = widget.plan.stages.length - 1;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final stages = widget.plan.stages;
+    final selected = stages[_selectedIndex];
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Row(
+          children: <Widget>[
+            const Icon(
+              Icons.route_outlined,
+              size: 16,
+              color: _WorkbenchColors.primary,
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                widget.plan.title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontWeight: FontWeight.w900),
+              ),
+            ),
+            _TinyMetaChip(
+              icon: Icons.view_timeline_outlined,
+              label: '${stages.length} stages',
+            ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        for (final entry in stages.indexed) ...[
+          if (entry.$1 > 0)
+            const Divider(height: 12, color: _WorkbenchColors.border),
+          _PlanStageRow(
+            stage: entry.$2,
+            selected: entry.$1 == _selectedIndex,
+            onEnter: () {
+              setState(() {
+                _selectedIndex = entry.$1;
+              });
+            },
+          ),
+        ],
+        const SizedBox(height: 12),
+        _PlanStageDetail(stage: selected),
+      ],
+    );
+  }
+}
+
+class _PlanStageRow extends StatelessWidget {
+  const _PlanStageRow({
+    required this.stage,
+    required this.selected,
+    required this.onEnter,
+  });
+
+  final _PlanStage stage;
+  final bool selected;
+  final VoidCallback onEnter;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = selected
+        ? _WorkbenchColors.primary
+        : _WorkbenchColors.secondaryText;
+    return Material(
+      color: selected
+          ? _WorkbenchColors.primary.withValues(alpha: 0.08)
+          : Colors.transparent,
+      borderRadius: BorderRadius.circular(8),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(8),
+        onTap: onEnter,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              CircleAvatar(
+                radius: 13,
+                backgroundColor: color.withValues(alpha: 0.18),
+                child: Text(
+                  '${stage.order}',
+                  style: TextStyle(
+                    color: color,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    Text(
+                      stage.title,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: selected
+                            ? _WorkbenchColors.onBackground
+                            : _WorkbenchColors.secondaryText,
+                        fontWeight: FontWeight.w900,
+                        fontSize: 13,
+                      ),
+                    ),
+                    if (stage.description.isNotEmpty) ...[
+                      const SizedBox(height: 3),
+                      Text(
+                        stage.description,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: _WorkbenchColors.secondaryText,
+                          fontSize: 12,
+                          height: 1.25,
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 6),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 6,
+                      children: <Widget>[
+                        _TinyStatusPill(
+                          label: stage.status,
+                          warning: _planStatusIsWarning(stage.status),
+                        ),
+                        TextButton.icon(
+                          onPressed: onEnter,
+                          icon: const Icon(Icons.login_rounded, size: 15),
+                          label: const Text('Enter stage'),
+                          style: TextButton.styleFrom(
+                            visualDensity: VisualDensity.compact,
+                            padding: const EdgeInsets.symmetric(horizontal: 8),
+                            minimumSize: const Size(0, 30),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _PlanStageDetail extends StatelessWidget {
+  const _PlanStageDetail({required this.stage});
+
+  final _PlanStage stage;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: _WorkbenchColors.sourceBackground,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: _WorkbenchColors.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Row(
+            children: <Widget>[
+              Expanded(
+                child: Text(
+                  'Stage ${stage.order}: ${stage.title}',
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontWeight: FontWeight.w900),
+                ),
+              ),
+              const SizedBox(width: 8),
+              _TinyStatusPill(
+                label: stage.status,
+                warning: _planStatusIsWarning(stage.status),
+              ),
+            ],
+          ),
+          if (stage.description.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text(
+              stage.description,
+              style: const TextStyle(
+                color: _WorkbenchColors.onBackground,
+                fontSize: 12,
+                height: 1.35,
+              ),
+            ),
+          ],
+          if (stage.details.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            ...stage.details.map(
+              (detail) => Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    const Icon(
+                      Icons.chevron_right_rounded,
+                      size: 16,
+                      color: _WorkbenchColors.primary,
+                    ),
+                    const SizedBox(width: 4),
+                    Expanded(
+                      child: Text(
+                        detail,
+                        style: const TextStyle(
+                          color: _WorkbenchColors.secondaryText,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
 class _TaskFileSection extends StatelessWidget {
   const _TaskFileSection({
     required this.file,
@@ -4989,9 +5552,7 @@ class _DiagramCardState extends State<_DiagramCard> {
             else
               _DiagramPreview(
                 diagram: diagram,
-                diagramRenderer: widget.diagramRenderer,
                 renderFuture: _renderFuture,
-                sourceText: diagram.content!,
                 onRetry: _retryRender,
               ),
           ] else
@@ -5040,81 +5601,44 @@ class _DiagramModeSwitch extends StatelessWidget {
 class _DiagramPreview extends StatelessWidget {
   const _DiagramPreview({
     required this.diagram,
-    required this.diagramRenderer,
     required this.renderFuture,
-    required this.sourceText,
     required this.onRetry,
   });
 
   final SddDiagram diagram;
-  final MermaidDiagramRenderer diagramRenderer;
   final Future<MermaidRenderResult> renderFuture;
-  final String sourceText;
   final VoidCallback onRetry;
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: <Widget>[
-        Align(
-          alignment: Alignment.centerRight,
-          child: Tooltip(
-            message: 'Open diagram in full screen',
-            child: TextButton.icon(
-              onPressed: () => _openFullscreen(context),
-              icon: const Icon(Icons.fullscreen_rounded, size: 16),
-              label: const Text('Full screen'),
+    return FutureBuilder<MermaidRenderResult>(
+      future: renderFuture,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState != ConnectionState.done) {
+          return const _PreviewFrame(
+            child: SizedBox(
+              width: 720,
+              height: 300,
+              child: Center(child: CircularProgressIndicator()),
             ),
-          ),
-        ),
-        FutureBuilder<MermaidRenderResult>(
-          future: renderFuture,
-          builder: (context, snapshot) {
-            if (snapshot.connectionState != ConnectionState.done) {
-              return const _PreviewFrame(
-                child: SizedBox(
-                  width: 720,
-                  height: 300,
-                  child: Center(child: CircularProgressIndicator()),
-                ),
-              );
-            }
-            if (snapshot.hasError) {
-              return _DiagramRenderError(
-                message: snapshot.error.toString(),
-                sourceText: sourceText,
-                onRetry: onRetry,
-              );
-            }
-            final result = snapshot.data;
-            if (result == null || !result.isSuccess) {
-              return _DiagramRenderError(
-                message: result?.error ?? 'Could not render diagram preview.',
-                sourceText: sourceText,
-                onRetry: onRetry,
-              );
-            }
-            return _PreviewFrame(child: result.preview!);
-          },
-        ),
-      ],
-    );
-  }
-
-  void _openFullscreen(BuildContext context) {
-    showDialog<void>(
-      context: context,
-      useSafeArea: false,
-      builder: (dialogContext) {
-        return Theme(
-          data: _workbenchTheme(dialogContext),
-          child: _FullscreenDiagramDialog(
-            diagram: diagram,
-            diagramRenderer: _fullscreenRenderer(diagramRenderer),
-            sourceText: sourceText,
-          ),
-        );
+          );
+        }
+        if (snapshot.hasError) {
+          return _DiagramRenderError(
+            message: snapshot.error.toString(),
+            sourceText: diagram.content ?? '',
+            onRetry: onRetry,
+          );
+        }
+        final result = snapshot.data;
+        if (result == null || !result.isSuccess) {
+          return _DiagramRenderError(
+            message: result?.error ?? 'Could not render diagram preview.',
+            sourceText: diagram.content ?? '',
+            onRetry: onRetry,
+          );
+        }
+        return _PreviewFrame(child: result.preview!);
       },
     );
   }

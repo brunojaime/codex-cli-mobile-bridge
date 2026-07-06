@@ -343,11 +343,38 @@ void main() {
 
     await tester.tap(find.text('build-plan.md').first);
     await tester.pumpAndSettle();
-    expect(find.textContaining('# Build Plan'), findsOneWidget);
+    expect(find.text('Build Plan'), findsWidgets);
+    expect(find.text('2 stages'), findsOneWidget);
+    expect(find.text('Build the catalog shell'), findsWidgets);
+    expect(find.text('Enter stage'), findsWidgets);
+    expect(find.textContaining('# Build Plan'), findsNothing);
 
     await tester.tap(find.text('build-tasks.md').first);
     await tester.pumpAndSettle();
     expect(find.text('1/2 tasks complete'), findsOneWidget);
+  });
+
+  testWidgets('spec diagram detail preview does not offer full screen action', (
+    tester,
+  ) async {
+    await _pumpWorkbench(
+      tester,
+      loader: (_) async => SddProject.fromJson(_projectWithGovernanceJson()),
+      diagramRenderer: _FakeMermaidRenderer.success(),
+    );
+    _openWorkbench(tester);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Specs').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('SAT SDD Onboarding').first);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('UML class diagram').first);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Preview'), findsOneWidget);
+    expect(find.text('Full screen'), findsNothing);
+    expect(find.byTooltip('Open diagram in full screen'), findsNothing);
   });
 
   testWidgets('specs tab shows SCM metadata and task progress list', (
@@ -2278,12 +2305,15 @@ Map<String, dynamic> _projectWithTraceJson() {
         <String, dynamic>{
           'path': 'specs/001/design-plan.md',
           'size_bytes': 50,
-          'content': '# Design Plan',
+          'content': '# Design Plan\n\n1. Map the current catalog flow.',
         },
         <String, dynamic>{
           'path': 'specs/001/build-plan.md',
           'size_bytes': 50,
-          'content': '# Build Plan',
+          'content':
+              '# Build Plan\n\n'
+              '1. Build the catalog shell.\n'
+              '2. Validate checkout totals.',
         },
       ],
       'task_files': <Map<String, dynamic>>[
