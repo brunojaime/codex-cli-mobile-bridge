@@ -361,7 +361,7 @@ void main() {
     expect(find.textContaining('# Build Tasks'), findsNothing);
   });
 
-  testWidgets('spec tree switches task lists when selecting different plans', (
+  testWidgets('spec tree navigates from plans to scoped task lists', (
     tester,
   ) async {
     await _pumpWorkbench(
@@ -378,8 +378,9 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Inside this spec'), findsOneWidget);
-    expect(find.text('Spec'), findsWidgets);
+    expect(find.text('Plans in this spec'), findsOneWidget);
     expect(find.text('Plan 1'), findsOneWidget);
+    expect(find.text('Plan 2'), findsOneWidget);
     expect(find.text('Task 1'), findsNothing);
     expect(find.text('Task 3'), findsNothing);
     expect(find.text('Reserve cart units'), findsNothing);
@@ -388,23 +389,33 @@ void main() {
 
     await tester.tap(find.text('Plan 1').first);
     await tester.pumpAndSettle();
+    expect(find.text('Back to spec plans'), findsOneWidget);
+    expect(find.text('Tasks in Plan 1'), findsOneWidget);
     expect(find.text('Plan 1: Catalog readiness'), findsWidgets);
-    expect(find.text('Task 1: Normalize catalog variants'), findsWidgets);
-    expect(find.text('Task 2: Validate stock thresholds'), findsWidgets);
-    expect(find.text('Task 3: Persist reservation audit'), findsNothing);
+    expect(find.text('Normalize catalog variants'), findsWidgets);
+    expect(find.text('Validate stock thresholds'), findsWidgets);
+    expect(find.text('Persist reservation audit'), findsNothing);
     expect(find.text('Task 1: Reserve cart units.'), findsNothing);
+    expect(find.text('Show details'), findsNothing);
 
+    await tester.tap(find.text('Back to spec plans').first);
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Plan 2').first);
     await tester.pumpAndSettle();
+    expect(find.text('Tasks in Plan 2'), findsOneWidget);
     expect(find.text('Plan 2: Checkout reservation'), findsWidgets);
-    expect(find.text('Task 1: Reserve cart units'), findsWidgets);
-    expect(find.text('Task 2: Reconcile payment expiry'), findsWidgets);
-    expect(find.text('Task 3: Persist reservation audit'), findsWidgets);
-    expect(find.text('Task 1: Normalize catalog variants'), findsNothing);
+    expect(find.text('Reserve cart units'), findsWidgets);
+    expect(find.text('Reconcile payment expiry'), findsWidgets);
+    expect(find.text('Persist reservation audit'), findsWidgets);
+    expect(find.text('Normalize catalog variants'), findsNothing);
     expect(find.text('Task 1: Normalize catalog variants.'), findsNothing);
+    expect(find.text('Show details'), findsNothing);
 
+    await tester.ensureVisible(find.text('Reconcile payment expiry').first);
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Reconcile payment expiry').first);
     await tester.pumpAndSettle();
+    expect(find.text('Back to Plan 2 tasks'), findsOneWidget);
     expect(find.text('Task 2: Reconcile payment expiry'), findsWidgets);
     expect(find.text('Task 1: Reserve cart units'), findsNothing);
     expect(find.text('Task 3: Persist reservation audit'), findsNothing);

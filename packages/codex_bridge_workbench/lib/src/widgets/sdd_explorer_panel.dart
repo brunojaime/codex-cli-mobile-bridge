@@ -1396,6 +1396,7 @@ class _SpecsTabState extends State<_SpecsTab> {
               diagramRenderer: widget.diagramRenderer,
               onFeedback: widget.onFeedback,
               onCodexAction: widget.onCodexAction,
+              onSelected: _select,
             ),
           ],
         ),
@@ -3961,10 +3962,14 @@ class _SpecTreeNavigator extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final expandedPlanIndex =
+    final selectedPlan =
         selection.kind == _SpecArtifactKind.treePlan ||
             selection.kind == _SpecArtifactKind.treeTask
-        ? selection.artifactIndex
+        ? _fileAt(tree.plans, selection.artifactIndex)
+        : null;
+    final selectedTask =
+        selectedPlan != null && selection.kind == _SpecArtifactKind.treeTask
+        ? _fileAt(selectedPlan.tasks, selection.taskIndex)
         : null;
     return _PanelCard(
       child: Column(
@@ -4003,72 +4008,97 @@ class _SpecTreeNavigator extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 8),
-          _TreeNodeRow(
-            icon: Icons.description_outlined,
-            label: 'Spec',
-            title: spec.title,
-            selected: selection.kind == _SpecArtifactKind.treeSpec,
-            level: 0,
-            status: _specLifecycleStatus(spec),
-            onTap: () => onSelected(
-              _SpecArtifactSelection(
-                specIndex: selection.specIndex,
-                kind: _SpecArtifactKind.treeSpec,
+          if (selection.kind == _SpecArtifactKind.treeSpec) ...[
+            const Text(
+              'Plans in this spec',
+              style: TextStyle(
+                color: _WorkbenchColors.secondaryText,
+                fontSize: 12,
+                fontWeight: FontWeight.w900,
               ),
             ),
-          ),
-          for (final planEntry in tree.plans.indexed) ...[
+            const SizedBox(height: 6),
+            for (final planEntry in tree.plans.indexed)
+              _TreeNodeRow(
+                icon: Icons.route_outlined,
+                label: 'Plan ${planEntry.$2.number}',
+                title: planEntry.$2.title,
+                selected: false,
+                level: 0,
+                status: planEntry.$2.status,
+                trailing: '${planEntry.$2.tasks.length} tasks',
+                onTap: () => onSelected(
+                  _SpecArtifactSelection(
+                    specIndex: selection.specIndex,
+                    kind: _SpecArtifactKind.treePlan,
+                    artifactIndex: planEntry.$1,
+                  ),
+                ),
+              ),
+            if (tree.plans.isEmpty) ...[
+              const SizedBox(height: 6),
+              const Text(
+                'No plans defined in this spec tree.',
+                style: TextStyle(
+                  color: _WorkbenchColors.secondaryText,
+                  fontSize: 12,
+                ),
+              ),
+            ],
+          ] else if (selectedPlan != null) ...[
+            TextButton.icon(
+              onPressed: () => onSelected(
+                _SpecArtifactSelection(
+                  specIndex: selection.specIndex,
+                  kind: _SpecArtifactKind.treeSpec,
+                ),
+              ),
+              icon: const Icon(Icons.arrow_back_rounded, size: 17),
+              label: const Text('Back to spec plans'),
+            ),
+            const SizedBox(height: 4),
             _TreeNodeRow(
               icon: Icons.route_outlined,
-              label: 'Plan ${planEntry.$2.number}',
-              title: planEntry.$2.title,
-              selected:
-                  (selection.kind == _SpecArtifactKind.treePlan ||
-                      selection.kind == _SpecArtifactKind.treeTask) &&
-                  selection.artifactIndex == planEntry.$1,
-              level: 1,
-              status: planEntry.$2.status,
-              trailing: '${planEntry.$2.tasks.length} tasks',
+              label: 'Plan ${selectedPlan.number}',
+              title: selectedPlan.title,
+              selected: selection.kind == _SpecArtifactKind.treePlan,
+              level: 0,
+              status: selectedPlan.status,
+              trailing: '${selectedPlan.tasks.length} tasks',
               onTap: () => onSelected(
                 _SpecArtifactSelection(
                   specIndex: selection.specIndex,
                   kind: _SpecArtifactKind.treePlan,
-                  artifactIndex: planEntry.$1,
+                  artifactIndex: selection.artifactIndex,
                 ),
               ),
             ),
-            if (expandedPlanIndex == planEntry.$1)
-              for (final taskEntry in planEntry.$2.tasks.indexed)
-                _TreeNodeRow(
-                  icon: Icons.checklist_rounded,
-                  label: 'Task ${taskEntry.$2.number}',
-                  title: taskEntry.$2.title,
-                  selected:
-                      selection.kind == _SpecArtifactKind.treeTask &&
-                      selection.artifactIndex == planEntry.$1 &&
-                      selection.taskIndex == taskEntry.$1,
-                  level: 2,
-                  status: taskEntry.$2.status,
-                  onTap: () => onSelected(
-                    _SpecArtifactSelection(
-                      specIndex: selection.specIndex,
-                      kind: _SpecArtifactKind.treeTask,
-                      artifactIndex: planEntry.$1,
-                      taskIndex: taskEntry.$1,
-                    ),
+            if (selectedTask != null) ...[
+              const SizedBox(height: 6),
+              TextButton.icon(
+                onPressed: () => onSelected(
+                  _SpecArtifactSelection(
+                    specIndex: selection.specIndex,
+                    kind: _SpecArtifactKind.treePlan,
+                    artifactIndex: selection.artifactIndex,
                   ),
                 ),
-          ],
-          if (tree.plans.isEmpty) ...[
-            const SizedBox(height: 6),
-            const Text(
-              'No plans defined in this spec tree.',
-              style: TextStyle(
-                color: _WorkbenchColors.secondaryText,
-                fontSize: 12,
+                icon: const Icon(Icons.arrow_back_rounded, size: 17),
+                label: Text('Back to Plan ${selectedPlan.number} tasks'),
               ),
-            ),
-          ],
+              const SizedBox(height: 4),
+              _TreeNodeRow(
+                icon: Icons.checklist_rounded,
+                label: 'Task ${selectedTask.number}',
+                title: selectedTask.title,
+                selected: true,
+                level: 0,
+                status: selectedTask.status,
+                onTap: () => onSelected(selection),
+              ),
+            ],
+          ] else
+            const _InfoCard(title: 'Plan', detail: 'Missing plan node'),
         ],
       ),
     );
@@ -4573,6 +4603,7 @@ class _SpecArtifactInspector extends StatelessWidget {
     required this.diagramRenderer,
     required this.onFeedback,
     required this.onCodexAction,
+    required this.onSelected,
     this.showHeading = true,
   });
 
@@ -4582,6 +4613,7 @@ class _SpecArtifactInspector extends StatelessWidget {
   final MermaidDiagramRenderer diagramRenderer;
   final ValueChanged<SddFeedbackTarget> onFeedback;
   final ValueChanged<SddCodexActionRequest> onCodexAction;
+  final ValueChanged<_SpecArtifactSelection> onSelected;
   final bool showHeading;
 
   @override
@@ -4770,27 +4802,20 @@ class _SpecArtifactInspector extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
-        _PlanFileSection(
-          title: 'Plan ${plan.number}: ${plan.title}',
-          file: plan.file,
-          feedbackTarget: _fileFeedbackTarget(
-            project: project,
-            spec: spec,
-            file: plan.file,
-            artifactType: 'plan',
-            fallbackTitle: plan.title,
-          ),
-          onFeedback: onFeedback,
-          actions: const <SddCodexActionKind>[SddCodexActionKind.updatePlan],
-          onCodexAction: onCodexAction,
-        ),
-        const SizedBox(height: 10),
         _TreeTaskListCard(
           project: project,
           spec: spec,
           plan: plan,
           onFeedback: onFeedback,
           onCodexAction: onCodexAction,
+          onTaskSelected: (taskIndex) => onSelected(
+            _SpecArtifactSelection(
+              specIndex: selection.specIndex,
+              kind: _SpecArtifactKind.treeTask,
+              artifactIndex: selection.artifactIndex,
+              taskIndex: taskIndex,
+            ),
+          ),
         ),
         if (plan.diagrams.isNotEmpty) ...[
           const SizedBox(height: 10),
@@ -4864,6 +4889,7 @@ class _TreeTaskListCard extends StatelessWidget {
     required this.project,
     required this.spec,
     required this.plan,
+    required this.onTaskSelected,
     this.onFeedback,
     this.onCodexAction,
   });
@@ -4871,6 +4897,7 @@ class _TreeTaskListCard extends StatelessWidget {
   final SddProject project;
   final SddSpec spec;
   final SddPlanNode plan;
+  final ValueChanged<int> onTaskSelected;
   final ValueChanged<SddFeedbackTarget>? onFeedback;
   final ValueChanged<SddCodexActionRequest>? onCodexAction;
 
@@ -4891,10 +4918,10 @@ class _TreeTaskListCard extends StatelessWidget {
                 color: _WorkbenchColors.primary,
               ),
               const SizedBox(width: 8),
-              const Expanded(
+              Expanded(
                 child: Text(
-                  'Tasks in this plan',
-                  style: TextStyle(fontWeight: FontWeight.w900),
+                  'Tasks in Plan ${plan.number}',
+                  style: const TextStyle(fontWeight: FontWeight.w900),
                 ),
               ),
               _TinyMetaChip(
@@ -4903,6 +4930,14 @@ class _TreeTaskListCard extends StatelessWidget {
                 warning: completed < plan.tasks.length,
               ),
             ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Plan ${plan.number}: ${plan.title}',
+            style: const TextStyle(
+              color: _WorkbenchColors.onBackground,
+              fontWeight: FontWeight.w900,
+            ),
           ),
           if (plan.description.trim().isNotEmpty) ...[
             const SizedBox(height: 6),
@@ -4915,6 +4950,19 @@ class _TreeTaskListCard extends StatelessWidget {
               ),
             ),
           ],
+          const SizedBox(height: 8),
+          _ArtifactControls(
+            target: _fileFeedbackTarget(
+              project: project,
+              spec: spec,
+              file: plan.file,
+              artifactType: 'plan',
+              fallbackTitle: plan.title,
+            ),
+            onFeedback: onFeedback,
+            actions: const <SddCodexActionKind>[SddCodexActionKind.updatePlan],
+            onCodexAction: onCodexAction,
+          ),
           if (plan.tasks.isEmpty) ...[
             const SizedBox(height: 8),
             const Text(
@@ -4929,14 +4977,15 @@ class _TreeTaskListCard extends StatelessWidget {
             for (final entry in plan.tasks.indexed) ...[
               if (entry.$1 > 0)
                 const Divider(height: 14, color: _WorkbenchColors.border),
-              _TreeTaskNodeSection(
-                project: project,
-                spec: spec,
-                plan: plan,
-                task: entry.$2,
-                onFeedback: onFeedback,
-                onCodexAction: onCodexAction,
-                embedded: true,
+              _TreeNodeRow(
+                icon: Icons.checklist_rounded,
+                label: 'Task ${entry.$2.number}',
+                title: entry.$2.title,
+                selected: false,
+                level: 0,
+                status: entry.$2.status,
+                trailing: 'Open',
+                onTap: () => onTaskSelected(entry.$1),
               ),
             ],
           ],
@@ -4954,7 +5003,6 @@ class _TreeTaskNodeSection extends StatefulWidget {
     required this.task,
     this.onFeedback,
     this.onCodexAction,
-    this.embedded = false,
   });
 
   final SddProject project;
@@ -4963,7 +5011,6 @@ class _TreeTaskNodeSection extends StatefulWidget {
   final SddTaskNode task;
   final ValueChanged<SddFeedbackTarget>? onFeedback;
   final ValueChanged<SddCodexActionRequest>? onCodexAction;
-  final bool embedded;
 
   @override
   State<_TreeTaskNodeSection> createState() => _TreeTaskNodeSectionState();
@@ -5042,17 +5089,7 @@ class _TreeTaskNodeSectionState extends State<_TreeTaskNodeSection> {
         ],
       ],
     );
-    if (!widget.embedded) {
-      return _PanelCard(child: body);
-    }
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: _WorkbenchColors.background,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: _WorkbenchColors.border),
-      ),
-      child: Padding(padding: const EdgeInsets.all(10), child: body),
-    );
+    return _PanelCard(child: body);
   }
 }
 
