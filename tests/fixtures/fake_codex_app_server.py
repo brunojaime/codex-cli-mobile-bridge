@@ -6,6 +6,12 @@ from pathlib import Path
 import tempfile
 import time
 import uuid
+from contextlib import contextmanager
+
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - Windows fallback for local runs.
+    fcntl = None
 
 
 STATE_FILE = Path(
@@ -14,6 +20,20 @@ STATE_FILE = Path(
         str(Path(tempfile.gettempdir()) / "fake_codex_app_server_threads.json"),
     )
 )
+LOCK_FILE = STATE_FILE.with_suffix(f"{STATE_FILE.suffix}.lock")
+
+
+@contextmanager
+def _state_lock():
+    LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with LOCK_FILE.open("a+", encoding="utf-8") as lock_file:
+        if fcntl is not None:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            if fcntl is not None:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
 
 def _load_threads() -> dict[str, dict[str, object]]:
@@ -34,6 +54,21 @@ def _save_threads(threads: dict[str, dict[str, object]]) -> None:
         json.dumps({"threads": threads}),
         encoding="utf-8",
     )
+
+
+def _read_threads_locked() -> dict[str, dict[str, object]]:
+    with _state_lock():
+        return _load_threads()
+
+
+def _mutate_threads_locked(
+    mutate,
+) -> tuple[dict[str, dict[str, object]], object]:
+    with _state_lock():
+        threads = _load_threads()
+        result = mutate(threads)
+        _save_threads(threads)
+        return threads, result
 
 
 def _thread_payload(thread_id: str, turn_count: int) -> dict[str, object]:
@@ -100,9 +135,12 @@ def main() -> int:
             continue
 
         if method == "thread/start":
-            thread_id = f"thread-{uuid.uuid4()}"
-            threads[thread_id] = {"turn_count": 0}
-            _save_threads(threads)
+            def mutate(threads: dict[str, dict[str, object]]) -> str:
+                thread_id = f"thread-{uuid.uuid4()}"
+                threads[thread_id] = {"turn_count": 0}
+                return thread_id
+
+            threads, thread_id = _mutate_threads_locked(mutate)
             _print(
                 {
                     "id": request_id,
@@ -122,6 +160,7 @@ def main() -> int:
         if method == "thread/resume":
             params = payload.get("params") or {}
             thread_id = params.get("threadId")
+            threads = _read_threads_locked()
             if not isinstance(thread_id, str) or thread_id not in threads:
                 _print(
                     {
@@ -154,6 +193,7 @@ def main() -> int:
         if method == "turn/start":
             params = payload.get("params") or {}
             thread_id = params.get("threadId")
+            threads = _read_threads_locked()
             if not isinstance(thread_id, str) or thread_id not in threads:
                 _print(
                     {
@@ -175,9 +215,12 @@ def main() -> int:
             ):
                 prompt = str(input_items[0].get("text") or "")
 
-            turn_count = int(threads[thread_id].get("turn_count", 0)) + 1
-            threads[thread_id]["turn_count"] = turn_count
-            _save_threads(threads)
+            def mutate(threads: dict[str, dict[str, object]]) -> int:
+                turn_count = int(threads[thread_id].get("turn_count", 0)) + 1
+                threads[thread_id]["turn_count"] = turn_count
+                return turn_count
+
+            threads, turn_count = _mutate_threads_locked(mutate)
             turn_id = f"turn-{turn_count}-{uuid.uuid4()}"
             item_id = f"msg-{uuid.uuid4()}"
             response_text = _turn_response(turn_count, prompt)
