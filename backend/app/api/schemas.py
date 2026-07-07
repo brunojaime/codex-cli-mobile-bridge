@@ -449,6 +449,36 @@ class AppUpdateResponse(BaseModel):
     available: bool
 
 
+class InstallableAppResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    kind: str = "codex.installableApp"
+    version: int = 1
+    source_app: str = Field(alias="sourceApp")
+    display_name: str = Field(alias="displayName")
+    repo: str
+    release_channel: str = Field(default="stable", alias="releaseChannel")
+    latest_version: str | None = Field(default=None, alias="latestVersion")
+    latest_build: int | None = Field(default=None, alias="latestBuild")
+    release_tag: str | None = Field(default=None, alias="releaseTag")
+    apk_url: str | None = Field(default=None, alias="apkUrl")
+    apk_asset_name: str | None = Field(default=None, alias="apkAssetName")
+    size_bytes: int | None = Field(default=None, alias="sizeBytes")
+    sha256: str | None = None
+    available: bool
+    enabled: bool
+    package_id: str | None = Field(default=None, alias="packageId")
+    install_status_hint: str = Field(alias="installStatusHint")
+
+
+class InstallableAppsResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    kind: str = "codex.installableApps"
+    version: int = 1
+    apps: list[InstallableAppResponse]
+
+
 class FeedbackBatchStartRequest(BaseModel):
     batch_id: str | None = Field(
         default=None,

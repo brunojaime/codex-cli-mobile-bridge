@@ -42,6 +42,8 @@ class CodexAppUpdaterController extends ChangeNotifier {
 
   bool get canRetryInstallPreparedApk => _canInstallPreparedApk;
 
+  bool get isActiveOperation => _isActiveOperation;
+
   Future<CodexAppUpdateInfo?> checkForUpdate(CodexAppUpdaterConfig config) {
     if (!config.enabled || config.bridgeUrl.trim().isEmpty) {
       return Future.value(null);
@@ -199,6 +201,35 @@ class CodexAppUpdaterController extends ChangeNotifier {
     return update;
   }
 
+  Future<bool> installExternalApk({
+    required Uri apkUrl,
+    required String sourceApp,
+    String? displayName,
+    String? apkAssetName,
+    String? sha256,
+    int? sizeBytes,
+    bool requireChecksum = false,
+  }) {
+    if (_activeUpdate != null) return _activeUpdate!;
+    late final Future<bool> install;
+    install =
+        _installExternalApk(
+          apkUrl: apkUrl,
+          sourceApp: sourceApp,
+          displayName: displayName,
+          apkAssetName: apkAssetName,
+          sha256: sha256,
+          sizeBytes: sizeBytes,
+          requireChecksum: requireChecksum,
+        ).whenComplete(() {
+          if (identical(_activeUpdate, install)) {
+            _activeUpdate = null;
+          }
+        });
+    _activeUpdate = install;
+    return install;
+  }
+
   Future<bool> _updateNow(CodexAppUpdaterConfig config) async {
     if (_canInstallPreparedApk) {
       return installPreparedApk();
@@ -212,6 +243,47 @@ class CodexAppUpdaterController extends ChangeNotifier {
       return false;
     }
     final prepared = await downloadAndPrepare(config);
+    if (!prepared) return false;
+    return installPreparedApk();
+  }
+
+  Future<bool> _installExternalApk({
+    required Uri apkUrl,
+    required String sourceApp,
+    String? displayName,
+    String? apkAssetName,
+    String? sha256,
+    int? sizeBytes,
+    required bool requireChecksum,
+  }) async {
+    _clearPreparedDownload();
+    updateInfo = CodexAppUpdateInfo(
+      sourceApp: sourceApp,
+      displayName: displayName,
+      platform: 'android',
+      currentVersion: null,
+      currentBuild: null,
+      latestVersion: null,
+      latestBuild: null,
+      releaseTag: null,
+      releaseUrl: null,
+      apkUrl: apkUrl.toString(),
+      apkAssetName: apkAssetName,
+      sha256: sha256,
+      sizeBytes: sizeBytes,
+      releaseNotes: null,
+      required: false,
+      available: true,
+    );
+    final prepared = await downloadAndPrepare(
+      CodexAppUpdaterConfig(
+        sourceApp: sourceApp,
+        bridgeUrl: 'http://localhost',
+        currentVersion: '0.0.0',
+        currentBuild: 0,
+        requireChecksum: requireChecksum,
+      ),
+    );
     if (!prepared) return false;
     return installPreparedApk();
   }

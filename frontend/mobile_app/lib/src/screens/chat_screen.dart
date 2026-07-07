@@ -35,6 +35,7 @@ import '../utils/chat_message_visibility.dart';
 import '../widgets/agent_studio_status_button.dart';
 import '../widgets/chat_bubble.dart';
 import '../widgets/current_run_timeline_card.dart';
+import '../widgets/installable_apps_sheet.dart';
 import '../widgets/reviewer_status_banner.dart';
 
 const String _defaultAutoReviewerPrompt =
@@ -222,6 +223,7 @@ const Key kChatScreenBodyScrollViewKey =
     ValueKey<String>('chat-screen-body-scroll-view');
 
 enum _AppBarOverflowAction {
+  apps,
   conversationContext,
   summaryView,
   codexTools,
@@ -2203,6 +2205,27 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
     }
   }
 
+  Future<void> _openInstallableAppsSheet() async {
+    final activeServer = _activeServer;
+    if (activeServer == null) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No active bridge server.')),
+      );
+      return;
+    }
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (context) => FractionallySizedBox(
+        heightFactor: 0.82,
+        child: InstallableAppsSheet(
+          apiClient: ApiClient(baseUrl: activeServer.baseUrl),
+        ),
+      ),
+    );
+  }
+
   Future<CodexToolingSnapshot?> _installCodexMcpApp(
     CodexMcpApp app,
   ) async {
@@ -2645,6 +2668,11 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
           },
           itemBuilder: (context) => <PopupMenuEntry<_AppBarOverflowAction>>[
             _buildAppBarOverflowMenuItem(
+              action: _AppBarOverflowAction.apps,
+              icon: Icons.apps_rounded,
+              label: 'Apps',
+            ),
+            _buildAppBarOverflowMenuItem(
               action: _AppBarOverflowAction.conversationContext,
               icon: Icons.topic_outlined,
               label: 'What are we doing?',
@@ -2699,6 +2727,13 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
     }
     return <Widget>[
       ...primaryActions,
+      IconButton(
+        onPressed: () async {
+          await _openInstallableAppsSheet();
+        },
+        icon: const Icon(Icons.apps_rounded),
+        tooltip: 'Apps',
+      ),
       IconButton(
         onPressed: _chatController.currentSession == null
             ? null
@@ -2809,6 +2844,9 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
 
   Future<void> _handleAppBarOverflowAction(_AppBarOverflowAction action) async {
     switch (action) {
+      case _AppBarOverflowAction.apps:
+        await _openInstallableAppsSheet();
+        return;
       case _AppBarOverflowAction.conversationContext:
         await _openConversationContextSheet();
         return;

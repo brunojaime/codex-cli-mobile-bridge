@@ -10,6 +10,7 @@ import '../models/agent_profile.dart';
 import '../models/chat_message.dart';
 import '../models/codex_tooling.dart';
 import '../models/feedback_queue_item.dart';
+import '../models/installable_app.dart';
 import '../models/project_factory.dart';
 import '../models/server_capabilities.dart';
 import '../models/session_detail.dart';
@@ -109,6 +110,33 @@ class ApiClient {
     }
 
     return ServerCapabilities.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<List<InstallableApp>> listInstallableApps() async {
+    final response = await _client.get(Uri.parse('$baseUrl/installable-apps'));
+
+    if (response.statusCode != 200) {
+      throw Exception('Failed to list installable apps: ${response.body}');
+    }
+
+    final payload = jsonDecode(response.body) as Map<String, dynamic>;
+    return ((payload['apps'] as List<dynamic>?) ?? <dynamic>[])
+        .whereType<Map<String, dynamic>>()
+        .map(InstallableApp.fromJson)
+        .toList(growable: false);
+  }
+
+  Future<InstallableApp> getInstallableApp(String sourceApp) async {
+    final response =
+        await _client.get(Uri.parse('$baseUrl/installable-apps/$sourceApp'));
+
+    if (response.statusCode != 200) {
+      throw Exception('Failed to fetch installable app: ${response.body}');
+    }
+
+    return InstallableApp.fromJson(
       jsonDecode(response.body) as Map<String, dynamic>,
     );
   }

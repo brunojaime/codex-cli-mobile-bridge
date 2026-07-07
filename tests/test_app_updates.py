@@ -740,6 +740,149 @@ def test_app_update_apk_url_is_bridge_proxy_not_github(tmp_path: Path) -> None:
     assert "github.com" not in apk_url
 
 
+def test_installable_apps_lists_available_app_with_bridge_apk_url(
+    tmp_path: Path,
+) -> None:
+    digest = "c" * 64
+    client = _build_app_update_client(
+        tmp_path,
+        expected_package_id="com.ambientando.calendar",
+        verified_package_ids={"android-v1.0.0-build.40": "com.ambientando.calendar"},
+        releases=[
+            _release(
+                "android-v1.0.0-build.40",
+                assets=[
+                    _apk_asset(
+                        "ambientando-calendar.apk",
+                        digest=f"sha256:{digest}",
+                    ),
+                ],
+            ),
+        ],
+    )
+
+    response = client.get("/installable-apps")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["kind"] == "codex.installableApps"
+    app = payload["apps"][0]
+    assert app["kind"] == "codex.installableApp"
+    assert app["sourceApp"] == "ambientando-calendar"
+    assert app["displayName"] == "Ambientando Calendar"
+    assert app["repo"] == "brunojaime/ambientando-calendar"
+    assert app["enabled"] is True
+    assert app["available"] is True
+    assert app["installStatusHint"] == "available"
+    assert app["latestVersion"] == "1.0.0"
+    assert app["latestBuild"] == 40
+    assert app["releaseTag"] == "android-v1.0.0-build.40"
+    assert app["apkAssetName"] == "ambientando-calendar.apk"
+    assert app["apkUrl"].startswith("http://testserver/app-updates/")
+    assert "github.com" not in app["apkUrl"]
+    assert app["sha256"] == digest
+    assert app["sizeBytes"] == 12345
+    assert app["packageId"] == "com.ambientando.calendar"
+
+
+def test_installable_app_detail_returns_single_app(tmp_path: Path) -> None:
+    client = _build_app_update_client(
+        tmp_path,
+        releases=[
+            _release(
+                "android-v1.0.0-build.40",
+                assets=[_apk_asset("ambientando-calendar.apk")],
+            ),
+        ],
+    )
+
+    response = client.get("/installable-apps/ambientando-calendar")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["sourceApp"] == "ambientando-calendar"
+    assert payload["available"] is True
+    assert payload["apkUrl"].startswith("http://testserver/app-updates/")
+
+
+def test_installable_disabled_app_is_visible_without_install(
+    tmp_path: Path,
+) -> None:
+    client = _build_app_update_client(
+        tmp_path,
+        enabled=False,
+        expected_package_id="com.ambientando.calendar",
+        releases=[
+            _release(
+                "android-v1.0.0-build.40",
+                assets=[_apk_asset("ambientando-calendar.apk")],
+            ),
+        ],
+    )
+
+    response = client.get("/installable-apps")
+
+    assert response.status_code == 200
+    app = response.json()["apps"][0]
+    assert app["enabled"] is False
+    assert app["available"] is False
+    assert app["apkUrl"] is None
+    assert app["installStatusHint"] == "disabled"
+    assert app["packageId"] == "com.ambientando.calendar"
+
+
+def test_installable_app_without_release_does_not_break_list(tmp_path: Path) -> None:
+    client = _build_app_update_client(tmp_path, releases=[])
+
+    response = client.get("/installable-apps")
+
+    assert response.status_code == 200
+    app = response.json()["apps"][0]
+    assert app["sourceApp"] == "ambientando-calendar"
+    assert app["enabled"] is True
+    assert app["available"] is False
+    assert app["apkUrl"] is None
+    assert app["installStatusHint"] == "no_release_available"
+
+
+def test_installable_app_release_without_apk_is_visible_without_install(
+    tmp_path: Path,
+) -> None:
+    client = _build_app_update_client(
+        tmp_path,
+        releases=[
+            _release(
+                "android-v1.0.0-build.40",
+                assets=[
+                    GitHubAsset(
+                        "release-notes.txt",
+                        "https://example.test/release-notes.txt",
+                        size=100,
+                    )
+                ],
+            ),
+        ],
+    )
+
+    response = client.get("/installable-apps")
+
+    assert response.status_code == 200
+    app = response.json()["apps"][0]
+    assert app["available"] is False
+    assert app["apkUrl"] is None
+    assert app["releaseTag"] is None
+    assert app["installStatusHint"] == "no_release_available"
+
+
+def test_installable_app_unknown_returns_404(tmp_path: Path) -> None:
+    client = _build_app_update_client(tmp_path, releases=[])
+
+    response = client.get("/installable-apps/missing-app")
+
+    assert response.status_code == 404
+    assert response.json()["detail"]["code"] == "unknown_source_app"
+
+
 def test_app_update_apk_proxy_downloads_private_asset(tmp_path: Path) -> None:
     asset = _apk_asset("ambientando-calendar-1.0.0-build.40.apk")
     content = b"PK\x03\x04fake apk"

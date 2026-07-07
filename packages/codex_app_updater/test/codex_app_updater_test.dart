@@ -319,6 +319,67 @@ void main() {
     expect(installer.launchCount, 0);
   });
 
+  test(
+    'installExternalApk downloads verifies and launches installer',
+    () async {
+      final apkFile = await _writeTempApk('external-apk-ok', [1, 2, 3]);
+      final expectedSha = await _sha256(apkFile.path);
+      final downloader = _FakeDownloader(apkFile.path);
+      final installer = _FakeInstallerLauncher();
+      final controller = CodexAppUpdaterController(
+        downloader: downloader,
+        installerLauncher: installer,
+      );
+      addTearDown(controller.dispose);
+
+      final installed = await controller.installExternalApk(
+        apkUrl: Uri.parse('http://bridge.test/installable-apps/sat/apk'),
+        sourceApp: 'sat-showroom',
+        displayName: 'SAT Showroom',
+        apkAssetName: 'sat-showroom.apk',
+        sha256: expectedSha,
+        sizeBytes: 123,
+      );
+
+      expect(installed, isTrue);
+      expect(downloader.downloadCount, 1);
+      expect(
+        downloader.requestedUrl.toString(),
+        'http://bridge.test/installable-apps/sat/apk',
+      );
+      expect(installer.launchCount, 1);
+      expect(installer.launchedPath, apkFile.path);
+      expect(controller.updateInfo?.sourceApp, 'sat-showroom');
+      expect(controller.status, CodexAppUpdateStatus.dismissed);
+    },
+  );
+
+  test('installExternalApk reports checksum mismatch', () async {
+    final apkFile = await _writeTempApk('external-apk-bad', [1, 1, 1]);
+    final installer = _FakeInstallerLauncher();
+    final controller = CodexAppUpdaterController(
+      downloader: _FakeDownloader(apkFile.path),
+      installerLauncher: installer,
+    );
+    addTearDown(controller.dispose);
+
+    final installed = await controller.installExternalApk(
+      apkUrl: Uri.parse('http://bridge.test/installable-apps/sat/apk'),
+      sourceApp: 'sat-showroom',
+      apkAssetName: 'sat-showroom.apk',
+      sha256:
+          'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    );
+
+    expect(installed, isFalse);
+    expect(controller.status, CodexAppUpdateStatus.failed);
+    expect(
+      controller.failureReason,
+      CodexAppUpdateFailureReason.checksumMismatch,
+    );
+    expect(installer.launchCount, 0);
+  });
+
   test('download failure maps to failed downloadFailed', () async {
     final controller = CodexAppUpdaterController(
       httpClient: MockClient(

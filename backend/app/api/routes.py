@@ -59,6 +59,8 @@ from backend.app.api.schemas import (
     AppUpdateRegistryItemResponse,
     AppUpdateRegistryResponse,
     AppUpdateResponse,
+    InstallableAppResponse,
+    InstallableAppsResponse,
     FeedbackBatchStartRequest,
     FeedbackBatchStatusResponse,
     FeedbackQuickAskAcceptedResponse,
@@ -139,6 +141,7 @@ from backend.app.application.services.project_factory_reference_asset_service im
 )
 from backend.app.application.services.app_update_service import (
     AppDisabledError,
+    AppUpdateConfig,
     AppUpdateAssetNotFoundError,
     AppUpdateResult,
     GitHubReleaseError,
@@ -1499,6 +1502,60 @@ async def list_app_updates(
             )
             for config in container.app_update_service.list_apps()
         ],
+    )
+
+
+@router.get("/installable-apps", response_model=InstallableAppsResponse)
+async def list_installable_apps(
+    request: Request,
+    platform: str = "android",
+    channel: str = "stable",
+    container: AppContainer = Depends(get_container),
+) -> InstallableAppsResponse:
+    apps = []
+    for config in await run_in_threadpool(container.app_update_service.list_apps):
+        apps.append(
+            await _installable_app_for_config(
+                request=request,
+                config=config,
+                platform=platform,
+                channel=channel,
+                container=container,
+            )
+        )
+    return InstallableAppsResponse(apps=apps)
+
+
+@router.get(
+    "/installable-apps/{source_app}",
+    response_model=InstallableAppResponse,
+)
+async def get_installable_app(
+    request: Request,
+    source_app: str,
+    platform: str = "android",
+    channel: str = "stable",
+    container: AppContainer = Depends(get_container),
+) -> InstallableAppResponse:
+    configs = {
+        config.source_app: config
+        for config in await run_in_threadpool(container.app_update_service.list_apps)
+    }
+    config = configs.get(source_app)
+    if config is None:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "code": "unknown_source_app",
+                "sourceApp": source_app,
+            },
+        )
+    return await _installable_app_for_config(
+        request=request,
+        config=config,
+        platform=platform,
+        channel=channel,
+        container=container,
     )
 
 
@@ -4177,6 +4234,102 @@ def _app_update_response(
         package_id=result.package_id,
         required=result.required,
         available=result.available,
+    )
+
+
+async def _installable_app_for_config(
+    *,
+    request: Request,
+    config: AppUpdateConfig,
+    platform: str,
+    channel: str,
+    container: AppContainer,
+) -> InstallableAppResponse:
+    if not config.enabled:
+        return _installable_app_response_from_config(
+            config,
+            enabled=False,
+            install_status_hint="disabled",
+        )
+    try:
+        result = await run_in_threadpool(
+            container.app_update_service.check_update,
+            source_app=config.source_app,
+            platform=platform,
+            current_version="0.0.0",
+            current_build=0,
+            channel=channel,
+        )
+    except AppDisabledError:
+        return _installable_app_response_from_config(
+            config,
+            enabled=False,
+            install_status_hint="disabled",
+        )
+    except GitHubReleaseError:
+        return _installable_app_response_from_config(
+            config,
+            enabled=True,
+            install_status_hint="release_metadata_unavailable",
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    apk_url = None
+    install_status_hint = "available" if result.available else "no_release_available"
+    response_channel = result.release_channel or channel
+    if result.available and result.release_tag and result.apk_asset_name:
+        generated_apk_url = request.url_for(
+            "download_app_update_apk",
+            source_app=result.source_app,
+            release_tag=result.release_tag,
+            asset_name=result.apk_asset_name,
+        ).include_query_params(platform=platform, channel=response_channel)
+        apk_url = _preserve_api_v1_prefix(request, str(generated_apk_url))
+    elif result.release_tag and not result.apk_asset_name:
+        install_status_hint = "missing_apk_asset"
+
+    return InstallableAppResponse(
+        source_app=result.source_app,
+        display_name=result.display_name or config.display_name,
+        repo=config.repo,
+        release_channel=result.release_channel,
+        latest_version=result.latest_version,
+        latest_build=result.latest_build,
+        release_tag=result.release_tag,
+        apk_url=apk_url,
+        apk_asset_name=result.apk_asset_name,
+        size_bytes=result.size_bytes,
+        sha256=result.sha256,
+        available=bool(apk_url),
+        enabled=True,
+        package_id=result.package_id or config.expected_package_id,
+        install_status_hint=install_status_hint,
+    )
+
+
+def _installable_app_response_from_config(
+    config: AppUpdateConfig,
+    *,
+    enabled: bool,
+    install_status_hint: str,
+) -> InstallableAppResponse:
+    return InstallableAppResponse(
+        source_app=config.source_app,
+        display_name=config.display_name,
+        repo=config.repo,
+        release_channel=config.release_channel,
+        latest_version=None,
+        latest_build=None,
+        release_tag=None,
+        apk_url=None,
+        apk_asset_name=None,
+        size_bytes=None,
+        sha256=None,
+        available=False,
+        enabled=enabled,
+        package_id=config.expected_package_id,
+        install_status_hint=install_status_hint,
     )
 
 

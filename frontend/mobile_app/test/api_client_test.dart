@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'package:codex_mobile_frontend/src/models/chat_session_summary.dart';
 import 'package:codex_mobile_frontend/src/models/codex_tooling.dart';
 import 'package:codex_mobile_frontend/src/models/feedback_queue_item.dart';
+import 'package:codex_mobile_frontend/src/models/installable_app.dart';
 import 'package:codex_mobile_frontend/src/models/project_factory.dart';
 import 'package:codex_mobile_frontend/src/models/server_capabilities.dart';
 import 'package:codex_mobile_frontend/src/models/server_health.dart';
@@ -16,6 +17,103 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
 void main() {
+  test('installable app model parses install metadata', () {
+    final app = InstallableApp.fromJson(const <String, dynamic>{
+      'sourceApp': 'sat-showroom',
+      'displayName': 'SAT Showroom',
+      'repo': 'brunojaime/sat-showroom',
+      'releaseChannel': 'stable',
+      'latestVersion': '1.0.0',
+      'latestBuild': 12,
+      'releaseTag': 'android-v1.0.0-build.12',
+      'apkUrl': 'http://bridge.test/app-updates/sat-showroom/apk/tag/app.apk',
+      'apkAssetName': 'sat-showroom.apk',
+      'sizeBytes': 12345,
+      'sha256': 'abc',
+      'available': true,
+      'enabled': true,
+      'packageId': 'com.sat.showroom',
+      'installStatusHint': 'available',
+    });
+
+    expect(app.sourceApp, 'sat-showroom');
+    expect(app.title, 'SAT Showroom');
+    expect(app.versionLabel, '1.0.0+12');
+    expect(app.canInstall, isTrue);
+  });
+
+  test('api client lists and fetches installable apps', () async {
+    var step = 0;
+    final client = ApiClient(
+      baseUrl: 'http://localhost:8000',
+      client: MockClient((request) async {
+        step += 1;
+        if (step == 1) {
+          expect(request.method, 'GET');
+          expect(request.url.path, '/installable-apps');
+          return http.Response(
+            '''
+            {
+              "kind": "codex.installableApps",
+              "version": 1,
+              "apps": [
+                {
+                  "kind": "codex.installableApp",
+                  "version": 1,
+                  "sourceApp": "sat-showroom",
+                  "displayName": "SAT Showroom",
+                  "repo": "brunojaime/sat-showroom",
+                  "releaseChannel": "stable",
+                  "latestVersion": "1.0.0",
+                  "latestBuild": 12,
+                  "releaseTag": "android-v1.0.0-build.12",
+                  "apkUrl": "http://bridge.test/app-updates/sat-showroom/apk/tag/app.apk",
+                  "apkAssetName": "sat-showroom.apk",
+                  "sizeBytes": 12345,
+                  "sha256": null,
+                  "available": true,
+                  "enabled": true,
+                  "packageId": "com.sat.showroom",
+                  "installStatusHint": "available"
+                }
+              ]
+            }
+            ''',
+            200,
+            headers: <String, String>{'content-type': 'application/json'},
+          );
+        }
+        expect(request.method, 'GET');
+        expect(request.url.path, '/installable-apps/sat-showroom');
+        return http.Response(
+          '''
+          {
+            "kind": "codex.installableApp",
+            "version": 1,
+            "sourceApp": "sat-showroom",
+            "displayName": "SAT Showroom",
+            "repo": "brunojaime/sat-showroom",
+            "releaseChannel": "stable",
+            "available": false,
+            "enabled": true,
+            "installStatusHint": "no_release_available"
+          }
+          ''',
+          200,
+          headers: <String, String>{'content-type': 'application/json'},
+        );
+      }),
+    );
+
+    final apps = await client.listInstallableApps();
+    expect(apps.single.sourceApp, 'sat-showroom');
+    expect(apps.single.canInstall, isTrue);
+
+    final detail = await client.getInstallableApp('sat-showroom');
+    expect(detail.canInstall, isFalse);
+    expect(detail.installStatusHint, 'no_release_available');
+  });
+
   test('project factory client creates and generates draft', () async {
     var step = 0;
     final client = ApiClient(
