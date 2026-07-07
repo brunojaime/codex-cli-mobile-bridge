@@ -4671,6 +4671,7 @@ class _ComposerState extends State<_Composer> {
   bool _hasText = false;
   bool _isRecording = false;
   bool _isSubmittingAttachments = false;
+  bool _attachmentsExpanded = true;
   bool _didStartRecordingFromPrimaryDrag = false;
   double _primaryActionDragDy = 0;
   final List<_PendingAttachmentDraft> _pendingAttachments =
@@ -4934,6 +4935,8 @@ class _ComposerState extends State<_Composer> {
               onRemove: _removePendingAttachment,
               onRoleChanged: _setPendingAttachmentRole,
               onClearAll: _clearPendingAttachments,
+              expanded: _attachmentsExpanded,
+              onToggleExpanded: _toggleAttachmentsExpanded,
             ),
           ),
         TextField(
@@ -5306,6 +5309,8 @@ class _ComposerState extends State<_Composer> {
       return;
     }
 
+    final stagedAttachments =
+        List<_PendingAttachmentDraft>.from(_pendingAttachments);
     final recorder = _audioRecorder;
     _audioRecorder = widget.audioRecorderFactory();
     _recordingTicker?.cancel();
@@ -5323,8 +5328,6 @@ class _ComposerState extends State<_Composer> {
     }
 
     final prompt = widget.controller.text.trim();
-    final message =
-        _pendingAttachments.isEmpty && prompt.isNotEmpty ? prompt : null;
     if (mounted) {
       setState(() {
         _isSubmittingAttachments = true;
@@ -5332,8 +5335,38 @@ class _ComposerState extends State<_Composer> {
     }
 
     var didSend = false;
+    var usedAttachmentsFlow = false;
     try {
-      didSend = await widget.onSendAudio(audioFile, message: message);
+      if (stagedAttachments.isNotEmpty) {
+        usedAttachmentsFlow = true;
+        var audioName = 'voice-note.m4a';
+        try {
+          final resolvedName = audioFile.name.trim();
+          if (resolvedName.isNotEmpty) {
+            audioName = resolvedName;
+          }
+        } catch (_) {
+          audioName = 'voice-note.m4a';
+        }
+        final audioAttachment = _PendingAttachmentDraft(
+          file: audioFile,
+          name: audioName,
+          kind: _AttachmentDraftKind.audio,
+        );
+        final attachments = <_PendingAttachmentDraft>[
+          ...stagedAttachments,
+          audioAttachment,
+        ];
+        didSend = await _sendPendingAttachments(
+          attachments,
+          prompt: prompt.isEmpty ? null : prompt,
+        );
+      } else {
+        didSend = await widget.onSendAudio(
+          audioFile,
+          message: prompt.isEmpty ? null : prompt,
+        );
+      }
     } catch (_) {
       didSend = false;
     } finally {
@@ -5347,10 +5380,15 @@ class _ComposerState extends State<_Composer> {
       _isSubmittingAttachments = false;
     });
     if (didSend) {
-      if (message != null) {
-        widget.controller.clear();
-        _emitDraftChanged();
-      }
+      setState(() {
+        _pendingAttachments.clear();
+        _attachmentsExpanded = true;
+      });
+      widget.controller.clear();
+      _emitDraftChanged();
+      return;
+    }
+    if (usedAttachmentsFlow) {
       return;
     }
     ScaffoldMessenger.of(context).showSnackBar(
@@ -5451,8 +5489,18 @@ class _ComposerState extends State<_Composer> {
     }
     setState(() {
       _pendingAttachments.clear();
+      _attachmentsExpanded = true;
     });
     _emitDraftChanged();
+  }
+
+  void _toggleAttachmentsExpanded() {
+    if (_pendingAttachments.isEmpty) {
+      return;
+    }
+    setState(() {
+      _attachmentsExpanded = !_attachmentsExpanded;
+    });
   }
 
   bool _appendPendingAttachments(List<_PendingAttachmentDraft> attachments) {
@@ -5477,6 +5525,7 @@ class _ComposerState extends State<_Composer> {
 
     setState(() {
       _pendingAttachments.addAll(uniqueAttachments);
+      _attachmentsExpanded = true;
     });
     _emitDraftChanged();
     return true;
@@ -5622,6 +5671,9 @@ class _ComposerState extends State<_Composer> {
         _pendingAttachments
           ..clear()
           ..addAll(nextAttachments);
+        if (_pendingAttachments.isEmpty) {
+          _attachmentsExpanded = true;
+        }
       });
     } else {
       _hasText = nextText.trim().isNotEmpty;
@@ -8680,6 +8732,8 @@ class _PendingAttachmentTray extends StatelessWidget {
     required this.onRemove,
     required this.onRoleChanged,
     required this.onClearAll,
+    required this.expanded,
+    required this.onToggleExpanded,
   });
 
   final List<_PendingAttachmentDraft> attachments;
@@ -8689,6 +8743,8 @@ class _PendingAttachmentTray extends StatelessWidget {
   final void Function(
       _PendingAttachmentDraft attachment, ProjectAssetRole? role) onRoleChanged;
   final VoidCallback onClearAll;
+  final bool expanded;
+  final VoidCallback onToggleExpanded;
 
   @override
   Widget build(BuildContext context) {
@@ -8731,6 +8787,17 @@ class _PendingAttachmentTray extends StatelessWidget {
                         ),
                         const SizedBox(width: 8),
                         statusPill,
+                        IconButton(
+                          onPressed: onToggleExpanded,
+                          tooltip: expanded
+                              ? 'Collapse attachments'
+                              : 'Expand attachments',
+                          icon: Icon(
+                            expanded
+                                ? Icons.expand_less_rounded
+                                : Icons.expand_more_rounded,
+                          ),
+                        ),
                       ],
                     ),
                     Align(
@@ -8754,6 +8821,18 @@ class _PendingAttachmentTray extends StatelessWidget {
                   ),
                   statusPill,
                   const SizedBox(width: 8),
+                  IconButton(
+                    onPressed: onToggleExpanded,
+                    tooltip: expanded
+                        ? 'Collapse attachments'
+                        : 'Expand attachments',
+                    icon: Icon(
+                      expanded
+                          ? Icons.expand_less_rounded
+                          : Icons.expand_more_rounded,
+                    ),
+                  ),
+                  const SizedBox(width: 4),
                   TextButton(
                     onPressed: busy ? null : onClearAll,
                     child: const Text('Clear all'),
@@ -8778,25 +8857,27 @@ class _PendingAttachmentTray extends StatelessWidget {
               ),
             ),
           ),
-          const SizedBox(height: 10),
-          ConstrainedBox(
-            constraints: const BoxConstraints(maxHeight: 220),
-            child: ListView.separated(
-              shrinkWrap: true,
-              itemCount: attachments.length,
-              separatorBuilder: (context, index) => const SizedBox(height: 8),
-              itemBuilder: (context, index) {
-                final attachment = attachments[index];
-                return _PendingAttachmentRow(
-                  attachment: attachment,
-                  busy: busy,
-                  showProjectAssetRole: isProjectFactoryIntake,
-                  onRemove: () => onRemove(attachment),
-                  onRoleChanged: (role) => onRoleChanged(attachment, role),
-                );
-              },
+          if (expanded) ...<Widget>[
+            const SizedBox(height: 10),
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: 220),
+              child: ListView.separated(
+                shrinkWrap: true,
+                itemCount: attachments.length,
+                separatorBuilder: (context, index) => const SizedBox(height: 8),
+                itemBuilder: (context, index) {
+                  final attachment = attachments[index];
+                  return _PendingAttachmentRow(
+                    attachment: attachment,
+                    busy: busy,
+                    showProjectAssetRole: isProjectFactoryIntake,
+                    onRemove: () => onRemove(attachment),
+                    onRoleChanged: (role) => onRoleChanged(attachment, role),
+                  );
+                },
+              ),
             ),
-          ),
+          ],
         ],
       ),
     );

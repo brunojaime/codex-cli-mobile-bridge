@@ -1382,7 +1382,7 @@ flowchart LR
     expect(find.text('Logo'), findsOneWidget);
   });
 
-  testWidgets('recorded voice note sends without flushing staged attachments', (
+  testWidgets('recorded voice note sends together with staged attachments', (
     tester,
   ) async {
     tester.view.physicalSize = const Size(1200, 1600);
@@ -1414,7 +1414,6 @@ flowchart LR
               },
               onSendAudio: (audioFile, {message}) async {
                 audioSends.add(audioFile.name);
-                expect(message, isNull);
                 return true;
               },
               onSendAttachments: (attachments, {prompt}) async {
@@ -1449,17 +1448,59 @@ flowchart LR
         )
         .last;
     await tester.tap(voiceSendButton);
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 200));
+    await tester.pumpAndSettle();
 
-    expect(audioSends, <String>['voice-note.m4a']);
-    expect(attachmentSends, isEmpty);
-    expect(find.text('1 selected'), findsOneWidget);
-    expect(textController.text, contains('Keep this attachment staged'));
     expect(recorders.first.started, isTrue);
     expect(recorders.first.stopped, isTrue);
+    expect(audioSends, isEmpty);
+    expect(attachmentSends, <String>['staged-note.txt', 'voice-note.m4a']);
+    expect(attachmentPrompts, <String?>['Keep this attachment staged']);
+    expect(find.text('1 selected'), findsNothing);
+    expect(textController.text, isEmpty);
     expect(recorders.first.cleaned, isTrue);
     expect(recorders.first.disposed, isTrue);
+  });
+
+  testWidgets('pending attachment tray can collapse and expand the list', (
+    tester,
+  ) async {
+    final textController = TextEditingController();
+    addTearDown(textController.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Align(
+            alignment: Alignment.bottomCenter,
+            child: buildComposerVoiceRecordingHarnessForTest(
+              controller: textController,
+              stagedText: 'Use this',
+              stageAttachment: true,
+              audioRecorderFactory: () => _FakeAudioNoteRecorder(
+                XFile('voice-note.m4a', name: 'voice-note.m4a'),
+              ),
+              onSendAudio: (_, {message}) async => true,
+              onSendAttachments: (_, {prompt}) async => true,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('1 selected'), findsOneWidget);
+    expect(find.text('staged-note.txt'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('Collapse attachments'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('1 selected'), findsOneWidget);
+    expect(find.text('staged-note.txt'), findsNothing);
+
+    await tester.tap(find.byTooltip('Expand attachments'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('staged-note.txt'), findsOneWidget);
   });
 
   testWidgets('recorded voice note sends with composer text immediately', (
