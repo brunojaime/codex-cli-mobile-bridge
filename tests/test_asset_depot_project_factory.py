@@ -146,11 +146,23 @@ def test_project_factory_promotes_asset_roles_and_preserves_bytes(
     for role, asset in uploaded.items():
         assert role in metadata
         assert str(asset["sha256"]) in metadata
+    assert "visual_reference" in metadata
+    assert "assets/brand/logo.png" in metadata
+    assert "assets/brand/app_icon_source.png" in metadata
     spec = (project / "specs/001-product-foundation/spec.md").read_text(
         encoding="utf-8"
     )
     assert "Promoted Assets" in spec
+    assert "role `visual_reference`" in spec
+    assert "role `logo`" in spec
+    assert "role `app_icon`" in spec
+    assert str(uploaded["visual_reference"]["sha256"]) in spec
+    assert str(uploaded["logo"]["sha256"]) in spec
     assert str(uploaded["app_icon"]["sha256"]) in spec
+    visual_contract = (project / ".codex/project.yaml").read_text(encoding="utf-8")
+    assert "logo_only_also_sets_app_icon_source: true" in visual_contract
+    assert "app_icon_only_also_sets_logo: true" in visual_contract
+    assert "preserve_source_bytes: true" in visual_contract
     pubspec = (project / "apps/mobile/pubspec.yaml").read_text(encoding="utf-8")
     assert "assets/brand/" in pubspec
 

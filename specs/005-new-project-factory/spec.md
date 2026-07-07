@@ -55,7 +55,7 @@ release-readiness documentation.
   visible as publish blockers.
 - Do not hardcode real passwords or secrets into generated code or committed
   files.
-- Do not generate demo/mock release builds unless explicitly requested.
+- Do not let demo/mock runtime behavior leak into productive releases.
 - Do not overwrite an existing project folder.
 
 ## Chat-Mode Contract
@@ -69,7 +69,7 @@ inferred and states defaults clearly:
 3. Primary goal.
 4. Platforms, defaulting to iOS, Android, and Web.
 5. Optional visual reference images attached through the normal chat attachment
-   tray.
+   tray. These references are a binding UI/UX input, not generic inspiration.
 6. Logo/icon choice: upload, generate, or temporary placeholder.
 7. Backend choice, defaulting to FastAPI.
 8. Domain entities, user roles, key permissions, external integrations, and
@@ -142,9 +142,108 @@ new-project/
 - Codex: Feedback Bridge, Dev Workbench, app updater, and SDD metadata enabled.
 - SDD baseline diagrams: component, class, entity-relationship, and deployment
   diagrams are generated with metadata sidecars and indexed for Workbench.
-- Release data mode: real by default.
+- Runtime profile: `APP_RUNTIME_PROFILE=real` by default for productive
+  releases; `mock` and `staging` are explicit opt-in profiles.
 - Publish contract: initial git commit required, GitHub repository/push required
   before the project is considered published, and release status must be explicit.
+
+## Runtime Profile Contract
+
+Every generated project must include a central runtime profile selector:
+
+- `APP_RUNTIME_PROFILE=real`
+- `APP_RUNTIME_PROFILE=mock`
+- `APP_RUNTIME_PROFILE=staging` when useful
+
+`real` is the default for productive releases. `mock` is opt-in and is only valid
+for demo/local release tags such as `android-mock-vX.Y.Z-build.N` or
+`android-local-vX.Y.Z-build.N`.
+
+Mock/demo releases are installable early-test builds. They do not require a real
+backend or remote database, use local/in-memory app data, expose a visible seed
+role selector, and mark release metadata with:
+
+- `runtime_profile=mock`
+- `mock_or_demo=true`
+- `backend_required=false`
+
+Productive releases use tags such as `android-vX.Y.Z-build.N` and must use a
+real backend URL, real updater metadata, real auth, and no visible seed role
+selector, demo data, localhost, placeholder URLs, or visible Workbench/dev
+tools. Productive release metadata must include:
+
+- `runtime_profile=real`
+- `mock_or_demo=false`
+- `backend_required=true`
+- `API_BASE_URL=<real backend URL>`
+- signing metadata, with release keystore or an explicit debug fallback status.
+
+Generated CI and validation scripts must fail productive release builds when
+they detect mock/local profiles, seeded demo selectors, hardcoded demo users,
+localhost, placeholder/example URLs, updater metadata with `mock_or_demo=true`,
+missing release metadata, missing APK assets, or a dirty/unpushed worktree.
+
+## Visual Reference Contract
+
+When the user attaches visual references, the Factory must analyze each image
+before implementing UI and extract:
+
+- screen structure, navigation, headers, cards, buttons, chips/filters, lists,
+  iconography, typography, spacing, borders/radius, empty states, primary action
+  position, and dashboard/inventory/catalog patterns where present.
+
+The Factory must map those references to concrete generated screens. For
+example, inventory references must influence an inventory screen, dashboard
+references must influence dashboard composition, and catalog references must
+influence catalog cards, filters, and navigation. A generic Flutter Material
+shell, default `AppBar`, default buttons, or unstyled list is a generation
+failure when references exist.
+
+Generated projects must include design tokens derived from the references,
+reusable UI components based on the visual patterns, and a visual validation
+report. If the user requests a different palette, the Factory adapts color while
+preserving structure, rhythm, layout, cards, navigation, and interaction
+patterns.
+
+Logo and app icon assets are treated as exact assets. If the user supplies only
+a logo, it is also used as the app icon source unless overridden. If the user
+supplies only an app icon, it is also used as primary brand/logo source unless
+overridden. Source bytes are preserved and derived sizes are generated from that
+source.
+
+The preview before build must list detected visual references, screens derived
+from each reference, final palette, reusable components, intentional
+differences, and visual risks. The final report must list images used, influenced
+screens, logo/icon paths, whether logo and icon share a source, generated
+previews, and intentional visual differences.
+
+## Workbench And Developer Tooling Contract
+
+Workbench is mandatory from project creation. Generated projects must include
+baseline specs, plans, tasks, diagram indexes, architecture diagrams,
+`sourceApp`/workspace identity, feedback bridge configuration, and documentation
+for opening and using Workbench.
+
+Workbench and developer feedback UI may be visible in `mock` or internal
+profiles, but must be hidden or disabled in productive `real` releases. If a
+Workbench registration step cannot complete automatically, the Factory must
+record a blocking status and an exact manual command.
+
+## Updater And Release Contract
+
+Every generated project must include a real updater surface from the start:
+
+- backend endpoint such as `/app-updates/current`;
+- version, build, release tag, APK URL, release URL, runtime profile, and
+  `mock_or_demo` metadata;
+- Flutter wiring ready to consume the feed;
+- release metadata that matches the updater response.
+
+The Factory cannot consider a project finished only because files were generated
+locally. The publish contract requires an initial commit, `main` branch, GitHub
+remote creation or verification with authenticated tooling, push, release tag,
+GitHub release, APK asset verification, release metadata verification, and a
+clean worktree or explicit blocking report.
 
 ## Implemented API Surface
 
@@ -193,6 +292,8 @@ The generated backend is a runnable FastAPI v1 template with:
 The generated Flutter app is a runnable template with:
 
 - `API_BASE_URL` required by `--dart-define`;
+- `APP_RUNTIME_PROFILE`, defaulting to `real`;
+- mock profile support with local/in-memory data and a role seed selector;
 - login/register/session in memory;
 - admin gating by RBAC;
 - domain/user admin views;
@@ -219,6 +320,9 @@ report showing:
 - initial local git commit exists and the worktree is clean after scaffold;
 - GitHub repo/push is complete or explicitly blocked with a credential/config
   reason and manual next step;
+- release profile checks pass for productive and mock/demo tags;
+- productive release checks prove no mock/local/demo mode, localhost,
+  placeholder URL, visible seed selector, or visible Workbench tooling is active;
 - Flutter dependencies resolve;
 - Flutter tests pass when tooling is available;
 - backend health/tests pass when tooling is available;
@@ -226,6 +330,11 @@ report showing:
 - Google login is present and marked `pending_credentials` when credentials are
   absent;
 - Workbench can discover the project;
-- Feedback Bridge and updater remain required follow-up work in generated SDD
-  tasks until their concrete packages are wired into the template;
+- Feedback Bridge, Workbench, and updater are integrated or represented as
+  explicit verified blockers with exact commands;
 - no secrets are written to committed files.
+
+The final Factory report must include commit hash, repo URL, branch, mock/demo
+release tag if generated, productive release tag if generated, APK URLs, runtime
+profile and `mock_or_demo` status for each release, backend URL, updater
+response, Workbench status, tests executed, and real blockers.

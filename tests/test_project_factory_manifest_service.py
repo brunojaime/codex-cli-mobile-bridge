@@ -34,10 +34,17 @@ def test_valid_manifest_includes_required_product_defaults(tmp_path: Path) -> No
     assert manifest["platforms"] == {"ios": True, "android": True, "web": True}
     assert manifest["frontend"]["framework"] == "flutter"
     assert manifest["frontend"]["mobile_template"] == (
-        "flutter-auth-admin-notifications-v1"
+        "flutter-runtime-profiles-auth-admin-notifications-v1"
     )
     assert manifest["backend"]["framework"] == "fastapi"
-    assert manifest["backend"]["template"] == "fastapi-auth-rbac-admin-notifications-v1"
+    assert manifest["backend"]["template"] == (
+        "fastapi-runtime-profiles-auth-rbac-admin-notifications-v1"
+    )
+    assert manifest["runtime_profiles"]["env"] == "APP_RUNTIME_PROFILE"
+    assert manifest["runtime_profiles"]["default_profile"] == "real"
+    assert manifest["runtime_profiles"]["mock"]["opt_in"] is True
+    assert manifest["runtime_profiles"]["real"]["default_for_productive_release"] is True
+    assert manifest["runtime_profiles"]["real"]["mock_or_demo"] is False
     assert manifest["auth"]["required"] is True
     assert manifest["auth"]["google_login"] is True
     assert manifest["auth"]["google_credentials_status"] == "pending_credentials"
@@ -45,6 +52,15 @@ def test_valid_manifest_includes_required_product_defaults(tmp_path: Path) -> No
     assert manifest["access_control"]["owner_has_all_permissions"] is True
     assert manifest["admin"]["domain_management"] is True
     assert manifest["notifications"]["channels"] == ["in_app", "push", "email"]
+    assert (
+        manifest["visual_references"]["strong_reference_contract"][
+            "generic_material_shell_forbidden_when_references_exist"
+        ]
+        is True
+    )
+    assert "screen_structure" in manifest["visual_references"][
+        "strong_reference_contract"
+    ]["required_analysis_per_image"]
     assert manifest["sdd"]["required_artifacts"] == [
         "spec.md",
         "plan.md",
