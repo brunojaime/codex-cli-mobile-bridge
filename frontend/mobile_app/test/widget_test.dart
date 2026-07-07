@@ -2381,6 +2381,42 @@ flowchart LR
     );
   });
 
+  test('project factory build marker is required before activation', () {
+    final now = DateTime.utc(2026, 1, 1);
+    final intakeQuestion = ChatMessage(
+      id: 'question',
+      text: 'Todavia necesito saber entidades e integraciones.',
+      isUser: false,
+      authorType: ChatMessageAuthorType.assistant,
+      agentId: AgentId.generator,
+      agentType: AgentType.generator,
+      status: ChatMessageStatus.completed,
+      createdAt: now,
+      updatedAt: now,
+    );
+    final readyPreview = ChatMessage(
+      id: 'ready',
+      text: 'Preview validado.\n$kProjectFactoryReadyForBuildMarker',
+      isUser: false,
+      authorType: ChatMessageAuthorType.assistant,
+      agentId: AgentId.generator,
+      agentType: AgentType.generator,
+      status: ChatMessageStatus.completed,
+      createdAt: now,
+      updatedAt: now,
+    );
+
+    expect(projectFactoryHasBuildReadyMarker(<ChatMessage>[intakeQuestion]),
+        isFalse);
+    expect(
+      projectFactoryHasBuildReadyMarker(<ChatMessage>[
+        intakeQuestion,
+        readyPreview,
+      ]),
+      isTrue,
+    );
+  });
+
   test('supervisor turn budget mode parses and serializes cleanly', () {
     final configuration = AgentConfiguration.fromJson(
       <String, dynamic>{

@@ -37,9 +37,24 @@ def test_generator_writes_foundation_and_rolls_no_secrets(tmp_path: Path) -> Non
     assert result.target_path == str(project)
     assert (project / ".codex/project.yaml").is_file()
     assert (project / "specs/001-product-foundation/spec.md").is_file()
+    assert (project / ".sdd/spec-index.yaml").is_file()
+    assert (project / ".sdd/diagram-index.yaml").is_file()
+    assert (project / "architecture/components.mmd").is_file()
+    assert (project / "architecture/components.yaml").is_file()
+    assert (project / "architecture/classes.mmd").is_file()
+    assert (project / "architecture/classes.yaml").is_file()
+    assert (project / "architecture/entity-relationship.mmd").is_file()
+    assert (project / "architecture/entity-relationship.yaml").is_file()
+    assert (project / "architecture/deployment.mmd").is_file()
+    assert (project / "architecture/deployment.yaml").is_file()
     assert (project / "scripts/validate_generated_project.sh").is_file()
     assert (project / "apps/mobile/.gitkeep").is_file()
     assert (project / "backend/.gitkeep").is_file()
+    metadata = (
+        project / "specs/001-product-foundation/metadata.yaml"
+    ).read_text(encoding="utf-8")
+    assert "architecture/components.mmd" in metadata
+    assert "architecture/entity-relationship.mmd" in metadata
     assert "SEED_ADMIN_PASSWORD" in (project / "AGENTS.md").read_text(
         encoding="utf-8",
     )

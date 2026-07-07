@@ -69,8 +69,19 @@ inferred and states defaults clearly:
    tray.
 6. Logo/icon choice: upload, generate, or temporary placeholder.
 7. Backend choice, defaulting to FastAPI.
-8. Preview and explicit confirmation before generating files.
-9. History/recovery panel for persisted drafts and jobs.
+8. Domain entities, user roles, key permissions, external integrations, and
+   deployment assumptions needed for baseline SDD diagrams.
+9. Preview and explicit confirmation before generating files.
+10. History/recovery panel for persisted drafts and jobs.
+
+If the agent does not have enough information to generate the foundation spec,
+plan, tasks, and baseline diagrams, it must ask concrete simple questions with
+suggested answers. Reviewer/build mode must remain disabled during this intake.
+Only after the user validates a preview that covers specs, plan, tasks, domain
+entities, roles/permissions, modules, component/class/entity-relationship/
+deployment diagrams, risks, and validation commands may the agent emit
+`PROJECT_FACTORY_READY_FOR_BUILD`. The mobile app only enables the 20 generator
++ 20 reviewer workflow after that marker exists and the user confirms.
 
 The older form-style dialog remains an implementation component/fallback, but
 the user-facing path is chat-first so the user can describe an app naturally,
@@ -90,6 +101,18 @@ new-project/
     plan.md
     tasks.md
     metadata.yaml
+  .sdd/
+    spec-index.yaml
+    diagram-index.yaml
+  architecture/
+    components.mmd
+    components.yaml
+    classes.mmd
+    classes.yaml
+    entity-relationship.mmd
+    entity-relationship.yaml
+    deployment.mmd
+    deployment.yaml
   docs/research/
   design/
   assets/reference/
@@ -113,6 +136,8 @@ new-project/
 - Seed admin: configured only through environment variables/secrets.
 - Notifications: in-app, push, and email foundations.
 - Codex: Feedback Bridge, Dev Workbench, app updater, and SDD metadata enabled.
+- SDD baseline diagrams: component, class, entity-relationship, and deployment
+  diagrams are generated with metadata sidecars and indexed for Workbench.
 - Release data mode: real by default.
 
 ## Implemented API Surface

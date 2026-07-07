@@ -24,6 +24,8 @@
 - [x] T010 Add chat-first New Project mode that asks for name, business type,
       goal, platforms, visual references, logo/icon, backend, style, preview,
       and confirmation through the normal conversation.
+- [x] T010a Gate reviewer/build mode until the agent has validated spec, plan,
+      tasks, domain entities, and baseline diagram readiness with the user.
 - [x] T011 Add API client calls, progress display, and Project Factory History.
 - [x] T012 Add Flutter widget tests for the wizard, progress, and history.
 
@@ -78,3 +80,5 @@
 - [x] T036 Harden backend PID handling and post-restart validation.
 - [x] T037 Move primary New project UX from modal form to chat-mode kickoff.
 - [x] T038 Update creation defaults to 20 generator and 20 reviewer runs.
+- [x] T039 Generate mandatory baseline Workbench diagrams and SDD indexes for
+      new projects.

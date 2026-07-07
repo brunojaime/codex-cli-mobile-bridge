@@ -389,6 +389,12 @@ def test_project_factory_generate_creates_local_project_foundation(tmp_path: Pat
     assert (project / "specs/001-product-foundation/spec.md").is_file()
     assert (project / "specs/001-product-foundation/plan.md").is_file()
     assert (project / "specs/001-product-foundation/tasks.md").is_file()
+    assert (project / ".sdd/spec-index.yaml").is_file()
+    assert (project / ".sdd/diagram-index.yaml").is_file()
+    assert (project / "architecture/components.mmd").is_file()
+    assert (project / "architecture/classes.mmd").is_file()
+    assert (project / "architecture/entity-relationship.mmd").is_file()
+    assert (project / "architecture/deployment.mmd").is_file()
     assert (project / "docs/research/typical-apps.md").is_file()
     assert (project / "design/tokens.yaml").is_file()
     assert (project / "infra/aws/deploy-plan.md").is_file()
@@ -405,6 +411,11 @@ def test_project_factory_generate_creates_local_project_foundation(tmp_path: Pat
     assert "reviewer_runs: 20" in manifest_text
     assert "generator runs: 20" in spec_text
     assert "reviewer runs: 20" in spec_text
+    diagram_index = (project / ".sdd/diagram-index.yaml").read_text(
+        encoding="utf-8",
+    )
+    assert "architecture/components.mmd" in diagram_index
+    assert "architecture/entity-relationship.mmd" in diagram_index
     assert "Nienfoadmin1994" not in _read_all_text(project)
 
 

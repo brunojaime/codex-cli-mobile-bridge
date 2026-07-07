@@ -58,6 +58,8 @@ const String _projectFactoryReviewerPrompt =
     'notifications, generated files, tests, and validation are complete. '
     'Return only the next concrete prompt that should improve or verify the '
     'generator output.';
+const String kProjectFactoryReadyForBuildMarker =
+    'PROJECT_FACTORY_READY_FOR_BUILD';
 
 AgentConfiguration buildProjectFactoryIntakeConfiguration(
   AgentConfiguration current, {
@@ -150,6 +152,16 @@ bool isProjectFactoryIntakeConfiguration(AgentConfiguration? configuration) {
       generator?.enabled == true &&
       reviewer?.label == 'Project Reviewer' &&
       reviewer?.enabled == false;
+}
+
+bool projectFactoryHasBuildReadyMarker(Iterable<ChatMessage> messages) {
+  return messages.any(
+    (message) =>
+        !message.isUser &&
+        message.agentId == AgentId.generator &&
+        message.status == ChatMessageStatus.completed &&
+        message.text.contains(kProjectFactoryReadyForBuildMarker),
+  );
 }
 
 bool isProjectFactoryBuildConfirmation(String? rawText) {
@@ -1545,9 +1557,19 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     if (!isProjectFactoryIntakeConfiguration(session?.agentConfiguration)) {
       return true;
     }
+    if (!projectFactoryHasBuildReadyMarker(session!.messages)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'New project is still collecting specs and diagram details.',
+          ),
+        ),
+      );
+      return true;
+    }
 
     final didConfigure = await _chatController.updateAgentConfiguration(
-      buildProjectFactoryBuildConfiguration(session!.agentConfiguration),
+      buildProjectFactoryBuildConfiguration(session.agentConfiguration),
     );
     if (!mounted) {
       return didConfigure;
@@ -1583,6 +1605,9 @@ Primero respondeme al usuario, no generes archivos todavia. Tu primera respuesta
 - logo/icono;
 - colores, estilo visual y referencias de look and feel;
 - roles/permisos especiales si aplican;
+- entidades principales del dominio para DER/ERD;
+- actores y permisos principales para diagrama de clases/componentes;
+- integraciones externas esperadas para componentes/deployment;
 - si hay imagenes adjuntas en este chat, usalas como referencia visual nativa.
 
 Defaults si el usuario no modifica nada:
@@ -1598,7 +1623,15 @@ Defaults si el usuario no modifica nada:
 
 Si el usuario no sabe el nombre, rubro o titulo, proponelo a partir de lo que cuente. Para colores y look and feel no inventes como definitivo: preguntale o propone 2-3 direcciones y espera confirmacion. Antes de crear nada, devolve un preview corto del proyecto que vas a armar y pedi confirmacion explicita tipo "ok, dale para adelante".
 
-Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme, recien ahi ejecuta la creacion real usando Project Factory del bridge y el repo actual: draft/manifest, reference assets desde imagenes adjuntas del chat cuando existan, specs/plan/tasks, backend FastAPI, Flutter, auth/RBAC/admin/notificaciones, validacion y apertura del workspace. Mantene la conversacion practica y anda trabajando con el reviewer durante el build.
+Contrato semi-obligatorio antes del build:
+- Si falta informacion para armar spec, plan, tasks o diagramas baseline, hace preguntas concretas y simples.
+- Cada pregunta debe traer 2-4 respuestas sugeridas o una opcion "lo inferis vos".
+- Los diagramas baseline a validar son: componentes, clases, DER/ERD y deployment. Agrega otros si el dominio lo pide.
+- El preview previo al build debe incluir: brief normalizado, defaults asumidos, entidades del dominio, roles/permisos, modulos, spec/plan/tasks iniciales, lista de diagramas a generar, comandos de validacion, riesgos y pendientes.
+- No incluyas la linea $kProjectFactoryReadyForBuildMarker hasta que tengas informacion suficiente y el usuario haya validado el preview.
+- Cuando ya este validado y solo falte que el usuario confirme el arranque, termina tu respuesta con una linea exacta: $kProjectFactoryReadyForBuildMarker
+
+Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme despues de ese marker, recien ahi ejecuta la creacion real usando Project Factory del bridge y el repo actual: draft/manifest, reference assets desde imagenes adjuntas del chat cuando existan, specs/plan/tasks, diagramas baseline, backend FastAPI, Flutter, auth/RBAC/admin/notificaciones, validacion y apertura del workspace. Mantene la conversacion practica y anda trabajando con el reviewer durante el build.
 ''';
   }
 

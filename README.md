@@ -226,13 +226,19 @@ Chat sessions, messages, and job history are stored in SQLite by default. Keep `
 
 Project Factory is the built-in "New project" flow. It creates a sibling
 project under `PROJECTS_ROOT`, stores draft/job history in the bridge, and
-generates a Flutter + FastAPI foundation with Workbench specs.
+generates a Flutter + FastAPI foundation with Workbench specs, plans, tasks,
+and baseline architecture diagrams.
 
 In the mobile app the primary "New project" action opens a normal chat in
 Project Factory mode. The agent asks for the project name, business type,
-primary goal, style/colors, roles, and confirmation; anything the user does not
-know can be inferred from the conversation. Reference images should be attached
-with the normal chat attachment tray.
+primary goal, style/colors, roles, domain entities, integrations, and
+deployment shape; anything the user does not know can be inferred from the
+conversation. Reference images should be attached with the normal chat
+attachment tray. Reviewer/build mode stays disabled during intake. The agent
+must first validate a preview covering specs, plan, tasks, and baseline diagrams
+with the user, then emit `PROJECT_FACTORY_READY_FOR_BUILD`; only after the user
+confirms from that state does the app enable the 20 generator + 20 reviewer
+workflow.
 
 Operational variables:
 
