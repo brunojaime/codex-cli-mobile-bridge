@@ -3961,6 +3961,11 @@ class _SpecTreeNavigator extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final expandedPlanIndex =
+        selection.kind == _SpecArtifactKind.treePlan ||
+            selection.kind == _SpecArtifactKind.treeTask
+        ? selection.artifactIndex
+        : null;
     return _PanelCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -4018,7 +4023,8 @@ class _SpecTreeNavigator extends StatelessWidget {
               label: 'Plan ${planEntry.$2.number}',
               title: planEntry.$2.title,
               selected:
-                  selection.kind == _SpecArtifactKind.treePlan &&
+                  (selection.kind == _SpecArtifactKind.treePlan ||
+                      selection.kind == _SpecArtifactKind.treeTask) &&
                   selection.artifactIndex == planEntry.$1,
               level: 1,
               status: planEntry.$2.status,
@@ -4031,26 +4037,27 @@ class _SpecTreeNavigator extends StatelessWidget {
                 ),
               ),
             ),
-            for (final taskEntry in planEntry.$2.tasks.indexed)
-              _TreeNodeRow(
-                icon: Icons.checklist_rounded,
-                label: 'Task ${taskEntry.$2.number}',
-                title: taskEntry.$2.title,
-                selected:
-                    selection.kind == _SpecArtifactKind.treeTask &&
-                    selection.artifactIndex == planEntry.$1 &&
-                    selection.taskIndex == taskEntry.$1,
-                level: 2,
-                status: taskEntry.$2.status,
-                onTap: () => onSelected(
-                  _SpecArtifactSelection(
-                    specIndex: selection.specIndex,
-                    kind: _SpecArtifactKind.treeTask,
-                    artifactIndex: planEntry.$1,
-                    taskIndex: taskEntry.$1,
+            if (expandedPlanIndex == planEntry.$1)
+              for (final taskEntry in planEntry.$2.tasks.indexed)
+                _TreeNodeRow(
+                  icon: Icons.checklist_rounded,
+                  label: 'Task ${taskEntry.$2.number}',
+                  title: taskEntry.$2.title,
+                  selected:
+                      selection.kind == _SpecArtifactKind.treeTask &&
+                      selection.artifactIndex == planEntry.$1 &&
+                      selection.taskIndex == taskEntry.$1,
+                  level: 2,
+                  status: taskEntry.$2.status,
+                  onTap: () => onSelected(
+                    _SpecArtifactSelection(
+                      specIndex: selection.specIndex,
+                      kind: _SpecArtifactKind.treeTask,
+                      artifactIndex: planEntry.$1,
+                      taskIndex: taskEntry.$1,
+                    ),
                   ),
                 ),
-              ),
           ],
           if (tree.plans.isEmpty) ...[
             const SizedBox(height: 6),

@@ -380,8 +380,9 @@ void main() {
     expect(find.text('Inside this spec'), findsOneWidget);
     expect(find.text('Spec'), findsWidgets);
     expect(find.text('Plan 1'), findsOneWidget);
-    expect(find.text('Task 1'), findsNWidgets(2));
-    expect(find.text('Task 3'), findsOneWidget);
+    expect(find.text('Task 1'), findsNothing);
+    expect(find.text('Task 3'), findsNothing);
+    expect(find.text('Reserve cart units'), findsNothing);
     expect(find.textContaining('Plan:'), findsNothing);
     expect(find.textContaining('Tasks:'), findsNothing);
 
