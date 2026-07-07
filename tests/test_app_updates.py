@@ -883,6 +883,114 @@ def test_installable_app_unknown_returns_404(tmp_path: Path) -> None:
     assert response.json()["detail"]["code"] == "unknown_source_app"
 
 
+def test_installable_app_registration_updates_registry_without_restart(
+    tmp_path: Path,
+) -> None:
+    client = _build_app_update_client(
+        tmp_path,
+        releases=[
+            _release(
+                "android-v0.1.0-build.1",
+                assets=[_apk_asset("adjornos.apk")],
+            ),
+        ],
+    )
+
+    response = client.post(
+        "/installable-apps",
+        json={
+            "sourceApp": "adjornos",
+            "displayName": "Adjornos",
+            "repo": "brunojaime/adjornos",
+            "releaseTagPattern": "android-v*",
+            "apkAssetPattern": "adjornos*.apk",
+            "latestAssetName": "adjornos.apk",
+            "expectedPackageId": "com.adjornos.app",
+            "verifiedPackageIds": {
+                "android-v0.1.0-build.1": "com.adjornos.app",
+            },
+            "enabled": True,
+        },
+    )
+
+    assert response.status_code == 201
+    assert response.json()["sourceApp"] == "adjornos"
+    registry = json.loads((tmp_path / "app_updates.json").read_text(encoding="utf-8"))
+    assert registry["adjornos"]["displayName"] == "Adjornos"
+    assert registry["adjornos"]["repo"] == "brunojaime/adjornos"
+
+    detail = client.get("/installable-apps/adjornos")
+
+    assert detail.status_code == 200
+    app = detail.json()
+    assert app["sourceApp"] == "adjornos"
+    assert app["displayName"] == "Adjornos"
+    assert app["available"] is True
+    assert app["apkUrl"].startswith("http://testserver/app-updates/adjornos/apk/")
+    assert "github.com" not in app["apkUrl"]
+    assert app["packageId"] == "com.adjornos.app"
+
+
+def test_installable_app_registration_rejects_unsafe_values(tmp_path: Path) -> None:
+    client = _build_app_update_client(tmp_path, releases=[])
+
+    bad_source = client.post(
+        "/installable-apps",
+        json={
+            "sourceApp": "../adjornos",
+            "displayName": "Adjornos",
+            "repo": "brunojaime/adjornos",
+        },
+    )
+    bad_repo = client.post(
+        "/installable-apps",
+        json={
+            "sourceApp": "adjornos",
+            "displayName": "Adjornos",
+            "repo": "https://github.com/brunojaime/adjornos",
+        },
+    )
+
+    assert bad_source.status_code == 422
+    assert bad_repo.status_code == 422
+
+
+def test_installable_app_registry_file_reload_does_not_require_restart(
+    tmp_path: Path,
+) -> None:
+    client = _build_app_update_client(
+        tmp_path,
+        releases=[
+            _release(
+                "android-v0.1.0-build.1",
+                assets=[_apk_asset("adjornos.apk")],
+            ),
+        ],
+    )
+    registry_path = tmp_path / "app_updates.json"
+    registry = json.loads(registry_path.read_text(encoding="utf-8"))
+    registry["adjornos"] = {
+        "displayName": "Adjornos",
+        "repo": "brunojaime/adjornos",
+        "releaseTagPattern": "android-v*",
+        "apkAssetPattern": "adjornos*.apk",
+        "latestAssetName": "adjornos.apk",
+        "expectedPackageId": "com.adjornos.app",
+        "verifiedPackageIds": {
+            "android-v0.1.0-build.1": "com.adjornos.app",
+        },
+        "requiredMinimumBuild": None,
+        "enabled": True,
+    }
+    registry_path.write_text(json.dumps(registry), encoding="utf-8")
+
+    response = client.get("/installable-apps/adjornos")
+
+    assert response.status_code == 200
+    assert response.json()["sourceApp"] == "adjornos"
+    assert response.json()["available"] is True
+
+
 def test_app_update_apk_proxy_downloads_private_asset(tmp_path: Path) -> None:
     asset = _apk_asset("ambientando-calendar-1.0.0-build.40.apk")
     content = b"PK\x03\x04fake apk"
@@ -1249,6 +1357,7 @@ def _build_app_update_client(
     container.app_update_service = AppUpdateService(
         registry=AppUpdateRegistry.from_json_file(registry_path),
         release_client=release_client,
+        registry_path=registry_path,
     )
     return TestClient(app)
 

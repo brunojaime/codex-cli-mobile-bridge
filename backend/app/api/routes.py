@@ -59,6 +59,7 @@ from backend.app.api.schemas import (
     AppUpdateRegistryItemResponse,
     AppUpdateRegistryResponse,
     AppUpdateResponse,
+    InstallableAppRegistrationRequest,
     InstallableAppResponse,
     InstallableAppsResponse,
     FeedbackBatchStartRequest,
@@ -1524,6 +1525,43 @@ async def list_installable_apps(
             )
         )
     return InstallableAppsResponse(apps=apps)
+
+
+@router.post(
+    "/installable-apps",
+    response_model=AppUpdateRegistryItemResponse,
+    status_code=201,
+)
+async def register_installable_app(
+    payload: InstallableAppRegistrationRequest,
+    container: AppContainer = Depends(get_container),
+) -> AppUpdateRegistryItemResponse:
+    try:
+        config = await run_in_threadpool(
+            container.app_update_service.register_app,
+            source_app=payload.source_app,
+            display_name=payload.display_name,
+            repo=payload.repo,
+            release_tag_pattern=payload.release_tag_pattern,
+            apk_asset_pattern=payload.apk_asset_pattern,
+            latest_asset_name=payload.latest_asset_name,
+            required_minimum_build=payload.required_minimum_build,
+            enabled=payload.enabled,
+            release_channel=payload.release_channel,
+            expected_package_id=payload.expected_package_id,
+            verified_package_ids=payload.verified_package_ids,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return AppUpdateRegistryItemResponse(
+        source_app=config.source_app,
+        display_name=config.display_name,
+        enabled=config.enabled,
+        required_minimum_build=config.required_minimum_build,
+        release_channel=config.release_channel,
+        private_install=config.release_channel == "private-install",
+        expected_package_id=config.expected_package_id,
+    )
 
 
 @router.get(

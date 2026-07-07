@@ -53,6 +53,7 @@ def test_generator_writes_foundation_and_rolls_no_secrets(tmp_path: Path) -> Non
     assert (project / "scripts/validate_release_profiles.sh").is_file()
     assert (project / "scripts/finalize_local_commit.sh").is_file()
     assert (project / "scripts/publish_project.sh").is_file()
+    assert (project / "scripts/register_installable_app.sh").is_file()
     assert (project / ".github/workflows/android-release.yml").is_file()
     assert (project / "codex-bridge.yaml").is_file()
     assert (project / "docs/workbench.md").is_file()
@@ -352,12 +353,46 @@ def test_generated_contract_docs_have_coherent_minimum_content(
     assert "runtime_profiles:" in contracts
     assert "productive_release:" in contracts
     assert "mock_release:" in contracts
+    assert "codex_mobile_catalog:" in contracts
+    assert "scripts/register_installable_app.sh" in contracts
     assert "APP_RUNTIME_PROFILE=real" in runtime_doc
     assert "android-mock-vX.Y.Z-build.N" in runtime_doc
     assert "sourceApp: clinica-norte" in bridge
     assert "workbench-sdd/v1" in bridge
     assert "APP_RUNTIME_PROFILE=real" in workbench
     assert "hidden or disabled" in " ".join(workbench.split())
+
+
+def test_generated_project_registers_installable_app_contract(
+    tmp_path: Path,
+) -> None:
+    manifest_plan = ProjectFactoryManifestService(
+        projects_root=tmp_path,
+    ).plan_manifest(
+        ProjectFactoryManifestInput(
+            name="Clinica Norte",
+            business_type="medical",
+            primary_goal="Reservar turnos",
+        )
+    )
+
+    ProjectFactoryGeneratorService().generate(manifest_plan)
+
+    project = tmp_path / "clinica-norte"
+    script = project / "scripts/register_installable_app.sh"
+    assert script.is_file()
+    assert script.stat().st_mode & stat.S_IXUSR
+    content = script.read_text(encoding="utf-8")
+    assert 'SOURCE_APP="${SOURCE_APP:-clinica-norte}"' in content
+    assert 'DISPLAY_NAME="${DISPLAY_NAME:-Clinica Norte}"' in content
+    assert 'BRIDGE_URL="${BRIDGE_URL:-http://127.0.0.1:8000}"' in content
+    assert 'POST "$BRIDGE_URL/installable-apps"' in content
+    assert 'installable-apps/$SOURCE_APP' in content
+    assert "REQUIRE_INSTALLABLE_APK" in content
+
+    readme = (project / "README.md").read_text(encoding="utf-8")
+    assert "scripts/register_installable_app.sh" in readme
+    assert "/installable-apps/{sourceApp}" in readme
 
 
 def test_generated_flutter_mock_seed_selector_is_mock_profile_only(

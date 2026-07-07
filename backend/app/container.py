@@ -123,6 +123,7 @@ def build_container(settings: Settings | None = None) -> AppContainer:
             token=resolved_settings.app_update_github_token,
             timeout_seconds=resolved_settings.app_update_github_timeout_seconds,
         ),
+        registry_path=resolved_settings.app_update_registry_path,
     )
     sdd_project_service = SddProjectService(
         projects_root=resolved_settings.projects_root,

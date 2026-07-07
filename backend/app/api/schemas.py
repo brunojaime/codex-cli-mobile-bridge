@@ -479,6 +479,54 @@ class InstallableAppsResponse(BaseModel):
     apps: list[InstallableAppResponse]
 
 
+class InstallableAppRegistrationRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    source_app: str = Field(..., min_length=1, max_length=120, alias="sourceApp")
+    display_name: str = Field(..., min_length=1, max_length=160, alias="displayName")
+    repo: str = Field(..., min_length=3, max_length=200)
+    release_tag_pattern: str = Field(
+        default="android-v*",
+        min_length=1,
+        max_length=120,
+        alias="releaseTagPattern",
+    )
+    apk_asset_pattern: str = Field(
+        default="*.apk",
+        min_length=1,
+        max_length=160,
+        alias="apkAssetPattern",
+    )
+    latest_asset_name: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=160,
+        alias="latestAssetName",
+    )
+    required_minimum_build: int | None = Field(
+        default=None,
+        ge=0,
+        alias="requiredMinimumBuild",
+    )
+    release_channel: str = Field(
+        default="stable",
+        min_length=1,
+        max_length=40,
+        alias="releaseChannel",
+    )
+    expected_package_id: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=200,
+        alias="expectedPackageId",
+    )
+    verified_package_ids: dict[str, str] = Field(
+        default_factory=dict,
+        alias="verifiedPackageIds",
+    )
+    enabled: bool = True
+
+
 class FeedbackBatchStartRequest(BaseModel):
     batch_id: str | None = Field(
         default=None,
