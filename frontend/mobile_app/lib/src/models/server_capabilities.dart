@@ -15,6 +15,10 @@ class ServerCapabilities {
     required this.documentTextCharLimit,
     this.feedbackSourceWorkspaceAliases = const <String, String>{},
     this.supportsSdd = false,
+    this.supportsProjectFactory = false,
+    this.backendVersion,
+    this.backendCommit,
+    this.features = const <String, bool>{},
     this.speechOutputVoice,
     this.speechOutputResponseFormat,
     this.preferredClientUrl,
@@ -30,6 +34,10 @@ class ServerCapabilities {
   final bool supportsJobRetry;
   final bool supportsPushJobStream;
   final bool supportsSdd;
+  final bool supportsProjectFactory;
+  final String? backendVersion;
+  final String? backendCommit;
+  final Map<String, bool> features;
   final String speechOutputBackend;
   final String? speechOutputVoice;
   final String? speechOutputResponseFormat;
@@ -54,6 +62,11 @@ class ServerCapabilities {
       supportsJobRetry: json['supports_job_retry'] as bool? ?? false,
       supportsPushJobStream: json['supports_push_job_stream'] as bool? ?? false,
       supportsSdd: json['supports_sdd'] as bool? ?? false,
+      supportsProjectFactory:
+          json['supports_project_factory'] as bool? ?? false,
+      backendVersion: json['backend_version'] as String?,
+      backendCommit: json['backend_commit'] as String?,
+      features: _boolMapFromJson(json['features']),
       speechOutputBackend:
           json['speech_output_backend'] as String? ?? 'disabled',
       speechOutputVoice: json['speech_output_voice'] as String?,
@@ -84,5 +97,12 @@ class ServerCapabilities {
         .map((item) => item?.toString() ?? '')
         .where((item) => item.trim().isNotEmpty)
         .toList(growable: false);
+  }
+
+  static Map<String, bool> _boolMapFromJson(Object? value) {
+    if (value is! Map) return const <String, bool>{};
+    return value.map(
+      (key, raw) => MapEntry(key.toString(), raw == true),
+    )..removeWhere((key, _) => key.trim().isEmpty);
   }
 }

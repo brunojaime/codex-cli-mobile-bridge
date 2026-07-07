@@ -287,18 +287,21 @@ class ChatController extends ChangeNotifier {
     );
   }
 
-  Future<void> createNewSession({String? workspacePath}) async {
-    await createNewSessionWithProfile(workspacePath: workspacePath);
+  Future<void> createNewSession({String? workspacePath, String? title}) async {
+    await createNewSessionWithProfile(
+        workspacePath: workspacePath, title: title);
   }
 
   Future<void> createNewSessionWithProfile({
     String? workspacePath,
     String? agentProfileId,
+    String? title,
     bool turnSummariesEnabled = false,
   }) async {
     _setLoading(true);
     try {
       final session = await _apiClient.createSession(
+        title: title,
         workspacePath: workspacePath,
         agentProfileId: agentProfileId,
         turnSummariesEnabled: turnSummariesEnabled,

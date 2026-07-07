@@ -25,8 +25,8 @@ void main() {
                           logoModes: <String>['generate', 'upload'],
                           businessTypes: <String>['medical_appointments'],
                           creationWorkflow: <String, dynamic>{
-                            'generator_runs': 10,
-                            'reviewer_runs': 10,
+                            'generator_runs': 20,
+                            'reviewer_runs': 20,
                           },
                         ),
                       ),

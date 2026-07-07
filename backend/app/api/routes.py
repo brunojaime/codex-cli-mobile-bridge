@@ -3,8 +3,11 @@ from __future__ import annotations
 import base64
 import binascii
 import json
+import os
 import re
+import subprocess
 from collections.abc import Iterator
+from functools import lru_cache
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Any
@@ -222,6 +225,12 @@ _FALLBACK_FEEDBACK_WORKFLOW_PRESETS = (
     ),
 )
 _FEEDBACK_WORKSPACE_KEY_PATTERN = re.compile(r"[^a-z0-9]+")
+_BACKEND_FEATURES = {
+    "project_factory": True,
+    "sdd": True,
+    "feedback_bridge": True,
+    "app_updates": True,
+}
 
 
 def get_container() -> AppContainer:
@@ -232,6 +241,25 @@ def get_message_service(
     container: AppContainer = Depends(get_container),
 ) -> MessageService:
     return container.message_service
+
+
+@lru_cache(maxsize=1)
+def _backend_commit() -> str | None:
+    env_sha = os.environ.get("GITHUB_SHA") or os.environ.get("SOURCE_VERSION")
+    if env_sha:
+        return env_sha[:12]
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--short=12", "HEAD"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    commit = result.stdout.strip()
+    return commit or None
 
 
 @router.get("/health", response_model=HealthResponse)
@@ -247,6 +275,9 @@ async def healthcheck(
     persistence_issue = container.persistence_startup_issue
     return HealthResponse(
         server_name=container.settings.server_name,
+        backend_version="bridge-local",
+        backend_commit=_backend_commit(),
+        features=_BACKEND_FEATURES,
         backend_mode=container.settings.effective_backend_mode,
         projects_root=container.settings.projects_root,
         persistence_available=container.message_service.is_persistence_available(),
@@ -296,6 +327,10 @@ async def capabilities(
         supports_job_retry=service.supports_job_retry(),
         supports_push_job_stream=True,
         supports_sdd=True,
+        supports_project_factory=True,
+        backend_version="bridge-local",
+        backend_commit=_backend_commit(),
+        features=_BACKEND_FEATURES,
         speech_output_backend=speech_status.backend,
         speech_output_voice=speech_status.voice,
         speech_output_response_format=speech_status.response_format,

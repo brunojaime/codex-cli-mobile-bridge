@@ -6486,6 +6486,9 @@ def test_health_endpoint_exposes_audio_transcription_status() -> None:
 
     assert response.status_code == 200
     payload = response.json()
+    assert payload["backend_version"] == "bridge-local"
+    assert payload["backend_commit"]
+    assert payload["features"]["project_factory"] is True
     assert payload["audio_transcription_backend"] == "auto"
     assert payload["audio_transcription_resolved_backend"] == "faster_whisper"
     assert payload["audio_transcription_ready"] is True
@@ -6542,6 +6545,10 @@ def test_capabilities_endpoint_exposes_speech_output_status() -> None:
     assert response.status_code == 200
     payload = response.json()
     assert payload["supports_image_input"] is True
+    assert payload["supports_project_factory"] is True
+    assert payload["features"]["project_factory"] is True
+    assert payload["backend_version"] == "bridge-local"
+    assert payload["backend_commit"]
     assert payload["supports_speech_output"] is True
     assert payload["speech_output_backend"] == "openai"
     assert payload["speech_output_voice"] == "cedar"

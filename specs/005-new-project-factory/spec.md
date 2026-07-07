@@ -28,7 +28,7 @@ release-readiness documentation.
 
 ## Scope
 
-- A minimal wizard in the existing mobile/workbench app.
+- A chat-mode "New project" entry in the existing mobile/workbench app.
 - A backend project-factory API with draft, dry-run, generate, history,
   reference-asset, doctor, and job status flows.
 - A validated `.codex/project.yaml` manifest contract.
@@ -55,19 +55,27 @@ release-readiness documentation.
 - Do not generate demo/mock release builds unless explicitly requested.
 - Do not overwrite an existing project folder.
 
-## Wizard Contract
+## Chat-Mode Contract
 
-The first wizard version asks only for decisions that cannot be inferred:
+The primary "New project" action creates a normal chat configured as Project
+Factory mode. The first agent response asks only for decisions that cannot be
+inferred and states defaults clearly:
 
 1. Project name.
 2. Business type.
 3. Primary goal.
 4. Platforms, defaulting to iOS, Android, and Web.
-5. Optional visual reference images.
+5. Optional visual reference images attached through the normal chat attachment
+   tray.
 6. Logo/icon choice: upload, generate, or temporary placeholder.
 7. Backend choice, defaulting to FastAPI.
-8. Confirmation.
+8. Preview and explicit confirmation before generating files.
 9. History/recovery panel for persisted drafts and jobs.
+
+The older form-style dialog remains an implementation component/fallback, but
+the user-facing path is chat-first so the user can describe an app naturally,
+attach images in the same conversation, ask the agent to infer missing name or
+business type, and approve a preview before generation.
 
 ## Generated Project Shape
 
@@ -96,7 +104,7 @@ new-project/
 - Flutter targets: iOS, Android, Web.
 - Backend: FastAPI unless the user selects another option.
 - Creation runner: Codex CLI with generator/reviewer batches.
-- Creation batch default: 10 generator runs and 10 reviewer runs.
+- Creation batch default: 20 generator runs and 20 reviewer runs.
 - Auth: registration, email/password login, password reset path, session
   persistence, and Google login placeholders.
 - Access control: RBAC with `owner`, `admin`, `manager`, `staff`, `customer`,

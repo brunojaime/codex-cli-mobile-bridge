@@ -11,8 +11,8 @@ DEFAULT_PLATFORMS = ("ios", "android", "web")
 DEFAULT_ROLES = ("owner", "admin", "manager", "staff", "customer", "guest")
 DEFAULT_BACKEND = "fastapi"
 DEFAULT_FRONTEND = "flutter"
-DEFAULT_CREATION_GENERATOR_RUNS = 10
-DEFAULT_CREATION_REVIEWER_RUNS = 10
+DEFAULT_CREATION_GENERATOR_RUNS = 20
+DEFAULT_CREATION_REVIEWER_RUNS = 20
 
 ALLOWED_PLATFORMS = frozenset({"ios", "android", "web"})
 ALLOWED_BACKENDS = frozenset({"fastapi", "go", "none"})

@@ -18,11 +18,12 @@
 - [x] T008 Add route tests for draft, dry-run, validation errors, status, history,
       duplicate generation, and recovery.
 
-## Phase 3: Mobile Wizard
+## Phase 3: Mobile Chat Flow
 
 - [x] T009 Add New project entry point to the existing Flutter app.
-- [x] T010 Add wizard dialog for name, business type, goal, platforms, visual
-      references, logo/icon, backend, and confirmation.
+- [x] T010 Add chat-first New Project mode that asks for name, business type,
+      goal, platforms, visual references, logo/icon, backend, style, preview,
+      and confirmation through the normal conversation.
 - [x] T011 Add API client calls, progress display, and Project Factory History.
 - [x] T012 Add Flutter widget tests for the wizard, progress, and history.
 
@@ -70,3 +71,10 @@
 - [x] T032 Add draft/job history APIs and mobile history panel.
 - [x] T033 Document operational config, toolchain, and generated validation.
 - [x] T034 Run acceptance validation.
+
+## Phase 10: Post-Release Chat-Mode Hardening
+
+- [x] T035 Add backend version/capability metadata for Project Factory.
+- [x] T036 Harden backend PID handling and post-restart validation.
+- [x] T037 Move primary New project UX from modal form to chat-mode kickoff.
+- [x] T038 Update creation defaults to 20 generator and 20 reviewer runs.

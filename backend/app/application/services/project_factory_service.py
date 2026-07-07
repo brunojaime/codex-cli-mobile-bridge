@@ -203,9 +203,9 @@ class ProjectFactoryService:
             ),
             _doctor_check(
                 "default_creation_workflow",
-                DEFAULT_CREATION_GENERATOR_RUNS == 10
-                and DEFAULT_CREATION_REVIEWER_RUNS == 10,
-                "Default creation workflow must stay 10 generator and 10 reviewer runs.",
+                DEFAULT_CREATION_GENERATOR_RUNS == 20
+                and DEFAULT_CREATION_REVIEWER_RUNS == 20,
+                "Default creation workflow must stay 20 generator and 20 reviewer runs.",
             ),
             _doctor_check(
                 "local_generator_available",

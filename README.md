@@ -155,8 +155,8 @@ Important variables:
 - `PROJECT_FACTORY_REFERENCE_ASSET_DIR=.data/project_factory_reference_assets`
 - `PROJECT_FACTORY_STATE_DIR=.data/project_factory_state`
 - `PROJECT_FACTORY_ASYNC_JOBS=true`
-- `PROJECT_FACTORY_GENERATOR_RUNS_OVERRIDE=` leave empty for the default 10
-- `PROJECT_FACTORY_REVIEWER_RUNS_OVERRIDE=` leave empty for the default 10
+- `PROJECT_FACTORY_GENERATOR_RUNS_OVERRIDE=` leave empty for the default 20
+- `PROJECT_FACTORY_REVIEWER_RUNS_OVERRIDE=` leave empty for the default 20
 - `PROJECT_FACTORY_STEP_TIMEOUT_SECONDS=0`
 - `PROJECT_FACTORY_RUN_GENERATED_VALIDATION=false`
 - `API_HOST=0.0.0.0`
@@ -228,6 +228,12 @@ Project Factory is the built-in "New project" flow. It creates a sibling
 project under `PROJECTS_ROOT`, stores draft/job history in the bridge, and
 generates a Flutter + FastAPI foundation with Workbench specs.
 
+In the mobile app the primary "New project" action opens a normal chat in
+Project Factory mode. The agent asks for the project name, business type,
+primary goal, style/colors, roles, and confirmation; anything the user does not
+know can be inferred from the conversation. Reference images should be attached
+with the normal chat attachment tray.
+
 Operational variables:
 
 - `PROJECTS_ROOT` is the parent directory where new project folders are created.
@@ -241,8 +247,8 @@ Operational variables:
   recovered as `interrupted`.
 - `PROJECT_FACTORY_GENERATOR_RUNS_OVERRIDE` and
   `PROJECT_FACTORY_REVIEWER_RUNS_OVERRIDE` are optional local/dev overrides.
-  Leave them empty in normal use so the manifest default stays 10 generator
-  runs and 10 reviewer runs.
+  Leave them empty in normal use so the manifest default stays 20 generator
+  runs and 20 reviewer runs.
 - `PROJECT_FACTORY_STEP_TIMEOUT_SECONDS=0` disables per-step timeout. Set a
   positive value to bound each Codex CLI or generated-validation step.
 - `PROJECT_FACTORY_ASYNC_JOBS=true` starts generation in a background thread.
@@ -268,6 +274,20 @@ Run it from the generated project root to install/prepare the generated backend,
 run backend tests, start FastAPI locally, validate auth/admin/notifications via
 real HTTP, and run the generated Flutter tests with
 `API_BASE_URL=http://127.0.0.1:<port>`.
+
+Post-release backend checklist for APK updates:
+
+```bash
+git pull
+scripts/stop_backend.sh
+scripts/run_backend_detached.sh
+scripts/validate_backend_post_release.sh
+```
+
+The validation script checks local `/health`, local
+`/project-factory/options`, and Tailscale Serve proxy configuration. If the
+mobile app shows that Project Factory needs a backend update or restart, run the
+same checklist on the bridge host before retrying from the phone.
 
 Voice-note transcription options:
 

@@ -249,3 +249,12 @@ if ! restart_backend "${RESTART_MODE}"; then
   disable_drain || true
   exit 1
 fi
+
+if ! "${ROOT_DIR}/scripts/validate_backend_post_release.sh"; then
+  echo "Backend post-restart validation failed; attempting to disable drain." >&2
+  disable_drain || true
+  exit 1
+fi
+
+disable_drain
+echo "Backend restarted and post-restart validation passed."

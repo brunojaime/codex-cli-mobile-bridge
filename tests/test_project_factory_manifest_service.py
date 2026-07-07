@@ -53,7 +53,7 @@ def test_valid_manifest_includes_required_product_defaults(tmp_path: Path) -> No
     ]
 
 
-def test_creation_workflow_defaults_to_ten_generator_and_ten_reviewer_runs(
+def test_creation_workflow_defaults_to_twenty_generator_and_twenty_reviewer_runs(
     tmp_path: Path,
 ) -> None:
     service = ProjectFactoryManifestService(projects_root=tmp_path)
@@ -69,8 +69,8 @@ def test_creation_workflow_defaults_to_ten_generator_and_ten_reviewer_runs(
     workflow = result.manifest["codex"]["creation_workflow"]
     assert workflow["runner"] == "codex_cli"
     assert workflow["mode"] == "generator_reviewer_batches"
-    assert workflow["generator_runs"] == DEFAULT_CREATION_GENERATOR_RUNS == 10
-    assert workflow["reviewer_runs"] == DEFAULT_CREATION_REVIEWER_RUNS == 10
+    assert workflow["generator_runs"] == DEFAULT_CREATION_GENERATOR_RUNS == 20
+    assert workflow["reviewer_runs"] == DEFAULT_CREATION_REVIEWER_RUNS == 20
 
 
 def test_seed_admin_manifest_uses_env_names_and_never_plain_password(

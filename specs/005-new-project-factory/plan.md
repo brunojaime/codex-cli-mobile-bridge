@@ -10,7 +10,7 @@ added.
   path under `PROJECTS_ROOT`.
 - Include mandatory auth, RBAC, admin, notifications, Codex, SDD, and release
   defaults.
-- Include Codex CLI creation workflow defaults of 10 generator runs and 10
+- Include Codex CLI creation workflow defaults of 20 generator runs and 20
   reviewer runs.
 - Keep seed admin values as environment variable names only.
 - Prove validation is deterministic and write-free.
@@ -24,11 +24,13 @@ added.
   reporting.
 - Block duplicate generation for the same draft.
 
-## Phase 3: Mobile Wizard
+## Phase 3: Mobile Chat Flow
 
 - Add the New project action to the current app.
-- Implement the minimal wizard flow.
-- Support optional visual reference uploads.
+- Implement the primary chat-mode flow: create a normal chat titled "New
+  project", configure Project Factory generator/reviewer agents, and send the
+  kickoff prompt that asks for missing project context.
+- Support optional visual references through the existing chat attachment tray.
 - Show dry-run summary and generation progress.
 - Open the generated workspace after success.
 - Add Project Factory History so persisted jobs can be inspected, watched again,

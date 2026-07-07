@@ -4,6 +4,8 @@ import 'package:codex_mobile_frontend/src/models/chat_session_summary.dart';
 import 'package:codex_mobile_frontend/src/models/codex_tooling.dart';
 import 'package:codex_mobile_frontend/src/models/feedback_queue_item.dart';
 import 'package:codex_mobile_frontend/src/models/project_factory.dart';
+import 'package:codex_mobile_frontend/src/models/server_capabilities.dart';
+import 'package:codex_mobile_frontend/src/models/server_health.dart';
 import 'package:codex_mobile_frontend/src/models/session_detail.dart';
 import 'package:codex_mobile_frontend/src/services/api_client.dart';
 import 'package:codex_mobile_frontend/src/services/chat_notification_service.dart';
@@ -37,8 +39,8 @@ void main() {
               "creation_workflow": {
                 "runner": "codex_cli",
                 "mode": "generator_reviewer_batches",
-                "generator_runs": 10,
-                "reviewer_runs": 10
+                "generator_runs": 20,
+                "reviewer_runs": 20
               }
             }
             ''',
@@ -100,8 +102,8 @@ void main() {
     );
 
     final options = await client.getProjectFactoryOptions();
-    expect(options.creationWorkflow['generator_runs'], 10);
-    expect(options.creationWorkflow['reviewer_runs'], 10);
+    expect(options.creationWorkflow['generator_runs'], 20);
+    expect(options.creationWorkflow['reviewer_runs'], 20);
 
     final draft = await client.createProjectFactoryDraft(
       const ProjectFactoryDraftRequest(
@@ -115,6 +117,76 @@ void main() {
     final job = await client.generateProjectFactoryDraft(draft.draftId);
     expect(job.isReady, isTrue);
     expect(job.targetPath, '/projects/clinica-norte');
+  });
+
+  test('project factory options 404 reports backend update action', () async {
+    final client = ApiClient(
+      baseUrl: 'http://localhost:8000',
+      client: MockClient((request) async {
+        expect(request.method, 'GET');
+        expect(request.url.path, '/project-factory/options');
+        return http.Response('{"detail":"Not Found"}', 404);
+      }),
+    );
+
+    expect(
+      client.getProjectFactoryOptions,
+      throwsA(
+        isA<ProjectFactoryUnavailableException>().having(
+          (error) => error.message,
+          'message',
+          contains('Restart or update the bridge backend'),
+        ),
+      ),
+    );
+  });
+
+  test('server metadata exposes project factory capability', () {
+    final capabilities = ServerCapabilities.fromJson(
+      const <String, dynamic>{
+        'supports_audio_input': true,
+        'supports_speech_output': false,
+        'supports_image_input': true,
+        'supports_document_input': true,
+        'supports_attachment_batch': true,
+        'supports_job_cancellation': true,
+        'supports_job_retry': true,
+        'supports_push_job_stream': true,
+        'supports_sdd': true,
+        'supports_project_factory': true,
+        'backend_version': 'bridge-local',
+        'backend_commit': 'abc123',
+        'features': <String, dynamic>{'project_factory': true},
+        'speech_output_backend': 'disabled',
+        'audio_max_upload_bytes': 1,
+        'image_max_upload_bytes': 2,
+        'document_max_upload_bytes': 3,
+        'document_text_char_limit': 4,
+      },
+    );
+    final health = ServerHealth.fromJson(
+      const <String, dynamic>{
+        'server_name': 'local',
+        'backend_mode': 'local',
+        'projects_root': '/projects',
+        'backend_version': 'bridge-local',
+        'backend_commit': 'abc123',
+        'features': <String, dynamic>{'project_factory': true},
+        'audio_transcription_backend': 'disabled',
+        'audio_transcription_resolved_backend': 'disabled',
+        'audio_transcription_ready': false,
+        'speech_synthesis_backend': 'disabled',
+        'speech_synthesis_ready': false,
+        'tailscale_installed': true,
+        'tailscale_online': true,
+      },
+    );
+
+    expect(capabilities.supportsProjectFactory, isTrue);
+    expect(capabilities.features['project_factory'], isTrue);
+    expect(capabilities.backendCommit, 'abc123');
+    expect(health.features['project_factory'], isTrue);
+    expect(health.backendVersion, 'bridge-local');
   });
 
   test('project factory client manages reference assets', () async {

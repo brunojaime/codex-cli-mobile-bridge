@@ -12,7 +12,7 @@ from backend.app.infrastructure.config.settings import Settings
 from backend.app.main import create_app
 
 
-def test_project_factory_options_exposes_ten_by_ten_creation_workflow(
+def test_project_factory_options_exposes_twenty_by_twenty_creation_workflow(
     tmp_path: Path,
 ) -> None:
     client = _client(tmp_path)
@@ -26,8 +26,8 @@ def test_project_factory_options_exposes_ten_by_ten_creation_workflow(
     assert payload["creation_workflow"] == {
         "runner": "codex_cli",
         "mode": "generator_reviewer_batches",
-        "generator_runs": 10,
-        "reviewer_runs": 10,
+        "generator_runs": 20,
+        "reviewer_runs": 20,
     }
 
 
@@ -80,7 +80,7 @@ def test_project_factory_draft_and_dry_run_are_write_free(tmp_path: Path) -> Non
     assert draft["manifest_plan"]["ok"] is True
     assert draft["manifest_plan"]["manifest"]["codex"]["creation_workflow"][
         "generator_runs"
-    ] == 10
+    ] == 20
     assert not (tmp_path / "clinica-norte").exists()
 
     dry_run_response = client.post(f"/project-factory/drafts/{draft_id}/dry-run")
@@ -401,10 +401,10 @@ def test_project_factory_generate_creates_local_project_foundation(tmp_path: Pat
     spec_text = (project / "specs/001-product-foundation/spec.md").read_text(
         encoding="utf-8",
     )
-    assert "generator_runs: 10" in manifest_text
-    assert "reviewer_runs: 10" in manifest_text
-    assert "generator runs: 10" in spec_text
-    assert "reviewer runs: 10" in spec_text
+    assert "generator_runs: 20" in manifest_text
+    assert "reviewer_runs: 20" in manifest_text
+    assert "generator runs: 20" in spec_text
+    assert "reviewer runs: 20" in spec_text
     assert "Nienfoadmin1994" not in _read_all_text(project)
 
 

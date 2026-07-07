@@ -29,6 +29,15 @@ class SynthesizedSpeechClip {
   final String responseFormat;
 }
 
+class ProjectFactoryUnavailableException implements Exception {
+  const ProjectFactoryUnavailableException(this.message);
+
+  final String message;
+
+  @override
+  String toString() => message;
+}
+
 class ApiClient {
   ApiClient({
     required this.baseUrl,
@@ -107,6 +116,12 @@ class ApiClient {
   Future<ProjectFactoryOptions> getProjectFactoryOptions() async {
     final response =
         await _client.get(Uri.parse('$baseUrl/project-factory/options'));
+
+    if (response.statusCode == 404) {
+      throw const ProjectFactoryUnavailableException(
+        'This backend does not expose Project Factory yet. Restart or update the bridge backend, then try again.',
+      );
+    }
 
     if (response.statusCode != 200) {
       throw Exception(

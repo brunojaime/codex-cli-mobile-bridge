@@ -43,6 +43,21 @@ const String _defaultAutoReviewerPrompt =
     'improves the implementation with more code, tighter validation, missing '
     'tests, edge cases, cleanup, or follow-up work. Reply only with that next '
     'prompt.';
+const String _projectFactoryGeneratorPrompt =
+    'You are the New Project Factory Codex inside Codex Mobile Bridge. '
+    'Guide the user through creating a new app as a normal chat, infer missing '
+    'project details from the conversation, ask concise questions, use any '
+    'attached images as visual references, produce a preview before generation, '
+    'and only create files after explicit confirmation. When confirmed, use the '
+    'bridge Project Factory workflow and keep specs, plan, tasks, reference '
+    'assets, Flutter, FastAPI, auth, RBAC, admin, notifications, validation, '
+    'and workspace handoff consistent.';
+const String _projectFactoryReviewerPrompt =
+    'You are reviewing the New Project Factory generator. Check that the '
+    'project brief, defaults, visual references, roles, auth, admin, '
+    'notifications, generated files, tests, and validation are complete. '
+    'Return only the next concrete prompt that should improve or verify the '
+    'generator output.';
 const List<double> _audioReplyPlaybackSpeeds = <double>[
   1.0,
   1.25,
@@ -1277,9 +1292,28 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   Future<void> _openNewProjectFactory() async {
     final activeBaseUrl = _activeServer?.baseUrl ?? widget.initialApiBaseUrl;
     final client = ApiClient(baseUrl: activeBaseUrl);
+    final capabilities = _activeServerCapabilities;
+    if (capabilities != null && !capabilities.supportsProjectFactory) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'New project needs an updated bridge backend. Restart or update the backend, then try again.',
+          ),
+        ),
+      );
+      return;
+    }
     ProjectFactoryOptions options;
     try {
       options = await client.getProjectFactoryOptions();
+    } on ProjectFactoryUnavailableException catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(error.message)),
+      );
+      return;
     } catch (error) {
       if (!mounted) {
         return;
@@ -1293,112 +1327,144 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       return;
     }
 
-    final draft = await showDialog<NewProjectFactoryDraft>(
-      context: context,
-      builder: (context) => Dialog(
-        backgroundColor: const Color(0xFF101931),
-        insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 720, maxHeight: 760),
-          child: NewProjectFactoryDialog(
-            options: options,
-            onOpenHistory: () async {
-              await showDialog<void>(
-                context: context,
-                builder: (context) => ProjectFactoryHistoryDialog(
-                  listJobs: client.listProjectFactoryJobs,
-                  getJob: client.getProjectFactoryJob,
-                  onOpenProjectPath: _openProjectFactoryTargetPath,
-                ),
-              );
-            },
-          ),
-        ),
-      ),
+    await _startNewProjectFactoryChat(options);
+  }
+
+  Future<void> _startNewProjectFactoryChat(
+      ProjectFactoryOptions options) async {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Starting a New project chat...')),
     );
-    if (draft == null) {
-      return;
-    }
+    await _chatController.createNewSession(title: 'New project');
     if (!mounted) {
       return;
     }
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Creating ${draft.name}...')),
-    );
-    try {
-      final createdDraft = await client.createProjectFactoryDraft(
-        ProjectFactoryDraftRequest(
-          name: draft.name,
-          businessType: draft.businessType,
-          primaryGoal: draft.primaryGoal,
-          platforms: draft.platforms,
-          backend: draft.backend,
-          logoMode: draft.logoMode,
-          visualReferencePaths: draft.visualReferencePaths,
-        ),
-      );
-      if (createdDraft.manifestPlan['ok'] != true) {
-        throw Exception('Project draft validation failed.');
-      }
-      if (!mounted) {
-        return;
-      }
-      if (draft.referenceImages.isNotEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              'Uploading ${draft.referenceImages.length} reference image${draft.referenceImages.length == 1 ? '' : 's'}...',
-            ),
+    final session = _chatController.currentSession;
+    if (session == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _chatController.errorText ?? 'Could not start New project chat.',
           ),
-        );
-      }
-      for (final image in draft.referenceImages) {
-        await client.uploadProjectFactoryReferenceAsset(
-          createdDraft.draftId,
-          image,
-        );
-      }
-      final startedJob =
-          await client.generateProjectFactoryDraft(createdDraft.draftId);
-      if (!mounted) {
-        return;
-      }
-      final job = await showDialog<ProjectFactoryJob>(
-        context: context,
-        barrierDismissible: false,
-        builder: (context) => ProjectFactoryProgressDialog(
-          initialJob: startedJob,
-          pollJob: client.getProjectFactoryJob,
         ),
       );
-      if (job == null) {
-        return;
-      }
-      final targetPath = job.targetPath;
-      if (!job.isReady || targetPath == null) {
-        throw Exception(
-          job.message.isEmpty ? 'Project generation failed.' : job.message,
-        );
-      }
+      return;
+    }
 
-      final workspace = await _openProjectFactoryTargetPath(targetPath);
-      if (!mounted) {
-        return;
-      }
+    final didConfigure = await _chatController.updateAgentConfiguration(
+      _projectFactoryChatConfiguration(session.agentConfiguration),
+    );
+    if (!mounted) {
+      return;
+    }
+    if (!didConfigure) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Project ${workspace.name} is ready.')),
+        SnackBar(
+          content: Text(
+            _chatController.errorText ??
+                'Could not configure New project agents.',
+          ),
+        ),
       );
-    } catch (error) {
-      if (!mounted) {
-        return;
-      }
+      return;
+    }
+
+    final didSend = await _chatController.sendMessage(
+      _projectFactoryKickoffPrompt(options),
+    );
+    if (!mounted) {
+      return;
+    }
+    if (!didSend) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not create project.\n$error')),
+        SnackBar(
+          content: Text(
+            _chatController.errorText ??
+                'Could not send the New project kickoff message.',
+          ),
+        ),
       );
     }
   }
 
+  AgentConfiguration _projectFactoryChatConfiguration(
+    AgentConfiguration current,
+  ) {
+    return current.copyWith(
+      preset: AgentPreset.review,
+      displayMode: AgentDisplayMode.showAll,
+      turnBudgetMode: TurnBudgetMode.eachAgent,
+      agents: current.agents.map((agent) {
+        switch (agent.agentId) {
+          case AgentId.generator:
+            return agent.copyWith(
+              enabled: true,
+              label: 'Project Factory',
+              prompt: _projectFactoryGeneratorPrompt,
+              visibility: AgentVisibilityMode.visible,
+              maxTurns: 20,
+            );
+          case AgentId.reviewer:
+            return agent.copyWith(
+              enabled: true,
+              label: 'Project Reviewer',
+              prompt: _projectFactoryReviewerPrompt,
+              visibility: AgentVisibilityMode.collapsed,
+              maxTurns: 20,
+            );
+          case AgentId.summary:
+            return agent.copyWith(enabled: false, maxTurns: 0);
+          case AgentId.user:
+          case AgentId.supervisor:
+          case AgentId.qa:
+          case AgentId.ux:
+          case AgentId.seniorEngineer:
+          case AgentId.scraper:
+            return agent.copyWith(enabled: false, maxTurns: 0);
+        }
+      }).toList(growable: false),
+    );
+  }
+
+  String _projectFactoryKickoffPrompt(ProjectFactoryOptions options) {
+    final workflow = options.creationWorkflow;
+    final generatorRuns = workflow['generator_runs'] ?? 20;
+    final reviewerRuns = workflow['reviewer_runs'] ?? 20;
+    final platforms = options.defaultPlatforms.join(', ');
+    final businessTypes = options.businessTypes.join(', ');
+    return '''
+Estamos en modo New Project Factory dentro de un chat normal.
+
+Primero respondeme al usuario, no generes archivos todavia. Tu primera respuesta debe explicar: "vamos a hacer un nuevo proyecto" y pedir lo minimo necesario para inferir o confirmar:
+- nombre del proyecto;
+- business type/rubro;
+- primary goal;
+- plataformas;
+- backend;
+- logo/icono;
+- colores, estilo visual y referencias de look and feel;
+- roles/permisos especiales si aplican;
+- si hay imagenes adjuntas en este chat, usalas como referencia visual nativa.
+
+Defaults si el usuario no modifica nada:
+- plataformas: $platforms;
+- backend: ${options.defaultBackend};
+- logo: generate;
+- roles base: owner, admin, manager, staff, customer, guest;
+- auth: login/registro + Google pending credentials;
+- admin/domain management: incluido;
+- notificaciones: incluido;
+- workflow al confirmar: $generatorRuns generator runs + $reviewerRuns reviewer runs.
+- business types sugeridos si necesita elegir: $businessTypes.
+
+Si el usuario no sabe el nombre, rubro o titulo, proponelo a partir de lo que cuente. Para colores y look and feel no inventes como definitivo: preguntale o propone 2-3 direcciones y espera confirmacion. Antes de crear nada, devolve un preview corto del proyecto que vas a armar y pedi confirmacion explicita tipo "ok, dale para adelante".
+
+Cuando el usuario confirme, recien ahi ejecuta la creacion real usando Project Factory del bridge y el repo actual: draft/manifest, reference assets desde imagenes adjuntas del chat cuando existan, specs/plan/tasks, backend FastAPI, Flutter, auth/RBAC/admin/notificaciones, validacion y apertura del workspace. Mantene la conversacion practica y anda trabajando con el reviewer durante el build.
+''';
+  }
+
+  // Kept for the Project Factory history/fallback dialog.
+  // ignore: unused_element
   Future<Workspace> _openProjectFactoryTargetPath(String targetPath) async {
     await _chatController.refreshWorkspaces();
     final workspace = _chatController.workspaces.firstWhere(

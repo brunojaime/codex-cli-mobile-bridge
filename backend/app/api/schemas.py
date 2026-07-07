@@ -2531,6 +2531,9 @@ class BackendDrainStatusResponse(BaseModel):
 class HealthResponse(BaseModel):
     status: str = "ok"
     server_name: str
+    backend_version: str | None = None
+    backend_commit: str | None = None
+    features: dict[str, bool] = Field(default_factory=dict)
     backend_mode: str
     projects_root: str
     persistence_available: bool
@@ -2594,6 +2597,10 @@ class ServerCapabilitiesResponse(BaseModel):
     supports_push_job_stream: bool
     supports_feedback_batches: bool = True
     supports_sdd: bool = True
+    supports_project_factory: bool = True
+    backend_version: str | None = None
+    backend_commit: str | None = None
+    features: dict[str, bool] = Field(default_factory=dict)
     speech_output_backend: str
     speech_output_voice: str | None = None
     speech_output_response_format: str | None = None
