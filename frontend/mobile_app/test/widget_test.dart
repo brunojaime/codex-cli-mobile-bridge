@@ -2340,6 +2340,47 @@ flowchart LR
     expect(configuration.byId(AgentId.summary)?.enabled, isFalse);
   });
 
+  test('project factory intake keeps reviewer disabled until confirmation', () {
+    final configuration = buildProjectFactoryIntakeConfiguration(
+      kDefaultAgentConfiguration,
+    );
+
+    expect(configuration.preset, AgentPreset.solo);
+    expect(configuration.byId(AgentId.generator)?.enabled, isTrue);
+    expect(configuration.byId(AgentId.generator)?.label, 'Project Factory');
+    expect(configuration.byId(AgentId.generator)?.maxTurns, 1);
+    expect(configuration.byId(AgentId.reviewer)?.enabled, isFalse);
+    expect(configuration.byId(AgentId.reviewer)?.label, 'Project Reviewer');
+    expect(configuration.byId(AgentId.reviewer)?.maxTurns, 0);
+    expect(isProjectFactoryIntakeConfiguration(configuration), isTrue);
+  });
+
+  test('project factory build configuration enables reviewer batches', () {
+    final intake = buildProjectFactoryIntakeConfiguration(
+      kDefaultAgentConfiguration,
+    );
+    final build = buildProjectFactoryBuildConfiguration(intake);
+
+    expect(build.preset, AgentPreset.review);
+    expect(build.byId(AgentId.generator)?.enabled, isTrue);
+    expect(build.byId(AgentId.generator)?.maxTurns, 20);
+    expect(build.byId(AgentId.reviewer)?.enabled, isTrue);
+    expect(build.byId(AgentId.reviewer)?.maxTurns, 20);
+    expect(isProjectFactoryIntakeConfiguration(build), isFalse);
+  });
+
+  test('project factory build confirmation requires explicit start text', () {
+    expect(isProjectFactoryBuildConfirmation('ok, dale para adelante'), isTrue);
+    expect(isProjectFactoryBuildConfirmation('comencemos'), isTrue);
+    expect(isProjectFactoryBuildConfirmation('dale arrancá'), isTrue);
+    expect(isProjectFactoryBuildConfirmation('todavia no, esperemos'), isFalse);
+    expect(isProjectFactoryBuildConfirmation('no comencemos todavía'), isFalse);
+    expect(
+      isProjectFactoryBuildConfirmation('me gusta, pero cambiemos colores'),
+      isFalse,
+    );
+  });
+
   test('supervisor turn budget mode parses and serializes cleanly', () {
     final configuration = AgentConfiguration.fromJson(
       <String, dynamic>{

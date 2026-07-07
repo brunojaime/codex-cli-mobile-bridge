@@ -58,6 +58,147 @@ const String _projectFactoryReviewerPrompt =
     'notifications, generated files, tests, and validation are complete. '
     'Return only the next concrete prompt that should improve or verify the '
     'generator output.';
+
+AgentConfiguration buildProjectFactoryIntakeConfiguration(
+  AgentConfiguration current, {
+  int generatorRuns = 1,
+}) {
+  return current.copyWith(
+    preset: AgentPreset.solo,
+    displayMode: AgentDisplayMode.showAll,
+    turnBudgetMode: TurnBudgetMode.eachAgent,
+    agents: current.agents.map((agent) {
+      switch (agent.agentId) {
+        case AgentId.generator:
+          return agent.copyWith(
+            enabled: true,
+            label: 'Project Factory',
+            prompt: _projectFactoryGeneratorPrompt,
+            visibility: AgentVisibilityMode.visible,
+            maxTurns: generatorRuns,
+          );
+        case AgentId.reviewer:
+          return agent.copyWith(
+            enabled: false,
+            label: 'Project Reviewer',
+            prompt: _projectFactoryReviewerPrompt,
+            visibility: AgentVisibilityMode.collapsed,
+            maxTurns: 0,
+          );
+        case AgentId.summary:
+          return agent.copyWith(enabled: false, maxTurns: 0);
+        case AgentId.user:
+        case AgentId.supervisor:
+        case AgentId.qa:
+        case AgentId.ux:
+        case AgentId.seniorEngineer:
+        case AgentId.scraper:
+          return agent.copyWith(enabled: false, maxTurns: 0);
+      }
+    }).toList(growable: false),
+  );
+}
+
+AgentConfiguration buildProjectFactoryBuildConfiguration(
+  AgentConfiguration current, {
+  int generatorRuns = 20,
+  int reviewerRuns = 20,
+}) {
+  return current.copyWith(
+    preset: AgentPreset.review,
+    displayMode: AgentDisplayMode.showAll,
+    turnBudgetMode: TurnBudgetMode.eachAgent,
+    agents: current.agents.map((agent) {
+      switch (agent.agentId) {
+        case AgentId.generator:
+          return agent.copyWith(
+            enabled: true,
+            label: 'Project Factory',
+            prompt: _projectFactoryGeneratorPrompt,
+            visibility: AgentVisibilityMode.visible,
+            maxTurns: generatorRuns,
+          );
+        case AgentId.reviewer:
+          return agent.copyWith(
+            enabled: true,
+            label: 'Project Reviewer',
+            prompt: _projectFactoryReviewerPrompt,
+            visibility: AgentVisibilityMode.collapsed,
+            maxTurns: reviewerRuns,
+          );
+        case AgentId.summary:
+          return agent.copyWith(enabled: false, maxTurns: 0);
+        case AgentId.user:
+        case AgentId.supervisor:
+        case AgentId.qa:
+        case AgentId.ux:
+        case AgentId.seniorEngineer:
+        case AgentId.scraper:
+          return agent.copyWith(enabled: false, maxTurns: 0);
+      }
+    }).toList(growable: false),
+  );
+}
+
+bool isProjectFactoryIntakeConfiguration(AgentConfiguration? configuration) {
+  if (configuration == null) {
+    return false;
+  }
+  final generator = configuration.byId(AgentId.generator);
+  final reviewer = configuration.byId(AgentId.reviewer);
+  return generator?.label == 'Project Factory' &&
+      generator?.enabled == true &&
+      reviewer?.label == 'Project Reviewer' &&
+      reviewer?.enabled == false;
+}
+
+bool isProjectFactoryBuildConfirmation(String? rawText) {
+  final text = _normalizeProjectFactoryConfirmationText(rawText);
+  if (text.isEmpty) {
+    return false;
+  }
+  const blockers = <String>[
+    'no comencemos',
+    'no empecemos',
+    'no arranquemos',
+    'no arranques',
+    'no empieces',
+    'todavia no',
+    'todavía no',
+    'espera',
+    'esperá',
+  ];
+  if (blockers.any(text.contains)) {
+    return false;
+  }
+  const confirmations = <String>[
+    'ok dale para adelante',
+    'dale para adelante',
+    'ok comencemos',
+    'comencemos',
+    'empecemos',
+    'arranquemos',
+    'arranca',
+    'arrancá',
+    'empeza',
+    'empezá',
+    'dale arrancá',
+    'dale arranca',
+    'go ahead',
+    'start build',
+    'start building',
+  ];
+  return confirmations.any(text.contains);
+}
+
+String _normalizeProjectFactoryConfirmationText(String? rawText) {
+  return (rawText ?? '')
+      .toLowerCase()
+      .replaceAll(RegExp(r'[^\p{L}\p{N}]+', unicode: true), ' ')
+      .replaceAll(RegExp(r'\s+'), ' ')
+      .trim();
+}
+
 const List<double> _audioReplyPlaybackSpeeds = <double>[
   1.0,
   1.25,
@@ -933,6 +1074,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     if (await _maybeHandleOpenMcpAppCommand(_textController.text)) {
       return true;
     }
+    if (!await _maybeActivateProjectFactoryBuildMode(_textController.text)) {
+      return false;
+    }
     final sessionIdBeforeSend = _chatController.selectedSessionId;
     final workspacePathBeforeSend =
         _chatController.currentSession?.workspacePath;
@@ -957,6 +1101,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     List<_PendingAttachmentDraft> attachments, {
     String? prompt,
   }) async {
+    if (!await _maybeActivateProjectFactoryBuildMode(prompt)) {
+      return false;
+    }
     final sessionIdBeforeSend = _chatController.selectedSessionId;
     final workspacePathBeforeSend =
         _chatController.currentSession?.workspacePath;
@@ -981,6 +1128,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     XFile audioFile, {
     String? message,
   }) async {
+    if (!await _maybeActivateProjectFactoryBuildMode(message)) {
+      return false;
+    }
     final sessionIdBeforeSend = _chatController.selectedSessionId;
     final workspacePathBeforeSend =
         _chatController.currentSession?.workspacePath;
@@ -1352,7 +1502,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     }
 
     final didConfigure = await _chatController.updateAgentConfiguration(
-      _projectFactoryChatConfiguration(session.agentConfiguration),
+      buildProjectFactoryIntakeConfiguration(session.agentConfiguration),
     );
     if (!mounted) {
       return;
@@ -1387,43 +1537,32 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     }
   }
 
-  AgentConfiguration _projectFactoryChatConfiguration(
-    AgentConfiguration current,
-  ) {
-    return current.copyWith(
-      preset: AgentPreset.review,
-      displayMode: AgentDisplayMode.showAll,
-      turnBudgetMode: TurnBudgetMode.eachAgent,
-      agents: current.agents.map((agent) {
-        switch (agent.agentId) {
-          case AgentId.generator:
-            return agent.copyWith(
-              enabled: true,
-              label: 'Project Factory',
-              prompt: _projectFactoryGeneratorPrompt,
-              visibility: AgentVisibilityMode.visible,
-              maxTurns: 20,
-            );
-          case AgentId.reviewer:
-            return agent.copyWith(
-              enabled: true,
-              label: 'Project Reviewer',
-              prompt: _projectFactoryReviewerPrompt,
-              visibility: AgentVisibilityMode.collapsed,
-              maxTurns: 20,
-            );
-          case AgentId.summary:
-            return agent.copyWith(enabled: false, maxTurns: 0);
-          case AgentId.user:
-          case AgentId.supervisor:
-          case AgentId.qa:
-          case AgentId.ux:
-          case AgentId.seniorEngineer:
-          case AgentId.scraper:
-            return agent.copyWith(enabled: false, maxTurns: 0);
-        }
-      }).toList(growable: false),
+  Future<bool> _maybeActivateProjectFactoryBuildMode(String? message) async {
+    if (!isProjectFactoryBuildConfirmation(message)) {
+      return true;
+    }
+    final session = _chatController.currentSession;
+    if (!isProjectFactoryIntakeConfiguration(session?.agentConfiguration)) {
+      return true;
+    }
+
+    final didConfigure = await _chatController.updateAgentConfiguration(
+      buildProjectFactoryBuildConfiguration(session!.agentConfiguration),
     );
+    if (!mounted) {
+      return didConfigure;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          didConfigure
+              ? 'New project build mode enabled: reviewer will run after confirmation.'
+              : _chatController.errorText ??
+                  'Could not enable New project build mode.',
+        ),
+      ),
+    );
+    return didConfigure;
   }
 
   String _projectFactoryKickoffPrompt(ProjectFactoryOptions options) {
@@ -1459,7 +1598,7 @@ Defaults si el usuario no modifica nada:
 
 Si el usuario no sabe el nombre, rubro o titulo, proponelo a partir de lo que cuente. Para colores y look and feel no inventes como definitivo: preguntale o propone 2-3 direcciones y espera confirmacion. Antes de crear nada, devolve un preview corto del proyecto que vas a armar y pedi confirmacion explicita tipo "ok, dale para adelante".
 
-Cuando el usuario confirme, recien ahi ejecuta la creacion real usando Project Factory del bridge y el repo actual: draft/manifest, reference assets desde imagenes adjuntas del chat cuando existan, specs/plan/tasks, backend FastAPI, Flutter, auth/RBAC/admin/notificaciones, validacion y apertura del workspace. Mantene la conversacion practica y anda trabajando con el reviewer durante el build.
+Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme, recien ahi ejecuta la creacion real usando Project Factory del bridge y el repo actual: draft/manifest, reference assets desde imagenes adjuntas del chat cuando existan, specs/plan/tasks, backend FastAPI, Flutter, auth/RBAC/admin/notificaciones, validacion y apertura del workspace. Mantene la conversacion practica y anda trabajando con el reviewer durante el build.
 ''';
   }
 
