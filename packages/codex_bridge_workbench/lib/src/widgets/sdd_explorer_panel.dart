@@ -1383,6 +1383,8 @@ class _SpecsTabState extends State<_SpecsTab> {
     }
     final selection = _validatedSelection(_selection, specs);
     final selectedSpec = specs[selection.specIndex];
+    final showSpecFileBeforeNavigator =
+        selection.kind == _SpecArtifactKind.treeSpec;
     if (_showDetail) {
       return SingleChildScrollView(
         controller: _detailScrollController,
@@ -1395,6 +1397,19 @@ class _SpecsTabState extends State<_SpecsTab> {
               onBack: () => setState(() => _showDetail = false),
             ),
             const SizedBox(height: 10),
+            if (showSpecFileBeforeNavigator) ...[
+              _SpecArtifactInspector(
+                project: widget.project,
+                spec: selectedSpec,
+                selection: selection,
+                showHeading: false,
+                diagramRenderer: widget.diagramRenderer,
+                onFeedback: widget.onFeedback,
+                onCodexAction: widget.onCodexAction,
+                onSelected: _select,
+              ),
+              const SizedBox(height: 10),
+            ],
             _SpecTraceNavigator(
               specs: specs,
               selection: selection,
@@ -1402,17 +1417,19 @@ class _SpecsTabState extends State<_SpecsTab> {
               title: 'Inside this spec',
               allowSpecSwitch: false,
             ),
-            const SizedBox(height: 10),
-            _SpecArtifactInspector(
-              project: widget.project,
-              spec: selectedSpec,
-              selection: selection,
-              showHeading: false,
-              diagramRenderer: widget.diagramRenderer,
-              onFeedback: widget.onFeedback,
-              onCodexAction: widget.onCodexAction,
-              onSelected: _select,
-            ),
+            if (!showSpecFileBeforeNavigator) ...[
+              const SizedBox(height: 10),
+              _SpecArtifactInspector(
+                project: widget.project,
+                spec: selectedSpec,
+                selection: selection,
+                showHeading: false,
+                diagramRenderer: widget.diagramRenderer,
+                onFeedback: widget.onFeedback,
+                onCodexAction: widget.onCodexAction,
+                onSelected: _select,
+              ),
+            ],
           ],
         ),
       );
@@ -1602,7 +1619,6 @@ class _SpecIntakeComposerState extends State<_SpecIntakeComposer> {
   Future<void> _attachImage() async {
     final picker = widget.mediaAttachmentPicker;
     if (picker == null) {
-      _showAttachmentUnavailable('Image upload');
       return;
     }
     await _attachMedia(picker: picker, kind: 'image');
@@ -1611,7 +1627,6 @@ class _SpecIntakeComposerState extends State<_SpecIntakeComposer> {
   Future<void> _attachAudio() async {
     final picker = widget.audioAttachmentPicker;
     if (picker == null) {
-      _showAttachmentUnavailable('Audio capture');
       return;
     }
     await _attachMedia(picker: picker, kind: 'audio');
@@ -1620,7 +1635,6 @@ class _SpecIntakeComposerState extends State<_SpecIntakeComposer> {
   Future<void> _attachStructured() async {
     final picker = widget.structuredAttachmentPicker;
     if (picker == null) {
-      _showAttachmentUnavailable('Structured media');
       return;
     }
     await _run(() async {
@@ -1632,12 +1646,6 @@ class _SpecIntakeComposerState extends State<_SpecIntakeComposer> {
         _preview = null;
         _clearGeneratedOutput();
       });
-    });
-  }
-
-  void _showAttachmentUnavailable(String capability) {
-    setState(() {
-      _attachmentStatus = '$capability is not configured by this host app.';
     });
   }
 
@@ -2198,7 +2206,7 @@ class _IntakeRequestBox extends StatelessWidget {
                 _IntakeAttachmentAction(
                   tooltip: audioConfigured
                       ? 'Attach audio note'
-                      : 'Audio capture is not configured',
+                      : 'Audio is unavailable in this app',
                   icon: Icons.mic_none_rounded,
                   label: 'Audio',
                   configured: audioConfigured,
@@ -2207,7 +2215,7 @@ class _IntakeRequestBox extends StatelessWidget {
                 _IntakeAttachmentAction(
                   tooltip: imageConfigured
                       ? 'Attach image'
-                      : 'Image upload is not configured',
+                      : 'Image upload is unavailable in this app',
                   icon: Icons.image_outlined,
                   label: 'Image',
                   configured: imageConfigured,
@@ -2216,7 +2224,7 @@ class _IntakeRequestBox extends StatelessWidget {
                 _IntakeAttachmentAction(
                   tooltip: structuredConfigured
                       ? 'Attach structured media'
-                      : 'Structured media is not configured',
+                      : 'Structured media is unavailable in this app',
                   icon: Icons.crop_free_rounded,
                   label: 'Structured',
                   configured: structuredConfigured,
@@ -2259,7 +2267,7 @@ class _IntakeAttachmentAction extends StatelessWidget {
             : _WorkbenchColors.surfaceHigh,
         borderRadius: BorderRadius.circular(8),
         child: InkWell(
-          onTap: onPressed,
+          onTap: configured ? onPressed : null,
           borderRadius: BorderRadius.circular(8),
           child: Container(
             constraints: const BoxConstraints(minWidth: 92, minHeight: 38),
@@ -2285,6 +2293,16 @@ class _IntakeAttachmentAction extends StatelessWidget {
                     fontSize: 12,
                   ),
                 ),
+                if (!configured) ...[
+                  const SizedBox(width: 6),
+                  Icon(
+                    Icons.block_rounded,
+                    size: 14,
+                    color: _WorkbenchColors.secondaryText.withValues(
+                      alpha: 0.82,
+                    ),
+                  ),
+                ],
               ],
             ),
           ),
@@ -4060,6 +4078,22 @@ class _SpecTreeNavigator extends StatelessWidget {
                 ),
               ),
             ],
+            if (tree.plans.any((plan) => plan.tasks.isNotEmpty)) ...[
+              const SizedBox(height: 8),
+              _AllSpecTasksExpansion(
+                tree: tree,
+                onSelected: (planIndex, taskIndex) {
+                  onSelected(
+                    _SpecArtifactSelection(
+                      specIndex: selection.specIndex,
+                      kind: _SpecArtifactKind.treeTask,
+                      artifactIndex: planIndex,
+                      taskIndex: taskIndex,
+                    ),
+                  );
+                },
+              ),
+            ],
           ] else if (selectedPlan != null) ...[
             TextButton.icon(
               onPressed: () => onSelected(
@@ -4114,6 +4148,99 @@ class _SpecTreeNavigator extends StatelessWidget {
             ],
           ] else
             const _InfoCard(title: 'Plan', detail: 'Missing plan node'),
+        ],
+      ),
+    );
+  }
+}
+
+class _AllSpecTasksExpansion extends StatefulWidget {
+  const _AllSpecTasksExpansion({required this.tree, required this.onSelected});
+
+  final SddSpecTree tree;
+  final void Function(int planIndex, int taskIndex) onSelected;
+
+  @override
+  State<_AllSpecTasksExpansion> createState() => _AllSpecTasksExpansionState();
+}
+
+class _AllSpecTasksExpansionState extends State<_AllSpecTasksExpansion> {
+  bool _expanded = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final taskCount = widget.tree.plans.fold<int>(
+      0,
+      (total, plan) => total + plan.tasks.length,
+    );
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: _expanded
+            ? _WorkbenchColors.primary.withValues(alpha: 0.08)
+            : _WorkbenchColors.background,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: _WorkbenchColors.border),
+      ),
+      child: Column(
+        children: <Widget>[
+          Material(
+            color: Colors.transparent,
+            borderRadius: BorderRadius.circular(8),
+            child: InkWell(
+              borderRadius: BorderRadius.circular(8),
+              onTap: () => setState(() => _expanded = !_expanded),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 9,
+                ),
+                child: Row(
+                  children: <Widget>[
+                    Icon(
+                      _expanded
+                          ? Icons.expand_less_rounded
+                          : Icons.expand_more_rounded,
+                      size: 19,
+                      color: _WorkbenchColors.primary,
+                    ),
+                    const SizedBox(width: 8),
+                    const Expanded(
+                      child: Text(
+                        'See all tasks',
+                        style: TextStyle(
+                          color: _WorkbenchColors.onBackground,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                    ),
+                    _TinyMetaChip(
+                      icon: Icons.checklist_rounded,
+                      label: '$taskCount tasks',
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          if (_expanded) ...[
+            const Divider(height: 1, color: _WorkbenchColors.border),
+            for (final planEntry in widget.tree.plans.indexed)
+              for (final taskEntry in planEntry.$2.tasks.indexed) ...[
+                if (planEntry.$1 > 0 || taskEntry.$1 > 0)
+                  const Divider(height: 1, color: _WorkbenchColors.border),
+                _TreeNodeRow(
+                  icon: Icons.checklist_rounded,
+                  label:
+                      'Plan ${planEntry.$2.number} · Task ${taskEntry.$2.number}',
+                  title: taskEntry.$2.title,
+                  selected: false,
+                  level: 0,
+                  status: taskEntry.$2.status,
+                  trailing: 'Plan ${planEntry.$2.number}',
+                  onTap: () => widget.onSelected(planEntry.$1, taskEntry.$1),
+                ),
+              ],
+          ],
         ],
       ),
     );

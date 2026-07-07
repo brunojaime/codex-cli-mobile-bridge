@@ -386,6 +386,11 @@ void main() {
 
     expect(find.text('Inside this spec'), findsOneWidget);
     expect(find.text('Plans in this spec'), findsOneWidget);
+    expect(find.text('spec.md'), findsOneWidget);
+    expect(
+      tester.getTopLeft(find.text('spec.md')).dy,
+      lessThan(tester.getTopLeft(find.text('Plans in this spec')).dy),
+    );
     expect(find.text('Plan 1'), findsOneWidget);
     expect(find.text('Plan 2'), findsOneWidget);
     expect(find.text('Task 1'), findsNothing);
@@ -393,6 +398,16 @@ void main() {
     expect(find.text('Reserve cart units'), findsNothing);
     expect(find.textContaining('Plan:'), findsNothing);
     expect(find.textContaining('Tasks:'), findsNothing);
+
+    await tester.ensureVisible(find.text('See all tasks'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('See all tasks'));
+    await tester.pumpAndSettle();
+    expect(find.text('Plan 1 · Task 1'), findsOneWidget);
+    expect(find.text('Plan 2 · Task 3'), findsOneWidget);
+    expect(find.text('Reserve cart units'), findsOneWidget);
+    expect(find.text('Plan 1'), findsWidgets);
+    expect(find.text('Plan 2'), findsWidgets);
 
     await tester.tap(find.text('Plan 1').first);
     await tester.pumpAndSettle();
@@ -407,7 +422,9 @@ void main() {
 
     await tester.tap(find.text('Back to spec plans').first);
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Plan 2').first);
+    await tester.ensureVisible(find.text('Checkout reservation').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Checkout reservation').first);
     await tester.pumpAndSettle();
     expect(find.text('Tasks in Plan 2'), findsOneWidget);
     expect(find.text('Plan 2: Checkout reservation'), findsWidgets);
@@ -474,6 +491,8 @@ void main() {
       await tester.tap(find.text('SAT Catalog Flow').first);
       await tester.pumpAndSettle();
 
+      await tester.ensureVisible(find.text('Spec trace').first);
+      await tester.pumpAndSettle();
       await tester.tap(find.text('Spec trace').first);
       await tester.pumpAndSettle();
 
@@ -526,6 +545,8 @@ void main() {
       await tester.tap(find.text('SAT Catalog Flow').first);
       await tester.pumpAndSettle();
 
+      await tester.ensureVisible(find.text('Spec trace').first);
+      await tester.pumpAndSettle();
       await tester.tap(find.text('Spec trace').first);
       await tester.pumpAndSettle();
       await tester.tap(find.text('Plan: plan.md').first);
@@ -678,6 +699,8 @@ void main() {
     await tester.tap(find.text('Spec trace').first);
     await tester.pumpAndSettle();
     await tester.tap(find.text('Plan: build-plan.md').first);
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Show details').first);
     await tester.pumpAndSettle();
     await tester.tap(find.text('Show details').first);
     await tester.pumpAndSettle();
@@ -835,7 +858,9 @@ void main() {
     expect(find.textContaining('Run SDD doctor'), findsOneWidget);
   });
 
-  testWidgets('spec intake explains unavailable media pickers', (tester) async {
+  testWidgets('spec intake keeps unavailable media pickers quiet', (
+    tester,
+  ) async {
     tester.view.physicalSize = const Size(360, 780);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(() {
@@ -861,21 +886,20 @@ void main() {
     await _tapVisible(tester, find.text('Audio'));
     expect(
       find.textContaining('Audio capture is not configured'),
-      findsOneWidget,
+      findsNothing,
     );
-    expect(tester.getSize(find.text('Attachments')).width, greaterThan(80));
+    expect(find.text('Attachments'), findsNothing);
 
     await _tapVisible(tester, find.text('Image'));
-    expect(
-      find.textContaining('Image upload is not configured'),
-      findsOneWidget,
-    );
+    expect(find.textContaining('Image upload is not configured'), findsNothing);
+    expect(find.text('Attachments'), findsNothing);
 
     await _tapVisible(tester, find.text('Structured'));
     expect(
       find.textContaining('Structured media is not configured'),
-      findsOneWidget,
+      findsNothing,
     );
+    expect(find.text('Attachments'), findsNothing);
   });
 
   testWidgets('spec intake stages image attachment before preview', (
