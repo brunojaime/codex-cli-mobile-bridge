@@ -2417,6 +2417,46 @@ flowchart LR
     );
   });
 
+  test('project factory chat image attachments keep intake session context',
+      () async {
+    final fakeApiClient = _FakeApiClient();
+    final controller = ChatController(
+      apiClient: fakeApiClient,
+      notificationService: const NoopChatNotificationService(),
+    );
+    addTearDown(controller.dispose);
+    fakeApiClient._sessionConfigurations['session-a'] =
+        buildProjectFactoryIntakeConfiguration(kDefaultAgentConfiguration);
+    await controller.selectSession('session-a');
+
+    final didSend = await controller.sendAttachmentsMessage(
+      <XFile>[
+        XFile.fromData(
+          Uint8List.fromList(const <int>[137, 80, 78, 71]),
+          name: 'reference.png',
+          mimeType: 'image/png',
+          path: 'reference.png',
+        ),
+      ],
+      message: 'Usa esta imagen como referencia visual del nuevo proyecto.',
+    );
+
+    expect(didSend, isTrue);
+    expect(fakeApiClient.attachmentSends, hasLength(1));
+    expect(fakeApiClient.attachmentSends.single.sessionId, 'session-a');
+    expect(fakeApiClient.attachmentSends.single.workspacePath, '/workspace/a');
+    expect(fakeApiClient.attachmentSends.single.message,
+        contains('referencia visual'));
+    expect(fakeApiClient.attachmentSends.single.filenames,
+        <String>['reference.png']);
+    expect(
+      isProjectFactoryIntakeConfiguration(
+        controller.currentSession?.agentConfiguration,
+      ),
+      isTrue,
+    );
+  });
+
   test('supervisor turn budget mode parses and serializes cleanly', () {
     final configuration = AgentConfiguration.fromJson(
       <String, dynamic>{
