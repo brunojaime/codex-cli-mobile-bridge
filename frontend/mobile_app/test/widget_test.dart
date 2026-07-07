@@ -1375,6 +1375,7 @@ flowchart LR
 
     await tester.tap(find.text('Chat context only'));
     await tester.pumpAndSettle();
+    expect(find.text('Visual reference'), findsOneWidget);
     await tester.tap(find.text('Logo').last);
     await tester.pumpAndSettle();
 

@@ -32,7 +32,7 @@ class ProjectFactoryOptions {
 }
 
 enum ProjectAssetRole {
-  visualReference('visual_reference', 'Reference'),
+  visualReference('visual_reference', 'Visual reference'),
   exactAsset('exact_asset', 'Copy exact'),
   appIcon('app_icon', 'App icon'),
   logo('logo', 'Logo'),
