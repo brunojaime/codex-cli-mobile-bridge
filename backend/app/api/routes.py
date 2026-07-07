@@ -71,6 +71,17 @@ from backend.app.api.schemas import (
     MessageRequest,
     PersistenceIntegrityIssueResponse,
     PersistenceIntegrityResponse,
+    ProjectFactoryDraftRequest,
+    ProjectFactoryDraftResponse,
+    ProjectFactoryDraftsResponse,
+    ProjectFactoryDoctorResponse,
+    ProjectFactoryDryRunResponse,
+    ProjectFactoryJobResponse,
+    ProjectFactoryJobsResponse,
+    ProjectFactoryOptionsResponse,
+    ProjectFactoryReferenceAssetDeleteResponse,
+    ProjectFactoryReferenceAssetResponse,
+    ProjectFactoryReferenceAssetsResponse,
     RenameSessionRequest,
     ServerCapabilitiesResponse,
     SessionDetailResponse,
@@ -105,6 +116,15 @@ from backend.app.api.schemas import (
     SddWorkbenchViewResponse,
     TurnSummaryConfigRequest,
     WorkspaceResponse,
+)
+from backend.app.application.services.project_factory_manifest_service import (
+    ProjectFactoryManifestInput,
+)
+from backend.app.application.services.project_factory_service import (
+    ProjectFactoryGenerationConflictError,
+)
+from backend.app.application.services.project_factory_reference_asset_service import (
+    ProjectFactoryReferenceAssetError,
 )
 from backend.app.application.services.app_update_service import (
     AppDisabledError,
@@ -288,6 +308,211 @@ async def capabilities(
         ),
         preferred_client_url=tailscale.preferred_client_url,
         public_base_urls=tailscale.public_base_urls,
+    )
+
+
+@router.get("/project-factory/options", response_model=ProjectFactoryOptionsResponse)
+async def project_factory_options(
+    container: AppContainer = Depends(get_container),
+) -> ProjectFactoryOptionsResponse:
+    return ProjectFactoryOptionsResponse(
+        **container.project_factory_service.options(),
+    )
+
+
+@router.post("/project-factory/drafts", response_model=ProjectFactoryDraftResponse)
+async def create_project_factory_draft(
+    request: ProjectFactoryDraftRequest,
+    container: AppContainer = Depends(get_container),
+) -> ProjectFactoryDraftResponse:
+    draft = await run_in_threadpool(
+        container.project_factory_service.create_draft,
+        _project_factory_manifest_input(request),
+    )
+    return ProjectFactoryDraftResponse(**draft.to_payload())
+
+
+@router.get("/project-factory/drafts", response_model=ProjectFactoryDraftsResponse)
+async def list_project_factory_drafts(
+    limit: int = 50,
+    container: AppContainer = Depends(get_container),
+) -> ProjectFactoryDraftsResponse:
+    drafts = await run_in_threadpool(
+        container.project_factory_service.list_drafts,
+        limit=limit,
+    )
+    return ProjectFactoryDraftsResponse(drafts=list(drafts))
+
+
+@router.get(
+    "/project-factory/drafts/{draft_id}",
+    response_model=ProjectFactoryDraftResponse,
+)
+async def get_project_factory_draft(
+    draft_id: str,
+    container: AppContainer = Depends(get_container),
+) -> ProjectFactoryDraftResponse:
+    draft = await run_in_threadpool(
+        container.project_factory_service.get_draft,
+        draft_id,
+    )
+    if draft is None:
+        raise HTTPException(status_code=404, detail="Project factory draft not found.")
+    return ProjectFactoryDraftResponse(**draft.to_payload())
+
+
+@router.post(
+    "/project-factory/drafts/{draft_id}/dry-run",
+    response_model=ProjectFactoryDryRunResponse,
+)
+async def project_factory_dry_run(
+    draft_id: str,
+    container: AppContainer = Depends(get_container),
+) -> ProjectFactoryDryRunResponse:
+    manifest_plan = await run_in_threadpool(
+        container.project_factory_service.dry_run,
+        draft_id,
+    )
+    if manifest_plan is None:
+        raise HTTPException(status_code=404, detail="Project factory draft not found.")
+    return ProjectFactoryDryRunResponse(**manifest_plan.to_payload())
+
+
+@router.post(
+    "/project-factory/drafts/{draft_id}/reference-assets",
+    response_model=ProjectFactoryReferenceAssetResponse,
+)
+async def upload_project_factory_reference_asset(
+    draft_id: str,
+    asset: UploadFile = File(...),
+    container: AppContainer = Depends(get_container),
+) -> ProjectFactoryReferenceAssetResponse:
+    content = await asset.read()
+    try:
+        created_asset = await run_in_threadpool(
+            container.project_factory_service.create_reference_asset,
+            draft_id=draft_id,
+            filename=asset.filename or "",
+            content_type=asset.content_type,
+            content=content,
+        )
+    except ProjectFactoryReferenceAssetError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if created_asset is None:
+        raise HTTPException(status_code=404, detail="Project factory draft not found.")
+    return ProjectFactoryReferenceAssetResponse(**created_asset.to_payload())
+
+
+@router.get(
+    "/project-factory/drafts/{draft_id}/reference-assets",
+    response_model=ProjectFactoryReferenceAssetsResponse,
+)
+async def list_project_factory_reference_assets(
+    draft_id: str,
+    container: AppContainer = Depends(get_container),
+) -> ProjectFactoryReferenceAssetsResponse:
+    assets = await run_in_threadpool(
+        container.project_factory_service.list_reference_assets,
+        draft_id,
+    )
+    if assets is None:
+        raise HTTPException(status_code=404, detail="Project factory draft not found.")
+    return ProjectFactoryReferenceAssetsResponse(
+        draft_id=draft_id,
+        assets=[
+            ProjectFactoryReferenceAssetResponse(**asset.to_payload())
+            for asset in assets
+        ],
+    )
+
+
+@router.delete(
+    "/project-factory/drafts/{draft_id}/reference-assets/{asset_id}",
+    response_model=ProjectFactoryReferenceAssetDeleteResponse,
+)
+async def delete_project_factory_reference_asset(
+    draft_id: str,
+    asset_id: str,
+    container: AppContainer = Depends(get_container),
+) -> ProjectFactoryReferenceAssetDeleteResponse:
+    try:
+        deleted = await run_in_threadpool(
+            container.project_factory_service.delete_reference_asset,
+            draft_id=draft_id,
+            asset_id=asset_id,
+        )
+    except ProjectFactoryReferenceAssetError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if deleted is None:
+        raise HTTPException(status_code=404, detail="Project factory draft not found.")
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Reference asset not found.")
+    return ProjectFactoryReferenceAssetDeleteResponse(
+        draft_id=draft_id,
+        asset_id=asset_id,
+        deleted=True,
+    )
+
+
+@router.post(
+    "/project-factory/drafts/{draft_id}/generate",
+    response_model=ProjectFactoryJobResponse,
+)
+async def start_project_factory_generation(
+    draft_id: str,
+    container: AppContainer = Depends(get_container),
+) -> ProjectFactoryJobResponse:
+    try:
+        job = await run_in_threadpool(
+            container.project_factory_service.start_generation,
+            draft_id,
+        )
+    except ProjectFactoryGenerationConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if job is None:
+        raise HTTPException(status_code=404, detail="Project factory draft not found.")
+    return ProjectFactoryJobResponse(**job.to_payload())
+
+
+@router.get("/project-factory/jobs", response_model=ProjectFactoryJobsResponse)
+async def list_project_factory_jobs(
+    status: str | None = None,
+    draft_id: str | None = None,
+    limit: int = 50,
+    container: AppContainer = Depends(get_container),
+) -> ProjectFactoryJobsResponse:
+    jobs = await run_in_threadpool(
+        container.project_factory_service.list_jobs,
+        status=status,
+        draft_id=draft_id,
+        limit=limit,
+    )
+    return ProjectFactoryJobsResponse(jobs=list(jobs))
+
+
+@router.get(
+    "/project-factory/jobs/{job_id}",
+    response_model=ProjectFactoryJobResponse,
+)
+async def get_project_factory_job(
+    job_id: str,
+    container: AppContainer = Depends(get_container),
+) -> ProjectFactoryJobResponse:
+    job = await run_in_threadpool(container.project_factory_service.get_job, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Project factory job not found.")
+    return ProjectFactoryJobResponse(**job.to_payload())
+
+
+@router.get(
+    "/project-factory/doctor",
+    response_model=ProjectFactoryDoctorResponse,
+)
+async def project_factory_doctor(
+    container: AppContainer = Depends(get_container),
+) -> ProjectFactoryDoctorResponse:
+    return ProjectFactoryDoctorResponse(
+        **await run_in_threadpool(container.project_factory_service.doctor),
     )
 
 
@@ -3846,6 +4071,21 @@ def _safe_upload_suffix(upload: UploadFile, *, default_filename: str) -> str:
         if image_suffix is not None:
             return image_suffix
     return suffix or ".bin"
+
+
+def _project_factory_manifest_input(
+    request: ProjectFactoryDraftRequest,
+) -> ProjectFactoryManifestInput:
+    return ProjectFactoryManifestInput(
+        name=request.name,
+        business_type=request.business_type,
+        primary_goal=request.primary_goal,
+        slug=request.slug,
+        platforms=tuple(request.platforms),
+        backend=request.backend,
+        logo_mode=request.logo_mode,
+        visual_reference_paths=tuple(request.visual_reference_paths),
+    )
 
 
 class _StoredUpload:

@@ -16,6 +16,7 @@ import '../models/chat_turn_summary.dart';
 import '../models/agent_configuration.dart';
 import '../models/agent_profile.dart';
 import '../models/codex_tooling.dart';
+import '../models/project_factory.dart';
 import '../models/server_capabilities.dart';
 import '../models/server_health.dart';
 import '../models/server_profile.dart';
@@ -59,6 +60,7 @@ enum _AppBarOverflowAction {
   saveCurrentAgent,
   replyMode,
   servers,
+  newProject,
   newChat,
 }
 
@@ -1272,6 +1274,145 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     });
   }
 
+  Future<void> _openNewProjectFactory() async {
+    final activeBaseUrl = _activeServer?.baseUrl ?? widget.initialApiBaseUrl;
+    final client = ApiClient(baseUrl: activeBaseUrl);
+    ProjectFactoryOptions options;
+    try {
+      options = await client.getProjectFactoryOptions();
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not load new project options.\n$error')),
+      );
+      return;
+    }
+    if (!mounted) {
+      return;
+    }
+
+    final draft = await showDialog<NewProjectFactoryDraft>(
+      context: context,
+      builder: (context) => Dialog(
+        backgroundColor: const Color(0xFF101931),
+        insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 720, maxHeight: 760),
+          child: NewProjectFactoryDialog(
+            options: options,
+            onOpenHistory: () async {
+              await showDialog<void>(
+                context: context,
+                builder: (context) => ProjectFactoryHistoryDialog(
+                  listJobs: client.listProjectFactoryJobs,
+                  getJob: client.getProjectFactoryJob,
+                  onOpenProjectPath: _openProjectFactoryTargetPath,
+                ),
+              );
+            },
+          ),
+        ),
+      ),
+    );
+    if (draft == null) {
+      return;
+    }
+    if (!mounted) {
+      return;
+    }
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Creating ${draft.name}...')),
+    );
+    try {
+      final createdDraft = await client.createProjectFactoryDraft(
+        ProjectFactoryDraftRequest(
+          name: draft.name,
+          businessType: draft.businessType,
+          primaryGoal: draft.primaryGoal,
+          platforms: draft.platforms,
+          backend: draft.backend,
+          logoMode: draft.logoMode,
+          visualReferencePaths: draft.visualReferencePaths,
+        ),
+      );
+      if (createdDraft.manifestPlan['ok'] != true) {
+        throw Exception('Project draft validation failed.');
+      }
+      if (!mounted) {
+        return;
+      }
+      if (draft.referenceImages.isNotEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Uploading ${draft.referenceImages.length} reference image${draft.referenceImages.length == 1 ? '' : 's'}...',
+            ),
+          ),
+        );
+      }
+      for (final image in draft.referenceImages) {
+        await client.uploadProjectFactoryReferenceAsset(
+          createdDraft.draftId,
+          image,
+        );
+      }
+      final startedJob =
+          await client.generateProjectFactoryDraft(createdDraft.draftId);
+      if (!mounted) {
+        return;
+      }
+      final job = await showDialog<ProjectFactoryJob>(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => ProjectFactoryProgressDialog(
+          initialJob: startedJob,
+          pollJob: client.getProjectFactoryJob,
+        ),
+      );
+      if (job == null) {
+        return;
+      }
+      final targetPath = job.targetPath;
+      if (!job.isReady || targetPath == null) {
+        throw Exception(
+          job.message.isEmpty ? 'Project generation failed.' : job.message,
+        );
+      }
+
+      final workspace = await _openProjectFactoryTargetPath(targetPath);
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Project ${workspace.name} is ready.')),
+      );
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not create project.\n$error')),
+      );
+    }
+  }
+
+  Future<Workspace> _openProjectFactoryTargetPath(String targetPath) async {
+    await _chatController.refreshWorkspaces();
+    final workspace = _chatController.workspaces.firstWhere(
+      (item) => item.path == targetPath,
+      orElse: () => Workspace(
+        name: _fallbackWorkspaceName(targetPath),
+        path: targetPath,
+      ),
+    );
+    await _pinWorkspaceToSidebar(workspace);
+    await _createNewChatForWorkspace(workspace);
+    return workspace;
+  }
+
   Future<void> _openWorkspacePicker() async {
     if (_isOpeningWorkspacePicker) {
       return;
@@ -2241,6 +2382,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
               label: 'Servers',
             ),
             _buildAppBarOverflowMenuItem(
+              action: _AppBarOverflowAction.newProject,
+              icon: Icons.create_new_folder_outlined,
+              label: 'New project',
+            ),
+            _buildAppBarOverflowMenuItem(
               action: _AppBarOverflowAction.newChat,
               icon: Icons.add,
               label: 'Choose project for new chat',
@@ -2321,6 +2467,13 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       ),
       IconButton(
         onPressed: () async {
+          await _openNewProjectFactory();
+        },
+        icon: const Icon(Icons.create_new_folder_outlined),
+        tooltip: 'New project',
+      ),
+      IconButton(
+        onPressed: () async {
           await _openWorkspacePicker();
         },
         icon: const Icon(Icons.add),
@@ -2387,6 +2540,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         return;
       case _AppBarOverflowAction.servers:
         await _openServerManager();
+        return;
+      case _AppBarOverflowAction.newProject:
+        await _openNewProjectFactory();
         return;
       case _AppBarOverflowAction.newChat:
         await _openWorkspacePicker();
@@ -5797,6 +5953,681 @@ class _AgentProfilePill extends StatelessWidget {
         ],
       ),
     );
+  }
+}
+
+class NewProjectFactoryDraft {
+  const NewProjectFactoryDraft({
+    required this.name,
+    required this.businessType,
+    required this.primaryGoal,
+    required this.platforms,
+    required this.backend,
+    required this.logoMode,
+    required this.visualReferencePaths,
+    required this.referenceImages,
+  });
+
+  final String name;
+  final String businessType;
+  final String primaryGoal;
+  final List<String> platforms;
+  final String backend;
+  final String logoMode;
+  final List<String> visualReferencePaths;
+  final List<XFile> referenceImages;
+}
+
+class NewProjectFactoryDialog extends StatefulWidget {
+  const NewProjectFactoryDialog({
+    super.key,
+    required this.options,
+    this.onOpenHistory,
+  });
+
+  final ProjectFactoryOptions options;
+  final Future<void> Function()? onOpenHistory;
+
+  @override
+  State<NewProjectFactoryDialog> createState() =>
+      NewProjectFactoryDialogState();
+}
+
+class NewProjectFactoryDialogState extends State<NewProjectFactoryDialog> {
+  final TextEditingController _nameController = TextEditingController();
+  final TextEditingController _goalController = TextEditingController();
+  final TextEditingController _visualReferencesController =
+      TextEditingController();
+  final List<XFile> _referenceImages = <XFile>[];
+  late String _businessType;
+  late String _backend;
+  late String _logoMode;
+  late Set<String> _platforms;
+
+  @override
+  void initState() {
+    super.initState();
+    _businessType = widget.options.businessTypes.isNotEmpty
+        ? widget.options.businessTypes.first
+        : 'other';
+    _backend = widget.options.defaultBackend;
+    _logoMode = widget.options.logoModes.isNotEmpty
+        ? widget.options.logoModes.first
+        : 'generate';
+    _platforms = widget.options.defaultPlatforms.toSet();
+  }
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _goalController.dispose();
+    _visualReferencesController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final businessTypes = widget.options.businessTypes.isNotEmpty
+        ? widget.options.businessTypes
+        : <String>['other'];
+    final backends = widget.options.backends.isNotEmpty
+        ? widget.options.backends
+        : <String>['fastapi'];
+    final logoModes = widget.options.logoModes.isNotEmpty
+        ? widget.options.logoModes
+        : <String>['generate'];
+    final platforms = widget.options.platforms.isNotEmpty
+        ? widget.options.platforms
+        : <String>['ios', 'android', 'web'];
+    return Padding(
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          Row(
+            children: <Widget>[
+              const Icon(Icons.create_new_folder_outlined),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  'New project',
+                  style: theme.textTheme.titleLarge?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              if (widget.onOpenHistory != null)
+                IconButton(
+                  onPressed: widget.onOpenHistory,
+                  icon: const Icon(Icons.history),
+                  tooltip: 'Project history',
+                ),
+              IconButton(
+                onPressed: () => Navigator.of(context).pop(),
+                icon: const Icon(Icons.close),
+                tooltip: 'Close',
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          Expanded(
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: <Widget>[
+                  TextField(
+                    controller: _nameController,
+                    textInputAction: TextInputAction.next,
+                    decoration: const InputDecoration(
+                      labelText: 'Project name',
+                      prefixIcon: Icon(Icons.drive_file_rename_outline),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<String>(
+                    initialValue: _businessType,
+                    decoration: const InputDecoration(
+                      labelText: 'Business type',
+                      prefixIcon: Icon(Icons.business_center_outlined),
+                    ),
+                    items: businessTypes
+                        .map(
+                          (type) => DropdownMenuItem<String>(
+                            value: type,
+                            child: Text(type),
+                          ),
+                        )
+                        .toList(),
+                    onChanged: (value) {
+                      if (value == null) {
+                        return;
+                      }
+                      setState(() => _businessType = value);
+                    },
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _goalController,
+                    maxLines: 3,
+                    decoration: const InputDecoration(
+                      labelText: 'Primary goal',
+                      prefixIcon: Icon(Icons.flag_outlined),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: platforms.map((platform) {
+                      return FilterChip(
+                        label: Text(platform),
+                        selected: _platforms.contains(platform),
+                        onSelected: (selected) {
+                          setState(() {
+                            if (selected) {
+                              _platforms.add(platform);
+                            } else if (_platforms.length > 1) {
+                              _platforms.remove(platform);
+                            }
+                          });
+                        },
+                      );
+                    }).toList(),
+                  ),
+                  const SizedBox(height: 16),
+                  DropdownButtonFormField<String>(
+                    initialValue: _backend,
+                    decoration: const InputDecoration(
+                      labelText: 'Backend',
+                      prefixIcon: Icon(Icons.dns_outlined),
+                    ),
+                    items: backends
+                        .map(
+                          (backend) => DropdownMenuItem<String>(
+                            value: backend,
+                            child: Text(backend),
+                          ),
+                        )
+                        .toList(),
+                    onChanged: (value) {
+                      if (value == null) {
+                        return;
+                      }
+                      setState(() => _backend = value);
+                    },
+                  ),
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<String>(
+                    initialValue: _logoMode,
+                    decoration: const InputDecoration(
+                      labelText: 'Logo',
+                      prefixIcon: Icon(Icons.imagesearch_roller_outlined),
+                    ),
+                    items: logoModes
+                        .map(
+                          (mode) => DropdownMenuItem<String>(
+                            value: mode,
+                            child: Text(mode),
+                          ),
+                        )
+                        .toList(),
+                    onChanged: (value) {
+                      if (value == null) {
+                        return;
+                      }
+                      setState(() => _logoMode = value);
+                    },
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _visualReferencesController,
+                    maxLines: 2,
+                    decoration: const InputDecoration(
+                      labelText: 'Visual reference paths',
+                      prefixIcon: Icon(Icons.image_outlined),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  OutlinedButton.icon(
+                    onPressed: _pickReferenceImages,
+                    icon: const Icon(Icons.add_photo_alternate_outlined),
+                    label: const Text('Attach reference images'),
+                  ),
+                  if (_referenceImages.isNotEmpty) ...<Widget>[
+                    const SizedBox(height: 8),
+                    ..._referenceImages.map(
+                      (image) => ListTile(
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        leading: const Icon(Icons.image_outlined),
+                        title: Text(image.name),
+                        trailing: IconButton(
+                          onPressed: () {
+                            setState(() {
+                              _referenceImages.remove(image);
+                            });
+                          },
+                          icon: const Icon(Icons.close),
+                          tooltip: 'Remove image',
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+          FilledButton.icon(
+            onPressed: _submit,
+            icon: const Icon(Icons.play_arrow_rounded),
+            label: const Text('Create'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _pickReferenceImages() async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.image,
+      allowMultiple: true,
+      withData: kIsWeb,
+    );
+    if (result == null || result.files.isEmpty) {
+      return;
+    }
+    final picked = <XFile>[];
+    for (final file in result.files) {
+      final mimeType = _mimeTypeForReferenceImage(file.name);
+      if (file.path != null && file.path!.isNotEmpty) {
+        picked.add(XFile(file.path!, name: file.name, mimeType: mimeType));
+        continue;
+      }
+      final bytes = file.bytes;
+      if (bytes != null) {
+        picked.add(
+          XFile.fromData(bytes, name: file.name, mimeType: mimeType),
+        );
+      }
+    }
+    if (picked.isEmpty) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not read selected images.')),
+      );
+      return;
+    }
+    setState(() {
+      _referenceImages.addAll(picked);
+    });
+  }
+
+  void _submit() {
+    final name = _nameController.text.trim();
+    final goal = _goalController.text.trim();
+    if (name.isEmpty || goal.isEmpty || _platforms.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Name, goal, and platform are required.')),
+      );
+      return;
+    }
+    Navigator.of(context).pop(
+      NewProjectFactoryDraft(
+        name: name,
+        businessType: _businessType,
+        primaryGoal: goal,
+        platforms: _platforms.toList(growable: false),
+        backend: _backend,
+        logoMode: _logoMode,
+        visualReferencePaths: _visualReferencesController.text
+            .split(',')
+            .map((item) => item.trim())
+            .where((item) => item.isNotEmpty)
+            .toList(growable: false),
+        referenceImages: List<XFile>.unmodifiable(_referenceImages),
+      ),
+    );
+  }
+}
+
+String? _mimeTypeForReferenceImage(String filename) {
+  final suffix = filename.trim().toLowerCase().split('.').last;
+  return switch (suffix) {
+    'png' => 'image/png',
+    'jpg' || 'jpeg' => 'image/jpeg',
+    'webp' => 'image/webp',
+    _ => null,
+  };
+}
+
+typedef ProjectFactoryJobPoller = Future<ProjectFactoryJob> Function(
+    String jobId);
+typedef ProjectFactoryJobLister = Future<List<ProjectFactoryJobSummary>>
+    Function();
+typedef ProjectFactoryProjectPathOpener = Future<void> Function(
+    String projectPath);
+
+class ProjectFactoryHistoryDialog extends StatefulWidget {
+  const ProjectFactoryHistoryDialog({
+    super.key,
+    required this.listJobs,
+    required this.getJob,
+    required this.onOpenProjectPath,
+  });
+
+  final ProjectFactoryJobLister listJobs;
+  final ProjectFactoryJobPoller getJob;
+  final ProjectFactoryProjectPathOpener onOpenProjectPath;
+
+  @override
+  State<ProjectFactoryHistoryDialog> createState() =>
+      _ProjectFactoryHistoryDialogState();
+}
+
+class _ProjectFactoryHistoryDialogState
+    extends State<ProjectFactoryHistoryDialog> {
+  bool _loading = true;
+  String? _error;
+  List<ProjectFactoryJobSummary> _jobs = <ProjectFactoryJobSummary>[];
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_load());
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final jobs = await widget.listJobs();
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _jobs = jobs;
+        _loading = false;
+      });
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _error = error.toString();
+        _loading = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Row(
+        children: <Widget>[
+          const Icon(Icons.history),
+          const SizedBox(width: 12),
+          const Expanded(child: Text('Project history')),
+          IconButton(
+            onPressed: _load,
+            icon: const Icon(Icons.refresh),
+            tooltip: 'Refresh',
+          ),
+        ],
+      ),
+      content: SizedBox(
+        width: 620,
+        child: _buildContent(context),
+      ),
+      actions: <Widget>[
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Close'),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildContent(BuildContext context) {
+    if (_loading) {
+      return const SizedBox(
+        height: 160,
+        child: Center(child: CircularProgressIndicator()),
+      );
+    }
+    if (_error != null) {
+      return SizedBox(
+        height: 160,
+        child: Center(child: Text(_error!)),
+      );
+    }
+    if (_jobs.isEmpty) {
+      return const SizedBox(
+        height: 160,
+        child: Center(child: Text('No project factory history')),
+      );
+    }
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxHeight: 520),
+      child: ListView.separated(
+        shrinkWrap: true,
+        itemCount: _jobs.length,
+        separatorBuilder: (_, __) => const Divider(height: 1),
+        itemBuilder: (context, index) => _ProjectFactoryHistoryTile(
+          job: _jobs[index],
+          onWatch: () => _watchJob(_jobs[index]),
+          onOpen: _jobs[index].isReady && _jobs[index].projectPath != null
+              ? () => _openProject(_jobs[index].projectPath!)
+              : null,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _watchJob(ProjectFactoryJobSummary summary) async {
+    final detail = await widget.getJob(summary.jobId);
+    if (!mounted) {
+      return;
+    }
+    final result = await showDialog<ProjectFactoryJob>(
+      context: context,
+      barrierDismissible: detail.isTerminal,
+      builder: (context) => ProjectFactoryProgressDialog(
+        initialJob: detail,
+        pollJob: widget.getJob,
+      ),
+    );
+    final targetPath = result?.targetPath;
+    if (result != null && result.isReady && targetPath != null) {
+      await _openProject(targetPath);
+    }
+    await _load();
+  }
+
+  Future<void> _openProject(String projectPath) async {
+    await widget.onOpenProjectPath(projectPath);
+    if (!mounted) {
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Project workspace opened.')),
+    );
+  }
+}
+
+class _ProjectFactoryHistoryTile extends StatelessWidget {
+  const _ProjectFactoryHistoryTile({
+    required this.job,
+    required this.onWatch,
+    required this.onOpen,
+  });
+
+  final ProjectFactoryJobSummary job;
+  final VoidCallback onWatch;
+  final VoidCallback? onOpen;
+
+  @override
+  Widget build(BuildContext context) {
+    final error = job.error;
+    return ListTile(
+      contentPadding: EdgeInsets.zero,
+      leading: Icon(_iconForProjectFactoryStatus(job.status)),
+      title: Text(job.name ?? job.slug ?? job.jobId),
+      subtitle: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Text('${job.status} - ${job.currentPhase} - ${job.progress}%'),
+          if (job.completedAt != null) Text('Completed: ${job.completedAt}'),
+          if (error != null && error.isNotEmpty)
+            Text(error,
+                style: TextStyle(color: Theme.of(context).colorScheme.error)),
+          if (job.manualNextStep != null && !job.isReady)
+            Text(job.manualNextStep!),
+        ],
+      ),
+      trailing: Wrap(
+        spacing: 8,
+        children: <Widget>[
+          if (!job.isReady)
+            TextButton(onPressed: onWatch, child: const Text('Details')),
+          if (job.isReady && onOpen != null)
+            FilledButton(onPressed: onOpen, child: const Text('Open')),
+        ],
+      ),
+      onTap: job.isReady && onOpen != null ? onOpen : onWatch,
+    );
+  }
+}
+
+IconData _iconForProjectFactoryStatus(String status) {
+  return switch (status) {
+    'ready' || 'completed' => Icons.check_circle_outline,
+    'failed' || 'interrupted' || 'blocked' => Icons.error_outline,
+    _ => Icons.pending_actions_outlined,
+  };
+}
+
+class ProjectFactoryProgressDialog extends StatefulWidget {
+  const ProjectFactoryProgressDialog({
+    super.key,
+    required this.initialJob,
+    required this.pollJob,
+    this.pollInterval = const Duration(seconds: 1),
+  });
+
+  final ProjectFactoryJob initialJob;
+  final ProjectFactoryJobPoller pollJob;
+  final Duration pollInterval;
+
+  @override
+  State<ProjectFactoryProgressDialog> createState() =>
+      ProjectFactoryProgressDialogState();
+}
+
+class ProjectFactoryProgressDialogState
+    extends State<ProjectFactoryProgressDialog> {
+  late ProjectFactoryJob _job;
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    _job = widget.initialJob;
+    if (!_isTerminal(_job)) {
+      _timer = Timer.periodic(widget.pollInterval, (_) => _poll());
+      unawaited(_poll());
+    }
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final failed = _job.status == 'failed' || _job.status == 'interrupted';
+    final ready = _job.isReady;
+    return AlertDialog(
+      title: const Text('New project'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          LinearProgressIndicator(
+            value: (_job.progress.clamp(0, 100)) / 100,
+          ),
+          const SizedBox(height: 16),
+          Text(_job.currentPhase),
+          const SizedBox(height: 8),
+          Text(_job.message),
+          if (failed && _job.error != null) ...<Widget>[
+            const SizedBox(height: 8),
+            Text(_job.error!),
+          ],
+        ],
+      ),
+      actions: <Widget>[
+        if (failed)
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(_job),
+            child: const Text('Close'),
+          ),
+        if (ready)
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(_job),
+            child: const Text('Open project'),
+          ),
+      ],
+    );
+  }
+
+  Future<void> _poll() async {
+    try {
+      final next = await widget.pollJob(_job.jobId);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _job = next;
+      });
+      if (_isTerminal(next)) {
+        _timer?.cancel();
+      }
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _job = ProjectFactoryJob(
+          jobId: _job.jobId,
+          draftId: _job.draftId,
+          status: 'failed',
+          currentStep: 'polling',
+          currentPhase: 'polling',
+          progress: _job.progress,
+          message: 'Could not refresh project job.',
+          manifestPlan: _job.manifestPlan,
+          stepLogs: _job.stepLogs,
+          error: error.toString(),
+          generationResult: _job.generationResult,
+        );
+      });
+      _timer?.cancel();
+    }
+  }
+
+  bool _isTerminal(ProjectFactoryJob job) {
+    return job.status == 'ready' ||
+        job.status == 'failed' ||
+        job.status == 'blocked' ||
+        job.status == 'interrupted';
   }
 }
 

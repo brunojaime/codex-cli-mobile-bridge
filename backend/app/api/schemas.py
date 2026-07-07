@@ -65,6 +65,165 @@ class MessageRequest(BaseModel):
     codex_options: "CodexRunOptionsRequest | None" = None
 
 
+class ProjectFactoryDraftRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    name: str = Field(..., min_length=1, max_length=80)
+    business_type: str = Field(
+        ...,
+        min_length=1,
+        max_length=80,
+        alias="businessType",
+    )
+    primary_goal: str = Field(
+        ...,
+        min_length=1,
+        max_length=500,
+        alias="primaryGoal",
+    )
+    slug: str | None = Field(default=None, max_length=80)
+    platforms: list[str] = Field(default_factory=lambda: ["ios", "android", "web"])
+    backend: str = "fastapi"
+    logo_mode: str = Field(default="generate", alias="logoMode")
+    visual_reference_paths: list[str] = Field(
+        default_factory=list,
+        alias="visualReferencePaths",
+    )
+
+
+class ProjectFactoryOptionsResponse(BaseModel):
+    kind: str
+    version: int
+    default_platforms: list[str]
+    platforms: list[str]
+    default_backend: str
+    backends: list[str]
+    logo_modes: list[str]
+    business_types: list[str]
+    creation_workflow: dict[str, Any]
+
+
+class ProjectFactoryDraftResponse(BaseModel):
+    kind: str
+    version: int
+    draft_id: str
+    created_at: str
+    manifest_plan: dict[str, Any]
+
+
+class ProjectFactoryDraftSummaryResponse(BaseModel):
+    id: str
+    draft_id: str
+    name: str
+    slug: str | None = None
+    business_type: str
+    primary_goal: str
+    status: str
+    ok: bool
+    created_at: str
+    target_path: str | None = None
+    error: str | None = None
+
+
+class ProjectFactoryDraftsResponse(BaseModel):
+    kind: str = "codex.projectFactoryDrafts"
+    version: int = 1
+    drafts: list[ProjectFactoryDraftSummaryResponse]
+
+
+class ProjectFactoryDryRunResponse(BaseModel):
+    kind: str
+    version: int
+    ok: bool
+    status: str
+    target_path: str | None
+    manifest_path: str | None
+    manifest: dict[str, Any]
+    errors: list[dict[str, Any]]
+    next_actions: list[str]
+
+
+class ProjectFactoryJobResponse(BaseModel):
+    kind: str
+    version: int
+    job_id: str
+    draft_id: str
+    created_at: str
+    updated_at: str
+    status: str
+    current_step: str
+    current_phase: str
+    progress: int
+    started_at: str | None = None
+    completed_at: str | None = None
+    error: str | None = None
+    project_path: str | None = None
+    message: str
+    manifest_plan: dict[str, Any]
+    step_logs: list[dict[str, Any]] = Field(default_factory=list)
+    generation_result: dict[str, Any] | None = None
+
+
+class ProjectFactoryJobSummaryResponse(BaseModel):
+    id: str
+    job_id: str
+    draft_id: str
+    name: str | None = None
+    slug: str | None = None
+    status: str
+    current_phase: str
+    progress: int
+    created_at: str
+    started_at: str | None = None
+    completed_at: str | None = None
+    project_path: str | None = None
+    target_path: str | None = None
+    error: str | None = None
+    message: str | None = None
+    manual_next_step: str | None = None
+
+
+class ProjectFactoryJobsResponse(BaseModel):
+    kind: str = "codex.projectFactoryJobs"
+    version: int = 1
+    jobs: list[ProjectFactoryJobSummaryResponse]
+
+
+class ProjectFactoryReferenceAssetResponse(BaseModel):
+    id: str
+    draft_id: str
+    original_filename: str
+    content_type: str
+    size_bytes: int
+    created_at: str
+    storage_path: str
+
+
+class ProjectFactoryReferenceAssetsResponse(BaseModel):
+    kind: str = "codex.projectFactoryReferenceAssets"
+    version: int = 1
+    draft_id: str
+    assets: list[ProjectFactoryReferenceAssetResponse]
+
+
+class ProjectFactoryReferenceAssetDeleteResponse(BaseModel):
+    kind: str = "codex.projectFactoryReferenceAssetDelete"
+    version: int = 1
+    draft_id: str
+    asset_id: str
+    deleted: bool
+
+
+class ProjectFactoryDoctorResponse(BaseModel):
+    kind: str
+    version: int
+    ok: bool
+    status: str
+    projects_root: str
+    checks: list[dict[str, Any]]
+    toolchain: dict[str, dict[str, Any]] = Field(default_factory=dict)
+
+
 class FeedbackPointRequest(BaseModel):
     x: float
     y: float

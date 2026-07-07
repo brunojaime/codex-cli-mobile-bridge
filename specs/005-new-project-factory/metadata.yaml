@@ -1,0 +1,25 @@
+id: 005-new-project-factory
+slug: 005-new-project-factory
+title: New Project Factory
+description: Create full Flutter business apps from Codex Mobile Bridge with research, SDD artifacts, auth, admin, roles, notifications, and validation.
+lifecycle_status: draft
+created_at: null
+updated_at: null
+generated:
+  title: false
+  description: false
+  user_pinned_title: true
+  user_pinned_description: true
+tasks:
+  total: 30
+  completed: 0
+  pending: 30
+last_run_state: null
+metadata_status: fresh
+metadata_warnings: []
+metadata_stale_paths: []
+available_files:
+  - spec.md
+  - plan.md
+  - tasks.md
+diagrams: []

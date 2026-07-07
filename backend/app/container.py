@@ -9,6 +9,9 @@ from backend.app.application.services.app_update_service import (
     HttpGitHubReleaseClient,
 )
 from backend.app.application.services.message_service import MessageService
+from backend.app.application.services.project_factory_service import (
+    ProjectFactoryService,
+)
 from backend.app.application.services.sdd_codex_job_service import SddCodexJobService
 from backend.app.application.services.sdd_project_service import SddProjectService
 from backend.app.application.services.sdd_workbench_view_service import (
@@ -67,6 +70,7 @@ class AppContainer:
     sdd_project_service: SddProjectService
     sdd_workbench_view_service: SddWorkbenchViewService
     sdd_codex_job_service: SddCodexJobService
+    project_factory_service: ProjectFactoryService
     job_stream_hub: JobStreamHub
     audio_transcriber: AudioTranscriber
     speech_synthesizer: SpeechSynthesizer
@@ -126,6 +130,26 @@ def build_container(settings: Settings | None = None) -> AppContainer:
         codex_command=resolved_settings.codex_command,
         timeout_seconds=resolved_settings.execution_timeout_seconds,
     )
+    project_factory_service = ProjectFactoryService(
+        projects_root=resolved_settings.projects_root,
+        reference_asset_storage_root=(
+            resolved_settings.project_factory_reference_asset_dir
+        ),
+        max_reference_asset_bytes=resolved_settings.image_max_upload_bytes,
+        state_root=resolved_settings.project_factory_state_dir,
+        codex_command=resolved_settings.codex_command,
+        timeout_seconds=resolved_settings.project_factory_step_timeout_seconds,
+        generator_runs_override=(
+            resolved_settings.project_factory_generator_runs_override
+        ),
+        reviewer_runs_override=(
+            resolved_settings.project_factory_reviewer_runs_override
+        ),
+        run_generated_validation=(
+            resolved_settings.project_factory_run_generated_validation
+        ),
+        async_jobs=resolved_settings.project_factory_async_jobs,
+    )
     return AppContainer(
         settings=resolved_settings,
         message_service=message_service,
@@ -134,6 +158,7 @@ def build_container(settings: Settings | None = None) -> AppContainer:
         sdd_project_service=sdd_project_service,
         sdd_workbench_view_service=sdd_workbench_view_service,
         sdd_codex_job_service=sdd_codex_job_service,
+        project_factory_service=project_factory_service,
         job_stream_hub=job_stream_hub,
         audio_transcriber=audio_transcriber,
         speech_synthesizer=speech_synthesizer,

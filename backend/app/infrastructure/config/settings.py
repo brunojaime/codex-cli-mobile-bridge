@@ -44,6 +44,15 @@ class Settings(BaseSettings):
     feedback_queue_path: str = str(Path.cwd() / ".data" / "feedback_queue.json")
     feedback_image_dir: str = str(Path.cwd() / ".data" / "feedback_images")
     feedback_audio_dir: str = str(Path.cwd() / ".data" / "feedback_audio")
+    project_factory_reference_asset_dir: str = str(
+        Path.cwd() / ".data" / "project_factory_reference_assets"
+    )
+    project_factory_state_dir: str = str(Path.cwd() / ".data" / "project_factory_state")
+    project_factory_async_jobs: bool = True
+    project_factory_generator_runs_override: int | None = None
+    project_factory_reviewer_runs_override: int | None = None
+    project_factory_step_timeout_seconds: int = 0
+    project_factory_run_generated_validation: bool = False
     feedback_source_workspace_aliases: str = ""
     tailscale_socket: str | None = None
     execution_timeout_seconds: int = 0

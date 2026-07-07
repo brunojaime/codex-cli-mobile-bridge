@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'package:codex_mobile_frontend/src/models/chat_session_summary.dart';
 import 'package:codex_mobile_frontend/src/models/codex_tooling.dart';
 import 'package:codex_mobile_frontend/src/models/feedback_queue_item.dart';
+import 'package:codex_mobile_frontend/src/models/project_factory.dart';
 import 'package:codex_mobile_frontend/src/models/session_detail.dart';
 import 'package:codex_mobile_frontend/src/services/api_client.dart';
 import 'package:codex_mobile_frontend/src/services/chat_notification_service.dart';
@@ -13,6 +14,264 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
 void main() {
+  test('project factory client creates and generates draft', () async {
+    var step = 0;
+    final client = ApiClient(
+      baseUrl: 'http://localhost:8000',
+      client: MockClient((request) async {
+        step += 1;
+        if (step == 1) {
+          expect(request.method, 'GET');
+          expect(request.url.path, '/project-factory/options');
+          return http.Response(
+            '''
+            {
+              "kind": "codex.projectFactoryOptions",
+              "version": 1,
+              "default_platforms": ["ios", "android", "web"],
+              "platforms": ["ios", "android", "web"],
+              "default_backend": "fastapi",
+              "backends": ["fastapi", "go", "none"],
+              "logo_modes": ["generate", "upload", "placeholder"],
+              "business_types": ["medical_appointments"],
+              "creation_workflow": {
+                "runner": "codex_cli",
+                "mode": "generator_reviewer_batches",
+                "generator_runs": 10,
+                "reviewer_runs": 10
+              }
+            }
+            ''',
+            200,
+            headers: <String, String>{'content-type': 'application/json'},
+          );
+        }
+        if (step == 2) {
+          expect(request.method, 'POST');
+          expect(request.url.path, '/project-factory/drafts');
+          expect(
+              request.body, contains('"businessType":"medical_appointments"'));
+          expect(request.body,
+              contains('"primaryGoal":"Pacientes reservan turnos"'));
+          return http.Response(
+            '''
+            {
+              "kind": "codex.projectFactoryDraft",
+              "version": 1,
+              "draft_id": "pf-draft-1",
+              "created_at": "2026-07-07T00:00:00Z",
+              "manifest_plan": {
+                "ok": true,
+                "target_path": "/projects/clinica-norte"
+              }
+            }
+            ''',
+            200,
+            headers: <String, String>{'content-type': 'application/json'},
+          );
+        }
+        expect(request.method, 'POST');
+        expect(request.url.path, '/project-factory/drafts/pf-draft-1/generate');
+        return http.Response(
+          '''
+          {
+            "kind": "codex.projectFactoryJob",
+            "version": 1,
+            "job_id": "pf-job-1",
+            "draft_id": "pf-draft-1",
+            "created_at": "2026-07-07T00:00:00Z",
+            "updated_at": "2026-07-07T00:00:00Z",
+            "status": "ready",
+            "current_step": "ready",
+            "message": "Local project foundation generated.",
+            "manifest_plan": {
+              "ok": true,
+              "target_path": "/projects/clinica-norte"
+            },
+            "generation_result": {
+              "target_path": "/projects/clinica-norte"
+            }
+          }
+          ''',
+          200,
+          headers: <String, String>{'content-type': 'application/json'},
+        );
+      }),
+    );
+
+    final options = await client.getProjectFactoryOptions();
+    expect(options.creationWorkflow['generator_runs'], 10);
+    expect(options.creationWorkflow['reviewer_runs'], 10);
+
+    final draft = await client.createProjectFactoryDraft(
+      const ProjectFactoryDraftRequest(
+        name: 'Clinica Norte',
+        businessType: 'medical_appointments',
+        primaryGoal: 'Pacientes reservan turnos',
+      ),
+    );
+    expect(draft.draftId, 'pf-draft-1');
+
+    final job = await client.generateProjectFactoryDraft(draft.draftId);
+    expect(job.isReady, isTrue);
+    expect(job.targetPath, '/projects/clinica-norte');
+  });
+
+  test('project factory client manages reference assets', () async {
+    var step = 0;
+    final client = ApiClient(
+      baseUrl: 'http://localhost:8000',
+      client: MockClient((request) async {
+        step += 1;
+        if (step == 1) {
+          expect(request.method, 'POST');
+          expect(
+            request.url.path,
+            '/project-factory/drafts/pf-draft-1/reference-assets',
+          );
+          expect(
+              request.headers['content-type'], contains('multipart/form-data'));
+          final body = String.fromCharCodes(request.bodyBytes).toLowerCase();
+          expect(body, contains('name="asset"'));
+          expect(body, contains('filename="home.png"'));
+          expect(body, contains('content-type: image/png'));
+          return http.Response(
+            _referenceAssetJson(),
+            200,
+            headers: <String, String>{'content-type': 'application/json'},
+          );
+        }
+        if (step == 2) {
+          expect(request.method, 'GET');
+          expect(
+            request.url.path,
+            '/project-factory/drafts/pf-draft-1/reference-assets',
+          );
+          return http.Response(
+            '{"kind":"codex.projectFactoryReferenceAssets","version":1,"draft_id":"pf-draft-1","assets":[${_referenceAssetJson()}]}',
+            200,
+            headers: <String, String>{'content-type': 'application/json'},
+          );
+        }
+        expect(request.method, 'DELETE');
+        expect(
+          request.url.path,
+          '/project-factory/drafts/pf-draft-1/reference-assets/pf-asset-1',
+        );
+        return http.Response(
+          '{"kind":"codex.projectFactoryReferenceAssetDelete","version":1,"draft_id":"pf-draft-1","asset_id":"pf-asset-1","deleted":true}',
+          200,
+          headers: <String, String>{'content-type': 'application/json'},
+        );
+      }),
+    );
+
+    final uploaded = await client.uploadProjectFactoryReferenceAsset(
+      'pf-draft-1',
+      XFile.fromData(
+        Uint8List.fromList(<int>[137, 80, 78, 71]),
+        name: 'home.png',
+        path: 'home.png',
+      ),
+    );
+    expect(uploaded.id, 'pf-asset-1');
+    expect(uploaded.originalFilename, 'home.png');
+
+    final listed = await client.listProjectFactoryReferenceAssets('pf-draft-1');
+    expect(listed.single.storagePath, 'pf-draft-1/pf-asset-1.png');
+
+    await client.deleteProjectFactoryReferenceAsset(
+      draftId: 'pf-draft-1',
+      assetId: 'pf-asset-1',
+    );
+  });
+
+  test('project factory client lists drafts and jobs', () async {
+    var step = 0;
+    final client = ApiClient(
+      baseUrl: 'http://localhost:8000',
+      client: MockClient((request) async {
+        step += 1;
+        if (step == 1) {
+          expect(request.method, 'GET');
+          expect(request.url.path, '/project-factory/drafts');
+          expect(request.url.queryParameters['limit'], '25');
+          return http.Response(
+            '''
+            {
+              "kind": "codex.projectFactoryDrafts",
+              "version": 1,
+              "drafts": [
+                {
+                  "id": "pf-draft-1",
+                  "draft_id": "pf-draft-1",
+                  "name": "Clinica Norte",
+                  "slug": "clinica-norte",
+                  "business_type": "medical",
+                  "primary_goal": "Reservar turnos",
+                  "status": "valid",
+                  "ok": true,
+                  "created_at": "2026-07-07T00:00:00Z",
+                  "target_path": "/projects/clinica-norte",
+                  "error": null
+                }
+              ]
+            }
+            ''',
+            200,
+            headers: <String, String>{'content-type': 'application/json'},
+          );
+        }
+        expect(request.method, 'GET');
+        expect(request.url.path, '/project-factory/jobs');
+        expect(request.url.queryParameters['status'], 'interrupted');
+        expect(request.url.queryParameters['draft_id'], 'pf-draft-1');
+        return http.Response(
+          '''
+          {
+            "kind": "codex.projectFactoryJobs",
+            "version": 1,
+            "jobs": [
+              {
+                "id": "pf-job-1",
+                "job_id": "pf-job-1",
+                "draft_id": "pf-draft-1",
+                "name": "Clinica Norte",
+                "slug": "clinica-norte",
+                "status": "interrupted",
+                "current_phase": "interrupted",
+                "progress": 50,
+                "created_at": "2026-07-07T00:00:00Z",
+                "started_at": "2026-07-07T00:00:01Z",
+                "completed_at": "2026-07-07T00:00:02Z",
+                "project_path": null,
+                "target_path": "/projects/clinica-norte",
+                "error": "Restarted",
+                "message": "Restarted",
+                "manual_next_step": "Inspect logs"
+              }
+            ]
+          }
+          ''',
+          200,
+          headers: <String, String>{'content-type': 'application/json'},
+        );
+      }),
+    );
+
+    final drafts = await client.listProjectFactoryDrafts(limit: 25);
+    expect(drafts.single.name, 'Clinica Norte');
+    expect(drafts.single.targetPath, '/projects/clinica-norte');
+
+    final jobs = await client.listProjectFactoryJobs(
+      status: 'interrupted',
+      draftId: 'pf-draft-1',
+    );
+    expect(jobs.single.status, 'interrupted');
+    expect(jobs.single.isTerminal, isTrue);
+    expect(jobs.single.manualNextStep, 'Inspect logs');
+  });
+
   test('sendMessage includes codex options when requested', () async {
     final client = ApiClient(
       baseUrl: 'http://localhost:8000',
@@ -452,6 +711,20 @@ String _sessionDetailJson({required String title}) {
     "created_at": "2026-04-01T00:00:00Z",
     "updated_at": "2026-04-01T00:00:00Z",
     "messages": []
+  }
+  ''';
+}
+
+String _referenceAssetJson() {
+  return '''
+  {
+    "id": "pf-asset-1",
+    "draft_id": "pf-draft-1",
+    "original_filename": "home.png",
+    "content_type": "image/png",
+    "size_bytes": 4,
+    "created_at": "2026-07-07T00:00:00Z",
+    "storage_path": "pf-draft-1/pf-asset-1.png"
   }
   ''';
 }

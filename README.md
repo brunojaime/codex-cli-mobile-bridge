@@ -152,6 +152,13 @@ Important variables:
 - `PROJECTS_ROOT=/absolute/path/to/your/projects`
 - `CHAT_STORE_BACKEND=sqlite|memory`
 - `CHAT_STORE_PATH=.data/chat_store.sqlite3`
+- `PROJECT_FACTORY_REFERENCE_ASSET_DIR=.data/project_factory_reference_assets`
+- `PROJECT_FACTORY_STATE_DIR=.data/project_factory_state`
+- `PROJECT_FACTORY_ASYNC_JOBS=true`
+- `PROJECT_FACTORY_GENERATOR_RUNS_OVERRIDE=` leave empty for the default 10
+- `PROJECT_FACTORY_REVIEWER_RUNS_OVERRIDE=` leave empty for the default 10
+- `PROJECT_FACTORY_STEP_TIMEOUT_SECONDS=0`
+- `PROJECT_FACTORY_RUN_GENERATED_VALIDATION=false`
 - `API_HOST=0.0.0.0`
 - `API_PORT=8000`
 - `API_BASE_URL=http://localhost:8000`
@@ -214,6 +221,53 @@ When `CODEX_STREAMING_MODE=auto`, the backend prefers `codex app-server` for nor
 `EXECUTION_TIMEOUT_SECONDS=0` disables the backend execution timeout entirely.
 
 Chat sessions, messages, and job history are stored in SQLite by default. Keep `CHAT_STORE_BACKEND=sqlite` and point `CHAT_STORE_PATH` at a persistent location if you deploy with containers or redeploy often.
+
+### New Project Factory
+
+Project Factory is the built-in "New project" flow. It creates a sibling
+project under `PROJECTS_ROOT`, stores draft/job history in the bridge, and
+generates a Flutter + FastAPI foundation with Workbench specs.
+
+Operational variables:
+
+- `PROJECTS_ROOT` is the parent directory where new project folders are created.
+  The factory refuses to write outside this root and refuses to overwrite an
+  existing project folder.
+- `PROJECT_FACTORY_REFERENCE_ASSET_DIR` stores uploaded reference images and
+  per-asset metadata. Keep it on persistent storage if users attach visual
+  references before generation.
+- `PROJECT_FACTORY_STATE_DIR` stores persisted drafts and jobs. On backend
+  restart, completed/failed jobs remain queryable and queued/running jobs are
+  recovered as `interrupted`.
+- `PROJECT_FACTORY_GENERATOR_RUNS_OVERRIDE` and
+  `PROJECT_FACTORY_REVIEWER_RUNS_OVERRIDE` are optional local/dev overrides.
+  Leave them empty in normal use so the manifest default stays 10 generator
+  runs and 10 reviewer runs.
+- `PROJECT_FACTORY_STEP_TIMEOUT_SECONDS=0` disables per-step timeout. Set a
+  positive value to bound each Codex CLI or generated-validation step.
+- `PROJECT_FACTORY_ASYNC_JOBS=true` starts generation in a background thread.
+  Use `false` only in local tests or controlled debugging.
+- `PROJECT_FACTORY_RUN_GENERATED_VALIDATION=false` leaves a command in job logs
+  instead of running the generated project's full validation script. Set it to
+  `true` when the bridge machine has the required toolchain and you want
+  `finalize_validation` to run it automatically.
+
+Toolchain expected by `/project-factory/doctor` and generated validation:
+
+- Python 3 and `pytest`
+- Flutter and Dart
+- Codex CLI on `PATH` or through `CODEX_COMMAND`
+
+Generated projects include:
+
+```bash
+scripts/validate_generated_project.sh
+```
+
+Run it from the generated project root to install/prepare the generated backend,
+run backend tests, start FastAPI locally, validate auth/admin/notifications via
+real HTTP, and run the generated Flutter tests with
+`API_BASE_URL=http://127.0.0.1:<port>`.
 
 Voice-note transcription options:
 
