@@ -364,6 +364,13 @@ void main() {
   testWidgets('spec tree navigates from plans to scoped task lists', (
     tester,
   ) async {
+    tester.view.physicalSize = const Size(360, 780);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(() {
+      tester.view.resetPhysicalSize();
+      tester.view.resetDevicePixelRatio();
+    });
+
     await _pumpWorkbench(
       tester,
       loader: (_) async => SddProject.fromJson(_projectWithTreeJson()),

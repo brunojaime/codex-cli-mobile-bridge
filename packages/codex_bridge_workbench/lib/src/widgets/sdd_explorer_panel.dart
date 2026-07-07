@@ -1332,6 +1332,7 @@ class _SpecsTab extends StatefulWidget {
 }
 
 class _SpecsTabState extends State<_SpecsTab> {
+  final ScrollController _detailScrollController = ScrollController();
   _SpecArtifactSelection _selection = const _SpecArtifactSelection(
     specIndex: 0,
     kind: _SpecArtifactKind.spec,
@@ -1347,12 +1348,25 @@ class _SpecsTabState extends State<_SpecsTab> {
     }
   }
 
+  @override
+  void dispose() {
+    _detailScrollController.dispose();
+    super.dispose();
+  }
+
   void _select(_SpecArtifactSelection selection, {bool showDetail = true}) {
     final nextSelection = _validatedSelection(selection, widget.project.specs);
     setState(() {
       _selection = nextSelection;
       _showDetail = showDetail;
     });
+    if (showDetail) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (_detailScrollController.hasClients) {
+          _detailScrollController.jumpTo(0);
+        }
+      });
+    }
   }
 
   @override
@@ -1371,6 +1385,7 @@ class _SpecsTabState extends State<_SpecsTab> {
     final selectedSpec = specs[selection.specIndex];
     if (_showDetail) {
       return SingleChildScrollView(
+        controller: _detailScrollController,
         padding: const EdgeInsets.fromLTRB(14, 12, 14, 24),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -4129,73 +4144,100 @@ class _TreeNodeRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final statusValue = status ?? '';
-    return Material(
-      color: selected
-          ? _WorkbenchColors.primary.withValues(alpha: 0.10)
-          : Colors.transparent,
-      borderRadius: BorderRadius.circular(8),
-      child: InkWell(
+    return Semantics(
+      button: true,
+      child: Material(
+        color: selected
+            ? _WorkbenchColors.primary.withValues(alpha: 0.10)
+            : Colors.transparent,
         borderRadius: BorderRadius.circular(8),
-        onTap: onTap,
-        child: Padding(
-          padding: EdgeInsets.fromLTRB(8 + (level * 18), 8, 8, 8),
-          child: Row(
-            children: <Widget>[
-              Icon(
-                icon,
-                size: 16,
-                color: selected
-                    ? _WorkbenchColors.primary
-                    : _WorkbenchColors.secondaryText,
-              ),
-              const SizedBox(width: 8),
-              SizedBox(
-                width: 52,
-                child: Text(
-                  label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: selected
-                        ? _WorkbenchColors.primary
-                        : _WorkbenchColors.secondaryText,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w900,
-                  ),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(8),
+          onTap: onTap,
+          child: Padding(
+            padding: EdgeInsets.fromLTRB(8 + (level * 18), 8, 8, 8),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Row(
+                  children: <Widget>[
+                    Icon(
+                      icon,
+                      size: 16,
+                      color: selected
+                          ? _WorkbenchColors.primary
+                          : _WorkbenchColors.secondaryText,
+                    ),
+                    const SizedBox(width: 8),
+                    SizedBox(
+                      width: 52,
+                      child: Text(
+                        label,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: selected
+                              ? _WorkbenchColors.primary
+                              : _WorkbenchColors.secondaryText,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        title,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: _WorkbenchColors.onBackground,
+                          fontSize: 12,
+                          fontWeight: selected
+                              ? FontWeight.w900
+                              : FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    Icon(
+                      Icons.chevron_right_rounded,
+                      size: 18,
+                      color: selected
+                          ? _WorkbenchColors.primary
+                          : _WorkbenchColors.secondaryText,
+                    ),
+                  ],
                 ),
-              ),
-              const SizedBox(width: 6),
-              Expanded(
-                child: Text(
-                  title,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: _WorkbenchColors.onBackground,
-                    fontSize: 12,
-                    fontWeight: selected ? FontWeight.w900 : FontWeight.w800,
+                if (trailing != null || statusValue.trim().isNotEmpty) ...[
+                  const SizedBox(height: 6),
+                  Padding(
+                    padding: const EdgeInsets.only(left: 82),
+                    child: Wrap(
+                      spacing: 6,
+                      runSpacing: 6,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: <Widget>[
+                        if (trailing != null)
+                          Text(
+                            trailing!,
+                            style: const TextStyle(
+                              color: _WorkbenchColors.secondaryText,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        if (statusValue.trim().isNotEmpty)
+                          _TinyStatusPill(
+                            label: statusValue,
+                            warning: _normalizeStatus(statusValue) == 'blocked',
+                          ),
+                      ],
+                    ),
                   ),
-                ),
-              ),
-              if (trailing != null) ...[
-                const SizedBox(width: 6),
-                Text(
-                  trailing!,
-                  style: const TextStyle(
-                    color: _WorkbenchColors.secondaryText,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
+                ],
               ],
-              if (statusValue.trim().isNotEmpty) ...[
-                const SizedBox(width: 6),
-                _TinyStatusPill(
-                  label: statusValue,
-                  warning: _normalizeStatus(statusValue) == 'blocked',
-                ),
-              ],
-            ],
+            ),
           ),
         ),
       ),
@@ -5061,7 +5103,7 @@ class _TreeTaskNodeSectionState extends State<_TreeTaskNodeSection> {
         const SizedBox(height: 8),
         _TinyMetaChip(
           icon: Icons.route_outlined,
-          label: 'Plan ${widget.plan.number}: ${widget.plan.title}',
+          label: 'Plan ${widget.plan.number}',
         ),
         if (task.file == null) ...[
           const SizedBox(height: 8),
