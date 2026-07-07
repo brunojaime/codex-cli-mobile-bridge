@@ -10,6 +10,11 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+loaded_scripts = sys.modules.get("scripts")
+loaded_scripts_path = getattr(loaded_scripts, "__file__", "") if loaded_scripts else ""
+if loaded_scripts_path and not loaded_scripts_path.startswith(str(ROOT / "scripts")):
+    del sys.modules["scripts"]
+
 from scripts.codex_bridge_sdd_sat_adopt import (  # noqa: E402
     AdoptionOperation,
     _write_missing_file,

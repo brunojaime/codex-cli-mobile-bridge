@@ -12,6 +12,11 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+loaded_scripts = sys.modules.get("scripts")
+loaded_scripts_path = getattr(loaded_scripts, "__file__", "") if loaded_scripts else ""
+if loaded_scripts_path and not loaded_scripts_path.startswith(str(ROOT / "scripts")):
+    del sys.modules["scripts"]
+
 from backend.app.infrastructure.config.settings import Settings  # noqa: E402
 from backend.app.main import create_app  # noqa: E402
 from scripts.codex_bridge_sdd_backfill import backfill_workspace  # noqa: E402
