@@ -16,6 +16,10 @@ const _configuredAppUpdaterEnabled = bool.fromEnvironment(
   'APP_UPDATER_ENABLED',
   defaultValue: true,
 );
+const _configuredAppUpdaterAutoInstall = bool.fromEnvironment(
+  'CODEX_APP_UPDATER_AUTO_INSTALL',
+  defaultValue: false,
+);
 const _configuredCodexBridgeDevMode = bool.fromEnvironment(
   'CODEX_BRIDGE_DEV_MODE',
   defaultValue: false,
@@ -181,6 +185,7 @@ class _CodexMobileAppState extends State<CodexMobileApp> {
               currentVersion: widget.currentVersion,
               currentBuild: widget.currentBuild,
               enabled: widget.appUpdaterEnabled,
+              autoInstallAvailableUpdates: _configuredAppUpdaterAutoInstall,
             ),
             controller: widget.appUpdaterController,
             checkOnStart: widget.appUpdaterCheckOnStart,

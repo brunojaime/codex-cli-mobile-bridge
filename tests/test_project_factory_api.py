@@ -369,12 +369,18 @@ def test_project_factory_generate_creates_local_project_foundation(tmp_path: Pat
         "research_planning",
         "finalize_validation",
         "finalize_validation",
+        "publish_finalize",
+        "publish_finalize",
+        "local_git_commit",
+        "local_git_commit",
+        "publish_verification",
+        "publish_verification",
     ]
     assert job["step_logs"][-1]["command"] == [
         "bash",
-        "scripts/validate_generated_project.sh",
+        "scripts/validate_publication_ready.sh",
     ]
-    assert "validation skipped" in job["step_logs"][-1]["message"]
+    assert "Publication verification completed" in job["step_logs"][-1]["message"]
     assert job["generation_result"]["status"] == "ready"
 
     job_response = client.get(f"/project-factory/jobs/{job['job_id']}")
@@ -503,6 +509,7 @@ def _client(projects_root: Path) -> TestClient:
         project_factory_async_jobs=False,
         project_factory_generator_runs_override=0,
         project_factory_reviewer_runs_override=0,
+        project_factory_publication_validation_mode="local",
     )
     return TestClient(create_app(settings))
 

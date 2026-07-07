@@ -33,8 +33,10 @@ release-readiness documentation.
   reference-asset, doctor, and job status flows.
 - A validated `.codex/project.yaml` manifest contract.
 - Local project creation under `PROJECTS_ROOT`.
-- Optional GitHub repository creation is deferred; local git initialization is
-  included and remote credentials remain pending.
+- Local git initialization and an initial committed baseline are mandatory.
+- GitHub publication is part of the publish contract: create/verify the remote,
+  push the branch, and record any missing credentials as an explicit blocked
+  publish state rather than silently completing.
 - Business-type research for typical apps, expected features, UX patterns, and
   look and feel.
 - User-uploaded visual references for style context.
@@ -49,7 +51,8 @@ release-readiness documentation.
 
 - Do not publish to App Store, Play Store, or AWS in the first implementation.
 - Do not require Google, Apple, Play Console, GitHub, or AWS credentials to
-  create a local project.
+  create a local project, but missing GitHub/release credentials must remain
+  visible as publish blockers.
 - Do not hardcode real passwords or secrets into generated code or committed
   files.
 - Do not generate demo/mock release builds unless explicitly requested.
@@ -95,6 +98,7 @@ new-project/
   .codex/project.yaml
   apps/mobile/
   backend/
+  scripts/publish_project.sh
   scripts/validate_generated_project.sh
   specs/001-product-foundation/
     spec.md
@@ -139,6 +143,8 @@ new-project/
 - SDD baseline diagrams: component, class, entity-relationship, and deployment
   diagrams are generated with metadata sidecars and indexed for Workbench.
 - Release data mode: real by default.
+- Publish contract: initial git commit required, GitHub repository/push required
+  before the project is considered published, and release status must be explicit.
 
 ## Implemented API Surface
 
@@ -198,6 +204,11 @@ installs/prepares the generated backend, runs backend tests, starts FastAPI on a
 local port, validates auth/admin/notifications via real HTTP, and runs generated
 Flutter tests against that backend when Flutter is available.
 
+The generated project also includes `scripts/publish_project.sh`, which creates
+or verifies the GitHub repository through authenticated `gh`, pushes the main
+branch, and reports the remote URL. Project Factory creates the initial local
+commit itself so a generated repo never remains in `No commits yet` state.
+
 ## Completion Criteria
 
 A project is not considered created until the backend returns a validation
@@ -205,6 +216,9 @@ report showing:
 
 - manifest valid;
 - project files created inside `PROJECTS_ROOT`;
+- initial local git commit exists and the worktree is clean after scaffold;
+- GitHub repo/push is complete or explicitly blocked with a credential/config
+  reason and manual next step;
 - Flutter dependencies resolve;
 - Flutter tests pass when tooling is available;
 - backend health/tests pass when tooling is available;

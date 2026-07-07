@@ -157,6 +157,7 @@ class ProjectFactoryService:
         generator_runs_override: int | None = None,
         reviewer_runs_override: int | None = None,
         run_generated_validation: bool = False,
+        publication_validation_mode: str = "remote",
         runner: ProjectFactoryJobRunner | None = None,
         async_jobs: bool = True,
     ) -> None:
@@ -190,6 +191,7 @@ class ProjectFactoryService:
         self._generator_runs_override = generator_runs_override
         self._reviewer_runs_override = reviewer_runs_override
         self._run_generated_validation = run_generated_validation
+        self._publication_validation_mode = publication_validation_mode
         self._async_jobs = async_jobs
         self._lock = RLock()
         self._drafts: dict[str, ProjectFactoryDraft] = {}
@@ -507,6 +509,7 @@ class ProjectFactoryService:
             codex_command=self._codex_command,
             timeout_seconds=self._timeout_seconds,
             run_generated_validation=self._run_generated_validation,
+            publication_validation_mode=self._publication_validation_mode,
         )
         self._update_job(
             job_id,

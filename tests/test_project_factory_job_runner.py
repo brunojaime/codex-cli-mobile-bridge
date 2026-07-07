@@ -40,7 +40,8 @@ def test_project_factory_runner_success_writes_prompts_and_runs_batches(
     assert (project / ".codex/factory/prompts/generator-01.md").is_file()
     assert (project / ".codex/factory/prompts/reviewer-02.md").is_file()
     assert (project / ".codex/factory/prompts/finalize-validation.md").is_file()
-    assert len(process_runner.calls) == 4
+    assert (project / ".codex/factory/prompts/publish-finalize.md").is_file()
+    assert len(process_runner.calls) == 7
     assert [event["phase"] for event in events if event["status"] == "completed"] == [
         "scaffold",
         "research_planning",
@@ -48,9 +49,11 @@ def test_project_factory_runner_success_writes_prompts_and_runs_batches(
         "reviewer_batch",
         "reviewer_batch",
         "finalize_validation",
+        "publish_finalize",
+        "local_git_commit",
+        "publish_verification",
     ]
-    assert events[-1]["command"] == ["bash", "scripts/validate_generated_project.sh"]
-    assert "skipped" in str(events[-1]["message"])
+    assert events[-1]["command"] == ["bash", "scripts/validate_publication_ready.sh"]
 
 
 def test_project_factory_runner_can_execute_generated_validation(
@@ -70,10 +73,11 @@ def test_project_factory_runner_can_execute_generated_validation(
         event_sink=events.append,
     )
 
-    assert process_runner.calls[-1] == ("bash", "scripts/validate_generated_project.sh")
+    assert ("bash", "scripts/validate_generated_project.sh") in process_runner.calls
     completed = [event for event in events if event["phase"] == "finalize_validation"]
     assert completed[-1]["status"] == "completed"
     assert completed[-1]["stdout"] == "ok"
+    assert events[-1]["phase"] == "publish_verification"
 
 
 def test_project_factory_runner_reports_generated_validation_failure(

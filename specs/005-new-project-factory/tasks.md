@@ -55,7 +55,7 @@
 
 ## Phase 7: GitHub And Release Readiness
 
-- [ ] T025 Add optional GitHub repository creation.
+- [x] T025 Add mandatory initial git commit and generated GitHub publish script.
 - [x] T026 Generate AWS, App Store, and Play Store readiness docs.
 - [x] T027 Mark Google/AWS/store credentials as pending without failing local
       project creation.

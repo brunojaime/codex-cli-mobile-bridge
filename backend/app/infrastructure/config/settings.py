@@ -55,6 +55,7 @@ class Settings(BaseSettings):
     project_factory_reviewer_runs_override: int | None = None
     project_factory_step_timeout_seconds: int = 0
     project_factory_run_generated_validation: bool = False
+    project_factory_publication_validation_mode: Literal["remote", "local"] = "remote"
     feedback_source_workspace_aliases: str = ""
     tailscale_socket: str | None = None
     execution_timeout_seconds: int = 0

@@ -2,6 +2,13 @@
 
 Reusable Bridge-controlled Android APK updater for Codex Mobile Bridge apps.
 
+## Auto Install Mode
+
+`CodexAppUpdaterConfig.autoInstallAvailableUpdates` can start the same updater
+flow automatically after a newer installable release is detected. The app still
+downloads through the Bridge and still opens the normal Android package
+installer; Android permissions and confirmation prompts remain user-controlled.
+
 ## Android Background Download Validation
 
 The Android implementation downloads APKs through `DownloadManager` into:

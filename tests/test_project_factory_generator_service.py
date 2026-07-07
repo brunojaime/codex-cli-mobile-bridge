@@ -48,8 +48,18 @@ def test_generator_writes_foundation_and_rolls_no_secrets(tmp_path: Path) -> Non
     assert (project / "architecture/deployment.mmd").is_file()
     assert (project / "architecture/deployment.yaml").is_file()
     assert (project / "scripts/validate_generated_project.sh").is_file()
+    assert (project / "scripts/validate_publication_ready.sh").is_file()
+    assert (project / "scripts/finalize_local_commit.sh").is_file()
+    assert (project / "scripts/publish_project.sh").is_file()
     assert (project / "apps/mobile/.gitkeep").is_file()
     assert (project / "backend/.gitkeep").is_file()
+    assert result.git_status == "initialized_committed"
+    assert _git(["log", "--oneline", "-1"], project).stdout
+    assert "Initial Project Factory baseline" in _git(
+        ["log", "--format=%s", "-1"],
+        project,
+    ).stdout
+    assert _git(["status", "--porcelain"], project).stdout == ""
     metadata = (
         project / "specs/001-product-foundation/metadata.yaml"
     ).read_text(encoding="utf-8")
@@ -142,6 +152,45 @@ def test_generator_writes_executable_e2e_validation_script(tmp_path: Path) -> No
     assert "/notifications" in content
     assert "flutter test --dart-define=API_BASE_URL=" in content
     assert "trap cleanup EXIT" in content
+
+
+def test_generator_writes_executable_publish_script(tmp_path: Path) -> None:
+    manifest_plan = ProjectFactoryManifestService(
+        projects_root=tmp_path,
+    ).plan_manifest(
+        ProjectFactoryManifestInput(
+            name="Clinica Norte",
+            business_type="medical",
+            primary_goal="Reservar turnos",
+        )
+    )
+
+    ProjectFactoryGeneratorService().generate(manifest_plan)
+
+    script = tmp_path / "clinica-norte/scripts/publish_project.sh"
+    assert script.is_file()
+    assert script.stat().st_mode & stat.S_IXUSR
+    content = script.read_text(encoding="utf-8")
+    assert "gh repo create" in content
+    assert "git push -u origin" in content
+    assert "GITHUB_OWNER" in content
+    assert "INITIAL_COMMIT_MESSAGE" in content
+    assert "published: https://github.com/$REPO" in content
+
+    finalize_script = tmp_path / "clinica-norte/scripts/finalize_local_commit.sh"
+    assert finalize_script.is_file()
+    assert finalize_script.stat().st_mode & stat.S_IXUSR
+    finalize_content = finalize_script.read_text(encoding="utf-8")
+    assert "git add -A" in finalize_content
+    assert "Finalize Project Factory output" in finalize_content
+
+    validation_script = tmp_path / "clinica-norte/scripts/validate_publication_ready.sh"
+    assert validation_script.is_file()
+    assert validation_script.stat().st_mode & stat.S_IXUSR
+    validation_content = validation_script.read_text(encoding="utf-8")
+    assert "origin remote is not configured" in validation_content
+    assert "local HEAD is not pushed" in validation_content
+    assert "GitHub release $expected_tag has no APK asset" in validation_content
 
 
 def test_generator_writes_flutter_mobile_v1_template(tmp_path: Path) -> None:
@@ -248,3 +297,13 @@ def _read_all_text(project: Path) -> str:
         if path.is_file() and ".git" not in path.parts:
             chunks.append(path.read_text(encoding="utf-8"))
     return "\n".join(chunks)
+
+
+def _git(args: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["git", *args],
+        cwd=cwd,
+        text=True,
+        capture_output=True,
+        check=True,
+    )

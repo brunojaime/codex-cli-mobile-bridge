@@ -84,6 +84,24 @@ void main() {
     expect(find.byKey(codexAppUpdaterLaterButtonKey), findsOneWidget);
   });
 
+  testWidgets('auto install requests update flow when enabled', (tester) async {
+    final controller = _AutoInstallProbeController();
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(
+      _Harness(
+        controller: controller,
+        config: _config(autoInstallAvailableUpdates: true),
+        checkOnStart: false,
+      ),
+    );
+    controller.emitAvailableUpdate();
+    await tester.pump();
+    await tester.pump();
+
+    expect(controller.updateNowCalls, 1);
+  });
+
   testWidgets('available update hides raw release notes and current version', (
     tester,
   ) async {
@@ -830,10 +848,15 @@ void main() {
 }
 
 class _Harness extends StatelessWidget {
-  const _Harness({required this.controller, this.config = _defaultConfig});
+  const _Harness({
+    required this.controller,
+    this.config = _defaultConfig,
+    this.checkOnStart = true,
+  });
 
   final CodexAppUpdaterController controller;
   final CodexAppUpdaterConfig config;
+  final bool checkOnStart;
 
   @override
   Widget build(BuildContext context) {
@@ -841,9 +864,36 @@ class _Harness extends StatelessWidget {
       home: CodexAppUpdater(
         config: config,
         controller: controller,
+        checkOnStart: checkOnStart,
         child: const Scaffold(body: Text('App')),
       ),
     );
+  }
+}
+
+class _AutoInstallProbeController extends CodexAppUpdaterController {
+  int updateNowCalls = 0;
+
+  void emitAvailableUpdate() {
+    updateInfo = const CodexAppUpdateInfo(
+      sourceApp: 'ambientando-calendar',
+      platform: 'android',
+      available: true,
+      required: false,
+      latestVersion: '1.0.0',
+      latestBuild: 40,
+      releaseTag: 'android-v1.0.0-build.40',
+      apkUrl: 'https://example.test/app.apk',
+      apkAssetName: 'ambientando-calendar.apk',
+    );
+    status = CodexAppUpdateStatus.updateAvailable;
+    notifyListeners();
+  }
+
+  @override
+  Future<bool> updateNow(CodexAppUpdaterConfig config) async {
+    updateNowCalls += 1;
+    return true;
   }
 }
 
@@ -919,11 +969,15 @@ const _defaultConfig = CodexAppUpdaterConfig(
   currentBuild: 39,
 );
 
-CodexAppUpdaterConfig _config({int currentBuild = 39}) => CodexAppUpdaterConfig(
+CodexAppUpdaterConfig _config({
+  int currentBuild = 39,
+  bool autoInstallAvailableUpdates = false,
+}) => CodexAppUpdaterConfig(
   sourceApp: 'ambientando-calendar',
   bridgeUrl: 'https://bridge.example.test',
   currentVersion: '1.0.0',
   currentBuild: currentBuild,
+  autoInstallAvailableUpdates: autoInstallAvailableUpdates,
 );
 
 Map<String, Object?> _updateJson({

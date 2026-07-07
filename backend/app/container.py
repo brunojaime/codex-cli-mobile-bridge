@@ -155,6 +155,9 @@ def build_container(settings: Settings | None = None) -> AppContainer:
         run_generated_validation=(
             resolved_settings.project_factory_run_generated_validation
         ),
+        publication_validation_mode=(
+            resolved_settings.project_factory_publication_validation_mode
+        ),
         async_jobs=resolved_settings.project_factory_async_jobs,
     )
     return AppContainer(

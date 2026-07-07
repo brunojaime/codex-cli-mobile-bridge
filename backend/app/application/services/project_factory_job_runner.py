@@ -89,6 +89,7 @@ class ProjectFactoryRunnerContext:
     codex_command: str
     timeout_seconds: int
     run_generated_validation: bool = False
+    publication_validation_mode: str = "remote"
     project_assets: tuple[object, ...] = ()
 
 
@@ -120,7 +121,7 @@ class ProjectFactoryJobRunner:
         *,
         event_sink: ProjectFactoryEventSink,
     ) -> ProjectFactoryRunnerResult:
-        total_steps = 3 + context.generator_runs + context.reviewer_runs
+        total_steps = 6 + context.generator_runs + context.reviewer_runs
         completed_steps = 0
 
         event_sink(_event("scaffold", "running", "Creating project scaffold.", 0))
@@ -251,21 +252,56 @@ class ProjectFactoryJobRunner:
                     exit_code=result.returncode,
                 )
             )
-            return ProjectFactoryRunnerResult(generation_result=generation_result)
-
-        completed_steps += 1
-        event_sink(
-            _event(
-                "finalize_validation",
-                "completed",
-                (
-                    "Generated project validation skipped. Run "
-                    "`scripts/validate_generated_project.sh` from the project root "
-                    "to validate backend and mobile together."
-                ),
-                _progress(completed_steps, total_steps),
-                command=validation_command,
+        else:
+            completed_steps += 1
+            event_sink(
+                _event(
+                    "finalize_validation",
+                    "completed",
+                    (
+                        "Generated project validation skipped. Run "
+                        "`scripts/validate_generated_project.sh` from the project root "
+                        "to validate backend and mobile together."
+                    ),
+                    _progress(completed_steps, total_steps),
+                    command=validation_command,
+                )
             )
+
+        publish_prompt_path = prompt_root / "publish-finalize.md"
+        publish_prompt_path.write_text(_publish_finalize_prompt(), encoding="utf-8")
+        completed_steps = self._run_cli_step(
+            context=context,
+            project_path=project_path,
+            prompt_path=publish_prompt_path,
+            phase="publish_finalize",
+            label="Publish finalize",
+            completed_steps=completed_steps,
+            total_steps=total_steps,
+            event_sink=event_sink,
+        )
+        completed_steps = self._run_command_step(
+            project_path=project_path,
+            argv=("bash", "scripts/finalize_local_commit.sh"),
+            phase="local_git_commit",
+            label="Local git commit",
+            completed_steps=completed_steps,
+            total_steps=total_steps,
+            event_sink=event_sink,
+            timeout_seconds=context.timeout_seconds,
+        )
+        completed_steps = self._run_command_step(
+            project_path=project_path,
+            argv=("bash", "scripts/validate_publication_ready.sh"),
+            phase="publish_verification",
+            label="Publication verification",
+            completed_steps=completed_steps,
+            total_steps=total_steps,
+            event_sink=event_sink,
+            timeout_seconds=context.timeout_seconds,
+            env_overrides={
+                "PUBLICATION_VALIDATION_MODE": context.publication_validation_mode,
+            },
         )
         return ProjectFactoryRunnerResult(generation_result=generation_result)
 
@@ -297,6 +333,78 @@ class ProjectFactoryJobRunner:
                 cwd=project_path,
                 env=_allowed_env(),
                 timeout_seconds=context.timeout_seconds,
+            )
+        except subprocess.TimeoutExpired as exc:
+            event_sink(
+                _event(
+                    phase,
+                    "failed",
+                    f"{label} timed out.",
+                    _progress(completed_steps, total_steps),
+                    command=argv,
+                    stderr=str(exc),
+                )
+            )
+            raise ProjectFactoryJobRunnerError(f"{label} timed out.") from exc
+        if result.returncode != 0:
+            event_sink(
+                _event(
+                    phase,
+                    "failed",
+                    f"{label} failed with exit code {result.returncode}.",
+                    _progress(completed_steps, total_steps),
+                    command=argv,
+                    stdout=result.stdout,
+                    stderr=result.stderr,
+                    exit_code=result.returncode,
+                )
+            )
+            raise ProjectFactoryJobRunnerError(
+                f"{label} failed with exit code {result.returncode}."
+            )
+        completed_steps += 1
+        event_sink(
+            _event(
+                phase,
+                "completed",
+                f"{label} completed.",
+                _progress(completed_steps, total_steps),
+                command=argv,
+                stdout=result.stdout,
+                stderr=result.stderr,
+                exit_code=result.returncode,
+            )
+        )
+        return completed_steps
+
+    def _run_command_step(
+        self,
+        *,
+        project_path: Path,
+        argv: tuple[str, ...],
+        phase: str,
+        label: str,
+        completed_steps: int,
+        total_steps: int,
+        event_sink: ProjectFactoryEventSink,
+        timeout_seconds: int,
+        env_overrides: dict[str, str] | None = None,
+    ) -> int:
+        event_sink(
+            _event(
+                phase,
+                "running",
+                label,
+                _progress(completed_steps, total_steps),
+                command=argv,
+            )
+        )
+        try:
+            result = self._process_runner.run(
+                argv=argv,
+                cwd=project_path,
+                env={**_allowed_env(), **(env_overrides or {})},
+                timeout_seconds=timeout_seconds,
             )
         except subprocess.TimeoutExpired as exc:
             event_sink(
@@ -373,6 +481,9 @@ Required defaults:
 - RBAC, admin, domain management, notifications.
 - Feedback Bridge, app updater, and Workbench SDD artifacts.
 - Real data paths by default; no mock/demo release data.
+- Initial git commit, GitHub publish/push status, and release readiness must be
+  explicit. Do not report the project complete if files are only untracked local
+  changes.
 
 Reference assets:
 {chr(10).join(reference_lines)}
@@ -447,4 +558,24 @@ def _finalize_prompt() -> str:
 
 Validate the generated project foundation, update specs/plans/tasks if needed,
 and leave concrete next actions for the Workbench.
+"""
+
+
+def _publish_finalize_prompt() -> str:
+    return """# Publish Finalize
+
+Finish delivery. This Project Factory job is not complete until publication is
+real and verifiable.
+
+Required outcome:
+- Run the generated validation script and fix failures.
+- Commit all intended project files.
+- Configure a real `origin` remote if missing.
+- Push the current branch so local HEAD matches its upstream.
+- If the project contains a Flutter Android app, publish a real Android APK
+  release from real backend/update configuration, then verify the release asset.
+- Do not use mock/demo data, placeholder API URLs, or local demo mode unless
+  the user explicitly requested a demo/mock release.
+- If credentials or store/release configuration are missing, leave a concrete
+  blocker and fail instead of reporting the job as complete.
 """

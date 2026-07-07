@@ -179,7 +179,10 @@ def _project_files(manifest: dict[str, Any]) -> dict[str, str]:
         ".gitignore": _gitignore(),
         "README.md": _readme(name, business_type, primary_goal),
         "AGENTS.md": _agents(name),
+        "scripts/finalize_local_commit.sh": _finalize_local_commit_script(),
+        "scripts/publish_project.sh": _publish_script(),
         "scripts/validate_generated_project.sh": _validation_script(),
+        "scripts/validate_publication_ready.sh": _publication_validation_script(),
         "specs/001-product-foundation/spec.md": _initial_spec(
             name,
             business_type,
@@ -282,6 +285,22 @@ scripts/validate_generated_project.sh
 The script uses process-local validation credentials unless `DATABASE_URL`,
 `SECRET_KEY`, `ADMIN_EMAIL`, and `ADMIN_INITIAL_PASSWORD` are already set. It
 does not write secrets to repository files.
+
+## Publish Contract
+
+Project Factory must not leave this project as an uncommitted local scaffold.
+The generated baseline is committed locally by the factory. After validation,
+publish the repository with:
+
+```bash
+GITHUB_OWNER=<owner> scripts/publish_project.sh
+```
+
+The script creates or verifies the GitHub repository, pushes the current branch,
+and reports the remote URL. Mobile/App Store/Play Store releases still require
+their credentials and release workflow configuration; if those are missing, keep
+the release state explicit in `release/` and do not mark the project fully
+published.
 """
 
 
@@ -453,6 +472,157 @@ else
 fi
 
 echo "generated project validation completed"
+'''
+
+
+def _publish_script() -> str:
+    return r'''#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT_DIR"
+
+PROJECT_SLUG="$(python3 - <<'PY'
+import pathlib
+import re
+
+project = pathlib.Path(".codex/project.yaml").read_text(encoding="utf-8")
+match = re.search(r"^slug:\s*([A-Za-z0-9_.-]+)\s*$", project, re.MULTILINE)
+if not match:
+    raise SystemExit("Could not read slug from .codex/project.yaml")
+print(match.group(1))
+PY
+)"
+BRANCH="${PUBLISH_BRANCH:-main}"
+OWNER="${GITHUB_OWNER:-}"
+VISIBILITY="${GITHUB_VISIBILITY:-private}"
+
+if ! command -v git >/dev/null 2>&1; then
+  echo "git is required to publish this project." >&2
+  exit 2
+fi
+
+if ! command -v gh >/dev/null 2>&1; then
+  echo "GitHub CLI (gh) is required to create/verify the remote repository." >&2
+  exit 2
+fi
+
+if [ -z "$OWNER" ]; then
+  OWNER="$(gh api user --jq .login 2>/dev/null || true)"
+fi
+if [ -z "$OWNER" ]; then
+  echo "Set GITHUB_OWNER or authenticate gh before publishing." >&2
+  exit 2
+fi
+
+if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  git init
+fi
+
+git add -A
+if ! git diff --cached --quiet; then
+  git -c user.name="${GIT_AUTHOR_NAME:-Codex Project Factory}" \
+      -c user.email="${GIT_AUTHOR_EMAIL:-codex-project-factory@local}" \
+      commit -m "${INITIAL_COMMIT_MESSAGE:-Initial Project Factory baseline}"
+fi
+
+git branch -M "$BRANCH"
+
+REPO="$OWNER/$PROJECT_SLUG"
+if ! gh repo view "$REPO" >/dev/null 2>&1; then
+  gh repo create "$REPO" "--$VISIBILITY" --source . --remote origin --push
+else
+  if ! git remote get-url origin >/dev/null 2>&1; then
+    git remote add origin "https://github.com/$REPO.git"
+  fi
+  git push -u origin "$BRANCH"
+fi
+
+echo "published: https://github.com/$REPO"
+'''
+
+
+def _finalize_local_commit_script() -> str:
+    return r'''#!/usr/bin/env bash
+set -euo pipefail
+
+if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  git init
+fi
+
+git add -A
+if ! git diff --cached --quiet; then
+  git -c user.name="${GIT_AUTHOR_NAME:-Codex Project Factory}" \
+      -c user.email="${GIT_AUTHOR_EMAIL:-codex-project-factory@local}" \
+      commit -m "${PROJECT_FACTORY_FINAL_COMMIT_MESSAGE:-Finalize Project Factory output}"
+fi
+
+printf 'local git commit ready\n'
+'''
+
+
+def _publication_validation_script() -> str:
+    return r'''#!/usr/bin/env bash
+set -euo pipefail
+
+fail() {
+  printf 'publication validation failed: %s\n' "$*" >&2
+  exit 1
+}
+
+mode="${PUBLICATION_VALIDATION_MODE:-remote}"
+
+git rev-parse --is-inside-work-tree >/dev/null 2>&1 || fail "not inside a git repository"
+git rev-parse --verify HEAD >/dev/null 2>&1 || fail "no git commit exists"
+
+if [[ -n "$(git status --porcelain)" ]]; then
+  git status --short >&2
+  fail "working tree has uncommitted or untracked files"
+fi
+
+if [[ "$mode" == "local" ]]; then
+  printf 'publication validation completed: local commit ready; remote publish not required in this mode\n'
+  exit 0
+fi
+
+[[ "$mode" == "remote" ]] || fail "unsupported PUBLICATION_VALIDATION_MODE=$mode"
+
+origin_url="$(git remote get-url origin 2>/dev/null || true)"
+[[ -n "$origin_url" ]] || fail "origin remote is not configured"
+repo_ref="$origin_url"
+repo_ref="${repo_ref#https://github.com/}"
+repo_ref="${repo_ref#git@github.com:}"
+repo_ref="${repo_ref%.git}"
+
+branch="$(git symbolic-ref --short HEAD 2>/dev/null || true)"
+[[ -n "$branch" ]] || fail "HEAD is detached; publish from a named branch"
+
+upstream="$(git rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null || true)"
+[[ -n "$upstream" ]] || fail "current branch has no upstream"
+
+git fetch --quiet origin "$branch" || fail "could not fetch origin/$branch"
+local_head="$(git rev-parse HEAD)"
+remote_head="$(git rev-parse "$upstream" 2>/dev/null || true)"
+[[ "$local_head" == "$remote_head" ]] || fail "local HEAD is not pushed to $upstream"
+
+if [[ -f apps/mobile/pubspec.yaml ]]; then
+  version="$(awk '/^version:/ { print $2; exit }' apps/mobile/pubspec.yaml)"
+  [[ -n "$version" ]] || fail "apps/mobile/pubspec.yaml has no version"
+  expected_tag="${APP_ANDROID_RELEASE_TAG:-android-v${version//+/-build.}}"
+  git rev-parse --verify "refs/tags/$expected_tag" >/dev/null 2>&1 || fail "missing Android release tag $expected_tag"
+  tag_commit="$(git rev-list -n 1 "$expected_tag")"
+  [[ "$tag_commit" == "$local_head" ]] || fail "Android release tag $expected_tag does not point at HEAD"
+  git ls-remote --exit-code --tags origin "$expected_tag" >/dev/null 2>&1 || fail "Android release tag $expected_tag is not pushed"
+
+  if ! command -v gh >/dev/null 2>&1; then
+    fail "gh is required to verify Android APK release assets"
+  fi
+  assets="$(gh release view "$expected_tag" --repo "$repo_ref" --json assets --jq '.assets[].name' 2>/dev/null || true)"
+  [[ -n "$assets" ]] || fail "GitHub release $expected_tag is missing or has no assets"
+  printf '%s\n' "$assets" | grep -Eq '\.apk$' || fail "GitHub release $expected_tag has no APK asset"
+fi
+
+printf 'publication validation completed\n'
 '''
 
 
@@ -2427,9 +2597,40 @@ def _init_git(target: Path) -> str:
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
+        subprocess.run(
+            ["git", "add", "-A"],
+            cwd=target,
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        diff = subprocess.run(
+            ["git", "diff", "--cached", "--quiet"],
+            cwd=target,
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        if diff.returncode == 1:
+            subprocess.run(
+                [
+                    "git",
+                    "-c",
+                    "user.name=Codex Project Factory",
+                    "-c",
+                    "user.email=codex-project-factory@local",
+                    "commit",
+                    "-m",
+                    "Initial Project Factory baseline",
+                ],
+                cwd=target,
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
     except (OSError, subprocess.CalledProcessError):
         return "pending_git"
-    return "initialized"
+    return "initialized_committed"
 
 
 def _cleanup_created_target(target: Path) -> None:

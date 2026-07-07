@@ -513,6 +513,23 @@ Recommended flow:
 5. Download it from:
    `https://github.com/<owner>/<repo>/releases/latest/download/codex-mobile.apk`
 
+The normal phone update path does not require manually opening GitHub. The
+installed app checks the Bridge updater endpoint, downloads the APK through the
+Bridge proxy, and then hands it to Android's package installer. Android still
+asks the user to confirm sideloaded APK installs.
+
+From the backend machine, the same update metadata can be used through CLI:
+
+```bash
+scripts/install_android_update.sh --source-app codex-mobile --print-url
+scripts/install_android_update.sh --source-app codex-mobile --download-only
+scripts/install_android_update.sh --source-app codex-mobile --adb-install
+```
+
+`--print-url` returns the Bridge APK URL, `--download-only` stores the APK under
+`.run/apks`, and `--adb-install` runs `adb install -r` for a connected Android
+device. None of these modes enable mock/demo data.
+
 Important details:
 
 - If `frontend/mobile_app/android/key.properties` is present, the Android release build uses that keystore.

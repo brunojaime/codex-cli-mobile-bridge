@@ -62,8 +62,9 @@ added.
 
 ## Phase 7: GitHub And Release Readiness
 
-- Create GitHub repo when authentication is available.
-- Leave `pending_github_auth` when it is not.
+- Create an initial local git commit for every generated project.
+- Create GitHub repo and push when authentication is available.
+- Leave an explicit publish blocker when GitHub/release credentials are missing.
 - Generate AWS, App Store, and Play Store readiness files.
 - Keep Google, AWS, Apple, and Play credentials as explicit pending items.
 

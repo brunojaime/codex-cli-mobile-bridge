@@ -414,6 +414,12 @@ def _build_manifest(
             "mock_or_demo_release": False,
             "app_store_ready": True,
             "play_store_ready": True,
+            "publish_contract": {
+                "local_git_commit_required": True,
+                "github_repository_required": True,
+                "push_required": True,
+                "release_status_must_be_explicit": True,
+            },
         },
         "cloud": {
             "provider": "aws",

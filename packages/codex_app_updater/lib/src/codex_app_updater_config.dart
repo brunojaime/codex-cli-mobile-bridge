@@ -8,6 +8,7 @@ class CodexAppUpdaterConfig {
     this.channel = 'stable',
     this.enabled = true,
     this.requireChecksum = false,
+    this.autoInstallAvailableUpdates = false,
   });
 
   final String sourceApp;
@@ -18,6 +19,7 @@ class CodexAppUpdaterConfig {
   final String channel;
   final bool enabled;
   final bool requireChecksum;
+  final bool autoInstallAvailableUpdates;
 
   Uri updateUri() {
     final base = Uri.parse(_trimTrailingSlash(bridgeUrl));
