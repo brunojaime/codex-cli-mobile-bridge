@@ -7,8 +7,9 @@ import textwrap
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+if str(ROOT) in sys.path:
+    sys.path.remove(str(ROOT))
+sys.path.insert(0, str(ROOT))
 
 loaded_scripts = sys.modules.get("scripts")
 loaded_scripts_path = getattr(loaded_scripts, "__file__", "") if loaded_scripts else ""
