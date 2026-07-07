@@ -7,6 +7,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from backend.app.application.services.asset_depot_service import (
+    AssetDepotService,
+)
 from backend.app.application.services.project_factory_manifest_service import (
     ProjectFactoryManifestPlan,
 )
@@ -54,14 +57,17 @@ class ProjectFactoryGeneratorService:
         self,
         *,
         reference_asset_service: ProjectFactoryReferenceAssetService | None = None,
+        asset_depot_service: AssetDepotService | None = None,
     ) -> None:
         self._reference_asset_service = reference_asset_service
+        self._asset_depot_service = asset_depot_service
 
     def generate(
         self,
         manifest_plan: ProjectFactoryManifestPlan,
         *,
         reference_assets: Sequence[ProjectFactoryReferenceAsset] = (),
+        project_assets: Sequence[object] = (),
     ) -> ProjectFactoryGenerationResult:
         if not manifest_plan.ok or not manifest_plan.target_path:
             raise ProjectFactoryGeneratorError(
@@ -90,9 +96,13 @@ class ProjectFactoryGeneratorService:
                 )
             for relative_dir in (
                 "assets/reference/uploaded",
+                "assets/source",
+                "assets/brand",
                 "apps/mobile",
+                "apps/mobile/assets/brand",
                 "backend",
                 "references/images",
+                "references/documents",
             ):
                 directory = target / relative_dir
                 directory.mkdir(parents=True, exist_ok=True)
@@ -115,6 +125,24 @@ class ProjectFactoryGeneratorService:
                     target_project=target,
                 )
                 for relative_path in copied_assets:
+                    path = target / relative_path
+                    written.append(
+                        ProjectFactoryGeneratedFile(
+                            path=relative_path,
+                            size_bytes=path.stat().st_size,
+                        )
+                    )
+            if project_assets:
+                if self._asset_depot_service is None:
+                    raise ProjectFactoryGeneratorError(
+                        "Asset Depot service is required to copy project assets."
+                    )
+                copied_project_assets = _copy_project_assets_to_project(
+                    asset_depot_service=self._asset_depot_service,
+                    project_assets=tuple(project_assets),
+                    target_project=target,
+                )
+                for relative_path in copied_project_assets:
                     path = target / relative_path
                     written.append(
                         ProjectFactoryGeneratedFile(
@@ -145,6 +173,7 @@ def _project_files(manifest: dict[str, Any]) -> dict[str, str]:
     business_type = str(manifest["business_type"])
     primary_goal = str(manifest["primary_goal"])
     workflow = manifest["codex"]["creation_workflow"]
+    project_assets = manifest.get("asset_depot", {}).get("project_assets", [])
     files = {
         ".codex/project.yaml": _to_yaml(manifest),
         ".gitignore": _gitignore(),
@@ -156,6 +185,7 @@ def _project_files(manifest: dict[str, Any]) -> dict[str, str]:
             business_type,
             primary_goal,
             workflow,
+            project_assets,
         ),
         "specs/001-product-foundation/plan.md": _initial_plan(name),
         "specs/001-product-foundation/tasks.md": _initial_tasks(),
@@ -474,6 +504,8 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  assets:
+    - assets/brand/
 """
 
 
@@ -2115,11 +2147,133 @@ def _diagram_class_name(name: str) -> str:
     return candidate or "Generated"
 
 
+def _copy_project_assets_to_project(
+    *,
+    asset_depot_service: AssetDepotService,
+    project_assets: tuple[object, ...],
+    target_project: Path,
+) -> tuple[str, ...]:
+    metadata: list[dict[str, object]] = []
+    written: list[str] = []
+    reference_lines: list[str] = []
+    document_lines: list[str] = []
+    for linked in project_assets:
+        asset_id = str(getattr(linked, "asset_id", ""))
+        role = str(getattr(linked, "role", ""))
+        asset = asset_depot_service.get_asset(asset_id)
+        if asset is None:
+            raise ProjectFactoryGeneratorError(f"Promoted asset not found: {asset_id}")
+        destinations = _asset_destinations_for_role(role, asset.id, asset.original_filename)
+        copied_paths: list[str] = []
+        for destination in destinations:
+            copied = asset_depot_service.copy_asset_to(
+                asset=asset,
+                target_project=target_project,
+                relative_destination=destination,
+            )
+            copied_paths.append(copied)
+            written.append(copied)
+        item = {
+            "asset_id": asset.id,
+            "role": role,
+            "original_filename": asset.original_filename,
+            "content_type": asset.content_type,
+            "size_bytes": asset.size_bytes,
+            "sha256": asset.sha256,
+            "source": asset.source,
+            "bridge_storage_path": asset.storage_path,
+            "destinations": copied_paths,
+            "notes": str(getattr(linked, "notes", "")),
+        }
+        metadata.append(item)
+        if role == "visual_reference":
+            reference_lines.append(_asset_markdown_item(item))
+        if role == "document_context":
+            document_lines.append(_asset_markdown_item(item))
+    metadata_path = target_project / "assets" / "asset-depot-assets.yaml"
+    metadata_path.write_text(_to_yaml({"assets": metadata}), encoding="utf-8")
+    written.append(str(metadata_path.relative_to(target_project)))
+    if reference_lines:
+        reference_path = target_project / "references" / "reference-assets.md"
+        existing = reference_path.read_text(encoding="utf-8") if reference_path.exists() else "# Reference Assets\n"
+        reference_path.write_text(
+            existing.rstrip()
+            + "\n\n## Asset Depot Visual References\n\n"
+            + "\n".join(reference_lines)
+            + "\n",
+            encoding="utf-8",
+        )
+        written.append(str(reference_path.relative_to(target_project)))
+    if document_lines:
+        document_path = target_project / "references" / "documents" / "document-assets.md"
+        document_path.write_text(
+            "# Document Context Assets\n\n" + "\n".join(document_lines) + "\n",
+            encoding="utf-8",
+        )
+        written.append(str(document_path.relative_to(target_project)))
+    return tuple(dict.fromkeys(written))
+
+
+def _asset_destinations_for_role(
+    role: str,
+    asset_id: str,
+    original_filename: str,
+) -> tuple[str, ...]:
+    suffix = Path(original_filename).suffix.lower() or ".bin"
+    slug = _slug_filename(original_filename)
+    if role == "visual_reference":
+        return (f"references/images/{asset_id}-{slug}",)
+    if role == "exact_asset":
+        return (f"assets/source/{asset_id}-{slug}",)
+    if role == "logo":
+        return (f"assets/brand/logo{suffix}",)
+    if role == "app_icon":
+        return (
+            f"assets/brand/app_icon_source{suffix}",
+            f"apps/mobile/assets/brand/app_icon_source{suffix}",
+        )
+    if role == "document_context":
+        return (f"references/documents/{asset_id}-{slug}",)
+    return (f"assets/source/{asset_id}-{slug}",)
+
+
+def _asset_markdown_item(item: dict[str, object]) -> str:
+    destinations = ", ".join(f"`{path}`" for path in item["destinations"])
+    return (
+        f"- `{item['original_filename']}` role `{item['role']}` "
+        f"sha256 `{item['sha256']}` -> {destinations}"
+    )
+
+
+def _promoted_assets_spec_section(project_assets: object) -> str:
+    if not isinstance(project_assets, list) or not project_assets:
+        return "- No promoted exact assets yet."
+    lines = []
+    for item in project_assets:
+        if not isinstance(item, dict):
+            continue
+        lines.append(
+            "- "
+            f"{item.get('original_filename')} "
+            f"role `{item.get('role')}` "
+            f"sha256 `{item.get('sha256')}`"
+        )
+    return "\n".join(lines) if lines else "- No promoted exact assets yet."
+
+
+def _slug_filename(filename: str) -> str:
+    suffix = Path(filename).suffix.lower()
+    stem = Path(filename).stem.lower()
+    slug = re.sub(r"[^a-z0-9]+", "-", stem).strip("-") or "asset"
+    return f"{slug}{suffix}"
+
+
 def _initial_spec(
     name: str,
     business_type: str,
     primary_goal: str,
     workflow: dict[str, Any],
+    project_assets: object,
 ) -> str:
     return f"""# Product Foundation
 
@@ -2133,6 +2287,10 @@ Bridge, app updater, and Workbench-driven feature growth.
 
 - Business type: `{business_type}`
 - Primary goal: {primary_goal}
+
+## Promoted Assets
+
+{_promoted_assets_spec_section(project_assets)}
 
 ## Creation Workflow
 

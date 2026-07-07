@@ -258,6 +258,72 @@ void main() {
     );
   });
 
+  test('asset depot client uploads and links project draft asset', () async {
+    var step = 0;
+    final client = ApiClient(
+      baseUrl: 'http://localhost:8000',
+      client: MockClient((request) async {
+        step += 1;
+        if (step == 1) {
+          expect(request.method, 'POST');
+          expect(request.url.path, '/assets');
+          final body = String.fromCharCodes(request.bodyBytes).toLowerCase();
+          expect(body, contains('name="asset"'));
+          expect(body, contains('filename="logo.png"'));
+          expect(body, contains('name="source"'));
+          expect(body, contains('chat_upload'));
+          return http.Response(
+            _assetDepotJson(),
+            200,
+            headers: <String, String>{'content-type': 'application/json'},
+          );
+        }
+        if (step == 2) {
+          expect(request.method, 'POST');
+          expect(request.url.path, '/project-factory/drafts/pf-draft-1/assets');
+          expect(request.body, contains('"asset_id":"asset-abc123def456"'));
+          expect(request.body, contains('"role":"logo"'));
+          return http.Response(
+            _projectFactoryDraftAssetJson(),
+            200,
+            headers: <String, String>{'content-type': 'application/json'},
+          );
+        }
+        expect(request.method, 'GET');
+        expect(request.url.path, '/project-factory/drafts/pf-draft-1/assets');
+        return http.Response(
+          '{"kind":"codex.projectFactoryDraftAssets","version":1,"draft_id":"pf-draft-1","assets":[${_projectFactoryDraftAssetJson()}]}',
+          200,
+          headers: <String, String>{'content-type': 'application/json'},
+        );
+      }),
+    );
+
+    final asset = await client.uploadAssetDepotAsset(
+      XFile.fromData(
+        Uint8List.fromList(<int>[1, 2, 3, 4]),
+        name: 'logo.png',
+        mimeType: 'image/png',
+        path: 'logo.png',
+      ),
+      source: 'chat_upload',
+    );
+    expect(asset.assetId, 'asset-abc123def456');
+    expect(asset.sha256, 'sha256-value');
+
+    final linked = await client.linkProjectFactoryDraftAsset(
+      draftId: 'pf-draft-1',
+      assetId: asset.assetId,
+      role: ProjectAssetRole.logo,
+      notes: 'Use exact logo',
+    );
+    expect(linked.role, ProjectAssetRole.logo);
+    expect(linked.assetId, asset.assetId);
+
+    final listed = await client.listProjectFactoryDraftAssets('pf-draft-1');
+    expect(listed.single.originalFilename, 'logo.png');
+  });
+
   test('project factory client lists drafts and jobs', () async {
     var step = 0;
     final client = ApiClient(
@@ -797,6 +863,40 @@ String _referenceAssetJson() {
     "size_bytes": 4,
     "created_at": "2026-07-07T00:00:00Z",
     "storage_path": "pf-draft-1/pf-asset-1.png"
+  }
+  ''';
+}
+
+String _assetDepotJson() {
+  return '''
+  {
+    "asset_id": "asset-abc123def456",
+    "id": "asset-abc123def456",
+    "original_filename": "logo.png",
+    "content_type": "image/png",
+    "size_bytes": 4,
+    "sha256": "sha256-value",
+    "created_at": "2026-07-07T00:00:00Z",
+    "storage_path": "files/asset-abc123def456.png",
+    "source": "chat_upload"
+  }
+  ''';
+}
+
+String _projectFactoryDraftAssetJson() {
+  return '''
+  {
+    "draft_id": "pf-draft-1",
+    "asset_id": "asset-abc123def456",
+    "role": "logo",
+    "notes": "Use exact logo",
+    "linked_at": "2026-07-07T00:00:00Z",
+    "original_filename": "logo.png",
+    "content_type": "image/png",
+    "size_bytes": 4,
+    "sha256": "sha256-value",
+    "storage_path": "files/asset-abc123def456.png",
+    "source": "chat_upload"
   }
   ''';
 }

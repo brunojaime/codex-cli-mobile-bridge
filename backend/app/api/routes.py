@@ -52,6 +52,10 @@ from backend.app.api.schemas import (
     CodexToolingResponse,
     CreateSessionRequest,
     DocumentMessageAcceptedResponse,
+    AssetDepotDeleteResponse,
+    AssetDepotFromJobAttachmentRequest,
+    AssetDepotItemResponse,
+    AssetDepotListResponse,
     AppUpdateRegistryItemResponse,
     AppUpdateRegistryResponse,
     AppUpdateResponse,
@@ -75,6 +79,9 @@ from backend.app.api.schemas import (
     PersistenceIntegrityIssueResponse,
     PersistenceIntegrityResponse,
     ProjectFactoryDraftRequest,
+    ProjectFactoryDraftAssetLinkRequest,
+    ProjectFactoryDraftAssetResponse,
+    ProjectFactoryDraftAssetsResponse,
     ProjectFactoryDraftResponse,
     ProjectFactoryDraftsResponse,
     ProjectFactoryDoctorResponse,
@@ -120,6 +127,7 @@ from backend.app.api.schemas import (
     TurnSummaryConfigRequest,
     WorkspaceResponse,
 )
+from backend.app.application.services.asset_depot_service import AssetDepotError
 from backend.app.application.services.project_factory_manifest_service import (
     ProjectFactoryManifestInput,
 )
@@ -346,6 +354,129 @@ async def capabilities(
     )
 
 
+@router.get("/assets", response_model=AssetDepotListResponse)
+async def list_asset_depot_assets(
+    limit: int = 100,
+    container: AppContainer = Depends(get_container),
+) -> AssetDepotListResponse:
+    assets = await run_in_threadpool(
+        container.asset_depot_service.list_assets,
+        limit=limit,
+    )
+    return AssetDepotListResponse(
+        assets=[AssetDepotItemResponse(**asset.to_payload()) for asset in assets],
+    )
+
+
+@router.post("/assets", response_model=AssetDepotItemResponse)
+async def upload_asset_depot_asset(
+    asset: UploadFile = File(...),
+    source: str = Form(default="manual_upload"),
+    container: AppContainer = Depends(get_container),
+) -> AssetDepotItemResponse:
+    temp_path = await _store_uploaded_file(
+        asset,
+        max_bytes=container.settings.asset_depot_max_upload_bytes,
+        default_filename="asset-upload.bin",
+        size_limit_label="Asset",
+    )
+    try:
+        content = temp_path.read_bytes()
+        created = await run_in_threadpool(
+            container.asset_depot_service.create_asset,
+            filename=asset.filename or temp_path.name,
+            content_type=asset.content_type,
+            content=content,
+            source=source,
+        )
+    except AssetDepotError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    finally:
+        temp_path.unlink(missing_ok=True)
+        await asset.close()
+    return AssetDepotItemResponse(**created.to_payload())
+
+
+@router.post("/assets/from-job-attachment", response_model=AssetDepotItemResponse)
+async def create_asset_from_job_attachment(
+    request: AssetDepotFromJobAttachmentRequest,
+    container: AppContainer = Depends(get_container),
+) -> AssetDepotItemResponse:
+    attachment = await run_in_threadpool(
+        container.message_service.get_job_image_attachment_file,
+        request.job_id,
+        request.attachment_index,
+    )
+    if attachment is None:
+        raise HTTPException(status_code=404, detail="Job attachment not found.")
+    try:
+        created = await run_in_threadpool(
+            container.asset_depot_service.import_file,
+            path=attachment.path,
+            filename=attachment.path.name,
+            content_type=attachment.media_type,
+            source=request.source,
+        )
+    except AssetDepotError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return AssetDepotItemResponse(**created.to_payload())
+
+
+@router.get("/assets/{asset_id}", response_model=AssetDepotItemResponse)
+async def get_asset_depot_asset(
+    asset_id: str,
+    container: AppContainer = Depends(get_container),
+) -> AssetDepotItemResponse:
+    try:
+        asset = await run_in_threadpool(
+            container.asset_depot_service.get_asset,
+            asset_id,
+        )
+    except AssetDepotError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if asset is None:
+        raise HTTPException(status_code=404, detail="Asset not found.")
+    return AssetDepotItemResponse(**asset.to_payload())
+
+
+@router.get("/assets/{asset_id}/download")
+async def download_asset_depot_asset(
+    asset_id: str,
+    container: AppContainer = Depends(get_container),
+) -> FileResponse:
+    try:
+        asset = await run_in_threadpool(
+            container.asset_depot_service.get_asset,
+            asset_id,
+        )
+    except AssetDepotError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if asset is None:
+        raise HTTPException(status_code=404, detail="Asset not found.")
+    return FileResponse(
+        container.asset_depot_service.asset_file_path(asset),
+        media_type=asset.content_type,
+        filename=asset.original_filename,
+    )
+
+
+@router.delete("/assets/{asset_id}", response_model=AssetDepotDeleteResponse)
+async def delete_asset_depot_asset(
+    asset_id: str,
+    container: AppContainer = Depends(get_container),
+) -> AssetDepotDeleteResponse:
+    try:
+        deleted = await run_in_threadpool(
+            container.asset_depot_service.delete_asset,
+            asset_id,
+        )
+    except AssetDepotError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Asset not found.")
+    return AssetDepotDeleteResponse(asset_id=asset_id, deleted=True)
+
+
 @router.get("/project-factory/options", response_model=ProjectFactoryOptionsResponse)
 async def project_factory_options(
     container: AppContainer = Depends(get_container),
@@ -486,6 +617,50 @@ async def delete_project_factory_reference_asset(
         draft_id=draft_id,
         asset_id=asset_id,
         deleted=True,
+    )
+
+
+@router.post(
+    "/project-factory/drafts/{draft_id}/assets",
+    response_model=ProjectFactoryDraftAssetResponse,
+)
+async def link_project_factory_draft_asset(
+    draft_id: str,
+    request: ProjectFactoryDraftAssetLinkRequest,
+    container: AppContainer = Depends(get_container),
+) -> ProjectFactoryDraftAssetResponse:
+    try:
+        linked = await run_in_threadpool(
+            container.project_factory_service.link_asset_to_draft,
+            draft_id=draft_id,
+            asset_id=request.asset_id,
+            role=request.role,
+            notes=request.notes,
+        )
+    except AssetDepotError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if linked is None:
+        raise HTTPException(status_code=404, detail="Project factory draft not found.")
+    return ProjectFactoryDraftAssetResponse(**linked.to_payload())
+
+
+@router.get(
+    "/project-factory/drafts/{draft_id}/assets",
+    response_model=ProjectFactoryDraftAssetsResponse,
+)
+async def list_project_factory_draft_assets(
+    draft_id: str,
+    container: AppContainer = Depends(get_container),
+) -> ProjectFactoryDraftAssetsResponse:
+    assets = await run_in_threadpool(
+        container.project_factory_service.list_draft_assets,
+        draft_id,
+    )
+    if assets is None:
+        raise HTTPException(status_code=404, detail="Project factory draft not found.")
+    return ProjectFactoryDraftAssetsResponse(
+        draft_id=draft_id,
+        assets=[ProjectFactoryDraftAssetResponse(**asset.to_payload()) for asset in assets],
     )
 
 

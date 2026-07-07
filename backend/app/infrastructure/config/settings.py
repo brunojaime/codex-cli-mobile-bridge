@@ -44,6 +44,8 @@ class Settings(BaseSettings):
     feedback_queue_path: str = str(Path.cwd() / ".data" / "feedback_queue.json")
     feedback_image_dir: str = str(Path.cwd() / ".data" / "feedback_images")
     feedback_audio_dir: str = str(Path.cwd() / ".data" / "feedback_audio")
+    asset_depot_dir: str = str(Path.cwd() / ".data" / "asset_depot")
+    asset_depot_max_upload_bytes: int = 25_000_000
     project_factory_reference_asset_dir: str = str(
         Path.cwd() / ".data" / "project_factory_reference_assets"
     )

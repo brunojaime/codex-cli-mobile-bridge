@@ -12,6 +12,12 @@ import sys
 from threading import RLock, Thread
 from uuid import uuid4
 
+from backend.app.application.services.asset_depot_service import (
+    AssetDepotError,
+    AssetDepotItem,
+    AssetDepotService,
+    validate_asset_role,
+)
 from backend.app.application.services.project_factory_job_runner import (
     ProjectFactoryJobRunner,
     ProjectFactoryJobRunnerError,
@@ -100,6 +106,39 @@ class ProjectFactoryJob:
         return payload
 
 
+@dataclass(frozen=True, slots=True)
+class ProjectFactoryDraftAsset:
+    draft_id: str
+    asset_id: str
+    role: str
+    notes: str
+    linked_at: str
+    original_filename: str
+    content_type: str
+    size_bytes: int
+    sha256: str
+    storage_path: str
+    source: str
+
+    def to_payload(self) -> dict[str, object]:
+        return {
+            "draft_id": self.draft_id,
+            "asset_id": self.asset_id,
+            "role": self.role,
+            "notes": self.notes,
+            "linked_at": self.linked_at,
+            "original_filename": self.original_filename,
+            "content_type": self.content_type,
+            "size_bytes": self.size_bytes,
+            "sha256": self.sha256,
+            "storage_path": self.storage_path,
+            "source": self.source,
+        }
+
+    def to_manifest_item(self) -> dict[str, object]:
+        return self.to_payload()
+
+
 class ProjectFactoryGenerationConflictError(RuntimeError):
     pass
 
@@ -110,6 +149,7 @@ class ProjectFactoryService:
         *,
         projects_root: str | Path,
         reference_asset_storage_root: str | Path,
+        asset_depot_service: AssetDepotService | None = None,
         max_reference_asset_bytes: int,
         state_root: str | Path | None = None,
         codex_command: str = "codex",
@@ -129,6 +169,7 @@ class ProjectFactoryService:
         )
         self._draft_state_dir = self._state_root / "drafts"
         self._job_state_dir = self._state_root / "jobs"
+        self._draft_asset_state_dir = self._state_root / "draft_assets"
         self._manifest_service = ProjectFactoryManifestService(
             projects_root=self._projects_root,
         )
@@ -136,8 +177,10 @@ class ProjectFactoryService:
             storage_root=reference_asset_storage_root,
             max_image_bytes=max_reference_asset_bytes,
         )
+        self._asset_depot_service = asset_depot_service
         self._generator_service = ProjectFactoryGeneratorService(
             reference_asset_service=self._reference_asset_service,
+            asset_depot_service=self._asset_depot_service,
         )
         self._runner = runner or ProjectFactoryJobRunner(
             generator_service=self._generator_service,
@@ -151,9 +194,11 @@ class ProjectFactoryService:
         self._lock = RLock()
         self._drafts: dict[str, ProjectFactoryDraft] = {}
         self._jobs: dict[str, ProjectFactoryJob] = {}
+        self._draft_assets: dict[str, list[ProjectFactoryDraftAsset]] = {}
         self._state_root.mkdir(parents=True, exist_ok=True)
         self._draft_state_dir.mkdir(parents=True, exist_ok=True)
         self._job_state_dir.mkdir(parents=True, exist_ok=True)
+        self._draft_asset_state_dir.mkdir(parents=True, exist_ok=True)
         self._load_state()
 
     def options(self) -> dict[str, object]:
@@ -279,6 +324,50 @@ class ProjectFactoryService:
             asset_id=asset_id,
         )
 
+    def link_asset_to_draft(
+        self,
+        *,
+        draft_id: str,
+        asset_id: str,
+        role: str,
+        notes: str = "",
+    ) -> ProjectFactoryDraftAsset | None:
+        if self._asset_depot_service is None:
+            raise AssetDepotError("Asset Depot is not configured.")
+        normalized_role = validate_asset_role(role)
+        with self._lock:
+            draft_exists = draft_id in self._drafts
+        if not draft_exists:
+            return None
+        asset = self._asset_depot_service.get_asset(asset_id)
+        if asset is None:
+            raise AssetDepotError("Asset not found.")
+        linked = _draft_asset_from_depot_item(
+            draft_id=draft_id,
+            asset=asset,
+            role=normalized_role,
+            notes=notes,
+        )
+        with self._lock:
+            existing = [
+                item
+                for item in self._draft_assets.get(draft_id, [])
+                if not (item.asset_id == asset_id and item.role == normalized_role)
+            ]
+            existing.append(linked)
+            self._draft_assets[draft_id] = existing
+            self._persist_draft_assets(draft_id)
+        return linked
+
+    def list_draft_assets(
+        self,
+        draft_id: str,
+    ) -> tuple[ProjectFactoryDraftAsset, ...] | None:
+        with self._lock:
+            if draft_id not in self._drafts:
+                return None
+            return tuple(self._draft_assets.get(draft_id, []))
+
     def get_draft(self, draft_id: str) -> ProjectFactoryDraft | None:
         with self._lock:
             return self._drafts.get(draft_id)
@@ -396,6 +485,7 @@ class ProjectFactoryService:
             return
         manifest_plan = self._manifest_plan_for_draft(draft)
         reference_assets = self._reference_asset_service.list_assets(draft.id)
+        project_assets = tuple(self._draft_assets.get(draft.id, []))
         workflow = manifest_plan.manifest.get("codex", {}).get("creation_workflow", {})
         generator_runs = (
             self._generator_runs_override
@@ -411,6 +501,7 @@ class ProjectFactoryService:
             draft_id=draft.id,
             manifest_plan=manifest_plan,
             reference_assets=reference_assets,
+            project_assets=project_assets,
             generator_runs=generator_runs,
             reviewer_runs=reviewer_runs,
             codex_command=self._codex_command,
@@ -499,6 +590,7 @@ class ProjectFactoryService:
         draft: ProjectFactoryDraft,
     ) -> ProjectFactoryManifestPlan:
         assets = self._reference_asset_service.list_assets(draft.id)
+        project_assets = tuple(self._draft_assets.get(draft.id, []))
         request = ProjectFactoryManifestInput(
             name=draft.request.name,
             business_type=draft.request.business_type,
@@ -511,6 +603,7 @@ class ProjectFactoryService:
             visual_reference_assets=tuple(
                 asset.to_manifest_item() for asset in assets
             ),
+            project_assets=tuple(asset.to_manifest_item() for asset in project_assets),
         )
         return self._manifest_service.plan_manifest(request)
 
@@ -529,6 +622,17 @@ class ProjectFactoryService:
             except Exception:
                 continue
             self._drafts[draft.id] = draft
+        for draft_assets_path in sorted(self._draft_asset_state_dir.glob("*.json")):
+            try:
+                payload = _read_json(draft_assets_path)
+                draft_id = str(payload["draft_id"])
+                self._draft_assets[draft_id] = [
+                    _draft_asset_from_payload(item)
+                    for item in payload.get("assets", [])
+                    if isinstance(item, dict)
+                ]
+            except Exception:
+                continue
         recovered_jobs = False
         for job_path in sorted(self._job_state_dir.glob("*.json")):
             try:
@@ -576,6 +680,19 @@ class ProjectFactoryService:
         _atomic_write_json(
             self._job_state_dir / f"{job.id}.json",
             _job_storage_payload(job),
+        )
+
+    def _persist_draft_assets(self, draft_id: str) -> None:
+        _atomic_write_json(
+            self._draft_asset_state_dir / f"{draft_id}.json",
+            {
+                "kind": "codex.projectFactoryDraftAssets.storage",
+                "version": 1,
+                "draft_id": draft_id,
+                "assets": [
+                    item.to_payload() for item in self._draft_assets.get(draft_id, [])
+                ],
+            },
         )
 
 
@@ -651,6 +768,44 @@ def _manual_next_step(job: ProjectFactoryJob) -> str | None:
     if job.status in {"failed", "interrupted", "blocked"}:
         return "Open job details, inspect step logs, and create a new draft if regeneration is required."
     return "Reopen this job to continue watching progress."
+
+
+def _draft_asset_from_depot_item(
+    *,
+    draft_id: str,
+    asset: AssetDepotItem,
+    role: str,
+    notes: str,
+) -> ProjectFactoryDraftAsset:
+    return ProjectFactoryDraftAsset(
+        draft_id=draft_id,
+        asset_id=asset.id,
+        role=role,
+        notes=notes.strip()[:1000],
+        linked_at=_now_iso(),
+        original_filename=asset.original_filename,
+        content_type=asset.content_type,
+        size_bytes=asset.size_bytes,
+        sha256=asset.sha256,
+        storage_path=asset.storage_path,
+        source=asset.source,
+    )
+
+
+def _draft_asset_from_payload(payload: dict[str, object]) -> ProjectFactoryDraftAsset:
+    return ProjectFactoryDraftAsset(
+        draft_id=str(payload["draft_id"]),
+        asset_id=str(payload["asset_id"]),
+        role=str(payload["role"]),
+        notes=str(payload.get("notes") or ""),
+        linked_at=str(payload["linked_at"]),
+        original_filename=str(payload["original_filename"]),
+        content_type=str(payload["content_type"]),
+        size_bytes=int(payload["size_bytes"]),
+        sha256=str(payload["sha256"]),
+        storage_path=str(payload["storage_path"]),
+        source=str(payload["source"]),
+    )
 
 
 def _truncate_summary(value: str | None, limit: int = 300) -> str | None:

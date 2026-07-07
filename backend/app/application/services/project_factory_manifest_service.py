@@ -31,6 +31,7 @@ class ProjectFactoryManifestInput:
     logo_mode: str = "generate"
     visual_reference_paths: tuple[str, ...] = ()
     visual_reference_assets: tuple[Mapping[str, object], ...] = ()
+    project_assets: tuple[Mapping[str, object], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -127,6 +128,7 @@ class ProjectFactoryManifestService:
                 logo_mode=request.logo_mode,
                 visual_reference_paths=request.visual_reference_paths,
                 visual_reference_assets=request.visual_reference_assets,
+                project_assets=request.project_assets,
             )
             if not errors
             else {}
@@ -318,6 +320,7 @@ def _build_manifest(
     logo_mode: str,
     visual_reference_paths: tuple[str, ...],
     visual_reference_assets: tuple[Mapping[str, object], ...],
+    project_assets: tuple[Mapping[str, object], ...],
 ) -> dict[str, Any]:
     return {
         "schema_version": 1,
@@ -349,6 +352,9 @@ def _build_manifest(
             "analysis_file": "docs/research/visual-reference-analysis.md",
             "generated_tokens": "design/tokens.yaml",
             "logo_mode": logo_mode,
+        },
+        "asset_depot": {
+            "project_assets": [dict(asset) for asset in project_assets],
         },
         "auth": {
             "required": True,

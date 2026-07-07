@@ -31,6 +31,105 @@ class ProjectFactoryOptions {
   }
 }
 
+enum ProjectAssetRole {
+  visualReference('visual_reference', 'Reference'),
+  exactAsset('exact_asset', 'Copy exact'),
+  appIcon('app_icon', 'App icon'),
+  logo('logo', 'Logo'),
+  documentContext('document_context', 'Document');
+
+  const ProjectAssetRole(this.apiValue, this.label);
+
+  final String apiValue;
+  final String label;
+
+  static ProjectAssetRole fromApiValue(String value) {
+    return ProjectAssetRole.values.firstWhere(
+      (role) => role.apiValue == value,
+      orElse: () => ProjectAssetRole.visualReference,
+    );
+  }
+}
+
+class AssetDepotAsset {
+  const AssetDepotAsset({
+    required this.assetId,
+    required this.originalFilename,
+    required this.contentType,
+    required this.sizeBytes,
+    required this.sha256,
+    required this.createdAt,
+    required this.storagePath,
+    required this.source,
+  });
+
+  final String assetId;
+  final String originalFilename;
+  final String contentType;
+  final int sizeBytes;
+  final String sha256;
+  final String createdAt;
+  final String storagePath;
+  final String source;
+
+  factory AssetDepotAsset.fromJson(Map<String, dynamic> json) {
+    return AssetDepotAsset(
+      assetId: json['asset_id'] as String? ?? json['id'] as String? ?? '',
+      originalFilename: json['original_filename'] as String? ?? '',
+      contentType: json['content_type'] as String? ?? '',
+      sizeBytes: json['size_bytes'] as int? ?? 0,
+      sha256: json['sha256'] as String? ?? '',
+      createdAt: json['created_at'] as String? ?? '',
+      storagePath: json['storage_path'] as String? ?? '',
+      source: json['source'] as String? ?? '',
+    );
+  }
+}
+
+class ProjectFactoryDraftAsset {
+  const ProjectFactoryDraftAsset({
+    required this.draftId,
+    required this.assetId,
+    required this.role,
+    required this.notes,
+    required this.linkedAt,
+    required this.originalFilename,
+    required this.contentType,
+    required this.sizeBytes,
+    required this.sha256,
+    required this.storagePath,
+    required this.source,
+  });
+
+  final String draftId;
+  final String assetId;
+  final ProjectAssetRole role;
+  final String notes;
+  final String linkedAt;
+  final String originalFilename;
+  final String contentType;
+  final int sizeBytes;
+  final String sha256;
+  final String storagePath;
+  final String source;
+
+  factory ProjectFactoryDraftAsset.fromJson(Map<String, dynamic> json) {
+    return ProjectFactoryDraftAsset(
+      draftId: json['draft_id'] as String? ?? '',
+      assetId: json['asset_id'] as String? ?? '',
+      role: ProjectAssetRole.fromApiValue(json['role'] as String? ?? ''),
+      notes: json['notes'] as String? ?? '',
+      linkedAt: json['linked_at'] as String? ?? '',
+      originalFilename: json['original_filename'] as String? ?? '',
+      contentType: json['content_type'] as String? ?? '',
+      sizeBytes: json['size_bytes'] as int? ?? 0,
+      sha256: json['sha256'] as String? ?? '',
+      storagePath: json['storage_path'] as String? ?? '',
+      source: json['source'] as String? ?? '',
+    );
+  }
+}
+
 class ProjectFactoryDraftRequest {
   const ProjectFactoryDraftRequest({
     required this.name,

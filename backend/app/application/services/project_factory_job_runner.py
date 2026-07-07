@@ -89,6 +89,7 @@ class ProjectFactoryRunnerContext:
     codex_command: str
     timeout_seconds: int
     run_generated_validation: bool = False
+    project_assets: tuple[object, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -126,6 +127,7 @@ class ProjectFactoryJobRunner:
         generation_result = self._generator_service.generate(
             context.manifest_plan,
             reference_assets=context.reference_assets,
+            project_assets=context.project_assets,
         )
         completed_steps += 1
         project_path = Path(generation_result.target_path)
@@ -351,6 +353,11 @@ class ProjectFactoryJobRunner:
             f"- {asset.id}: {asset.original_filename} ({asset.content_type})"
             for asset in context.reference_assets
         ] or ["- No uploaded reference images."]
+        project_asset_lines = [
+            f"- {getattr(asset, 'asset_id', '')}: {getattr(asset, 'original_filename', '')} "
+            f"role={getattr(asset, 'role', '')} sha256={getattr(asset, 'sha256', '')}"
+            for asset in context.project_assets
+        ] or ["- No promoted project assets."]
         base = f"""# Project Factory Context
 
 Project path: `{project_path}`
@@ -369,6 +376,9 @@ Required defaults:
 
 Reference assets:
 {chr(10).join(reference_lines)}
+
+Promoted project assets:
+{chr(10).join(project_asset_lines)}
 """
         (prompt_root / "research-planning.md").write_text(
             base + "\nResearch typical apps, UX patterns, and product plan.\n",

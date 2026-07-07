@@ -1342,6 +1342,45 @@ flowchart LR
     expect(textController.text, isEmpty);
   });
 
+  testWidgets('new project attachment tray exposes asset role selector', (
+    tester,
+  ) async {
+    final textController = TextEditingController();
+    addTearDown(textController.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Align(
+            alignment: Alignment.bottomCenter,
+            child: buildComposerVoiceRecordingHarnessForTest(
+              controller: textController,
+              stagedText: 'Usar este archivo',
+              stageAttachment: true,
+              isProjectFactoryIntake: true,
+              audioRecorderFactory: () => _FakeAudioNoteRecorder(
+                XFile('voice-note.m4a', name: 'voice-note.m4a'),
+              ),
+              onSendAudio: (_, {message}) async => true,
+              onSendAttachments: (_, {prompt}) async => true,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('New Project asset'), findsOneWidget);
+    expect(find.text('Chat context only'), findsOneWidget);
+
+    await tester.tap(find.text('Chat context only'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Logo').last);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Logo'), findsOneWidget);
+  });
+
   testWidgets('recorded voice note sends without flushing staged attachments', (
     tester,
   ) async {

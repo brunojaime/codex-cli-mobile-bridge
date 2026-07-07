@@ -214,6 +214,64 @@ class ProjectFactoryReferenceAssetDeleteResponse(BaseModel):
     deleted: bool
 
 
+class AssetDepotItemResponse(BaseModel):
+    asset_id: str
+    id: str
+    original_filename: str
+    content_type: str
+    size_bytes: int
+    sha256: str
+    created_at: str
+    storage_path: str
+    source: str
+
+
+class AssetDepotListResponse(BaseModel):
+    kind: str = "codex.assetDepotAssets"
+    version: int = 1
+    assets: list[AssetDepotItemResponse]
+
+
+class AssetDepotDeleteResponse(BaseModel):
+    kind: str = "codex.assetDepotDelete"
+    version: int = 1
+    asset_id: str
+    deleted: bool
+
+
+class AssetDepotFromJobAttachmentRequest(BaseModel):
+    job_id: str
+    attachment_index: int = Field(default=0, ge=0)
+    source: str = Field(default="chat_upload", max_length=80)
+
+
+class ProjectFactoryDraftAssetLinkRequest(BaseModel):
+    asset_id: str = Field(..., max_length=80)
+    role: str = Field(..., max_length=80)
+    notes: str = Field(default="", max_length=1000)
+
+
+class ProjectFactoryDraftAssetResponse(BaseModel):
+    draft_id: str
+    asset_id: str
+    role: str
+    notes: str
+    linked_at: str
+    original_filename: str
+    content_type: str
+    size_bytes: int
+    sha256: str
+    storage_path: str
+    source: str
+
+
+class ProjectFactoryDraftAssetsResponse(BaseModel):
+    kind: str = "codex.projectFactoryDraftAssets"
+    version: int = 1
+    draft_id: str
+    assets: list[ProjectFactoryDraftAssetResponse]
+
+
 class ProjectFactoryDoctorResponse(BaseModel):
     kind: str
     version: int

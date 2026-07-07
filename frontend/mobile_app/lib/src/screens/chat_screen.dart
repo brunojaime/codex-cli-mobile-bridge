@@ -1073,6 +1073,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                       _activeServerCapabilities?.supportsImageInput ?? true,
                   fileAttachmentsEnabled: _resolvedFileAttachmentsEnabled(),
                   voiceStatusText: _resolveVoiceStatusText(),
+                  isProjectFactoryIntake: isProjectFactoryIntakeConfiguration(
+                    _chatController.currentSession?.agentConfiguration,
+                  ),
                 ),
               ],
             ),
@@ -1120,9 +1123,16 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     final workspacePathBeforeSend =
         _chatController.currentSession?.workspacePath;
     final codexRunOptions = _currentComposerDraft().codexRunOptions;
+    final enrichedPrompt = await _promptWithPromotedProjectAssets(
+      attachments,
+      prompt,
+    );
+    if (enrichedPrompt == null) {
+      return false;
+    }
     final didSend = await _chatController.sendAttachmentsMessage(
       attachments.map((attachment) => attachment.file).toList(),
-      message: prompt,
+      message: enrichedPrompt,
       sessionIdOverride: sessionIdBeforeSend,
       workspacePathOverride: workspacePathBeforeSend,
       codexRunOptions: codexRunOptions.isEmpty ? null : codexRunOptions,
@@ -1134,6 +1144,59 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       _scrollToBottom();
     }
     return didSend;
+  }
+
+  Future<String?> _promptWithPromotedProjectAssets(
+    List<_PendingAttachmentDraft> attachments,
+    String? prompt,
+  ) async {
+    if (!isProjectFactoryIntakeConfiguration(
+      _chatController.currentSession?.agentConfiguration,
+    )) {
+      return prompt;
+    }
+    final promoted = attachments
+        .where((attachment) => attachment.projectAssetRole != null)
+        .toList(growable: false);
+    if (promoted.isEmpty) {
+      return prompt;
+    }
+    final baseUrl = (_activeServer?.baseUrl ?? widget.initialApiBaseUrl)
+        .trim()
+        .replaceAll(RegExp(r'/$'), '');
+    final client = ApiClient(baseUrl: baseUrl);
+    final lines = <String>[];
+    try {
+      for (final attachment in promoted) {
+        final role = attachment.projectAssetRole!;
+        final asset = await client.uploadAssetDepotAsset(
+          attachment.file,
+          source: 'chat_upload',
+        );
+        lines.add(
+          '- asset_id: ${asset.assetId}; role: ${role.apiValue}; '
+          'filename: ${asset.originalFilename}; sha256: ${asset.sha256}',
+        );
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not promote attachment asset. $error')),
+        );
+      }
+      return null;
+    }
+    final trimmedPrompt = prompt?.trim() ?? '';
+    final assetBlock = '''
+Asset Depot uploads for this New Project:
+${lines.join('\n')}
+
+When you create the Project Factory draft, link each asset with POST /project-factory/drafts/{draft_id}/assets using the listed role. Preserve exact bytes for exact_asset, logo, and app_icon.
+''';
+    if (trimmedPrompt.isEmpty) {
+      return assetBlock.trim();
+    }
+    return '$trimmedPrompt\n\n${assetBlock.trim()}';
   }
 
   Future<bool> _handleSendAudio(
@@ -4572,6 +4635,7 @@ class _Composer extends StatefulWidget {
     required this.imageAttachmentsEnabled,
     required this.fileAttachmentsEnabled,
     required this.voiceStatusText,
+    required this.isProjectFactoryIntake,
   });
 
   final String? sessionId;
@@ -4591,6 +4655,7 @@ class _Composer extends StatefulWidget {
   final bool imageAttachmentsEnabled;
   final bool fileAttachmentsEnabled;
   final String voiceStatusText;
+  final bool isProjectFactoryIntake;
 
   @override
   State<_Composer> createState() => _ComposerState();
@@ -4865,7 +4930,9 @@ class _ComposerState extends State<_Composer> {
             child: _PendingAttachmentTray(
               attachments: _pendingAttachments,
               busy: widget.isBusy,
+              isProjectFactoryIntake: widget.isProjectFactoryIntake,
               onRemove: _removePendingAttachment,
+              onRoleChanged: _setPendingAttachmentRole,
               onClearAll: _clearPendingAttachments,
             ),
           ),
@@ -5361,6 +5428,23 @@ class _ComposerState extends State<_Composer> {
     _emitDraftChanged();
   }
 
+  void _setPendingAttachmentRole(
+    _PendingAttachmentDraft attachment,
+    ProjectAssetRole? role,
+  ) {
+    final index = _pendingAttachments.indexWhere(
+      (item) => item.identityKey == attachment.identityKey,
+    );
+    if (index < 0) {
+      return;
+    }
+    setState(() {
+      _pendingAttachments[index] =
+          _pendingAttachments[index].copyWith(projectAssetRole: role);
+    });
+    _emitDraftChanged();
+  }
+
   void _clearPendingAttachments() {
     if (_pendingAttachments.isEmpty) {
       return;
@@ -5714,6 +5798,7 @@ class _PendingAttachmentDraft {
     required this.kind,
     this.sizeBytes,
     this.previewBytes,
+    this.projectAssetRole,
   });
 
   final XFile file;
@@ -5721,6 +5806,7 @@ class _PendingAttachmentDraft {
   final _AttachmentDraftKind kind;
   final int? sizeBytes;
   final Uint8List? previewBytes;
+  final ProjectAssetRole? projectAssetRole;
 
   bool get isImage => kind == _AttachmentDraftKind.image;
 
@@ -5737,6 +5823,19 @@ class _PendingAttachmentDraft {
   }
 
   String get identityKey => '${kind.name}:$name:${sizeBytes ?? 0}';
+
+  _PendingAttachmentDraft copyWith({
+    ProjectAssetRole? projectAssetRole,
+  }) {
+    return _PendingAttachmentDraft(
+      file: file,
+      name: name,
+      kind: kind,
+      sizeBytes: sizeBytes,
+      previewBytes: previewBytes,
+      projectAssetRole: projectAssetRole,
+    );
+  }
 }
 
 enum _RenameChatDraftKind { manual, generatedText, generatedAudio }
@@ -8452,6 +8551,7 @@ Widget buildComposerVoiceRecordingHarnessForTest({
   }) onSendAttachments,
   String stagedText = '',
   bool stageAttachment = false,
+  bool isProjectFactoryIntake = false,
 }) {
   return _Composer(
     sessionId: 'test-session',
@@ -8490,6 +8590,7 @@ Widget buildComposerVoiceRecordingHarnessForTest({
     imageAttachmentsEnabled: true,
     fileAttachmentsEnabled: true,
     voiceStatusText: 'Audio transcription ready.',
+    isProjectFactoryIntake: isProjectFactoryIntake,
   );
 }
 
@@ -8575,13 +8676,18 @@ class _PendingAttachmentTray extends StatelessWidget {
   const _PendingAttachmentTray({
     required this.attachments,
     required this.busy,
+    required this.isProjectFactoryIntake,
     required this.onRemove,
+    required this.onRoleChanged,
     required this.onClearAll,
   });
 
   final List<_PendingAttachmentDraft> attachments;
   final bool busy;
+  final bool isProjectFactoryIntake;
   final ValueChanged<_PendingAttachmentDraft> onRemove;
+  final void Function(
+      _PendingAttachmentDraft attachment, ProjectAssetRole? role) onRoleChanged;
   final VoidCallback onClearAll;
 
   @override
@@ -8684,7 +8790,9 @@ class _PendingAttachmentTray extends StatelessWidget {
                 return _PendingAttachmentRow(
                   attachment: attachment,
                   busy: busy,
+                  showProjectAssetRole: isProjectFactoryIntake,
                   onRemove: () => onRemove(attachment),
+                  onRoleChanged: (role) => onRoleChanged(attachment, role),
                 );
               },
             ),
@@ -8699,12 +8807,16 @@ class _PendingAttachmentRow extends StatelessWidget {
   const _PendingAttachmentRow({
     required this.attachment,
     required this.busy,
+    required this.showProjectAssetRole,
     required this.onRemove,
+    required this.onRoleChanged,
   });
 
   final _PendingAttachmentDraft attachment;
   final bool busy;
+  final bool showProjectAssetRole;
   final VoidCallback onRemove;
+  final ValueChanged<ProjectAssetRole?> onRoleChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -8757,6 +8869,14 @@ class _PendingAttachmentRow extends StatelessWidget {
                   fontWeight: FontWeight.w700,
                 ),
               ),
+              if (showProjectAssetRole) ...<Widget>[
+                const SizedBox(height: 8),
+                _ProjectAssetRoleSelector(
+                  value: attachment.projectAssetRole,
+                  enabled: !busy,
+                  onChanged: onRoleChanged,
+                ),
+              ],
             ],
           ),
         ),
@@ -8766,6 +8886,42 @@ class _PendingAttachmentRow extends StatelessWidget {
           icon: const Icon(Icons.close_rounded),
         ),
       ],
+    );
+  }
+}
+
+class _ProjectAssetRoleSelector extends StatelessWidget {
+  const _ProjectAssetRoleSelector({
+    required this.value,
+    required this.enabled,
+    required this.onChanged,
+  });
+
+  final ProjectAssetRole? value;
+  final bool enabled;
+  final ValueChanged<ProjectAssetRole?> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return DropdownButtonFormField<ProjectAssetRole?>(
+      initialValue: value,
+      isDense: true,
+      decoration: const InputDecoration(
+        labelText: 'New Project asset',
+        contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      ),
+      items: <DropdownMenuItem<ProjectAssetRole?>>[
+        const DropdownMenuItem<ProjectAssetRole?>(
+          value: null,
+          child: Text('Chat context only'),
+        ),
+        for (final role in ProjectAssetRole.values)
+          DropdownMenuItem<ProjectAssetRole?>(
+            value: role,
+            child: Text(role.label),
+          ),
+      ],
+      onChanged: enabled ? onChanged : null,
     );
   }
 }

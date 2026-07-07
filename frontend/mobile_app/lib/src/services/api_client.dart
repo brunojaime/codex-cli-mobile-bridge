@@ -287,6 +287,102 @@ class ApiClient {
     );
   }
 
+  Future<AssetDepotAsset> uploadAssetDepotAsset(
+    XFile file, {
+    String source = 'manual_upload',
+  }) async {
+    final request = http.MultipartRequest(
+      'POST',
+      Uri.parse('$baseUrl/assets'),
+    );
+    request.fields['source'] = source;
+    request.files.add(
+      await _multipartFileFromXFile('asset', file),
+    );
+
+    final streamedResponse = await _client.send(request);
+    final response = await http.Response.fromStream(streamedResponse);
+    if (response.statusCode != 200) {
+      throw Exception('Failed to upload asset: ${response.body}');
+    }
+
+    return AssetDepotAsset.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<AssetDepotAsset> createAssetFromJobAttachment({
+    required String jobId,
+    required int attachmentIndex,
+    String source = 'chat_upload',
+  }) async {
+    final response = await _client.post(
+      Uri.parse('$baseUrl/assets/from-job-attachment'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode(<String, dynamic>{
+        'job_id': jobId,
+        'attachment_index': attachmentIndex,
+        'source': source,
+      }),
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception(
+          'Failed to create asset from chat attachment: ${response.body}');
+    }
+
+    return AssetDepotAsset.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<ProjectFactoryDraftAsset> linkProjectFactoryDraftAsset({
+    required String draftId,
+    required String assetId,
+    required ProjectAssetRole role,
+    String notes = '',
+  }) async {
+    final response = await _client.post(
+      Uri.parse('$baseUrl/project-factory/drafts/$draftId/assets'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode(<String, dynamic>{
+        'asset_id': assetId,
+        'role': role.apiValue,
+        'notes': notes,
+      }),
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception('Failed to link project asset: ${response.body}');
+    }
+
+    return ProjectFactoryDraftAsset.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<List<ProjectFactoryDraftAsset>> listProjectFactoryDraftAssets(
+    String draftId,
+  ) async {
+    final response = await _client.get(
+      Uri.parse('$baseUrl/project-factory/drafts/$draftId/assets'),
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception('Failed to list project assets: ${response.body}');
+    }
+
+    final payload = jsonDecode(response.body) as Map<String, dynamic>;
+    final assets = payload['assets'] as List<dynamic>? ?? <dynamic>[];
+    return assets
+        .map(
+          (item) => ProjectFactoryDraftAsset.fromJson(
+            item as Map<String, dynamic>,
+          ),
+        )
+        .toList(growable: false);
+  }
+
   Future<void> deleteProjectFactoryReferenceAsset({
     required String draftId,
     required String assetId,

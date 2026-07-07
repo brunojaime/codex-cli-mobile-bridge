@@ -8,6 +8,7 @@ from backend.app.application.services.app_update_service import (
     AppUpdateService,
     HttpGitHubReleaseClient,
 )
+from backend.app.application.services.asset_depot_service import AssetDepotService
 from backend.app.application.services.message_service import MessageService
 from backend.app.application.services.project_factory_service import (
     ProjectFactoryService,
@@ -66,6 +67,7 @@ class AppContainer:
     settings: Settings
     message_service: MessageService
     feedback_queue_service: FeedbackQueueService
+    asset_depot_service: AssetDepotService
     app_update_service: AppUpdateService
     sdd_project_service: SddProjectService
     sdd_workbench_view_service: SddWorkbenchViewService
@@ -109,6 +111,10 @@ def build_container(settings: Settings | None = None) -> AppContainer:
         image_dir=resolved_settings.feedback_image_dir,
         audio_dir=resolved_settings.feedback_audio_dir,
     )
+    asset_depot_service = AssetDepotService(
+        storage_root=resolved_settings.asset_depot_dir,
+        max_upload_bytes=resolved_settings.asset_depot_max_upload_bytes,
+    )
     app_update_service = AppUpdateService(
         registry=AppUpdateRegistry.from_json_file(
             resolved_settings.app_update_registry_path,
@@ -135,6 +141,7 @@ def build_container(settings: Settings | None = None) -> AppContainer:
         reference_asset_storage_root=(
             resolved_settings.project_factory_reference_asset_dir
         ),
+        asset_depot_service=asset_depot_service,
         max_reference_asset_bytes=resolved_settings.image_max_upload_bytes,
         state_root=resolved_settings.project_factory_state_dir,
         codex_command=resolved_settings.codex_command,
@@ -154,6 +161,7 @@ def build_container(settings: Settings | None = None) -> AppContainer:
         settings=resolved_settings,
         message_service=message_service,
         feedback_queue_service=feedback_queue_service,
+        asset_depot_service=asset_depot_service,
         app_update_service=app_update_service,
         sdd_project_service=sdd_project_service,
         sdd_workbench_view_service=sdd_workbench_view_service,
