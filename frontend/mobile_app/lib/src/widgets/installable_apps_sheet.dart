@@ -71,8 +71,12 @@ class _InstallableAppsSheetState extends State<InstallableAppsSheet> {
       _statusText = 'Starting download';
       _errorText = null;
     });
+    final resolvedApkUrl = _resolveInstallableApkUrl(
+      widget.apiClient.baseUrl,
+      apkUrl,
+    );
     final installed = await _updaterController.installExternalApk(
-      apkUrl: Uri.parse(apkUrl),
+      apkUrl: resolvedApkUrl,
       sourceApp: app.sourceApp,
       displayName: app.displayName,
       apkAssetName: app.apkAssetName,
@@ -298,6 +302,30 @@ String _statusHintLabel(InstallableApp app) {
     'disabled' => 'Disabled',
     _ => 'No release available',
   };
+}
+
+Uri _resolveInstallableApkUrl(String bridgeBaseUrl, String apkUrl) {
+  final baseUri = Uri.parse(bridgeBaseUrl.trim().replaceAll(RegExp(r'/$'), ''));
+  final candidate = Uri.parse(apkUrl.trim());
+  if (!candidate.hasScheme) {
+    return baseUri.resolve(apkUrl.trim());
+  }
+  if (_isLoopbackHost(candidate.host) && !_isLoopbackHost(baseUri.host)) {
+    return baseUri.replace(
+      path: candidate.path,
+      query: candidate.hasQuery ? candidate.query : null,
+    );
+  }
+  return candidate;
+}
+
+bool _isLoopbackHost(String host) {
+  final normalized = host.toLowerCase();
+  return normalized == 'localhost' ||
+      normalized == '127.0.0.1' ||
+      normalized == '0.0.0.0' ||
+      normalized == '10.0.2.2' ||
+      normalized == '::1';
 }
 
 String _statusLabel(CodexAppUpdateStatus status) {

@@ -65,6 +65,36 @@ void main() {
     expect(find.text('Installer opened'), findsOneWidget);
   });
 
+  testWidgets('install rewrites loopback APK URL to active bridge host',
+      (tester) async {
+    final controller = _RecordingInstallController();
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(
+      _harness(
+        http.Response(
+          _appsJson(
+            apkUrl:
+                'http://127.0.0.1:8000/app-updates/sat-showroom/apk/tag/sat-showroom.apk?platform=android&channel=stable',
+          ),
+          200,
+        ),
+        baseUrl: 'http://bridge.tailnet.test',
+        controller: controller,
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Install'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+
+    expect(controller.installCallCount, 1);
+    expect(
+      controller.requestedApkUrl.toString(),
+      'http://bridge.tailnet.test/app-updates/sat-showroom/apk/tag/sat-showroom.apk?platform=android&channel=stable',
+    );
+  });
+
   testWidgets('checksum failure is visible', (tester) async {
     final controller = _RecordingInstallController(
       result: false,
@@ -89,13 +119,14 @@ void main() {
 
 Widget _harness(
   http.Response response, {
+  String baseUrl = 'http://bridge.test',
   CodexAppUpdaterController? controller,
 }) {
   return MaterialApp(
     home: Scaffold(
       body: InstallableAppsSheet(
         apiClient: ApiClient(
-          baseUrl: 'http://bridge.test',
+          baseUrl: baseUrl,
           client: MockClient((request) async {
             expect(request.url.path, '/installable-apps');
             return response;
@@ -107,7 +138,7 @@ Widget _harness(
   );
 }
 
-String _appsJson({String? sha256}) {
+String _appsJson({String? sha256, String? apkUrl}) {
   return '''
   {
     "kind": "codex.installableApps",
@@ -123,7 +154,7 @@ String _appsJson({String? sha256}) {
         "latestVersion": "1.0.0",
         "latestBuild": 12,
         "releaseTag": "android-v1.0.0-build.12",
-        "apkUrl": "http://bridge.test/app-updates/sat-showroom/apk/tag/sat-showroom.apk",
+        "apkUrl": "${apkUrl ?? 'http://bridge.test/app-updates/sat-showroom/apk/tag/sat-showroom.apk'}",
         "apkAssetName": "sat-showroom.apk",
         "sizeBytes": 2097152,
         "sha256": ${sha256 == null ? 'null' : '"$sha256"'},
