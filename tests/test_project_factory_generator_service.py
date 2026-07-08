@@ -54,6 +54,12 @@ def test_generator_writes_foundation_and_rolls_no_secrets(tmp_path: Path) -> Non
     assert (project / "scripts/finalize_local_commit.sh").is_file()
     assert (project / "scripts/publish_project.sh").is_file()
     assert (project / "scripts/register_installable_app.sh").is_file()
+    assert (project / "scripts/build_web_preview.sh").is_file()
+    assert (project / "scripts/validate_web_preview.sh").is_file()
+    assert (project / "scripts/deploy_web_preview.sh").is_file()
+    assert (project / "deploy/web-preview/web-preview-manifest.yaml").is_file()
+    assert (project / "deploy/web-preview/wrangler.toml.example").is_file()
+    assert (project / "deploy/web-preview/worker/src/index.js").is_file()
     assert (project / ".github/workflows/android-release.yml").is_file()
     assert (project / "codex-bridge.yaml").is_file()
     assert (project / "docs/workbench.md").is_file()
@@ -82,6 +88,27 @@ def test_generator_writes_foundation_and_rolls_no_secrets(tmp_path: Path) -> Non
     assert "strong_reference_contract:" in manifest
     assert "generic_material_shell_forbidden_when_references_exist: true" in manifest
     assert "workbench_visibility:" in manifest
+    web_preview_manifest = (
+        project / "deploy/web-preview/web-preview-manifest.yaml"
+    ).read_text(encoding="utf-8")
+    assert "source_app: clinica-norte" in web_preview_manifest
+    assert 'stable_url: "https://preview.nienfos.com/clinica-norte"' in (
+        web_preview_manifest
+    )
+    assert "api_runtime: cloudflare_preview" in web_preview_manifest
+    assert "CLOUDFLARE_API_TOKEN:" not in web_preview_manifest
+    assert "runtime_profile=mock" not in web_preview_manifest
+    deploy_script = (project / "scripts/deploy_web_preview.sh").read_text(
+        encoding="utf-8",
+    )
+    assert "--plan|--apply" in deploy_script
+    assert "CONFIRM_APPLY=true is required" in deploy_script
+    assert "EXPECTED_PLAN_HASH is required" in deploy_script
+    web_preview_readme = (project / "deploy/web-preview/README.md").read_text(
+        encoding="utf-8",
+    )
+    assert "Bridge deploy flow" in web_preview_readme
+    assert "WEB_PREVIEW_APPLY_ENABLED=true" in web_preview_readme
     bridge_config = (project / "codex-bridge.yaml").read_text(encoding="utf-8")
     assert "sourceApp: clinica-norte" in bridge_config
     assert "workbench-sdd/v1" in bridge_config
@@ -355,7 +382,10 @@ def test_generated_contract_docs_have_coherent_minimum_content(
     assert "mock_release:" in contracts
     assert "codex_mobile_catalog:" in contracts
     assert "scripts/register_installable_app.sh" in contracts
+    assert "web_preview:" in contracts
+    assert "scripts/validate_web_preview.sh" in contracts
     assert "APP_RUNTIME_PROFILE=real" in runtime_doc
+    assert "APP_RUNTIME_PROFILE=preview" in runtime_doc
     assert "android-mock-vX.Y.Z-build.N" in runtime_doc
     assert "sourceApp: clinica-norte" in bridge
     assert "workbench-sdd/v1" in bridge
@@ -478,9 +508,13 @@ def test_generated_flutter_mock_seed_selector_is_mock_profile_only(
     screens = (mobile / "lib/src/screens.dart").read_text(encoding="utf-8")
 
     assert "defaultValue: 'real'" in main
+    assert "API_RUNTIME" in main
+    assert "APP_SLUG" in main
     assert "config.isMock" in main
     assert "MockProjectApiClient" in main
     assert "runtimeProfile == 'mock'" in config
+    assert "runtimeProfile != 'preview'" in config
+    assert "apiRuntime == 'cloudflare_preview'" in config
     assert "bool get isMockRuntime" in session
     assert "if (widget.controller.isMockRuntime)" in screens
     assert "Enter demo as role" in screens
@@ -510,6 +544,8 @@ def test_generator_writes_flutter_mobile_v1_template(tmp_path: Path) -> None:
     assert (mobile / "lib/src/mock_api_client.dart").is_file()
     assert (mobile / "lib/src/session_controller.dart").is_file()
     assert (mobile / "lib/src/screens.dart").is_file()
+    assert (mobile / "web/index.html").is_file()
+    assert (mobile / "web/manifest.json").is_file()
     assert (mobile / "test/config_test.dart").is_file()
     assert (mobile / "test/api_client_test.dart").is_file()
     assert (mobile / "test/session_controller_test.dart").is_file()
@@ -573,6 +609,84 @@ def test_generator_writes_visual_reference_contract(tmp_path: Path) -> None:
     assert "screenshots/previews" in report
     tokens = (project / "design/tokens.yaml").read_text(encoding="utf-8")
     assert "derived_from_visual_references" in tokens
+
+
+def test_generated_web_preview_bundle_is_validable_locally(tmp_path: Path) -> None:
+    manifest_plan = ProjectFactoryManifestService(
+        projects_root=tmp_path,
+    ).plan_manifest(
+        ProjectFactoryManifestInput(
+            name="Clinica Norte",
+            business_type="medical",
+            primary_goal="Reservar turnos",
+        )
+    )
+
+    ProjectFactoryGeneratorService().generate(manifest_plan)
+
+    project = tmp_path / "clinica-norte"
+    build_script = project / "scripts/build_web_preview.sh"
+    validate_script = project / "scripts/validate_web_preview.sh"
+    worker = project / "deploy/web-preview/worker/src/index.js"
+    wrangler = project / "deploy/web-preview/wrangler.toml.example"
+    manifest = project / "deploy/web-preview/web-preview-manifest.yaml"
+    assert build_script.stat().st_mode & stat.S_IXUSR
+    assert validate_script.stat().st_mode & stat.S_IXUSR
+    assert "flutter build web" in build_script.read_text(encoding="utf-8")
+    assert "APP_RUNTIME_PROFILE" in build_script.read_text(encoding="utf-8")
+    assert "/health" in worker.read_text(encoding="utf-8")
+    assert "PREVIEW_DB" in wrangler.read_text(encoding="utf-8")
+
+    yaml = pytest.importorskip("yaml")
+    payload = yaml.safe_load(manifest.read_text(encoding="utf-8"))
+    assert payload["source_app"] == "clinica-norte"
+    assert payload["stable_url"] == "https://preview.nienfos.com/clinica-norte"
+    assert payload["runtime"]["default_profile"] == "real"
+    assert payload["runtime"]["api_runtime"] == "cloudflare_preview"
+    assert payload["cloudflare"]["resources"]["worker_name"] == (
+        "nienfos-preview-runtime"
+    )
+    assert payload["cloudflare"]["resources"]["d1_database"] == "nienfos-preview"
+
+
+def test_generated_web_preview_validation_accepts_real_and_blocks_mock(
+    tmp_path: Path,
+) -> None:
+    manifest_plan = ProjectFactoryManifestService(
+        projects_root=tmp_path,
+    ).plan_manifest(
+        ProjectFactoryManifestInput(
+            name="Clinica Norte",
+            business_type="medical",
+            primary_goal="Reservar turnos",
+        )
+    )
+
+    ProjectFactoryGeneratorService().generate(manifest_plan)
+
+    project = tmp_path / "clinica-norte"
+    real = subprocess.run(
+        ["scripts/validate_web_preview.sh"],
+        cwd=project,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert real.returncode == 0, real.stdout + real.stderr
+    assert "web preview validation completed" in real.stdout
+
+    mock = subprocess.run(
+        ["scripts/validate_web_preview.sh"],
+        cwd=project,
+        env={**os.environ, "APP_RUNTIME_PROFILE": "mock"},
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert mock.returncode != 0
+    assert "mock web preview validation requires ALLOW_MOCK_WEB_PREVIEW=true" in (
+        mock.stderr
+    )
 
 
 def test_generated_flutter_mobile_tests_pass_when_flutter_is_available(

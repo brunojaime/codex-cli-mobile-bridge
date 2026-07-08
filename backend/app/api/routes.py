@@ -130,6 +130,10 @@ from backend.app.api.schemas import (
     SddTaskNodeResponse,
     SddWorkbenchViewResponse,
     TurnSummaryConfigRequest,
+    WebPreviewDeployRequest,
+    WebPreviewListResponse,
+    WebPreviewPlanRequest,
+    WebPreviewResponse,
     WorkspaceResponse,
 )
 from backend.app.application.services.asset_depot_service import AssetDepotError
@@ -141,6 +145,11 @@ from backend.app.application.services.project_factory_service import (
 )
 from backend.app.application.services.project_factory_reference_asset_service import (
     ProjectFactoryReferenceAssetError,
+)
+from backend.app.application.services.web_preview_deploy_service import (
+    WebPreviewDeployInput,
+    WebPreviewError,
+    WebPreviewPlanInput,
 )
 from backend.app.application.services.app_update_service import (
     AppDisabledError,
@@ -727,9 +736,79 @@ async def get_project_factory_job(
 async def project_factory_doctor(
     container: AppContainer = Depends(get_container),
 ) -> ProjectFactoryDoctorResponse:
-    return ProjectFactoryDoctorResponse(
-        **await run_in_threadpool(container.project_factory_service.doctor),
+    payload = await run_in_threadpool(container.project_factory_service.doctor)
+    payload["web_preview"] = await run_in_threadpool(
+        container.cloudflare_preview_doctor_service.doctor,
     )
+    return ProjectFactoryDoctorResponse(**payload)
+
+
+@router.post("/web-previews/plan", response_model=WebPreviewResponse)
+async def plan_web_preview(
+    request: WebPreviewPlanRequest,
+    container: AppContainer = Depends(get_container),
+) -> WebPreviewResponse:
+    try:
+        payload = await run_in_threadpool(
+            container.web_preview_deploy_service.plan,
+            WebPreviewPlanInput(
+                project_path=request.project_path,
+                manifest_path=request.manifest_path,
+                source_app=request.source_app,
+            ),
+        )
+    except WebPreviewError as exc:
+        raise _web_preview_http_error(exc) from exc
+    return WebPreviewResponse(**payload)
+
+
+@router.post("/web-previews/deploy", response_model=WebPreviewResponse)
+async def deploy_web_preview(
+    request: WebPreviewDeployRequest,
+    container: AppContainer = Depends(get_container),
+) -> WebPreviewResponse:
+    try:
+        payload = await run_in_threadpool(
+            container.web_preview_deploy_service.deploy,
+            WebPreviewDeployInput(
+                project_path=request.project_path,
+                manifest_path=request.manifest_path,
+                source_app=request.source_app,
+                confirm_apply=request.confirm_apply,
+                expected_plan_hash=request.expected_plan_hash,
+            ),
+        )
+    except WebPreviewError as exc:
+        raise _web_preview_http_error(exc) from exc
+    return WebPreviewResponse(**payload)
+
+
+@router.get("/web-previews", response_model=WebPreviewListResponse)
+async def list_web_previews(
+    limit: int = Query(default=50, ge=1, le=200),
+    container: AppContainer = Depends(get_container),
+) -> WebPreviewListResponse:
+    previews = await run_in_threadpool(
+        container.web_preview_deploy_service.list_previews,
+        limit=limit,
+    )
+    return WebPreviewListResponse(
+        previews=[WebPreviewResponse(**preview) for preview in previews],
+    )
+
+
+@router.get("/web-previews/{preview_id}", response_model=WebPreviewResponse)
+async def get_web_preview(
+    preview_id: str,
+    container: AppContainer = Depends(get_container),
+) -> WebPreviewResponse:
+    preview = await run_in_threadpool(
+        container.web_preview_deploy_service.get_preview,
+        preview_id,
+    )
+    if preview is None:
+        raise HTTPException(status_code=404, detail={"code": "web_preview_not_found"})
+    return WebPreviewResponse(**preview)
 
 
 @router.get("/sdd/projects", response_model=SddProjectsResponse)
@@ -4416,6 +4495,16 @@ def _authorize_installable_app_registration(
                 "message": "Registration token is invalid.",
             },
         )
+
+
+def _web_preview_http_error(exc: WebPreviewError) -> HTTPException:
+    return HTTPException(
+        status_code=exc.status_code,
+        detail={
+            "code": exc.code,
+            "message": exc.message,
+        },
+    )
 
 
 def _preserve_api_v1_prefix(request: Request, url: str) -> str:

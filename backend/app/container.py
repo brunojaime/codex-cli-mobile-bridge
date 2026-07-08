@@ -9,9 +9,15 @@ from backend.app.application.services.app_update_service import (
     HttpGitHubReleaseClient,
 )
 from backend.app.application.services.asset_depot_service import AssetDepotService
+from backend.app.application.services.cloudflare_preview_service import (
+    CloudflarePreviewDoctorService,
+)
 from backend.app.application.services.message_service import MessageService
 from backend.app.application.services.project_factory_service import (
     ProjectFactoryService,
+)
+from backend.app.application.services.web_preview_deploy_service import (
+    WebPreviewDeployService,
 )
 from backend.app.application.services.sdd_codex_job_service import SddCodexJobService
 from backend.app.application.services.sdd_project_service import SddProjectService
@@ -73,6 +79,8 @@ class AppContainer:
     sdd_workbench_view_service: SddWorkbenchViewService
     sdd_codex_job_service: SddCodexJobService
     project_factory_service: ProjectFactoryService
+    cloudflare_preview_doctor_service: CloudflarePreviewDoctorService
+    web_preview_deploy_service: WebPreviewDeployService
     job_stream_hub: JobStreamHub
     audio_transcriber: AudioTranscriber
     speech_synthesizer: SpeechSynthesizer
@@ -161,6 +169,12 @@ def build_container(settings: Settings | None = None) -> AppContainer:
         ),
         async_jobs=resolved_settings.project_factory_async_jobs,
     )
+    cloudflare_preview_doctor_service = CloudflarePreviewDoctorService(
+        settings=resolved_settings,
+    )
+    web_preview_deploy_service = WebPreviewDeployService(
+        settings=resolved_settings,
+    )
     return AppContainer(
         settings=resolved_settings,
         message_service=message_service,
@@ -171,6 +185,8 @@ def build_container(settings: Settings | None = None) -> AppContainer:
         sdd_workbench_view_service=sdd_workbench_view_service,
         sdd_codex_job_service=sdd_codex_job_service,
         project_factory_service=project_factory_service,
+        cloudflare_preview_doctor_service=cloudflare_preview_doctor_service,
+        web_preview_deploy_service=web_preview_deploy_service,
         job_stream_hub=job_stream_hub,
         audio_transcriber=audio_transcriber,
         speech_synthesizer=speech_synthesizer,

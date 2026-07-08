@@ -280,6 +280,44 @@ class ProjectFactoryDoctorResponse(BaseModel):
     projects_root: str
     checks: list[dict[str, Any]]
     toolchain: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    web_preview: dict[str, Any] = Field(default_factory=dict)
+
+
+class WebPreviewPlanRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    project_path: str | None = Field(default=None, alias="projectPath")
+    manifest_path: str | None = Field(default=None, alias="manifestPath")
+    source_app: str | None = Field(default=None, alias="sourceApp")
+
+
+class WebPreviewDeployRequest(WebPreviewPlanRequest):
+    confirm_apply: bool = Field(default=False, alias="confirmApply")
+    expected_plan_hash: str | None = Field(default=None, alias="expectedPlanHash")
+
+
+class WebPreviewResponse(BaseModel):
+    kind: str
+    version: int
+    preview_id: str
+    source_app: str
+    project_path: str
+    manifest_path: str
+    status: str
+    preview_url: str
+    plan_hash: str
+    planned_resources: list[dict[str, Any]]
+    applied_resources: list[dict[str, Any]]
+    error: str | None = None
+    logs: list[dict[str, Any]] = Field(default_factory=list)
+    created_at: str
+    completed_at: str | None = None
+
+
+class WebPreviewListResponse(BaseModel):
+    kind: str = "codex.webPreviews"
+    version: int = 1
+    previews: list[WebPreviewResponse]
 
 
 class FeedbackPointRequest(BaseModel):

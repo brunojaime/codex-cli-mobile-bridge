@@ -57,6 +57,10 @@ def test_project_factory_doctor_is_non_mutating_and_checks_defaults(
     assert "dart" in toolchain
     assert "codex_cli" in toolchain
     assert toolchain["codex_cli"]["available"] is True
+    web_preview = payload["web_preview"]
+    assert web_preview["kind"] == "codex.webPreviewDoctor"
+    assert web_preview["status"] == "blocked_configuration"
+    assert web_preview["planner"]["dry_run"] is True
     after = sorted(path.relative_to(tmp_path) for path in tmp_path.rglob("*"))
     assert after == before
 
@@ -510,6 +514,10 @@ def _client(projects_root: Path) -> TestClient:
         project_factory_generator_runs_override=0,
         project_factory_reviewer_runs_override=0,
         project_factory_publication_validation_mode="local",
+        cloudflare_api_token=None,
+        cloudflare_dns_api_token=None,
+        cloudflare_account_id=None,
+        cloudflare_zone_id=None,
     )
     return TestClient(create_app(settings))
 

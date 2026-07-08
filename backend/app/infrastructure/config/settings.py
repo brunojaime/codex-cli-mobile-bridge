@@ -17,7 +17,7 @@ _DEFAULT_FEEDBACK_SOURCE_WORKSPACE_ALIASES = {
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=(".env", "secrets/cloudflare.env"),
         env_file_encoding="utf-8",
         extra="ignore",
     )
@@ -96,6 +96,20 @@ class Settings(BaseSettings):
     app_update_github_token: str | None = None
     app_update_github_timeout_seconds: float = 10.0
     installable_apps_registration_token: str | None = None
+    cloudflare_api_token: str | None = None
+    cloudflare_dns_api_token: str | None = None
+    cloudflare_account_id: str | None = None
+    cloudflare_zone_id: str | None = None
+    cloudflare_zone_name: str = "nienfos.com"
+    cloudflare_api_base_url: str = "https://api.cloudflare.com/client/v4"
+    cloudflare_timeout_seconds: float = 10.0
+    preview_base_domain: str = "preview.nienfos.com"
+    preview_worker_name: str = "nienfos-preview-runtime"
+    preview_d1_database_name: str = "nienfos-preview"
+    preview_pages_project_name: str = "nienfos-preview-web"
+    preview_r2_bucket_name: str | None = None
+    web_preview_state_dir: str = str(Path.cwd() / ".data" / "web_preview_state")
+    web_preview_apply_enabled: bool = False
     sdd_file_max_bytes: int = 256_000
     openai_api_key: str | None = None
     openai_base_url: str = "https://api.openai.com/v1"
