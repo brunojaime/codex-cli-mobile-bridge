@@ -210,11 +210,20 @@ def test_web_preview_invite_api_create_and_list(tmp_path: Path) -> None:
     assert payload["single_use"] is True
     assert payload["used_at"] is None
     assert payload["revoked_at"] is None
+    assert payload["sync_status"] == "not_deployed"
+    assert payload["synced_at"] is None
+    assert payload["sync_error"] is None
     assert listed.status_code == 200
     listed_payload = listed.json()["invites"][0]
     assert listed_payload["invite_id"] == payload["invite_id"]
     assert listed_payload["token"] is None
     assert listed_payload["invite_url"] is None
+    assert listed_payload["sync_status"] == "not_deployed"
+    retry = client.post(
+        f"/web-previews/{plan.json()['preview_id']}/invites/{payload['invite_id']}/sync",
+    )
+    assert retry.status_code == 200
+    assert retry.json()["sync_status"] == "not_deployed"
     revoke = client.delete(
         f"/web-previews/{plan.json()['preview_id']}/invites/{payload['invite_id']}",
     )

@@ -309,6 +309,7 @@ class WebPreviewResponse(BaseModel):
     plan_hash: str
     planned_resources: list[dict[str, Any]]
     applied_resources: list[dict[str, Any]]
+    invite_sync_summary: dict[str, Any] | None = None
     error: str | None = None
     logs: list[dict[str, Any]] = Field(default_factory=list)
     created_at: str
@@ -342,6 +343,9 @@ class WebPreviewInviteResponse(BaseModel):
     single_use: bool = True
     used_at: str | None = None
     revoked_at: str | None = None
+    sync_status: str = "not_deployed"
+    synced_at: str | None = None
+    sync_error: str | None = None
     token_sha256: str
     invite_url: str | None = None
     token: str | None = None

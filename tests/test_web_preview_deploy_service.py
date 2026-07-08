@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import json
 from typing import Any
 
 from fastapi.testclient import TestClient
@@ -22,6 +23,10 @@ from backend.app.application.services.web_preview_deploy_service import (
     WebPreviewDeployService,
     WebPreviewError,
     WebPreviewPlanInput,
+)
+from backend.app.application.services.web_preview_invite_service import (
+    WebPreviewInviteCreateInput,
+    WebPreviewInviteService,
 )
 from backend.app.infrastructure.config.settings import Settings
 from backend.app.main import create_app
@@ -132,6 +137,14 @@ def test_web_preview_deploy_applies_resources_with_fake_cloudflare(
     fake = _FakeCloudflareClient()
     service = _service(tmp_path, apply_enabled=True, fake=fake)
     plan = service.plan(WebPreviewPlanInput(project_path=str(project)))
+    invite_service = WebPreviewInviteService(
+        settings=_settings(tmp_path, apply_enabled=True),
+        preview_service=service,
+    )
+    invite = invite_service.create_invite(
+        WebPreviewInviteCreateInput(preview_id=plan["preview_id"]),
+    )
+    assert invite["sync_status"] == "not_deployed"
 
     payload = service.deploy(
         WebPreviewDeployInput(
@@ -149,9 +162,18 @@ def test_web_preview_deploy_applies_resources_with_fake_cloudflare(
     assert ("d1_migration", "applied") in statuses
     assert ("pages_project", "created") in statuses
     assert ("r2_bucket", "skipped") in statuses
+    assert payload["invite_sync_summary"]["synced"] == 1
     assert fake.calls.count("create_dns_record:zone-1") == 1
     assert "deploy_worker_script:acct-1:nienfos-preview-runtime" in fake.calls
     assert "execute_d1_sql:acct-1:d1-1" in fake.calls
+    stored = _read_invite(tmp_path, invite["invite_id"])
+    assert stored["sync_status"] == "synced"
+    assert stored["synced_at"]
+    assert stored["sync_error"] is None
+    insert_calls = [call for call in fake.sql_calls if "preview_invites" in call["sql"]]
+    assert insert_calls
+    assert invite["token"] not in insert_calls[-1]["sql"]
+    assert invite["token_sha256"] in insert_calls[-1]["params"]
 
 
 def test_web_preview_deploy_is_idempotent_when_resources_exist(
@@ -275,6 +297,108 @@ def test_web_preview_deploy_api_success_with_fake_cloudflare(tmp_path: Path) -> 
     assert response.json()["status"] == "active"
 
 
+def test_web_preview_invite_created_after_deploy_syncs_immediately(
+    tmp_path: Path,
+) -> None:
+    project = _generated_project(tmp_path)
+    _write_web_build_output(project)
+    fake = _FakeCloudflareClient()
+    service = _service(tmp_path, apply_enabled=True, fake=fake)
+    plan = service.plan(WebPreviewPlanInput(project_path=str(project)))
+    service.deploy(
+        WebPreviewDeployInput(
+            project_path=str(project),
+            confirm_apply=True,
+            expected_plan_hash=plan["plan_hash"],
+        )
+    )
+    invite_service = WebPreviewInviteService(
+        settings=_settings(tmp_path, apply_enabled=True),
+        preview_service=service,
+    )
+
+    invite = invite_service.create_invite(
+        WebPreviewInviteCreateInput(preview_id=plan["preview_id"]),
+    )
+
+    assert invite["sync_status"] == "synced"
+    assert invite["synced_at"]
+    assert invite["sync_error"] is None
+    assert fake.sql_calls[-1]["params"][0] == invite["invite_id"]
+    assert fake.sql_calls[-1]["params"][1] == invite["token_sha256"]
+
+
+def test_web_preview_invite_sync_failure_and_retry_are_persisted(
+    tmp_path: Path,
+) -> None:
+    project = _generated_project(tmp_path)
+    _write_web_build_output(project)
+    fake = _FakeCloudflareClient()
+    service = _service(tmp_path, apply_enabled=True, fake=fake)
+    plan = service.plan(WebPreviewPlanInput(project_path=str(project)))
+    service.deploy(
+        WebPreviewDeployInput(
+            project_path=str(project),
+            confirm_apply=True,
+            expected_plan_hash=plan["plan_hash"],
+        )
+    )
+    fake.fail_invite_sync = True
+    invite_service = WebPreviewInviteService(
+        settings=_settings(tmp_path, apply_enabled=True),
+        preview_service=service,
+    )
+
+    invite = invite_service.create_invite(
+        WebPreviewInviteCreateInput(preview_id=plan["preview_id"]),
+    )
+
+    assert invite["sync_status"] == "failed"
+    assert "d1_invite_sync_failed" in invite["sync_error"]
+    assert "secret-token" not in invite["sync_error"]
+    fake.fail_invite_sync = False
+    retried = invite_service.sync_invite(
+        preview_id=plan["preview_id"],
+        invite_id=invite["invite_id"],
+    )
+    assert retried["sync_status"] == "synced"
+    assert retried["sync_error"] is None
+
+
+def test_web_preview_invite_revoke_after_deploy_updates_d1(
+    tmp_path: Path,
+) -> None:
+    project = _generated_project(tmp_path)
+    _write_web_build_output(project)
+    fake = _FakeCloudflareClient()
+    service = _service(tmp_path, apply_enabled=True, fake=fake)
+    plan = service.plan(WebPreviewPlanInput(project_path=str(project)))
+    service.deploy(
+        WebPreviewDeployInput(
+            project_path=str(project),
+            confirm_apply=True,
+            expected_plan_hash=plan["plan_hash"],
+        )
+    )
+    invite_service = WebPreviewInviteService(
+        settings=_settings(tmp_path, apply_enabled=True),
+        preview_service=service,
+    )
+    invite = invite_service.create_invite(
+        WebPreviewInviteCreateInput(preview_id=plan["preview_id"]),
+    )
+
+    revoked = invite_service.revoke_invite(
+        preview_id=plan["preview_id"],
+        invite_id=invite["invite_id"],
+    )
+
+    assert revoked["sync_status"] == "synced"
+    assert revoked["revoked_at"]
+    assert fake.sql_calls[-1]["params"][0] == invite["invite_id"]
+    assert fake.sql_calls[-1]["params"][7] == revoked["revoked_at"]
+
+
 def _generated_project(tmp_path: Path) -> Path:
     projects_root = tmp_path / "projects"
     projects_root.mkdir(parents=True, exist_ok=True)
@@ -301,6 +425,14 @@ def _write_web_build_output(project: Path) -> None:
     (assets_dir / "AssetManifest.bin").write_bytes(b"assets")
 
 
+def _read_invite(tmp_path: Path, invite_id: str) -> dict[str, Any]:
+    return json.loads(
+        (tmp_path / "state/invites" / f"{invite_id}.json").read_text(
+            encoding="utf-8",
+        )
+    )
+
+
 def _settings(
     tmp_path: Path,
     *,
@@ -323,6 +455,7 @@ def _settings(
         preview_d1_database_name="nienfos-preview",
         preview_pages_project_name="nienfos-preview-web",
         preview_r2_bucket_name=None,
+        web_preview_invite_secret="test-web-preview-invite-secret-value-32",
     )
 
 
@@ -349,10 +482,13 @@ class _FakeCloudflareClient:
         *,
         resources_exist: bool = False,
         fail_worker: bool = False,
+        fail_invite_sync: bool = False,
     ) -> None:
         self.calls: list[str] = []
+        self.sql_calls: list[dict[str, Any]] = []
         self.resources_exist = resources_exist
         self.fail_worker = fail_worker
+        self.fail_invite_sync = fail_invite_sync
 
     def get_account(self, account_id: str) -> CloudflareLookupResult:
         self.calls.append(f"get_account:{account_id}")
@@ -463,6 +599,13 @@ class _FakeCloudflareClient:
         params: list[Any] | None = None,
     ) -> CloudflareLookupResult:
         self.calls.append(f"execute_d1_sql:{account_id}:{database_id}")
+        self.sql_calls.append({"sql": sql, "params": params or []})
+        if self.fail_invite_sync and "INSERT INTO preview_invites" in sql:
+            return CloudflareLookupResult(
+                ok=False,
+                status_code=500,
+                error="Bearer secret-token invite sync failed",
+            )
         return CloudflareLookupResult(
             ok=True,
             payload={"result": [{"sql": sql, "params": params or []}]},

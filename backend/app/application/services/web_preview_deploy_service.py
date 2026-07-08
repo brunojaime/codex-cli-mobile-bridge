@@ -23,6 +23,27 @@ from backend.app.infrastructure.config.settings import Settings
 
 
 _SOURCE_APP_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,78}[a-z0-9])?$")
+_INVITE_UPSERT_SQL = """
+INSERT INTO preview_invites (
+  invite_id,
+  token_sha256,
+  source_app,
+  app_slug,
+  single_use,
+  created_at,
+  expires_at,
+  used_at,
+  revoked_at
+) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL, ?8)
+ON CONFLICT(invite_id) DO UPDATE SET
+  token_sha256 = excluded.token_sha256,
+  source_app = excluded.source_app,
+  app_slug = excluded.app_slug,
+  single_use = excluded.single_use,
+  created_at = excluded.created_at,
+  expires_at = excluded.expires_at,
+  revoked_at = excluded.revoked_at
+"""
 
 
 class WebPreviewError(RuntimeError):
@@ -57,7 +78,9 @@ class WebPreviewDeployService:
         self._client = client
         self._state_root = Path(settings.web_preview_state_dir).expanduser().resolve()
         self._preview_state_dir = self._state_root / "previews"
+        self._invite_state_dir = self._state_root / "invites"
         self._preview_state_dir.mkdir(parents=True, exist_ok=True)
+        self._invite_state_dir.mkdir(parents=True, exist_ok=True)
 
     def plan(self, request: WebPreviewPlanInput) -> dict[str, Any]:
         manifest_path, project_path, manifest = self._load_manifest(request)
@@ -174,6 +197,26 @@ class WebPreviewDeployService:
                     },
                 ],
             }
+            self._persist_preview(state)
+            invite_sync_summary = self.sync_invites_for_preview(
+                str(state["preview_id"]),
+            )
+            state = {
+                **state,
+                "invite_sync_summary": invite_sync_summary,
+                "logs": [
+                    *state["logs"],
+                    {
+                        "level": "info",
+                        "message": (
+                            "Invite sync completed: "
+                            f"{invite_sync_summary['synced']} synced, "
+                            f"{invite_sync_summary['failed']} failed, "
+                            f"{invite_sync_summary['not_deployed']} not deployed."
+                        ),
+                    },
+                ],
+            }
         except Exception as exc:
             error = _safe_error(
                 exc,
@@ -203,6 +246,76 @@ class WebPreviewDeployService:
                 status_code=500,
             )
         return state
+
+    def sync_invite(self, invite: dict[str, Any]) -> dict[str, Any]:
+        preview = self.get_preview(str(invite.get("preview_id") or ""))
+        if preview is None or preview.get("status") != "active":
+            return {
+                "sync_status": "not_deployed",
+                "synced_at": None,
+                "sync_error": None,
+            }
+        try:
+            context = self._d1_sync_context(preview)
+            result = self._cloudflare_client().execute_d1_sql(
+                account_id=context["account_id"],
+                database_id=context["database_id"],
+                sql=_INVITE_UPSERT_SQL,
+                params=_invite_sync_params(invite),
+            )
+            _raise_if_failed(result, "d1_invite_sync_failed")
+            return {
+                "sync_status": "synced",
+                "synced_at": _now_iso(),
+                "sync_error": None,
+            }
+        except Exception as exc:
+            return {
+                "sync_status": "failed",
+                "synced_at": invite.get("synced_at"),
+                "sync_error": _safe_error(
+                    exc,
+                    secrets=(
+                        self._settings.cloudflare_api_token,
+                        self._settings.cloudflare_dns_api_token,
+                    ),
+                ),
+            }
+
+    def sync_invites_for_preview(
+        self,
+        preview_id: str,
+        *,
+        invite_id: str | None = None,
+    ) -> dict[str, Any]:
+        summary = {
+            "preview_id": preview_id,
+            "total": 0,
+            "synced": 0,
+            "failed": 0,
+            "not_deployed": 0,
+            "pending": 0,
+            "updated_at": _now_iso(),
+        }
+        for path in sorted(self._invite_state_dir.glob("*.json")):
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                continue
+            if payload.get("preview_id") != preview_id:
+                continue
+            if invite_id and payload.get("invite_id") != invite_id:
+                continue
+            summary["total"] += 1
+            sync = self.sync_invite(payload)
+            payload.update(sync)
+            _atomic_write_json(path, payload)
+            status = str(sync.get("sync_status") or "pending")
+            if status in summary:
+                summary[status] += 1
+            else:
+                summary["pending"] += 1
+        return summary
 
     def get_preview(self, preview_id: str) -> dict[str, Any] | None:
         path = self._preview_state_dir / f"{_safe_id(preview_id)}.json"
@@ -337,6 +450,22 @@ class WebPreviewDeployService:
     def _persist_preview(self, payload: dict[str, Any]) -> None:
         preview_id = _safe_id(str(payload["preview_id"]))
         _atomic_write_json(self._preview_state_dir / f"{preview_id}.json", payload)
+
+    def _d1_sync_context(self, preview: dict[str, Any]) -> dict[str, str]:
+        account_id = (self._settings.cloudflare_account_id or "").strip()
+        if not account_id:
+            raise RuntimeError("cloudflare_account_id_missing")
+        database_id = ""
+        for resource in preview.get("applied_resources") or ():
+            if isinstance(resource, dict) and resource.get("kind") == "d1_database":
+                database_id = str(resource.get("database_id") or "").strip()
+                break
+        if not database_id:
+            raise RuntimeError("d1_database_id_missing")
+        return {
+            "account_id": account_id,
+            "database_id": database_id,
+        }
 
 
 class CloudflarePreviewProvisioner:
@@ -601,6 +730,19 @@ def _d1_database_id(payload: dict[str, Any]) -> str:
         if isinstance(value, str) and value.strip():
             return value.strip()
     return ""
+
+
+def _invite_sync_params(invite: dict[str, Any]) -> list[Any]:
+    return [
+        str(invite.get("invite_id") or ""),
+        str(invite.get("token_sha256") or ""),
+        str(invite.get("source_app") or ""),
+        str(invite.get("app_slug") or invite.get("source_app") or ""),
+        1 if invite.get("single_use", True) else 0,
+        str(invite.get("created_at") or ""),
+        str(invite.get("expires_at") or ""),
+        invite.get("revoked_at"),
+    ]
 
 
 def _raise_if_failed(result: CloudflareLookupResult, code: str) -> None:

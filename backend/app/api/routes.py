@@ -886,6 +886,26 @@ async def revoke_web_preview_invite(
     return WebPreviewInviteResponse(**payload)
 
 
+@router.post(
+    "/web-previews/{preview_id}/invites/{invite_id}/sync",
+    response_model=WebPreviewInviteResponse,
+)
+async def sync_web_preview_invite(
+    preview_id: str,
+    invite_id: str,
+    container: AppContainer = Depends(get_container),
+) -> WebPreviewInviteResponse:
+    try:
+        payload = await run_in_threadpool(
+            container.web_preview_invite_service.sync_invite,
+            preview_id=preview_id,
+            invite_id=invite_id,
+        )
+    except WebPreviewInviteError as exc:
+        raise _web_preview_invite_http_error(exc) from exc
+    return WebPreviewInviteResponse(**payload)
+
+
 @router.get("/sdd/projects", response_model=SddProjectsResponse)
 async def list_sdd_projects(
     container: AppContainer = Depends(get_container),

@@ -628,13 +628,20 @@ curl -X POST "$BRIDGE_URL/web-previews/wp-{slug}/invites" \\
   -d '{{"ttlSeconds":604800,"singleUse":true}}'
 ```
 
-5. Seed the returned invite metadata into `preview_invites` with the same
-`invite_id`, `token_sha256`, app fields, expiration, and `single_use`.
+5. The Bridge syncs invite rows into D1 during deploy apply and after later
+create/revoke operations. The row uses `invite_id`, `token_sha256`, app fields,
+expiration, `single_use`, and `revoked_at`; plaintext tokens are never stored or
+sent to D1. If sync fails, retry it from the Bridge:
+
+```bash
+curl -X POST "$BRIDGE_URL/web-previews/wp-{slug}/invites/<invite-id>/sync"
+```
 
 6. Open the returned `invite_url`. The Worker validates the token, checks D1,
 marks first use atomically when `single_use=true`, sets an HttpOnly cookie, and
 redirects to the app. The Bridge stores invite metadata and token SHA256 only,
-never the plaintext token.
+never the plaintext token. `used_at` is written by the Worker in D1; the Bridge
+does not read it back yet.
 """
 
 

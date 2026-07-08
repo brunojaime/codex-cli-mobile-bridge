@@ -92,9 +92,13 @@ class WebPreviewInviteService:
             "single_use": request.single_use,
             "used_at": None,
             "revoked_at": None,
+            "sync_status": "not_deployed",
+            "synced_at": None,
+            "sync_error": None,
             "token_sha256": token_hash,
         }
         _atomic_write_json(self._invite_state_dir / f"{invite_id}.json", metadata)
+        metadata = self._sync_and_persist(metadata)
         return {
             **metadata,
             "invite_url": invite_url,
@@ -131,7 +135,25 @@ class WebPreviewInviteService:
         if payload.get("revoked_at") is None:
             payload["revoked_at"] = _iso(datetime.now(UTC))
             _atomic_write_json(path, payload)
+        payload = self._sync_and_persist(payload)
         return payload
+
+    def sync_invite(self, *, preview_id: str, invite_id: str) -> dict[str, Any]:
+        path = self._invite_state_dir / f"{invite_id}.json"
+        if not path.is_file():
+            raise WebPreviewInviteError(
+                code="web_preview_invite_not_found",
+                message="Web preview invite was not found.",
+                status_code=404,
+            )
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if payload.get("preview_id") != preview_id:
+            raise WebPreviewInviteError(
+                code="web_preview_invite_not_found",
+                message="Web preview invite was not found.",
+                status_code=404,
+            )
+        return self._sync_and_persist(payload)
 
     def verify_token(
         self,
@@ -183,6 +205,15 @@ class WebPreviewInviteService:
                 message="Invite ttl_seconds exceeds WEB_PREVIEW_INVITE_MAX_TTL_SECONDS.",
             )
         return ttl
+
+    def _sync_and_persist(self, payload: dict[str, Any]) -> dict[str, Any]:
+        sync = self._preview_service.sync_invite(payload)
+        updated = {**payload, **sync}
+        _atomic_write_json(
+            self._invite_state_dir / f"{updated['invite_id']}.json",
+            updated,
+        )
+        return updated
 
 
 def sign_web_preview_invite(*, secret: str, payload: dict[str, Any]) -> str:
