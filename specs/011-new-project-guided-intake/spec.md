@@ -1,7 +1,7 @@
 ---
 id: 011-new-project-guided-intake
 title: New Project Guided Intake
-status: draft
+status: active
 type: feature
 domains:
   - project-factory
