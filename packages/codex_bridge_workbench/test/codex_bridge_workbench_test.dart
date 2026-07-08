@@ -617,7 +617,7 @@ void main() {
     await tester.tap(find.text('Checkout reservation').first);
     await tester.pumpAndSettle();
     expect(find.text('Tasks in Plan 2'), findsOneWidget);
-    expect(find.text('Plan 2: Checkout reservation'), findsWidgets);
+    expect(find.text('Plan 2: Checkout reservation'), findsOneWidget);
     expect(find.text('Reserve cart units'), findsWidgets);
     expect(find.text('Reconcile payment expiry'), findsWidgets);
     expect(find.text('Persist reservation audit'), findsWidgets);
@@ -630,10 +630,11 @@ void main() {
     await tester.tap(find.text('Reconcile payment expiry').first);
     await tester.pumpAndSettle();
     expect(find.text('Back to Plan 2 tasks'), findsOneWidget);
-    expect(find.text('Task 2: Reconcile payment expiry'), findsWidgets);
+    expect(find.text('Task 2: Reconcile payment expiry'), findsOneWidget);
     expect(find.text('Task 1: Reserve cart units'), findsNothing);
     expect(find.text('Task 3: Persist reservation audit'), findsNothing);
     expect(find.text('Task 1: Normalize catalog variants.'), findsNothing);
+    expect(find.text('Show details'), findsNothing);
   });
 
   testWidgets('spec tree fallback marks incomplete trees as incomplete', (

@@ -4298,25 +4298,8 @@ class _SpecTreeNavigator extends StatelessWidget {
               icon: const Icon(Icons.arrow_back_rounded, size: 17),
               label: const Text('Back to spec plans'),
             ),
-            const SizedBox(height: 4),
-            _TreeNodeRow(
-              icon: Icons.route_outlined,
-              label: 'Plan ${selectedPlan.number}',
-              title: selectedPlan.title,
-              selected: selection.kind == _SpecArtifactKind.treePlan,
-              level: 0,
-              status: selectedPlan.status,
-              trailing: '${selectedPlan.tasks.length} tasks',
-              onTap: () => onSelected(
-                _SpecArtifactSelection(
-                  specIndex: selection.specIndex,
-                  kind: _SpecArtifactKind.treePlan,
-                  artifactIndex: selection.artifactIndex,
-                ),
-              ),
-            ),
             if (selectedTask != null) ...[
-              const SizedBox(height: 6),
+              const SizedBox(height: 4),
               TextButton.icon(
                 onPressed: () => onSelected(
                   _SpecArtifactSelection(
@@ -4327,16 +4310,6 @@ class _SpecTreeNavigator extends StatelessWidget {
                 ),
                 icon: const Icon(Icons.arrow_back_rounded, size: 17),
                 label: Text('Back to Plan ${selectedPlan.number} tasks'),
-              ),
-              const SizedBox(height: 4),
-              _TreeNodeRow(
-                icon: Icons.checklist_rounded,
-                label: 'Task ${selectedTask.number}',
-                title: selectedTask.title,
-                selected: true,
-                level: 0,
-                status: selectedTask.status,
-                onTap: () => onSelected(selection),
               ),
             ],
           ] else
@@ -5272,7 +5245,7 @@ class _TreeTaskListCard extends StatelessWidget {
   }
 }
 
-class _TreeTaskNodeSection extends StatefulWidget {
+class _TreeTaskNodeSection extends StatelessWidget {
   const _TreeTaskNodeSection({
     required this.project,
     required this.spec,
@@ -5290,32 +5263,7 @@ class _TreeTaskNodeSection extends StatefulWidget {
   final ValueChanged<SddCodexActionRequest>? onCodexAction;
 
   @override
-  State<_TreeTaskNodeSection> createState() => _TreeTaskNodeSectionState();
-}
-
-class _TreeTaskNodeSectionState extends State<_TreeTaskNodeSection> {
-  bool _expanded = false;
-
-  @override
-  void didUpdateWidget(_TreeTaskNodeSection oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.task.id != widget.task.id ||
-        oldWidget.plan.id != widget.plan.id) {
-      _expanded = false;
-    }
-  }
-
-  @override
   Widget build(BuildContext context) {
-    final task = widget.task;
-    final taskRow = _StructuredTask(
-      order: task.number,
-      title: 'Task ${task.number}: ${task.title}',
-      status: task.status,
-      details: task.description.trim().isEmpty
-          ? const <String>[]
-          : <String>[task.description],
-    );
     final body = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
@@ -5325,21 +5273,38 @@ class _TreeTaskNodeSectionState extends State<_TreeTaskNodeSection> {
         ),
         _ArtifactControls(
           target: _fileFeedbackTarget(
-            project: widget.project,
-            spec: widget.spec,
+            project: project,
+            spec: spec,
             file: task.file,
             artifactType: 'tasks',
             fallbackTitle: task.title,
           ),
-          onFeedback: widget.onFeedback,
+          onFeedback: onFeedback,
           actions: const <SddCodexActionKind>[SddCodexActionKind.updateTasks],
-          onCodexAction: widget.onCodexAction,
+          onCodexAction: onCodexAction,
         ),
         const SizedBox(height: 8),
-        _TinyMetaChip(
-          icon: Icons.route_outlined,
-          label: 'Plan ${widget.plan.number}',
+        Wrap(
+          spacing: 8,
+          runSpacing: 6,
+          children: <Widget>[
+            _TinyMetaChip(
+              icon: Icons.route_outlined,
+              label: 'Plan ${plan.number}',
+            ),
+            _TinyStatusPill(label: task.status),
+          ],
         ),
+        if (task.description.trim().isNotEmpty) ...[
+          const SizedBox(height: 8),
+          Text(
+            task.description,
+            style: const TextStyle(
+              color: _WorkbenchColors.secondaryText,
+              height: 1.35,
+            ),
+          ),
+        ],
         if (task.file == null) ...[
           const SizedBox(height: 8),
           const Text(
@@ -5354,12 +5319,6 @@ class _TreeTaskNodeSectionState extends State<_TreeTaskNodeSection> {
             style: const TextStyle(color: _WorkbenchColors.warning),
           ),
         ],
-        const SizedBox(height: 8),
-        _StructuredTaskRow(
-          task: taskRow,
-          expanded: _expanded,
-          onToggle: () => setState(() => _expanded = !_expanded),
-        ),
         if (task.file?.hasContent ?? false) ...[
           const SizedBox(height: 8),
           _SourceExcerptDisclosure(text: task.file!.content!),
