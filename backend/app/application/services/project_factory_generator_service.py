@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 import subprocess
 from collections.abc import Sequence
@@ -219,6 +220,10 @@ def _project_files(manifest: dict[str, Any]) -> dict[str, str]:
         ),
         "specs/001-product-foundation/plan.md": _initial_plan(name),
         "specs/001-product-foundation/tasks.md": _initial_tasks(),
+        "specs/001-product-foundation/tree.json": _initial_tree_json(),
+        "specs/001-product-foundation/plans/01-foundation/plan.md": _initial_plan(
+            name
+        ),
         "specs/001-product-foundation/metadata.yaml": _initial_metadata(slug, name),
         ".sdd/spec-index.yaml": _spec_index(slug, name),
         ".sdd/diagram-index.yaml": _diagram_index(),
@@ -293,6 +298,7 @@ def _project_files(manifest: dict[str, Any]) -> dict[str, str]:
         "release/release-output-template.md": _release_output_template(),
     }
     files.update(_baseline_diagram_files(name, business_type, primary_goal))
+    files.update(_initial_task_node_files())
     files.update(_backend_files(slug))
     files.update(_mobile_files(name, slug))
     return files
@@ -4767,24 +4773,129 @@ Create the foundation for `{name}` in incremental validated slices:
 """
 
 
-def _initial_tasks() -> str:
-    return """# Tasks
+def _initial_task_items() -> tuple[dict[str, str], ...]:
+    return (
+        {
+            "title": "Complete business research.",
+            "status": "planned",
+            "description": "Research users, operational constraints, risks, and domain-specific workflows.",
+        },
+        {
+            "title": "Complete visual reference analysis.",
+            "status": "planned",
+            "description": "Analyze user-provided visual references and convert them into tokens, components, and screen patterns.",
+        },
+        {
+            "title": "Generate Flutter mobile v1 with API_BASE_URL, auth/session, RBAC admin gating, domain management, notifications, and generated tests.",
+            "status": "done",
+            "description": "Generated Flutter mobile v1 foundation is present.",
+        },
+        {
+            "title": "Generate backend v1 with FastAPI, auth, RBAC, admin, domain CRUD foundation, and notifications.",
+            "status": "done",
+            "description": "Generated FastAPI backend v1 foundation is present.",
+        },
+        {
+            "title": "Add auth and Google login placeholders.",
+            "status": "done",
+            "description": "Generated auth includes real email/password flow and explicit Google credential placeholders.",
+        },
+        {
+            "title": "Add RBAC and admin shell.",
+            "status": "done",
+            "description": "Generated RBAC roles and admin shell are present.",
+        },
+        {
+            "title": "Add domain CRUD foundation.",
+            "status": "done",
+            "description": "Generated domain management foundation is present.",
+        },
+        {
+            "title": "Add notification foundation.",
+            "status": "done",
+            "description": "Generated notification model/endpoints/client foundation is present.",
+        },
+        {
+            "title": "Add baseline SDD diagrams for components, classes, data, and deployment.",
+            "status": "done",
+            "description": "Generated baseline Mermaid diagrams and metadata are present.",
+        },
+        {
+            "title": "Wire Feedback Bridge and updater.",
+            "status": "planned",
+            "description": "Verify app-specific feedback routing and updater feed before release.",
+        },
+        {
+            "title": "Validate Workbench integration and release readiness.",
+            "status": "planned",
+            "description": "Run generated validation, release profile checks, and Workbench checks.",
+        },
+    )
 
-- [ ] Complete business research.
-- [ ] Complete visual reference analysis.
-- [x] Generate Flutter mobile v1 with API_BASE_URL, auth/session, RBAC admin gating, domain management, notifications, and generated tests.
-- [x] Generate backend v1 with FastAPI, auth, RBAC, admin, domain CRUD foundation, and notifications.
-- [x] Add auth and Google login placeholders.
-- [x] Add RBAC and admin shell.
-- [x] Add domain CRUD foundation.
-- [x] Add notification foundation.
-- [x] Add baseline SDD diagrams for components, classes, data, and deployment.
-- [ ] Wire Feedback Bridge and updater.
-- [ ] Validate Workbench integration and release readiness.
+
+def _initial_tasks() -> str:
+    lines = ["# Tasks", ""]
+    for item in _initial_task_items():
+        marker = "x" if item["status"] == "done" else " "
+        lines.append(f"- [{marker}] {item['title']}")
+    return "\n".join(lines) + "\n"
+
+
+def _initial_tree_json() -> str:
+    tasks = []
+    for index, item in enumerate(_initial_task_items(), start=1):
+        task_id = f"plan-1-task-{index}"
+        tasks.append(
+            {
+                "id": task_id,
+                "number": index,
+                "title": item["title"].rstrip("."),
+                "status": item["status"],
+                "description": item["description"],
+                "file": f"tasks/{task_id}/task.md",
+            }
+        )
+    return (
+        json.dumps(
+            {
+                "spec": {"file": "spec.md"},
+                "plans": [
+                    {
+                        "id": "plan-1",
+                        "number": 1,
+                        "title": "Product Foundation",
+                        "status": "in_progress",
+                        "description": "Create, validate, and prepare the generated project foundation.",
+                        "file": "plans/01-foundation/plan.md",
+                        "tasks": tasks,
+                    }
+                ],
+            },
+            indent=2,
+        )
+        + "\n"
+    )
+
+
+def _initial_task_node_files() -> dict[str, str]:
+    files: dict[str, str] = {}
+    for index, item in enumerate(_initial_task_items(), start=1):
+        task_id = f"plan-1-task-{index}"
+        files[
+            f"specs/001-product-foundation/tasks/{task_id}/task.md"
+        ] = f"""# {item["title"].rstrip(".")}
+
+Status: {item["status"]}
+
+{item["description"]}
 """
+    return files
 
 
 def _initial_metadata(slug: str, name: str) -> str:
+    task_items = _initial_task_items()
+    completed = sum(1 for item in task_items if item["status"] == "done")
+    pending = len(task_items) - completed
     return _to_yaml(
         {
             "id": "001-product-foundation",
@@ -4800,12 +4911,16 @@ def _initial_metadata(slug: str, name: str) -> str:
                 "user_pinned_title": True,
                 "user_pinned_description": True,
             },
-            "tasks": {"total": 10, "completed": 0, "pending": 10},
+            "tasks": {
+                "total": len(task_items),
+                "completed": completed,
+                "pending": pending,
+            },
             "last_run_state": None,
             "metadata_status": "fresh",
             "metadata_warnings": [],
             "metadata_stale_paths": [],
-            "available_files": ["spec.md", "plan.md", "tasks.md"],
+            "available_files": ["spec.md", "plan.md", "tasks.md", "tree.json"],
             "diagrams": [
                 {
                     "id": "components",

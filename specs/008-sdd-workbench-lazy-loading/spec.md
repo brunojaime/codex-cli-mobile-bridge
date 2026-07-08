@@ -1,7 +1,7 @@
 ---
 id: 008-sdd-workbench-lazy-loading
 title: SDD Workbench Lazy Loading
-status: draft
+status: active
 type: feature
 domains:
   - sdd
@@ -105,9 +105,12 @@ The Workbench client must:
 - show a local loading/error state for the selected spec without blanking the
   whole Workbench.
 
+Plan and task status badges must come from `tree.json`; the human-readable
+`tasks.md` checklist is not the UI source of truth for those row states. The
+normalized contract is captured in `009-sdd-status-normalization`.
+
 ## Release Contract
 
 Because this changes the shared Workbench behavior used by Codex Mobile, the
 change must ship in a new Codex Mobile Android release after backend and Flutter
 tests pass.
-

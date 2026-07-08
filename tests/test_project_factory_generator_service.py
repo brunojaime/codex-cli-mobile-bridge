@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import stat
@@ -38,6 +39,13 @@ def test_generator_writes_foundation_and_rolls_no_secrets(tmp_path: Path) -> Non
     assert result.target_path == str(project)
     assert (project / ".codex/project.yaml").is_file()
     assert (project / "specs/001-product-foundation/spec.md").is_file()
+    assert (project / "specs/001-product-foundation/tree.json").is_file()
+    assert (
+        project / "specs/001-product-foundation/plans/01-foundation/plan.md"
+    ).is_file()
+    assert (
+        project / "specs/001-product-foundation/tasks/plan-1-task-1/task.md"
+    ).is_file()
     assert (project / ".sdd/spec-index.yaml").is_file()
     assert (project / ".sdd/diagram-index.yaml").is_file()
     assert (project / "architecture/components.mmd").is_file()
@@ -78,8 +86,22 @@ def test_generator_writes_foundation_and_rolls_no_secrets(tmp_path: Path) -> Non
     metadata = (
         project / "specs/001-product-foundation/metadata.yaml"
     ).read_text(encoding="utf-8")
+    assert "tree.json" in metadata
+    assert "total: 11" in metadata
+    assert "completed: 7" in metadata
+    assert "pending: 4" in metadata
     assert "architecture/components.mmd" in metadata
     assert "architecture/entity-relationship.mmd" in metadata
+    tree = json.loads(
+        (project / "specs/001-product-foundation/tree.json").read_text(
+            encoding="utf-8",
+        ),
+    )
+    assert tree["plans"][0]["status"] == "in_progress"
+    statuses = [task["status"] for task in tree["plans"][0]["tasks"]]
+    assert statuses.count("done") == 7
+    assert statuses.count("planned") == 4
+    assert tree["plans"][0]["tasks"][0]["file"] == "tasks/plan-1-task-1/task.md"
     assert "SEED_ADMIN_PASSWORD" in (project / "AGENTS.md").read_text(
         encoding="utf-8",
     )

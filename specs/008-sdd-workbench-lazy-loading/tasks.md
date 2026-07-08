@@ -13,5 +13,4 @@
 - [x] T011 Add lazy spec hydration/cache in the Specs tab.
 - [x] T012 Add Workbench tests for lazy loading behavior.
 - [x] T013 Run backend, Workbench package, and mobile validation.
-- [ ] T014 Publish Codex Mobile Android release.
-
+- [x] T014 Publish Codex Mobile Android release.

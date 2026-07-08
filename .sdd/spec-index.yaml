@@ -41,3 +41,13 @@ specs:
     title: Initial Preview Release
     status: draft
     summary: "id: 007-initial-preview-release"
+  008-sdd-workbench-lazy-loading:
+    path: specs/008-sdd-workbench-lazy-loading/spec.md
+    title: SDD Workbench Lazy Loading
+    status: active
+    summary: Load SDD project summaries first and fetch full spec trees, plans, and tasks lazily.
+  009-sdd-status-normalization:
+    path: specs/009-sdd-status-normalization/spec.md
+    title: SDD Status Normalization
+    status: active
+    summary: Normalize Workbench status sources across current and generated projects.
