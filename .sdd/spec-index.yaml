@@ -51,3 +51,13 @@ specs:
     title: SDD Status Normalization
     status: active
     summary: Normalize Workbench status sources across current and generated projects.
+  010-slash-command-palette:
+    path: specs/010-slash-command-palette/spec.md
+    title: Slash Command Palette
+    status: draft
+    summary: Add a Codex-compatible slash command palette to the mobile chat composer.
+  011-new-project-guided-intake:
+    path: specs/011-new-project-guided-intake/spec.md
+    title: New Project Guided Intake
+    status: draft
+    summary: Add a guided question-and-contract layer before New Project build execution.

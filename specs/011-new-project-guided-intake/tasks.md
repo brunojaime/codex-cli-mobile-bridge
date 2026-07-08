@@ -1,0 +1,28 @@
+# New Project Guided Intake Tasks
+
+- [ ] T001 Define guided intake draft state model.
+- [ ] T002 Define structured question and option models.
+- [ ] T003 Define answer source, confidence, assumptions, and missing-field model.
+- [ ] T004 Extend draft persistence for intake state without breaking existing drafts.
+- [ ] T005 Add API schema coverage for questions, answers, contract preview, and readiness.
+- [ ] T006 Add endpoint or endpoint extension to get current intake state.
+- [ ] T007 Add endpoint or endpoint extension to answer/update a question.
+- [ ] T008 Add endpoint or endpoint extension to generate contract preview.
+- [ ] T009 Add endpoint or endpoint extension to confirm contract.
+- [ ] T010 Gate generate/build so only confirmed drafts can start generator/reviewer.
+- [ ] T011 Build intake engine for required topic detection.
+- [ ] T012 Build recommended-option generation from defaults, context, assets, and prior answers.
+- [ ] T013 Track release/web-preview/installable-app blockers separately from local planning.
+- [ ] T014 Preserve and expose asset role decisions through intake.
+- [ ] T015 Update New Project button flow to enter or reopen guided intake.
+- [ ] T016 Render question cards with recommended options in chat.
+- [ ] T017 Support free-text answers and option taps.
+- [ ] T018 Render contract preview with decisions, defaults, assumptions, assets, and blockers.
+- [ ] T019 Render confirm/build actions only when valid.
+- [ ] T020 Render changes-requested and blocked states with next steps.
+- [ ] T021 Add contextual command hooks if slash command palette exists.
+- [ ] T022 Add backend tests for state transitions and persistence.
+- [ ] T023 Add backend tests for blocked/confirmed build gate behavior.
+- [ ] T024 Add Flutter tests for models, API, question UI, preview UI, and build gating.
+- [ ] T025 Run Project Factory regression tests.
+- [ ] T026 Run mobile analyze/tests and publish Android release if frontend code ships.
