@@ -311,6 +311,7 @@ Generated projects must continue to include:
 
 - `.github/workflows/android-release.yml`;
 - `scripts/publish_project.sh`;
+- `scripts/publish_android_release.sh`;
 - `scripts/finalize_local_commit.sh`;
 - `scripts/validate_publication_ready.sh`;
 - `scripts/validate_release_profiles.sh`;

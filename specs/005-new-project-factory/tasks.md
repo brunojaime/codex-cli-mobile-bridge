@@ -59,6 +59,12 @@
 - [x] T026 Generate AWS, App Store, and Play Store readiness docs.
 - [x] T027 Mark Google/AWS/store credentials as pending without failing local
       project creation.
+- [x] T027a Execute GitHub publish, Android release, installable-app
+      registration, and remote publication verification from the Factory runner
+      when remote publication mode is active.
+- [x] T027b Mark publication gaps as `blocked` with concrete command/log output
+      instead of `ready` when GitHub origin, release APK, or Bridge registration
+      is missing.
 
 ## Phase 8: End-To-End Validation
 
@@ -82,3 +88,18 @@
 - [x] T038 Update creation defaults to 20 generator and 20 reviewer runs.
 - [x] T039 Generate mandatory baseline Workbench diagrams and SDD indexes for
       new projects.
+
+## Phase 11: Publication Contract Hardening
+
+- [x] T040 Document the SAT Showroom gap where a local foundation finished
+      without GitHub repo, Android release, or Bridge app registration.
+- [x] T041 Add runner-owned `github_publish`, `android_release`, and
+      `installable_app_registration` phases for remote Project Factory jobs.
+- [x] T042 Generate `scripts/publish_android_release.sh` and a stable
+      `<sourceApp>.apk` GitHub release asset.
+- [x] T043 Pass required GitHub/release/Bridge environment variables to
+      generated publication scripts without printing secrets.
+- [x] T044 Treat missing external publication configuration as `blocked`, not
+      `ready`.
+- [x] T045 Add regression tests for remote publication phase execution and
+      blocked publication outcomes.

@@ -37,6 +37,10 @@ release-readiness documentation.
 - GitHub publication is part of the publish contract: create/verify the remote,
   push the branch, and record any missing credentials as an explicit blocked
   publish state rather than silently completing.
+- Android release publication and Codex Mobile installable-app registration are
+  part of the same publish contract. A generated project is not "ready" for the
+  user when it only exists locally; it is either published and registered, or the
+  job is blocked with the exact missing step.
 - Business-type research for typical apps, expected features, UX patterns, and
   look and feel.
 - User-uploaded visual references for style context.
@@ -145,7 +149,41 @@ new-project/
 - Runtime profile: `APP_RUNTIME_PROFILE=real` by default for productive
   releases; `mock` and `staging` are explicit opt-in profiles.
 - Publish contract: initial git commit required, GitHub repository/push required
-  before the project is considered published, and release status must be explicit.
+  before the project is considered published, Android release and APK asset
+  verification required before the app is considered installable, Codex Mobile
+  installable-app registration required before the app is expected to appear in
+  the Apps catalog, and release status must be explicit.
+
+## Publication Completion Contract
+
+The Factory regression that generated `sat-showroom` exposed a gap: the job
+ended as `ready` with the message `Local project foundation generated` even
+though the repository had no GitHub `origin`, no remote repository, no Android
+release, and no installable-app registry entry. Future Factory runs must not
+close that way.
+
+Remote publication mode must execute and verify these phases in order:
+
+1. `scripts/finalize_local_commit.sh`
+2. `scripts/publish_project.sh` to create/verify the GitHub repository and push
+   the current branch.
+3. `scripts/publish_android_release.sh --push --watch` to create/push the
+   productive Android tag, wait for GitHub Actions, and verify APK assets.
+4. `scripts/register_installable_app.sh` to register the APK with the Bridge.
+5. `scripts/validate_publication_ready.sh` to prove remote, tag, release asset,
+   profile, updater, and publish metadata are coherent.
+
+If any publication phase cannot run because `gh` is unauthenticated, GitHub
+permissions are missing, release secrets are absent, `BRIDGE_URL` or
+`INSTALLABLE_APPS_REGISTRATION_TOKEN` is missing, or the APK asset cannot be
+verified, the job status must become `blocked`. It must include the failing
+phase, command, exit code, redacted stdout/stderr, and a concrete manual next
+step. It must not become `ready`.
+
+`local` publication validation mode remains only for tests and explicit local
+development. It may validate local commit readiness, but it must be visibly
+different from remote publication and must not be used to claim that the app is
+available in Codex Mobile Apps.
 
 ## Runtime Profile Contract
 
@@ -245,6 +283,29 @@ remote creation or verification with authenticated tooling, push, release tag,
 GitHub release, APK asset verification, release metadata verification, and a
 clean worktree or explicit blocking report.
 
+### SAT Showroom Publication Gap
+
+This requirement was hardened after SAT Showroom regenerated successfully as a
+local foundation but did not appear in Codex Mobile Apps. The root cause was
+that generated publication helpers existed, but the runner could still finish as
+`ready` without owning the GitHub repo creation, Android release, and Bridge
+installable-app registration phases. The fix is that remote Project Factory jobs
+must execute those phases directly:
+
+- `github_publish`: run `scripts/publish_project.sh` to create or verify the
+  authenticated GitHub repo, set `origin`, normalize `main`, and push HEAD.
+- `android_release`: run `scripts/publish_android_release.sh` to validate real
+  release configuration, push the productive Android tag, wait for the GitHub
+  release APK asset, and reject mock/local release settings.
+- `installable_app_registration`: run `scripts/register_installable_app.sh` to
+  register the verified APK in the Bridge catalog.
+- `publish_verification`: run `scripts/validate_publication_ready.sh` after the
+  previous phases so the final job state reflects the actual installable app.
+
+If external configuration is missing, such as `gh` auth, `API_BASE_URL`,
+`BRIDGE_URL`, or `INSTALLABLE_APPS_REGISTRATION_TOKEN`, the job must end as
+`blocked` with the exact phase and command in `step_logs`, not as `ready`.
+
 After an APK release is published, the generated project must register itself in
 the Bridge installable-app catalog through the protected Bridge endpoint
 `POST /installable-apps`. The Bridge must require
@@ -319,6 +380,13 @@ or verifies the GitHub repository through authenticated `gh`, pushes the main
 branch, and reports the remote URL. Project Factory creates the initial local
 commit itself so a generated repo never remains in `No commits yet` state.
 
+The generated project also includes `scripts/publish_android_release.sh`, which
+derives the productive Android tag from `apps/mobile/pubspec.yaml`, validates
+`APP_RUNTIME_PROFILE=real` plus a non-local `API_BASE_URL`, pushes the tag, and
+waits for the GitHub release to expose an APK asset. The Android workflow copies
+the built APK to a stable `<sourceApp>.apk` asset name so Bridge registration can
+verify the exact installable artifact.
+
 ## Completion Criteria
 
 A project is not considered created until the backend returns a validation
@@ -329,6 +397,10 @@ report showing:
 - initial local git commit exists and the worktree is clean after scaffold;
 - GitHub repo/push is complete or explicitly blocked with a credential/config
   reason and manual next step;
+- Android release tag and APK asset are complete or explicitly blocked with a
+  credential/config reason and manual next step;
+- Bridge installable-app registration is complete or explicitly blocked with a
+  credential/config reason and manual next step;
 - release profile checks pass for productive and mock/demo tags;
 - productive release checks prove no mock/local/demo mode, localhost,
   placeholder URL, visible seed selector, or visible Workbench tooling is active;

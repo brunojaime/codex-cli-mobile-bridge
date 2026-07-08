@@ -22,15 +22,41 @@ from backend.app.application.services.project_factory_reference_asset_service im
 
 ALLOWED_ENV_KEYS = frozenset(
     {
+        "ANDROID_RELEASE_POLL_SECONDS",
+        "ANDROID_RELEASE_TIMEOUT_SECONDS",
+        "API_BASE_URL",
+        "APP_ANDROID_RELEASE_TAG",
+        "APP_RELEASE_TAG",
+        "APP_RUNTIME_PROFILE",
+        "APK_ASSET_PATTERN",
+        "BRIDGE_REGISTRATION_TOKEN",
+        "BRIDGE_URL",
         "CODEX_HOME",
+        "DISPLAY_NAME",
+        "ENABLED",
+        "GH_TOKEN",
+        "GITHUB_OWNER",
+        "GITHUB_REPO",
+        "GITHUB_TOKEN",
+        "GITHUB_VISIBILITY",
         "HOME",
+        "INITIAL_COMMIT_MESSAGE",
+        "INSTALLABLE_APPS_REGISTRATION_TOKEN",
         "LANG",
         "LC_ALL",
+        "LATEST_ASSET_NAME",
         "LOGNAME",
         "OPENAI_API_KEY",
         "PATH",
+        "PROJECT_FACTORY_FINAL_COMMIT_MESSAGE",
+        "PUBLISH_BRANCH",
+        "RELEASE_CHANNEL",
+        "RELEASE_TAG_PATTERN",
+        "REQUIRE_INSTALLABLE_APK",
+        "SOURCE_APP",
         "TERM",
         "USER",
+        "WAIT_FOR_ANDROID_RELEASE",
     }
 )
 
@@ -102,6 +128,10 @@ class ProjectFactoryJobRunnerError(RuntimeError):
     pass
 
 
+class ProjectFactoryJobRunnerBlockedError(ProjectFactoryJobRunnerError):
+    pass
+
+
 ProjectFactoryEventSink = Callable[[dict[str, object]], None]
 
 
@@ -121,7 +151,11 @@ class ProjectFactoryJobRunner:
         *,
         event_sink: ProjectFactoryEventSink,
     ) -> ProjectFactoryRunnerResult:
-        total_steps = 6 + context.generator_runs + context.reviewer_runs
+        remote_publication = context.publication_validation_mode == "remote"
+        publication_steps = 3 if remote_publication else 0
+        total_steps = (
+            6 + publication_steps + context.generator_runs + context.reviewer_runs
+        )
         completed_steps = 0
 
         event_sink(_event("scaffold", "running", "Creating project scaffold.", 0))
@@ -290,6 +324,40 @@ class ProjectFactoryJobRunner:
             event_sink=event_sink,
             timeout_seconds=context.timeout_seconds,
         )
+        if remote_publication:
+            completed_steps = self._run_command_step(
+                project_path=project_path,
+                argv=("bash", "scripts/publish_project.sh"),
+                phase="github_publish",
+                label="GitHub publish",
+                completed_steps=completed_steps,
+                total_steps=total_steps,
+                event_sink=event_sink,
+                timeout_seconds=context.timeout_seconds,
+                block_on_failure=True,
+            )
+            completed_steps = self._run_command_step(
+                project_path=project_path,
+                argv=("bash", "scripts/publish_android_release.sh", "--push", "--watch"),
+                phase="android_release",
+                label="Android release",
+                completed_steps=completed_steps,
+                total_steps=total_steps,
+                event_sink=event_sink,
+                timeout_seconds=context.timeout_seconds,
+                block_on_failure=True,
+            )
+            completed_steps = self._run_command_step(
+                project_path=project_path,
+                argv=("bash", "scripts/register_installable_app.sh"),
+                phase="installable_app_registration",
+                label="Installable app registration",
+                completed_steps=completed_steps,
+                total_steps=total_steps,
+                event_sink=event_sink,
+                timeout_seconds=context.timeout_seconds,
+                block_on_failure=True,
+            )
         completed_steps = self._run_command_step(
             project_path=project_path,
             argv=("bash", "scripts/validate_publication_ready.sh"),
@@ -302,6 +370,7 @@ class ProjectFactoryJobRunner:
             env_overrides={
                 "PUBLICATION_VALIDATION_MODE": context.publication_validation_mode,
             },
+            block_on_failure=remote_publication,
         )
         return ProjectFactoryRunnerResult(generation_result=generation_result)
 
@@ -389,6 +458,8 @@ class ProjectFactoryJobRunner:
         event_sink: ProjectFactoryEventSink,
         timeout_seconds: int,
         env_overrides: dict[str, str] | None = None,
+        blocked_exit_codes: set[int] | None = None,
+        block_on_failure: bool = False,
     ) -> int:
         event_sink(
             _event(
@@ -419,11 +490,15 @@ class ProjectFactoryJobRunner:
             )
             raise ProjectFactoryJobRunnerError(f"{label} timed out.") from exc
         if result.returncode != 0:
+            blocked = block_on_failure or result.returncode in (
+                blocked_exit_codes or set()
+            )
+            status = "blocked" if blocked else "failed"
             event_sink(
                 _event(
                     phase,
-                    "failed",
-                    f"{label} failed with exit code {result.returncode}.",
+                    status,
+                    f"{label} {status} with exit code {result.returncode}.",
                     _progress(completed_steps, total_steps),
                     command=argv,
                     stdout=result.stdout,
@@ -431,6 +506,10 @@ class ProjectFactoryJobRunner:
                     exit_code=result.returncode,
                 )
             )
+            if blocked:
+                raise ProjectFactoryJobRunnerBlockedError(
+                    f"{label} blocked with exit code {result.returncode}."
+                )
             raise ProjectFactoryJobRunnerError(
                 f"{label} failed with exit code {result.returncode}."
             )
@@ -570,12 +649,13 @@ real and verifiable.
 Required outcome:
 - Run the generated validation script and fix failures.
 - Commit all intended project files.
-- Configure a real `origin` remote if missing.
-- Push the current branch so local HEAD matches its upstream.
-- If the project contains a Flutter Android app, publish a real Android APK
-  release from real backend/update configuration, then verify the release asset.
+- Keep `scripts/publish_project.sh`, `scripts/publish_android_release.sh`,
+  `scripts/register_installable_app.sh`, `scripts/validate_publication_ready.sh`,
+  and `.github/workflows/android-release.yml` present and executable.
+- Prepare any source fixes needed before the runner executes those scripts.
 - Do not use mock/demo data, placeholder API URLs, or local demo mode unless
   the user explicitly requested a demo/mock release.
-- If credentials or store/release configuration are missing, leave a concrete
-  blocker and fail instead of reporting the job as complete.
+- If credentials or release configuration are missing, leave a concrete blocker
+  and let the publication phase report `blocked` instead of claiming the app is
+  installable.
 """

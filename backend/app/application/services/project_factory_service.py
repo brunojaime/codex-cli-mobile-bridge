@@ -20,6 +20,7 @@ from backend.app.application.services.asset_depot_service import (
 )
 from backend.app.application.services.project_factory_job_runner import (
     ProjectFactoryJobRunner,
+    ProjectFactoryJobRunnerBlockedError,
     ProjectFactoryJobRunnerError,
     ProjectFactoryRunnerContext,
 )
@@ -524,6 +525,16 @@ class ProjectFactoryService:
                 context,
                 event_sink=lambda event: self._record_event(job_id, event),
             )
+        except ProjectFactoryJobRunnerBlockedError as exc:
+            self._update_job(
+                job_id,
+                status="blocked",
+                current_step="blocked",
+                message=str(exc),
+                error=str(exc),
+                completed_at=_now_iso(),
+            )
+            return
         except ProjectFactoryJobRunnerError as exc:
             self._update_job(
                 job_id,
@@ -550,7 +561,10 @@ class ProjectFactoryService:
             current_phase="ready",
             current_step="ready",
             progress=100,
-            message=result.generation_result.message,
+            message=_ready_message(
+                result.generation_result.message,
+                publication_validation_mode=self._publication_validation_mode,
+            ),
             project_path=result.generation_result.target_path,
             generation_result=result.generation_result,
             completed_at=_now_iso(),
@@ -575,6 +589,9 @@ class ProjectFactoryService:
             job.updated_at = _now_iso()
             if status == "failed":
                 job.status = "failed"
+                job.error = message
+            elif status == "blocked":
+                job.status = "blocked"
                 job.error = message
             self._persist_job(job)
 
@@ -768,9 +785,24 @@ def _summary_error(errors: tuple[ProjectFactoryValidationError, ...]) -> str | N
 def _manual_next_step(job: ProjectFactoryJob) -> str | None:
     if job.status == "ready":
         return None
+    if job.status == "blocked":
+        return (
+            "Open job details, inspect the blocked publication phase, provide the "
+            "missing GitHub/release/Bridge configuration, then rerun generation or "
+            "execute the logged command manually from the generated project."
+        )
     if job.status in {"failed", "interrupted", "blocked"}:
         return "Open job details, inspect step logs, and create a new draft if regeneration is required."
     return "Reopen this job to continue watching progress."
+
+
+def _ready_message(local_message: str, *, publication_validation_mode: str) -> str:
+    if publication_validation_mode == "remote":
+        return (
+            "Project published to GitHub, Android release verified, and "
+            "installable app registration completed."
+        )
+    return local_message
 
 
 def _draft_asset_from_depot_item(

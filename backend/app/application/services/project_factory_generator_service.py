@@ -180,9 +180,12 @@ def _project_files(manifest: dict[str, Any]) -> dict[str, str]:
         ".gitignore": _gitignore(),
         "README.md": _readme(name, business_type, primary_goal),
         "AGENTS.md": _agents(name),
-        ".github/workflows/android-release.yml": _generated_android_release_workflow(),
+        ".github/workflows/android-release.yml": _generated_android_release_workflow(
+            slug,
+        ),
         "scripts/finalize_local_commit.sh": _finalize_local_commit_script(),
         "scripts/publish_project.sh": _publish_script(),
+        "scripts/publish_android_release.sh": _publish_android_release_script(),
         "scripts/register_installable_app.sh": _register_installable_app_script(
             slug,
             name,
@@ -1929,7 +1932,6 @@ fi
 echo "published: https://github.com/$REPO"
 '''
 
-
 def _register_installable_app_script(slug: str, name: str) -> str:
     return f'''#!/usr/bin/env bash
 set -euo pipefail
@@ -2143,6 +2145,111 @@ printf 'local git commit ready\n'
 '''
 
 
+def _publish_android_release_script() -> str:
+    return r'''#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT_DIR"
+
+fail_blocked() {
+  printf 'android release blocked: %s\n' "$*" >&2
+  exit 2
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --push)
+      shift
+      ;;
+    --watch)
+      WAIT_FOR_ANDROID_RELEASE=true
+      shift
+      ;;
+    --no-watch)
+      WAIT_FOR_ANDROID_RELEASE=false
+      shift
+      ;;
+    *)
+      fail_blocked "unknown argument: $1"
+      ;;
+  esac
+done
+
+[[ -f apps/mobile/pubspec.yaml ]] || fail_blocked "apps/mobile/pubspec.yaml is required"
+[[ -n "${API_BASE_URL:-}" ]] || fail_blocked "API_BASE_URL is required for a real Android release"
+[[ "${API_BASE_URL:-}" != *localhost* && "${API_BASE_URL:-}" != *127.0.0.1* && "${API_BASE_URL:-}" != *10.0.2.2* ]] || \
+  fail_blocked "API_BASE_URL must not point at a local backend"
+[[ "${APP_RUNTIME_PROFILE:-real}" != "mock" ]] || fail_blocked "real Android release cannot use APP_RUNTIME_PROFILE=mock"
+
+git rev-parse --is-inside-work-tree >/dev/null 2>&1 || fail_blocked "not inside a git repository"
+git rev-parse --verify HEAD >/dev/null 2>&1 || fail_blocked "no git commit exists"
+
+if [[ -n "$(git status --porcelain)" ]]; then
+  git status --short >&2
+  fail_blocked "working tree must be clean before tagging the release"
+fi
+
+origin_url="$(git remote get-url origin 2>/dev/null || true)"
+[[ -n "$origin_url" ]] || fail_blocked "origin remote is not configured"
+repo_ref="$origin_url"
+repo_ref="${repo_ref#https://github.com/}"
+repo_ref="${repo_ref#git@github.com:}"
+repo_ref="${repo_ref%.git}"
+[[ "$repo_ref" == */* ]] || fail_blocked "origin remote must point to a GitHub owner/repo"
+
+branch="$(git symbolic-ref --short HEAD 2>/dev/null || true)"
+[[ -n "$branch" ]] || fail_blocked "HEAD is detached; release from a named branch"
+upstream="$(git rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null || true)"
+[[ -n "$upstream" ]] || fail_blocked "current branch has no upstream"
+local_head="$(git rev-parse HEAD)"
+remote_head="$(git rev-parse "$upstream" 2>/dev/null || true)"
+[[ "$local_head" == "$remote_head" ]] || fail_blocked "local HEAD is not pushed to $upstream"
+
+version="$(awk '/^version:/ { print $2; exit }' apps/mobile/pubspec.yaml)"
+[[ -n "$version" ]] || fail_blocked "apps/mobile/pubspec.yaml has no version"
+tag="${APP_ANDROID_RELEASE_TAG:-android-v${version//+/-build.}}"
+
+APP_RELEASE_TAG="$tag" \
+APP_RUNTIME_PROFILE="${APP_RUNTIME_PROFILE:-real}" \
+API_BASE_URL="$API_BASE_URL" \
+scripts/validate_release_profiles.sh
+
+if git rev-parse --verify "refs/tags/$tag" >/dev/null 2>&1; then
+  tag_commit="$(git rev-list -n 1 "$tag")"
+  [[ "$tag_commit" == "$local_head" ]] || fail_blocked "existing tag $tag does not point at HEAD"
+else
+  git tag "$tag"
+fi
+
+git push origin "$tag"
+
+if [[ "${WAIT_FOR_ANDROID_RELEASE:-true}" != "true" ]]; then
+  printf 'android release tag pushed: %s\n' "$tag"
+  exit 0
+fi
+
+if ! command -v gh >/dev/null 2>&1; then
+  fail_blocked "gh is required to verify GitHub release assets"
+fi
+
+timeout="${ANDROID_RELEASE_TIMEOUT_SECONDS:-1800}"
+poll="${ANDROID_RELEASE_POLL_SECONDS:-15}"
+deadline=$((SECONDS + timeout))
+while (( SECONDS <= deadline )); do
+  assets="$(gh release view "$tag" --repo "$repo_ref" --json assets --jq '.assets[].name' 2>/dev/null || true)"
+  if printf '%s\n' "$assets" | grep -Eq '\.apk$'; then
+    printf 'android release completed: %s\n' "$tag"
+    printf '%s\n' "$assets"
+    exit 0
+  fi
+  sleep "$poll"
+done
+
+fail_blocked "GitHub release $tag did not expose an APK asset within ${timeout}s"
+'''
+
+
 def _publication_validation_script() -> str:
     return r'''#!/usr/bin/env bash
 set -euo pipefail
@@ -2275,8 +2382,8 @@ printf 'release profile validation completed: profile=%s tag=%s\n' "$PROFILE" "$
 '''
 
 
-def _generated_android_release_workflow() -> str:
-    return """name: Android Release
+def _generated_android_release_workflow(slug: str) -> str:
+    return f"""name: Android Release
 
 on:
   push:
@@ -2298,8 +2405,8 @@ jobs:
   build-release:
     runs-on: ubuntu-latest
     env:
-      APP_RUNTIME_PROFILE: ${{ github.event.inputs.runtime_profile || (startsWith(github.ref_name, 'android-mock-') && 'mock') || (startsWith(github.ref_name, 'android-local-') && 'mock') || 'real' }}
-      API_BASE_URL: ${{ vars.API_BASE_URL }}
+      APP_RUNTIME_PROFILE: ${{{{ github.event.inputs.runtime_profile || (startsWith(github.ref_name, 'android-mock-') && 'mock') || (startsWith(github.ref_name, 'android-local-') && 'mock') || 'real' }}}}
+      API_BASE_URL: ${{{{ vars.API_BASE_URL }}}}
       LOCAL_DATA_MODE: "false"
 
     steps:
@@ -2337,14 +2444,15 @@ jobs:
           if [[ "$APP_RUNTIME_PROFILE" != "mock" ]]; then
             args+=(--dart-define=API_BASE_URL="$API_BASE_URL")
           fi
-          args+=(--dart-define=CODEX_FEEDBACK_BRIDGE_URL="${{ vars.CODEX_FEEDBACK_BRIDGE_URL }}")
-          args+=(--dart-define=CODEX_FEEDBACK_ENABLED="${{ vars.CODEX_FEEDBACK_ENABLED || 'false' }}")
-          flutter build apk --release "${args[@]}"
+          args+=(--dart-define=CODEX_FEEDBACK_BRIDGE_URL="${{{{ vars.CODEX_FEEDBACK_BRIDGE_URL }}}}")
+          args+=(--dart-define=CODEX_FEEDBACK_ENABLED="${{{{ vars.CODEX_FEEDBACK_ENABLED || 'false' }}}}")
+          flutter build apk --release "${{args[@]}}"
+          cp build/app/outputs/flutter-apk/app-release.apk build/app/outputs/flutter-apk/{slug}.apk
 
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
         with:
-          files: apps/mobile/build/app/outputs/flutter-apk/app-release.apk
+          files: apps/mobile/build/app/outputs/flutter-apk/{slug}.apk
           generate_release_notes: true
 """
 

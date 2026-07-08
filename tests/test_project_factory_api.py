@@ -396,6 +396,7 @@ def test_project_factory_generate_creates_local_project_foundation(tmp_path: Pat
     assert (project / ".codex/project.yaml").is_file()
     assert (project / "AGENTS.md").is_file()
     assert (project / "README.md").is_file()
+    assert (project / "scripts/publish_android_release.sh").is_file()
     assert (project / "specs/001-product-foundation/spec.md").is_file()
     assert (project / "specs/001-product-foundation/plan.md").is_file()
     assert (project / "specs/001-product-foundation/tasks.md").is_file()

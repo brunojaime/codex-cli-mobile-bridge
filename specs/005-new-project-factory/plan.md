@@ -63,8 +63,16 @@ added.
 ## Phase 7: GitHub And Release Readiness
 
 - Create an initial local git commit for every generated project.
-- Create GitHub repo and push when authentication is available.
-- Leave an explicit publish blocker when GitHub/release credentials are missing.
+- In remote publication mode, execute the generated GitHub publish script so the
+  repository is actually created/verified and pushed, not merely documented.
+- Generate and execute an Android release script that creates the productive tag,
+  pushes it, waits for the GitHub Actions release workflow, and verifies APK
+  assets.
+- Register the published APK in the Bridge installable-app catalog so Codex
+  Mobile can show it under Apps.
+- Leave an explicit `blocked` publish state when GitHub, release, Bridge URL, or
+  registration-token configuration is missing. Do not report `ready` for local
+  foundations that have not been remotely published.
 - Generate AWS, App Store, and Play Store readiness files.
 - Keep Google, AWS, Apple, and Play credentials as explicit pending items.
 
@@ -72,6 +80,9 @@ added.
 
 - Add a doctor endpoint with Projects root and toolchain checks.
 - Add generated-project validation script.
+- Add regression coverage for the SAT Showroom gap: remote publication phases
+  must run before `ready`, and missing GitHub/release/Bridge config must end as
+  `blocked`.
 - Validate Workbench discovery, Flutter, backend, auth/RBAC, admin, notifications,
   and no-secret output.
 

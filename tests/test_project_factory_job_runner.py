@@ -10,6 +10,7 @@ from backend.app.application.services.project_factory_generator_service import (
 )
 from backend.app.application.services.project_factory_job_runner import (
     ProjectFactoryJobRunner,
+    ProjectFactoryJobRunnerBlockedError,
     ProjectFactoryJobRunnerError,
     ProjectFactoryProcessResult,
 )
@@ -54,6 +55,63 @@ def test_project_factory_runner_success_writes_prompts_and_runs_batches(
         "publish_verification",
     ]
     assert events[-1]["command"] == ["bash", "scripts/validate_publication_ready.sh"]
+
+
+def test_project_factory_runner_remote_publication_runs_required_phases(
+    tmp_path: Path,
+) -> None:
+    process_runner = _FakeProcessRunner()
+    runner = _runner(tmp_path, process_runner)
+    events: list[dict[str, object]] = []
+
+    runner.run(
+        _context(
+            tmp_path,
+            generator_runs=0,
+            reviewer_runs=0,
+            publication_validation_mode="remote",
+        ),
+        event_sink=events.append,
+    )
+
+    assert process_runner.calls[-4:] == [
+        ("bash", "scripts/publish_project.sh"),
+        ("bash", "scripts/publish_android_release.sh", "--push", "--watch"),
+        ("bash", "scripts/register_installable_app.sh"),
+        ("bash", "scripts/validate_publication_ready.sh"),
+    ]
+    completed_phases = [
+        event["phase"] for event in events if event["status"] == "completed"
+    ]
+    assert completed_phases[-4:] == [
+        "github_publish",
+        "android_release",
+        "installable_app_registration",
+        "publish_verification",
+    ]
+
+
+def test_project_factory_runner_remote_publication_reports_blocked_phase(
+    tmp_path: Path,
+) -> None:
+    process_runner = _FakeProcessRunner(fail_call=4, fail_returncode=2)
+    runner = _runner(tmp_path, process_runner)
+    events: list[dict[str, object]] = []
+
+    with pytest.raises(ProjectFactoryJobRunnerBlockedError):
+        runner.run(
+            _context(
+                tmp_path,
+                generator_runs=0,
+                reviewer_runs=0,
+                publication_validation_mode="remote",
+            ),
+            event_sink=events.append,
+        )
+
+    blocked = [event for event in events if event["status"] == "blocked"]
+    assert blocked[-1]["phase"] == "github_publish"
+    assert blocked[-1]["exit_code"] == 2
 
 
 def test_project_factory_runner_can_execute_generated_validation(
@@ -124,6 +182,31 @@ def test_project_factory_runner_failure_keeps_project_and_reports_error(
     assert failed[0]["exit_code"] == 7
 
 
+def test_project_factory_runner_blocks_when_remote_publication_fails(
+    tmp_path: Path,
+) -> None:
+    process_runner = _FakeProcessRunner(fail_call=4)
+    runner = _runner(tmp_path, process_runner)
+    events: list[dict[str, object]] = []
+
+    with pytest.raises(ProjectFactoryJobRunnerBlockedError):
+        runner.run(
+            _context(
+                tmp_path,
+                generator_runs=0,
+                reviewer_runs=0,
+                publication_validation_mode="remote",
+            ),
+            event_sink=events.append,
+        )
+
+    blocked = [event for event in events if event["status"] == "blocked"]
+    assert blocked
+    assert blocked[-1]["phase"] == "github_publish"
+    assert blocked[-1]["command"] == ["bash", "scripts/publish_project.sh"]
+    assert blocked[-1]["exit_code"] == 7
+
+
 def test_project_factory_runner_timeout_reports_failed_phase(tmp_path: Path) -> None:
     process_runner = _FakeProcessRunner(timeout_call=1)
     runner = _runner(tmp_path, process_runner)
@@ -141,9 +224,16 @@ def test_project_factory_runner_timeout_reports_failed_phase(tmp_path: Path) -> 
 
 
 class _FakeProcessRunner:
-    def __init__(self, *, fail_call: int | None = None, timeout_call: int | None = None):
+    def __init__(
+        self,
+        *,
+        fail_call: int | None = None,
+        fail_returncode: int = 7,
+        timeout_call: int | None = None,
+    ):
         self.calls: list[tuple[str, ...]] = []
         self.fail_call = fail_call
+        self.fail_returncode = fail_returncode
         self.timeout_call = timeout_call
 
     def run(self, *, argv, cwd, env, timeout_seconds):
@@ -153,7 +243,7 @@ class _FakeProcessRunner:
             raise subprocess.TimeoutExpired(argv, timeout_seconds)
         if self.fail_call == call_number:
             return ProjectFactoryProcessResult(
-                returncode=7,
+                returncode=self.fail_returncode,
                 stdout="partial",
                 stderr="failed",
             )
@@ -179,6 +269,7 @@ def _context(
     generator_runs: int,
     reviewer_runs: int,
     run_generated_validation: bool = False,
+    publication_validation_mode: str = "local",
 ):
     plan = ProjectFactoryManifestService(projects_root=tmp_path).plan_manifest(
         ProjectFactoryManifestInput(
@@ -200,4 +291,5 @@ def _context(
         codex_command="fake-codex",
         timeout_seconds=1,
         run_generated_validation=run_generated_validation,
+        publication_validation_mode=publication_validation_mode,
     )

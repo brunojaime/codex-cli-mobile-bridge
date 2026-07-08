@@ -53,6 +53,7 @@ def test_generator_writes_foundation_and_rolls_no_secrets(tmp_path: Path) -> Non
     assert (project / "scripts/validate_release_profiles.sh").is_file()
     assert (project / "scripts/finalize_local_commit.sh").is_file()
     assert (project / "scripts/publish_project.sh").is_file()
+    assert (project / "scripts/publish_android_release.sh").is_file()
     assert (project / "scripts/register_installable_app.sh").is_file()
     assert (project / "scripts/build_web_preview.sh").is_file()
     assert (project / "scripts/validate_web_preview.sh").is_file()
@@ -244,6 +245,15 @@ def test_generator_writes_executable_publish_script(tmp_path: Path) -> None:
     assert "local HEAD is not pushed" in validation_content
     assert "GitHub release $expected_tag has no APK asset" in validation_content
     assert "validate_release_profiles.sh" in validation_content
+
+    android_release_script = tmp_path / "clinica-norte/scripts/publish_android_release.sh"
+    assert android_release_script.is_file()
+    assert android_release_script.stat().st_mode & stat.S_IXUSR
+    android_release_content = android_release_script.read_text(encoding="utf-8")
+    assert "API_BASE_URL is required for a real Android release" in android_release_content
+    assert "real Android release cannot use APP_RUNTIME_PROFILE=mock" in android_release_content
+    assert "git push origin \"$tag\"" in android_release_content
+    assert "GitHub release $tag did not expose an APK asset" in android_release_content
 
     release_profile_script = tmp_path / "clinica-norte/scripts/validate_release_profiles.sh"
     assert release_profile_script.is_file()
