@@ -502,6 +502,8 @@ class CloudflareProvisioningPlanner:
         runtime = runtime if isinstance(runtime, dict) else {}
         access = manifest.get("access")
         access = access if isinstance(access, dict) else {}
+        d1_binding = str(access.get("d1_binding") or "")
+        migrations_dir = str(access.get("migrations_dir") or "")
         return self._plan(
             base_domain=str(cloudflare.get("base_domain") or ""),
             worker_name=str(resources.get("worker_name") or ""),
@@ -514,6 +516,8 @@ class CloudflareProvisioningPlanner:
             health_path=str(runtime.get("health_path") or "/__preview/health"),
             access_mode=str(access.get("mode") or "public"),
             required_worker_secrets=tuple(access.get("required_worker_secrets") or ()),
+            d1_binding=d1_binding,
+            migrations_dir=migrations_dir,
         )
 
     def _plan(
@@ -528,6 +532,8 @@ class CloudflareProvisioningPlanner:
         health_path: str,
         access_mode: str = "public",
         required_worker_secrets: tuple[str, ...] = (),
+        d1_binding: str = "",
+        migrations_dir: str = "",
     ) -> dict[str, Any]:
         resources = [
             {
@@ -577,6 +583,17 @@ class CloudflareProvisioningPlanner:
                     "name": secret_name,
                     "mode": "required_external",
                     "status": "operator_configured",
+                },
+            )
+        if access_mode == "invite_token" and d1_binding and migrations_dir:
+            resources.append(
+                {
+                    "kind": "d1_migration",
+                    "name": migrations_dir,
+                    "binding": d1_binding,
+                    "database": d1_name,
+                    "mode": "apply_from_project",
+                    "status": "planned",
                 },
             )
         return {

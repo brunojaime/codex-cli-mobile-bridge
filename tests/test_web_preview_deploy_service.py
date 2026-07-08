@@ -47,6 +47,14 @@ def test_web_preview_plan_is_stable_and_persisted(tmp_path: Path) -> None:
         "mode": "required_external",
         "status": "operator_configured",
     } in first["planned_resources"]
+    assert {
+        "kind": "d1_migration",
+        "name": "deploy/web-preview/d1/migrations",
+        "binding": "PREVIEW_DB",
+        "database": "nienfos-preview",
+        "mode": "apply_from_project",
+        "status": "planned",
+    } in first["planned_resources"]
     assert "secret-token" not in str(first)
     assert (tmp_path / "state/previews/wp-clinica-norte.json").is_file()
 
@@ -138,10 +146,12 @@ def test_web_preview_deploy_applies_resources_with_fake_cloudflare(
     assert ("dns_record", "created") in statuses
     assert ("worker_script", "created") in statuses
     assert ("d1_database", "created") in statuses
+    assert ("d1_migration", "applied") in statuses
     assert ("pages_project", "created") in statuses
     assert ("r2_bucket", "skipped") in statuses
     assert fake.calls.count("create_dns_record:zone-1") == 1
     assert "deploy_worker_script:acct-1:nienfos-preview-runtime" in fake.calls
+    assert "execute_d1_sql:acct-1:d1-1" in fake.calls
 
 
 def test_web_preview_deploy_is_idempotent_when_resources_exist(
@@ -163,13 +173,14 @@ def test_web_preview_deploy_is_idempotent_when_resources_exist(
 
     assert payload["status"] == "active"
     assert all(
-        item["status"] in {"existing", "planned_external", "skipped"}
+        item["status"] in {"existing", "planned_external", "skipped", "applied"}
         for item in payload["applied_resources"]
     )
     assert not any(call.startswith("create_dns_record") for call in fake.calls)
     assert not any(call.startswith("deploy_worker_script") for call in fake.calls)
     assert not any(call.startswith("create_d1_database") for call in fake.calls)
     assert not any(call.startswith("create_pages_project") for call in fake.calls)
+    assert "execute_d1_sql:acct-1:d1-1" in fake.calls
 
 
 def test_web_preview_deploy_failure_persists_failed_state_without_secrets(
@@ -425,7 +436,9 @@ class _FakeCloudflareClient:
     def list_d1_databases(self, account_id: str) -> CloudflareLookupResult:
         self.calls.append(f"list_d1_databases:{account_id}")
         databases: list[dict[str, Any]] = (
-            [{"name": "nienfos-preview"}] if self.resources_exist else []
+            [{"name": "nienfos-preview", "uuid": "d1-1"}]
+            if self.resources_exist
+            else []
         )
         return CloudflareLookupResult(ok=True, payload={"result": databases})
 
@@ -436,7 +449,10 @@ class _FakeCloudflareClient:
         name: str,
     ) -> CloudflareLookupResult:
         self.calls.append(f"create_d1_database:{account_id}:{name}")
-        return CloudflareLookupResult(ok=True, payload={"result": {"name": name}})
+        return CloudflareLookupResult(
+            ok=True,
+            payload={"result": {"name": name, "uuid": "d1-1"}},
+        )
 
     def execute_d1_sql(
         self,

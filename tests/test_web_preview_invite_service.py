@@ -146,10 +146,45 @@ def test_web_preview_invite_creation_persists_metadata_without_plain_token(
     assert invite["token"] not in stored
     payload = json.loads(stored)
     assert payload["token_sha256"] == invite["token_sha256"]
+    assert payload["single_use"] is True
+    assert payload["used_at"] is None
+    assert payload["revoked_at"] is None
     listed = service.list_invites("wp-clinica-norte")
     assert listed[0]["invite_id"] == invite["invite_id"]
+    assert listed[0]["single_use"] is True
     assert "token" not in listed[0]
     assert "invite_url" not in listed[0]
+
+
+def test_web_preview_invite_revoke_marks_metadata_without_plain_token(
+    tmp_path: Path,
+) -> None:
+    deploy_service = _planned_preview(tmp_path)
+    service = WebPreviewInviteService(
+        settings=_settings(tmp_path),
+        preview_service=deploy_service,
+    )
+    invite = service.create_invite(
+        WebPreviewInviteCreateInput(
+            preview_id="wp-clinica-norte",
+            ttl_seconds=300,
+            single_use=True,
+        )
+    )
+
+    revoked = service.revoke_invite(
+        preview_id="wp-clinica-norte",
+        invite_id=invite["invite_id"],
+    )
+    stored = json.loads(
+        (tmp_path / "state/invites" / f"{invite['invite_id']}.json").read_text(
+            encoding="utf-8",
+        )
+    )
+
+    assert revoked["revoked_at"]
+    assert stored["revoked_at"] == revoked["revoked_at"]
+    assert invite["token"] not in json.dumps(stored)
 
 
 def test_web_preview_invite_api_create_and_list(tmp_path: Path) -> None:
@@ -164,7 +199,7 @@ def test_web_preview_invite_api_create_and_list(tmp_path: Path) -> None:
 
     response = client.post(
         f"/web-previews/{plan.json()['preview_id']}/invites",
-        json={"ttlSeconds": 300},
+        json={"ttlSeconds": 300, "singleUse": True},
     )
     listed = client.get(f"/web-previews/{plan.json()['preview_id']}/invites")
 
@@ -172,11 +207,19 @@ def test_web_preview_invite_api_create_and_list(tmp_path: Path) -> None:
     payload = response.json()
     assert payload["token"]
     assert payload["invite_url"].endswith(payload["token"])
+    assert payload["single_use"] is True
+    assert payload["used_at"] is None
+    assert payload["revoked_at"] is None
     assert listed.status_code == 200
     listed_payload = listed.json()["invites"][0]
     assert listed_payload["invite_id"] == payload["invite_id"]
     assert listed_payload["token"] is None
     assert listed_payload["invite_url"] is None
+    revoke = client.delete(
+        f"/web-previews/{plan.json()['preview_id']}/invites/{payload['invite_id']}",
+    )
+    assert revoke.status_code == 200
+    assert revoke.json()["revoked_at"]
 
 
 def test_web_preview_invite_api_reports_disabled_when_secret_missing(

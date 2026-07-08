@@ -836,6 +836,7 @@ async def create_web_preview_invite(
             WebPreviewInviteCreateInput(
                 preview_id=preview_id,
                 ttl_seconds=request.ttl_seconds,
+                single_use=request.single_use,
             ),
         )
     except WebPreviewInviteError as exc:
@@ -863,6 +864,26 @@ async def list_web_preview_invites(
     return WebPreviewInviteListResponse(
         invites=[WebPreviewInviteResponse(**invite) for invite in invites],
     )
+
+
+@router.delete(
+    "/web-previews/{preview_id}/invites/{invite_id}",
+    response_model=WebPreviewInviteResponse,
+)
+async def revoke_web_preview_invite(
+    preview_id: str,
+    invite_id: str,
+    container: AppContainer = Depends(get_container),
+) -> WebPreviewInviteResponse:
+    try:
+        payload = await run_in_threadpool(
+            container.web_preview_invite_service.revoke_invite,
+            preview_id=preview_id,
+            invite_id=invite_id,
+        )
+    except WebPreviewInviteError as exc:
+        raise _web_preview_invite_http_error(exc) from exc
+    return WebPreviewInviteResponse(**payload)
 
 
 @router.get("/sdd/projects", response_model=SddProjectsResponse)

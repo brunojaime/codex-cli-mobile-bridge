@@ -631,6 +631,7 @@ def test_generated_web_preview_bundle_is_validable_locally(tmp_path: Path) -> No
     worker_harness = project / "deploy/web-preview/worker/local_preview_test.mjs"
     wrangler = project / "deploy/web-preview/wrangler.toml.example"
     manifest = project / "deploy/web-preview/web-preview-manifest.yaml"
+    d1_migration = project / "deploy/web-preview/d1/migrations/0001_preview_invites.sql"
     assert build_script.stat().st_mode & stat.S_IXUSR
     assert validate_script.stat().st_mode & stat.S_IXUSR
     assert "flutter build web" in build_script.read_text(encoding="utf-8")
@@ -639,6 +640,9 @@ def test_generated_web_preview_bundle_is_validable_locally(tmp_path: Path) -> No
     assert "/__preview/health" in worker_text
     assert "ASSETS.fetch" in worker_text
     assert "WEB_PREVIEW_INVITE_SECRET" in worker_text
+    assert "PREVIEW_DB" in worker_text
+    assert "used_invite_token" in worker_text
+    assert "revoked_invite_token" in worker_text
     assert "missing_invite_token" in worker_text
     assert "/__preview/access" in worker_text
     assert "asset_not_found" in worker_text
@@ -648,6 +652,11 @@ def test_generated_web_preview_bundle_is_validable_locally(tmp_path: Path) -> No
     assert "PREVIEW_DB" in wrangler.read_text(encoding="utf-8")
     assert 'binding = "ASSETS"' in wrangler.read_text(encoding="utf-8")
     assert "WEB_PREVIEW_INVITE_SECRET" in wrangler.read_text(encoding="utf-8")
+    migration_text = d1_migration.read_text(encoding="utf-8")
+    assert "CREATE TABLE IF NOT EXISTS preview_invites" in migration_text
+    assert "token_sha256" in migration_text
+    assert "used_at" in migration_text
+    assert "revoked_at" in migration_text
     if shutil.which("node"):
         completed = subprocess.run(
             ["node", "deploy/web-preview/worker/local_preview_test.mjs"],
@@ -669,6 +678,9 @@ def test_generated_web_preview_bundle_is_validable_locally(tmp_path: Path) -> No
     assert payload["runtime"]["health_path"] == "/__preview/health"
     assert payload["runtime"]["asset_binding"] == "ASSETS"
     assert payload["access"]["mode"] == "invite_token"
+    assert payload["access"]["single_use"] is True
+    assert payload["access"]["d1_binding"] == "PREVIEW_DB"
+    assert payload["access"]["migrations_dir"] == "deploy/web-preview/d1/migrations"
     assert payload["access"]["required_worker_secrets"] == [
         "WEB_PREVIEW_INVITE_SECRET"
     ]

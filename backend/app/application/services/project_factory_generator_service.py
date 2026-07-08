@@ -204,6 +204,9 @@ def _project_files(manifest: dict[str, Any]) -> dict[str, str]:
         "deploy/web-preview/worker/local_preview_test.mjs": (
             _web_preview_worker_harness_js(slug)
         ),
+        "deploy/web-preview/d1/migrations/0001_preview_invites.sql": (
+            _web_preview_d1_invites_migration()
+        ),
         "specs/001-product-foundation/spec.md": _initial_spec(
             name,
             business_type,
@@ -495,6 +498,9 @@ def _web_preview_manifest_payload(slug: str, name: str) -> dict[str, Any]:
             "access_path": "/__preview/access",
             "token_query_param": "token",
             "cookie_name": "codex_preview_access",
+            "single_use": True,
+            "d1_binding": "PREVIEW_DB",
+            "migrations_dir": "deploy/web-preview/d1/migrations",
             "required_worker_secrets": ["WEB_PREVIEW_INVITE_SECRET"],
             "public_paths": ["/__preview/health"],
         },
@@ -609,17 +615,26 @@ but the SPA and static assets require a signed invite token.
 wrangler secret put WEB_PREVIEW_INVITE_SECRET
 ```
 
-3. Create an invite after a dry-run plan exists:
+3. Apply the D1 migration in `deploy/web-preview/d1/migrations/` to the shared
+preview D1 database before enabling invite-token access. Without D1 the Worker
+can validate HMAC tokens, but strong revoke and single-use enforcement are not
+available and apply must stay blocked.
+
+4. Create an invite after a dry-run plan exists:
 
 ```bash
 curl -X POST "$BRIDGE_URL/web-previews/wp-{slug}/invites" \\
   -H 'content-type: application/json' \\
-  -d '{{"ttlSeconds":604800}}'
+  -d '{{"ttlSeconds":604800,"singleUse":true}}'
 ```
 
-4. Open the returned `invite_url`. The Worker validates the token, sets an
-HttpOnly cookie, and redirects to the app. Tokens are time-limited. The Bridge
-stores invite metadata and token SHA256 only, never the plaintext token.
+5. Seed the returned invite metadata into `preview_invites` with the same
+`invite_id`, `token_sha256`, app fields, expiration, and `single_use`.
+
+6. Open the returned `invite_url`. The Worker validates the token, checks D1,
+marks first use atomically when `single_use=true`, sets an HttpOnly cookie, and
+redirects to the app. The Bridge stores invite metadata and token SHA256 only,
+never the plaintext token.
 """
 
 
@@ -648,6 +663,38 @@ not_found_handling = "single-page-application"
 PREVIEW_ACCESS_MODE = "invite_token"
 # Configure the real value as a Worker secret, not here:
 # wrangler secret put WEB_PREVIEW_INVITE_SECRET
+"""
+
+
+def _web_preview_d1_invites_migration() -> str:
+    return """-- Web Preview Delivery access control.
+-- Apply to the shared preview D1 database before enabling invite_token access.
+
+CREATE TABLE IF NOT EXISTS preview_invites (
+  invite_id TEXT PRIMARY KEY,
+  token_sha256 TEXT NOT NULL UNIQUE,
+  source_app TEXT NOT NULL,
+  app_slug TEXT NOT NULL,
+  single_use INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  used_at TEXT,
+  revoked_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_preview_invites_token_sha256
+  ON preview_invites(token_sha256);
+
+CREATE INDEX IF NOT EXISTS idx_preview_invites_app
+  ON preview_invites(source_app, app_slug);
+
+CREATE TABLE IF NOT EXISTS preview_access_attempts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  invite_id TEXT,
+  source_app TEXT NOT NULL,
+  status TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
 """
 
 
@@ -772,6 +819,47 @@ async function hmacSha256(secret, value) {
   return base64UrlEncode(new Uint8Array(signature));
 }
 
+async function sha256Hex(value) {
+  const digest = await crypto.subtle.digest(
+    'SHA-256',
+    new TextEncoder().encode(value),
+  );
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+function base64UrlJson(payload) {
+  return base64UrlEncode(new TextEncoder().encode(JSON.stringify(payload)));
+}
+
+async function signStructuredToken(env, payload) {
+  const header = base64UrlJson({ alg: 'HS256', typ: 'JWT' });
+  const body = base64UrlJson(payload);
+  const signature = await hmacSha256(env.WEB_PREVIEW_INVITE_SECRET, `${header}.${body}`);
+  return `${header}.${body}.${signature}`;
+}
+
+async function verifyStructuredToken(env, token) {
+  if (!env.WEB_PREVIEW_INVITE_SECRET) {
+    return null;
+  }
+  const parts = (token || '').split('.');
+  if (parts.length !== 3) {
+    return null;
+  }
+  const signingInput = `${parts[0]}.${parts[1]}`;
+  const expected = await hmacSha256(env.WEB_PREVIEW_INVITE_SECRET, signingInput);
+  if (expected !== parts[2]) {
+    return null;
+  }
+  try {
+    return JSON.parse(new TextDecoder().decode(base64UrlDecode(parts[1])));
+  } catch (_error) {
+    return null;
+  }
+}
+
 function tokenFromCookie(cookieHeader) {
   if (!cookieHeader) {
     return null;
@@ -794,6 +882,10 @@ function tokenFromRequest(request, url) {
   if (auth.toLowerCase().startsWith('bearer ')) {
     return auth.slice(7).trim();
   }
+  return tokenFromCookie(request.headers.get('cookie'));
+}
+
+function sessionTokenFromRequest(request) {
   return tokenFromCookie(request.headers.get('cookie'));
 }
 
@@ -829,13 +921,106 @@ async function verifyInviteToken(env, token) {
   return { ok: true, payload };
 }
 
+async function lookupInviteRow(env, inviteId, tokenHash) {
+  if (!env.PREVIEW_DB || typeof env.PREVIEW_DB.prepare !== 'function') {
+    return { ok: false, status: 503, code: 'd1_required' };
+  }
+  const row = await env.PREVIEW_DB
+    .prepare(
+      `SELECT invite_id, token_sha256, source_app, app_slug, single_use, expires_at, used_at, revoked_at
+       FROM preview_invites
+       WHERE invite_id = ?1 AND token_sha256 = ?2 AND source_app = ?3 AND app_slug = ?4
+       LIMIT 1`,
+    )
+    .bind(inviteId, tokenHash, SOURCE_APP, SOURCE_APP)
+    .first();
+  if (!row) {
+    return { ok: false, status: 403, code: 'invite_not_found' };
+  }
+  return { ok: true, row };
+}
+
+function validateInviteRow(row, { allowUsed }) {
+  if (row.revoked_at) {
+    return { ok: false, status: 403, code: 'revoked_invite_token' };
+  }
+  if (Date.parse(row.expires_at) <= Date.now()) {
+    return { ok: false, status: 403, code: 'expired_invite_token' };
+  }
+  if (!allowUsed && Number(row.single_use) === 1 && row.used_at) {
+    return { ok: false, status: 403, code: 'used_invite_token' };
+  }
+  return { ok: true };
+}
+
+async function markInviteUsed(env, row) {
+  if (Number(row.single_use) !== 1) {
+    return { ok: true };
+  }
+  const usedAt = new Date().toISOString();
+  const result = await env.PREVIEW_DB
+    .prepare(
+      `UPDATE preview_invites
+       SET used_at = COALESCE(used_at, ?1)
+       WHERE invite_id = ?2
+         AND token_sha256 = ?3
+         AND used_at IS NULL
+         AND revoked_at IS NULL`,
+    )
+    .bind(usedAt, row.invite_id, row.token_sha256)
+    .run();
+  const changes = Number(result?.meta?.changes || result?.changes || 0);
+  if (changes < 1) {
+    return { ok: false, status: 403, code: 'used_invite_token' };
+  }
+  return { ok: true, used_at: usedAt };
+}
+
+async function createAccessSession(env, invitePayload, tokenHash) {
+  return signStructuredToken(env, {
+    aud: 'codex.web-preview-session',
+    scope: 'web_preview:session',
+    source_app: SOURCE_APP,
+    app_slug: SOURCE_APP,
+    invite_id: invitePayload.invite_id,
+    token_sha256: tokenHash,
+    exp: invitePayload.exp,
+    iat: Math.floor(Date.now() / 1000),
+  });
+}
+
+async function verifyAccessSession(env, token) {
+  const payload = await verifyStructuredToken(env, token);
+  if (!payload) {
+    return { ok: false, status: 403, code: 'invalid_access_session' };
+  }
+  if (payload.aud !== 'codex.web-preview-session' || payload.scope !== 'web_preview:session') {
+    return { ok: false, status: 403, code: 'invalid_access_session' };
+  }
+  if (payload.source_app !== SOURCE_APP || payload.app_slug !== SOURCE_APP) {
+    return { ok: false, status: 403, code: 'invalid_access_session' };
+  }
+  if (!payload.exp || Number(payload.exp) <= Math.floor(Date.now() / 1000)) {
+    return { ok: false, status: 403, code: 'expired_access_session' };
+  }
+  const lookup = await lookupInviteRow(env, payload.invite_id, payload.token_sha256);
+  if (!lookup.ok) {
+    return lookup;
+  }
+  const active = validateInviteRow(lookup.row, { allowUsed: true });
+  if (!active.ok) {
+    return active;
+  }
+  return { ok: true, payload };
+}
+
 function accessDenied(code, status) {
   return json({
     error: {
       code,
       message: code === 'missing_invite_token'
         ? 'A valid preview invite token is required.'
-        : 'Preview invite token is invalid or expired.',
+        : 'Preview access is not allowed for this invite.',
     },
   }, { status });
 }
@@ -844,18 +1029,18 @@ async function requireAccess(env, request, url) {
   if (ACCESS_MODE === 'public') {
     return { ok: true };
   }
-  const token = tokenFromRequest(request, url);
+  const token = sessionTokenFromRequest(request);
   if (!token) {
     return { ok: false, response: accessDenied('missing_invite_token', 401) };
   }
-  const verified = await verifyInviteToken(env, token);
+  const verified = await verifyAccessSession(env, token);
   if (!verified.ok) {
     return { ok: false, response: accessDenied(verified.code, verified.status) };
   }
-  return { ok: true, token, payload: verified.payload };
+  return { ok: true, payload: verified.payload };
 }
 
-function redirectWithCookie(url, token, payload) {
+function redirectWithCookie(url, sessionToken, payload) {
   const next = url.searchParams.get('next');
   const safeNext = next && next.startsWith('/') && !next.startsWith('//')
     ? next
@@ -865,7 +1050,7 @@ function redirectWithCookie(url, token, payload) {
     status: 302,
     headers: {
       location: safeNext,
-      'set-cookie': `${ACCESS_COOKIE_NAME}=${encodeURIComponent(token)}; Max-Age=${maxAge}; Path=/; HttpOnly; Secure; SameSite=Lax`,
+      'set-cookie': `${ACCESS_COOKIE_NAME}=${encodeURIComponent(sessionToken)}; Max-Age=${maxAge}; Path=/; HttpOnly; Secure; SameSite=Lax`,
       ...securityHeaders(),
     },
   });
@@ -973,7 +1158,21 @@ export default {
       if (!verified.ok) {
         return accessDenied(verified.code, verified.status);
       }
-      return redirectWithCookie(url, token, verified.payload);
+      const tokenHash = await sha256Hex(token);
+      const lookup = await lookupInviteRow(env, verified.payload.invite_id, tokenHash);
+      if (!lookup.ok) {
+        return accessDenied(lookup.code, lookup.status);
+      }
+      const active = validateInviteRow(lookup.row, { allowUsed: false });
+      if (!active.ok) {
+        return accessDenied(active.code, active.status);
+      }
+      const marked = await markInviteUsed(env, lookup.row);
+      if (!marked.ok) {
+        return accessDenied(marked.code, marked.status);
+      }
+      const sessionToken = await createAccessSession(env, verified.payload, tokenHash);
+      return redirectWithCookie(url, sessionToken, verified.payload);
     }
 
     if (request.method !== 'GET' && request.method !== 'HEAD') {
@@ -1010,7 +1209,7 @@ export default {
 
 def _web_preview_worker_harness_js(slug: str) -> str:
     template = """import assert from 'node:assert/strict';
-import { createHmac, webcrypto } from 'node:crypto';
+import { createHash, createHmac, webcrypto } from 'node:crypto';
 import {{ readFile }} from 'node:fs/promises';
 
 if (!globalThis.crypto) {
@@ -1040,6 +1239,10 @@ function signToken(payload, secret) {
   return `${header}.${body}.${signature}`;
 }
 
+function sha256Hex(value) {
+  return createHash('sha256').update(value).digest('hex');
+}
+
 const secret = 'local-preview-secret-value-32-bytes';
 const now = Math.floor(Date.now() / 1000);
 const validToken = signToken({
@@ -1062,6 +1265,90 @@ const expiredToken = signToken({
   iat: now - 7200,
   exp: now - 3600,
 }, secret);
+const revokedToken = signToken({
+  aud: 'codex.web-preview',
+  scope: 'web_preview:access',
+  preview_id: 'wp-__SOURCE_APP__',
+  source_app: '__SOURCE_APP__',
+  app_slug: '__SOURCE_APP__',
+  invite_id: 'wpi-revoked',
+  iat: now,
+  exp: now + 3600,
+}, secret);
+const d1ExpiredToken = signToken({
+  aud: 'codex.web-preview',
+  scope: 'web_preview:access',
+  preview_id: 'wp-__SOURCE_APP__',
+  source_app: '__SOURCE_APP__',
+  app_slug: '__SOURCE_APP__',
+  invite_id: 'wpi-d1-expired',
+  iat: now,
+  exp: now + 3600,
+}, secret);
+const missingRowToken = signToken({
+  aud: 'codex.web-preview',
+  scope: 'web_preview:access',
+  preview_id: 'wp-__SOURCE_APP__',
+  source_app: '__SOURCE_APP__',
+  app_slug: '__SOURCE_APP__',
+  invite_id: 'wpi-missing',
+  iat: now,
+  exp: now + 3600,
+}, secret);
+
+function inviteRow(inviteId, token, extra = {}) {
+  return {
+    invite_id: inviteId,
+    token_sha256: sha256Hex(token),
+    source_app: '__SOURCE_APP__',
+    app_slug: '__SOURCE_APP__',
+    single_use: 1,
+    expires_at: new Date(Date.now() + 3600000).toISOString(),
+    used_at: null,
+    revoked_at: null,
+    ...extra,
+  };
+}
+
+const d1Rows = new Map();
+for (const row of [
+  inviteRow('wpi-local', validToken),
+  inviteRow('wpi-revoked', revokedToken, { revoked_at: new Date().toISOString() }),
+  inviteRow('wpi-d1-expired', d1ExpiredToken, { expires_at: new Date(Date.now() - 1000).toISOString() }),
+]) {
+  d1Rows.set(`${row.invite_id}:${row.token_sha256}`, row);
+}
+
+function fakeD1() {
+  return {
+    prepare(sql) {
+      return {
+        bind(...args) {
+          return {
+            async first() {
+              const [inviteId, tokenHash, sourceApp, appSlug] = args;
+              const row = d1Rows.get(`${inviteId}:${tokenHash}`);
+              if (!row || row.source_app !== sourceApp || row.app_slug !== appSlug) {
+                return null;
+              }
+              return { ...row };
+            },
+            async run() {
+              const [_usedAt, inviteId, tokenHash] = args;
+              const row = d1Rows.get(`${inviteId}:${tokenHash}`);
+              if (!row || row.used_at || row.revoked_at) {
+                return { meta: { changes: 0 } };
+              }
+              row.used_at = _usedAt;
+              d1Rows.set(`${inviteId}:${tokenHash}`, row);
+              return { meta: { changes: 1 } };
+            },
+          };
+        },
+      };
+    },
+  };
+}
 
 const assets = new Map([
   ['/index.html', response('<!doctype html><div id="flt"></div>', {{ headers: {{ 'content-type': 'text/html' }} }})],
@@ -1074,6 +1361,7 @@ const env = {{
   PREVIEW_BUILD_ID: 'local-harness',
   PREVIEW_COMMIT_SHA: 'test-commit',
   WEB_PREVIEW_INVITE_SECRET: secret,
+  PREVIEW_DB: fakeD1(),
   ASSETS: {{
     async fetch(request) {{
       const url = new URL(request.url);
@@ -1099,9 +1387,25 @@ assert.equal(access.status, 302);
 const cookie = access.headers.get('set-cookie') || '';
 assert.match(cookie, /codex_preview_access=/);
 
+const secondUse = await fetchPath(`/__SOURCE_APP__/__preview/access?token=${validToken}`);
+assert.equal(secondUse.status, 403);
+assert.equal((await secondUse.json()).error.code, 'used_invite_token');
+
 const expired = await fetchPath(`/__SOURCE_APP__/__preview/access?token=${expiredToken}`);
 assert.equal(expired.status, 403);
 assert.equal((await expired.json()).error.code, 'expired_invite_token');
+
+const revoked = await fetchPath(`/__SOURCE_APP__/__preview/access?token=${revokedToken}`);
+assert.equal(revoked.status, 403);
+assert.equal((await revoked.json()).error.code, 'revoked_invite_token');
+
+const d1Expired = await fetchPath(`/__SOURCE_APP__/__preview/access?token=${d1ExpiredToken}`);
+assert.equal(d1Expired.status, 403);
+assert.equal((await d1Expired.json()).error.code, 'expired_invite_token');
+
+const missingRow = await fetchPath(`/__SOURCE_APP__/__preview/access?token=${missingRowToken}`);
+assert.equal(missingRow.status, 403);
+assert.equal((await missingRow.json()).error.code, 'invite_not_found');
 
 const asset = await worker.fetch(
   new Request('https://preview.nienfos.com/__SOURCE_APP__/flutter_bootstrap.js', {
@@ -1260,6 +1564,7 @@ MANIFEST="$ROOT_DIR/deploy/web-preview/web-preview-manifest.yaml"
 WORKER="$ROOT_DIR/deploy/web-preview/worker/src/index.js"
 WORKER_HARNESS="$ROOT_DIR/deploy/web-preview/worker/local_preview_test.mjs"
 WRANGLER_EXAMPLE="$ROOT_DIR/deploy/web-preview/wrangler.toml.example"
+D1_MIGRATION="$ROOT_DIR/deploy/web-preview/d1/migrations/0001_preview_invites.sql"
 APP_SLUG="${{APP_SLUG:-{slug}}}"
 APP_RUNTIME_PROFILE="${{APP_RUNTIME_PROFILE:-real}}"
 API_RUNTIME="${{API_RUNTIME:-cloudflare_preview}}"
@@ -1287,6 +1592,7 @@ fi
 [[ -f "$WORKER" ]] || fail "missing deploy/web-preview/worker/src/index.js"
 [[ -f "$WORKER_HARNESS" ]] || fail "missing deploy/web-preview/worker/local_preview_test.mjs"
 [[ -f "$WRANGLER_EXAMPLE" ]] || fail "missing deploy/web-preview/wrangler.toml.example"
+[[ -f "$D1_MIGRATION" ]] || fail "missing deploy/web-preview/d1/migrations/0001_preview_invites.sql"
 [[ -f "$ROOT_DIR/apps/mobile/pubspec.yaml" ]] || fail "missing apps/mobile/pubspec.yaml"
 [[ -f "$ROOT_DIR/apps/mobile/lib/main.dart" ]] || fail "missing apps/mobile/lib/main.dart"
 
@@ -1328,6 +1634,9 @@ checks = (
     ("access.mode", access.get("mode") if isinstance(access, dict) else None, "invite_token"),
     ("access.access_path", access.get("access_path") if isinstance(access, dict) else None, "/__preview/access"),
     ("access.cookie_name", access.get("cookie_name") if isinstance(access, dict) else None, "codex_preview_access"),
+    ("access.single_use", access.get("single_use") if isinstance(access, dict) else None, True),
+    ("access.d1_binding", access.get("d1_binding") if isinstance(access, dict) else None, "PREVIEW_DB"),
+    ("access.migrations_dir", access.get("migrations_dir") if isinstance(access, dict) else None, "deploy/web-preview/d1/migrations"),
 )
 for label, actual, expected in checks:
     if actual != expected:
@@ -1344,12 +1653,17 @@ grep -q 'ASSETS' "$WORKER" || fail "worker asset binding missing"
 grep -q 'asset_not_found' "$WORKER" || fail "worker asset 404 missing"
 grep -q 'content-security-policy' "$WORKER" || fail "worker security headers missing"
 grep -q 'WEB_PREVIEW_INVITE_SECRET' "$WORKER" || fail "worker invite secret binding missing"
+grep -q 'PREVIEW_DB' "$WORKER" || fail "worker D1 binding missing"
 grep -q '/__preview/access' "$WORKER" || fail "worker access route missing"
 grep -q 'missing_invite_token' "$WORKER" || fail "worker missing-token response missing"
 grep -q 'expired_invite_token' "$WORKER" || fail "worker expired-token response missing"
 grep -q 'PREVIEW_DB' "$WRANGLER_EXAMPLE" || fail "wrangler D1 binding missing"
 grep -q 'binding = "ASSETS"' "$WRANGLER_EXAMPLE" || fail "wrangler assets binding missing"
 grep -q 'WEB_PREVIEW_INVITE_SECRET' "$WRANGLER_EXAMPLE" || fail "wrangler invite secret documentation missing"
+grep -q 'CREATE TABLE IF NOT EXISTS preview_invites' "$D1_MIGRATION" || fail "D1 preview_invites migration missing"
+grep -q 'token_sha256' "$D1_MIGRATION" || fail "D1 token hash column missing"
+grep -q 'used_at' "$D1_MIGRATION" || fail "D1 used_at column missing"
+grep -q 'revoked_at' "$D1_MIGRATION" || fail "D1 revoked_at column missing"
 grep -q 'APP_RUNTIME_PROFILE' "$ROOT_DIR/apps/mobile/lib/main.dart" || fail "Flutter runtime profile define missing"
 grep -q 'API_RUNTIME' "$ROOT_DIR/apps/mobile/lib/main.dart" || fail "Flutter API runtime define missing"
 grep -q 'APP_SLUG' "$ROOT_DIR/apps/mobile/lib/main.dart" || fail "Flutter app slug define missing"

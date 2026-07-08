@@ -325,6 +325,7 @@ class WebPreviewInviteCreateRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     ttl_seconds: int | None = Field(default=None, alias="ttlSeconds", gt=0)
+    single_use: bool = Field(default=True, alias="singleUse")
 
 
 class WebPreviewInviteResponse(BaseModel):
@@ -338,6 +339,8 @@ class WebPreviewInviteResponse(BaseModel):
     scope: str
     created_at: str
     expires_at: str
+    single_use: bool = True
+    used_at: str | None = None
     revoked_at: str | None = None
     token_sha256: str
     invite_url: str | None = None

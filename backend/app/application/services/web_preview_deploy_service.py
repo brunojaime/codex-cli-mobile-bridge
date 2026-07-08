@@ -355,6 +355,8 @@ class CloudflarePreviewProvisioner:
         pages_project = str(resources.get("pages_project") or "nienfos-preview-web")
         d1_database = str(resources.get("d1_database") or "nienfos-preview")
         r2_bucket = resources.get("r2_bucket")
+        access = manifest.get("access") if isinstance(manifest.get("access"), dict) else {}
+        migrations_dir = str(access.get("migrations_dir") or "")
         applied = [
             self._ensure_dns_record(
                 zone_id=zone_id,
@@ -366,15 +368,29 @@ class CloudflarePreviewProvisioner:
                 worker_name=worker_name,
                 script_path=project_path / "deploy/web-preview/worker/src/index.js",
             ),
-            self._ensure_d1(account_id=account_id, database_name=d1_database),
-            self._ensure_pages_project(account_id=account_id, name=pages_project),
-            {
-                "kind": "route",
-                "name": f"{base_domain}/{source_app}",
-                "status": "planned_external",
-                "detail": "Stable route is served by the shared preview Worker/Pages routing.",
-            },
         ]
+        d1_resource = self._ensure_d1(account_id=account_id, database_name=d1_database)
+        applied.append(d1_resource)
+        if migrations_dir:
+            applied.extend(
+                self._apply_d1_migrations(
+                    account_id=account_id,
+                    database_name=d1_database,
+                    database_id=str(d1_resource.get("database_id") or ""),
+                    migrations_dir=project_path / migrations_dir,
+                )
+            )
+        applied.extend(
+            [
+                self._ensure_pages_project(account_id=account_id, name=pages_project),
+                {
+                    "kind": "route",
+                    "name": f"{base_domain}/{source_app}",
+                    "status": "planned_external",
+                    "detail": "Stable route is served by the shared preview Worker/Pages routing.",
+                },
+            ]
+        )
         if r2_bucket:
             applied.append(
                 {
@@ -457,13 +473,51 @@ class CloudflarePreviewProvisioner:
                     "kind": "d1_database",
                     "name": database_name,
                     "status": "existing",
+                    "database_id": _d1_database_id(item),
                 }
         created = self._client.create_d1_database(
             account_id=account_id,
             name=database_name,
         )
         _raise_if_failed(created, "d1_create_failed")
-        return {"kind": "d1_database", "name": database_name, "status": "created"}
+        return {
+            "kind": "d1_database",
+            "name": database_name,
+            "status": "created",
+            "database_id": _d1_database_id(_cloudflare_result(created.payload)),
+        }
+
+    def _apply_d1_migrations(
+        self,
+        *,
+        account_id: str,
+        database_name: str,
+        database_id: str,
+        migrations_dir: Path,
+    ) -> list[dict[str, Any]]:
+        if not database_id:
+            raise RuntimeError("d1_database_id_missing")
+        if not migrations_dir.is_dir():
+            raise RuntimeError("d1_migrations_missing")
+        applied: list[dict[str, Any]] = []
+        for migration in sorted(migrations_dir.glob("*.sql")):
+            result = self._client.execute_d1_sql(
+                account_id=account_id,
+                database_id=database_id,
+                sql=migration.read_text(encoding="utf-8"),
+            )
+            _raise_if_failed(result, "d1_migration_failed")
+            applied.append(
+                {
+                    "kind": "d1_migration",
+                    "name": migration.name,
+                    "database": database_name,
+                    "status": "applied",
+                }
+            )
+        if not applied:
+            raise RuntimeError("d1_migrations_missing")
+        return applied
 
     def _ensure_pages_project(self, *, account_id: str, name: str) -> dict[str, Any]:
         existing = self._client.get_pages_project(
@@ -532,6 +586,21 @@ def _cloudflare_result_list(payload: dict[str, Any] | list[Any] | None) -> list[
         result = payload.get("result")
         return result if isinstance(result, list) else []
     return payload if isinstance(payload, list) else []
+
+
+def _cloudflare_result(payload: dict[str, Any] | list[Any] | None) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        return {}
+    result = payload.get("result")
+    return result if isinstance(result, dict) else {}
+
+
+def _d1_database_id(payload: dict[str, Any]) -> str:
+    for key in ("uuid", "id", "database_id"):
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
 
 
 def _raise_if_failed(result: CloudflareLookupResult, code: str) -> None:

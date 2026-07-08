@@ -34,6 +34,7 @@ class WebPreviewInviteError(RuntimeError):
 class WebPreviewInviteCreateInput:
     preview_id: str
     ttl_seconds: int | None = None
+    single_use: bool = True
 
 
 class WebPreviewInviteService:
@@ -88,6 +89,8 @@ class WebPreviewInviteService:
             "scope": WEB_PREVIEW_INVITE_SCOPE,
             "created_at": _iso(now),
             "expires_at": _iso(expires_at),
+            "single_use": request.single_use,
+            "used_at": None,
             "revoked_at": None,
             "token_sha256": token_hash,
         }
@@ -109,6 +112,26 @@ class WebPreviewInviteService:
                 invites.append(payload)
         invites.sort(key=lambda item: str(item.get("created_at") or ""), reverse=True)
         return tuple(invites)
+
+    def revoke_invite(self, *, preview_id: str, invite_id: str) -> dict[str, Any]:
+        path = self._invite_state_dir / f"{invite_id}.json"
+        if not path.is_file():
+            raise WebPreviewInviteError(
+                code="web_preview_invite_not_found",
+                message="Web preview invite was not found.",
+                status_code=404,
+            )
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if payload.get("preview_id") != preview_id:
+            raise WebPreviewInviteError(
+                code="web_preview_invite_not_found",
+                message="Web preview invite was not found.",
+                status_code=404,
+            )
+        if payload.get("revoked_at") is None:
+            payload["revoked_at"] = _iso(datetime.now(UTC))
+            _atomic_write_json(path, payload)
+        return payload
 
     def verify_token(
         self,
