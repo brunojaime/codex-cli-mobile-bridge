@@ -1,0 +1,201 @@
+{
+  "spec": {
+    "file": "spec.md"
+  },
+  "plans": [
+    {
+      "id": "plan-1",
+      "number": 1,
+      "title": "Contract And Registry",
+      "status": "planned",
+      "description": "Define command data, availability, and ownership boundaries.",
+      "file": "plans/01-contract-registry/plan.md",
+      "tasks": [
+        {
+          "id": "plan-1-task-1",
+          "number": 1,
+          "title": "T001 Define command registry model and action schema",
+          "status": "planned",
+          "description": "Create stable command fields, action kinds, and payload contract.",
+          "file": "tasks/plan-1-task-1/task.md"
+        },
+        {
+          "id": "plan-1-task-2",
+          "number": 2,
+          "title": "T002 Define command availability rules and disabled reason behavior",
+          "status": "planned",
+          "description": "Define enabled, disabled, and hidden states for global and contextual commands.",
+          "file": "tasks/plan-1-task-2/task.md"
+        }
+      ]
+    },
+    {
+      "id": "plan-2",
+      "number": 2,
+      "title": "Composer UI",
+      "status": "planned",
+      "description": "Open, filter, and render the command palette from the composer.",
+      "file": "plans/02-composer-ui/plan.md",
+      "tasks": [
+        {
+          "id": "plan-2-task-1",
+          "number": 1,
+          "title": "T003 Add composer slash-token detection without breaking normal messages",
+          "status": "planned",
+          "description": "Detect command invocation while preserving regular chat text.",
+          "file": "tasks/plan-2-task-1/task.md"
+        },
+        {
+          "id": "plan-2-task-2",
+          "number": 2,
+          "title": "T004 Build mobile command palette UI with filter, empty, loading, and disabled states",
+          "status": "planned",
+          "description": "Render command suggestions safely on small mobile viewports.",
+          "file": "tasks/plan-2-task-2/task.md"
+        }
+      ]
+    },
+    {
+      "id": "plan-3",
+      "number": 3,
+      "title": "Command Dispatch",
+      "status": "planned",
+      "description": "Execute selected commands through safe action routing.",
+      "file": "plans/03-command-dispatch/plan.md",
+      "tasks": [
+        {
+          "id": "plan-3-task-1",
+          "number": 1,
+          "title": "T005 Register initial global commands",
+          "status": "planned",
+          "description": "Provide the first global command set for mobile chat.",
+          "file": "tasks/plan-3-task-1/task.md"
+        },
+        {
+          "id": "plan-3-task-2",
+          "number": 2,
+          "title": "T006 Implement /new-project as an alias of the existing New Project entry",
+          "status": "planned",
+          "description": "Route the slash command to the current New Project flow without duplicating state.",
+          "file": "tasks/plan-3-task-2/task.md"
+        },
+        {
+          "id": "plan-3-task-3",
+          "number": 3,
+          "title": "T010 Implement command dispatch for insert, open panel, route, backend, and callback actions",
+          "status": "planned",
+          "description": "Support each action kind through one safe dispatcher.",
+          "file": "tasks/plan-3-task-3/task.md"
+        },
+        {
+          "id": "plan-3-task-4",
+          "number": 4,
+          "title": "T011 Add backend capability checks or frontend capability guards",
+          "status": "planned",
+          "description": "Disable commands when backend support is missing.",
+          "file": "tasks/plan-3-task-4/task.md"
+        },
+        {
+          "id": "plan-3-task-5",
+          "number": 5,
+          "title": "T012 Add safety gates for mutating or long-running commands",
+          "status": "planned",
+          "description": "Prevent accidental mutation or job starts.",
+          "file": "tasks/plan-3-task-5/task.md"
+        },
+        {
+          "id": "plan-3-task-6",
+          "number": 6,
+          "title": "T013 Add unknown-command and unavailable-command error handling",
+          "status": "planned",
+          "description": "Return clear UI feedback when a command cannot run.",
+          "file": "tasks/plan-3-task-6/task.md"
+        }
+      ]
+    },
+    {
+      "id": "plan-4",
+      "number": 4,
+      "title": "Feature Integration",
+      "status": "planned",
+      "description": "Let features contribute contextual commands.",
+      "file": "plans/04-feature-integration/plan.md",
+      "tasks": [
+        {
+          "id": "plan-4-task-1",
+          "number": 1,
+          "title": "T007 Add contextual command provider interface for feature modules",
+          "status": "planned",
+          "description": "Expose a provider contract for feature-owned commands.",
+          "file": "tasks/plan-4-task-1/task.md"
+        },
+        {
+          "id": "plan-4-task-2",
+          "number": 2,
+          "title": "T008 Register New Project contextual commands as placeholders or callbacks",
+          "status": "planned",
+          "description": "Make project commands available only during project intake.",
+          "file": "tasks/plan-4-task-2/task.md"
+        },
+        {
+          "id": "plan-4-task-3",
+          "number": 3,
+          "title": "T009 Register Workbench and Apps commands backed by existing UI actions",
+          "status": "planned",
+          "description": "Connect command palette entries to existing panels.",
+          "file": "tasks/plan-4-task-3/task.md"
+        }
+      ]
+    },
+    {
+      "id": "plan-5",
+      "number": 5,
+      "title": "Validation And Release",
+      "status": "planned",
+      "description": "Test command behavior and release if needed.",
+      "file": "plans/05-validation-release/plan.md",
+      "tasks": [
+        {
+          "id": "plan-5-task-1",
+          "number": 1,
+          "title": "T014 Add model tests for command parsing, filtering, and availability",
+          "status": "planned",
+          "description": "Cover pure command registry behavior.",
+          "file": "tasks/plan-5-task-1/task.md"
+        },
+        {
+          "id": "plan-5-task-2",
+          "number": 2,
+          "title": "T015 Add widget tests for palette rendering and command selection",
+          "status": "planned",
+          "description": "Cover UI behavior and dispatch.",
+          "file": "tasks/plan-5-task-2/task.md"
+        },
+        {
+          "id": "plan-5-task-3",
+          "number": 3,
+          "title": "T016 Add regression tests that ordinary slash-containing messages still send normally",
+          "status": "planned",
+          "description": "Prevent command parsing from corrupting normal chat.",
+          "file": "tasks/plan-5-task-3/task.md"
+        },
+        {
+          "id": "plan-5-task-4",
+          "number": 4,
+          "title": "T017 Run mobile analyze and tests",
+          "status": "planned",
+          "description": "Validate the frontend package and mobile app.",
+          "file": "tasks/plan-5-task-4/task.md"
+        },
+        {
+          "id": "plan-5-task-5",
+          "number": 5,
+          "title": "T018 Publish Android release if frontend code changes ship to users",
+          "status": "planned",
+          "description": "Use the standard Android release flow only after tests pass.",
+          "file": "tasks/plan-5-task-5/task.md"
+        }
+      ]
+    }
+  ]
+}

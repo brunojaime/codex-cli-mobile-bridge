@@ -1,0 +1,63 @@
+kind: codex.sdd.index
+standard_id: workbench-sdd/v1
+standard_version: 1
+fingerprint: 3c377897e0fb765d9cf82788474cdaf779568e107151ba03c4b72a4981dff4f0
+generated_at_epoch: 1783527392
+read_policy: prefix_only_no_full_spec_body
+index_type: spec
+specs:
+  001-codex-bridge-sdd-wrapper:
+    path: specs/001-codex-bridge-sdd-wrapper/spec.md
+    title: Codex Bridge SDD Wrapper
+    status: unknown
+    summary: Codex Mobile Bridge projects must expose a mandatory SDD structure that can be
+  002-sdd-visual-workbench:
+    path: specs/002-sdd-visual-workbench/spec.md
+    title: SDD Visual Workbench
+    status: unknown
+    summary: Build the development-mode visual workbench for Codex Mobile Bridge. The
+  003-workbench-sdd-standard:
+    path: specs/003-workbench-sdd-standard/spec.md
+    title: Workbench SDD Standard And Context Routing
+    status: validated
+    summary: "id: 003-workbench-sdd-standard"
+  004-workbench-scm-spec-intake:
+    path: specs/004-workbench-scm-spec-intake/spec.md
+    title: Workbench SCM Spec Intake
+    status: draft
+    summary: "id: 004-workbench-scm-spec-intake"
+  005-new-project-factory:
+    path: specs/005-new-project-factory/spec.md
+    title: New Project Factory
+    status: accepted
+    summary: "id: 005-new-project-factory"
+  006-web-preview-delivery:
+    path: specs/006-web-preview-delivery/spec.md
+    title: Web Preview Delivery Platform
+    status: draft
+    summary: "id: 006-web-preview-delivery"
+  007-initial-preview-release:
+    path: specs/007-initial-preview-release/spec.md
+    title: Initial Preview Release
+    status: draft
+    summary: "id: 007-initial-preview-release"
+  008-sdd-workbench-lazy-loading:
+    path: specs/008-sdd-workbench-lazy-loading/spec.md
+    title: SDD Workbench Lazy Loading
+    status: active
+    summary: Load SDD project summaries first and fetch full spec trees, plans, and tasks lazily.
+  009-sdd-status-normalization:
+    path: specs/009-sdd-status-normalization/spec.md
+    title: SDD Status Normalization
+    status: active
+    summary: Normalize Workbench status sources across current and generated projects.
+  010-slash-command-palette:
+    path: specs/010-slash-command-palette/spec.md
+    title: Slash Command Palette
+    status: draft
+    summary: Add a Codex-compatible slash command palette to the mobile chat composer.
+  011-new-project-guided-intake:
+    path: specs/011-new-project-guided-intake/spec.md
+    title: New Project Guided Intake
+    status: draft
+    summary: Add a guided question-and-contract layer before New Project build execution.

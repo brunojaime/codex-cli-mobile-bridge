@@ -1,0 +1,275 @@
+{
+  "spec": {
+    "file": "spec.md"
+  },
+  "plans": [
+    {
+      "id": "plan-1",
+      "number": 1,
+      "title": "Intake Contract",
+      "status": "planned",
+      "description": "Define the guided intake data contract and state machine.",
+      "file": "plans/01-intake-contract/plan.md",
+      "tasks": [
+        {
+          "id": "plan-1-task-1",
+          "number": 1,
+          "title": "T001 Define guided intake draft state model",
+          "status": "planned",
+          "description": "Add collecting, review, confirmed, build, and blocked states.",
+          "file": "tasks/plan-1-task-1/task.md"
+        },
+        {
+          "id": "plan-1-task-2",
+          "number": 2,
+          "title": "T002 Define structured question and option models",
+          "status": "planned",
+          "description": "Define question and option payloads for backend and frontend.",
+          "file": "tasks/plan-1-task-2/task.md"
+        },
+        {
+          "id": "plan-1-task-3",
+          "number": 3,
+          "title": "T003 Define answer source, confidence, assumptions, and missing-field model",
+          "status": "planned",
+          "description": "Track provenance and readiness for each answer.",
+          "file": "tasks/plan-1-task-3/task.md"
+        }
+      ]
+    },
+    {
+      "id": "plan-2",
+      "number": 2,
+      "title": "Backend Draft Persistence",
+      "status": "planned",
+      "description": "Persist and expose guided intake state safely.",
+      "file": "plans/02-backend-draft-persistence/plan.md",
+      "tasks": [
+        {
+          "id": "plan-2-task-1",
+          "number": 1,
+          "title": "T004 Extend draft persistence for intake state without breaking existing drafts",
+          "status": "planned",
+          "description": "Add durable intake fields with backward-compatible defaults.",
+          "file": "tasks/plan-2-task-1/task.md"
+        },
+        {
+          "id": "plan-2-task-2",
+          "number": 2,
+          "title": "T005 Add API schema coverage for questions, answers, contract preview, and readiness",
+          "status": "planned",
+          "description": "Expose typed schemas for the guided intake payloads.",
+          "file": "tasks/plan-2-task-2/task.md"
+        },
+        {
+          "id": "plan-2-task-3",
+          "number": 3,
+          "title": "T006 Add endpoint or endpoint extension to get current intake state",
+          "status": "planned",
+          "description": "Allow frontend to load the current guided state.",
+          "file": "tasks/plan-2-task-3/task.md"
+        },
+        {
+          "id": "plan-2-task-4",
+          "number": 4,
+          "title": "T007 Add endpoint or endpoint extension to answer/update a question",
+          "status": "planned",
+          "description": "Persist option selections and free-text answers.",
+          "file": "tasks/plan-2-task-4/task.md"
+        },
+        {
+          "id": "plan-2-task-5",
+          "number": 5,
+          "title": "T008 Add endpoint or endpoint extension to generate contract preview",
+          "status": "planned",
+          "description": "Return the preview of decisions and blockers.",
+          "file": "tasks/plan-2-task-5/task.md"
+        },
+        {
+          "id": "plan-2-task-6",
+          "number": 6,
+          "title": "T009 Add endpoint or endpoint extension to confirm contract",
+          "status": "planned",
+          "description": "Move a ready draft to confirmed state.",
+          "file": "tasks/plan-2-task-6/task.md"
+        }
+      ]
+    },
+    {
+      "id": "plan-3",
+      "number": 3,
+      "title": "Intake Engine",
+      "status": "planned",
+      "description": "Generate missing questions, recommendations, and blockers.",
+      "file": "plans/03-intake-engine/plan.md",
+      "tasks": [
+        {
+          "id": "plan-3-task-1",
+          "number": 1,
+          "title": "T011 Build intake engine for required topic detection",
+          "status": "planned",
+          "description": "Compute missing fields from draft, manifest, assets, and defaults.",
+          "file": "tasks/plan-3-task-1/task.md"
+        },
+        {
+          "id": "plan-3-task-2",
+          "number": 2,
+          "title": "T012 Build recommended-option generation from defaults, context, assets, and prior answers",
+          "status": "planned",
+          "description": "Generate useful options with one recommended answer when possible.",
+          "file": "tasks/plan-3-task-2/task.md"
+        },
+        {
+          "id": "plan-3-task-3",
+          "number": 3,
+          "title": "T013 Track release/web-preview/installable-app blockers separately from local planning",
+          "status": "planned",
+          "description": "Keep external blockers visible without blocking local intake.",
+          "file": "tasks/plan-3-task-3/task.md"
+        },
+        {
+          "id": "plan-3-task-4",
+          "number": 4,
+          "title": "T014 Preserve and expose asset role decisions through intake",
+          "status": "planned",
+          "description": "Keep logo, app icon, exact asset, and visual reference decisions stable.",
+          "file": "tasks/plan-3-task-4/task.md"
+        }
+      ]
+    },
+    {
+      "id": "plan-4",
+      "number": 4,
+      "title": "Frontend Chat Experience",
+      "status": "planned",
+      "description": "Render guided intake inside the existing chat-first New Project flow.",
+      "file": "plans/04-frontend-chat-experience/plan.md",
+      "tasks": [
+        {
+          "id": "plan-4-task-1",
+          "number": 1,
+          "title": "T015 Update New Project button flow to enter or reopen guided intake",
+          "status": "planned",
+          "description": "Reuse the existing entry and avoid duplicate drafts.",
+          "file": "tasks/plan-4-task-1/task.md"
+        },
+        {
+          "id": "plan-4-task-2",
+          "number": 2,
+          "title": "T016 Render question cards with recommended options in chat",
+          "status": "planned",
+          "description": "Show focused questions and selectable options in the timeline.",
+          "file": "tasks/plan-4-task-2/task.md"
+        },
+        {
+          "id": "plan-4-task-3",
+          "number": 3,
+          "title": "T017 Support free-text answers and option taps",
+          "status": "planned",
+          "description": "Let the user answer naturally or by selecting options.",
+          "file": "tasks/plan-4-task-3/task.md"
+        },
+        {
+          "id": "plan-4-task-4",
+          "number": 4,
+          "title": "T018 Render contract preview with decisions, defaults, assumptions, assets, and blockers",
+          "status": "planned",
+          "description": "Show the contract before confirmation.",
+          "file": "tasks/plan-4-task-4/task.md"
+        },
+        {
+          "id": "plan-4-task-5",
+          "number": 5,
+          "title": "T019 Render confirm/build actions only when valid",
+          "status": "planned",
+          "description": "Show build actions only after the contract is ready and confirmed.",
+          "file": "tasks/plan-4-task-5/task.md"
+        },
+        {
+          "id": "plan-4-task-6",
+          "number": 6,
+          "title": "T020 Render changes-requested and blocked states with next steps",
+          "status": "planned",
+          "description": "Guide the user back to focused questions or external setup.",
+          "file": "tasks/plan-4-task-6/task.md"
+        },
+        {
+          "id": "plan-4-task-7",
+          "number": 7,
+          "title": "T021 Add contextual command hooks if slash command palette exists",
+          "status": "planned",
+          "description": "Register project commands without requiring the palette for first delivery.",
+          "file": "tasks/plan-4-task-7/task.md"
+        }
+      ]
+    },
+    {
+      "id": "plan-5",
+      "number": 5,
+      "title": "Build Gate Integration",
+      "status": "planned",
+      "description": "Connect confirmed drafts to the existing generation workflow.",
+      "file": "plans/05-build-gate-integration/plan.md",
+      "tasks": [
+        {
+          "id": "plan-5-task-1",
+          "number": 1,
+          "title": "T010 Gate generate/build so only confirmed drafts can start generator/reviewer",
+          "status": "planned",
+          "description": "Prevent premature build execution and route confirmed drafts to the existing runner.",
+          "file": "tasks/plan-5-task-1/task.md"
+        }
+      ]
+    },
+    {
+      "id": "plan-6",
+      "number": 6,
+      "title": "Validation",
+      "status": "planned",
+      "description": "Cover backend, frontend, and Project Factory regression behavior.",
+      "file": "plans/06-validation/plan.md",
+      "tasks": [
+        {
+          "id": "plan-6-task-1",
+          "number": 1,
+          "title": "T022 Add backend tests for state transitions and persistence",
+          "status": "planned",
+          "description": "Cover guided intake draft state transitions.",
+          "file": "tasks/plan-6-task-1/task.md"
+        },
+        {
+          "id": "plan-6-task-2",
+          "number": 2,
+          "title": "T023 Add backend tests for blocked/confirmed build gate behavior",
+          "status": "planned",
+          "description": "Ensure build cannot start before confirmation.",
+          "file": "tasks/plan-6-task-2/task.md"
+        },
+        {
+          "id": "plan-6-task-3",
+          "number": 3,
+          "title": "T024 Add Flutter tests for models, API, question UI, preview UI, and build gating",
+          "status": "planned",
+          "description": "Cover mobile guided intake behavior.",
+          "file": "tasks/plan-6-task-3/task.md"
+        },
+        {
+          "id": "plan-6-task-4",
+          "number": 4,
+          "title": "T025 Run Project Factory regression tests",
+          "status": "planned",
+          "description": "Verify existing factory flows still pass.",
+          "file": "tasks/plan-6-task-4/task.md"
+        },
+        {
+          "id": "plan-6-task-5",
+          "number": 5,
+          "title": "T026 Run mobile analyze/tests and publish Android release if frontend code ships",
+          "status": "planned",
+          "description": "Validate and release user-visible frontend changes.",
+          "file": "tasks/plan-6-task-5/task.md"
+        }
+      ]
+    }
+  ]
+}
