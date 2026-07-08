@@ -407,9 +407,135 @@ class ProjectFactoryReferenceAsset {
   }
 }
 
+class WebPreview {
+  const WebPreview({
+    required this.previewId,
+    required this.sourceApp,
+    required this.status,
+    required this.previewUrl,
+    required this.plannedResources,
+    required this.appliedResources,
+    required this.logs,
+    required this.createdAt,
+    this.healthUrl,
+    this.error,
+    this.completedAt,
+    this.inviteSyncSummary,
+    this.planHash,
+    this.projectPath,
+    this.manifestPath,
+  });
+
+  final String previewId;
+  final String sourceApp;
+  final String status;
+  final String previewUrl;
+  final String? healthUrl;
+  final String? error;
+  final String? completedAt;
+  final String? planHash;
+  final String? projectPath;
+  final String? manifestPath;
+  final Map<String, dynamic>? inviteSyncSummary;
+  final List<Map<String, dynamic>> plannedResources;
+  final List<Map<String, dynamic>> appliedResources;
+  final List<Map<String, dynamic>> logs;
+  final String createdAt;
+
+  bool get isActive => status == 'active';
+  bool get isFailed => status == 'failed';
+  bool get isApplyDisabled => status == 'apply_disabled';
+
+  factory WebPreview.fromJson(Map<String, dynamic> json) {
+    return WebPreview(
+      previewId: json['preview_id'] as String? ?? '',
+      sourceApp: json['source_app'] as String? ?? '',
+      status: json['status'] as String? ?? 'unknown',
+      previewUrl: json['preview_url'] as String? ?? '',
+      healthUrl: json['health_url'] as String?,
+      error: json['error'] as String?,
+      completedAt: json['completed_at'] as String?,
+      planHash: json['plan_hash'] as String?,
+      projectPath: json['project_path'] as String?,
+      manifestPath: json['manifest_path'] as String?,
+      inviteSyncSummary: json['invite_sync_summary'] as Map<String, dynamic>?,
+      plannedResources: _mapList(json['planned_resources']),
+      appliedResources: _mapList(json['applied_resources']),
+      logs: _mapList(json['logs']),
+      createdAt: json['created_at'] as String? ?? '',
+    );
+  }
+}
+
+class WebPreviewInvite {
+  const WebPreviewInvite({
+    required this.inviteId,
+    required this.previewId,
+    required this.sourceApp,
+    required this.appSlug,
+    required this.createdAt,
+    required this.expiresAt,
+    required this.singleUse,
+    required this.syncStatus,
+    required this.tokenSha256,
+    this.usedAt,
+    this.revokedAt,
+    this.syncedAt,
+    this.syncError,
+    this.inviteUrl,
+    this.token,
+  });
+
+  final String inviteId;
+  final String previewId;
+  final String sourceApp;
+  final String appSlug;
+  final String createdAt;
+  final String expiresAt;
+  final bool singleUse;
+  final String? usedAt;
+  final String? revokedAt;
+  final String syncStatus;
+  final String? syncedAt;
+  final String? syncError;
+  final String tokenSha256;
+  final String? inviteUrl;
+  final String? token;
+
+  bool get isRevoked => revokedAt != null && revokedAt!.isNotEmpty;
+  bool get canRetrySync => syncStatus == 'failed' || syncStatus == 'pending';
+
+  factory WebPreviewInvite.fromJson(Map<String, dynamic> json) {
+    return WebPreviewInvite(
+      inviteId: json['invite_id'] as String? ?? '',
+      previewId: json['preview_id'] as String? ?? '',
+      sourceApp: json['source_app'] as String? ?? '',
+      appSlug: json['app_slug'] as String? ?? '',
+      createdAt: json['created_at'] as String? ?? '',
+      expiresAt: json['expires_at'] as String? ?? '',
+      singleUse: json['single_use'] as bool? ?? true,
+      usedAt: json['used_at'] as String?,
+      revokedAt: json['revoked_at'] as String?,
+      syncStatus: json['sync_status'] as String? ?? 'not_deployed',
+      syncedAt: json['synced_at'] as String?,
+      syncError: json['sync_error'] as String?,
+      tokenSha256: json['token_sha256'] as String? ?? '',
+      inviteUrl: json['invite_url'] as String?,
+      token: json['token'] as String?,
+    );
+  }
+}
+
 List<String> _stringList(Object? value) {
   if (value is! List) {
     return <String>[];
   }
   return value.whereType<String>().toList(growable: false);
+}
+
+List<Map<String, dynamic>> _mapList(Object? value) {
+  if (value is! List) {
+    return <Map<String, dynamic>>[];
+  }
+  return value.whereType<Map<String, dynamic>>().toList(growable: false);
 }

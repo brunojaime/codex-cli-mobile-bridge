@@ -271,6 +271,163 @@ class ApiClient {
     );
   }
 
+  Future<List<WebPreview>> listWebPreviews({int limit = 50}) async {
+    final uri = Uri.parse('$baseUrl/web-previews').replace(
+      queryParameters: <String, String>{'limit': '$limit'},
+    );
+    final response = await _client.get(uri);
+
+    if (response.statusCode != 200) {
+      throw Exception('Failed to list web previews: ${response.body}');
+    }
+
+    final payload = jsonDecode(response.body) as Map<String, dynamic>;
+    return ((payload['previews'] as List<dynamic>?) ?? <dynamic>[])
+        .whereType<Map<String, dynamic>>()
+        .map(WebPreview.fromJson)
+        .toList(growable: false);
+  }
+
+  Future<WebPreview> getWebPreview(String previewId) async {
+    final response =
+        await _client.get(Uri.parse('$baseUrl/web-previews/$previewId'));
+
+    if (response.statusCode != 200) {
+      throw Exception('Failed to fetch web preview: ${response.body}');
+    }
+
+    return WebPreview.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<WebPreview> planWebPreview({
+    String? projectPath,
+    String? manifestPath,
+    String? sourceApp,
+  }) async {
+    final response = await _client.post(
+      Uri.parse('$baseUrl/web-previews/plan'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode(<String, dynamic>{
+        if (projectPath != null) 'projectPath': projectPath,
+        if (manifestPath != null) 'manifestPath': manifestPath,
+        if (sourceApp != null) 'sourceApp': sourceApp,
+      }),
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception('Failed to plan web preview: ${response.body}');
+    }
+
+    return WebPreview.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<WebPreview> deployWebPreview({
+    String? projectPath,
+    String? manifestPath,
+    String? sourceApp,
+    bool confirmApply = false,
+    String? expectedPlanHash,
+  }) async {
+    final response = await _client.post(
+      Uri.parse('$baseUrl/web-previews/deploy'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode(<String, dynamic>{
+        if (projectPath != null) 'projectPath': projectPath,
+        if (manifestPath != null) 'manifestPath': manifestPath,
+        if (sourceApp != null) 'sourceApp': sourceApp,
+        'confirmApply': confirmApply,
+        if (expectedPlanHash != null) 'expectedPlanHash': expectedPlanHash,
+      }),
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception('Failed to deploy web preview: ${response.body}');
+    }
+
+    return WebPreview.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<List<WebPreviewInvite>> listWebPreviewInvites(
+    String previewId,
+  ) async {
+    final response = await _client.get(
+      Uri.parse('$baseUrl/web-previews/$previewId/invites'),
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception('Failed to list web preview invites: ${response.body}');
+    }
+
+    final payload = jsonDecode(response.body) as Map<String, dynamic>;
+    return ((payload['invites'] as List<dynamic>?) ?? <dynamic>[])
+        .whereType<Map<String, dynamic>>()
+        .map(WebPreviewInvite.fromJson)
+        .toList(growable: false);
+  }
+
+  Future<WebPreviewInvite> createWebPreviewInvite(
+    String previewId, {
+    int? ttlSeconds,
+    bool singleUse = true,
+  }) async {
+    final response = await _client.post(
+      Uri.parse('$baseUrl/web-previews/$previewId/invites'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode(<String, dynamic>{
+        if (ttlSeconds != null) 'ttlSeconds': ttlSeconds,
+        'singleUse': singleUse,
+      }),
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception('Failed to create web preview invite: ${response.body}');
+    }
+
+    return WebPreviewInvite.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<WebPreviewInvite> revokeWebPreviewInvite({
+    required String previewId,
+    required String inviteId,
+  }) async {
+    final response = await _client.delete(
+      Uri.parse('$baseUrl/web-previews/$previewId/invites/$inviteId'),
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception('Failed to revoke web preview invite: ${response.body}');
+    }
+
+    return WebPreviewInvite.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<WebPreviewInvite> syncWebPreviewInvite({
+    required String previewId,
+    required String inviteId,
+  }) async {
+    final response = await _client.post(
+      Uri.parse('$baseUrl/web-previews/$previewId/invites/$inviteId/sync'),
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception('Failed to sync web preview invite: ${response.body}');
+    }
+
+    return WebPreviewInvite.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
   Future<List<ProjectFactoryReferenceAsset>> listProjectFactoryReferenceAssets(
     String draftId,
   ) async {

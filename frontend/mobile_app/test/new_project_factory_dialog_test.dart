@@ -238,6 +238,131 @@ void main() {
     expect(find.text('Failed run'), findsOneWidget);
     expect(find.text('Restarted'), findsOneWidget);
   });
+
+  testWidgets('project factory history opens active web preview',
+      (tester) async {
+    String? openedUrl;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ProjectFactoryHistoryDialog(
+            listJobs: () async => <ProjectFactoryJobSummary>[],
+            getJob: (_) async => _job(status: 'running', progress: 10),
+            onOpenProjectPath: (_) async {},
+            listWebPreviews: () async => <WebPreview>[
+              _webPreview(status: 'active'),
+            ],
+            onOpenWebPreviewUrl: (url) async {
+              openedUrl = url;
+            },
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Web previews'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('clinica-norte'), findsOneWidget);
+    expect(find.text('active'), findsOneWidget);
+    await tester.tap(find.text('Open preview'));
+    await tester.pumpAndSettle();
+
+    expect(openedUrl, 'https://preview.nienfos.com/clinica-norte');
+  });
+
+  testWidgets('web preview panel shows disabled and failed states',
+      (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: WebPreviewPanelDialog(
+            listWebPreviews: () async => <WebPreview>[
+              _webPreview(status: 'planned'),
+              _webPreview(status: 'apply_disabled', sourceApp: 'disabled-app'),
+              _webPreview(
+                status: 'failed',
+                sourceApp: 'failed-app',
+                error: 'D1 unavailable',
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+
+    expect(find.text('planned'), findsOneWidget);
+    expect(find.text('apply_disabled'), findsOneWidget);
+    expect(find.textContaining('Configure and enable web preview apply'),
+        findsOneWidget);
+    await tester.drag(find.byType(ListView), const Offset(0, -260));
+    await tester.pumpAndSettle();
+    expect(find.text('D1 unavailable'), findsOneWidget);
+  });
+
+  testWidgets('web preview invites create revoke and retry sync',
+      (tester) async {
+    final invites = <WebPreviewInvite>[];
+    var revoked = false;
+    var retried = false;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: WebPreviewInvitesDialog(
+            preview: _webPreview(status: 'active'),
+            listInvites: (_) async => invites,
+            createInvite: (
+              previewId, {
+              int? ttlSeconds,
+              bool singleUse = true,
+            }) async {
+              final invite = _webPreviewInvite(
+                inviteUrl:
+                    'https://preview.nienfos.com/clinica-norte/__preview/access?token=abc',
+              );
+              invites.add(invite);
+              return invite;
+            },
+            revokeInvite: ({required previewId, required inviteId}) async {
+              revoked = true;
+              invites
+                ..clear()
+                ..add(_webPreviewInvite(revokedAt: '2026-07-07T00:05:00Z'));
+              return invites.single;
+            },
+            syncInvite: ({required previewId, required inviteId}) async {
+              retried = true;
+              invites
+                ..clear()
+                ..add(_webPreviewInvite(syncStatus: 'synced'));
+              return invites.single;
+            },
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+    expect(find.text('No preview invites'), findsOneWidget);
+
+    await tester.tap(find.text('Create invite'));
+    await tester.pumpAndSettle();
+    expect(find.text('Invite link created'), findsOneWidget);
+    expect(find.text('wpi-1'), findsOneWidget);
+
+    await tester.tap(find.text('Retry sync'));
+    await tester.pumpAndSettle();
+    expect(retried, isTrue);
+    expect(find.text('Sync: synced'), findsOneWidget);
+
+    await tester.tap(find.text('Revoke'));
+    await tester.pumpAndSettle();
+    expect(revoked, isTrue);
+    expect(find.textContaining('Revoked:'), findsOneWidget);
+  });
 }
 
 ProjectFactoryJob _job({required String status, required int progress}) {
@@ -280,5 +405,58 @@ ProjectFactoryJobSummary _jobSummary({
     error: error,
     message: status,
     manualNextStep: status == 'ready' ? null : 'Inspect logs',
+  );
+}
+
+WebPreview _webPreview({
+  required String status,
+  String sourceApp = 'clinica-norte',
+  String? error,
+}) {
+  return WebPreview(
+    previewId: 'wp-$sourceApp',
+    sourceApp: sourceApp,
+    status: status,
+    previewUrl: 'https://preview.nienfos.com/$sourceApp',
+    healthUrl: 'https://preview.nienfos.com/$sourceApp/__preview/health',
+    plannedResources: const <Map<String, dynamic>>[
+      <String, dynamic>{'kind': 'worker_script', 'status': 'planned'},
+    ],
+    appliedResources: status == 'active'
+        ? const <Map<String, dynamic>>[
+            <String, dynamic>{'kind': 'd1_database', 'status': 'created'},
+          ]
+        : const <Map<String, dynamic>>[],
+    logs: const <Map<String, dynamic>>[],
+    createdAt: '2026-07-07T00:00:00Z',
+    error: error,
+    inviteSyncSummary: const <String, dynamic>{
+      'synced': 1,
+      'failed': 0,
+      'pending': 0,
+      'not_deployed': 0,
+    },
+  );
+}
+
+WebPreviewInvite _webPreviewInvite({
+  String syncStatus = 'failed',
+  String? revokedAt,
+  String? inviteUrl,
+}) {
+  return WebPreviewInvite(
+    inviteId: 'wpi-1',
+    previewId: 'wp-clinica-norte',
+    sourceApp: 'clinica-norte',
+    appSlug: 'clinica-norte',
+    createdAt: '2026-07-07T00:00:00Z',
+    expiresAt: '2026-07-14T00:00:00Z',
+    singleUse: true,
+    syncStatus: syncStatus,
+    tokenSha256: 'abc123',
+    revokedAt: revokedAt,
+    syncedAt: syncStatus == 'synced' ? '2026-07-07T00:01:00Z' : null,
+    syncError: syncStatus == 'failed' ? 'D1 unavailable' : null,
+    inviteUrl: inviteUrl,
   );
 }

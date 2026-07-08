@@ -231,6 +231,7 @@ enum _AppBarOverflowAction {
   replyMode,
   servers,
   newProject,
+  projectHistory,
   newChat,
 }
 
@@ -1614,6 +1615,26 @@ When you create the Project Factory draft, link each asset with POST /project-fa
     }
   }
 
+  Future<void> _openProjectFactoryHistory() async {
+    final activeBaseUrl = _activeServer?.baseUrl ?? widget.initialApiBaseUrl;
+    final client = ApiClient(baseUrl: activeBaseUrl);
+    await showDialog<void>(
+      context: context,
+      builder: (context) => ProjectFactoryHistoryDialog(
+        listJobs: () => client.listProjectFactoryJobs(),
+        getJob: client.getProjectFactoryJob,
+        onOpenProjectPath: (path) async {
+          await _openProjectFactoryTargetPath(path);
+        },
+        listWebPreviews: () => client.listWebPreviews(),
+        listWebPreviewInvites: client.listWebPreviewInvites,
+        createWebPreviewInvite: client.createWebPreviewInvite,
+        revokeWebPreviewInvite: client.revokeWebPreviewInvite,
+        syncWebPreviewInvite: client.syncWebPreviewInvite,
+      ),
+    );
+  }
+
   Future<bool> _maybeActivateProjectFactoryBuildMode(String? message) async {
     if (!isProjectFactoryBuildConfirmation(message)) {
       return true;
@@ -2716,6 +2737,11 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
               label: 'New project',
             ),
             _buildAppBarOverflowMenuItem(
+              action: _AppBarOverflowAction.projectHistory,
+              icon: Icons.history,
+              label: 'Project history',
+            ),
+            _buildAppBarOverflowMenuItem(
               action: _AppBarOverflowAction.newChat,
               icon: Icons.add,
               label: 'Choose project for new chat',
@@ -2810,6 +2836,13 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
       ),
       IconButton(
         onPressed: () async {
+          await _openProjectFactoryHistory();
+        },
+        icon: const Icon(Icons.history),
+        tooltip: 'Project history',
+      ),
+      IconButton(
+        onPressed: () async {
           await _openWorkspacePicker();
         },
         icon: const Icon(Icons.add),
@@ -2882,6 +2915,9 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
         return;
       case _AppBarOverflowAction.newProject:
         await _openNewProjectFactory();
+        return;
+      case _AppBarOverflowAction.projectHistory:
+        await _openProjectFactoryHistory();
         return;
       case _AppBarOverflowAction.newChat:
         await _openWorkspacePicker();
@@ -6737,6 +6773,19 @@ typedef ProjectFactoryJobLister = Future<List<ProjectFactoryJobSummary>>
     Function();
 typedef ProjectFactoryProjectPathOpener = Future<void> Function(
     String projectPath);
+typedef WebPreviewLister = Future<List<WebPreview>> Function();
+typedef WebPreviewInviteLister = Future<List<WebPreviewInvite>> Function(
+    String previewId);
+typedef WebPreviewInviteCreator = Future<WebPreviewInvite> Function(
+  String previewId, {
+  int? ttlSeconds,
+  bool singleUse,
+});
+typedef WebPreviewInviteMutator = Future<WebPreviewInvite> Function({
+  required String previewId,
+  required String inviteId,
+});
+typedef WebPreviewUrlOpener = Future<void> Function(String url);
 
 class ProjectFactoryHistoryDialog extends StatefulWidget {
   const ProjectFactoryHistoryDialog({
@@ -6744,11 +6793,23 @@ class ProjectFactoryHistoryDialog extends StatefulWidget {
     required this.listJobs,
     required this.getJob,
     required this.onOpenProjectPath,
+    this.listWebPreviews,
+    this.listWebPreviewInvites,
+    this.createWebPreviewInvite,
+    this.revokeWebPreviewInvite,
+    this.syncWebPreviewInvite,
+    this.onOpenWebPreviewUrl,
   });
 
   final ProjectFactoryJobLister listJobs;
   final ProjectFactoryJobPoller getJob;
   final ProjectFactoryProjectPathOpener onOpenProjectPath;
+  final WebPreviewLister? listWebPreviews;
+  final WebPreviewInviteLister? listWebPreviewInvites;
+  final WebPreviewInviteCreator? createWebPreviewInvite;
+  final WebPreviewInviteMutator? revokeWebPreviewInvite;
+  final WebPreviewInviteMutator? syncWebPreviewInvite;
+  final WebPreviewUrlOpener? onOpenWebPreviewUrl;
 
   @override
   State<ProjectFactoryHistoryDialog> createState() =>
@@ -6800,6 +6861,12 @@ class _ProjectFactoryHistoryDialogState
           const Icon(Icons.history),
           const SizedBox(width: 12),
           const Expanded(child: Text('Project history')),
+          if (widget.listWebPreviews != null)
+            IconButton(
+              onPressed: _openWebPreviews,
+              icon: const Icon(Icons.language),
+              tooltip: 'Web previews',
+            ),
           IconButton(
             onPressed: _load,
             icon: const Icon(Icons.refresh),
@@ -6885,6 +6952,549 @@ class _ProjectFactoryHistoryDialogState
       const SnackBar(content: Text('Project workspace opened.')),
     );
   }
+
+  Future<void> _openWebPreviews() async {
+    final listWebPreviews = widget.listWebPreviews;
+    if (listWebPreviews == null) {
+      return;
+    }
+    await showDialog<void>(
+      context: context,
+      builder: (context) => WebPreviewPanelDialog(
+        listWebPreviews: listWebPreviews,
+        listInvites: widget.listWebPreviewInvites,
+        createInvite: widget.createWebPreviewInvite,
+        revokeInvite: widget.revokeWebPreviewInvite,
+        syncInvite: widget.syncWebPreviewInvite,
+        onOpenUrl: widget.onOpenWebPreviewUrl,
+      ),
+    );
+  }
+}
+
+class WebPreviewPanelDialog extends StatefulWidget {
+  const WebPreviewPanelDialog({
+    super.key,
+    required this.listWebPreviews,
+    this.listInvites,
+    this.createInvite,
+    this.revokeInvite,
+    this.syncInvite,
+    this.onOpenUrl,
+  });
+
+  final WebPreviewLister listWebPreviews;
+  final WebPreviewInviteLister? listInvites;
+  final WebPreviewInviteCreator? createInvite;
+  final WebPreviewInviteMutator? revokeInvite;
+  final WebPreviewInviteMutator? syncInvite;
+  final WebPreviewUrlOpener? onOpenUrl;
+
+  @override
+  State<WebPreviewPanelDialog> createState() => _WebPreviewPanelDialogState();
+}
+
+class _WebPreviewPanelDialogState extends State<WebPreviewPanelDialog> {
+  bool _loading = true;
+  String? _error;
+  List<WebPreview> _previews = <WebPreview>[];
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_load());
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final previews = await widget.listWebPreviews();
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _previews = previews;
+        _loading = false;
+      });
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _error = error.toString();
+        _loading = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Row(
+        children: <Widget>[
+          const Icon(Icons.language),
+          const SizedBox(width: 12),
+          const Expanded(child: Text('Web previews')),
+          IconButton(
+            onPressed: _load,
+            icon: const Icon(Icons.refresh),
+            tooltip: 'Refresh previews',
+          ),
+        ],
+      ),
+      content: SizedBox(
+        width: 680,
+        child: _buildContent(context),
+      ),
+      actions: <Widget>[
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Close'),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildContent(BuildContext context) {
+    if (_loading) {
+      return const SizedBox(
+        height: 180,
+        child: Center(child: CircularProgressIndicator()),
+      );
+    }
+    if (_error != null) {
+      return SizedBox(height: 180, child: Center(child: Text(_error!)));
+    }
+    if (_previews.isEmpty) {
+      return const SizedBox(
+        height: 180,
+        child: Center(child: Text('No web previews')),
+      );
+    }
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxHeight: 560),
+      child: ListView.separated(
+        shrinkWrap: true,
+        itemCount: _previews.length,
+        separatorBuilder: (_, __) => const SizedBox(height: 12),
+        itemBuilder: (context, index) => _WebPreviewCard(
+          preview: _previews[index],
+          onOpen: _previews[index].isActive
+              ? () => _openUrl(_previews[index].previewUrl)
+              : null,
+          onInvites: widget.listInvites == null
+              ? null
+              : () => _openInvites(_previews[index]),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openUrl(String url) async {
+    final callback = widget.onOpenUrl;
+    if (callback != null) {
+      await callback(url);
+      return;
+    }
+    final uri = Uri.tryParse(url);
+    if (uri == null) {
+      return;
+    }
+    await launchUrl(uri, mode: LaunchMode.externalApplication);
+  }
+
+  Future<void> _openInvites(WebPreview preview) async {
+    final listInvites = widget.listInvites;
+    if (listInvites == null) {
+      return;
+    }
+    await showDialog<void>(
+      context: context,
+      builder: (context) => WebPreviewInvitesDialog(
+        preview: preview,
+        listInvites: listInvites,
+        createInvite: widget.createInvite,
+        revokeInvite: widget.revokeInvite,
+        syncInvite: widget.syncInvite,
+      ),
+    );
+    await _load();
+  }
+}
+
+class _WebPreviewCard extends StatelessWidget {
+  const _WebPreviewCard({
+    required this.preview,
+    required this.onOpen,
+    required this.onInvites,
+  });
+
+  final WebPreview preview;
+  final VoidCallback? onOpen;
+  final VoidCallback? onInvites;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final resourceSummary = _resourceSummary(preview);
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Row(
+              children: <Widget>[
+                Icon(_iconForWebPreviewStatus(preview.status)),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    preview.sourceApp.isEmpty
+                        ? preview.previewId
+                        : preview.sourceApp,
+                    style: theme.textTheme.titleMedium,
+                  ),
+                ),
+                Text(preview.status),
+              ],
+            ),
+            const SizedBox(height: 8),
+            if (preview.previewUrl.isNotEmpty) Text(preview.previewUrl),
+            if (preview.healthUrl != null && preview.healthUrl!.isNotEmpty)
+              Text('Health: ${preview.healthUrl}'),
+            if (resourceSummary.isNotEmpty) Text(resourceSummary),
+            if (preview.inviteSyncSummary != null)
+              Text(_inviteSyncSummary(preview.inviteSyncSummary!)),
+            if (preview.status == 'apply_disabled')
+              const Text(
+                'Apply is disabled on the backend. Configure and enable web preview apply before publishing.',
+              ),
+            if (preview.error != null && preview.error!.isNotEmpty)
+              Text(
+                preview.error!,
+                style: TextStyle(color: theme.colorScheme.error),
+              ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              children: <Widget>[
+                if (onOpen != null)
+                  FilledButton.icon(
+                    onPressed: onOpen,
+                    icon: const Icon(Icons.open_in_browser),
+                    label: const Text('Open preview'),
+                  ),
+                if (onInvites != null)
+                  OutlinedButton.icon(
+                    onPressed: onInvites,
+                    icon: const Icon(Icons.mail_outline),
+                    label: const Text('Invites'),
+                  ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class WebPreviewInvitesDialog extends StatefulWidget {
+  const WebPreviewInvitesDialog({
+    super.key,
+    required this.preview,
+    required this.listInvites,
+    this.createInvite,
+    this.revokeInvite,
+    this.syncInvite,
+  });
+
+  final WebPreview preview;
+  final WebPreviewInviteLister listInvites;
+  final WebPreviewInviteCreator? createInvite;
+  final WebPreviewInviteMutator? revokeInvite;
+  final WebPreviewInviteMutator? syncInvite;
+
+  @override
+  State<WebPreviewInvitesDialog> createState() =>
+      _WebPreviewInvitesDialogState();
+}
+
+class _WebPreviewInvitesDialogState extends State<WebPreviewInvitesDialog> {
+  final TextEditingController _ttlController =
+      TextEditingController(text: '604800');
+  bool _singleUse = true;
+  bool _loading = true;
+  bool _busy = false;
+  String? _error;
+  WebPreviewInvite? _createdInvite;
+  List<WebPreviewInvite> _invites = <WebPreviewInvite>[];
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_load());
+  }
+
+  @override
+  void dispose() {
+    _ttlController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final invites = await widget.listInvites(widget.preview.previewId);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _invites = invites;
+        _loading = false;
+      });
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _error = error.toString();
+        _loading = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text('Invites - ${widget.preview.sourceApp}'),
+      content: SizedBox(width: 680, child: _buildContent(context)),
+      actions: <Widget>[
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Close'),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildContent(BuildContext context) {
+    if (_loading) {
+      return const SizedBox(
+        height: 180,
+        child: Center(child: CircularProgressIndicator()),
+      );
+    }
+    if (_error != null) {
+      return SizedBox(height: 180, child: Center(child: Text(_error!)));
+    }
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxHeight: 560),
+      child: SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: <Widget>[
+            _buildCreateInvite(context),
+            if (_createdInvite?.inviteUrl != null) ...<Widget>[
+              const SizedBox(height: 12),
+              _InviteLinkCard(invite: _createdInvite!),
+            ],
+            const SizedBox(height: 16),
+            if (_invites.isEmpty)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 32),
+                child: Center(child: Text('No preview invites')),
+              )
+            else
+              ..._invites.map(_buildInviteTile),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCreateInvite(BuildContext context) {
+    return Row(
+      children: <Widget>[
+        SizedBox(
+          width: 130,
+          child: TextField(
+            controller: _ttlController,
+            keyboardType: TextInputType.number,
+            decoration: const InputDecoration(labelText: 'TTL seconds'),
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('Single use'),
+            value: _singleUse,
+            onChanged: _busy
+                ? null
+                : (value) => setState(() {
+                      _singleUse = value;
+                    }),
+          ),
+        ),
+        const SizedBox(width: 12),
+        FilledButton.icon(
+          onPressed: _busy || widget.createInvite == null ? null : _create,
+          icon: const Icon(Icons.add_link),
+          label: const Text('Create invite'),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildInviteTile(WebPreviewInvite invite) {
+    return ListTile(
+      contentPadding: EdgeInsets.zero,
+      leading: Icon(invite.isRevoked ? Icons.block : Icons.link),
+      title: Text(invite.inviteId),
+      subtitle: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Text('Expires: ${invite.expiresAt}'),
+          Text('Sync: ${invite.syncStatus}'),
+          if (invite.syncedAt != null) Text('Synced: ${invite.syncedAt}'),
+          if (invite.revokedAt != null) Text('Revoked: ${invite.revokedAt}'),
+          if (invite.syncError != null && invite.syncError!.isNotEmpty)
+            Text(invite.syncError!),
+        ],
+      ),
+      trailing: Wrap(
+        spacing: 8,
+        children: <Widget>[
+          if (invite.canRetrySync && widget.syncInvite != null)
+            TextButton(
+              onPressed: _busy ? null : () => _sync(invite),
+              child: const Text('Retry sync'),
+            ),
+          if (!invite.isRevoked && widget.revokeInvite != null)
+            TextButton(
+              onPressed: _busy ? null : () => _revoke(invite),
+              child: const Text('Revoke'),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _create() async {
+    final createInvite = widget.createInvite;
+    if (createInvite == null) {
+      return;
+    }
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      final ttl = int.tryParse(_ttlController.text.trim());
+      final invite = await createInvite(
+        widget.preview.previewId,
+        ttlSeconds: ttl,
+        singleUse: _singleUse,
+      );
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _createdInvite = invite;
+        _busy = false;
+      });
+      await _load();
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _busy = false;
+        _error = error.toString();
+      });
+    }
+  }
+
+  Future<void> _revoke(WebPreviewInvite invite) async {
+    await _mutateInvite(invite, widget.revokeInvite);
+  }
+
+  Future<void> _sync(WebPreviewInvite invite) async {
+    await _mutateInvite(invite, widget.syncInvite);
+  }
+
+  Future<void> _mutateInvite(
+    WebPreviewInvite invite,
+    WebPreviewInviteMutator? mutator,
+  ) async {
+    if (mutator == null) {
+      return;
+    }
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      await mutator(
+        previewId: widget.preview.previewId,
+        inviteId: invite.inviteId,
+      );
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _busy = false;
+      });
+      await _load();
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _busy = false;
+        _error = error.toString();
+      });
+    }
+  }
+}
+
+class _InviteLinkCard extends StatelessWidget {
+  const _InviteLinkCard({required this.invite});
+
+  final WebPreviewInvite invite;
+
+  @override
+  Widget build(BuildContext context) {
+    final url = invite.inviteUrl ?? '';
+    return Card(
+      child: ListTile(
+        leading: const Icon(Icons.link),
+        title: const Text('Invite link created'),
+        subtitle: Text(url),
+        trailing: IconButton(
+          onPressed: url.isEmpty
+              ? null
+              : () async {
+                  await Clipboard.setData(ClipboardData(text: url));
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Invite link copied.')),
+                    );
+                  }
+                },
+          icon: const Icon(Icons.copy),
+          tooltip: 'Copy invite link',
+        ),
+      ),
+    );
+  }
 }
 
 class _ProjectFactoryHistoryTile extends StatelessWidget {
@@ -6937,6 +7547,33 @@ IconData _iconForProjectFactoryStatus(String status) {
     'failed' || 'interrupted' || 'blocked' => Icons.error_outline,
     _ => Icons.pending_actions_outlined,
   };
+}
+
+IconData _iconForWebPreviewStatus(String status) {
+  return switch (status) {
+    'active' => Icons.check_circle_outline,
+    'failed' => Icons.error_outline,
+    'applying' || 'planned' => Icons.pending_actions_outlined,
+    'apply_disabled' => Icons.lock_outline,
+    _ => Icons.language,
+  };
+}
+
+String _resourceSummary(WebPreview preview) {
+  final planned = preview.plannedResources.length;
+  final applied = preview.appliedResources.length;
+  if (planned == 0 && applied == 0) {
+    return '';
+  }
+  return 'Resources: $planned planned, $applied applied';
+}
+
+String _inviteSyncSummary(Map<String, dynamic> summary) {
+  final synced = summary['synced'] ?? 0;
+  final failed = summary['failed'] ?? 0;
+  final pending = summary['pending'] ?? 0;
+  final notDeployed = summary['not_deployed'] ?? 0;
+  return 'Invite sync: $synced synced, $failed failed, $pending pending, $notDeployed not deployed';
 }
 
 class ProjectFactoryProgressDialog extends StatefulWidget {

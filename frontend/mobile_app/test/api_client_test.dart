@@ -508,6 +508,104 @@ void main() {
     expect(jobs.single.manualNextStep, 'Inspect logs');
   });
 
+  test('web preview client parses status and invite operations', () async {
+    var step = 0;
+    final client = ApiClient(
+      baseUrl: 'http://localhost:8000',
+      client: MockClient((request) async {
+        step += 1;
+        if (step == 1) {
+          expect(request.method, 'GET');
+          expect(request.url.path, '/web-previews');
+          expect(request.url.queryParameters['limit'], '10');
+          return http.Response(_webPreviewListJson, 200);
+        }
+        if (step == 2) {
+          expect(request.method, 'GET');
+          expect(request.url.path, '/web-previews/wp-clinica-norte');
+          return http.Response(_webPreviewJson, 200);
+        }
+        if (step == 3) {
+          expect(request.method, 'POST');
+          expect(request.url.path, '/web-previews/plan');
+          expect(request.body, contains('"sourceApp":"clinica-norte"'));
+          return http.Response(_webPreviewJson, 200);
+        }
+        if (step == 4) {
+          expect(request.method, 'POST');
+          expect(request.url.path, '/web-previews/deploy');
+          expect(request.body, contains('"confirmApply":false'));
+          return http.Response(_webPreviewJson, 200);
+        }
+        if (step == 5) {
+          expect(request.method, 'POST');
+          expect(request.url.path, '/web-previews/wp-clinica-norte/invites');
+          expect(request.body, contains('"ttlSeconds":300'));
+          expect(request.body, contains('"singleUse":true'));
+          return http.Response(_webPreviewInviteJson(withToken: true), 200);
+        }
+        if (step == 6) {
+          expect(request.method, 'GET');
+          expect(request.url.path, '/web-previews/wp-clinica-norte/invites');
+          return http.Response(
+            '{"kind":"codex.webPreviewInvites","version":1,"invites":[${_webPreviewInviteJson()}]}',
+            200,
+          );
+        }
+        if (step == 7) {
+          expect(request.method, 'DELETE');
+          expect(
+            request.url.path,
+            '/web-previews/wp-clinica-norte/invites/wpi-1',
+          );
+          return http.Response(_webPreviewInviteJson(revoked: true), 200);
+        }
+        expect(request.method, 'POST');
+        expect(
+          request.url.path,
+          '/web-previews/wp-clinica-norte/invites/wpi-1/sync',
+        );
+        return http.Response(_webPreviewInviteJson(syncStatus: 'synced'), 200);
+      }),
+    );
+
+    final previews = await client.listWebPreviews(limit: 10);
+    expect(previews.single.status, 'active');
+    expect(previews.single.inviteSyncSummary?['synced'], 1);
+
+    final detail = await client.getWebPreview('wp-clinica-norte');
+    expect(detail.isActive, isTrue);
+
+    final planned = await client.planWebPreview(sourceApp: 'clinica-norte');
+    expect(planned.previewUrl, 'https://preview.nienfos.com/clinica-norte');
+
+    final deployed = await client.deployWebPreview(sourceApp: 'clinica-norte');
+    expect(deployed.status, 'active');
+
+    final created = await client.createWebPreviewInvite(
+      'wp-clinica-norte',
+      ttlSeconds: 300,
+    );
+    expect(created.inviteUrl, contains('__preview/access'));
+    expect(created.token, 'secret-token');
+
+    final invites = await client.listWebPreviewInvites('wp-clinica-norte');
+    expect(invites.single.syncStatus, 'failed');
+    expect(invites.single.canRetrySync, isTrue);
+
+    final revoked = await client.revokeWebPreviewInvite(
+      previewId: 'wp-clinica-norte',
+      inviteId: 'wpi-1',
+    );
+    expect(revoked.isRevoked, isTrue);
+
+    final synced = await client.syncWebPreviewInvite(
+      previewId: 'wp-clinica-norte',
+      inviteId: 'wpi-1',
+    );
+    expect(synced.syncStatus, 'synced');
+  });
+
   test('sendMessage includes codex options when requested', () async {
     final client = ApiClient(
       baseUrl: 'http://localhost:8000',
@@ -995,6 +1093,66 @@ String _projectFactoryDraftAssetJson() {
     "sha256": "sha256-value",
     "storage_path": "files/asset-abc123def456.png",
     "source": "chat_upload"
+  }
+  ''';
+}
+
+const String _webPreviewJson = '''
+{
+  "kind": "codex.webPreview",
+  "version": 1,
+  "preview_id": "wp-clinica-norte",
+  "source_app": "clinica-norte",
+  "project_path": "/projects/clinica-norte",
+  "manifest_path": "/projects/clinica-norte/deploy/web-preview/web-preview-manifest.yaml",
+  "status": "active",
+  "preview_url": "https://preview.nienfos.com/clinica-norte",
+  "health_url": "https://preview.nienfos.com/clinica-norte/__preview/health",
+  "plan_hash": "abc",
+  "planned_resources": [{"kind":"worker_script","status":"planned"}],
+  "applied_resources": [{"kind":"d1_database","status":"created"}],
+  "invite_sync_summary": {"synced": 1, "failed": 0, "pending": 0, "not_deployed": 0},
+  "error": null,
+  "logs": [],
+  "created_at": "2026-07-07T00:00:00Z",
+  "completed_at": "2026-07-07T00:01:00Z"
+}
+''';
+
+const String _webPreviewListJson = '''
+{
+  "kind": "codex.webPreviews",
+  "version": 1,
+  "previews": [$_webPreviewJson]
+}
+''';
+
+String _webPreviewInviteJson({
+  bool withToken = false,
+  bool revoked = false,
+  String syncStatus = 'failed',
+}) {
+  return '''
+  {
+    "kind": "codex.webPreviewInvite",
+    "version": 1,
+    "invite_id": "wpi-1",
+    "preview_id": "wp-clinica-norte",
+    "source_app": "clinica-norte",
+    "app_slug": "clinica-norte",
+    "audience": "codex.web-preview",
+    "scope": "web_preview:access",
+    "created_at": "2026-07-07T00:00:00Z",
+    "expires_at": "2026-07-14T00:00:00Z",
+    "single_use": true,
+    "used_at": null,
+    "revoked_at": ${revoked ? '"2026-07-07T00:05:00Z"' : 'null'},
+    "sync_status": "$syncStatus",
+    "synced_at": ${syncStatus == 'synced' ? '"2026-07-07T00:02:00Z"' : 'null'},
+    "sync_error": ${syncStatus == 'failed' ? '"D1 unavailable"' : 'null'},
+    "token_sha256": "abc123",
+    "invite_url": ${withToken ? '"https://preview.nienfos.com/clinica-norte/__preview/access?token=secret-token"' : 'null'},
+    "token": ${withToken ? '"secret-token"' : 'null'}
   }
   ''';
 }
