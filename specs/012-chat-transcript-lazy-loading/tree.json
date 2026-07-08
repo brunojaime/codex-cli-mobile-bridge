@@ -7,76 +7,258 @@
       "id": "plan-1",
       "number": 1,
       "title": "Message Window Contract",
-      "status": "planned",
+      "status": "done",
       "description": "Define the partial transcript response contract and cursor semantics.",
       "file": "plans/01-message-window-contract/plan.md",
       "tasks": [
-        {"id": "plan-1-task-1", "number": 1, "title": "T001 Define transcript window response schema", "status": "planned", "description": "Define messages, paging metadata, anchors, and partial flags.", "file": "tasks/plan-1-task-1/task.md"},
-        {"id": "plan-1-task-2", "number": 2, "title": "T002 Define stable cursor format and ordering contract", "status": "planned", "description": "Use a cursor that remains stable when messages are appended.", "file": "tasks/plan-1-task-2/task.md"},
-        {"id": "plan-1-task-3", "number": 3, "title": "T003 Define latest-user-message anchor selection rules", "status": "planned", "description": "Select the most recent visible user-authored message as the initial anchor.", "file": "tasks/plan-1-task-3/task.md"},
-        {"id": "plan-1-task-4", "number": 4, "title": "T004 Define backward compatibility and full-transcript escape hatch", "status": "planned", "description": "Keep explicit full transcript access for debug/export use.", "file": "tasks/plan-1-task-4/task.md"}
+        {
+          "id": "plan-1-task-1",
+          "number": 1,
+          "title": "T001 Define transcript window response schema",
+          "status": "done",
+          "description": "Define messages, paging metadata, anchors, and partial flags.",
+          "file": "tasks/plan-1-task-1/task.md"
+        },
+        {
+          "id": "plan-1-task-2",
+          "number": 2,
+          "title": "T002 Define stable cursor format and ordering contract",
+          "status": "done",
+          "description": "Use a cursor that remains stable when messages are appended.",
+          "file": "tasks/plan-1-task-2/task.md"
+        },
+        {
+          "id": "plan-1-task-3",
+          "number": 3,
+          "title": "T003 Define latest-user-message anchor selection rules",
+          "status": "done",
+          "description": "Select the most recent visible user-authored message as the initial anchor.",
+          "file": "tasks/plan-1-task-3/task.md"
+        },
+        {
+          "id": "plan-1-task-4",
+          "number": 4,
+          "title": "T004 Define backward compatibility and full-transcript escape hatch",
+          "status": "done",
+          "description": "Keep explicit full transcript access for debug/export use.",
+          "file": "tasks/plan-1-task-4/task.md"
+        }
       ]
     },
     {
       "id": "plan-2",
       "number": 2,
       "title": "Backend Pagination",
-      "status": "planned",
+      "status": "done",
       "description": "Add backend support for bounded transcript windows and lightweight summaries.",
       "file": "plans/02-backend-pagination/plan.md",
       "tasks": [
-        {"id": "plan-2-task-1", "number": 1, "title": "T005 Add repository/service method for paged messages before cursor", "status": "planned", "description": "Fetch older messages with a stable before cursor and limit.", "file": "tasks/plan-2-task-1/task.md"},
-        {"id": "plan-2-task-2", "number": 2, "title": "T006 Add repository/service method for latest user anchor window", "status": "planned", "description": "Fetch the latest user-authored message plus all later messages.", "file": "tasks/plan-2-task-2/task.md"},
-        {"id": "plan-2-task-3", "number": 3, "title": "T007 Add API request parameters or endpoint for bounded session detail", "status": "planned", "description": "Expose bounded initial load and older page requests.", "file": "tasks/plan-2-task-3/task.md"},
-        {"id": "plan-2-task-4", "number": 4, "title": "T008 Add paging metadata to session detail responses", "status": "planned", "description": "Return has_older, cursors, anchor id, and partial flags.", "file": "tasks/plan-2-task-4/task.md"},
-        {"id": "plan-2-task-5", "number": 5, "title": "T009 Make session list summaries avoid serializing full transcripts", "status": "planned", "description": "Avoid full message body traversal in chat list responses where possible.", "file": "tasks/plan-2-task-5/task.md"},
-        {"id": "plan-2-task-6", "number": 6, "title": "T010 Keep full transcript available for explicit export/debug use", "status": "planned", "description": "Provide a clearly named full transcript path for workflows that truly need it.", "file": "tasks/plan-2-task-6/task.md"}
+        {
+          "id": "plan-2-task-1",
+          "number": 1,
+          "title": "T005 Add repository/service method for paged messages before cursor",
+          "status": "done",
+          "description": "Fetch older messages with a stable before cursor and limit.",
+          "file": "tasks/plan-2-task-1/task.md"
+        },
+        {
+          "id": "plan-2-task-2",
+          "number": 2,
+          "title": "T006 Add repository/service method for latest user anchor window",
+          "status": "done",
+          "description": "Fetch the latest user-authored message plus all later messages.",
+          "file": "tasks/plan-2-task-2/task.md"
+        },
+        {
+          "id": "plan-2-task-3",
+          "number": 3,
+          "title": "T007 Add API request parameters or endpoint for bounded session detail",
+          "status": "done",
+          "description": "Expose bounded initial load and older page requests.",
+          "file": "tasks/plan-2-task-3/task.md"
+        },
+        {
+          "id": "plan-2-task-4",
+          "number": 4,
+          "title": "T008 Add paging metadata to session detail responses",
+          "status": "done",
+          "description": "Return has_older, cursors, anchor id, and partial flags.",
+          "file": "tasks/plan-2-task-4/task.md"
+        },
+        {
+          "id": "plan-2-task-5",
+          "number": 5,
+          "title": "T009 Make session list summaries avoid serializing full transcripts",
+          "status": "done",
+          "description": "Avoid full message body traversal in chat list responses where possible.",
+          "file": "tasks/plan-2-task-5/task.md"
+        },
+        {
+          "id": "plan-2-task-6",
+          "number": 6,
+          "title": "T010 Keep full transcript available for explicit export/debug use",
+          "status": "done",
+          "description": "Provide a clearly named full transcript path for workflows that truly need it.",
+          "file": "tasks/plan-2-task-6/task.md"
+        }
       ]
     },
     {
       "id": "plan-3",
       "number": 3,
       "title": "Frontend Lazy Thread",
-      "status": "planned",
+      "status": "done",
       "description": "Load and render chat messages incrementally in Codex Mobile.",
       "file": "plans/03-frontend-lazy-thread/plan.md",
       "tasks": [
-        {"id": "plan-3-task-1", "number": 1, "title": "T011 Extend Flutter API client and models for message windows", "status": "planned", "description": "Parse paging metadata and partial transcript fields.", "file": "tasks/plan-3-task-1/task.md"},
-        {"id": "plan-3-task-2", "number": 2, "title": "T012 Update chat controller to load initial latest-user exchange", "status": "planned", "description": "Replace full-session initial load with the anchored window.", "file": "tasks/plan-3-task-2/task.md"},
-        {"id": "plan-3-task-3", "number": 3, "title": "T013 Add upward-scroll lazy loading with scroll-position preservation", "status": "planned", "description": "Prepend older pages without jumping the user's viewport.", "file": "tasks/plan-3-task-3/task.md"},
-        {"id": "plan-3-task-4", "number": 4, "title": "T014 Add loading, empty, retry, and exhausted-history UI states", "status": "planned", "description": "Show clear non-blocking states for older-history loading.", "file": "tasks/plan-3-task-4/task.md"},
-        {"id": "plan-3-task-5", "number": 5, "title": "T015 Deduplicate overlapping pages and live appended messages", "status": "planned", "description": "Avoid duplicates when older pages and new messages arrive concurrently.", "file": "tasks/plan-3-task-5/task.md"},
-        {"id": "plan-3-task-6", "number": 6, "title": "T016 Preserve composer and active run updates while older pages load", "status": "planned", "description": "Keep sending and job status updates responsive during pagination.", "file": "tasks/plan-3-task-6/task.md"}
+        {
+          "id": "plan-3-task-1",
+          "number": 1,
+          "title": "T011 Extend Flutter API client and models for message windows",
+          "status": "done",
+          "description": "Parse paging metadata and partial transcript fields.",
+          "file": "tasks/plan-3-task-1/task.md"
+        },
+        {
+          "id": "plan-3-task-2",
+          "number": 2,
+          "title": "T012 Update chat controller to load initial latest-user exchange",
+          "status": "done",
+          "description": "Replace full-session initial load with the anchored window.",
+          "file": "tasks/plan-3-task-2/task.md"
+        },
+        {
+          "id": "plan-3-task-3",
+          "number": 3,
+          "title": "T013 Add upward-scroll lazy loading with scroll-position preservation",
+          "status": "done",
+          "description": "Prepend older pages without jumping the user's viewport.",
+          "file": "tasks/plan-3-task-3/task.md"
+        },
+        {
+          "id": "plan-3-task-4",
+          "number": 4,
+          "title": "T014 Add loading, empty, retry, and exhausted-history UI states",
+          "status": "done",
+          "description": "Show clear non-blocking states for older-history loading.",
+          "file": "tasks/plan-3-task-4/task.md"
+        },
+        {
+          "id": "plan-3-task-5",
+          "number": 5,
+          "title": "T015 Deduplicate overlapping pages and live appended messages",
+          "status": "done",
+          "description": "Avoid duplicates when older pages and new messages arrive concurrently.",
+          "file": "tasks/plan-3-task-5/task.md"
+        },
+        {
+          "id": "plan-3-task-6",
+          "number": 6,
+          "title": "T016 Preserve composer and active run updates while older pages load",
+          "status": "done",
+          "description": "Keep sending and job status updates responsive during pagination.",
+          "file": "tasks/plan-3-task-6/task.md"
+        }
       ]
     },
     {
       "id": "plan-4",
       "number": 4,
       "title": "Active Run And Context",
-      "status": "planned",
+      "status": "done",
       "description": "Keep active run metadata and message affordances correct with partial transcripts.",
       "file": "plans/04-active-run-and-context/plan.md",
       "tasks": [
-        {"id": "plan-4-task-1", "number": 1, "title": "T017 Preserve current run/reviewer/job metadata with partial messages", "status": "planned", "description": "Ensure execution state is not derived only from loaded messages.", "file": "tasks/plan-4-task-1/task.md"},
-        {"id": "plan-4-task-2", "number": 2, "title": "T018 Preserve attachment, asset, feedback, and recovery affordances for visible messages", "status": "planned", "description": "Visible messages keep the same actions and links as before.", "file": "tasks/plan-4-task-2/task.md"},
-        {"id": "plan-4-task-3", "number": 3, "title": "T019 Ensure New Project readiness markers and build prompts remain detectable", "status": "planned", "description": "Do not hide state needed to gate New Project build execution.", "file": "tasks/plan-4-task-3/task.md"},
-        {"id": "plan-4-task-4", "number": 4, "title": "T020 Ensure summary/collapse views still work over the loaded window", "status": "planned", "description": "Collapse modes operate predictably on partial transcript data.", "file": "tasks/plan-4-task-4/task.md"}
+        {
+          "id": "plan-4-task-1",
+          "number": 1,
+          "title": "T017 Preserve current run/reviewer/job metadata with partial messages",
+          "status": "done",
+          "description": "Ensure execution state is not derived only from loaded messages.",
+          "file": "tasks/plan-4-task-1/task.md"
+        },
+        {
+          "id": "plan-4-task-2",
+          "number": 2,
+          "title": "T018 Preserve attachment, asset, feedback, and recovery affordances for visible messages",
+          "status": "done",
+          "description": "Visible messages keep the same actions and links as before.",
+          "file": "tasks/plan-4-task-2/task.md"
+        },
+        {
+          "id": "plan-4-task-3",
+          "number": 3,
+          "title": "T019 Ensure New Project readiness markers and build prompts remain detectable",
+          "status": "done",
+          "description": "Do not hide state needed to gate New Project build execution.",
+          "file": "tasks/plan-4-task-3/task.md"
+        },
+        {
+          "id": "plan-4-task-4",
+          "number": 4,
+          "title": "T020 Ensure summary/collapse views still work over the loaded window",
+          "status": "done",
+          "description": "Collapse modes operate predictably on partial transcript data.",
+          "file": "tasks/plan-4-task-4/task.md"
+        }
       ]
     },
     {
       "id": "plan-5",
       "number": 5,
       "title": "Validation And Rollout",
-      "status": "planned",
+      "status": "done",
       "description": "Validate pagination behavior and deployment safety.",
       "file": "plans/05-validation-and-rollout/plan.md",
       "tasks": [
-        {"id": "plan-5-task-1", "number": 1, "title": "T021 Add backend tests for anchor selection and cursor pagination", "status": "planned", "description": "Cover latest user anchor, ordering, empty sessions, and older pages.", "file": "tasks/plan-5-task-1/task.md"},
-        {"id": "plan-5-task-2", "number": 2, "title": "T022 Add backend tests for session list lightweight behavior", "status": "planned", "description": "Confirm summaries do not serialize entire transcripts.", "file": "tasks/plan-5-task-2/task.md"},
-        {"id": "plan-5-task-3", "number": 3, "title": "T023 Add Flutter model/API tests for paged transcript payloads", "status": "planned", "description": "Cover parsing and request construction.", "file": "tasks/plan-5-task-3/task.md"},
-        {"id": "plan-5-task-4", "number": 4, "title": "T024 Add Flutter widget tests for initial load, scroll-up load, retry, and append behavior", "status": "planned", "description": "Cover the user-visible lazy loading states.", "file": "tasks/plan-5-task-4/task.md"},
-        {"id": "plan-5-task-5", "number": 5, "title": "T025 Add regression tests for active generator/reviewer conversations", "status": "planned", "description": "Ensure long-running conversations remain observable.", "file": "tasks/plan-5-task-5/task.md"},
-        {"id": "plan-5-task-6", "number": 6, "title": "T026 Run full backend and mobile validation before deployment", "status": "planned", "description": "Run relevant pytest, flutter analyze, and flutter test before release.", "file": "tasks/plan-5-task-6/task.md"}
+        {
+          "id": "plan-5-task-1",
+          "number": 1,
+          "title": "T021 Add backend tests for anchor selection and cursor pagination",
+          "status": "done",
+          "description": "Cover latest user anchor, ordering, empty sessions, and older pages.",
+          "file": "tasks/plan-5-task-1/task.md"
+        },
+        {
+          "id": "plan-5-task-2",
+          "number": 2,
+          "title": "T022 Add backend tests for session list lightweight behavior",
+          "status": "done",
+          "description": "Confirm summaries do not serialize entire transcripts.",
+          "file": "tasks/plan-5-task-2/task.md"
+        },
+        {
+          "id": "plan-5-task-3",
+          "number": 3,
+          "title": "T023 Add Flutter model/API tests for paged transcript payloads",
+          "status": "done",
+          "description": "Cover parsing and request construction.",
+          "file": "tasks/plan-5-task-3/task.md"
+        },
+        {
+          "id": "plan-5-task-4",
+          "number": 4,
+          "title": "T024 Add Flutter widget tests for initial load, scroll-up load, retry, and append behavior",
+          "status": "done",
+          "description": "Cover the user-visible lazy loading states.",
+          "file": "tasks/plan-5-task-4/task.md"
+        },
+        {
+          "id": "plan-5-task-5",
+          "number": 5,
+          "title": "T025 Add regression tests for active generator/reviewer conversations",
+          "status": "done",
+          "description": "Ensure long-running conversations remain observable.",
+          "file": "tasks/plan-5-task-5/task.md"
+        },
+        {
+          "id": "plan-5-task-6",
+          "number": 6,
+          "title": "T026 Run full backend and mobile validation before deployment",
+          "status": "done",
+          "description": "Run relevant pytest, flutter analyze, and flutter test before release.",
+          "file": "tasks/plan-5-task-6/task.md"
+        }
       ]
     }
   ]

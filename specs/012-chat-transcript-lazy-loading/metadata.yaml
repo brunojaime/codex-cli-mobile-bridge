@@ -2,8 +2,8 @@ id: 012-chat-transcript-lazy-loading
 slug: 012-chat-transcript-lazy-loading
 title: Chat Transcript Lazy Loading
 description: Load chat transcripts from the latest user exchange and fetch older messages lazily.
-status: draft
-last_run_state: planned
+status: validated
+last_run_state: validated
 generated:
   title: false
   description: false
@@ -11,8 +11,8 @@ generated:
   user_pinned_description: true
 tasks:
   total: 26
-  completed: 0
-  pending: 26
+  completed: 26
+  pending: 0
 diagrams:
   total: 0
   items: {}

@@ -2,8 +2,8 @@ id: 010-slash-command-palette
 slug: 010-slash-command-palette
 title: Slash Command Palette
 description: Add a Codex-compatible slash command palette to the mobile chat composer.
-status: draft
-last_run_state: planned
+status: active
+last_run_state: validated
 generated:
   title: false
   description: false
@@ -11,8 +11,8 @@ generated:
   user_pinned_description: true
 tasks:
   total: 18
-  completed: 0
-  pending: 18
+  completed: 17
+  pending: 1
 diagrams:
   total: 0
   items: {}

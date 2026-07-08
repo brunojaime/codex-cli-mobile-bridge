@@ -1,7 +1,7 @@
 # Chat Transcript Lazy Loading
 
 id: 012-chat-transcript-lazy-loading
-status: draft
+status: validated
 owner: codex-mobile-bridge
 
 ## Intent

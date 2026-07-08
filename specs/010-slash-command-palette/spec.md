@@ -1,7 +1,7 @@
 ---
 id: 010-slash-command-palette
 title: Slash Command Palette
-status: draft
+status: active
 type: feature
 domains:
   - mobile
