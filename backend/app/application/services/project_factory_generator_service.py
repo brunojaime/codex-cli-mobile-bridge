@@ -356,7 +356,9 @@ published.
 After an Android APK release exists, register the app in Codex Mobile:
 
 ```bash
-BRIDGE_URL=http://127.0.0.1:8000 scripts/register_installable_app.sh
+BRIDGE_URL=http://127.0.0.1:8000 \\
+BRIDGE_REGISTRATION_TOKEN=<token> \\
+scripts/register_installable_app.sh
 ```
 
 The project is not installable from Codex Mobile until
@@ -677,7 +679,8 @@ def _register_installable_app_script(slug: str, name: str) -> str:
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${{BASH_SOURCE[0]}}")/.." && pwd)"
-BRIDGE_URL="${{BRIDGE_URL:-http://127.0.0.1:8000}}"
+DRY_RUN=false
+BRIDGE_URL="${{BRIDGE_URL:-}}"
 SOURCE_APP="${{SOURCE_APP:-{slug}}}"
 DISPLAY_NAME="${{DISPLAY_NAME:-{name}}}"
 RELEASE_TAG_PATTERN="${{RELEASE_TAG_PATTERN:-android-v*}}"
@@ -687,8 +690,41 @@ RELEASE_CHANNEL="${{RELEASE_CHANNEL:-stable}}"
 ENABLED="${{ENABLED:-true}}"
 REQUIRE_INSTALLABLE_APK="${{REQUIRE_INSTALLABLE_APK:-true}}"
 EXPECTED_PACKAGE_ID="${{EXPECTED_PACKAGE_ID:-}}"
+EXPECTED_SHA256="${{EXPECTED_SHA256:-}}"
+APP_RELEASE_TAG="${{APP_RELEASE_TAG:-}}"
+BRIDGE_REGISTRATION_TOKEN="${{BRIDGE_REGISTRATION_TOKEN:-${{INSTALLABLE_APPS_REGISTRATION_TOKEN:-}}}}"
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --dry-run)
+      DRY_RUN=true
+      shift
+      ;;
+    --bridge-url)
+      BRIDGE_URL="${{2:-}}"
+      shift 2
+      ;;
+    --token)
+      BRIDGE_REGISTRATION_TOKEN="${{2:-}}"
+      shift 2
+      ;;
+    *)
+      echo "Unknown argument: $1" >&2
+      exit 2
+      ;;
+  esac
+done
 
 cd "$ROOT_DIR"
+
+if [[ -z "$BRIDGE_URL" ]]; then
+  echo "BRIDGE_URL is required. Example: BRIDGE_URL=http://127.0.0.1:8000 $0" >&2
+  exit 2
+fi
+if [[ -z "$BRIDGE_REGISTRATION_TOKEN" ]]; then
+  echo "BRIDGE_REGISTRATION_TOKEN or INSTALLABLE_APPS_REGISTRATION_TOKEN is required." >&2
+  exit 2
+fi
 
 GITHUB_REPO="${{GITHUB_REPO:-}}"
 if [[ -z "$GITHUB_REPO" ]]; then
@@ -701,6 +737,54 @@ fi
 
 if [[ -z "$GITHUB_REPO" || "$GITHUB_REPO" != */* ]]; then
   echo "Set GITHUB_REPO=owner/repo or configure git origin before registering." >&2
+  exit 2
+fi
+export SOURCE_APP DISPLAY_NAME GITHUB_REPO RELEASE_TAG_PATTERN APK_ASSET_PATTERN
+export LATEST_ASSET_NAME RELEASE_CHANNEL ENABLED EXPECTED_PACKAGE_ID EXPECTED_SHA256
+
+if [[ -z "$APP_RELEASE_TAG" && -f apps/mobile/pubspec.yaml ]]; then
+  version="$(awk '/^version:/ {{ print $2; exit }}' apps/mobile/pubspec.yaml)"
+  if [[ -n "$version" ]]; then
+    APP_RELEASE_TAG="android-v${{version//+/-build.}}"
+  fi
+fi
+if [[ -z "$APP_RELEASE_TAG" ]]; then
+  echo "APP_RELEASE_TAG is required or apps/mobile/pubspec.yaml must define version." >&2
+  exit 2
+fi
+
+if [[ -n "$EXPECTED_PACKAGE_ID" ]]; then
+  python3 - <<'PY'
+from __future__ import annotations
+
+import os
+import re
+
+package_id = os.environ["EXPECTED_PACKAGE_ID"]
+part = r"[A-Za-z][A-Za-z0-9_]*"
+if not re.fullmatch(rf"{{part}}(\\.{{part}})+", package_id):
+    raise SystemExit("EXPECTED_PACKAGE_ID is not a valid Android package id.")
+PY
+fi
+
+if [[ -n "$EXPECTED_SHA256" && ! "$EXPECTED_SHA256" =~ ^[a-fA-F0-9]{{64}}$ ]]; then
+  echo "EXPECTED_SHA256 must be 64 hex characters." >&2
+  exit 2
+fi
+
+if ! command -v gh >/dev/null 2>&1; then
+  echo "GitHub CLI (gh) is required to verify release APK assets." >&2
+  exit 2
+fi
+
+asset_names="$(gh release view "$APP_RELEASE_TAG" --repo "$GITHUB_REPO" --json assets --jq '.assets[].name' 2>/dev/null || true)"
+if [[ -z "$asset_names" ]]; then
+  echo "Release $APP_RELEASE_TAG was not found or has no assets in $GITHUB_REPO." >&2
+  exit 2
+fi
+if ! printf '%s\n' "$asset_names" | grep -Fx "$LATEST_ASSET_NAME" >/dev/null; then
+  echo "Release $APP_RELEASE_TAG does not contain APK asset $LATEST_ASSET_NAME." >&2
+  printf 'Available assets:\n%s\n' "$asset_names" >&2
   exit 2
 fi
 
@@ -727,8 +811,15 @@ print(json.dumps(payload))
 PY
 )"
 
+if [[ "$DRY_RUN" == "true" ]]; then
+  echo "$payload" | python3 -m json.tool
+  echo "dry-run: release and asset were verified; registry was not mutated."
+  exit 0
+fi
+
 curl -fsS \\
   -X POST "$BRIDGE_URL/installable-apps" \\
+  -H "Authorization: Bearer $BRIDGE_REGISTRATION_TOKEN" \\
   -H 'Content-Type: application/json' \\
   -d "$payload" >/tmp/project-factory-register-installable-app.json
 
@@ -747,12 +838,33 @@ detail = json.loads(Path("/tmp/project-factory-installable-app-detail.json").rea
 print(f"registered installable app: {{registered['sourceApp']}} -> {{registered['displayName']}}")
 print(f"install status: {{detail.get('installStatusHint')}}")
 print(f"apk url: {{detail.get('apkUrl')}}")
+expected_sha = os.environ.get("EXPECTED_SHA256", "").strip().lower()
+actual_sha = str(detail.get("sha256") or "").lower()
+if expected_sha and actual_sha and expected_sha != actual_sha:
+    raise SystemExit("Registered APK checksum does not match EXPECTED_SHA256.")
 if os.environ.get("REQUIRE_INSTALLABLE_APK", "true").lower() == "true" and not detail.get("apkUrl"):
     raise SystemExit(
         "Bridge registry updated, but no installable APK is available yet. "
         "Publish the Android release asset or rerun with REQUIRE_INSTALLABLE_APK=false."
     )
 PY
+
+apk_url="$(python3 - <<'PY'
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+detail = json.loads(Path("/tmp/project-factory-installable-app-detail.json").read_text())
+print(detail.get("apkUrl") or "")
+PY
+)"
+if [[ -n "$apk_url" ]]; then
+  curl -fsSI "$apk_url" >/dev/null || {{
+    echo "Bridge APK proxy did not respond for $apk_url" >&2
+    exit 2
+  }}
+fi
 '''
 
 

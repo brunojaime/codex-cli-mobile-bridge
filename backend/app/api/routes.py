@@ -5,6 +5,7 @@ import binascii
 import json
 import os
 import re
+import secrets
 import subprocess
 from collections.abc import Iterator
 from functools import lru_cache
@@ -22,6 +23,7 @@ from fastapi import (
     Request,
     UploadFile,
     WebSocket,
+    Header,
 )
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, Response, StreamingResponse
@@ -1534,8 +1536,15 @@ async def list_installable_apps(
 )
 async def register_installable_app(
     payload: InstallableAppRegistrationRequest,
+    authorization: str | None = Header(default=None),
+    x_bridge_registration_token: str | None = Header(default=None),
     container: AppContainer = Depends(get_container),
 ) -> AppUpdateRegistryItemResponse:
+    _authorize_installable_app_registration(
+        container=container,
+        authorization=authorization,
+        registration_token=x_bridge_registration_token,
+    )
     try:
         config = await run_in_threadpool(
             container.app_update_service.register_app,
@@ -1552,7 +1561,7 @@ async def register_installable_app(
             verified_package_ids=payload.verified_package_ids,
         )
     except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return AppUpdateRegistryItemResponse(
         source_app=config.source_app,
         display_name=config.display_name,
@@ -4369,6 +4378,44 @@ def _installable_app_response_from_config(
         package_id=config.expected_package_id,
         install_status_hint=install_status_hint,
     )
+
+
+def _authorize_installable_app_registration(
+    *,
+    container: AppContainer,
+    authorization: str | None,
+    registration_token: str | None,
+) -> None:
+    expected = (container.settings.installable_apps_registration_token or "").strip()
+    if not expected:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "installable_app_registration_disabled",
+                "message": "Installable app registration token is not configured.",
+            },
+        )
+    provided = (registration_token or "").strip()
+    if not provided and authorization:
+        scheme, _, value = authorization.partition(" ")
+        if scheme.lower() == "bearer":
+            provided = value.strip()
+    if not provided:
+        raise HTTPException(
+            status_code=401,
+            detail={
+                "code": "missing_registration_token",
+                "message": "Registration token is required.",
+            },
+        )
+    if not secrets.compare_digest(provided, expected):
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "invalid_registration_token",
+                "message": "Registration token is invalid.",
+            },
+        )
 
 
 def _preserve_api_v1_prefix(request: Request, url: str) -> str:

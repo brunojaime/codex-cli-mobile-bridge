@@ -385,14 +385,73 @@ def test_generated_project_registers_installable_app_contract(
     content = script.read_text(encoding="utf-8")
     assert 'SOURCE_APP="${SOURCE_APP:-clinica-norte}"' in content
     assert 'DISPLAY_NAME="${DISPLAY_NAME:-Clinica Norte}"' in content
-    assert 'BRIDGE_URL="${BRIDGE_URL:-http://127.0.0.1:8000}"' in content
+    assert 'BRIDGE_URL="${BRIDGE_URL:-}"' in content
+    assert "BRIDGE_REGISTRATION_TOKEN" in content
+    assert "--dry-run" in content
+    assert "gh release view" in content
     assert 'POST "$BRIDGE_URL/installable-apps"' in content
+    assert 'Authorization: Bearer $BRIDGE_REGISTRATION_TOKEN' in content
     assert 'installable-apps/$SOURCE_APP' in content
+    assert "curl -fsSI" in content
     assert "REQUIRE_INSTALLABLE_APK" in content
 
     readme = (project / "README.md").read_text(encoding="utf-8")
     assert "scripts/register_installable_app.sh" in readme
+    assert "BRIDGE_REGISTRATION_TOKEN=<token>" in readme
     assert "/installable-apps/{sourceApp}" in readme
+
+
+def test_generated_register_installable_app_script_dry_run_uses_release_asset(
+    tmp_path: Path,
+) -> None:
+    manifest_plan = ProjectFactoryManifestService(
+        projects_root=tmp_path,
+    ).plan_manifest(
+        ProjectFactoryManifestInput(
+            name="Clinica Norte",
+            business_type="medical",
+            primary_goal="Reservar turnos",
+        )
+    )
+
+    ProjectFactoryGeneratorService().generate(manifest_plan)
+
+    project = tmp_path / "clinica-norte"
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_gh = fake_bin / "gh"
+    fake_gh.write_text(
+        "#!/usr/bin/env bash\n"
+        "if [[ \"$1 $2 $3\" == \"release view android-v0.1.0-build.1\" ]]; then\n"
+        "  printf 'clinica-norte.apk\\n'\n"
+        "  exit 0\n"
+        "fi\n"
+        "exit 2\n",
+        encoding="utf-8",
+    )
+    fake_gh.chmod(0o755)
+
+    completed = subprocess.run(
+        ["scripts/register_installable_app.sh", "--dry-run"],
+        cwd=project,
+        env={
+            **os.environ,
+            "PATH": f"{fake_bin}:{os.environ['PATH']}",
+            "BRIDGE_URL": "http://bridge.test",
+            "BRIDGE_REGISTRATION_TOKEN": "token",
+            "GITHUB_REPO": "brunojaime/clinica-norte",
+            "APP_RELEASE_TAG": "android-v0.1.0-build.1",
+            "LATEST_ASSET_NAME": "clinica-norte.apk",
+        },
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert '"sourceApp": "clinica-norte"' in completed.stdout
+    assert '"latestAssetName": "clinica-norte.apk"' in completed.stdout
+    assert "dry-run: release and asset were verified" in completed.stdout
 
 
 def test_generated_flutter_mock_seed_selector_is_mock_profile_only(

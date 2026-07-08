@@ -95,6 +95,7 @@ class Settings(BaseSettings):
     app_update_registry_path: str = str(Path(__file__).with_name("app_updates.json"))
     app_update_github_token: str | None = None
     app_update_github_timeout_seconds: float = 10.0
+    installable_apps_registration_token: str | None = None
     sdd_file_max_bytes: int = 256_000
     openai_api_key: str | None = None
     openai_base_url: str = "https://api.openai.com/v1"

@@ -480,7 +480,7 @@ class InstallableAppsResponse(BaseModel):
 
 
 class InstallableAppRegistrationRequest(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
     source_app: str = Field(..., min_length=1, max_length=120, alias="sourceApp")
     display_name: str = Field(..., min_length=1, max_length=160, alias="displayName")

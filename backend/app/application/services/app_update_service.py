@@ -5,7 +5,9 @@ import fnmatch
 import hashlib
 import json
 import re
+import shutil
 import threading
+import time
 from pathlib import Path
 from collections.abc import Iterator
 from typing import Any, Protocol
@@ -240,6 +242,12 @@ class AppUpdateRegistry:
             raise AppDisabledError(source_app)
         return config
 
+    def to_mapping(self) -> dict[str, Any]:
+        return {
+            config.source_app: _config_to_raw(config)
+            for config in self.list_configs()
+        }
+
 
 class AppUpdateService:
     def __init__(
@@ -278,34 +286,39 @@ class AppUpdateService:
         if self._registry_path is None:
             raise ValueError("App update registry path is not writable.")
         normalized_source_app = _validate_source_app(source_app)
-        _validate_repo(repo)
+        normalized_repo = _validate_repo(repo)
         _validate_channel(release_channel)
         if required_minimum_build is not None and required_minimum_build < 0:
             raise ValueError("requiredMinimumBuild must be greater than or equal to 0.")
+        normalized_package_id = (
+            _validate_android_package_id(expected_package_id)
+            if expected_package_id
+            else None
+        )
+        normalized_verified_package_ids = {
+            _non_empty_string(str(key), "verifiedPackageIds key"): (
+                _validate_android_package_id(str(value))
+            )
+            for key, value in (verified_package_ids or {}).items()
+        }
         entry = {
             "displayName": _non_empty_string(display_name, "displayName"),
-            "repo": repo,
+            "repo": normalized_repo,
             "releaseTagPattern": _non_empty_string(
-                release_tag_pattern,
+                _safe_pattern(release_tag_pattern, "releaseTagPattern"),
                 "releaseTagPattern",
             ),
-            "apkAssetPattern": _non_empty_string(apk_asset_pattern, "apkAssetPattern"),
+            "apkAssetPattern": _non_empty_string(
+                _safe_pattern(apk_asset_pattern, "apkAssetPattern"),
+                "apkAssetPattern",
+            ),
             "latestAssetName": (
                 _safe_asset_name(latest_asset_name) if latest_asset_name else None
             ),
             "requiredMinimumBuild": required_minimum_build,
             "releaseChannel": release_channel,
-            "expectedPackageId": (
-                _non_empty_string(expected_package_id, "expectedPackageId")
-                if expected_package_id
-                else None
-            ),
-            "verifiedPackageIds": {
-                _non_empty_string(str(key), "verifiedPackageIds key"): (
-                    _non_empty_string(str(value), "verifiedPackageIds value")
-                )
-                for key, value in (verified_package_ids or {}).items()
-            },
+            "expectedPackageId": normalized_package_id,
+            "verifiedPackageIds": normalized_verified_package_ids,
             "enabled": enabled,
         }
         config = _config_from_raw(normalized_source_app, entry)
@@ -439,15 +452,21 @@ class AppUpdateService:
             return {}
         if not self._registry_path.exists():
             return {}
-        payload = json.loads(self._registry_path.read_text(encoding="utf-8"))
-        if not isinstance(payload, dict):
-            raise ValueError("App update registry must be a JSON object.")
+        try:
+            payload = json.loads(self._registry_path.read_text(encoding="utf-8"))
+            if not isinstance(payload, dict):
+                raise ValueError("App update registry must be a JSON object.")
+        except (json.JSONDecodeError, ValueError):
+            self._backup_registry_file(suffix="corrupt")
+            return self._registry.to_mapping()
         return payload
 
     def _write_registry_payload(self, payload: dict[str, Any]) -> None:
         if self._registry_path is None:
             raise ValueError("App update registry path is not writable.")
         self._registry_path.parent.mkdir(parents=True, exist_ok=True)
+        if self._registry_path.exists():
+            self._backup_registry_file(suffix="bak")
         tmp_path = self._registry_path.with_name(f".{self._registry_path.name}.tmp")
         tmp_path.write_text(
             json.dumps(payload, indent=2, sort_keys=True) + "\n",
@@ -461,13 +480,25 @@ class AppUpdateService:
         mtime_ns = self._current_registry_mtime_ns()
         if mtime_ns == self._registry_mtime_ns:
             return
-        self._registry = AppUpdateRegistry.from_json_file(self._registry_path)
+        try:
+            self._registry = AppUpdateRegistry.from_json_file(self._registry_path)
+        except (json.JSONDecodeError, ValueError):
+            self._backup_registry_file(suffix="corrupt")
         self._registry_mtime_ns = mtime_ns
 
     def _current_registry_mtime_ns(self) -> int | None:
         if self._registry_path is None or not self._registry_path.exists():
             return None
         return self._registry_path.stat().st_mtime_ns
+
+    def _backup_registry_file(self, *, suffix: str) -> None:
+        if self._registry_path is None or not self._registry_path.exists():
+            return
+        timestamp = int(time.time() * 1000)
+        backup_path = self._registry_path.with_name(
+            f"{self._registry_path.name}.{suffix}.{timestamp}",
+        )
+        shutil.copy2(self._registry_path, backup_path)
 
     def _latest_valid_release(
         self,
@@ -570,6 +601,21 @@ def _config_from_raw(source_app: str, raw_config: dict[str, Any]) -> AppUpdateCo
     )
 
 
+def _config_to_raw(config: AppUpdateConfig) -> dict[str, Any]:
+    return {
+        "displayName": config.display_name,
+        "repo": config.repo,
+        "releaseTagPattern": config.release_tag_pattern,
+        "apkAssetPattern": config.apk_asset_pattern,
+        "latestAssetName": config.latest_asset_name,
+        "requiredMinimumBuild": config.required_minimum_build,
+        "releaseChannel": config.release_channel,
+        "expectedPackageId": config.expected_package_id,
+        "verifiedPackageIds": config.verified_package_ids or {},
+        "enabled": config.enabled,
+    }
+
+
 def _release_from_json(payload: Any) -> GitHubRelease:
     if not isinstance(payload, dict):
         raise GitHubReleaseError("Invalid GitHub release item.")
@@ -626,9 +672,11 @@ def _validate_source_app(source_app: str) -> str:
     return value
 
 
-def _validate_repo(repo: str) -> None:
-    if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo.strip()):
+def _validate_repo(repo: str) -> str:
+    value = repo.strip()
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", value):
         raise ValueError("repo must use the OWNER/REPO format.")
+    return value
 
 
 def _non_empty_string(value: str | None, field_name: str) -> str:
@@ -642,6 +690,26 @@ def _safe_asset_name(value: str) -> str:
     normalized = _non_empty_string(value, "latestAssetName")
     if not _is_safe_asset_name(normalized):
         raise ValueError("latestAssetName must be a safe file name.")
+    return normalized
+
+
+def _safe_pattern(value: str, field_name: str) -> str:
+    normalized = _non_empty_string(value, field_name)
+    if (
+        "/" in normalized
+        or "\\" in normalized
+        or "\x00" in normalized
+        or ".." in normalized
+    ):
+        raise ValueError(f"{field_name} must not contain path traversal.")
+    return normalized
+
+
+def _validate_android_package_id(value: str) -> str:
+    normalized = _non_empty_string(value, "packageId")
+    part = r"[A-Za-z][A-Za-z0-9_]*"
+    if not re.fullmatch(rf"{part}(\.{part})+", normalized):
+        raise ValueError("packageId must be a valid Android package id.")
     return normalized
 
 

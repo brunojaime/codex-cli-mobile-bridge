@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 import json
 import hashlib
 from pathlib import Path
@@ -898,6 +899,7 @@ def test_installable_app_registration_updates_registry_without_restart(
 
     response = client.post(
         "/installable-apps",
+        headers={"Authorization": "Bearer test-registration-token"},
         json={
             "sourceApp": "adjornos",
             "displayName": "Adjornos",
@@ -936,6 +938,7 @@ def test_installable_app_registration_rejects_unsafe_values(tmp_path: Path) -> N
 
     bad_source = client.post(
         "/installable-apps",
+        headers={"X-Bridge-Registration-Token": "test-registration-token"},
         json={
             "sourceApp": "../adjornos",
             "displayName": "Adjornos",
@@ -944,6 +947,7 @@ def test_installable_app_registration_rejects_unsafe_values(tmp_path: Path) -> N
     )
     bad_repo = client.post(
         "/installable-apps",
+        headers={"X-Bridge-Registration-Token": "test-registration-token"},
         json={
             "sourceApp": "adjornos",
             "displayName": "Adjornos",
@@ -951,8 +955,123 @@ def test_installable_app_registration_rejects_unsafe_values(tmp_path: Path) -> N
         },
     )
 
-    assert bad_source.status_code == 422
-    assert bad_repo.status_code == 422
+    assert bad_source.status_code == 400
+    assert bad_repo.status_code == 400
+
+
+def test_installable_app_registration_requires_configured_token(
+    tmp_path: Path,
+) -> None:
+    disabled_client = _build_app_update_client(
+        tmp_path / "disabled",
+        releases=[],
+        registration_token=None,
+    )
+    enabled_client = _build_app_update_client(
+        tmp_path / "enabled",
+        releases=[],
+        registration_token="expected-token",
+    )
+    payload = {
+        "sourceApp": "adjornos",
+        "displayName": "Adjornos",
+        "repo": "brunojaime/adjornos",
+    }
+
+    disabled = disabled_client.post("/installable-apps", json=payload)
+    missing = enabled_client.post("/installable-apps", json=payload)
+    invalid = enabled_client.post(
+        "/installable-apps",
+        headers={"Authorization": "Bearer wrong-token"},
+        json=payload,
+    )
+
+    assert disabled.status_code == 503
+    assert disabled.json()["detail"]["code"] == "installable_app_registration_disabled"
+    assert missing.status_code == 401
+    assert missing.json()["detail"]["code"] == "missing_registration_token"
+    assert invalid.status_code == 403
+    assert invalid.json()["detail"]["code"] == "invalid_registration_token"
+
+
+def test_installable_app_registration_rejects_invalid_metadata(
+    tmp_path: Path,
+) -> None:
+    client = _build_app_update_client(tmp_path, releases=[])
+    base_payload = {
+        "sourceApp": "adjornos",
+        "displayName": "Adjornos",
+        "repo": "brunojaime/adjornos",
+    }
+
+    invalid_package = client.post(
+        "/installable-apps",
+        headers={"X-Bridge-Registration-Token": "test-registration-token"},
+        json={**base_payload, "expectedPackageId": "bad-package"},
+    )
+    invalid_asset = client.post(
+        "/installable-apps",
+        headers={"X-Bridge-Registration-Token": "test-registration-token"},
+        json={**base_payload, "latestAssetName": "../app.apk"},
+    )
+    invalid_pattern = client.post(
+        "/installable-apps",
+        headers={"X-Bridge-Registration-Token": "test-registration-token"},
+        json={**base_payload, "apkAssetPattern": "../*.apk"},
+    )
+    arbitrary_url = client.post(
+        "/installable-apps",
+        headers={"X-Bridge-Registration-Token": "test-registration-token"},
+        json={**base_payload, "apkUrl": "https://github.com/example/app.apk"},
+    )
+
+    assert invalid_package.status_code == 400
+    assert invalid_asset.status_code == 400
+    assert invalid_pattern.status_code == 400
+    assert arbitrary_url.status_code == 422
+
+
+def test_installable_app_registration_is_idempotent_and_updates_metadata(
+    tmp_path: Path,
+) -> None:
+    client = _build_app_update_client(tmp_path, releases=[])
+    payload = {
+        "sourceApp": "adjornos",
+        "displayName": "Adjornos",
+        "repo": "brunojaime/adjornos",
+        "releaseTagPattern": "android-v*",
+        "apkAssetPattern": "adjornos*.apk",
+        "latestAssetName": "adjornos.apk",
+        "expectedPackageId": "com.adjornos.app",
+    }
+
+    first = client.post(
+        "/installable-apps",
+        headers={"X-Bridge-Registration-Token": "test-registration-token"},
+        json=payload,
+    )
+    second = client.post(
+        "/installable-apps",
+        headers={"X-Bridge-Registration-Token": "test-registration-token"},
+        json=payload,
+    )
+    updated = client.post(
+        "/installable-apps",
+        headers={"X-Bridge-Registration-Token": "test-registration-token"},
+        json={
+            **payload,
+            "releaseTagPattern": "android-v1.*",
+            "latestAssetName": "adjornos-v2.apk",
+        },
+    )
+
+    assert first.status_code == 201
+    assert second.status_code == 201
+    assert updated.status_code == 201
+    registry = json.loads((tmp_path / "app_updates.json").read_text(encoding="utf-8"))
+    assert list(key for key in registry if key == "adjornos") == ["adjornos"]
+    assert registry["adjornos"]["releaseTagPattern"] == "android-v1.*"
+    assert registry["adjornos"]["latestAssetName"] == "adjornos-v2.apk"
 
 
 def test_installable_app_registry_file_reload_does_not_require_restart(
@@ -989,6 +1108,56 @@ def test_installable_app_registry_file_reload_does_not_require_restart(
     assert response.status_code == 200
     assert response.json()["sourceApp"] == "adjornos"
     assert response.json()["available"] is True
+
+
+def test_installable_app_registry_recovers_from_corrupt_json_on_register(
+    tmp_path: Path,
+) -> None:
+    client = _build_app_update_client(tmp_path, releases=[])
+    registry_path = tmp_path / "app_updates.json"
+    registry_path.write_text("{not-json", encoding="utf-8")
+
+    response = client.post(
+        "/installable-apps",
+        headers={"X-Bridge-Registration-Token": "test-registration-token"},
+        json={
+            "sourceApp": "adjornos",
+            "displayName": "Adjornos",
+            "repo": "brunojaime/adjornos",
+        },
+    )
+
+    assert response.status_code == 201
+    registry = json.loads(registry_path.read_text(encoding="utf-8"))
+    assert "adjornos" in registry
+    backups = list(tmp_path.glob("app_updates.json.corrupt.*"))
+    assert backups
+
+
+def test_installable_app_registration_handles_basic_concurrency(
+    tmp_path: Path,
+) -> None:
+    client = _build_app_update_client(tmp_path, releases=[])
+
+    def register(source_app: str) -> int:
+        response = client.post(
+            "/installable-apps",
+            headers={"X-Bridge-Registration-Token": "test-registration-token"},
+            json={
+                "sourceApp": source_app,
+                "displayName": source_app.title(),
+                "repo": f"brunojaime/{source_app}",
+            },
+        )
+        return response.status_code
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        statuses = list(executor.map(register, ["adjornos-a", "adjornos-b"]))
+
+    assert statuses == [201, 201]
+    registry = json.loads((tmp_path / "app_updates.json").read_text(encoding="utf-8"))
+    assert "adjornos-a" in registry
+    assert "adjornos-b" in registry
 
 
 def test_app_update_apk_proxy_downloads_private_asset(tmp_path: Path) -> None:
@@ -1321,7 +1490,9 @@ def _build_app_update_client(
     release_channel: str = "stable",
     expected_package_id: str | None = None,
     verified_package_ids: dict[str, str] | None = None,
+    registration_token: str | None = "test-registration-token",
 ) -> TestClient:
+    tmp_path.mkdir(parents=True, exist_ok=True)
     registry_path = tmp_path / "app_updates.json"
     registry_path.write_text(
         json.dumps(
@@ -1346,6 +1517,7 @@ def _build_app_update_client(
         chat_store_backend="memory",
         audio_transcription_backend="disabled",
         app_update_registry_path=str(registry_path),
+        installable_apps_registration_token=registration_token,
     )
     app = create_app(settings)
     container = app.dependency_overrides[get_container]()

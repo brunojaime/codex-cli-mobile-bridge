@@ -245,6 +245,15 @@ remote creation or verification with authenticated tooling, push, release tag,
 GitHub release, APK asset verification, release metadata verification, and a
 clean worktree or explicit blocking report.
 
+After an APK release is published, the generated project must register itself in
+the Bridge installable-app catalog through the protected Bridge endpoint
+`POST /installable-apps`. The Bridge must require
+`INSTALLABLE_APPS_REGISTRATION_TOKEN` and must keep install URLs routed through
+Bridge APK proxy endpoints rather than accepting arbitrary external APK URLs.
+The generated `scripts/register_installable_app.sh` must verify the GitHub
+release asset first, send the registration token by header, then confirm
+`GET /installable-apps/{sourceApp}` returns an installable APK proxy URL.
+
 ## Implemented API Surface
 
 - `GET /project-factory/options`
