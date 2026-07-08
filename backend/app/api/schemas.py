@@ -305,6 +305,7 @@ class WebPreviewResponse(BaseModel):
     manifest_path: str
     status: str
     preview_url: str
+    health_url: str | None = None
     plan_hash: str
     planned_resources: list[dict[str, Any]]
     applied_resources: list[dict[str, Any]]

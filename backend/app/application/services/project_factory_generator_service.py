@@ -200,7 +200,10 @@ def _project_files(manifest: dict[str, Any]) -> dict[str, str]:
         "deploy/web-preview/wrangler.toml.example": _web_preview_wrangler_example(
             slug,
         ),
-        "deploy/web-preview/worker/src/index.js": _web_preview_worker_js(),
+        "deploy/web-preview/worker/src/index.js": _web_preview_worker_js(slug, name),
+        "deploy/web-preview/worker/local_preview_test.mjs": (
+            _web_preview_worker_harness_js(slug)
+        ),
         "specs/001-product-foundation/spec.md": _initial_spec(
             name,
             business_type,
@@ -473,11 +476,15 @@ def _web_preview_manifest_payload(slug: str, name: str) -> dict[str, Any]:
         "display_name": name,
         "stable_url": f"https://preview.nienfos.com/{slug}",
         "runtime": {
+            "type": "cloudflare_worker_assets",
             "default_profile": "real",
             "allowed_profiles": ["real", "staging", "preview", "mock"],
             "api_runtime": "cloudflare_preview",
             "api_base_url": "https://preview.nienfos.com",
             "app_slug": slug,
+            "health_path": "/__preview/health",
+            "asset_binding": "ASSETS",
+            "spa_fallback": "index.html",
             "mock_preview_requires_opt_in": True,
         },
         "build": {
@@ -486,6 +493,12 @@ def _web_preview_manifest_payload(slug: str, name: str) -> dict[str, Any]:
             "entrypoint": "apps/mobile/lib/main.dart",
             "script": "scripts/build_web_preview.sh",
             "validation_script": "scripts/validate_web_preview.sh",
+            "asset_entrypoint": "index.html",
+            "required_files": [
+                "index.html",
+                "manifest.json",
+                "flutter_bootstrap.js",
+            ],
         },
         "cloudflare": {
             "provider": "cloudflare",
@@ -506,8 +519,14 @@ def _web_preview_manifest_payload(slug: str, name: str) -> dict[str, Any]:
             ],
             "secrets_in_repo": False,
         },
+        "expected_routes": [
+            f"/{slug}/",
+            f"/{slug}/__preview/health",
+            f"/{slug}/apps/{slug}/config",
+            f"/{slug}/dashboard",
+        ],
         "preview_api_v1": {
-            "health": "/health",
+            "health": "/__preview/health",
             "app_config": f"/apps/{slug}/config",
             "auth": ["/auth/login", "/auth/logout", "/auth/me"],
             "admin": ["/admin/users", "/admin/roles"],
@@ -583,59 +602,273 @@ routes = [
 binding = "PREVIEW_DB"
 database_name = "nienfos-preview"
 database_id = "set-in-cloudflare-dashboard-or-doctor-output"
+
+[assets]
+binding = "ASSETS"
+directory = "../../build/web-preview/{slug}"
+not_found_handling = "single-page-application"
 """
 
 
-def _web_preview_worker_js() -> str:
-    return """function json(payload, init = {}) {
+def _web_preview_worker_js(slug: str, name: str) -> str:
+    template = """const SOURCE_APP = '__SOURCE_APP__';
+const DISPLAY_NAME = __DISPLAY_NAME__;
+const DEFAULT_RUNTIME_PROFILE = 'real';
+const STATIC_ASSET_EXTENSIONS = new Set([
+  '.avif',
+  '.bin',
+  '.css',
+  '.gif',
+  '.ico',
+  '.jpg',
+  '.js',
+  '.json',
+  '.map',
+  '.otf',
+  '.png',
+  '.svg',
+  '.wasm',
+  '.webp',
+  '.woff',
+  '.woff2',
+]);
+
+function json(payload, init = {{}}) {{
   return new Response(JSON.stringify(payload), {
     ...init,
     headers: {
       'content-type': 'application/json; charset=utf-8',
-      ...(init.headers || {}),
-    },
+      ...securityHeaders(),
+      ...(init.headers || {{}}),
+    }},
   });
 }
 
 function appSlugFromPath(pathname) {
   const parts = pathname.split('/').filter(Boolean);
-  return parts.length > 0 ? parts[0] : null;
+  return parts.length > 0 ? parts[0] : SOURCE_APP;
+}
+
+function stripAppPrefix(pathname) {
+  const prefix = `/${SOURCE_APP}`;
+  if (pathname === prefix) {
+    return '/';
+  }
+  if (pathname.startsWith(`${prefix}/`)) {
+    return pathname.slice(prefix.length) || '/';
+  }
+  return pathname || '/';
+}
+
+function contentTypeFor(pathname) {
+  const clean = pathname.toLowerCase();
+  if (clean.endsWith('.html')) return 'text/html; charset=utf-8';
+  if (clean.endsWith('.js')) return 'application/javascript; charset=utf-8';
+  if (clean.endsWith('.css')) return 'text/css; charset=utf-8';
+  if (clean.endsWith('.json') || clean.endsWith('.webmanifest')) return 'application/json; charset=utf-8';
+  if (clean.endsWith('.svg')) return 'image/svg+xml';
+  if (clean.endsWith('.png')) return 'image/png';
+  if (clean.endsWith('.jpg') || clean.endsWith('.jpeg')) return 'image/jpeg';
+  if (clean.endsWith('.webp')) return 'image/webp';
+  if (clean.endsWith('.wasm')) return 'application/wasm';
+  if (clean.endsWith('.woff2')) return 'font/woff2';
+  if (clean.endsWith('.woff')) return 'font/woff';
+  if (clean.endsWith('.otf')) return 'font/otf';
+  return 'application/octet-stream';
+}
+
+function securityHeaders() {
+  return {
+    'x-content-type-options': 'nosniff',
+    'referrer-policy': 'strict-origin-when-cross-origin',
+    'permissions-policy': 'camera=(), microphone=(), geolocation=()',
+    'content-security-policy': "default-src 'self'; connect-src 'self' https://preview.nienfos.com; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self' 'wasm-unsafe-eval'; font-src 'self' data:;",
+  };
+}
+
+function cacheControlFor(pathname) {
+  if (pathname === '/' || pathname.endsWith('/index.html')) {
+    return 'no-cache, no-store, must-revalidate';
+  }
+  if (/[.-][a-f0-9]{8,}\\./i.test(pathname)) {
+    return 'public, max-age=31536000, immutable';
+  }
+  return 'public, max-age=3600';
+}
+
+function isStaticAssetPath(pathname) {
+  const lastSegment = pathname.split('/').pop() || '';
+  if (pathname.startsWith('/assets/') || pathname.startsWith('/canvaskit/') || pathname.startsWith('/icons/')) {
+    return true;
+  }
+  const dot = lastSegment.lastIndexOf('.');
+  if (dot === -1) {
+    return false;
+  }
+  return STATIC_ASSET_EXTENSIONS.has(lastSegment.slice(dot).toLowerCase());
+}
+
+async function fetchAsset(env, request, pathname) {
+  if (!env.ASSETS || typeof env.ASSETS.fetch !== 'function') {
+    return null;
+  }
+  const assetUrl = new URL(request.url);
+  assetUrl.pathname = pathname;
+  return env.ASSETS.fetch(new Request(assetUrl.toString(), request));
+}
+
+async function assetResponse(env, request, pathname) {
+  const response = await fetchAsset(env, request, pathname);
+  if (!response || response.status === 404) {
+    return null;
+  }
+  const headers = new Headers(response.headers);
+  if (!headers.has('content-type')) {
+    headers.set('content-type', contentTypeFor(pathname));
+  }
+  headers.set('cache-control', cacheControlFor(pathname));
+  for (const [key, value] of Object.entries(securityHeaders())) {
+    headers.set(key, value);
+  }
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
+
+async function serveSpa(env, request) {
+  const response = await assetResponse(env, request, '/index.html');
+  if (response) {
+    return response;
+  }
+  return json({
+    error: {
+      code: 'preview_assets_unavailable',
+      message: 'Preview assets binding is missing or index.html was not found.',
+    },
+  }, { status: 503 });
 }
 
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     const appSlug = appSlugFromPath(url.pathname);
+    const assetPath = stripAppPrefix(url.pathname);
 
-    if (url.pathname === '/health' || url.pathname.endsWith('/health')) {
+    if (request.method === 'GET' && (assetPath === '/__preview/health' || url.pathname === '/__preview/health')) {
       return json({
         status: 'ok',
+        source_app: SOURCE_APP,
+        app_slug: appSlug || SOURCE_APP,
+        display_name: DISPLAY_NAME,
+        runtime_profile: env.APP_RUNTIME_PROFILE || DEFAULT_RUNTIME_PROFILE,
         runtime: 'cloudflare_preview',
+        runtime_type: 'cloudflare_worker_assets',
+        build_id: env.PREVIEW_BUILD_ID || null,
+        version: env.PREVIEW_VERSION || null,
+        commit: env.PREVIEW_COMMIT_SHA || null,
+        deployed_at: env.PREVIEW_DEPLOYED_AT || null,
         d1_bound: Boolean(env.PREVIEW_DB),
+        assets_bound: Boolean(env.ASSETS),
       });
     }
 
-    const configMatch = url.pathname.match(/^\\/apps\\/([^/]+)\\/config\\/?$/);
+    const configMatch = assetPath.match(/^\\/apps\\/([^/]+)\\/config\\/?$/);
     if (request.method === 'GET' && configMatch) {
       return json({
         app_slug: configMatch[1],
-        runtime_profile: 'real',
+        source_app: SOURCE_APP,
+        display_name: DISPLAY_NAME,
+        runtime_profile: env.APP_RUNTIME_PROFILE || DEFAULT_RUNTIME_PROFILE,
         api_runtime: 'cloudflare_preview',
+        api_base_url: 'https://preview.nienfos.com',
+        health_path: '/__preview/health',
       });
     }
 
-    if (request.method === 'GET' && appSlug) {
+    if (request.method !== 'GET' && request.method !== 'HEAD') {
+      return json({ error: { code: 'method_not_allowed', message: 'Method not allowed' } }, { status: 405 });
+    }
+
+    if (isStaticAssetPath(assetPath)) {
+      const response = await assetResponse(env, request, assetPath);
+      if (response) {
+        return response;
+      }
       return json({
-        app_slug: appSlug,
-        runtime: 'cloudflare_preview',
-        message: 'Flutter web artifact should be served by Pages for this route.',
-      });
+        error: {
+          code: 'asset_not_found',
+          message: `Static asset not found: ${assetPath}`,
+        },
+      }, { status: 404 });
     }
 
-    return json({ error: { code: 'not_found', message: 'Not found' } }, { status: 404 });
+    return serveSpa(env, request);
   },
 };
 """
+    return template.replace("__SOURCE_APP__", slug).replace(
+        "__DISPLAY_NAME__",
+        repr(name),
+    ).replace("{{", "{").replace("}}", "}")
+
+
+def _web_preview_worker_harness_js(slug: str) -> str:
+    template = """import assert from 'node:assert/strict';
+import {{ readFile }} from 'node:fs/promises';
+
+const workerSource = await readFile(new URL('./src/index.js', import.meta.url), 'utf8');
+const workerModule = await import(
+  `data:text/javascript;base64,${{Buffer.from(workerSource).toString('base64')}}`
+);
+const worker = workerModule.default;
+
+function response(body, init = {{}}) {{
+  return new Response(body, init);
+}}
+
+const assets = new Map([
+  ['/index.html', response('<!doctype html><div id="flt"></div>', {{ headers: {{ 'content-type': 'text/html' }} }})],
+  ['/flutter_bootstrap.js', response('console.log("bootstrap");', {{ headers: {{ 'content-type': 'application/javascript' }} }})],
+  ['/assets/AssetManifest.bin', response('asset-manifest')],
+]);
+
+const env = {{
+  APP_RUNTIME_PROFILE: 'real',
+  PREVIEW_BUILD_ID: 'local-harness',
+  PREVIEW_COMMIT_SHA: 'test-commit',
+  ASSETS: {{
+    async fetch(request) {{
+      const url = new URL(request.url);
+      return assets.get(url.pathname) || response('missing', {{ status: 404 }});
+    }},
+  }},
+}};
+
+async function fetchPath(path) {{
+  return worker.fetch(new Request(`https://preview.nienfos.com${{path}}`), env, {{}});
+}}
+
+const health = await fetchPath('/__SOURCE_APP__/__preview/health');
+assert.equal(health.status, 200);
+assert.equal((await health.json()).source_app, '__SOURCE_APP__');
+
+const asset = await fetchPath('/__SOURCE_APP__/flutter_bootstrap.js');
+assert.equal(asset.status, 200);
+assert.match(asset.headers.get('content-type') || '', /javascript/);
+
+const spa = await fetchPath('/__SOURCE_APP__/dashboard/orders');
+assert.equal(spa.status, 200);
+assert.match(spa.headers.get('cache-control') || '', /no-cache/);
+
+const missingAsset = await fetchPath('/__SOURCE_APP__/assets/missing.png');
+assert.equal(missingAsset.status, 404);
+assert.equal((await missingAsset.json()).error.code, 'asset_not_found');
+
+console.log('worker local preview harness passed');
+"""
+    return template.replace("__SOURCE_APP__", slug).replace("{{", "{").replace("}}", "}")
 
 
 def _build_web_preview_script(slug: str) -> str:
@@ -758,6 +991,7 @@ fail() {{
 ROOT_DIR="$(cd "$(dirname "${{BASH_SOURCE[0]}}")/.." && pwd)"
 MANIFEST="$ROOT_DIR/deploy/web-preview/web-preview-manifest.yaml"
 WORKER="$ROOT_DIR/deploy/web-preview/worker/src/index.js"
+WORKER_HARNESS="$ROOT_DIR/deploy/web-preview/worker/local_preview_test.mjs"
 WRANGLER_EXAMPLE="$ROOT_DIR/deploy/web-preview/wrangler.toml.example"
 APP_SLUG="${{APP_SLUG:-{slug}}}"
 APP_RUNTIME_PROFILE="${{APP_RUNTIME_PROFILE:-real}}"
@@ -784,25 +1018,76 @@ fi
 [[ "$API_RUNTIME" == "cloudflare_preview" ]] || fail "API_RUNTIME must be cloudflare_preview"
 [[ -f "$MANIFEST" ]] || fail "missing deploy/web-preview/web-preview-manifest.yaml"
 [[ -f "$WORKER" ]] || fail "missing deploy/web-preview/worker/src/index.js"
+[[ -f "$WORKER_HARNESS" ]] || fail "missing deploy/web-preview/worker/local_preview_test.mjs"
 [[ -f "$WRANGLER_EXAMPLE" ]] || fail "missing deploy/web-preview/wrangler.toml.example"
 [[ -f "$ROOT_DIR/apps/mobile/pubspec.yaml" ]] || fail "missing apps/mobile/pubspec.yaml"
 [[ -f "$ROOT_DIR/apps/mobile/lib/main.dart" ]] || fail "missing apps/mobile/lib/main.dart"
 
-grep -q '^source_app: {slug}$' "$MANIFEST" || fail "manifest source_app mismatch"
-grep -Eq '^stable_url: "?https://preview\\.nienfos\\.com/{slug}"?$' "$MANIFEST" || fail "manifest stable_url mismatch"
-grep -q 'api_runtime: cloudflare_preview' "$MANIFEST" || fail "manifest api runtime missing"
-grep -q 'default_profile: real' "$MANIFEST" || fail "manifest default profile must be real"
-grep -q 'worker_name: nienfos-preview-runtime' "$MANIFEST" || fail "manifest worker name mismatch"
-grep -q 'd1_database: nienfos-preview' "$MANIFEST" || fail "manifest D1 database mismatch"
+if ! command -v python3 >/dev/null 2>&1; then
+  fail "python3 is required to validate web-preview-manifest.yaml"
+fi
+
+python3 - "$MANIFEST" "$APP_SLUG" <<'PY'
+import sys
+try:
+    import yaml
+except ModuleNotFoundError as exc:
+    raise SystemExit("PyYAML is required to validate web-preview-manifest.yaml") from exc
+
+manifest_path, expected_slug = sys.argv[1], sys.argv[2]
+with open(manifest_path, encoding="utf-8") as handle:
+    payload = yaml.safe_load(handle)
+if not isinstance(payload, dict):
+    raise SystemExit("manifest must be a YAML object")
+
+runtime = payload.get("runtime")
+build = payload.get("build")
+cloudflare = payload.get("cloudflare")
+resources = cloudflare.get("resources") if isinstance(cloudflare, dict) else None
+expected_routes = payload.get("expected_routes")
+checks = (
+    ("source_app", payload.get("source_app"), expected_slug),
+    ("stable_url", payload.get("stable_url"), "https://preview.nienfos.com/" + expected_slug),
+    ("runtime.type", runtime.get("type") if isinstance(runtime, dict) else None, "cloudflare_worker_assets"),
+    ("runtime.api_runtime", runtime.get("api_runtime") if isinstance(runtime, dict) else None, "cloudflare_preview"),
+    ("runtime.default_profile", runtime.get("default_profile") if isinstance(runtime, dict) else None, "real"),
+    ("runtime.health_path", runtime.get("health_path") if isinstance(runtime, dict) else None, "/__preview/health"),
+    ("runtime.asset_binding", runtime.get("asset_binding") if isinstance(runtime, dict) else None, "ASSETS"),
+    ("build.output_dir", build.get("output_dir") if isinstance(build, dict) else None, "build/web-preview/" + expected_slug),
+    ("build.asset_entrypoint", build.get("asset_entrypoint") if isinstance(build, dict) else None, "index.html"),
+    ("cloudflare.worker_name", resources.get("worker_name") if isinstance(resources, dict) else None, "nienfos-preview-runtime"),
+    ("cloudflare.d1_database", resources.get("d1_database") if isinstance(resources, dict) else None, "nienfos-preview"),
+)
+for label, actual, expected in checks:
+    if actual != expected:
+        raise SystemExit("%s mismatch: expected %r, got %r" % (label, expected, actual))
+if not isinstance(expected_routes, list) or "/" + expected_slug + "/__preview/health" not in expected_routes:
+    raise SystemExit("expected_routes must include the preview health route")
+PY
+
 grep -q 'export default' "$WORKER" || fail "worker module export missing"
-grep -q '/health' "$WORKER" || fail "worker health route missing"
+grep -q '/__preview/health' "$WORKER" || fail "worker health route missing"
+grep -q 'ASSETS' "$WORKER" || fail "worker asset binding missing"
+grep -q 'asset_not_found' "$WORKER" || fail "worker asset 404 missing"
+grep -q 'content-security-policy' "$WORKER" || fail "worker security headers missing"
 grep -q 'PREVIEW_DB' "$WRANGLER_EXAMPLE" || fail "wrangler D1 binding missing"
+grep -q 'binding = "ASSETS"' "$WRANGLER_EXAMPLE" || fail "wrangler assets binding missing"
 grep -q 'APP_RUNTIME_PROFILE' "$ROOT_DIR/apps/mobile/lib/main.dart" || fail "Flutter runtime profile define missing"
 grep -q 'API_RUNTIME' "$ROOT_DIR/apps/mobile/lib/main.dart" || fail "Flutter API runtime define missing"
 grep -q 'APP_SLUG' "$ROOT_DIR/apps/mobile/lib/main.dart" || fail "Flutter app slug define missing"
 
+if command -v node >/dev/null 2>&1; then
+  node --check --input-type=module < "$WORKER" >/dev/null
+  node "$WORKER_HARNESS" >/dev/null
+else
+  printf 'node not found; skipping Worker syntax and local harness validation\\n'
+fi
+
 if [[ "$REQUIRE_WEB_BUILD_OUTPUT" == "true" ]]; then
   [[ -f "$WEB_PREVIEW_BUILD_DIR/index.html" ]] || fail "missing web build output index.html at $WEB_PREVIEW_BUILD_DIR"
+  [[ -f "$WEB_PREVIEW_BUILD_DIR/manifest.json" ]] || fail "missing web build output manifest.json at $WEB_PREVIEW_BUILD_DIR"
+  [[ -f "$WEB_PREVIEW_BUILD_DIR/flutter_bootstrap.js" ]] || fail "missing web build output flutter_bootstrap.js at $WEB_PREVIEW_BUILD_DIR"
+  [[ -d "$WEB_PREVIEW_BUILD_DIR/assets" ]] || fail "missing web build output assets directory at $WEB_PREVIEW_BUILD_DIR/assets"
 else
   printf 'web build output check skipped; set REQUIRE_WEB_BUILD_OUTPUT=true after scripts/build_web_preview.sh\\n'
 fi

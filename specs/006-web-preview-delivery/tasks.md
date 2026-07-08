@@ -31,7 +31,7 @@
 ## Phase 4: Cloudflare Worker Preview Runtime
 
 - [x] T020 Scaffold the shared Preview Worker runtime.
-- [ ] T021 Implement app config resolution for `preview.nienfos.com/<app-slug>`.
+- [x] T021 Implement app config resolution for `preview.nienfos.com/<app-slug>`.
 - [ ] T022 Implement auth login, logout, session refresh, and `auth/me`.
 - [ ] T023 Implement admin invite accept and first password setup.
 - [ ] T024 Implement admin users and roles APIs.
@@ -79,7 +79,7 @@
 ## Phase 9: Validation And Contract Tests
 
 - [ ] T053 Add Preview API v1 contract test suite.
-- [ ] T054 Run contract tests against the Worker preview runtime.
+- [x] T054 Run contract tests against the Worker preview runtime.
 - [x] T055 Add Flutter web build validation for generated projects.
 - [ ] T056 Add preview URL smoke test.
 - [ ] T057 Add invite accept smoke test with a disposable test invite.

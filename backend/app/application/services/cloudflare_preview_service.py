@@ -487,6 +487,8 @@ class CloudflareProvisioningPlanner:
             d1_name=self._settings.preview_d1_database_name.strip(),
             pages_project=self._settings.preview_pages_project_name.strip(),
             r2_bucket=(self._settings.preview_r2_bucket_name or "").strip(),
+            runtime_type="cloudflare_worker_assets",
+            health_path="/__preview/health",
         )
 
     def plan_for_manifest(self, manifest: dict[str, Any]) -> dict[str, Any]:
@@ -496,6 +498,8 @@ class CloudflareProvisioningPlanner:
         resources = cloudflare.get("resources")
         if not isinstance(resources, dict):
             raise ValueError("web preview manifest must include cloudflare resources")
+        runtime = manifest.get("runtime")
+        runtime = runtime if isinstance(runtime, dict) else {}
         return self._plan(
             base_domain=str(cloudflare.get("base_domain") or ""),
             worker_name=str(resources.get("worker_name") or ""),
@@ -504,6 +508,8 @@ class CloudflareProvisioningPlanner:
             r2_bucket=str(resources.get("r2_bucket") or "")
             if resources.get("r2_bucket") is not None
             else "",
+            runtime_type=str(runtime.get("type") or "cloudflare_worker_assets"),
+            health_path=str(runtime.get("health_path") or "/__preview/health"),
         )
 
     def _plan(
@@ -514,6 +520,8 @@ class CloudflareProvisioningPlanner:
         d1_name: str,
         pages_project: str,
         r2_bucket: str,
+        runtime_type: str,
+        health_path: str,
     ) -> dict[str, Any]:
         resources = [
             {
@@ -562,6 +570,8 @@ class CloudflareProvisioningPlanner:
             "dry_run": True,
             "provider": "cloudflare",
             "base_domain": base_domain,
+            "runtime_type": runtime_type,
+            "health_path": health_path,
             "resources": resources,
             "side_effects": [],
         }

@@ -81,6 +81,8 @@ class WebPreviewDeployService:
         cloudflare_plan = planner.plan_for_manifest(manifest)
         preview_id = _preview_id(source_app)
         plan_hash = _plan_hash(manifest, cloudflare_plan)
+        health_path = str(cloudflare_plan.get("health_path") or "/__preview/health")
+        preview_url = str(manifest.get("stable_url") or "")
         payload = {
             "kind": "codex.webPreview",
             "version": 1,
@@ -89,7 +91,8 @@ class WebPreviewDeployService:
             "project_path": str(project_path),
             "manifest_path": str(manifest_path),
             "status": "planned",
-            "preview_url": str(manifest.get("stable_url") or ""),
+            "preview_url": preview_url,
+            "health_url": f"{preview_url.rstrip('/')}{health_path}",
             "plan_hash": plan_hash,
             "planned_resources": cloudflare_plan["resources"],
             "applied_resources": [],
@@ -492,6 +495,8 @@ def _plan_hash(manifest: dict[str, Any], cloudflare_plan: dict[str, Any]) -> str
         "runtime": manifest.get("runtime"),
         "cloudflare": manifest.get("cloudflare"),
         "resources": cloudflare_plan.get("resources"),
+        "runtime_type": cloudflare_plan.get("runtime_type"),
+        "health_path": cloudflare_plan.get("health_path"),
     }
     encoded = json.dumps(material, sort_keys=True, separators=(",", ":")).encode()
     return hashlib.sha256(encoded).hexdigest()

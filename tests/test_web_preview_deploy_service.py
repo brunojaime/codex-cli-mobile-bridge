@@ -38,6 +38,9 @@ def test_web_preview_plan_is_stable_and_persisted(tmp_path: Path) -> None:
     assert first["preview_id"] == "wp-clinica-norte"
     assert first["plan_hash"] == second["plan_hash"]
     assert first["preview_url"] == "https://preview.nienfos.com/clinica-norte"
+    assert first["health_url"] == (
+        "https://preview.nienfos.com/clinica-norte/__preview/health"
+    )
     assert (tmp_path / "state/previews/wp-clinica-norte.json").is_file()
 
 
@@ -219,6 +222,7 @@ def test_web_preview_deploy_api_plan_status_list_and_apply_gate(
     assert blocked_response.json()["detail"]["code"] == "apply_disabled"
     assert status_response.status_code == 200
     assert status_response.json()["preview_id"] == "wp-clinica-norte"
+    assert status_response.json()["health_url"].endswith("/__preview/health")
     assert list_response.status_code == 200
     assert list_response.json()["previews"][0]["preview_id"] == "wp-clinica-norte"
     assert missing_response.status_code == 404
@@ -271,8 +275,12 @@ def _generated_project(tmp_path: Path) -> Path:
 
 def _write_web_build_output(project: Path) -> None:
     build_dir = project / "build/web-preview/clinica-norte"
-    build_dir.mkdir(parents=True, exist_ok=True)
+    assets_dir = build_dir / "assets"
+    assets_dir.mkdir(parents=True, exist_ok=True)
     (build_dir / "index.html").write_text("<!doctype html><title>Preview</title>\n")
+    (build_dir / "manifest.json").write_text("{}\n")
+    (build_dir / "flutter_bootstrap.js").write_text("void 0;\n")
+    (assets_dir / "AssetManifest.bin").write_bytes(b"assets")
 
 
 def _settings(

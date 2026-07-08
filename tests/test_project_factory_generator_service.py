@@ -628,25 +628,49 @@ def test_generated_web_preview_bundle_is_validable_locally(tmp_path: Path) -> No
     build_script = project / "scripts/build_web_preview.sh"
     validate_script = project / "scripts/validate_web_preview.sh"
     worker = project / "deploy/web-preview/worker/src/index.js"
+    worker_harness = project / "deploy/web-preview/worker/local_preview_test.mjs"
     wrangler = project / "deploy/web-preview/wrangler.toml.example"
     manifest = project / "deploy/web-preview/web-preview-manifest.yaml"
     assert build_script.stat().st_mode & stat.S_IXUSR
     assert validate_script.stat().st_mode & stat.S_IXUSR
     assert "flutter build web" in build_script.read_text(encoding="utf-8")
     assert "APP_RUNTIME_PROFILE" in build_script.read_text(encoding="utf-8")
-    assert "/health" in worker.read_text(encoding="utf-8")
+    worker_text = worker.read_text(encoding="utf-8")
+    assert "/__preview/health" in worker_text
+    assert "ASSETS.fetch" in worker_text
+    assert "asset_not_found" in worker_text
+    assert "content-security-policy" in worker_text
+    assert "serveSpa" in worker_text
+    assert worker_harness.is_file()
     assert "PREVIEW_DB" in wrangler.read_text(encoding="utf-8")
+    assert 'binding = "ASSETS"' in wrangler.read_text(encoding="utf-8")
+    if shutil.which("node"):
+        completed = subprocess.run(
+            ["node", "deploy/web-preview/worker/local_preview_test.mjs"],
+            cwd=project,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        assert completed.returncode == 0, completed.stdout + completed.stderr
+        assert "worker local preview harness passed" in completed.stdout
 
     yaml = pytest.importorskip("yaml")
     payload = yaml.safe_load(manifest.read_text(encoding="utf-8"))
     assert payload["source_app"] == "clinica-norte"
     assert payload["stable_url"] == "https://preview.nienfos.com/clinica-norte"
+    assert payload["runtime"]["type"] == "cloudflare_worker_assets"
     assert payload["runtime"]["default_profile"] == "real"
     assert payload["runtime"]["api_runtime"] == "cloudflare_preview"
+    assert payload["runtime"]["health_path"] == "/__preview/health"
+    assert payload["runtime"]["asset_binding"] == "ASSETS"
+    assert payload["build"]["asset_entrypoint"] == "index.html"
+    assert "flutter_bootstrap.js" in payload["build"]["required_files"]
     assert payload["cloudflare"]["resources"]["worker_name"] == (
         "nienfos-preview-runtime"
     )
     assert payload["cloudflare"]["resources"]["d1_database"] == "nienfos-preview"
+    assert "/clinica-norte/__preview/health" in payload["expected_routes"]
 
 
 def test_generated_web_preview_validation_accepts_real_and_blocks_mock(
@@ -674,6 +698,20 @@ def test_generated_web_preview_validation_accepts_real_and_blocks_mock(
     )
     assert real.returncode == 0, real.stdout + real.stderr
     assert "web preview validation completed" in real.stdout
+    build_output = project / "build/web-preview/clinica-norte"
+    (build_output / "assets").mkdir(parents=True)
+    (build_output / "index.html").write_text("<!doctype html>", encoding="utf-8")
+    (build_output / "manifest.json").write_text("{}", encoding="utf-8")
+    (build_output / "flutter_bootstrap.js").write_text("void 0;", encoding="utf-8")
+    strict = subprocess.run(
+        ["scripts/validate_web_preview.sh"],
+        cwd=project,
+        env={**os.environ, "REQUIRE_WEB_BUILD_OUTPUT": "true"},
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert strict.returncode == 0, strict.stdout + strict.stderr
 
     mock = subprocess.run(
         ["scripts/validate_web_preview.sh"],
