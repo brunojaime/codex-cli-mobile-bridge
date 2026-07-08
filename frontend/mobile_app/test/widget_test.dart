@@ -249,8 +249,6 @@ void main() {
     expect(find.textContaining('# Bridge Contract'), findsNothing);
     await tester.ensureVisible(find.text('Spec trace').first);
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Spec trace').first);
-    await tester.pumpAndSettle();
     await tester.tap(find.text('Plan: plan.md').last);
     await tester.pumpAndSettle();
     expect(find.textContaining('# Plan'), findsNothing);
@@ -263,8 +261,6 @@ void main() {
     expect(find.text('Planned'), findsWidgets);
     expect(find.textContaining('# Tasks'), findsNothing);
     await tester.ensureVisible(find.text('Spec trace').first);
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Spec trace').first);
     await tester.pumpAndSettle();
     await tester.tap(find.text('Slice: 01-slice.md').last);
     await tester.pumpAndSettle();
@@ -394,8 +390,6 @@ void main() {
     expect(find.textContaining('# Bridge Contract'), findsNothing);
     await tester.ensureVisible(find.text('Spec trace').first);
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Spec trace').first);
-    await tester.pumpAndSettle();
     await tester.tap(find.text('Plan: plan.md').last);
     await tester.pumpAndSettle();
     expect(find.textContaining('# Plan'), findsNothing);
@@ -406,8 +400,6 @@ void main() {
     expect(find.text('Planned'), findsWidgets);
     expect(find.textContaining('# Tasks'), findsNothing);
     await tester.ensureVisible(find.text('Spec trace').first);
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Spec trace').first);
     await tester.pumpAndSettle();
     await tester.tap(find.text('Slice: 01-slice.md').last);
     await tester.pumpAndSettle();

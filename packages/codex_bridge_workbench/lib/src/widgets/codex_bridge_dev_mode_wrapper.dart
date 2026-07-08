@@ -65,6 +65,26 @@ class _CodexBridgeDevModeWrapperState extends State<CodexBridgeDevModeWrapper> {
     if (!widget.enabled) {
       return widget.child;
     }
+    return HeroControllerScope.none(
+      child: Navigator(
+        onGenerateRoute: (settings) {
+          return PageRouteBuilder<void>(
+            settings: settings,
+            opaque: false,
+            pageBuilder: (context, animation, secondaryAnimation) {
+              return _buildEnabledStack();
+            },
+            transitionsBuilder:
+                (context, animation, secondaryAnimation, child) {
+                  return child;
+                },
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildEnabledStack() {
     return Stack(
       children: <Widget>[
         Banner(

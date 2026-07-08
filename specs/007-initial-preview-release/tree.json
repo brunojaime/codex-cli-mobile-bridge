@@ -1,0 +1,188 @@
+{
+  "spec": {
+    "file": "spec.md",
+    "diagrams": ["diagrams/initial-preview-release-flow.mmd"]
+  },
+  "plans": [
+    {
+      "id": "release-mode-contract",
+      "number": 1,
+      "title": "Release Mode Contract",
+      "status": "planned",
+      "description": "Define preview, real, and mock first-release modes and readiness semantics.",
+      "file": "plan.md",
+      "tasks": [
+        {
+          "id": "tasks-t001-t006",
+          "number": 1,
+          "title": "Define release mode models and contract tests",
+          "status": "planned",
+          "description": "Covers T001 through T006 in tasks.md.",
+          "file": "tasks.md"
+        }
+      ]
+    },
+    {
+      "id": "project-factory-contract-updates",
+      "number": 2,
+      "title": "Project Factory Contract Updates",
+      "status": "planned",
+      "description": "Make first-release mode explicit in intake, schemas, generated docs, and job history.",
+      "file": "plan.md",
+      "tasks": [
+        {
+          "id": "tasks-t007-t013",
+          "number": 1,
+          "title": "Update Factory schemas, prompts, and release docs",
+          "status": "planned",
+          "description": "Covers T007 through T013 in tasks.md.",
+          "file": "tasks.md"
+        }
+      ]
+    },
+    {
+      "id": "cloudflare-preview-backend-readiness",
+      "number": 3,
+      "title": "Cloudflare Preview Backend Readiness",
+      "status": "planned",
+      "description": "Reuse Web Preview Delivery to provision stable Worker routes and D1 persistence.",
+      "file": "plan.md",
+      "tasks": [
+        {
+          "id": "tasks-t014-t024",
+          "number": 1,
+          "title": "Gate and apply Cloudflare preview resources",
+          "status": "planned",
+          "description": "Covers T014 through T024 in tasks.md.",
+          "file": "tasks.md"
+        }
+      ]
+    },
+    {
+      "id": "generated-app-runtime-profile",
+      "number": 4,
+      "title": "Generated App Runtime Profile",
+      "status": "planned",
+      "description": "Generate Flutter preview runtime defines and prevent mock or localhost primary data paths.",
+      "file": "plan.md",
+      "tasks": [
+        {
+          "id": "tasks-t025-t033",
+          "number": 1,
+          "title": "Generate and validate preview runtime selection",
+          "status": "planned",
+          "description": "Covers T025 through T033 in tasks.md.",
+          "file": "tasks.md"
+        }
+      ]
+    },
+    {
+      "id": "android-preview-release-workflow",
+      "number": 5,
+      "title": "Android Preview Release Workflow",
+      "status": "planned",
+      "description": "Add the android-preview-v release lane, metadata, assets, updater channel, and signing policy.",
+      "file": "plan.md",
+      "tasks": [
+        {
+          "id": "tasks-t034-t044",
+          "number": 1,
+          "title": "Build and publish Android preview releases",
+          "status": "planned",
+          "description": "Covers T034 through T044 in tasks.md.",
+          "file": "tasks.md"
+        }
+      ]
+    },
+    {
+      "id": "bridge-installable-app-registration",
+      "number": 6,
+      "title": "Bridge Installable-App Registration",
+      "status": "planned",
+      "description": "Register the preview APK in Codex Mobile Apps with explicit preview metadata.",
+      "file": "plan.md",
+      "tasks": [
+        {
+          "id": "tasks-t045-t054",
+          "number": 1,
+          "title": "Register and validate the preview installable app",
+          "status": "planned",
+          "description": "Covers T045 through T054 in tasks.md.",
+          "file": "tasks.md"
+        }
+      ]
+    },
+    {
+      "id": "factory-runner-orchestration",
+      "number": 7,
+      "title": "Factory Runner Orchestration",
+      "status": "planned",
+      "description": "Sequence GitHub, Cloudflare, web smoke tests, Android release, Bridge registration, and readiness validation.",
+      "file": "plan.md",
+      "tasks": [
+        {
+          "id": "tasks-t055-t064",
+          "number": 1,
+          "title": "Orchestrate the initial preview release pipeline",
+          "status": "planned",
+          "description": "Covers T055 through T064 in tasks.md.",
+          "file": "tasks.md"
+        }
+      ]
+    },
+    {
+      "id": "mobile-and-workbench-ux",
+      "number": 8,
+      "title": "Mobile And Workbench UX",
+      "status": "planned",
+      "description": "Surface preview URL, APK state, channel metadata, production pending state, and blockers.",
+      "file": "plan.md",
+      "tasks": [
+        {
+          "id": "tasks-t065-t071",
+          "number": 1,
+          "title": "Add Initial Preview Release visibility to mobile and Workbench",
+          "status": "planned",
+          "description": "Covers T065 through T071 in tasks.md.",
+          "file": "tasks.md"
+        }
+      ]
+    },
+    {
+      "id": "validation-and-regression-coverage",
+      "number": 9,
+      "title": "Validation And Regression Coverage",
+      "status": "planned",
+      "description": "Add regression tests for preview defaults, blocked readiness, metadata, and channel separation.",
+      "file": "plan.md",
+      "tasks": [
+        {
+          "id": "tasks-t072-t078",
+          "number": 1,
+          "title": "Add first-release preview regression coverage",
+          "status": "planned",
+          "description": "Covers T072 through T078 in tasks.md.",
+          "file": "tasks.md"
+        }
+      ]
+    },
+    {
+      "id": "operations-documentation",
+      "number": 10,
+      "title": "Operations Documentation",
+      "status": "planned",
+      "description": "Document Cloudflare setup, cost guardrails, signing, Bridge registration, lifecycle operations, and promotion.",
+      "file": "plan.md",
+      "tasks": [
+        {
+          "id": "tasks-t079-t085",
+          "number": 1,
+          "title": "Document operation and promotion workflows",
+          "status": "planned",
+          "description": "Covers T079 through T085 in tasks.md.",
+          "file": "tasks.md"
+        }
+      ]
+    }
+  ]
+}

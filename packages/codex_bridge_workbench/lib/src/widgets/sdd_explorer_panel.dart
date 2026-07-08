@@ -3935,21 +3935,36 @@ class _SpecTraceNavigator extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 8),
-          Row(
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
-              Expanded(
-                child: Text(
-                  _artifactSelectionLabel(selectedSpec, selection),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: _WorkbenchColors.onBackground,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w800,
+              Row(
+                children: <Widget>[
+                  const Text(
+                    'Spec trace',
+                    style: TextStyle(
+                      color: _WorkbenchColors.primary,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w900,
+                    ),
                   ),
-                ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      _artifactSelectionLabel(selectedSpec, selection),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: _WorkbenchColors.onBackground,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                ],
               ),
-              _ArtifactSelectorMenu(
+              const SizedBox(height: 8),
+              _ArtifactSelectorBar(
                 spec: selectedSpec,
                 selection: selection,
                 onSelected: onSelected,
@@ -3969,6 +3984,121 @@ class _SpecTraceNavigator extends StatelessWidget {
             ),
           ],
         ],
+      ),
+    );
+  }
+}
+
+class _ArtifactSelectorBar extends StatelessWidget {
+  const _ArtifactSelectorBar({
+    required this.spec,
+    required this.selection,
+    required this.onSelected,
+  });
+
+  final SddSpec spec;
+  final _SpecArtifactSelection selection;
+  final ValueChanged<_SpecArtifactSelection> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    final items = _artifactMenuItems(spec, selection.specIndex);
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: items
+          .map((item) {
+            return _ArtifactSelectorChip(
+              item: item,
+              selected: item.selection == selection,
+              onSelected: () => onSelected(item.selection),
+            );
+          })
+          .toList(growable: false),
+    );
+  }
+}
+
+class _ArtifactSelectorChip extends StatelessWidget {
+  const _ArtifactSelectorChip({
+    required this.item,
+    required this.selected,
+    required this.onSelected,
+  });
+
+  final _ArtifactMenuItem item;
+  final bool selected;
+  final VoidCallback onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    final foreground = selected
+        ? _WorkbenchColors.onPrimary
+        : _WorkbenchColors.onBackground;
+    return Semantics(
+      button: true,
+      selected: selected,
+      child: Material(
+        color: selected
+            ? _WorkbenchColors.primary
+            : _WorkbenchColors.surfaceHigh,
+        borderRadius: BorderRadius.circular(8),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(8),
+          onTap: onSelected,
+          child: Container(
+            constraints: const BoxConstraints(minHeight: 42),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(
+                color: selected
+                    ? _WorkbenchColors.primary
+                    : _WorkbenchColors.border,
+              ),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                Icon(
+                  selected ? Icons.check_rounded : item.icon,
+                  size: 16,
+                  color: foreground,
+                ),
+                const SizedBox(width: 7),
+                Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    Text(
+                      item.label,
+                      style: TextStyle(
+                        color: foreground,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    if (item.detail != null)
+                      Text(
+                        item.detail!,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: selected
+                              ? _WorkbenchColors.onPrimary.withValues(
+                                  alpha: 0.82,
+                                )
+                              : _WorkbenchColors.secondaryText,
+                          fontSize: 10.5,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -4366,91 +4496,6 @@ class _TreeNodeRow extends StatelessWidget {
               ],
             ),
           ),
-        ),
-      ),
-    );
-  }
-}
-
-class _ArtifactSelectorMenu extends StatelessWidget {
-  const _ArtifactSelectorMenu({
-    required this.spec,
-    required this.selection,
-    required this.onSelected,
-  });
-
-  final SddSpec spec;
-  final _SpecArtifactSelection selection;
-  final ValueChanged<_SpecArtifactSelection> onSelected;
-
-  @override
-  Widget build(BuildContext context) {
-    final items = _artifactMenuItems(spec, selection.specIndex);
-    return PopupMenuButton<_SpecArtifactSelection>(
-      tooltip: 'Select spec trace artifact',
-      onSelected: onSelected,
-      itemBuilder: (context) {
-        return items
-            .map((item) {
-              final selected = item.selection == selection;
-              return PopupMenuItem<_SpecArtifactSelection>(
-                value: item.selection,
-                child: Row(
-                  children: <Widget>[
-                    Icon(
-                      selected ? Icons.check_rounded : item.icon,
-                      size: 16,
-                      color: selected
-                          ? _WorkbenchColors.primary
-                          : _WorkbenchColors.secondaryText,
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        mainAxisSize: MainAxisSize.min,
-                        children: <Widget>[
-                          Text(
-                            item.label,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                          if (item.detail != null)
-                            Text(
-                              item.detail!,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                color: _WorkbenchColors.secondaryText,
-                                fontSize: 11,
-                              ),
-                            ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              );
-            })
-            .toList(growable: false);
-      },
-      child: const Padding(
-        padding: EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: <Widget>[
-            Text(
-              'Spec trace',
-              style: TextStyle(
-                color: _WorkbenchColors.primary,
-                fontWeight: FontWeight.w800,
-              ),
-            ),
-            Icon(
-              Icons.arrow_drop_down_rounded,
-              color: _WorkbenchColors.primary,
-            ),
-          ],
         ),
       ),
     );

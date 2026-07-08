@@ -45,6 +45,50 @@ void main() {
   });
 
   testWidgets(
+    'dev wrapper keeps workbench menus interactive from MaterialApp builder',
+    (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: const Text('normal app'),
+          builder: (context, child) {
+            return CodexBridgeDevModeWrapper(
+              enabled: true,
+              bridgeUrl: 'http://bridge.test',
+              explorerLoader: (_) async =>
+                  SddProject.fromJson(_projectWithTraceJson()),
+              child: child ?? const SizedBox.shrink(),
+            );
+          },
+        ),
+      );
+
+      _openWorkbench(tester);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Specs').first);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('SAT Catalog Flow').first);
+      await tester.pumpAndSettle();
+      expect(find.text('Plan: design-plan.md'), findsWidgets);
+      await tester.tap(find.text('Plan: design-plan.md').last);
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Feedback').first);
+      await tester.pumpAndSettle();
+      expect(find.text('SDD feedback'), findsOneWidget);
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Codex').first);
+      await tester.pumpAndSettle();
+      expect(find.text('Update plan.md'), findsOneWidget);
+      await tester.tap(find.text('Update plan.md').last);
+      await tester.pumpAndSettle();
+      expect(find.text('Update plan.md'), findsWidgets);
+      expect(find.text('Submit to Codex'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
     'dev wrapper does not invent API config when bridge URL is empty',
     (tester) async {
       String? receivedBridgeUrl;
@@ -338,8 +382,6 @@ void main() {
     expect(find.text('Inside this spec'), findsOneWidget);
     expect(find.text('Spec trace'), findsOneWidget);
     expect(find.text('Artifact'), findsNothing);
-    await tester.tap(find.text('Spec trace').first);
-    await tester.pumpAndSettle();
     expect(find.text('Plan: design-plan.md'), findsWidgets);
     expect(find.text('Plan: build-plan.md'), findsWidgets);
     expect(find.text('Tasks: design-tasks.md'), findsNothing);
@@ -493,8 +535,6 @@ void main() {
 
       await tester.ensureVisible(find.text('Spec trace').first);
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Spec trace').first);
-      await tester.pumpAndSettle();
 
       expect(find.text('Tasks: build-tasks.md'), findsNothing);
       expect(find.text('Tasks needing plan: ops-tasks.md'), findsOneWidget);
@@ -547,16 +587,11 @@ void main() {
 
       await tester.ensureVisible(find.text('Spec trace').first);
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Spec trace').first);
-      await tester.pumpAndSettle();
       await tester.tap(find.text('Plan: plan.md').first);
       await tester.pumpAndSettle();
 
       expect(find.text('Follow generic plan'), findsWidgets);
       expect(find.text('Ops Tasks'), findsNothing);
-
-      await tester.tap(find.text('Spec trace').first);
-      await tester.pumpAndSettle();
       expect(find.text('Tasks needing plan: ops-tasks.md'), findsOneWidget);
 
       await tester.tap(find.text('Tasks needing plan: ops-tasks.md').first);
@@ -620,6 +655,8 @@ void main() {
       findsNothing,
     );
 
+    await tester.ensureVisible(find.text('Scope'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Scope'));
     await tester.pumpAndSettle();
 
@@ -640,6 +677,8 @@ void main() {
       findsNothing,
     );
 
+    await tester.ensureVisible(find.text('Non-Goals'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Non-Goals'));
     await tester.pumpAndSettle();
 
@@ -656,7 +695,9 @@ void main() {
       findsNothing,
     );
 
-    await tester.tap(find.text('Functional Requirements'));
+    await tester.ensureVisible(find.text('Functional Requirements').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Functional Requirements').last);
     await tester.pumpAndSettle();
 
     expect(
@@ -695,9 +736,6 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('SAT Catalog Flow').first);
     await tester.pumpAndSettle();
-
-    await tester.tap(find.text('Spec trace').first);
-    await tester.pumpAndSettle();
     await tester.tap(find.text('Plan: build-plan.md').first);
     await tester.pumpAndSettle();
     await tester.ensureVisible(find.text('Show details').first);
@@ -733,9 +771,6 @@ void main() {
     await tester.tap(find.text('Specs').first);
     await tester.pumpAndSettle();
     await tester.tap(find.text('SAT Catalog Flow').first);
-    await tester.pumpAndSettle();
-
-    await tester.tap(find.text('Spec trace').first);
     await tester.pumpAndSettle();
     await tester.tap(find.text('Diagrams').last);
     await tester.pumpAndSettle();

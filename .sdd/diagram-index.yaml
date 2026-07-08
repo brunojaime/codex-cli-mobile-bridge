@@ -1,8 +1,8 @@
 kind: codex.sdd.index
 standard_id: workbench-sdd/v1
 standard_version: 1
-fingerprint: 9b82c99e557f9e65e3909492f0c2ab5004c3324541602e6fa288ae2d2d70fcac
-generated_at_epoch: 1783339315
+fingerprint: 148bd35585141fcfb71c094a8c7a97aaa9f35ddd97075c75414029f4778b58a9
+generated_at_epoch: 1783524113
 read_policy: prefix_only_no_full_spec_body
 index_type: diagram
 diagrams:
@@ -96,3 +96,8 @@ diagrams:
     diagram_type: component-impact
     scope: feature
     metadata_path: specs/004-workbench-scm-spec-intake/diagrams/spec-intake-flow.yaml
+  specs__007-initial-preview-release__diagrams__initial-preview-release-flow_mmd:
+    path: specs/007-initial-preview-release/diagrams/initial-preview-release-flow.mmd
+    diagram_type: sequence
+    scope: feature
+    metadata_path: specs/007-initial-preview-release/diagrams/initial-preview-release-flow.yaml

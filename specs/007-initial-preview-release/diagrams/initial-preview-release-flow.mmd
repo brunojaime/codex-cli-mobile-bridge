@@ -1,0 +1,28 @@
+flowchart TD
+    Intake["New Project intake"]
+    LocalValidation["Generated project validation"]
+    GitHub["GitHub repo and branch published"]
+    Cloudflare["Cloudflare preview apply"]
+    D1["D1 migrations and preview data scope"]
+    WebSmoke["Web preview and API smoke tests"]
+    Android["Android preview APK release"]
+    Bridge["Bridge installable-app registration"]
+    Ready["Initial Preview Release ready"]
+    Blocked["Blocked with exact next step"]
+
+    Intake --> LocalValidation
+    LocalValidation --> GitHub
+    GitHub --> Cloudflare
+    Cloudflare --> D1
+    D1 --> WebSmoke
+    WebSmoke --> Android
+    Android --> Bridge
+    Bridge --> Ready
+
+    LocalValidation -. missing validation .-> Blocked
+    GitHub -. missing GitHub auth .-> Blocked
+    Cloudflare -. apply disabled or missing config .-> Blocked
+    D1 -. migration failure .-> Blocked
+    WebSmoke -. health or URL smoke failure .-> Blocked
+    Android -. missing APK asset .-> Blocked
+    Bridge -. missing URL or token .-> Blocked
