@@ -140,6 +140,48 @@ void main() {
     expect(result!.status, 'interrupted');
   });
 
+  testWidgets('project factory progress dialog treats blocked as terminal',
+      (tester) async {
+    ProjectFactoryJob? result;
+    var polled = false;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Builder(
+            builder: (context) {
+              return TextButton(
+                onPressed: () async {
+                  result = await showDialog<ProjectFactoryJob>(
+                    context: context,
+                    builder: (context) => ProjectFactoryProgressDialog(
+                      initialJob: _job(status: 'blocked', progress: 100),
+                      pollInterval: const Duration(milliseconds: 10),
+                      pollJob: (_) async {
+                        polled = true;
+                        return _job(status: 'ready', progress: 100);
+                      },
+                    ),
+                  );
+                },
+                child: const Text('Blocked'),
+              );
+            },
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('Blocked'));
+    await tester.pumpAndSettle();
+    expect(find.text('blocked'), findsWidgets);
+    expect(find.text('Close'), findsOneWidget);
+    await tester.tap(find.text('Close'));
+    await tester.pumpAndSettle();
+
+    expect(polled, isFalse);
+    expect(result!.status, 'blocked');
+  });
+
   testWidgets('project factory history shows empty state', (tester) async {
     await tester.pumpWidget(
       MaterialApp(

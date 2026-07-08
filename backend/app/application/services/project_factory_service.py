@@ -452,6 +452,7 @@ class ProjectFactoryService:
         return job
 
     def get_job(self, job_id: str) -> ProjectFactoryJob | None:
+        self._audit_ready_job_publication(job_id)
         with self._lock:
             return self._jobs.get(job_id)
 
@@ -465,6 +466,7 @@ class ProjectFactoryService:
         normalized_limit = _normalize_limit(limit)
         normalized_status = status.strip() if status else None
         normalized_draft_id = draft_id.strip() if draft_id else None
+        self._audit_ready_jobs_for_publication()
         with self._lock:
             jobs = sorted(
                 self._jobs.values(),
@@ -481,6 +483,115 @@ class ProjectFactoryService:
                 if len(filtered) >= normalized_limit:
                     break
             return tuple(filtered)
+
+    def _audit_ready_jobs_for_publication(self) -> None:
+        if self._publication_validation_mode != "remote":
+            return
+        with self._lock:
+            ready_job_ids = [
+                job.id
+                for job in self._jobs.values()
+                if job.status == "ready"
+            ]
+        for job_id in ready_job_ids:
+            self._audit_ready_job_publication(job_id)
+
+    def _audit_ready_job_publication(self, job_id: str) -> None:
+        if self._publication_validation_mode != "remote":
+            return
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None or job.status != "ready":
+                return
+            project_path_value = job.project_path or job.manifest_plan.target_path
+        if not project_path_value:
+            return
+        project_path = Path(project_path_value).expanduser().resolve()
+        command = ("bash", "scripts/validate_publication_ready.sh")
+        script = project_path / command[1]
+        if not script.is_file():
+            self._block_ready_job_publication(
+                job_id=job_id,
+                command=command,
+                message=(
+                    "Existing ready job is missing "
+                    "`scripts/validate_publication_ready.sh`; publication cannot "
+                    "be verified."
+                ),
+                stdout="",
+                stderr="publication validation script is missing",
+                exit_code=127,
+            )
+            return
+        try:
+            result = subprocess.run(
+                list(command),
+                cwd=project_path,
+                env={
+                    **os.environ,
+                    "PUBLICATION_VALIDATION_MODE": "remote",
+                },
+                timeout=self._timeout_seconds if self._timeout_seconds > 0 else None,
+                text=True,
+                capture_output=True,
+                check=False,
+                shell=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            self._block_ready_job_publication(
+                job_id=job_id,
+                command=command,
+                message="Existing ready job publication verification timed out.",
+                stdout=getattr(exc, "stdout", "") or "",
+                stderr=str(exc),
+                exit_code=None,
+            )
+            return
+        if result.returncode == 0:
+            return
+        self._block_ready_job_publication(
+            job_id=job_id,
+            command=command,
+            message=(
+                "Existing ready job is missing verified GitHub release or "
+                "Bridge registration artifacts."
+            ),
+            stdout=result.stdout,
+            stderr=result.stderr,
+            exit_code=result.returncode,
+        )
+
+    def _block_ready_job_publication(
+        self,
+        *,
+        job_id: str,
+        command: tuple[str, ...],
+        message: str,
+        stdout: str,
+        stderr: str,
+        exit_code: int | None,
+    ) -> None:
+        event = {
+            "phase": "publish_verification",
+            "status": "blocked",
+            "message": message,
+            "progress": 100,
+            "command": list(command),
+            "stdout": _truncate_summary(stdout, limit=4000) or "",
+            "stderr": _truncate_summary(stderr, limit=4000) or "",
+            "exit_code": exit_code,
+        }
+        self._record_event(job_id, event)
+        self._update_job(
+            job_id,
+            status="blocked",
+            current_phase="publish_verification",
+            current_step="publish_verification",
+            progress=100,
+            message=message,
+            error=message,
+            completed_at=_now_iso(),
+        )
 
     def _run_generation_job(self, job_id: str, draft_id: str) -> None:
         draft = self.get_draft(draft_id)

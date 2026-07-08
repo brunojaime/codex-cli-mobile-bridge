@@ -114,6 +114,75 @@ def test_project_factory_runner_remote_publication_reports_blocked_phase(
     assert blocked[-1]["exit_code"] == 2
 
 
+def test_project_factory_runner_blocks_when_publish_script_is_missing(
+    tmp_path: Path,
+) -> None:
+    process_runner = _MissingScriptProcessRunner("scripts/publish_project.sh")
+    runner = _runner(tmp_path, process_runner)
+    events: list[dict[str, object]] = []
+
+    with pytest.raises(ProjectFactoryJobRunnerBlockedError):
+        runner.run(
+            _context(
+                tmp_path,
+                generator_runs=0,
+                reviewer_runs=0,
+                publication_validation_mode="remote",
+            ),
+            event_sink=events.append,
+        )
+
+    blocked = [event for event in events if event["status"] == "blocked"]
+    assert blocked[-1]["phase"] == "github_publish"
+    assert "missing script" in blocked[-1]["stderr"]
+
+
+def test_project_factory_runner_blocks_when_android_release_is_missing(
+    tmp_path: Path,
+) -> None:
+    process_runner = _MissingScriptProcessRunner("scripts/publish_android_release.sh")
+    runner = _runner(tmp_path, process_runner)
+    events: list[dict[str, object]] = []
+
+    with pytest.raises(ProjectFactoryJobRunnerBlockedError):
+        runner.run(
+            _context(
+                tmp_path,
+                generator_runs=0,
+                reviewer_runs=0,
+                publication_validation_mode="remote",
+            ),
+            event_sink=events.append,
+        )
+
+    blocked = [event for event in events if event["status"] == "blocked"]
+    assert blocked[-1]["phase"] == "android_release"
+    assert "missing script" in blocked[-1]["stderr"]
+
+
+def test_project_factory_runner_blocks_when_installable_registration_is_missing(
+    tmp_path: Path,
+) -> None:
+    process_runner = _MissingScriptProcessRunner("scripts/register_installable_app.sh")
+    runner = _runner(tmp_path, process_runner)
+    events: list[dict[str, object]] = []
+
+    with pytest.raises(ProjectFactoryJobRunnerBlockedError):
+        runner.run(
+            _context(
+                tmp_path,
+                generator_runs=0,
+                reviewer_runs=0,
+                publication_validation_mode="remote",
+            ),
+            event_sink=events.append,
+        )
+
+    blocked = [event for event in events if event["status"] == "blocked"]
+    assert blocked[-1]["phase"] == "installable_app_registration"
+    assert "missing script" in blocked[-1]["stderr"]
+
+
 def test_project_factory_runner_can_execute_generated_validation(
     tmp_path: Path,
 ) -> None:
@@ -246,6 +315,22 @@ class _FakeProcessRunner:
                 returncode=self.fail_returncode,
                 stdout="partial",
                 stderr="failed",
+            )
+        return ProjectFactoryProcessResult(returncode=0, stdout="ok", stderr="")
+
+
+class _MissingScriptProcessRunner(_FakeProcessRunner):
+    def __init__(self, missing_script: str):
+        super().__init__()
+        self.missing_script = missing_script
+
+    def run(self, *, argv, cwd, env, timeout_seconds):
+        self.calls.append(tuple(argv))
+        if self.missing_script in argv:
+            return ProjectFactoryProcessResult(
+                returncode=127,
+                stdout="",
+                stderr=f"missing script: {self.missing_script}",
             )
         return ProjectFactoryProcessResult(returncode=0, stdout="ok", stderr="")
 

@@ -7616,7 +7616,9 @@ class ProjectFactoryProgressDialogState
 
   @override
   Widget build(BuildContext context) {
-    final failed = _job.status == 'failed' || _job.status == 'interrupted';
+    final failed = _job.status == 'failed' ||
+        _job.status == 'blocked' ||
+        _job.status == 'interrupted';
     final ready = _job.isReady;
     return AlertDialog(
       title: const Text('New project'),

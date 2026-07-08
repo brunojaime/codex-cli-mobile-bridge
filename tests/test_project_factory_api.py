@@ -430,6 +430,46 @@ def test_project_factory_generate_creates_local_project_foundation(tmp_path: Pat
     assert "Nienfoadmin1994" not in _read_all_text(project)
 
 
+def test_ready_job_without_remote_publication_is_audited_to_blocked(
+    tmp_path: Path,
+) -> None:
+    client = _client(tmp_path, publication_validation_mode="local")
+    draft_response = client.post(
+        "/project-factory/drafts",
+        json={
+            "name": "Catalogo Autos",
+            "businessType": "autos",
+            "primaryGoal": "Gestionar autos y consultas",
+        },
+    )
+    draft_id = draft_response.json()["draft_id"]
+    ready_response = client.post(f"/project-factory/drafts/{draft_id}/generate")
+    assert ready_response.status_code == 200
+    job_id = ready_response.json()["job_id"]
+    assert ready_response.json()["status"] == "ready"
+
+    remote_client = _client(tmp_path, publication_validation_mode="remote")
+    audited_response = remote_client.get(f"/project-factory/jobs/{job_id}")
+
+    assert audited_response.status_code == 200
+    audited = audited_response.json()
+    assert audited["status"] == "blocked"
+    assert audited["current_phase"] == "publish_verification"
+    assert "missing verified GitHub release" in audited["message"]
+    assert audited["step_logs"][-1]["status"] == "blocked"
+    assert audited["step_logs"][-1]["command"] == [
+        "bash",
+        "scripts/validate_publication_ready.sh",
+    ]
+    assert "origin remote is not configured" in audited["step_logs"][-1]["stderr"]
+
+    list_response = remote_client.get("/project-factory/jobs")
+    assert list_response.status_code == 200
+    summaries = list_response.json()["jobs"]
+    assert summaries[0]["status"] == "blocked"
+    assert summaries[0]["manual_next_step"]
+
+
 def test_project_factory_generate_duplicate_returns_conflict(tmp_path: Path) -> None:
     client = _client(tmp_path)
     draft_id = _create_draft(client, "Duplicado Norte")
@@ -501,7 +541,7 @@ def test_generated_project_is_discoverable_by_sdd_workbench(tmp_path: Path) -> N
     assert project_payload["specs"][0]["id"] == "001-product-foundation"
 
 
-def _client(projects_root: Path) -> TestClient:
+def _client(projects_root: Path, *, publication_validation_mode: str = "local") -> TestClient:
     fake_codex = _fake_codex(projects_root)
     settings = Settings(
         projects_root=str(projects_root),
@@ -514,7 +554,7 @@ def _client(projects_root: Path) -> TestClient:
         project_factory_async_jobs=False,
         project_factory_generator_runs_override=0,
         project_factory_reviewer_runs_override=0,
-        project_factory_publication_validation_mode="local",
+        project_factory_publication_validation_mode=publication_validation_mode,
         cloudflare_api_token=None,
         cloudflare_dns_api_token=None,
         cloudflare_account_id=None,
