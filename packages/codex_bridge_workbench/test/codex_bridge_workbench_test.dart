@@ -126,6 +126,99 @@ void main() {
     expect(project.workspaceName, 'Codex Bridge');
   });
 
+  test('SDD client loads lazy project summary and spec detail', () async {
+    final paths = <String>[];
+    final client = SddExplorerClient(
+      baseUrl: 'http://bridge.test',
+      client: MockClient((request) async {
+        paths.add(request.url.path);
+        if (request.url.path == '/sdd/projects') {
+          return http.Response(
+            jsonEncode(<String, Object?>{
+              'kind': 'codex.sddProjects',
+              'default_workspace_path': '/workspace/codex-cli-mobile-bridge',
+              'projects': <Map<String, Object?>>[
+                <String, Object?>{
+                  'workspace_name': 'Codex Bridge',
+                  'workspace_path': '/workspace/codex-cli-mobile-bridge',
+                  'spec_count': 1,
+                  'diagram_count': 1,
+                  'missing_required': <String>[],
+                  'has_manifest': true,
+                  'has_constitution': true,
+                },
+              ],
+            }),
+            200,
+          );
+        }
+        if (request.url.path == '/sdd/project/summary') {
+          expect(
+            request.url.queryParameters['workspace_path'],
+            '/workspace/codex-cli-mobile-bridge',
+          );
+          return http.Response(jsonEncode(_projectSummaryJson()), 200);
+        }
+        if (request.url.path == '/sdd/project/spec') {
+          expect(
+            request.url.queryParameters['spec_id'],
+            '001-sat-stock-reservation',
+          );
+          return http.Response(
+            jsonEncode(<String, Object?>{
+              'kind': 'codex.sddProjectSpec',
+              'workspace_path': '/workspace/codex-cli-mobile-bridge',
+              'spec':
+                  (_projectWithTreeJson()['specs']
+                          as List<Map<String, dynamic>>)
+                      .single,
+            }),
+            200,
+          );
+        }
+        return http.Response('not found', 404);
+      }),
+    );
+
+    final project = await client.loadDefaultProject();
+    final spec = await client.getSpec(
+      '/workspace/codex-cli-mobile-bridge',
+      '001-sat-stock-reservation',
+    );
+
+    expect(project!.specs.single.tree!.plans.first.file!.content, isNull);
+    expect(spec.tree!.plans.first.file!.content, contains('Catalog readiness'));
+    expect(paths, <String>[
+      '/sdd/projects',
+      '/sdd/project/summary',
+      '/sdd/project/spec',
+    ]);
+  });
+
+  test('SDD client falls back to legacy full project on old backend', () async {
+    final paths = <String>[];
+    final client = SddExplorerClient(
+      baseUrl: 'http://bridge.test',
+      client: MockClient((request) async {
+        paths.add(request.url.path);
+        if (request.url.path == '/sdd/project/summary') {
+          return http.Response('missing', 404);
+        }
+        if (request.url.path == '/sdd/project') {
+          return http.Response(jsonEncode(_projectJson()), 200);
+        }
+        return http.Response('not found', 404);
+      }),
+    );
+
+    final project = await client.loadProject(
+      '/workspace/codex-cli-mobile-bridge',
+    );
+
+    expect(project.workspaceName, 'Codex Bridge');
+    expect(paths, <String>['/sdd/project/summary', '/sdd/project']);
+  });
+
   test('SDD project model parses spec SCM metadata', () {
     final project = SddProject.fromJson(_projectJson());
     final spec = project.specs.single;
@@ -293,6 +386,61 @@ void main() {
     await tester.tap(find.text('Specs').first);
     await tester.pumpAndSettle();
     expect(find.text('Bridge Contract'), findsOneWidget);
+  });
+
+  testWidgets('workbench hydrates selected spec lazily and caches detail', (
+    tester,
+  ) async {
+    var detailRequests = 0;
+    final detailGate = Completer<void>();
+    final client = SddExplorerClient(
+      baseUrl: 'http://bridge.test',
+      client: MockClient((request) async {
+        if (request.url.path == '/sdd/project/spec') {
+          detailRequests += 1;
+          await detailGate.future;
+          return http.Response(
+            jsonEncode(<String, Object?>{
+              'kind': 'codex.sddProjectSpec',
+              'workspace_path': '/workspace/codex-cli-mobile-bridge',
+              'spec':
+                  (_projectWithTreeJson()['specs']
+                          as List<Map<String, dynamic>>)
+                      .single,
+            }),
+            200,
+          );
+        }
+        return http.Response('not found', 404);
+      }),
+    );
+    await _pumpWorkbench(
+      tester,
+      loader: (_) async => SddProject.fromJson(_projectSummaryJson()),
+      specIntakeClient: client,
+      diagramRenderer: _FakeMermaidRenderer.success(),
+    );
+    _openWorkbench(tester);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Specs').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('SAT Stock Reservation').first);
+    await tester.pump();
+
+    expect(find.text('Loading spec detail'), findsOneWidget);
+    detailGate.complete();
+    await tester.pumpAndSettle();
+    expect(find.text('Loading spec detail'), findsNothing);
+    expect(find.text('Plan 1'), findsWidgets);
+    expect(detailRequests, 1);
+
+    await tester.tap(find.byIcon(Icons.arrow_back_rounded).first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('SAT Stock Reservation').first);
+    await tester.pumpAndSettle();
+
+    expect(detailRequests, 1);
   });
 
   testWidgets('workbench renders diagram source and preview fallback', (
@@ -2938,6 +3086,31 @@ Map<String, dynamic> _projectWithTreeJson() {
       'diagrams': <Map<String, dynamic>>[],
     },
   ];
+  return project;
+}
+
+Map<String, dynamic> _projectSummaryJson() {
+  final project =
+      jsonDecode(jsonEncode(_projectWithTreeJson())) as Map<String, dynamic>;
+  project['kind'] = 'codex.sddProjectSummary';
+  final spec = (project['specs'] as List).single as Map<String, dynamic>;
+  final tree = spec['tree'] as Map<String, dynamic>;
+  void clearFileContent(Map<String, dynamic>? file) {
+    if (file == null) return;
+    file.remove('content');
+  }
+
+  clearFileContent(spec['plan'] as Map<String, dynamic>?);
+  clearFileContent(spec['tasks'] as Map<String, dynamic>?);
+  clearFileContent(tree['file'] as Map<String, dynamic>?);
+  for (final rawPlan in tree['plans'] as List) {
+    final plan = rawPlan as Map<String, dynamic>;
+    clearFileContent(plan['file'] as Map<String, dynamic>?);
+    for (final rawTask in plan['tasks'] as List) {
+      final task = rawTask as Map<String, dynamic>;
+      clearFileContent(task['file'] as Map<String, dynamic>?);
+    }
+  }
   return project;
 }
 

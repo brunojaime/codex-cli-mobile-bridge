@@ -348,7 +348,7 @@ class _SddExplorerPanelState extends State<SddExplorerPanel> {
     final client = SddExplorerClient(baseUrl: widget.bridgeUrl);
     final workspacePath = widget.workspacePath?.trim();
     if (workspacePath != null && workspacePath.isNotEmpty) {
-      return client.getProject(workspacePath);
+      return client.loadProject(workspacePath);
     }
     return client.loadDefaultProject();
   }
@@ -1333,6 +1333,9 @@ class _SpecsTab extends StatefulWidget {
 
 class _SpecsTabState extends State<_SpecsTab> {
   final ScrollController _detailScrollController = ScrollController();
+  late SddProject _project;
+  final Set<String> _loadingSpecIds = <String>{};
+  final Map<String, String> _specErrors = <String, String>{};
   _SpecArtifactSelection _selection = const _SpecArtifactSelection(
     specIndex: 0,
     kind: _SpecArtifactKind.spec,
@@ -1340,10 +1343,19 @@ class _SpecsTabState extends State<_SpecsTab> {
   bool _showDetail = false;
 
   @override
+  void initState() {
+    super.initState();
+    _project = widget.project;
+  }
+
+  @override
   void didUpdateWidget(_SpecsTab oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.project != widget.project) {
-      _selection = _validatedSelection(_selection, widget.project.specs);
+      _project = widget.project;
+      _selection = _validatedSelection(_selection, _project.specs);
+      _loadingSpecIds.clear();
+      _specErrors.clear();
       _showDetail = false;
     }
   }
@@ -1355,12 +1367,13 @@ class _SpecsTabState extends State<_SpecsTab> {
   }
 
   void _select(_SpecArtifactSelection selection, {bool showDetail = true}) {
-    final nextSelection = _validatedSelection(selection, widget.project.specs);
+    final nextSelection = _validatedSelection(selection, _project.specs);
     setState(() {
       _selection = nextSelection;
       _showDetail = showDetail;
     });
     if (showDetail) {
+      _hydrateSpecIfNeeded(nextSelection.specIndex);
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (_detailScrollController.hasClients) {
           _detailScrollController.jumpTo(0);
@@ -1369,9 +1382,41 @@ class _SpecsTabState extends State<_SpecsTab> {
     }
   }
 
+  Future<void> _hydrateSpecIfNeeded(int specIndex) async {
+    if (specIndex < 0 || specIndex >= _project.specs.length) return;
+    final spec = _project.specs[specIndex];
+    if (!_specNeedsDetail(spec) || _loadingSpecIds.contains(spec.id)) return;
+    setState(() {
+      _loadingSpecIds.add(spec.id);
+      _specErrors.remove(spec.id);
+    });
+    final client =
+        widget.specIntakeClient ?? SddExplorerClient(baseUrl: widget.bridgeUrl);
+    try {
+      final detailed = await client.getSpec(_project.workspacePath, spec.id);
+      if (!mounted) return;
+      setState(() {
+        final specs = List<SddSpec>.of(_project.specs);
+        final replacementIndex = specs.indexWhere((item) => item.id == spec.id);
+        if (replacementIndex != -1) {
+          specs[replacementIndex] = detailed;
+          _project = _project.copyWith(specs: specs);
+          _selection = _validatedSelection(_selection, _project.specs);
+        }
+        _loadingSpecIds.remove(spec.id);
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _loadingSpecIds.remove(spec.id);
+        _specErrors[spec.id] = error.toString();
+      });
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    final specs = widget.project.specs;
+    final specs = _project.specs;
     if (specs.isEmpty) {
       return const SingleChildScrollView(
         padding: EdgeInsets.fromLTRB(14, 12, 14, 96),
@@ -1383,6 +1428,10 @@ class _SpecsTabState extends State<_SpecsTab> {
     }
     final selection = _validatedSelection(_selection, specs);
     final selectedSpec = specs[selection.specIndex];
+    final selectedSpecLoading =
+        _loadingSpecIds.contains(selectedSpec.id) &&
+        _specNeedsDetail(selectedSpec);
+    final selectedSpecError = _specErrors[selectedSpec.id];
     final showSpecFileBeforeNavigator =
         selection.kind == _SpecArtifactKind.treeSpec;
     if (_showDetail) {
@@ -1397,9 +1446,23 @@ class _SpecsTabState extends State<_SpecsTab> {
               onBack: () => setState(() => _showDetail = false),
             ),
             const SizedBox(height: 10),
+            if (selectedSpecLoading) ...[
+              const _InfoCard(
+                title: 'Loading spec detail',
+                detail:
+                    'Fetching plans, tasks, diagrams, and files for this spec.',
+              ),
+              const SizedBox(height: 10),
+            ] else if (selectedSpecError != null) ...[
+              _SpecDetailErrorCard(
+                errorText: selectedSpecError,
+                onRetry: () => _hydrateSpecIfNeeded(selection.specIndex),
+              ),
+              const SizedBox(height: 10),
+            ],
             if (showSpecFileBeforeNavigator) ...[
               _SpecArtifactInspector(
-                project: widget.project,
+                project: _project,
                 spec: selectedSpec,
                 selection: selection,
                 showHeading: false,
@@ -1420,7 +1483,7 @@ class _SpecsTabState extends State<_SpecsTab> {
             if (!showSpecFileBeforeNavigator) ...[
               const SizedBox(height: 10),
               _SpecArtifactInspector(
-                project: widget.project,
+                project: _project,
                 spec: selectedSpec,
                 selection: selection,
                 showHeading: false,
@@ -6963,6 +7026,34 @@ int _specTaskCount(SddSpec spec) {
   return spec.allTaskFiles.length;
 }
 
+bool _specNeedsDetail(SddSpec spec) {
+  final tree = spec.tree;
+  if (tree != null && _treeNeedsDetail(tree)) {
+    return true;
+  }
+  return <SddFile>[
+    ...spec.allPlanFiles,
+    ...spec.allTaskFiles,
+    ...spec.sliceDocs,
+  ].any(_fileNeedsDetail);
+}
+
+bool _treeNeedsDetail(SddSpecTree tree) {
+  if (_fileNeedsDetail(tree.file)) return true;
+  for (final plan in tree.plans) {
+    if (_fileNeedsDetail(plan.file)) return true;
+    for (final task in plan.tasks) {
+      if (_fileNeedsDetail(task.file)) return true;
+    }
+  }
+  return false;
+}
+
+bool _fileNeedsDetail(SddFile? file) {
+  if (file == null) return false;
+  return file.content == null && file.error == null;
+}
+
 _TaskProgress? _taskProgress(String? content) {
   return _parseStructuredTasks(content)?.progress;
 }
@@ -9122,6 +9213,39 @@ class _InfoCard extends StatelessWidget {
           Text(
             detail,
             style: const TextStyle(color: _WorkbenchColors.secondaryText),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SpecDetailErrorCard extends StatelessWidget {
+  const _SpecDetailErrorCard({required this.errorText, required this.onRetry});
+
+  final String errorText;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    return _PanelCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          const Text(
+            'Could not load spec detail',
+            style: TextStyle(fontWeight: FontWeight.w800),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            errorText,
+            style: const TextStyle(color: _WorkbenchColors.secondaryText),
+          ),
+          const SizedBox(height: 10),
+          OutlinedButton.icon(
+            onPressed: onRetry,
+            icon: const Icon(Icons.refresh_rounded),
+            label: const Text('Retry spec'),
           ),
         ],
       ),

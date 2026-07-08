@@ -1,0 +1,151 @@
+{
+  "spec": {
+    "file": "spec.md"
+  },
+  "plans": [
+    {
+      "id": "plan-1",
+      "number": 1,
+      "title": "Contract And Compatibility",
+      "status": "planned",
+      "description": "Define the lazy-loading API contract without breaking older Workbench clients.",
+      "file": "plans/01-contract/plan.md",
+      "tasks": [
+        {
+          "id": "plan-1-task-1",
+          "number": 1,
+          "title": "T001 Create SDD spec, plan, task tree, and metadata for lazy loading",
+          "status": "planned",
+          "description": "Create the SDD artifacts for this feature.",
+          "file": "tasks/plan-1-task-1/task.md"
+        },
+        {
+          "id": "plan-1-task-2",
+          "number": 2,
+          "title": "T002 Define summary/detail API response contract",
+          "status": "planned",
+          "description": "Define startup summary and one-spec detail payloads.",
+          "file": "tasks/plan-1-task-2/task.md"
+        },
+        {
+          "id": "plan-1-task-3",
+          "number": 3,
+          "title": "T003 Preserve legacy /sdd/project compatibility",
+          "status": "planned",
+          "description": "Keep the existing full snapshot endpoint working.",
+          "file": "tasks/plan-1-task-3/task.md"
+        }
+      ]
+    },
+    {
+      "id": "plan-2",
+      "number": 2,
+      "title": "Backend API",
+      "status": "planned",
+      "description": "Expose lazy-loading endpoints and avoid unnecessary full snapshot reads.",
+      "file": "plans/02-backend-api/plan.md",
+      "tasks": [
+        {
+          "id": "plan-2-task-1",
+          "number": 1,
+          "title": "T004 Add get_project_summary service behavior",
+          "status": "planned",
+          "description": "Return project metadata and spec summaries without full artifact content.",
+          "file": "tasks/plan-2-task-1/task.md"
+        },
+        {
+          "id": "plan-2-task-2",
+          "number": 2,
+          "title": "T005 Add get_spec service behavior with safe spec_id validation",
+          "status": "planned",
+          "description": "Return one complete spec and reject unsafe or unknown IDs.",
+          "file": "tasks/plan-2-task-2/task.md"
+        },
+        {
+          "id": "plan-2-task-3",
+          "number": 3,
+          "title": "T006 Optimize diagram reads to avoid full project snapshots",
+          "status": "planned",
+          "description": "List diagrams without reading every plan/task file.",
+          "file": "tasks/plan-2-task-3/task.md"
+        }
+      ]
+    },
+    {
+      "id": "plan-3",
+      "number": 3,
+      "title": "Workbench Client",
+      "status": "planned",
+      "description": "Load the summary first and hydrate specs only when opened.",
+      "file": "plans/03-workbench-client/plan.md",
+      "tasks": [
+        {
+          "id": "plan-3-task-1",
+          "number": 1,
+          "title": "T007 Add /sdd/project/summary endpoint",
+          "status": "planned",
+          "description": "Expose the lightweight project summary API.",
+          "file": "tasks/plan-3-task-1/task.md"
+        },
+        {
+          "id": "plan-3-task-2",
+          "number": 2,
+          "title": "T008 Add /sdd/project/spec endpoint",
+          "status": "planned",
+          "description": "Expose one-spec detail loading.",
+          "file": "tasks/plan-3-task-2/task.md"
+        },
+        {
+          "id": "plan-3-task-3",
+          "number": 3,
+          "title": "T010 Add Workbench client summary/detail calls with legacy fallback",
+          "status": "planned",
+          "description": "Prefer lazy endpoints while supporting older Bridge backends.",
+          "file": "tasks/plan-3-task-3/task.md"
+        },
+        {
+          "id": "plan-3-task-4",
+          "number": 4,
+          "title": "T011 Add lazy spec hydration/cache in the Specs tab",
+          "status": "planned",
+          "description": "Fetch and cache selected spec details in the UI.",
+          "file": "tasks/plan-3-task-4/task.md"
+        }
+      ]
+    },
+    {
+      "id": "plan-4",
+      "number": 4,
+      "title": "Validation And Release",
+      "status": "planned",
+      "description": "Prove backend/frontend behavior and ship it to Codex Mobile.",
+      "file": "plans/04-validation-release/plan.md",
+      "tasks": [
+        {
+          "id": "plan-4-task-1",
+          "number": 1,
+          "title": "T009 Add backend tests for summary, detail, 404, and diagrams",
+          "status": "planned",
+          "description": "Cover lazy backend behavior.",
+          "file": "tasks/plan-4-task-1/task.md"
+        },
+        {
+          "id": "plan-4-task-2",
+          "number": 2,
+          "title": "T012 Add Workbench tests for lazy loading behavior",
+          "status": "planned",
+          "description": "Cover request order, hydration, cache, and fallback.",
+          "file": "tasks/plan-4-task-2/task.md"
+        },
+        {
+          "id": "plan-4-task-3",
+          "number": 3,
+          "title": "T013 Run backend, Workbench package, and mobile validation; T014 publish release",
+          "status": "planned",
+          "description": "Run validation and publish the Codex Mobile Android release.",
+          "file": "tasks/plan-4-task-3/task.md"
+        }
+      ]
+    }
+  ]
+}

@@ -118,7 +118,9 @@ from backend.app.api.schemas import (
     SddMediaUploadResponse,
     SddPlanNodeResponse,
     SddProjectDiagramsResponse,
+    SddProjectLazySummaryResponse,
     SddProjectResponse,
+    SddProjectSpecResponse,
     SddProjectsResponse,
     SddProjectSummaryResponse,
     SddSpecApplyResponse,
@@ -181,6 +183,7 @@ from backend.app.application.services.sdd_project_service import (
     SddProject,
     SddProjectSummary,
     SddSpec,
+    SddSpecNotFoundError,
     SddSpecTree,
     SddTaskNode,
     SddWorkspacePathError,
@@ -932,27 +935,60 @@ async def get_sdd_project(
     return _sdd_project_response(project)
 
 
+@router.get("/sdd/project/summary", response_model=SddProjectLazySummaryResponse)
+async def get_sdd_project_summary(
+    workspace_path: str = Query(...),
+    container: AppContainer = Depends(get_container),
+) -> SddProjectLazySummaryResponse:
+    try:
+        project = await run_in_threadpool(
+            container.sdd_project_service.get_project_summary,
+            workspace_path,
+        )
+    except SddWorkspacePathError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    payload = _sdd_project_response(project).model_dump()
+    payload["kind"] = "codex.sddProjectSummary"
+    return SddProjectLazySummaryResponse(**payload)
+
+
+@router.get("/sdd/project/spec", response_model=SddProjectSpecResponse)
+async def get_sdd_project_spec(
+    workspace_path: str = Query(...),
+    spec_id: str = Query(...),
+    container: AppContainer = Depends(get_container),
+) -> SddProjectSpecResponse:
+    try:
+        spec = await run_in_threadpool(
+            container.sdd_project_service.get_spec,
+            workspace_path,
+            spec_id,
+        )
+    except SddWorkspacePathError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except SddSpecNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return SddProjectSpecResponse(
+        workspace_path=str(Path(workspace_path).expanduser()),
+        spec=_sdd_spec_response(spec),
+    )
+
+
 @router.get("/sdd/project/diagrams", response_model=SddProjectDiagramsResponse)
 async def get_sdd_project_diagrams(
     workspace_path: str = Query(...),
     container: AppContainer = Depends(get_container),
 ) -> SddProjectDiagramsResponse:
     try:
-        project = await run_in_threadpool(
-            container.sdd_project_service.get_project,
+        diagrams = await run_in_threadpool(
+            container.sdd_project_service.get_diagrams,
             workspace_path,
         )
     except SddWorkspacePathError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return SddProjectDiagramsResponse(
-        workspace_path=project.workspace_path,
-        diagrams=[
-            _sdd_diagram_response(diagram)
-            for diagram in (
-                *project.architecture_diagrams,
-                *(diagram for spec in project.specs for diagram in spec.diagrams),
-            )
-        ],
+        workspace_path=workspace_path,
+        diagrams=[_sdd_diagram_response(diagram) for diagram in diagrams],
     )
 
 

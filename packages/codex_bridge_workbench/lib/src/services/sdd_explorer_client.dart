@@ -34,6 +34,46 @@ class SddExplorerClient {
     );
   }
 
+  Future<SddProject> getProjectSummary(String workspacePath) async {
+    final uri = Uri.parse('$baseUrl/sdd/project/summary').replace(
+      queryParameters: <String, String>{'workspace_path': workspacePath},
+    );
+    final response = await _client.get(uri);
+    if (response.statusCode != 200) {
+      throw Exception('Failed to load SDD project summary: ${response.body}');
+    }
+    return SddProject.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<SddSpec> getSpec(String workspacePath, String specId) async {
+    final uri = Uri.parse('$baseUrl/sdd/project/spec').replace(
+      queryParameters: <String, String>{
+        'workspace_path': workspacePath,
+        'spec_id': specId,
+      },
+    );
+    final response = await _client.get(uri);
+    if (response.statusCode != 200) {
+      throw Exception('Failed to load SDD spec: ${response.body}');
+    }
+    final payload = jsonDecode(response.body) as Map<String, dynamic>;
+    final spec = payload['spec'];
+    if (spec is! Map<String, dynamic>) {
+      throw Exception('Failed to load SDD spec: malformed response');
+    }
+    return SddSpec.fromJson(spec);
+  }
+
+  Future<SddProject> loadProject(String workspacePath) async {
+    try {
+      return await getProjectSummary(workspacePath);
+    } catch (_) {
+      return getProject(workspacePath);
+    }
+  }
+
   Future<List<SddDiagram>> getProjectDiagrams(String workspacePath) async {
     final uri = Uri.parse('$baseUrl/sdd/project/diagrams').replace(
       queryParameters: <String, String>{'workspace_path': workspacePath},
@@ -65,9 +105,7 @@ class SddExplorerClient {
             (project) => project.workspacePath == defaultPath,
             orElse: () => index.projects.first,
           );
-    final project = await getProject(selected.workspacePath);
-    await getProjectDiagrams(selected.workspacePath);
-    return project;
+    return loadProject(selected.workspacePath);
   }
 
   Future<SddSpecIntakePlan> dryRunSpecIntake(SddSpecIntakeDraft draft) {

@@ -178,6 +178,76 @@ def test_sdd_project_returns_explicit_spec_plan_task_tree(tmp_path: Path) -> Non
     }
 
 
+def test_sdd_project_lazy_summary_and_spec_detail(tmp_path: Path) -> None:
+    projects_root = tmp_path / "projects"
+    project = projects_root / "demo"
+    _write_sdd_project(project)
+    spec_dir = project / "specs/001-demo"
+    (spec_dir / "plans/01-foundation").mkdir(parents=True)
+    (spec_dir / "tasks/plan-1-task-1").mkdir(parents=True)
+    (spec_dir / "plans/01-foundation/plan.md").write_text("# Foundation Plan\n")
+    (spec_dir / "tasks/plan-1-task-1/task.md").write_text("# Foundation Task\n")
+    (spec_dir / "tree.json").write_text(
+        json.dumps(
+            {
+                "spec": {"file": "spec.md"},
+                "plans": [
+                    {
+                        "id": "plan-1",
+                        "number": 1,
+                        "title": "Foundation",
+                        "file": "plans/01-foundation/plan.md",
+                        "tasks": [
+                            {
+                                "id": "plan-1-task-1",
+                                "number": 1,
+                                "title": "Foundation Task",
+                                "file": "tasks/plan-1-task-1/task.md",
+                            }
+                        ],
+                    }
+                ],
+            }
+        )
+    )
+    client = _client(projects_root)
+
+    summary = client.get(
+        "/sdd/project/summary",
+        params={"workspace_path": str(project)},
+    )
+    detail = client.get(
+        "/sdd/project/spec",
+        params={"workspace_path": str(project), "spec_id": "001-demo"},
+    )
+    missing = client.get(
+        "/sdd/project/spec",
+        params={"workspace_path": str(project), "spec_id": "../001-demo"},
+    )
+
+    assert summary.status_code == 200
+    summary_payload = summary.json()
+    assert summary_payload["kind"] == "codex.sddProjectSummary"
+    summary_spec = summary_payload["specs"][0]
+    assert summary_spec["id"] == "001-demo"
+    assert summary_spec["tree"]["plans"][0]["title"] == "Foundation"
+    assert summary_spec["tree"]["plans"][0]["file"]["content"] is None
+    assert summary_spec["tree"]["plans"][0]["tasks"][0]["file"]["content"] is None
+    assert summary_spec["task_files"][0]["content"] is None
+
+    assert detail.status_code == 200
+    detail_payload = detail.json()
+    assert detail_payload["kind"] == "codex.sddProjectSpec"
+    detail_spec = detail_payload["spec"]
+    assert detail_spec["id"] == "001-demo"
+    assert detail_spec["tree"]["plans"][0]["file"]["content"] == "# Foundation Plan\n"
+    assert (
+        detail_spec["tree"]["plans"][0]["tasks"][0]["file"]["content"]
+        == "# Foundation Task\n"
+    )
+    assert missing.status_code == 404
+
+
 def test_sdd_project_tree_reports_missing_plan_file(tmp_path: Path) -> None:
     projects_root = tmp_path / "projects"
     project = projects_root / "demo"

@@ -73,6 +73,28 @@ class SddProject {
 
   bool get hasMissingRequired => missingRequired.isNotEmpty;
 
+  SddProject copyWith({
+    String? workspaceName,
+    String? workspacePath,
+    bool? required,
+    SddFile? manifest,
+    SddFile? constitution,
+    List<SddDiagram>? architectureDiagrams,
+    List<SddSpec>? specs,
+    List<String>? missingRequired,
+  }) {
+    return SddProject(
+      workspaceName: workspaceName ?? this.workspaceName,
+      workspacePath: workspacePath ?? this.workspacePath,
+      required: required ?? this.required,
+      manifest: manifest ?? this.manifest,
+      constitution: constitution ?? this.constitution,
+      architectureDiagrams: architectureDiagrams ?? this.architectureDiagrams,
+      specs: specs ?? this.specs,
+      missingRequired: missingRequired ?? this.missingRequired,
+    );
+  }
+
   factory SddProject.fromJson(Map<String, dynamic> json) {
     return SddProject(
       workspaceName: json['workspace_name'] as String? ?? 'Unknown project',

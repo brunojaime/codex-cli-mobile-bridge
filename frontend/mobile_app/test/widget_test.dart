@@ -204,6 +204,9 @@ void main() {
       if (request.url.path == '/sdd/projects') {
         return http.Response(jsonEncode(_sddProjectsIndexJson()), 200);
       }
+      if (request.url.path == '/sdd/project/summary') {
+        return http.Response(jsonEncode(_sddProjectJson()), 200);
+      }
       if (request.url.path == '/sdd/project') {
         return http.Response(jsonEncode(_sddProjectJson()), 200);
       }
@@ -228,8 +231,7 @@ void main() {
 
     expect(requestedPaths, <String>[
       '/sdd/projects',
-      '/sdd/project',
-      '/sdd/project/diagrams',
+      '/sdd/project/summary',
     ]);
 
     expect(find.text('SDD Workbench'), findsOneWidget);

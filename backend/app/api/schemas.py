@@ -1443,6 +1443,18 @@ class SddProjectResponse(BaseModel):
     missing_required: list[str] = Field(default_factory=list)
 
 
+class SddProjectLazySummaryResponse(SddProjectResponse):
+    kind: str = "codex.sddProjectSummary"
+    version: int = 1
+
+
+class SddProjectSpecResponse(BaseModel):
+    kind: str = "codex.sddProjectSpec"
+    version: int = 1
+    workspace_path: str
+    spec: SddSpecResponse
+
+
 class SddProjectDiagramsResponse(BaseModel):
     kind: str = "codex.sddProjectDiagrams"
     version: int = 1
