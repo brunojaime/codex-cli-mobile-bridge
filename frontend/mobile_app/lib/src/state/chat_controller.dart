@@ -1526,9 +1526,7 @@ class ChatController extends ChangeNotifier {
       transcriptWindow: freshSession.transcriptWindow.copyWith(
         oldestCursor: currentSession.transcriptWindow.oldestCursor,
         hasOlder: currentSession.transcriptWindow.hasOlder,
-        isPartial:
-            currentSession.transcriptWindow.hasOlder ||
-            freshSession.transcriptWindow.hasOlder,
+        isPartial: currentSession.transcriptWindow.hasOlder,
       ),
     );
   }

@@ -397,6 +397,44 @@ def test_transcript_window_loads_older_page_before_cursor() -> None:
     assert older.is_partial is True
 
 
+def test_transcript_window_cursor_uses_message_id_as_tie_breaker() -> None:
+    with TemporaryDirectory() as temp_dir:
+        workspace = Path(temp_dir) / "repo"
+        workspace.mkdir()
+        service, repository = _build_service_with_repository(temp_dir)
+        session = service.create_session(workspace_path=str(workspace))
+        timestamp = utc_now()
+        for message_id, role in (
+            ("a-user", ChatMessageRole.USER),
+            ("b-assistant", ChatMessageRole.ASSISTANT),
+            ("c-user", ChatMessageRole.USER),
+            ("d-assistant", ChatMessageRole.ASSISTANT),
+        ):
+            message = ChatMessage(
+                id=message_id,
+                session_id=session.id,
+                role=role,
+                author_type=ChatMessageAuthorType.HUMAN
+                if role == ChatMessageRole.USER
+                else ChatMessageAuthorType.ASSISTANT,
+                content=message_id,
+                status=ChatMessageStatus.COMPLETED,
+                created_at=timestamp,
+                updated_at=timestamp,
+            )
+            repository.save_message(message)
+
+        initial = service.get_transcript_window(session.id)
+        older = service.get_transcript_window(
+            session.id,
+            before=initial.oldest_cursor,
+            limit=2,
+        )
+
+    assert [message.id for message in initial.messages] == ["c-user", "d-assistant"]
+    assert [message.id for message in older.messages] == ["a-user", "b-assistant"]
+
+
 def test_transcript_full_escape_hatch_returns_complete_history() -> None:
     with TemporaryDirectory() as temp_dir:
         workspace = Path(temp_dir) / "repo"

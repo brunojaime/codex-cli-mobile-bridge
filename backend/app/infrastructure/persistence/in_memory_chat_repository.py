@@ -172,7 +172,7 @@ class InMemoryChatRepository(ChatRepository):
                     for message in self._messages.values()
                     if message.session_id == session_id
                 ),
-                key=lambda message: message.created_at,
+                key=lambda message: (message.created_at, message.id),
             )
 
     def list_messages_before(
