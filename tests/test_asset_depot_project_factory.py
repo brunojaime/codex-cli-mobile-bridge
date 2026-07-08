@@ -169,6 +169,8 @@ def test_project_factory_promotes_asset_roles_and_preserves_bytes(
 
 def _client(tmp_path: Path, *, asset_max_bytes: int = 25_000_000) -> TestClient:
     settings = Settings(
+        codex_command=f"python3 {Path('tests/fixtures/fake_codex.py').resolve()}",
+        execution_timeout_seconds=10,
         projects_root=str(tmp_path),
         chat_store_backend="memory",
         audio_transcription_backend="disabled",

@@ -72,6 +72,17 @@ void main() {
       'assistant-2',
     ]);
     expect(controller.hasOlderMessages, isFalse);
+    expect(controller.currentSession?.transcriptWindow.isPartial, isFalse);
+
+    await controller.refreshAppState();
+
+    expect(controller.hasOlderMessages, isFalse);
+    expect(controller.currentSession?.transcriptWindow.isPartial, isFalse);
+    expect(controller.messages.map((message) => message.id), <String>[
+      'assistant-1',
+      'user-2',
+      'assistant-2',
+    ]);
 
     controller.dispose();
   });
