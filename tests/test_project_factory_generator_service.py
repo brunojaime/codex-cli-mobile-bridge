@@ -638,12 +638,16 @@ def test_generated_web_preview_bundle_is_validable_locally(tmp_path: Path) -> No
     worker_text = worker.read_text(encoding="utf-8")
     assert "/__preview/health" in worker_text
     assert "ASSETS.fetch" in worker_text
+    assert "WEB_PREVIEW_INVITE_SECRET" in worker_text
+    assert "missing_invite_token" in worker_text
+    assert "/__preview/access" in worker_text
     assert "asset_not_found" in worker_text
     assert "content-security-policy" in worker_text
     assert "serveSpa" in worker_text
     assert worker_harness.is_file()
     assert "PREVIEW_DB" in wrangler.read_text(encoding="utf-8")
     assert 'binding = "ASSETS"' in wrangler.read_text(encoding="utf-8")
+    assert "WEB_PREVIEW_INVITE_SECRET" in wrangler.read_text(encoding="utf-8")
     if shutil.which("node"):
         completed = subprocess.run(
             ["node", "deploy/web-preview/worker/local_preview_test.mjs"],
@@ -664,6 +668,11 @@ def test_generated_web_preview_bundle_is_validable_locally(tmp_path: Path) -> No
     assert payload["runtime"]["api_runtime"] == "cloudflare_preview"
     assert payload["runtime"]["health_path"] == "/__preview/health"
     assert payload["runtime"]["asset_binding"] == "ASSETS"
+    assert payload["access"]["mode"] == "invite_token"
+    assert payload["access"]["required_worker_secrets"] == [
+        "WEB_PREVIEW_INVITE_SECRET"
+    ]
+    assert payload["access"]["access_path"] == "/__preview/access"
     assert payload["build"]["asset_entrypoint"] == "index.html"
     assert "flutter_bootstrap.js" in payload["build"]["required_files"]
     assert payload["cloudflare"]["resources"]["worker_name"] == (
@@ -671,6 +680,7 @@ def test_generated_web_preview_bundle_is_validable_locally(tmp_path: Path) -> No
     )
     assert payload["cloudflare"]["resources"]["d1_database"] == "nienfos-preview"
     assert "/clinica-norte/__preview/health" in payload["expected_routes"]
+    assert "/clinica-norte/__preview/access" in payload["expected_routes"]
 
 
 def test_generated_web_preview_validation_accepts_real_and_blocks_mock(

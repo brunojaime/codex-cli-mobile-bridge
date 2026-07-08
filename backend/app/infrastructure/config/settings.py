@@ -110,6 +110,9 @@ class Settings(BaseSettings):
     preview_r2_bucket_name: str | None = None
     web_preview_state_dir: str = str(Path.cwd() / ".data" / "web_preview_state")
     web_preview_apply_enabled: bool = False
+    web_preview_invite_secret: str | None = None
+    web_preview_invite_default_ttl_seconds: int = 7 * 24 * 60 * 60
+    web_preview_invite_max_ttl_seconds: int = 7 * 24 * 60 * 60
     sdd_file_max_bytes: int = 256_000
     openai_api_key: str | None = None
     openai_base_url: str = "https://api.openai.com/v1"

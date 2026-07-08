@@ -124,6 +124,20 @@ def test_cloudflare_planner_can_use_generated_web_preview_manifest() -> None:
     assert plan["dry_run"] is True
     assert plan["runtime_type"] == "cloudflare_worker_assets"
     assert plan["health_path"] == "/__preview/health"
+    assert plan["access_mode"] == "invite_token"
+    assert plan["required_worker_secrets"] == ["WEB_PREVIEW_INVITE_SECRET"]
+    secret_resources = [
+        item for item in plan["resources"] if item["kind"] == "worker_secret"
+    ]
+    assert secret_resources == [
+        {
+            "kind": "worker_secret",
+            "name": "WEB_PREVIEW_INVITE_SECRET",
+            "mode": "required_external",
+            "status": "operator_configured",
+        }
+    ]
+    assert "test-web-preview-invite-secret" not in str(plan)
 
 
 def test_http_cloudflare_client_uses_expected_paths_and_tokens(monkeypatch) -> None:

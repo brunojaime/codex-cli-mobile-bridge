@@ -41,6 +41,13 @@ def test_web_preview_plan_is_stable_and_persisted(tmp_path: Path) -> None:
     assert first["health_url"] == (
         "https://preview.nienfos.com/clinica-norte/__preview/health"
     )
+    assert {
+        "kind": "worker_secret",
+        "name": "WEB_PREVIEW_INVITE_SECRET",
+        "mode": "required_external",
+        "status": "operator_configured",
+    } in first["planned_resources"]
+    assert "secret-token" not in str(first)
     assert (tmp_path / "state/previews/wp-clinica-norte.json").is_file()
 
 

@@ -321,6 +321,35 @@ class WebPreviewListResponse(BaseModel):
     previews: list[WebPreviewResponse]
 
 
+class WebPreviewInviteCreateRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    ttl_seconds: int | None = Field(default=None, alias="ttlSeconds", gt=0)
+
+
+class WebPreviewInviteResponse(BaseModel):
+    kind: str
+    version: int
+    invite_id: str
+    preview_id: str
+    source_app: str
+    app_slug: str
+    audience: str
+    scope: str
+    created_at: str
+    expires_at: str
+    revoked_at: str | None = None
+    token_sha256: str
+    invite_url: str | None = None
+    token: str | None = None
+
+
+class WebPreviewInviteListResponse(BaseModel):
+    kind: str = "codex.webPreviewInvites"
+    version: int = 1
+    invites: list[WebPreviewInviteResponse]
+
+
 class FeedbackPointRequest(BaseModel):
     x: float
     y: float

@@ -487,6 +487,17 @@ def _web_preview_manifest_payload(slug: str, name: str) -> dict[str, Any]:
             "spa_fallback": "index.html",
             "mock_preview_requires_opt_in": True,
         },
+        "access": {
+            "mode": "invite_token",
+            "recommended_default": True,
+            "audience": "codex.web-preview",
+            "scope": "web_preview:access",
+            "access_path": "/__preview/access",
+            "token_query_param": "token",
+            "cookie_name": "codex_preview_access",
+            "required_worker_secrets": ["WEB_PREVIEW_INVITE_SECRET"],
+            "public_paths": ["/__preview/health"],
+        },
         "build": {
             "flutter_project": "apps/mobile",
             "output_dir": f"build/web-preview/{slug}",
@@ -522,6 +533,7 @@ def _web_preview_manifest_payload(slug: str, name: str) -> dict[str, Any]:
         "expected_routes": [
             f"/{slug}/",
             f"/{slug}/__preview/health",
+            f"/{slug}/__preview/access",
             f"/{slug}/apps/{slug}/config",
             f"/{slug}/dashboard",
         ],
@@ -584,6 +596,30 @@ scripts/deploy_web_preview.sh --apply
 The Bridge must also have `WEB_PREVIEW_APPLY_ENABLED=true` and Cloudflare
 operator secrets configured. Missing gates return explicit errors such as
 `apply_disabled`, `dry_run_required`, or `cloudflare_configuration_missing`.
+
+## Invite access
+
+The generated preview defaults to `access.mode=invite_token`. Health is public,
+but the SPA and static assets require a signed invite token.
+
+1. The Bridge operator configures `WEB_PREVIEW_INVITE_SECRET` on the Bridge.
+2. The Worker gets the same value as an operator-managed Worker secret:
+
+```bash
+wrangler secret put WEB_PREVIEW_INVITE_SECRET
+```
+
+3. Create an invite after a dry-run plan exists:
+
+```bash
+curl -X POST "$BRIDGE_URL/web-previews/wp-{slug}/invites" \\
+  -H 'content-type: application/json' \\
+  -d '{{"ttlSeconds":604800}}'
+```
+
+4. Open the returned `invite_url`. The Worker validates the token, sets an
+HttpOnly cookie, and redirects to the app. Tokens are time-limited. The Bridge
+stores invite metadata and token SHA256 only, never the plaintext token.
 """
 
 
@@ -607,6 +643,11 @@ database_id = "set-in-cloudflare-dashboard-or-doctor-output"
 binding = "ASSETS"
 directory = "../../build/web-preview/{slug}"
 not_found_handling = "single-page-application"
+
+[vars]
+PREVIEW_ACCESS_MODE = "invite_token"
+# Configure the real value as a Worker secret, not here:
+# wrangler secret put WEB_PREVIEW_INVITE_SECRET
 """
 
 
@@ -614,6 +655,10 @@ def _web_preview_worker_js(slug: str, name: str) -> str:
     template = """const SOURCE_APP = '__SOURCE_APP__';
 const DISPLAY_NAME = __DISPLAY_NAME__;
 const DEFAULT_RUNTIME_PROFILE = 'real';
+const ACCESS_MODE = 'invite_token';
+const INVITE_AUDIENCE = 'codex.web-preview';
+const INVITE_SCOPE = 'web_preview:access';
+const ACCESS_COOKIE_NAME = 'codex_preview_access';
 const STATIC_ASSET_EXTENSIONS = new Set([
   '.avif',
   '.bin',
@@ -696,6 +741,136 @@ function cacheControlFor(pathname) {
   return 'public, max-age=3600';
 }
 
+function base64UrlDecode(value) {
+  const normalized = value.replace(/-/g, '+').replace(/_/g, '/');
+  const padding = '='.repeat((4 - (normalized.length % 4)) % 4);
+  const binary = atob(normalized + padding);
+  return Uint8Array.from(binary, (char) => char.charCodeAt(0));
+}
+
+function base64UrlEncode(bytes) {
+  let binary = '';
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte);
+  }
+  return btoa(binary).replace(/\\+/g, '-').replace(/\\//g, '_').replace(/=+$/g, '');
+}
+
+async function hmacSha256(secret, value) {
+  const key = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign'],
+  );
+  const signature = await crypto.subtle.sign(
+    'HMAC',
+    key,
+    new TextEncoder().encode(value),
+  );
+  return base64UrlEncode(new Uint8Array(signature));
+}
+
+function tokenFromCookie(cookieHeader) {
+  if (!cookieHeader) {
+    return null;
+  }
+  for (const part of cookieHeader.split(';')) {
+    const [name, ...valueParts] = part.trim().split('=');
+    if (name === ACCESS_COOKIE_NAME) {
+      return decodeURIComponent(valueParts.join('='));
+    }
+  }
+  return null;
+}
+
+function tokenFromRequest(request, url) {
+  const queryToken = url.searchParams.get('token');
+  if (queryToken) {
+    return queryToken;
+  }
+  const auth = request.headers.get('authorization') || '';
+  if (auth.toLowerCase().startsWith('bearer ')) {
+    return auth.slice(7).trim();
+  }
+  return tokenFromCookie(request.headers.get('cookie'));
+}
+
+async function verifyInviteToken(env, token) {
+  if (!env.WEB_PREVIEW_INVITE_SECRET) {
+    return { ok: false, status: 503, code: 'invite_secret_missing' };
+  }
+  const parts = (token || '').split('.');
+  if (parts.length !== 3) {
+    return { ok: false, status: 403, code: 'invalid_invite_token' };
+  }
+  const signingInput = `${parts[0]}.${parts[1]}`;
+  const expected = await hmacSha256(env.WEB_PREVIEW_INVITE_SECRET, signingInput);
+  if (expected !== parts[2]) {
+    return { ok: false, status: 403, code: 'invalid_invite_token' };
+  }
+  let payload;
+  try {
+    payload = JSON.parse(new TextDecoder().decode(base64UrlDecode(parts[1])));
+  } catch (_error) {
+    return { ok: false, status: 403, code: 'invalid_invite_token' };
+  }
+  const now = Math.floor(Date.now() / 1000);
+  if (payload.aud !== INVITE_AUDIENCE || payload.scope !== INVITE_SCOPE) {
+    return { ok: false, status: 403, code: 'invalid_invite_token' };
+  }
+  if (payload.source_app !== SOURCE_APP || payload.app_slug !== SOURCE_APP) {
+    return { ok: false, status: 403, code: 'invalid_invite_app' };
+  }
+  if (!payload.exp || Number(payload.exp) <= now) {
+    return { ok: false, status: 403, code: 'expired_invite_token' };
+  }
+  return { ok: true, payload };
+}
+
+function accessDenied(code, status) {
+  return json({
+    error: {
+      code,
+      message: code === 'missing_invite_token'
+        ? 'A valid preview invite token is required.'
+        : 'Preview invite token is invalid or expired.',
+    },
+  }, { status });
+}
+
+async function requireAccess(env, request, url) {
+  if (ACCESS_MODE === 'public') {
+    return { ok: true };
+  }
+  const token = tokenFromRequest(request, url);
+  if (!token) {
+    return { ok: false, response: accessDenied('missing_invite_token', 401) };
+  }
+  const verified = await verifyInviteToken(env, token);
+  if (!verified.ok) {
+    return { ok: false, response: accessDenied(verified.code, verified.status) };
+  }
+  return { ok: true, token, payload: verified.payload };
+}
+
+function redirectWithCookie(url, token, payload) {
+  const next = url.searchParams.get('next');
+  const safeNext = next && next.startsWith('/') && !next.startsWith('//')
+    ? next
+    : `/${SOURCE_APP}/`;
+  const maxAge = Math.max(1, Number(payload.exp || 0) - Math.floor(Date.now() / 1000));
+  return new Response(null, {
+    status: 302,
+    headers: {
+      location: safeNext,
+      'set-cookie': `${ACCESS_COOKIE_NAME}=${encodeURIComponent(token)}; Max-Age=${maxAge}; Path=/; HttpOnly; Secure; SameSite=Lax`,
+      ...securityHeaders(),
+    },
+  });
+}
+
 function isStaticAssetPath(pathname) {
   const lastSegment = pathname.split('/').pop() || '';
   if (pathname.startsWith('/assets/') || pathname.startsWith('/canvaskit/') || pathname.startsWith('/icons/')) {
@@ -765,6 +940,7 @@ export default {
         runtime_profile: env.APP_RUNTIME_PROFILE || DEFAULT_RUNTIME_PROFILE,
         runtime: 'cloudflare_preview',
         runtime_type: 'cloudflare_worker_assets',
+        access_mode: ACCESS_MODE,
         build_id: env.PREVIEW_BUILD_ID || null,
         version: env.PREVIEW_VERSION || null,
         commit: env.PREVIEW_COMMIT_SHA || null,
@@ -784,11 +960,29 @@ export default {
         api_runtime: 'cloudflare_preview',
         api_base_url: 'https://preview.nienfos.com',
         health_path: '/__preview/health',
+        access_mode: ACCESS_MODE,
       });
+    }
+
+    if (request.method === 'GET' && assetPath === '/__preview/access') {
+      const token = url.searchParams.get('token');
+      if (!token) {
+        return accessDenied('missing_invite_token', 401);
+      }
+      const verified = await verifyInviteToken(env, token);
+      if (!verified.ok) {
+        return accessDenied(verified.code, verified.status);
+      }
+      return redirectWithCookie(url, token, verified.payload);
     }
 
     if (request.method !== 'GET' && request.method !== 'HEAD') {
       return json({ error: { code: 'method_not_allowed', message: 'Method not allowed' } }, { status: 405 });
+    }
+
+    const access = await requireAccess(env, request, url);
+    if (!access.ok) {
+      return access.response;
     }
 
     if (isStaticAssetPath(assetPath)) {
@@ -816,7 +1010,12 @@ export default {
 
 def _web_preview_worker_harness_js(slug: str) -> str:
     template = """import assert from 'node:assert/strict';
+import { createHmac, webcrypto } from 'node:crypto';
 import {{ readFile }} from 'node:fs/promises';
+
+if (!globalThis.crypto) {
+  Object.defineProperty(globalThis, 'crypto', { value: webcrypto });
+}
 
 const workerSource = await readFile(new URL('./src/index.js', import.meta.url), 'utf8');
 const workerModule = await import(
@@ -828,6 +1027,42 @@ function response(body, init = {{}}) {{
   return new Response(body, init);
 }}
 
+function base64UrlJson(payload) {
+  return Buffer.from(JSON.stringify(payload)).toString('base64url');
+}
+
+function signToken(payload, secret) {
+  const header = base64UrlJson({ alg: 'HS256', typ: 'JWT' });
+  const body = base64UrlJson(payload);
+  const signature = createHmac('sha256', secret)
+    .update(`${header}.${body}`)
+    .digest('base64url');
+  return `${header}.${body}.${signature}`;
+}
+
+const secret = 'local-preview-secret-value-32-bytes';
+const now = Math.floor(Date.now() / 1000);
+const validToken = signToken({
+  aud: 'codex.web-preview',
+  scope: 'web_preview:access',
+  preview_id: 'wp-__SOURCE_APP__',
+  source_app: '__SOURCE_APP__',
+  app_slug: '__SOURCE_APP__',
+  invite_id: 'wpi-local',
+  iat: now,
+  exp: now + 3600,
+}, secret);
+const expiredToken = signToken({
+  aud: 'codex.web-preview',
+  scope: 'web_preview:access',
+  preview_id: 'wp-__SOURCE_APP__',
+  source_app: '__SOURCE_APP__',
+  app_slug: '__SOURCE_APP__',
+  invite_id: 'wpi-expired',
+  iat: now - 7200,
+  exp: now - 3600,
+}, secret);
+
 const assets = new Map([
   ['/index.html', response('<!doctype html><div id="flt"></div>', {{ headers: {{ 'content-type': 'text/html' }} }})],
   ['/flutter_bootstrap.js', response('console.log("bootstrap");', {{ headers: {{ 'content-type': 'application/javascript' }} }})],
@@ -838,6 +1073,7 @@ const env = {{
   APP_RUNTIME_PROFILE: 'real',
   PREVIEW_BUILD_ID: 'local-harness',
   PREVIEW_COMMIT_SHA: 'test-commit',
+  WEB_PREVIEW_INVITE_SECRET: secret,
   ASSETS: {{
     async fetch(request) {{
       const url = new URL(request.url);
@@ -854,15 +1090,46 @@ const health = await fetchPath('/__SOURCE_APP__/__preview/health');
 assert.equal(health.status, 200);
 assert.equal((await health.json()).source_app, '__SOURCE_APP__');
 
-const asset = await fetchPath('/__SOURCE_APP__/flutter_bootstrap.js');
+const blocked = await fetchPath('/__SOURCE_APP__/dashboard/orders');
+assert.equal(blocked.status, 401);
+assert.equal((await blocked.json()).error.code, 'missing_invite_token');
+
+const access = await fetchPath(`/__SOURCE_APP__/__preview/access?token=${validToken}`);
+assert.equal(access.status, 302);
+const cookie = access.headers.get('set-cookie') || '';
+assert.match(cookie, /codex_preview_access=/);
+
+const expired = await fetchPath(`/__SOURCE_APP__/__preview/access?token=${expiredToken}`);
+assert.equal(expired.status, 403);
+assert.equal((await expired.json()).error.code, 'expired_invite_token');
+
+const asset = await worker.fetch(
+  new Request('https://preview.nienfos.com/__SOURCE_APP__/flutter_bootstrap.js', {
+    headers: { cookie },
+  }),
+  env,
+  {},
+);
 assert.equal(asset.status, 200);
 assert.match(asset.headers.get('content-type') || '', /javascript/);
 
-const spa = await fetchPath('/__SOURCE_APP__/dashboard/orders');
+const spa = await worker.fetch(
+  new Request('https://preview.nienfos.com/__SOURCE_APP__/dashboard/orders', {
+    headers: { cookie },
+  }),
+  env,
+  {},
+);
 assert.equal(spa.status, 200);
 assert.match(spa.headers.get('cache-control') || '', /no-cache/);
 
-const missingAsset = await fetchPath('/__SOURCE_APP__/assets/missing.png');
+const missingAsset = await worker.fetch(
+  new Request('https://preview.nienfos.com/__SOURCE_APP__/assets/missing.png', {
+    headers: { cookie },
+  }),
+  env,
+  {},
+);
 assert.equal(missingAsset.status, 404);
 assert.equal((await missingAsset.json()).error.code, 'asset_not_found');
 
@@ -1044,6 +1311,7 @@ runtime = payload.get("runtime")
 build = payload.get("build")
 cloudflare = payload.get("cloudflare")
 resources = cloudflare.get("resources") if isinstance(cloudflare, dict) else None
+access = payload.get("access")
 expected_routes = payload.get("expected_routes")
 checks = (
     ("source_app", payload.get("source_app"), expected_slug),
@@ -1057,12 +1325,17 @@ checks = (
     ("build.asset_entrypoint", build.get("asset_entrypoint") if isinstance(build, dict) else None, "index.html"),
     ("cloudflare.worker_name", resources.get("worker_name") if isinstance(resources, dict) else None, "nienfos-preview-runtime"),
     ("cloudflare.d1_database", resources.get("d1_database") if isinstance(resources, dict) else None, "nienfos-preview"),
+    ("access.mode", access.get("mode") if isinstance(access, dict) else None, "invite_token"),
+    ("access.access_path", access.get("access_path") if isinstance(access, dict) else None, "/__preview/access"),
+    ("access.cookie_name", access.get("cookie_name") if isinstance(access, dict) else None, "codex_preview_access"),
 )
 for label, actual, expected in checks:
     if actual != expected:
         raise SystemExit("%s mismatch: expected %r, got %r" % (label, expected, actual))
 if not isinstance(expected_routes, list) or "/" + expected_slug + "/__preview/health" not in expected_routes:
     raise SystemExit("expected_routes must include the preview health route")
+if not isinstance(access, dict) or "WEB_PREVIEW_INVITE_SECRET" not in access.get("required_worker_secrets", []):
+    raise SystemExit("access.required_worker_secrets must include WEB_PREVIEW_INVITE_SECRET")
 PY
 
 grep -q 'export default' "$WORKER" || fail "worker module export missing"
@@ -1070,8 +1343,13 @@ grep -q '/__preview/health' "$WORKER" || fail "worker health route missing"
 grep -q 'ASSETS' "$WORKER" || fail "worker asset binding missing"
 grep -q 'asset_not_found' "$WORKER" || fail "worker asset 404 missing"
 grep -q 'content-security-policy' "$WORKER" || fail "worker security headers missing"
+grep -q 'WEB_PREVIEW_INVITE_SECRET' "$WORKER" || fail "worker invite secret binding missing"
+grep -q '/__preview/access' "$WORKER" || fail "worker access route missing"
+grep -q 'missing_invite_token' "$WORKER" || fail "worker missing-token response missing"
+grep -q 'expired_invite_token' "$WORKER" || fail "worker expired-token response missing"
 grep -q 'PREVIEW_DB' "$WRANGLER_EXAMPLE" || fail "wrangler D1 binding missing"
 grep -q 'binding = "ASSETS"' "$WRANGLER_EXAMPLE" || fail "wrangler assets binding missing"
+grep -q 'WEB_PREVIEW_INVITE_SECRET' "$WRANGLER_EXAMPLE" || fail "wrangler invite secret documentation missing"
 grep -q 'APP_RUNTIME_PROFILE' "$ROOT_DIR/apps/mobile/lib/main.dart" || fail "Flutter runtime profile define missing"
 grep -q 'API_RUNTIME' "$ROOT_DIR/apps/mobile/lib/main.dart" || fail "Flutter API runtime define missing"
 grep -q 'APP_SLUG' "$ROOT_DIR/apps/mobile/lib/main.dart" || fail "Flutter app slug define missing"

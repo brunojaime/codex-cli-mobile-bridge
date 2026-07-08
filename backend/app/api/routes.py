@@ -15,6 +15,7 @@ from typing import Any
 
 from fastapi import (
     APIRouter,
+    Body,
     Depends,
     File,
     Form,
@@ -131,6 +132,9 @@ from backend.app.api.schemas import (
     SddWorkbenchViewResponse,
     TurnSummaryConfigRequest,
     WebPreviewDeployRequest,
+    WebPreviewInviteCreateRequest,
+    WebPreviewInviteListResponse,
+    WebPreviewInviteResponse,
     WebPreviewListResponse,
     WebPreviewPlanRequest,
     WebPreviewResponse,
@@ -150,6 +154,10 @@ from backend.app.application.services.web_preview_deploy_service import (
     WebPreviewDeployInput,
     WebPreviewError,
     WebPreviewPlanInput,
+)
+from backend.app.application.services.web_preview_invite_service import (
+    WebPreviewInviteCreateInput,
+    WebPreviewInviteError,
 )
 from backend.app.application.services.app_update_service import (
     AppDisabledError,
@@ -809,6 +817,52 @@ async def get_web_preview(
     if preview is None:
         raise HTTPException(status_code=404, detail={"code": "web_preview_not_found"})
     return WebPreviewResponse(**preview)
+
+
+@router.post(
+    "/web-previews/{preview_id}/invites",
+    response_model=WebPreviewInviteResponse,
+)
+async def create_web_preview_invite(
+    preview_id: str,
+    request: WebPreviewInviteCreateRequest = Body(
+        default_factory=WebPreviewInviteCreateRequest,
+    ),
+    container: AppContainer = Depends(get_container),
+) -> WebPreviewInviteResponse:
+    try:
+        payload = await run_in_threadpool(
+            container.web_preview_invite_service.create_invite,
+            WebPreviewInviteCreateInput(
+                preview_id=preview_id,
+                ttl_seconds=request.ttl_seconds,
+            ),
+        )
+    except WebPreviewInviteError as exc:
+        raise _web_preview_invite_http_error(exc) from exc
+    return WebPreviewInviteResponse(**payload)
+
+
+@router.get(
+    "/web-previews/{preview_id}/invites",
+    response_model=WebPreviewInviteListResponse,
+)
+async def list_web_preview_invites(
+    preview_id: str,
+    container: AppContainer = Depends(get_container),
+) -> WebPreviewInviteListResponse:
+    if await run_in_threadpool(
+        container.web_preview_deploy_service.get_preview,
+        preview_id,
+    ) is None:
+        raise HTTPException(status_code=404, detail={"code": "web_preview_not_found"})
+    invites = await run_in_threadpool(
+        container.web_preview_invite_service.list_invites,
+        preview_id,
+    )
+    return WebPreviewInviteListResponse(
+        invites=[WebPreviewInviteResponse(**invite) for invite in invites],
+    )
 
 
 @router.get("/sdd/projects", response_model=SddProjectsResponse)
@@ -4498,6 +4552,16 @@ def _authorize_installable_app_registration(
 
 
 def _web_preview_http_error(exc: WebPreviewError) -> HTTPException:
+    return HTTPException(
+        status_code=exc.status_code,
+        detail={
+            "code": exc.code,
+            "message": exc.message,
+        },
+    )
+
+
+def _web_preview_invite_http_error(exc: WebPreviewInviteError) -> HTTPException:
     return HTTPException(
         status_code=exc.status_code,
         detail={

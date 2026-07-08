@@ -19,6 +19,9 @@ from backend.app.application.services.project_factory_service import (
 from backend.app.application.services.web_preview_deploy_service import (
     WebPreviewDeployService,
 )
+from backend.app.application.services.web_preview_invite_service import (
+    WebPreviewInviteService,
+)
 from backend.app.application.services.sdd_codex_job_service import SddCodexJobService
 from backend.app.application.services.sdd_project_service import SddProjectService
 from backend.app.application.services.sdd_workbench_view_service import (
@@ -81,6 +84,7 @@ class AppContainer:
     project_factory_service: ProjectFactoryService
     cloudflare_preview_doctor_service: CloudflarePreviewDoctorService
     web_preview_deploy_service: WebPreviewDeployService
+    web_preview_invite_service: WebPreviewInviteService
     job_stream_hub: JobStreamHub
     audio_transcriber: AudioTranscriber
     speech_synthesizer: SpeechSynthesizer
@@ -175,6 +179,10 @@ def build_container(settings: Settings | None = None) -> AppContainer:
     web_preview_deploy_service = WebPreviewDeployService(
         settings=resolved_settings,
     )
+    web_preview_invite_service = WebPreviewInviteService(
+        settings=resolved_settings,
+        preview_service=web_preview_deploy_service,
+    )
     return AppContainer(
         settings=resolved_settings,
         message_service=message_service,
@@ -187,6 +195,7 @@ def build_container(settings: Settings | None = None) -> AppContainer:
         project_factory_service=project_factory_service,
         cloudflare_preview_doctor_service=cloudflare_preview_doctor_service,
         web_preview_deploy_service=web_preview_deploy_service,
+        web_preview_invite_service=web_preview_invite_service,
         job_stream_hub=job_stream_hub,
         audio_transcriber=audio_transcriber,
         speech_synthesizer=speech_synthesizer,

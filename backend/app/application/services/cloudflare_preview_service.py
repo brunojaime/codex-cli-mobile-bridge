@@ -500,6 +500,8 @@ class CloudflareProvisioningPlanner:
             raise ValueError("web preview manifest must include cloudflare resources")
         runtime = manifest.get("runtime")
         runtime = runtime if isinstance(runtime, dict) else {}
+        access = manifest.get("access")
+        access = access if isinstance(access, dict) else {}
         return self._plan(
             base_domain=str(cloudflare.get("base_domain") or ""),
             worker_name=str(resources.get("worker_name") or ""),
@@ -510,6 +512,8 @@ class CloudflareProvisioningPlanner:
             else "",
             runtime_type=str(runtime.get("type") or "cloudflare_worker_assets"),
             health_path=str(runtime.get("health_path") or "/__preview/health"),
+            access_mode=str(access.get("mode") or "public"),
+            required_worker_secrets=tuple(access.get("required_worker_secrets") or ()),
         )
 
     def _plan(
@@ -522,6 +526,8 @@ class CloudflareProvisioningPlanner:
         r2_bucket: str,
         runtime_type: str,
         health_path: str,
+        access_mode: str = "public",
+        required_worker_secrets: tuple[str, ...] = (),
     ) -> dict[str, Any]:
         resources = [
             {
@@ -564,6 +570,15 @@ class CloudflareProvisioningPlanner:
                     "status": "disabled",
                 },
             )
+        for secret_name in required_worker_secrets:
+            resources.append(
+                {
+                    "kind": "worker_secret",
+                    "name": secret_name,
+                    "mode": "required_external",
+                    "status": "operator_configured",
+                },
+            )
         return {
             "kind": "codex.webPreviewProvisioningPlan",
             "version": 1,
@@ -572,6 +587,8 @@ class CloudflareProvisioningPlanner:
             "base_domain": base_domain,
             "runtime_type": runtime_type,
             "health_path": health_path,
+            "access_mode": access_mode,
+            "required_worker_secrets": list(required_worker_secrets),
             "resources": resources,
             "side_effects": [],
         }
