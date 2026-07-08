@@ -1,86 +1,88 @@
 # Plan
 
-## Phase 1: Workbench SDD Standard
+This file is the legacy index for tools that expect a root `plan.md`. The canonical Workbench hierarchy is in `tree.json`.
 
-Define `workbench-sdd/v1` as the platform-owned contract. The standard must
-describe artifact families, lifecycle states, metadata, diagram taxonomy,
-traceability links, context pack names, generated index schemas, and LLM rules.
-The source-of-truth artifact is
-`backend/app/infrastructure/config/sdd_standards/workbench-sdd/v1.yaml`, loaded
-through `SddStandardService`. This phase also defines unknown-version errors,
-compatibility behavior, and fixture coverage.
+## Plan 1: Workbench SDD Standard
 
-## Phase 2: Project Manifest Adoption
+- File: [`plans/01-workbench-sdd-standard/plan.md`](plans/01-workbench-sdd-standard/plan.md)
+- Status: `done`
+- Tasks: `8`
 
-Extend `codex-bridge.yaml` so projects declare how they adopt the standard:
-roots, project type, domains, protected baseline artifacts, generated index
-location, context rules, and allowed project overrides. This phase includes
-manifest/schema validation and context-rule precedence before any scaffolding
-write flow exists.
+## Plan 2: Project Manifest Adoption
 
-## Phase 3: Preflight Validation And Scaffolding
+- File: [`plans/02-project-manifest-adoption/plan.md`](plans/02-project-manifest-adoption/plan.md)
+- Status: `done`
+- Tasks: `8`
 
-Add standard, manifest, template, and scaffold dry-run validators first. Only
-after preflight passes, add a bootstrap write flow that creates missing SDD
-artifacts for a repo that wants to use Workbench. The write flow must detect
-existing files, avoid destructive writes, and produce actionable next steps for
-incomplete projects.
+## Plan 3: Preflight Validation And Scaffolding
 
-## Phase 4: Documentation Templates
+- File: [`plans/03-preflight-validation-and-scaffolding/plan.md`](plans/03-preflight-validation-and-scaffolding/plan.md)
+- Status: `done`
+- Tasks: `9`
 
-Create templates for the required documents and metadata. Templates must stay
-domain-neutral and explain what is Workbench-owned versus project-owned.
+## Plan 4: Documentation Templates
 
-## Phase 5: Diagram Taxonomy And Governance
+- File: [`plans/04-documentation-templates/plan.md`](plans/04-documentation-templates/plan.md)
+- Status: `done`
+- Tasks: `7`
 
-Define built-in diagram types and Mermaid notation rules. Separate baseline
-architecture, domain, and data diagrams from feature-local impact diagrams.
-Baseline edits must require explicit impact justification.
+## Plan 5: Diagram Taxonomy And Governance
 
-## Phase 6: SDD Indexer
+- File: [`plans/05-diagram-taxonomy-and-governance/plan.md`](plans/05-diagram-taxonomy-and-governance/plan.md)
+- Status: `done`
+- Tasks: `6`
 
-Generate `.sdd/` indexes from project artifacts. Indexes must let the Workbench
-and LLMs identify relevant specs, diagrams, modules, domains, statuses, and
-traceability without scanning every spec. Missing or stale indexes must produce
-observable status. Context pack flows attempt deterministic regeneration first;
-if regeneration fails, they return a degraded pack or a hard failure depending
-on the action instead of reading all specs.
+## Plan 6: SDD Indexer
 
-## Phase 7: Context Pack Engine
+- File: [`plans/06-sdd-indexer/plan.md`](plans/06-sdd-indexer/plan.md)
+- Status: `done`
+- Tasks: `9`
 
-Implement context pack presets that map user intent to required files, candidate
-indexes, retrieval limits, forbidden broad reads, and escalation rules.
+## Plan 7: Context Pack Engine
 
-## Phase 8: LLM Operating Instructions
+- File: [`plans/07-context-pack-engine/plan.md`](plans/07-context-pack-engine/plan.md)
+- Status: `done`
+- Tasks: `10`
 
-Update Workbench-launched Codex actions so every LLM starts from manifest,
-standard, constitution, indexes, and a context pack. Prompts must prohibit
-unbounded spec reads unless the selected pack requires them.
+## Plan 8: LLM Operating Instructions
 
-## Phase 9: Workbench UI
+- File: [`plans/08-llm-operating-instructions/plan.md`](plans/08-llm-operating-instructions/plan.md)
+- Status: `done`
+- Tasks: `5`
 
-Expose project SDD health, standards compliance, feature specs, baselines,
-traceability matrix, context pack preview, and architecture/domain/data impact
-queues.
+## Plan 9: Workbench UI
 
-## Phase 10: Validators And Doctor Checks
+- File: [`plans/09-workbench-ui/plan.md`](plans/09-workbench-ui/plan.md)
+- Status: `done`
+- Tasks: `8`
 
-Add validation for manifest schema, artifact presence, metadata, diagram types,
-traceability links, stale indexes, and unsafe baseline edits.
+## Plan 10: Validators And Doctor Checks
 
-## Phase 11: SAT Pilot Adoption
+- File: [`plans/10-validators-and-doctor-checks/plan.md`](plans/10-validators-and-doctor-checks/plan.md)
+- Status: `done`
+- Tasks: `8`
 
-Apply the standard to SAT as the first real project. SAT must declare its
-domains and project-specific rules without adding SAT-specific assumptions to
-the platform standard.
+## Plan 11: SAT Pilot Adoption
 
-## Phase 12: Adoption Documentation
+- File: [`plans/11-sat-pilot-adoption/plan.md`](plans/11-sat-pilot-adoption/plan.md)
+- Status: `done`
+- Tasks: `5`
 
-Document how any new project adopts the standard, creates a feature, generates
-context packs, protects baseline artifacts, and applies Workbench rules to its
-own domain.
+## Plan 12: Adoption Documentation
 
-## Implementation Strategy
+- File: [`plans/12-adoption-documentation/plan.md`](plans/12-adoption-documentation/plan.md)
+- Status: `done`
+- Tasks: `7`
+
+## Plan 13: Review And Iteration
+
+- File: [`plans/13-review-and-iteration/plan.md`](plans/13-review-and-iteration/plan.md)
+- Status: `done`
+- Tasks: `5`
+
+## Notes
+
+### Implementation Strategy
 
 1. Keep the first implementation slice schema-only and read-only.
 2. Add standard, manifest, template, and scaffold dry-run validators before
@@ -92,7 +94,7 @@ own domain.
 6. Pilot on SAT only after generic behavior exists.
 7. Iterate with reviewer feedback after each phase or small group of phases.
 
-## Risks
+### Risks
 
 - The standard could become SAT-specific if project-owned content leaks into
   platform-owned schemas.
@@ -105,7 +107,7 @@ own domain.
 - Bootstrap could create files before the project has passed schema and template
   validation.
 
-## Mitigations
+### Mitigations
 
 - Keep Workbench schemas domain-neutral.
 - Make indexes regeneratable and validated.

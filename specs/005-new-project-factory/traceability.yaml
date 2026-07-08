@@ -1,0 +1,7 @@
+spec_id: 005-new-project-factory
+requirements:
+  FR-001:
+    acceptance_criteria:
+      - AC-001
+    tasks:
+      - T001

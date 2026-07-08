@@ -1,0 +1,364 @@
+{
+  "spec": {
+    "file": "spec.md",
+    "diagrams": [
+      "diagrams/classes.mmd",
+      "diagrams/components.mmd",
+      "diagrams/deployment.mmd",
+      "diagrams/entity-relationship.mmd",
+      "diagrams/security-suspicious-content.mmd",
+      "diagrams/sequence-diagram-feedback.mmd",
+      "diagrams/use-cases.mmd"
+    ]
+  },
+  "plans": [
+    {
+      "id": "plan-1",
+      "number": 1,
+      "title": "SDD Explorer",
+      "status": "done",
+      "description": "Create the first read-only workbench screen. It should load the current project's SDD snapshot and expose constitution, specs, plans, tasks, and diagram source files through the existing read-only SDD backend endpoints.",
+      "file": "plans/01-sdd-explorer/plan.md",
+      "tasks": [
+        {
+          "id": "plan-1-task-1",
+          "number": 1,
+          "title": "Add a dev-mode workbench entry point in MaterialApp.builder",
+          "status": "done",
+          "description": "Add a dev-mode workbench entry point in MaterialApp.builder",
+          "file": "tasks/plan-1-task-1/task.md"
+        },
+        {
+          "id": "plan-1-task-2",
+          "number": 2,
+          "title": "Load /sdd/projects only in the bridge/control app context",
+          "status": "done",
+          "description": "Load /sdd/projects only in the bridge/control app context",
+          "file": "tasks/plan-1-task-2/task.md"
+        },
+        {
+          "id": "plan-1-task-3",
+          "number": 3,
+          "title": "Load /sdd/project?workspace_path=... for the selected/current project",
+          "status": "done",
+          "description": "Load /sdd/project?workspace_path=... for the selected/current project",
+          "file": "tasks/plan-1-task-3/task.md"
+        },
+        {
+          "id": "plan-1-task-4",
+          "number": 4,
+          "title": "Load /sdd/project/diagrams?workspace_path=... for diagram source and metadata",
+          "status": "done",
+          "description": "Load /sdd/project/diagrams?workspace_path=... for diagram source and metadata",
+          "file": "tasks/plan-1-task-4/task.md"
+        },
+        {
+          "id": "plan-1-task-5",
+          "number": 5,
+          "title": "Display constitution, specs, plans, tasks, and diagram source",
+          "status": "done",
+          "description": "Display constitution, specs, plans, tasks, and diagram source",
+          "file": "tasks/plan-1-task-5/task.md"
+        },
+        {
+          "id": "plan-1-task-6",
+          "number": 6,
+          "title": "Show missing, oversized, or unreadable SDD artifacts",
+          "status": "done",
+          "description": "Show missing, oversized, or unreadable SDD artifacts",
+          "file": "tasks/plan-1-task-6/task.md"
+        },
+        {
+          "id": "plan-1-task-7",
+          "number": 7,
+          "title": "Keep ChatScreen product behavior unchanged",
+          "status": "done",
+          "description": "Keep ChatScreen product behavior unchanged",
+          "file": "tasks/plan-1-task-7/task.md"
+        }
+      ]
+    },
+    {
+      "id": "plan-2",
+      "number": 2,
+      "title": "Diagram Rendering",
+      "status": "in_progress",
+      "description": "Render Mermaid diagrams visually in dev mode. The initial target is preview quality, not production diagram publishing. The original `.mmd` file remains the source of truth and rendered output is cache only.",
+      "file": "plans/02-diagram-rendering/plan.md",
+      "tasks": [
+        {
+          "id": "plan-2-task-1",
+          "number": 1,
+          "title": "Choose a dev-mode Mermaid rendering approach",
+          "status": "done",
+          "description": "Choose a dev-mode Mermaid rendering approach",
+          "file": "tasks/plan-2-task-1/task.md"
+        },
+        {
+          "id": "plan-2-task-2",
+          "number": 2,
+          "title": "Render component, deployment, sequence, class, ER, and use case diagrams",
+          "status": "done",
+          "description": "Render component, deployment, sequence, class, ER, and use case diagrams",
+          "file": "tasks/plan-2-task-2/task.md"
+        },
+        {
+          "id": "plan-2-task-3",
+          "number": 3,
+          "title": "Provide full-screen diagram inspection",
+          "status": "planned",
+          "description": "Provide full-screen diagram inspection",
+          "file": "tasks/plan-2-task-3/task.md"
+        },
+        {
+          "id": "plan-2-task-4",
+          "number": 4,
+          "title": "Let users switch between source and rendered preview",
+          "status": "done",
+          "description": "Let users switch between source and rendered preview",
+          "file": "tasks/plan-2-task-4/task.md"
+        },
+        {
+          "id": "plan-2-task-5",
+          "number": 5,
+          "title": "Support selecting or marking diagram nodes, edges, and regions",
+          "status": "planned",
+          "description": "Support selecting or marking diagram nodes, edges, and regions",
+          "file": "tasks/plan-2-task-5/task.md"
+        },
+        {
+          "id": "plan-2-task-6",
+          "number": 6,
+          "title": "Treat render failures as validation feedback, not app crashes",
+          "status": "done",
+          "description": "Treat render failures as validation feedback, not app crashes",
+          "file": "tasks/plan-2-task-6/task.md"
+        }
+      ]
+    },
+    {
+      "id": "plan-3",
+      "number": 3,
+      "title": "Architecture UX",
+      "status": "in_progress",
+      "description": "Turn the raw explorer into a focused architecture review surface with tabs, status summaries, search, and diagram family navigation.",
+      "file": "plans/03-architecture-ux/plan.md",
+      "tasks": [
+        {
+          "id": "plan-3-task-1",
+          "number": 1,
+          "title": "Add tabs for Overview, Specs, Diagrams, and SDD files",
+          "status": "done",
+          "description": "Add tabs for Overview, Specs, Diagrams, and SDD files",
+          "file": "tasks/plan-3-task-1/task.md"
+        },
+        {
+          "id": "plan-3-task-2",
+          "number": 2,
+          "title": "Add diagram-family filters",
+          "status": "done",
+          "description": "Add diagram-family filters",
+          "file": "tasks/plan-3-task-2/task.md"
+        },
+        {
+          "id": "plan-3-task-3",
+          "number": 3,
+          "title": "Add search across specs, tasks, actors, components, entities, and diagrams",
+          "status": "planned",
+          "description": "Add search across specs, tasks, actors, components, entities, and diagrams",
+          "file": "tasks/plan-3-task-3/task.md"
+        },
+        {
+          "id": "plan-3-task-4",
+          "number": 4,
+          "title": "Add project-local architecture health indicators",
+          "status": "done",
+          "description": "Add project-local architecture health indicators",
+          "file": "tasks/plan-3-task-4/task.md"
+        },
+        {
+          "id": "plan-3-task-5",
+          "number": 5,
+          "title": "Add clear empty and invalid states",
+          "status": "done",
+          "description": "Add clear empty and invalid states",
+          "file": "tasks/plan-3-task-5/task.md"
+        }
+      ]
+    },
+    {
+      "id": "plan-4",
+      "number": 4,
+      "title": "Feedback Linked To Specs And Diagrams",
+      "status": "in_progress",
+      "description": "Extend developer feedback so items can be linked to specs, components, screens, actors, entities, sequence steps, and marked diagram regions.",
+      "file": "plans/04-feedback-linked-to-specs-and-diagrams/plan.md",
+      "tasks": [
+        {
+          "id": "plan-4-task-1",
+          "number": 1,
+          "title": "Extend feedback metadata with optional SDD references",
+          "status": "done",
+          "description": "Extend feedback metadata with optional SDD references",
+          "file": "tasks/plan-4-task-1/task.md"
+        },
+        {
+          "id": "plan-4-task-2",
+          "number": 2,
+          "title": "Add diagram region selection and annotation",
+          "status": "planned",
+          "description": "Add diagram region selection and annotation",
+          "file": "tasks/plan-4-task-2/task.md"
+        },
+        {
+          "id": "plan-4-task-3",
+          "number": 3,
+          "title": "Capture diagram node and edge selection metadata when available",
+          "status": "planned",
+          "description": "Capture diagram node and edge selection metadata when available",
+          "file": "tasks/plan-4-task-3/task.md"
+        },
+        {
+          "id": "plan-4-task-4",
+          "number": 4,
+          "title": "Link feedback to diagram files and SDD artifacts when available",
+          "status": "done",
+          "description": "Link feedback to diagram files and SDD artifacts when available",
+          "file": "tasks/plan-4-task-4/task.md"
+        },
+        {
+          "id": "plan-4-task-5",
+          "number": 5,
+          "title": "Show feedback grouped by spec, component, actor, entity, and diagram",
+          "status": "planned",
+          "description": "Show feedback grouped by spec, component, actor, entity, and diagram",
+          "file": "tasks/plan-4-task-5/task.md"
+        },
+        {
+          "id": "plan-4-task-6",
+          "number": 6,
+          "title": "Keep production feedback behavior unchanged when dev mode is off",
+          "status": "done",
+          "description": "Keep production feedback behavior unchanged when dev mode is off",
+          "file": "tasks/plan-4-task-6/task.md"
+        }
+      ]
+    },
+    {
+      "id": "plan-5",
+      "number": 5,
+      "title": "Codex Actions From Specs",
+      "status": "in_progress",
+      "description": "Allow the user to trigger Codex workflows from a spec, task, feedback item, or diagram annotation.",
+      "file": "plans/05-codex-actions-from-specs/plan.md",
+      "tasks": [
+        {
+          "id": "plan-5-task-1",
+          "number": 1,
+          "title": "Add actions to ask Codex to update a spec",
+          "status": "done",
+          "description": "Add actions to ask Codex to update a spec",
+          "file": "tasks/plan-5-task-1/task.md"
+        },
+        {
+          "id": "plan-5-task-2",
+          "number": 2,
+          "title": "Add actions to ask Codex to update a plan or tasks",
+          "status": "done",
+          "description": "Add actions to ask Codex to update a plan or tasks",
+          "file": "tasks/plan-5-task-2/task.md"
+        },
+        {
+          "id": "plan-5-task-3",
+          "number": 3,
+          "title": "Add actions to ask Codex to update a diagram from linked feedback",
+          "status": "done",
+          "description": "Add actions to ask Codex to update a diagram from linked feedback",
+          "file": "tasks/plan-5-task-3/task.md"
+        },
+        {
+          "id": "plan-5-task-4",
+          "number": 4,
+          "title": "Add actions to start an implementation session from a task",
+          "status": "planned",
+          "description": "Add actions to start an implementation session from a task",
+          "file": "tasks/plan-5-task-4/task.md"
+        },
+        {
+          "id": "plan-5-task-5",
+          "number": 5,
+          "title": "Add actions to run the SDD doctor and summarize results",
+          "status": "planned",
+          "description": "Add actions to run the SDD doctor and summarize results",
+          "file": "tasks/plan-5-task-5/task.md"
+        }
+      ]
+    },
+    {
+      "id": "plan-6",
+      "number": 6,
+      "title": "Current Project Dashboard",
+      "status": "in_progress",
+      "description": "Create a dashboard for the project currently being inspected. In inherited apps, this dashboard must describe only that app/project. The bridge app may still provide project selection because it is the control surface.",
+      "file": "plans/06-current-project-dashboard/plan.md",
+      "tasks": [
+        {
+          "id": "plan-6-task-1",
+          "number": 1,
+          "title": "Add a project-local dashboard for the current project",
+          "status": "done",
+          "description": "Add a project-local dashboard for the current project",
+          "file": "tasks/plan-6-task-1/task.md"
+        },
+        {
+          "id": "plan-6-task-2",
+          "number": 2,
+          "title": "Summarize only the current project's specs, diagrams, feedback, and tasks",
+          "status": "done",
+          "description": "Summarize only the current project's specs, diagrams, feedback, and tasks",
+          "file": "tasks/plan-6-task-2/task.md"
+        },
+        {
+          "id": "plan-6-task-3",
+          "number": 3,
+          "title": "In inherited apps, do not show other projects",
+          "status": "done",
+          "description": "In inherited apps, do not show other projects",
+          "file": "tasks/plan-6-task-3/task.md"
+        },
+        {
+          "id": "plan-6-task-4",
+          "number": 4,
+          "title": "In the bridge/control app, allow selecting a project before opening the project-local dashboard",
+          "status": "planned",
+          "description": "In the bridge/control app, allow selecting a project before opening the project-local dashboard",
+          "file": "tasks/plan-6-task-4/task.md"
+        },
+        {
+          "id": "plan-6-task-5",
+          "number": 5,
+          "title": "Surface diagram coverage by required diagram family",
+          "status": "planned",
+          "description": "Surface diagram coverage by required diagram family",
+          "file": "tasks/plan-6-task-5/task.md"
+        },
+        {
+          "id": "plan-6-task-6",
+          "number": 6,
+          "title": "Surface real Android release, updater, backend, and feedback configuration references for the selected/current project when available",
+          "status": "planned",
+          "description": "Surface real Android release, updater, backend, and feedback configuration references for the selected/current project when available",
+          "file": "tasks/plan-6-task-6/task.md"
+        },
+        {
+          "id": "plan-6-task-7",
+          "number": 7,
+          "title": "Keep the dashboard out of downstream repos except for the SDD contract files they expose",
+          "status": "done",
+          "description": "Keep the dashboard out of downstream repos except for the SDD contract files they expose",
+          "file": "tasks/plan-6-task-7/task.md"
+        }
+      ]
+    }
+  ]
+}

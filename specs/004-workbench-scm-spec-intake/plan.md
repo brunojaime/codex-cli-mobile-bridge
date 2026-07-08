@@ -1,190 +1,82 @@
 # Plan
 
-## Phase 1: Spec Target Contract
+This file is the legacy index for tools that expect a root `plan.md`. The canonical Workbench hierarchy is in `tree.json`.
 
-Define the shared `spec_target` payload used by Workbench and Codex CLI Bridge.
-The contract must support `none`, `new_spec`, and `existing_spec`, plus an
-optional artifact target: `auto`, `spec`, `plan`, `tasks`, or `diagram`.
+## Plan 1: Spec Target Contract
 
-Target modules:
+- File: [`plans/01-spec-target-contract/plan.md`](plans/01-spec-target-contract/plan.md)
+- Status: `done`
+- Tasks: `4`
 
-- `backend/app/api/schemas.py`
-- `backend/app/application/services/sdd_spec_target_service.py`
-- `tests/test_sdd_spec_target.py`
+## Plan 2: SCM Metadata Model
 
-No file-writing behavior is allowed in this phase.
+- File: [`plans/02-scm-metadata-model/plan.md`](plans/02-scm-metadata-model/plan.md)
+- Status: `done`
+- Tasks: `4`
 
-## Phase 2: SCM Metadata Model
+## Plan 3: Multimodal Intake Storage
 
-Add `metadata.yaml` support for specs. The model must include title,
-description, status, timestamps, generated/pinned field flags, task summary, and
-last Codex run state.
+- File: [`plans/03-multimodal-intake-storage/plan.md`](plans/03-multimodal-intake-storage/plan.md)
+- Status: `done`
+- Tasks: `6`
 
-Target modules:
+## Plan 4: Backend Spec Creation Boundary
 
-- `backend/app/application/services/sdd_project_service.py`
-- `backend/app/application/services/sdd_workbench_view_service.py`
-- `packages/codex_bridge_workbench/lib/src/models/sdd_project.dart`
-- `tests/test_sdd_spec_metadata.py`
-- focused Workbench model/widget tests.
+- File: [`plans/04-backend-spec-creation-boundary/plan.md`](plans/04-backend-spec-creation-boundary/plan.md)
+- Status: `done`
+- Tasks: `5`
 
-This phase is read-only. Missing metadata must use fallback values.
+## Plan 5: Backend Existing Spec Edit Boundary
 
-## Phase 3: Multimodal Intake Storage
+- File: [`plans/05-backend-existing-spec-edit-boundary/plan.md`](plans/05-backend-existing-spec-edit-boundary/plan.md)
+- Status: `done`
+- Tasks: `4`
 
-Persist text, audio, images, cropped images, marked regions, multiple
-screenshots, and image sequences under `specs/<id>/intake/`. Raw input must be
-preserved before transcription, visual summarization, or spec generation.
+## Plan 6: Codex CLI Orchestration
 
-Target modules:
+- File: [`plans/06-codex-cli-orchestration/plan.md`](plans/06-codex-cli-orchestration/plan.md)
+- Status: `done`
+- Tasks: `8`
 
-- `backend/app/api/schemas.py`
-- `backend/app/application/services/sdd_intake_service.py`
-- `tests/fixtures/sdd_intake/`
-- `tests/test_sdd_intake_service.py`
+## Plan 7: Metadata Refresh
 
-This phase adds dry-run planning and validation only. Writes are blocked until
-size, format, path, and collision checks pass.
+- File: [`plans/07-metadata-refresh/plan.md`](plans/07-metadata-refresh/plan.md)
+- Status: `done`
+- Tasks: `7`
 
-## Phase 4: Backend Spec Creation Boundary
+## Plan 8: Workbench UX For Specs
 
-Add a backend service and API boundary that can create a new spec package from a
-normalized intake. The first implementation must be dry-run capable and must
-avoid overwriting existing spec directories.
+- File: [`plans/08-workbench-ux-for-specs/plan.md`](plans/08-workbench-ux-for-specs/plan.md)
+- Status: `done`
+- Tasks: `13`
 
-Target modules:
+## Plan 9: Codex CLI Bridge Spec Targeting
 
-- `backend/app/api/routes.py`
-- `backend/app/api/schemas.py`
-- `backend/app/application/services/sdd_spec_creation_service.py`
-- `tests/test_sdd_spec_creation_service.py`
+- File: [`plans/09-codex-cli-bridge-spec-targeting/plan.md`](plans/09-codex-cli-bridge-spec-targeting/plan.md)
+- Status: `done`
+- Tasks: `9`
 
-The write flow must consume the dry-run plan as its write contract.
+## Plan 10: Status Streaming And Activity
 
-## Phase 5: Backend Existing Spec Edit Boundary
+- File: [`plans/10-status-streaming-and-activity/plan.md`](plans/10-status-streaming-and-activity/plan.md)
+- Status: `done`
+- Tasks: `5`
 
-Add a backend service and API boundary that can target an existing spec artifact
-for update. It must validate workspace, spec id, artifact path, and context
-before invoking Codex.
+## Plan 11: Validation And Tests
 
-Target modules:
+- File: [`plans/11-validation-and-tests/plan.md`](plans/11-validation-and-tests/plan.md)
+- Status: `done`
+- Tasks: `6`
 
-- `backend/app/application/services/sdd_spec_edit_service.py`
-- `backend/app/application/services/sdd_context_pack_service.py`
-- `tests/test_sdd_spec_edit_service.py`
+## Plan 12: SAT Pilot And Reviewer Closeout
 
-This phase prepares edit requests and dry-run validation. It does not execute
-Codex CLI yet.
+- File: [`plans/12-sat-pilot-and-reviewer-closeout/plan.md`](plans/12-sat-pilot-and-reviewer-closeout/plan.md)
+- Status: `done`
+- Tasks: `8`
 
-## Phase 6: Codex CLI Orchestration
+## Notes
 
-Run Codex CLI in an isolated job sandbox copied from the target workspace for
-create/edit actions. The service must build the correct context pack, pass
-raw/normalized intake references, expose job states, capture results, and
-report blocked/failed states. Generated changes must remain in the job sandbox
-until an explicit review/apply step validates paths, conflicts, and protected
-baseline rules.
-
-Target modules:
-
-- `backend/app/application/services/sdd_codex_job_service.py`
-- `backend/app/application/services/message_service.py` if existing session/job
-  infrastructure is reused.
-- `backend/app/api/routes.py`
-- `tests/test_sdd_codex_job_service.py`
-
-Codex CLI execution must use argv command construction, validated cwd,
-allowlisted env, timeout, cancellation, process log capture, and one active job
-per target workspace. The process cwd must be the job sandbox, not the
-destination repo root.
-
-## Phase 7: Metadata Refresh
-
-After every successful create/edit action, refresh title, description, status,
-task summary, traceability, and `.sdd` indexes. Pinned title/description fields
-must not be overwritten.
-
-Target modules:
-
-- `backend/app/application/services/sdd_metadata_refresh_service.py`
-- `backend/app/application/services/sdd_index_service.py`
-- `tests/test_sdd_metadata_refresh_service.py`
-
-Refresh must be idempotent and expose stale/updated/skipped/proposed fields.
-
-## Phase 8: Workbench UX For Specs
-
-Expose a spec list with title, description, status, task progress, updated
-timestamp, and last run state. Add new spec and edit spec flows with text,
-audio, image, crop, marked region, and image sequence inputs.
-
-Target modules:
-
-- `packages/codex_bridge_workbench/lib/src/widgets/sdd_explorer_panel.dart`
-- `packages/codex_bridge_workbench/lib/src/services/sdd_explorer_client.dart`
-- `packages/codex_bridge_workbench/lib/src/models/sdd_project.dart`
-- `packages/codex_bridge_workbench/test/codex_bridge_workbench_test.dart`
-
-The UI consumes backend state and submitter boundaries; it must not write files
-directly.
-
-## Phase 9: Codex CLI Bridge Spec Targeting
-
-Extend Bridge capture flows so screenshots, selected images, audio, comments,
-and capture batches can target no spec, a new spec, or an existing spec. The
-Bridge should send the same `spec_target` payload as Workbench.
-
-Target modules:
-
-- existing feedback/capture payload schemas in backend API.
-- Flutter feedback/capture widgets in the current Bridge app.
-- shared package metadata structures where feedback payloads are built.
-- focused payload compatibility tests.
-
-This phase reuses existing capture behavior and only adds target metadata and
-spec picker UI.
-
-## Phase 10: Status Streaming And Activity
-
-Show background states in the app: received, processing-media, preparing-context,
-queued, running-codex, applying-changes, refreshing-metadata, validating, ready,
-failed, and blocked.
-
-Retry is a new-job operation, not a mutation of a failed sandbox. A retry may
-only be created from `failed`, `timed_out`, or `cancelled` jobs. The backend
-copies the original validated request/context/prompt/base-manifest handoff into
-a fresh `.codex-bridge/sdd-jobs/<retry-id>/sandbox`, rejects queued, running,
-completed, applied, blocked, missing, stale, or concurrency-conflicting jobs,
-and preserves the rule that generated output is never written to the target repo
-until explicit reviewed apply.
-
-Target modules:
-
-- `backend/app/api/schemas.py`
-- `backend/app/api/routes.py`
-- `backend/app/application/services/sdd_codex_job_service.py`
-- Workbench activity widgets.
-- tests for state transitions and API response shapes.
-
-## Phase 11: Validation And Tests
-
-Add focused tests for contract parsing, path safety, dry-run creation, existing
-spec edit targeting, metadata refresh, pinned fields, task summaries, context
-pack use, Codex CLI job state output, and no broad spec fallback.
-
-This phase consolidates doctor/readiness checks and end-to-end fixtures. It must
-run strict doctor against generated fixture workspaces and prove no unintended
-writes outside the destination repo.
-
-## Phase 12: SAT Pilot And Reviewer Closeout
-
-Pilot the flow on SAT without SAT-specific platform code. Run reviewer pass,
-address findings, self-review, strict doctor, and SAT-focused validation before
-marking the feature complete.
-
-SAT writes, if any, must be explicit pilot actions and reported separately.
-
-## Implementation Strategy
+### Implementation Strategy
 
 1. Keep the first slice schema/read-only where possible.
 2. Add dry-run and validation before any write flow.
@@ -197,7 +89,7 @@ SAT writes, if any, must be explicit pilot actions and reported separately.
 7. Add UX surfaces after backend boundaries are machine-testable.
 8. Pilot SAT only after generic Workbench behavior exists.
 
-## Risks
+### Risks
 
 - Spec creation could overwrite or fork an existing spec if slug/id generation
   is weak.
@@ -211,7 +103,7 @@ SAT writes, if any, must be explicit pilot actions and reported separately.
 - The user experience could expose too much internal SDD language instead of
   SCM/spec language.
 
-## Mitigations
+### Mitigations
 
 - Use deterministic id/slug generation with collision checks.
 - Store raw intake before any generated summaries.

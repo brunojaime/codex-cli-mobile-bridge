@@ -1,46 +1,46 @@
 # Plan
 
-## Slice 1: SDD Explorer
+This file is the legacy index for tools that expect a root `plan.md`. The canonical Workbench hierarchy is in `tree.json`.
 
-Create the first read-only workbench screen. It should load the current
-project's SDD snapshot and expose constitution, specs, plans, tasks, and
-diagram source files through the existing read-only SDD backend endpoints.
+## Plan 1: SDD Explorer
 
-## Slice 2: Diagram Rendering
+- File: [`plans/01-sdd-explorer/plan.md`](plans/01-sdd-explorer/plan.md)
+- Status: `done`
+- Tasks: `7`
 
-Render Mermaid diagrams visually in dev mode. The initial target is preview
-quality, not production diagram publishing. The original `.mmd` file remains
-the source of truth and rendered output is cache only.
+## Plan 2: Diagram Rendering
 
-## Slice 3: Architecture UX
+- File: [`plans/02-diagram-rendering/plan.md`](plans/02-diagram-rendering/plan.md)
+- Status: `in_progress`
+- Tasks: `6`
 
-Turn the raw explorer into a focused architecture review surface with tabs,
-status summaries, search, and diagram family navigation.
+## Plan 3: Architecture UX
 
-## Slice 4: Feedback Linked To Specs And Diagrams
+- File: [`plans/03-architecture-ux/plan.md`](plans/03-architecture-ux/plan.md)
+- Status: `in_progress`
+- Tasks: `5`
 
-Extend developer feedback so items can be linked to specs, components, screens,
-actors, entities, sequence steps, and marked diagram regions.
+## Plan 4: Feedback Linked To Specs And Diagrams
 
-Feedback metadata should be optional and backward-compatible. Existing
-feedback senders that do not know about SDD must keep working.
+- File: [`plans/04-feedback-linked-to-specs-and-diagrams/plan.md`](plans/04-feedback-linked-to-specs-and-diagrams/plan.md)
+- Status: `in_progress`
+- Tasks: `6`
 
-## Slice 5: Codex Actions From Specs
+## Plan 5: Codex Actions From Specs
 
-Allow the user to trigger Codex workflows from a spec, task, feedback item, or
-diagram annotation.
+- File: [`plans/05-codex-actions-from-specs/plan.md`](plans/05-codex-actions-from-specs/plan.md)
+- Status: `in_progress`
+- Tasks: `5`
 
-## Slice 6: Current Project Dashboard
+## Plan 6: Current Project Dashboard
 
-Create a dashboard for the project currently being inspected. In inherited
-apps, this dashboard must describe only that app/project. The bridge app may
-still provide project selection because it is the control surface.
+- File: [`plans/06-current-project-dashboard/plan.md`](plans/06-current-project-dashboard/plan.md)
+- Status: `in_progress`
+- Tasks: `7`
 
-The dashboard may show real release, updater, backend, and feedback
-configuration references for the current project. It must not generate or
-suggest mock/demo configuration.
+## Notes
 
-## Implementation Notes
+### Implementation Notes
 
 - Keep all work behind `CODEX_BRIDGE_DEV_MODE`.
 - Keep SDD reads read-only unless a future explicit write flow is designed.

@@ -1,0 +1,76 @@
+{
+  "spec": {
+    "file": "spec.md",
+    "diagrams": [
+      "diagrams/read-model.mmd"
+    ]
+  },
+  "plans": [
+    {
+      "id": "plan-1",
+      "number": 1,
+      "title": "Codex Bridge SDD Wrapper",
+      "status": "done",
+      "description": "1. Add the project SDD contract and architecture docs.",
+      "file": "plans/01-codex-bridge-sdd-wrapper/plan.md",
+      "tasks": [
+        {
+          "id": "plan-1-task-1",
+          "number": 1,
+          "title": "Add SDD contract files and diagrams",
+          "status": "done",
+          "description": "Add SDD contract files and diagrams",
+          "file": "tasks/plan-1-task-1/task.md"
+        },
+        {
+          "id": "plan-1-task-2",
+          "number": 2,
+          "title": "Add SddProjectService",
+          "status": "done",
+          "description": "Add SddProjectService",
+          "file": "tasks/plan-1-task-2/task.md"
+        },
+        {
+          "id": "plan-1-task-3",
+          "number": 3,
+          "title": "Add /sdd/projects, /sdd/project, and /sdd/project/diagrams",
+          "status": "done",
+          "description": "Add /sdd/projects, /sdd/project, and /sdd/project/diagrams",
+          "file": "tasks/plan-1-task-3/task.md"
+        },
+        {
+          "id": "plan-1-task-4",
+          "number": 4,
+          "title": "Add supports_sdd to capabilities",
+          "status": "done",
+          "description": "Add supports_sdd to capabilities",
+          "file": "tasks/plan-1-task-4/task.md"
+        },
+        {
+          "id": "plan-1-task-5",
+          "number": 5,
+          "title": "Add scripts/codex_bridge_sdd_doctor.py",
+          "status": "done",
+          "description": "Add scripts/codex_bridge_sdd_doctor.py",
+          "file": "tasks/plan-1-task-5/task.md"
+        },
+        {
+          "id": "plan-1-task-6",
+          "number": 6,
+          "title": "Add focused tests for path safety, allowed extensions, size limits, and endpoint shapes",
+          "status": "done",
+          "description": "Add focused tests for path safety, allowed extensions, size limits, and endpoint shapes",
+          "file": "tasks/plan-1-task-6/task.md"
+        },
+        {
+          "id": "plan-1-task-7",
+          "number": 7,
+          "title": "Add CODEX_BRIDGE_DEV_MODE frontend wrapper gate",
+          "status": "done",
+          "description": "Add CODEX_BRIDGE_DEV_MODE frontend wrapper gate",
+          "file": "tasks/plan-1-task-7/task.md"
+        }
+      ]
+    }
+  ]
+}

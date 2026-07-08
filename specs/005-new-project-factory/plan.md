@@ -1,94 +1,69 @@
 # Plan
 
-## Phase 1: Manifest Contract
+This file is the legacy index for tools that expect a root `plan.md`. The canonical Workbench hierarchy is in `tree.json`.
 
-Define and test the project manifest model before any file-writing generator is
-added.
+## Plan 1: Manifest Contract
 
-- Add a pure project manifest planning service.
-- Validate project name, slug, platforms, backend, business type, and target
-  path under `PROJECTS_ROOT`.
-- Include mandatory auth, RBAC, admin, notifications, Codex, SDD, and release
-  defaults.
-- Include Codex CLI creation workflow defaults of 20 generator runs and 20
-  reviewer runs.
-- Keep seed admin values as environment variable names only.
-- Prove validation is deterministic and write-free.
+- File: [`plans/01-manifest-contract/plan.md`](plans/01-manifest-contract/plan.md)
+- Status: `done`
+- Tasks: `4`
 
-## Phase 2: Backend Draft And Job API
+## Plan 2: Backend Draft And Job API
 
-- Add project-factory request/response schemas.
-- Add draft creation, listing/detail, dry-run, reference assets, generation,
-  job listing/detail, and doctor endpoints.
-- Add persistent draft/job state with interrupted recovery and failure
-  reporting.
-- Block duplicate generation for the same draft.
+- File: [`plans/02-backend-draft-and-job-api/plan.md`](plans/02-backend-draft-and-job-api/plan.md)
+- Status: `done`
+- Tasks: `4`
 
-## Phase 3: Mobile Chat Flow
+## Plan 3: Mobile Chat Flow
 
-- Add the New project action to the current app.
-- Implement the primary chat-mode flow: create a normal chat titled "New
-  project", configure Project Factory generator/reviewer agents, and send the
-  kickoff prompt that asks for missing project context.
-- Support optional visual references through the existing chat attachment tray.
-- Show dry-run summary and generation progress.
-- Open the generated workspace after success.
-- Add Project Factory History so persisted jobs can be inspected, watched again,
-  or opened after app restart.
+- File: [`plans/03-mobile-chat-flow/plan.md`](plans/03-mobile-chat-flow/plan.md)
+- Status: `done`
+- Tasks: `5`
 
-## Phase 4: Research And Visual Direction
+## Plan 4: Research And Visual Direction
 
-- Generate placeholder business research documents that Codex CLI batches fill.
-- Generate typical-app pattern docs by business type through Codex prompts.
-- Copy uploaded images into generated repos with traceable metadata.
-- Generate design token/style guide placeholders for subsequent Codex runs.
+- File: [`plans/04-research-and-visual-direction/plan.md`](plans/04-research-and-visual-direction/plan.md)
+- Status: `done`
+- Tasks: `4`
 
-## Phase 5: Local Generator
+## Plan 5: Local Generator
 
-- Create the sibling project directory under `PROJECTS_ROOT`.
-- Write `.codex/project.yaml`.
-- Create README, AGENTS, docs, design, release, and infra folders.
-- Create the initial SDD spec package.
-- Initialize git without pushing secrets.
+- File: [`plans/05-local-generator/plan.md`](plans/05-local-generator/plan.md)
+- Status: `done`
+- Tasks: `4`
 
-## Phase 6: Flutter And Backend Templates
+## Plan 6: Flutter And Backend Templates
 
-- Generate the Flutter iOS/Android/Web app with auth, admin domain management,
-  RBAC-gated admin navigation, notifications, API config, and generated tests.
-- Generate the FastAPI backend with health, auth, RBAC, seed admin, domain
-  resources, notification resources, and tests.
-- Leave Feedback Bridge and app updater as generated SDD follow-up tasks until
-  those packages are wired into the template.
+- File: [`plans/06-flutter-and-backend-templates/plan.md`](plans/06-flutter-and-backend-templates/plan.md)
+- Status: `done`
+- Tasks: `4`
 
-## Phase 7: GitHub And Release Readiness
+## Plan 7: GitHub And Release Readiness
 
-- Create an initial local git commit for every generated project.
-- In remote publication mode, execute the generated GitHub publish script so the
-  repository is actually created/verified and pushed, not merely documented.
-- Generate and execute an Android release script that creates the productive tag,
-  pushes it, waits for the GitHub Actions release workflow, and verifies APK
-  assets.
-- Register the published APK in the Bridge installable-app catalog so Codex
-  Mobile can show it under Apps.
-- Leave an explicit `blocked` publish state when GitHub, release, Bridge URL, or
-  registration-token configuration is missing. Do not report `ready` for local
-  foundations that have not been remotely published.
-- Generate AWS, App Store, and Play Store readiness files.
-- Keep Google, AWS, Apple, and Play credentials as explicit pending items.
+- File: [`plans/07-github-and-release-readiness/plan.md`](plans/07-github-and-release-readiness/plan.md)
+- Status: `done`
+- Tasks: `5`
 
-## Phase 8: End-To-End Validation
+## Plan 8: End-To-End Validation
 
-- Add a doctor endpoint with Projects root and toolchain checks.
-- Add generated-project validation script.
-- Add regression coverage for the SAT Showroom gap: remote publication phases
-  must run before `ready`, and missing GitHub/release/Bridge config must end as
-  `blocked`.
-- Validate Workbench discovery, Flutter, backend, auth/RBAC, admin, notifications,
-  and no-secret output.
+- File: [`plans/08-end-to-end-validation/plan.md`](plans/08-end-to-end-validation/plan.md)
+- Status: `done`
+- Tasks: `3`
 
-## Phase 9: Acceptance Hardening
+## Plan 9: Acceptance Hardening
 
-- Persist drafts/jobs and recover interrupted jobs after restart.
-- Add history APIs and mobile history panel.
-- Document operational configuration and validation.
-- Run backend, Flutter, and generated-project E2E validation.
+- File: [`plans/09-acceptance-hardening/plan.md`](plans/09-acceptance-hardening/plan.md)
+- Status: `done`
+- Tasks: `4`
+
+## Plan 10: Post-Release Chat-Mode Hardening
+
+- File: [`plans/10-post-release-chat-mode-hardening/plan.md`](plans/10-post-release-chat-mode-hardening/plan.md)
+- Status: `done`
+- Tasks: `5`
+
+## Plan 11: Publication Contract Hardening
+
+- File: [`plans/11-publication-contract-hardening/plan.md`](plans/11-publication-contract-hardening/plan.md)
+- Status: `done`
+- Tasks: `6`

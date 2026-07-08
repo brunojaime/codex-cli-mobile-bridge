@@ -29,7 +29,7 @@ source_digests:
   diagrams/codex-cli-orchestration.yaml: 256179ec97bd811626d13e61a1e04fe5b1fc82d3ae3a20b579963a39a1ab7a86
   diagrams/spec-intake-flow.mmd: 718f27174a2c544ede6cd3b111d5d6c465fd57a1141cfaf797cbc627e1b0d251
   diagrams/spec-intake-flow.yaml: bb774f264b97dd5a8ddab3529698c1d757e11a9d65c03ade0a9b01626a71637f
-  plan.md: 6ced45a2000160bb53c52f83f17d2779fc3292bf2aef8d39c5a512dc6cda0f9e
+  plan.md: 4ee5020d70fe9ffde509f6ff2b946c93402a8e271e1ab6785428d53ff4efac04
   spec.md: 6cf351cca8cbfd7afe91bcfb5e4840ff76d2c0896b3d9118c25347e71760aa00
-  tasks.md: 5a107951af54b51113436b0e6dece68bb406ec9dd0bbcd5e50316aa6eb3c41eb
+  tasks.md: 085e34794fdb614f5910ada2d4a8f885c6c2ac72757fc6bebe41d65b35193a20
   traceability.yaml: 935ae46a0b262882e4878f00166c169937a4ebd2832b13a49e89d7796e3dc7c7
