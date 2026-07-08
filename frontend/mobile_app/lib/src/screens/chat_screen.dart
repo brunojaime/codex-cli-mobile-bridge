@@ -219,8 +219,9 @@ const List<double> _audioReplyPlaybackSpeeds = <double>[
   1.75,
   2.0,
 ];
-const Key kChatScreenBodyScrollViewKey =
-    ValueKey<String>('chat-screen-body-scroll-view');
+const Key kChatScreenBodyScrollViewKey = ValueKey<String>(
+  'chat-screen-body-scroll-view',
+);
 
 enum _AppBarOverflowAction {
   apps,
@@ -235,20 +236,44 @@ enum _AppBarOverflowAction {
   newChat,
 }
 
-enum _PinnedWorkspaceAction {
-  newChat,
-  remove,
-}
+enum _PinnedWorkspaceAction { newChat, remove }
 
-enum _RenameChatMode {
-  manual,
-  generated,
-}
+enum _RenameChatMode { manual, generated }
 
-enum _ChatBodyView {
-  conversation,
-  agentSummaries,
-  turnSummaries,
+enum _ChatBodyView { conversation, agentSummaries, turnSummaries }
+
+enum _SlashCommandActionKind { insertText, sendMessage, callback, disabled }
+
+class _SlashCommand {
+  const _SlashCommand({
+    required this.id,
+    required this.slash,
+    required this.title,
+    required this.description,
+    required this.scope,
+    required this.actionKind,
+    this.payload = '',
+    this.disabledReason,
+  });
+
+  final String id;
+  final String slash;
+  final String title;
+  final String description;
+  final String scope;
+  final _SlashCommandActionKind actionKind;
+  final String payload;
+  final String? disabledReason;
+
+  bool get isEnabled =>
+      disabledReason == null && actionKind != _SlashCommandActionKind.disabled;
+
+  bool matches(String query) {
+    final normalized = query.toLowerCase();
+    return slash.toLowerCase().contains(normalized) ||
+        title.toLowerCase().contains(normalized) ||
+        description.toLowerCase().contains(normalized);
+  }
 }
 
 class ChatScreen extends StatefulWidget {
@@ -329,8 +354,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     _chatController =
         widget.controllerOverride ?? _buildController(widget.initialApiBaseUrl);
     if (widget.initialSidebarWorkspaces.isNotEmpty) {
-      _sidebarWorkspaces =
-          List<Workspace>.from(widget.initialSidebarWorkspaces);
+      _sidebarWorkspaces = List<Workspace>.from(
+        widget.initialSidebarWorkspaces,
+      );
     }
     _activeCodexTooling = widget.initialCodexTooling;
     _chatController.addListener(_handleChatControllerChanged);
@@ -544,9 +570,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                   : _showArchivedChatsInSidebar
                                       ? 'No archived chats yet'
                                       : 'No chats yet',
-                              style: const TextStyle(
-                                color: Color(0xFF8B97B5),
-                              ),
+                              style: const TextStyle(color: Color(0xFF8B97B5)),
                             ),
                           )
                         : ListView(children: sessionGroups),
@@ -592,8 +616,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                           padding: const EdgeInsets.all(12),
                                           decoration: BoxDecoration(
                                             color: const Color(0xFF3B1521),
-                                            borderRadius:
-                                                BorderRadius.circular(14),
+                                            borderRadius: BorderRadius.circular(
+                                              14,
+                                            ),
                                           ),
                                           child: Text(
                                             _chatController.errorText!,
@@ -616,8 +641,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                           padding: const EdgeInsets.all(12),
                                           decoration: BoxDecoration(
                                             color: const Color(0xFF362411),
-                                            borderRadius:
-                                                BorderRadius.circular(14),
+                                            borderRadius: BorderRadius.circular(
+                                              14,
+                                            ),
                                           ),
                                           child: Text(
                                             _serverErrorText!,
@@ -648,6 +674,37 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                         ),
                                       ),
                                     if (currentSession != null &&
+                                        isProjectFactoryIntakeConfiguration(
+                                          currentSession.agentConfiguration,
+                                        ))
+                                      SliverPadding(
+                                        padding: const EdgeInsets.fromLTRB(
+                                          16,
+                                          8,
+                                          16,
+                                          0,
+                                        ),
+                                        sliver: SliverToBoxAdapter(
+                                          child: _GuidedProjectIntakeCard(
+                                            readyForBuild:
+                                                projectFactoryHasBuildReadyMarker(
+                                              currentSession.messages,
+                                            ),
+                                            onShowContract: () {
+                                              _textController.text =
+                                                  'Show the current New Project contract preview with decisions, assumptions, assets, release plan, Workbench/SDD, web preview, Android plan, blockers, risks, and validation.';
+                                              _textController.selection =
+                                                  TextSelection.collapsed(
+                                                offset:
+                                                    _textController.text.length,
+                                              );
+                                            },
+                                            onConfirmBuild:
+                                                _stageProjectBuildConfirmation,
+                                          ),
+                                        ),
+                                      ),
+                                    if (currentSession != null &&
                                         (summaryMessageCount > 0 ||
                                             turnSummaryCount > 0 ||
                                             currentSession
@@ -666,8 +723,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                             spacing: 10,
                                             children: <Widget>[
                                               ChoiceChip(
-                                                label:
-                                                    const Text('Conversation'),
+                                                label: const Text(
+                                                  'Conversation',
+                                                ),
                                                 selected: _chatBodyView ==
                                                     _ChatBodyView.conversation,
                                                 onSelected: (selected) {
@@ -678,10 +736,12 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                                     _ChatBodyView.conversation,
                                                   );
                                                 },
-                                                selectedColor:
-                                                    const Color(0xFF55D6BE),
-                                                backgroundColor:
-                                                    const Color(0xFF16213C),
+                                                selectedColor: const Color(
+                                                  0xFF55D6BE,
+                                                ),
+                                                backgroundColor: const Color(
+                                                  0xFF16213C,
+                                                ),
                                                 labelStyle: TextStyle(
                                                   color: _chatBodyView ==
                                                           _ChatBodyView
@@ -716,17 +776,21 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                                                     .agentSummaries,
                                                               );
                                                             },
-                                                  selectedColor:
-                                                      const Color(0xFF8CA8FF),
-                                                  backgroundColor:
-                                                      const Color(0xFF16213C),
+                                                  selectedColor: const Color(
+                                                    0xFF8CA8FF,
+                                                  ),
+                                                  backgroundColor: const Color(
+                                                    0xFF16213C,
+                                                  ),
                                                   labelStyle: TextStyle(
                                                     color:
                                                         isShowingAgentSummaries
                                                             ? const Color(
-                                                                0xFF07131D)
+                                                                0xFF07131D,
+                                                              )
                                                             : const Color(
-                                                                0xFFDCE5FF),
+                                                                0xFFDCE5FF,
+                                                              ),
                                                     fontWeight: FontWeight.w700,
                                                   ),
                                                   side: const BorderSide(
@@ -756,10 +820,12 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                                               .turnSummaries,
                                                         );
                                                       },
-                                                selectedColor:
-                                                    const Color(0xFFFFC857),
-                                                backgroundColor:
-                                                    const Color(0xFF16213C),
+                                                selectedColor: const Color(
+                                                  0xFFFFC857,
+                                                ),
+                                                backgroundColor: const Color(
+                                                  0xFF16213C,
+                                                ),
                                                 labelStyle: TextStyle(
                                                   color: isShowingTurnSummaries
                                                       ? const Color(0xFF2A1600)
@@ -903,8 +969,23 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                         sliver: SliverList(
                                           delegate: SliverChildBuilderDelegate(
                                             (context, index) {
-                                              final entry =
-                                                  timelineEntries[index];
+                                              if (index == 0 &&
+                                                  _shouldShowOlderMessagesRow) {
+                                                return _OlderMessagesRow(
+                                                  isLoading: _chatController
+                                                      .isLoadingOlderMessages,
+                                                  errorText: _chatController
+                                                      .olderMessagesError,
+                                                  onRetry:
+                                                      _loadOlderMessagesFromTop,
+                                                );
+                                              }
+                                              final timelineIndex =
+                                                  _shouldShowOlderMessagesRow
+                                                      ? index - 1
+                                                      : index;
+                                              final entry = timelineEntries[
+                                                  timelineIndex];
                                               if (entry.separatorDate != null) {
                                                 final separatorDate =
                                                     entry.separatorDate!;
@@ -1017,7 +1098,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                                 ),
                                               );
                                             },
-                                            childCount: timelineEntries.length,
+                                            childCount: timelineEntries.length +
+                                                (_shouldShowOlderMessagesRow
+                                                    ? 1
+                                                    : 0),
                                           ),
                                         ),
                                       ),
@@ -1047,9 +1131,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                       },
                                       backgroundColor: const Color(0xFF1C2745),
                                       foregroundColor: const Color(0xFF55D6BE),
-                                      child: const Icon(
-                                        Icons.south_rounded,
-                                      ),
+                                      child: const Icon(Icons.south_rounded),
                                     ),
                                   ),
                                 ),
@@ -1067,6 +1149,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                   onSendAudio: _handleSendAudio,
                   onSendAttachments: _handleSendAttachments,
                   onBeginRecording: _handleBeginRecording,
+                  onSlashCommand: _handleSlashCommand,
                   audioRecorderFactory: widget.audioRecorderFactoryOverride ??
                       AudioNoteRecorder.new,
                   isBusy: _chatController.isLoading &&
@@ -1113,6 +1196,38 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       _scrollToBottom();
     }
     return didSend;
+  }
+
+  Future<bool> _handleSlashCommand(String commandId, String payload) async {
+    switch (commandId) {
+      case 'new-project':
+        await _openNewProjectFactory();
+        return true;
+      case 'status':
+      case 'review':
+      case 'compact':
+      case 'diff':
+        _textController.text = payload;
+        _textController.selection = TextSelection.collapsed(
+          offset: _textController.text.length,
+        );
+        return _handleSend();
+      case 'feedback':
+        _textController.text = payload;
+        _textController.selection = TextSelection.collapsed(
+          offset: _textController.text.length,
+        );
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  void _stageProjectBuildConfirmation() {
+    _textController.text = 'Confirm the project contract and start the build.';
+    _textController.selection = TextSelection.collapsed(
+      offset: _textController.text.length,
+    );
   }
 
   Future<bool> _handleSendAttachments(
@@ -1202,10 +1317,7 @@ When you create the Project Factory draft, link each asset with POST /project-fa
     return '$trimmedPrompt\n\n${assetBlock.trim()}';
   }
 
-  Future<bool> _handleSendAudio(
-    XFile audioFile, {
-    String? message,
-  }) async {
+  Future<bool> _handleSendAudio(XFile audioFile, {String? message}) async {
     if (!await _maybeActivateProjectFactoryBuildMode(message)) {
       return false;
     }
@@ -1251,9 +1363,7 @@ When you create the Project Factory draft, link each asset with POST /project-fa
     }
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(
-          didRetry ? 'Retry queued.' : 'Could not retry the job.',
-        ),
+        content: Text(didRetry ? 'Retry queued.' : 'Could not retry the job.'),
         duration: const Duration(seconds: 2),
       ),
     );
@@ -1324,10 +1434,7 @@ When you create the Project Factory draft, link each asset with POST /project-fa
     }
 
     try {
-      final launched = await launchUrl(
-        uri,
-        mode: _launchModeForUri(uri),
-      );
+      final launched = await launchUrl(uri, mode: _launchModeForUri(uri));
       if (launched) {
         return;
       }
@@ -1369,19 +1476,13 @@ When you create the Project Factory draft, link each asset with POST /project-fa
     };
   }
 
-  Future<void> _copyLinkTarget(
-    String target, {
-    required String message,
-  }) async {
+  Future<void> _copyLinkTarget(String target, {required String message}) async {
     await Clipboard.setData(ClipboardData(text: target));
     if (!mounted) {
       return;
     }
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        duration: const Duration(seconds: 2),
-      ),
+      SnackBar(content: Text(message), duration: const Duration(seconds: 2)),
     );
   }
 
@@ -1538,9 +1639,9 @@ When you create the Project Factory draft, link each asset with POST /project-fa
       if (!mounted) {
         return;
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(error.message)),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error.message)));
       return;
     } catch (error) {
       if (!mounted) {
@@ -1559,7 +1660,8 @@ When you create the Project Factory draft, link each asset with POST /project-fa
   }
 
   Future<void> _startNewProjectFactoryChat(
-      ProjectFactoryOptions options) async {
+    ProjectFactoryOptions options,
+  ) async {
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('Starting a New project chat...')),
     );
@@ -1710,11 +1812,15 @@ Defaults si el usuario no modifica nada:
 Si el usuario no sabe el nombre, rubro o titulo, proponelo a partir de lo que cuente. Para colores y look and feel no inventes como definitivo: preguntale o propone 2-3 direcciones y espera confirmacion. Antes de crear nada, devolve un preview corto del proyecto que vas a armar y pedi confirmacion explicita tipo "ok, dale para adelante".
 
 Contrato semi-obligatorio antes del build:
-- Si falta informacion para armar spec, plan, tasks o diagramas baseline, hace preguntas concretas y simples.
-- Cada pregunta debe traer 2-4 respuestas sugeridas o una opcion "lo inferis vos".
+- Trabaja como intake guiado con estados: collecting, ready_for_review, changes_requested, confirmed, build_started o blocked.
+- Si falta informacion para armar spec, plan, tasks, release, assets o diagramas baseline, hace una o pocas preguntas concretas.
+- Cada pregunta debe traer 2-4 respuestas sugeridas, marcar recomendada cuando aplique y permitir una opcion tipo "lo inferis vos".
+- Para cada respuesta, deja claro si es user, inferred, default, asset, prior_context o system y si la confianza es low, medium o high.
 - Los diagramas baseline a validar son: componentes, clases, DER/ERD y deployment. Agrega otros si el dominio lo pide.
-- El preview previo al build debe incluir: brief normalizado, defaults asumidos, entidades del dominio, roles/permisos, modulos, spec/plan/tasks iniciales, lista de diagramas a generar, comandos de validacion, riesgos y pendientes.
-- No incluyas la linea $kProjectFactoryReadyForBuildMarker hasta que tengas informacion suficiente y el usuario haya validado el preview.
+- El preview previo al build debe incluir: brief normalizado, slug, business type, objetivo, plataformas, backend, entidades del dominio, roles/permisos, assets/logo/icono, Workbench/SDD, web preview, Android/installable app, release/runtime profile, defaults asumidos, blockers externos, riesgos, validacion y que hara generator/reviewer.
+- Persisti el contrato en la conversacion: cuando cambie algo, muestra una version resumida del contrato y los pendientes.
+- No incluyas la linea $kProjectFactoryReadyForBuildMarker hasta que el contrato este ready_for_review y el usuario haya validado explicitamente ese preview.
+- Si el usuario pide construir antes de readiness, responde solo con las preguntas o blockers minimos que faltan.
 - Cuando ya este validado y solo falte que el usuario confirme el arranque, termina tu respuesta con una linea exacta: $kProjectFactoryReadyForBuildMarker
 
 Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme despues de ese marker, recien ahi ejecuta la creacion real usando Project Factory del bridge y el repo actual: draft/manifest, reference assets desde imagenes adjuntas del chat cuando existan, specs/plan/tasks, diagramas baseline, backend FastAPI, Flutter, auth/RBAC/admin/notificaciones, validacion y apertura del workspace. Mantene la conversacion practica y anda trabajando con el reviewer durante el build.
@@ -1727,10 +1833,8 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
     await _chatController.refreshWorkspaces();
     final workspace = _chatController.workspaces.firstWhere(
       (item) => item.path == targetPath,
-      orElse: () => Workspace(
-        name: _fallbackWorkspaceName(targetPath),
-        path: targetPath,
-      ),
+      orElse: () =>
+          Workspace(name: _fallbackWorkspaceName(targetPath), path: targetPath),
     );
     await _pinWorkspaceToSidebar(workspace);
     await _createNewChatForWorkspace(workspace);
@@ -1835,10 +1939,7 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
               vertical: 24,
             ),
             child: ConstrainedBox(
-              constraints: const BoxConstraints(
-                maxWidth: 720,
-                maxHeight: 760,
-              ),
+              constraints: const BoxConstraints(maxWidth: 720, maxHeight: 760),
               child: sheet,
             ),
           );
@@ -2000,9 +2101,7 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
     }
 
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Saved ${profile.name} for future chats.'),
-      ),
+      SnackBar(content: Text('Saved ${profile.name} for future chats.')),
     );
   }
 
@@ -2014,10 +2113,7 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
       return;
     }
 
-    final updatedWorkspaces = <Workspace>[
-      ..._sidebarWorkspaces,
-      workspace,
-    ];
+    final updatedWorkspaces = <Workspace>[..._sidebarWorkspaces, workspace];
     setState(() {
       _sidebarWorkspaces = updatedWorkspaces;
     });
@@ -2073,8 +2169,10 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
     });
     await _replyPlaybackService.setPlaybackSpeed(audioReplyPlaybackSpeed);
 
-    final didConnect =
-        await _switchToServer(resolvedActiveProfile, initialize: true);
+    final didConnect = await _switchToServer(
+      resolvedActiveProfile,
+      initialize: true,
+    );
     if (didConnect) {
       return;
     }
@@ -2230,9 +2328,9 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
     final activeServer = _activeServer;
     if (activeServer == null) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('No active bridge server.')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('No active bridge server.')));
       return;
     }
     await showModalBottomSheet<void>(
@@ -2247,9 +2345,7 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
     );
   }
 
-  Future<CodexToolingSnapshot?> _installCodexMcpApp(
-    CodexMcpApp app,
-  ) async {
+  Future<CodexToolingSnapshot?> _installCodexMcpApp(CodexMcpApp app) async {
     if (widget.codexMcpAppInstallerOverride != null) {
       final snapshot = await widget.codexMcpAppInstallerOverride!(app);
       if (mounted) {
@@ -2279,10 +2375,7 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
     return snapshot;
   }
 
-  Future<void> _openMcpAppHost(
-    CodexMcpApp app, {
-    String? focusHint,
-  }) async {
+  Future<void> _openMcpAppHost(CodexMcpApp app, {String? focusHint}) async {
     if (!mounted) {
       return;
     }
@@ -2308,10 +2401,7 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
     if (request == null) {
       return false;
     }
-    await _openMcpAppHost(
-      request.app,
-      focusHint: request.focusHint,
-    );
+    await _openMcpAppHost(request.app, focusHint: request.focusHint);
     if (!mounted) {
       return true;
     }
@@ -2357,9 +2447,7 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
       isScrollControlled: true,
       backgroundColor: const Color(0xFF101931),
       builder: (context) {
-        return _AgentStudioSheet(
-          session: currentSession,
-        );
+        return _AgentStudioSheet(session: currentSession);
       },
     );
 
@@ -2377,11 +2465,9 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
 
     final errorText =
         _chatController.errorText ?? 'Failed to save agent settings.';
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(errorText),
-      ),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(errorText)));
   }
 
   Future<void> _openReplyModePicker() async {
@@ -2790,8 +2876,8 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
                 top: -6,
                 child: _MenuStatusBadge(
                   label: _codexSelectionCount(
-                          _currentComposerDraft().codexRunOptions)
-                      .toString(),
+                    _currentComposerDraft().codexRunOptions,
+                  ).toString(),
                   backgroundColor: const Color(0xFF55D6BE),
                   foregroundColor: const Color(0xFF07131D),
                 ),
@@ -2864,12 +2950,7 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
         children: <Widget>[
           Icon(icon, size: 18),
           const SizedBox(width: 12),
-          Expanded(
-            child: Text(
-              label,
-              overflow: TextOverflow.ellipsis,
-            ),
-          ),
+          Expanded(child: Text(label, overflow: TextOverflow.ellipsis)),
         ],
       ),
     );
@@ -3009,10 +3090,7 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
                 const SizedBox(height: 4),
                 Text(
                   trimmed,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    height: 1.35,
-                  ),
+                  style: const TextStyle(color: Colors.white, height: 1.35),
                 ),
               ],
             ),
@@ -3124,8 +3202,9 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
           draft.codexRunOptions,
         ) &&
         _sameDraftAttachments(
-            previous?.attachments ?? const <_PendingAttachmentDraft>[],
-            draft.attachments);
+          previous?.attachments ?? const <_PendingAttachmentDraft>[],
+          draft.attachments,
+        );
     if (isUnchanged) {
       return;
     }
@@ -3240,8 +3319,10 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
       );
       final displayedSessions =
           visibleSessions.take(displayedSessionCount).toList(growable: false);
-      final hiddenSessionCount =
-          math.max(0, visibleSessions.length - displayedSessions.length);
+      final hiddenSessionCount = math.max(
+        0,
+        visibleSessions.length - displayedSessions.length,
+      );
       if (archivedOnly && visibleSessions.isEmpty) {
         continue;
       }
@@ -3290,223 +3371,227 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
                   ? const Color(0x3355D6BE)
                   : const Color(0xFF23304F);
 
-      sessionGroups.add(Container(
-        margin: const EdgeInsets.fromLTRB(10, 6, 10, 6),
-        decoration: BoxDecoration(
-          color: projectCardColor,
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: projectBorderColor),
-        ),
-        child: Material(
-          type: MaterialType.transparency,
-          child: Theme(
-            data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
-            child: ExpansionTile(
-              key: PageStorageKey<String>('workspace-${workspace.path}'),
-              initiallyExpanded: hasSelected,
-              tilePadding:
-                  const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-              childrenPadding: const EdgeInsets.only(bottom: 10),
-              iconColor: const Color(0xFF9AA8C8),
-              collapsedIconColor: const Color(0xFF9AA8C8),
-              title: Row(
-                children: <Widget>[
-                  Container(
-                    width: 38,
-                    height: 38,
-                    decoration: BoxDecoration(
-                      color: activeJobCount > 0
-                          ? const Color(0x33FFC857)
-                          : outgoingUploadCount > 0
-                              ? const Color(0x223F5EF7)
-                              : const Color(0xFF1B2745),
-                      borderRadius: BorderRadius.circular(12),
+      sessionGroups.add(
+        Container(
+          margin: const EdgeInsets.fromLTRB(10, 6, 10, 6),
+          decoration: BoxDecoration(
+            color: projectCardColor,
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: projectBorderColor),
+          ),
+          child: Material(
+            type: MaterialType.transparency,
+            child: Theme(
+              data: Theme.of(
+                context,
+              ).copyWith(dividerColor: Colors.transparent),
+              child: ExpansionTile(
+                key: PageStorageKey<String>('workspace-${workspace.path}'),
+                initiallyExpanded: hasSelected,
+                tilePadding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 6,
+                ),
+                childrenPadding: const EdgeInsets.only(bottom: 10),
+                iconColor: const Color(0xFF9AA8C8),
+                collapsedIconColor: const Color(0xFF9AA8C8),
+                title: Row(
+                  children: <Widget>[
+                    Container(
+                      width: 38,
+                      height: 38,
+                      decoration: BoxDecoration(
+                        color: activeJobCount > 0
+                            ? const Color(0x33FFC857)
+                            : outgoingUploadCount > 0
+                                ? const Color(0x223F5EF7)
+                                : const Color(0xFF1B2745),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      alignment: Alignment.center,
+                      child: Icon(
+                        Icons.folder_rounded,
+                        color: activeJobCount > 0
+                            ? const Color(0xFFFFC857)
+                            : outgoingUploadCount > 0
+                                ? const Color(0xFF8CA8FF)
+                                : unreadChatsCount > 0
+                                    ? const Color(0xFF55D6BE)
+                                    : const Color(0xFF9AA8C8),
+                      ),
                     ),
-                    alignment: Alignment.center,
-                    child: Icon(
-                      Icons.folder_rounded,
-                      color: activeJobCount > 0
-                          ? const Color(0xFFFFC857)
-                          : outgoingUploadCount > 0
-                              ? const Color(0xFF8CA8FF)
-                              : unreadChatsCount > 0
-                                  ? const Color(0xFF55D6BE)
-                                  : const Color(0xFF9AA8C8),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: <Widget>[
+                          Text(
+                            workspace.name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: activeJobCount > 0
+                                  ? const Color(0xFFFFC857)
+                                  : outgoingUploadCount > 0
+                                      ? const Color(0xFFDCE5FF)
+                                      : unreadChatsCount > 0
+                                          ? const Color(0xFF55D6BE)
+                                          : const Color(0xFFE7EEF9),
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            archivedOnly
+                                ? '${workspace.path} • ${visibleSessions.length} archived chat${visibleSessions.length == 1 ? '' : 's'}'
+                                : '${workspace.path} • ${visibleSessions.length} chat${visibleSessions.length == 1 ? '' : 's'}',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: Color(0xFF8B97B5),
+                              fontSize: 12,
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          _ProjectStatusPill(
+                            active: hasBackgroundActivity,
+                            label: _formatProjectActivityLabel(
+                              activeJobCount: activeJobCount,
+                              activeChatCount: activeChatCount,
+                              outgoingUploadCount: outgoingUploadCount,
+                              outgoingChatCount: outgoingChatCount,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: <Widget>[
-                        Text(
-                          workspace.name,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
+                    if (hasBackgroundActivity)
+                      Padding(
+                        padding: const EdgeInsets.only(right: 8),
+                        child: Text(
+                          (activeJobCount + outgoingUploadCount).toString(),
                           style: TextStyle(
                             color: activeJobCount > 0
                                 ? const Color(0xFFFFC857)
-                                : outgoingUploadCount > 0
-                                    ? const Color(0xFFDCE5FF)
-                                    : unreadChatsCount > 0
-                                        ? const Color(0xFF55D6BE)
-                                        : const Color(0xFFE7EEF9),
+                                : const Color(0xFF8CA8FF),
                             fontWeight: FontWeight.w700,
                           ),
                         ),
-                        const SizedBox(height: 2),
-                        Text(
-                          archivedOnly
-                              ? '${workspace.path} • ${visibleSessions.length} archived chat${visibleSessions.length == 1 ? '' : 's'}'
-                              : '${workspace.path} • ${visibleSessions.length} chat${visibleSessions.length == 1 ? '' : 's'}',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
+                      ),
+                    if (unreadChatsCount > 0)
+                      Container(
+                        margin: const EdgeInsets.only(right: 8),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF55D6BE),
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                        child: Text(
+                          unreadChatsCount.toString(),
                           style: const TextStyle(
-                            color: Color(0xFF8B97B5),
-                            fontSize: 12,
+                            color: Color(0xFF07131D),
+                            fontWeight: FontWeight.w700,
                           ),
                         ),
-                        const SizedBox(height: 6),
-                        _ProjectStatusPill(
-                          active: hasBackgroundActivity,
-                          label: _formatProjectActivityLabel(
-                            activeJobCount: activeJobCount,
-                            activeChatCount: activeChatCount,
-                            outgoingUploadCount: outgoingUploadCount,
-                            outgoingChatCount: outgoingChatCount,
-                          ),
+                      ),
+                    PopupMenuButton<_PinnedWorkspaceAction>(
+                      tooltip: 'Project actions for ${workspace.name}',
+                      icon: const Icon(Icons.more_horiz_rounded),
+                      onSelected: (_PinnedWorkspaceAction action) async {
+                        switch (action) {
+                          case _PinnedWorkspaceAction.newChat:
+                            Navigator.of(context).pop();
+                            await _createNewChatForWorkspace(workspace);
+                            return;
+                          case _PinnedWorkspaceAction.remove:
+                            await _removeWorkspaceFromSidebar(workspace);
+                            return;
+                        }
+                      },
+                      itemBuilder: (context) =>
+                          <PopupMenuEntry<_PinnedWorkspaceAction>>[
+                        PopupMenuItem<_PinnedWorkspaceAction>(
+                          value: _PinnedWorkspaceAction.newChat,
+                          child: Text('New chat in ${workspace.name}'),
+                        ),
+                        const PopupMenuItem<_PinnedWorkspaceAction>(
+                          value: _PinnedWorkspaceAction.remove,
+                          child: Text('Remove project'),
                         ),
                       ],
                     ),
-                  ),
-                  if (hasBackgroundActivity)
-                    Padding(
-                      padding: const EdgeInsets.only(right: 8),
-                      child: Text(
-                        (activeJobCount + outgoingUploadCount).toString(),
-                        style: TextStyle(
-                          color: activeJobCount > 0
-                              ? const Color(0xFFFFC857)
-                              : const Color(0xFF8CA8FF),
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ),
-                  if (unreadChatsCount > 0)
-                    Container(
-                      margin: const EdgeInsets.only(right: 8),
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 4,
-                      ),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF55D6BE),
-                        borderRadius: BorderRadius.circular(999),
-                      ),
-                      child: Text(
-                        unreadChatsCount.toString(),
-                        style: const TextStyle(
-                          color: Color(0xFF07131D),
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ),
-                  PopupMenuButton<_PinnedWorkspaceAction>(
-                    tooltip: 'Project actions for ${workspace.name}',
-                    icon: const Icon(Icons.more_horiz_rounded),
-                    onSelected: (_PinnedWorkspaceAction action) async {
-                      switch (action) {
-                        case _PinnedWorkspaceAction.newChat:
-                          Navigator.of(context).pop();
-                          await _createNewChatForWorkspace(workspace);
-                          return;
-                        case _PinnedWorkspaceAction.remove:
-                          await _removeWorkspaceFromSidebar(workspace);
-                          return;
-                      }
-                    },
-                    itemBuilder: (context) =>
-                        <PopupMenuEntry<_PinnedWorkspaceAction>>[
-                      PopupMenuItem<_PinnedWorkspaceAction>(
-                        value: _PinnedWorkspaceAction.newChat,
-                        child: Text('New chat in ${workspace.name}'),
-                      ),
-                      const PopupMenuItem<_PinnedWorkspaceAction>(
-                        value: _PinnedWorkspaceAction.remove,
-                        child: Text('Remove project'),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-              children: visibleSessions.isEmpty
-                  ? <Widget>[
-                      Padding(
-                        padding: EdgeInsets.fromLTRB(24, 0, 24, 16),
-                        child: Align(
-                          alignment: Alignment.centerLeft,
-                          child: Text(
-                            archivedOnly
-                                ? 'No archived chats in this project'
-                                : 'No active chats in this project',
-                            style: const TextStyle(color: Color(0xFF8B97B5)),
-                          ),
-                        ),
-                      ),
-                    ]
-                  : <Widget>[
-                      ...displayedSessions.map(
-                        (session) => Padding(
-                          padding: const EdgeInsets.only(left: 10, right: 10),
-                          child: _SessionTile(
-                            activeJobSummary:
-                                _chatController.activeJobSummaryForSession(
-                              session.id,
-                            ),
-                            outgoingUploadSummary: _chatController
-                                .outgoingUploadSummaryForSession(session.id),
-                            session: session,
-                            unreadCount: _unreadCountForSession(session),
-                            selected:
-                                session.id == _chatController.selectedSessionId,
-                            onTap: () async {
-                              Navigator.of(context).pop();
-                              await _chatController.selectSession(session.id);
-                            },
-                            onRename: () async {
-                              Navigator.of(context).pop();
-                              await _openRenameChatSheet(session);
-                            },
-                            onArchiveToggle: () async {
-                              await _chatController.setSessionArchived(
-                                session.id,
-                                archived: !archivedOnly,
-                              );
-                            },
-                          ),
-                        ),
-                      ),
-                      if (hiddenSessionCount > 0)
+                  ],
+                ),
+                children: visibleSessions.isEmpty
+                    ? <Widget>[
                         Padding(
-                          padding: const EdgeInsets.fromLTRB(10, 8, 10, 0),
-                          child: OutlinedButton.icon(
-                            onPressed: () {
-                              _showMoreSessionsForGroup(
-                                workspace.path,
-                                archivedOnly: archivedOnly,
-                              );
-                            },
-                            icon: const Icon(Icons.expand_more_rounded),
-                            label: Text(
-                              'Show ${math.min(_sessionGroupPageSize, hiddenSessionCount)} more',
+                          padding: EdgeInsets.fromLTRB(24, 0, 24, 16),
+                          child: Align(
+                            alignment: Alignment.centerLeft,
+                            child: Text(
+                              archivedOnly
+                                  ? 'No archived chats in this project'
+                                  : 'No active chats in this project',
+                              style: const TextStyle(color: Color(0xFF8B97B5)),
                             ),
                           ),
                         ),
-                    ],
+                      ]
+                    : <Widget>[
+                        ...displayedSessions.map(
+                          (session) => Padding(
+                            padding: const EdgeInsets.only(left: 10, right: 10),
+                            child: _SessionTile(
+                              activeJobSummary: _chatController
+                                  .activeJobSummaryForSession(session.id),
+                              outgoingUploadSummary: _chatController
+                                  .outgoingUploadSummaryForSession(session.id),
+                              session: session,
+                              unreadCount: _unreadCountForSession(session),
+                              selected: session.id ==
+                                  _chatController.selectedSessionId,
+                              onTap: () async {
+                                Navigator.of(context).pop();
+                                await _chatController.selectSession(session.id);
+                              },
+                              onRename: () async {
+                                Navigator.of(context).pop();
+                                await _openRenameChatSheet(session);
+                              },
+                              onArchiveToggle: () async {
+                                await _chatController.setSessionArchived(
+                                  session.id,
+                                  archived: !archivedOnly,
+                                );
+                              },
+                            ),
+                          ),
+                        ),
+                        if (hiddenSessionCount > 0)
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(10, 8, 10, 0),
+                            child: OutlinedButton.icon(
+                              onPressed: () {
+                                _showMoreSessionsForGroup(
+                                  workspace.path,
+                                  archivedOnly: archivedOnly,
+                                );
+                              },
+                              icon: const Icon(Icons.expand_more_rounded),
+                              label: Text(
+                                'Show ${math.min(_sessionGroupPageSize, hiddenSessionCount)} more',
+                              ),
+                            ),
+                          ),
+                      ],
+              ),
             ),
           ),
         ),
-      ));
+      );
     }
 
     return sessionGroups;
@@ -3550,10 +3635,7 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
     });
   }
 
-  String _sessionGroupKey(
-    String workspacePath, {
-    required bool archivedOnly,
-  }) {
+  String _sessionGroupKey(String workspacePath, {required bool archivedOnly}) {
     return '${archivedOnly ? 'archived' : 'active'}::$workspacePath';
   }
 
@@ -3561,8 +3643,9 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
     ChatSessionSummary left,
     ChatSessionSummary right,
   ) {
-    final latestComparison =
-        right.latestActivityAt.compareTo(left.latestActivityAt);
+    final latestComparison = right.latestActivityAt.compareTo(
+      left.latestActivityAt,
+    );
     if (latestComparison != 0) {
       return latestComparison;
     }
@@ -3647,16 +3730,18 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
 
   int _totalActivePinnedProjectsCount() {
     return _sidebarWorkspaces
-        .where((workspace) =>
-            _activeOperationCountForWorkspace(workspace.path) > 0)
+        .where(
+          (workspace) => _activeOperationCountForWorkspace(workspace.path) > 0,
+        )
         .length;
   }
 
   int _totalActivePinnedJobsCount() {
     return _sidebarWorkspaces.fold(
-        0,
-        (total, workspace) =>
-            total + _activeOperationCountForWorkspace(workspace.path));
+      0,
+      (total, workspace) =>
+          total + _activeOperationCountForWorkspace(workspace.path),
+    );
   }
 
   int _activeOperationCountForWorkspace(String workspacePath) {
@@ -3708,12 +3793,48 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
         notification is ScrollEndNotification ||
         notification is UserScrollNotification) {
       _updateStickToBottom(_isNearBottom(notification.metrics));
+      if (_isNearTop(notification.metrics)) {
+        unawaited(_loadOlderMessagesFromTop());
+      }
     }
     return false;
   }
 
   bool _isNearBottom(ScrollMetrics metrics) {
     return metrics.extentAfter < 72;
+  }
+
+  bool _isNearTop(ScrollMetrics metrics) {
+    return metrics.extentBefore < 96;
+  }
+
+  bool get _shouldShowOlderMessagesRow {
+    return _chatBodyView == _ChatBodyView.conversation &&
+        (_chatController.hasOlderMessages ||
+            _chatController.isLoadingOlderMessages ||
+            _chatController.olderMessagesError != null);
+  }
+
+  Future<void> _loadOlderMessagesFromTop() async {
+    if (!_shouldShowOlderMessagesRow ||
+        _chatController.isLoadingOlderMessages ||
+        !_scrollController.hasClients) {
+      return;
+    }
+    final beforeMaxExtent = _scrollController.position.maxScrollExtent;
+    final beforeOffset = _scrollController.offset;
+    final loaded = await _chatController.loadOlderMessages();
+    if (!loaded || !mounted) {
+      return;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!_scrollController.hasClients) {
+        return;
+      }
+      final delta =
+          _scrollController.position.maxScrollExtent - beforeMaxExtent;
+      _scrollController.jumpTo(beforeOffset + delta);
+    });
   }
 
   void _updateStickToBottom(bool value) {
@@ -3900,9 +4021,11 @@ class _SessionTile extends StatelessWidget {
                           size: 18,
                         ),
                         const SizedBox(width: 12),
-                        Text(session.isArchived
-                            ? 'Unarchive chat'
-                            : 'Archive chat'),
+                        Text(
+                          session.isArchived
+                              ? 'Unarchive chat'
+                              : 'Archive chat',
+                        ),
                       ],
                     ),
                   ),
@@ -3950,10 +4073,7 @@ class _SessionMomentLine extends StatelessWidget {
             value,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              color: color,
-              fontSize: 12,
-            ),
+            style: TextStyle(color: color, fontSize: 12),
           ),
         ),
       ],
@@ -4041,10 +4161,7 @@ class _MenuStatusBadge extends StatelessWidget {
 }
 
 class _ProjectStatusPill extends StatelessWidget {
-  const _ProjectStatusPill({
-    required this.active,
-    required this.label,
-  });
+  const _ProjectStatusPill({required this.active, required this.label});
 
   final bool active;
   final String label;
@@ -4307,10 +4424,7 @@ class _FilteredMessagesPlaceholder extends StatelessWidget {
               Text(
                 _filteredMessagesPlaceholderText(displayMode),
                 textAlign: TextAlign.center,
-                style: const TextStyle(
-                  color: Color(0xFF8B97B5),
-                  height: 1.5,
-                ),
+                style: const TextStyle(color: Color(0xFF8B97B5), height: 1.5),
               ),
               const SizedBox(height: 20),
               FilledButton.icon(
@@ -4334,24 +4448,164 @@ class _FilteredMessagesPlaceholder extends StatelessWidget {
               const Text(
                 'Run history above still updates live, and you can keep chatting below.',
                 textAlign: TextAlign.center,
-                style: TextStyle(
-                  color: Color(0xFFB8C8EA),
-                  height: 1.5,
-                ),
+                style: TextStyle(color: Color(0xFFB8C8EA), height: 1.5),
               ),
               if (errorText != null) ...<Widget>[
                 const SizedBox(height: 12),
                 Text(
                   errorText!,
                   textAlign: TextAlign.center,
-                  style: const TextStyle(
-                    color: Color(0xFFFFB4B4),
-                    height: 1.4,
-                  ),
+                  style: const TextStyle(color: Color(0xFFFFB4B4), height: 1.4),
                 ),
               ],
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+class _OlderMessagesRow extends StatelessWidget {
+  const _OlderMessagesRow({
+    required this.isLoading,
+    required this.errorText,
+    required this.onRetry,
+  });
+
+  final bool isLoading;
+  final String? errorText;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    final hasError = errorText != null;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 420),
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              color: const Color(0xFF10182B),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: const Color(0xFF24304E)),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  if (isLoading)
+                    const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  else
+                    Icon(
+                      hasError
+                          ? Icons.error_outline_rounded
+                          : Icons.history_rounded,
+                      size: 18,
+                      color: hasError
+                          ? const Color(0xFFFFB4A8)
+                          : const Color(0xFF8CA8FF),
+                    ),
+                  const SizedBox(width: 10),
+                  Flexible(
+                    child: Text(
+                      hasError
+                          ? 'Older messages failed to load.'
+                          : 'Loading older messages...',
+                      style: const TextStyle(color: Color(0xFFDCE5FF)),
+                    ),
+                  ),
+                  if (hasError) ...<Widget>[
+                    const SizedBox(width: 8),
+                    TextButton(onPressed: onRetry, child: const Text('Retry')),
+                  ],
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _GuidedProjectIntakeCard extends StatelessWidget {
+  const _GuidedProjectIntakeCard({
+    required this.readyForBuild,
+    required this.onShowContract,
+    required this.onConfirmBuild,
+  });
+
+  final bool readyForBuild;
+  final VoidCallback onShowContract;
+  final VoidCallback onConfirmBuild;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: const Color(0xFF111B2D),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: const Color(0xFF273A60)),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Row(
+              children: <Widget>[
+                const Icon(Icons.fact_check_rounded, color: Color(0xFF55D6BE)),
+                const SizedBox(width: 10),
+                const Expanded(
+                  child: Text(
+                    'New Project contract',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+                _StatusPill(
+                  label: readyForBuild ? 'Ready' : 'Collecting',
+                  backgroundColor: readyForBuild
+                      ? const Color(0xFF0B3D25)
+                      : const Color(0xFF2A2440),
+                  foregroundColor: readyForBuild
+                      ? const Color(0xFFB7F5CF)
+                      : const Color(0xFFD9CCFF),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            const Text(
+              'Name, goal, platforms, backend, roles, entities, assets, release, Workbench/SDD, web preview, Android plan, blockers, risks.',
+              style: TextStyle(color: Color(0xFFB8C8EA), height: 1.35),
+            ),
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: <Widget>[
+                OutlinedButton.icon(
+                  onPressed: onShowContract,
+                  icon: const Icon(Icons.article_outlined),
+                  label: const Text('Preview'),
+                ),
+                FilledButton.icon(
+                  onPressed: readyForBuild ? onConfirmBuild : null,
+                  icon: const Icon(Icons.play_arrow_rounded),
+                  label: const Text('Confirm'),
+                ),
+              ],
+            ),
+          ],
         ),
       ),
     );
@@ -4382,18 +4636,12 @@ class _SummaryViewBanner extends StatelessWidget {
       ),
       child: Row(
         children: <Widget>[
-          const Icon(
-            Icons.summarize_outlined,
-            color: Color(0xFFAED3FF),
-          ),
+          const Icon(Icons.summarize_outlined, color: Color(0xFFAED3FF)),
           const SizedBox(width: 10),
           Expanded(
             child: Text(
               '$label. Tap a summary to inspect what was completed at that point in the run.',
-              style: const TextStyle(
-                color: Colors.white,
-                height: 1.35,
-              ),
+              style: const TextStyle(color: Colors.white, height: 1.35),
             ),
           ),
           const SizedBox(width: 12),
@@ -4408,9 +4656,7 @@ class _SummaryViewBanner extends StatelessWidget {
 }
 
 class _SummaryMessagesPlaceholder extends StatelessWidget {
-  const _SummaryMessagesPlaceholder({
-    required this.onShowFullChat,
-  });
+  const _SummaryMessagesPlaceholder({required this.onShowFullChat});
 
   final VoidCallback onShowFullChat;
 
@@ -4433,10 +4679,7 @@ class _SummaryMessagesPlaceholder extends StatelessWidget {
               const Text(
                 'Summary view is enabled for this chat, but the summarizer has not produced an update yet.',
                 textAlign: TextAlign.center,
-                style: TextStyle(
-                  color: Color(0xFF8B97B5),
-                  height: 1.5,
-                ),
+                style: TextStyle(color: Color(0xFF8B97B5), height: 1.5),
               ),
               const SizedBox(height: 20),
               FilledButton.icon(
@@ -4481,18 +4724,12 @@ class _TurnSummaryBanner extends StatelessWidget {
       ),
       child: Row(
         children: <Widget>[
-          const Icon(
-            Icons.history_edu_outlined,
-            color: Color(0xFFFFE08A),
-          ),
+          const Icon(Icons.history_edu_outlined, color: Color(0xFFFFE08A)),
           const SizedBox(width: 10),
           Expanded(
             child: Text(
               '$label. $suffix Each entry includes the source messages it was built from.',
-              style: const TextStyle(
-                color: Colors.white,
-                height: 1.35,
-              ),
+              style: const TextStyle(color: Colors.white, height: 1.35),
             ),
           ),
           const SizedBox(width: 12),
@@ -4537,10 +4774,7 @@ class _TurnSummariesPlaceholder extends StatelessWidget {
               Text(
                 message,
                 textAlign: TextAlign.center,
-                style: const TextStyle(
-                  color: Color(0xFF8B97B5),
-                  height: 1.5,
-                ),
+                style: const TextStyle(color: Color(0xFF8B97B5), height: 1.5),
               ),
               const SizedBox(height: 20),
               FilledButton.icon(
@@ -4557,9 +4791,7 @@ class _TurnSummariesPlaceholder extends StatelessWidget {
 }
 
 class _TurnSummaryCard extends StatelessWidget {
-  const _TurnSummaryCard({
-    required this.summary,
-  });
+  const _TurnSummaryCard({required this.summary});
 
   final ChatTurnSummary summary;
 
@@ -4577,10 +4809,7 @@ class _TurnSummaryCard extends StatelessWidget {
         children: <Widget>[
           Row(
             children: <Widget>[
-              const Icon(
-                Icons.article_outlined,
-                color: Color(0xFFFFC857),
-              ),
+              const Icon(Icons.article_outlined, color: Color(0xFFFFC857)),
               const SizedBox(width: 10),
               Expanded(
                 child: Text(
@@ -4595,20 +4824,14 @@ class _TurnSummaryCard extends StatelessWidget {
                 summary.sourceMessages.length == 1
                     ? '1 source'
                     : '${summary.sourceMessages.length} sources',
-                style: const TextStyle(
-                  color: Color(0xFF9FB0D4),
-                  fontSize: 12,
-                ),
+                style: const TextStyle(color: Color(0xFF9FB0D4), fontSize: 12),
               ),
             ],
           ),
           const SizedBox(height: 12),
           Text(
             summary.content,
-            style: const TextStyle(
-              color: Colors.white,
-              height: 1.45,
-            ),
+            style: const TextStyle(color: Colors.white, height: 1.45),
           ),
           const SizedBox(height: 14),
           const Text(
@@ -4623,10 +4846,7 @@ class _TurnSummaryCard extends StatelessWidget {
           if (summary.sourceMessages.isEmpty)
             const Text(
               'Source message metadata is unavailable for this summary.',
-              style: TextStyle(
-                color: Color(0xFFB8C8EA),
-                height: 1.4,
-              ),
+              style: TextStyle(color: Color(0xFFB8C8EA), height: 1.4),
             )
           else
             Column(
@@ -4693,6 +4913,130 @@ String _filteredMessagesPlaceholderText(AgentDisplayMode displayMode) {
   };
 }
 
+class _SlashCommandPalette extends StatelessWidget {
+  const _SlashCommandPalette({
+    required this.commands,
+    required this.selectedIndex,
+    required this.errorText,
+    required this.onSelected,
+    required this.onHighlightChanged,
+  });
+
+  final List<_SlashCommand> commands;
+  final int selectedIndex;
+  final String? errorText;
+  final ValueChanged<_SlashCommand> onSelected;
+  final ValueChanged<int> onHighlightChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: const Color(0xFF10182B),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: const Color(0xFF263455)),
+      ),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxHeight: 280),
+        child: commands.isEmpty
+            ? const Padding(
+                padding: EdgeInsets.all(14),
+                child: Row(
+                  children: <Widget>[
+                    Icon(Icons.search_off_rounded, color: Color(0xFF8B97B5)),
+                    SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        'No matching commands',
+                        style: TextStyle(color: Color(0xFFDCE5FF)),
+                      ),
+                    ),
+                  ],
+                ),
+              )
+            : ListView.builder(
+                shrinkWrap: true,
+                itemCount: commands.length + (errorText == null ? 0 : 1),
+                itemBuilder: (context, index) {
+                  if (errorText != null && index == commands.length) {
+                    return Padding(
+                      padding: const EdgeInsets.fromLTRB(12, 6, 12, 12),
+                      child: Text(
+                        errorText!,
+                        style: const TextStyle(color: Color(0xFFFFB4A8)),
+                      ),
+                    );
+                  }
+                  final command = commands[index];
+                  final selected = index == selectedIndex;
+                  final enabled = command.isEnabled;
+                  return Material(
+                    color:
+                        selected ? const Color(0xFF1B2745) : Colors.transparent,
+                    child: InkWell(
+                      onTap: () => onSelected(command),
+                      onHover: (_) => onHighlightChanged(index),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 10,
+                        ),
+                        child: Row(
+                          children: <Widget>[
+                            Icon(
+                              enabled
+                                  ? Icons.keyboard_command_key_rounded
+                                  : Icons.block_rounded,
+                              color: enabled
+                                  ? const Color(0xFF55D6BE)
+                                  : const Color(0xFF8B97B5),
+                              size: 18,
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: <Widget>[
+                                  Text(
+                                    '${command.slash}  ${command.title}',
+                                    style: TextStyle(
+                                      color: enabled
+                                          ? Colors.white
+                                          : const Color(0xFF8B97B5),
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    command.disabledReason ??
+                                        command.description,
+                                    style: const TextStyle(
+                                      color: Color(0xFFB8C8EA),
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            Text(
+                              command.scope,
+                              style: const TextStyle(
+                                color: Color(0xFF8B97B5),
+                                fontSize: 11,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              ),
+      ),
+    );
+  }
+}
+
 class _Composer extends StatefulWidget {
   const _Composer({
     required this.sessionId,
@@ -4703,6 +5047,7 @@ class _Composer extends StatefulWidget {
     required this.onSendAudio,
     required this.onSendAttachments,
     required this.onBeginRecording,
+    required this.onSlashCommand,
     required this.audioRecorderFactory,
     required this.isBusy,
     required this.voiceEnabled,
@@ -4723,6 +5068,7 @@ class _Composer extends StatefulWidget {
     String? prompt,
   }) onSendAttachments;
   final Future<void> Function() onBeginRecording;
+  final Future<bool> Function(String commandId, String payload) onSlashCommand;
   final AudioNoteRecorder Function() audioRecorderFactory;
   final bool isBusy;
   final bool voiceEnabled;
@@ -4748,6 +5094,8 @@ class _ComposerState extends State<_Composer> {
   bool _attachmentsExpanded = true;
   bool _didStartRecordingFromPrimaryDrag = false;
   double _primaryActionDragDy = 0;
+  int _selectedSlashCommandIndex = 0;
+  String? _slashCommandErrorText;
   final List<_PendingAttachmentDraft> _pendingAttachments =
       <_PendingAttachmentDraft>[];
 
@@ -4814,9 +5162,7 @@ class _ComposerState extends State<_Composer> {
         padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
         decoration: const BoxDecoration(
           color: Color(0xFF0B141A),
-          border: Border(
-            top: BorderSide(color: Color(0xFF17232B)),
-          ),
+          border: Border(top: BorderSide(color: Color(0xFF17232B))),
         ),
         child: LayoutBuilder(
           builder: (context, constraints) {
@@ -4897,9 +5243,7 @@ class _ComposerState extends State<_Composer> {
             return Row(
               crossAxisAlignment: CrossAxisAlignment.end,
               children: <Widget>[
-                Expanded(
-                  child: _buildComposerBody(),
-                ),
+                Expanded(child: _buildComposerBody()),
                 const SizedBox(width: 8),
                 if (_isRecording)
                   Row(
@@ -5011,6 +5355,22 @@ class _ComposerState extends State<_Composer> {
               onClearAll: _clearPendingAttachments,
               expanded: _attachmentsExpanded,
               onToggleExpanded: _toggleAttachmentsExpanded,
+            ),
+          ),
+        if (_slashQuery != null)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: _SlashCommandPalette(
+              commands: _filteredSlashCommands(_slashQuery!),
+              selectedIndex: _selectedSlashCommandIndex,
+              errorText: _slashCommandErrorText,
+              onSelected: _selectSlashCommand,
+              onHighlightChanged: (index) {
+                setState(() {
+                  _selectedSlashCommandIndex = index;
+                  _slashCommandErrorText = null;
+                });
+              },
             ),
           ),
         TextField(
@@ -5134,12 +5494,233 @@ class _ComposerState extends State<_Composer> {
 
   void _handleTextChanged() {
     final hasText = widget.controller.text.trim().isNotEmpty;
-    if (_hasText != hasText) {
+    final slashQuery = _slashQuery;
+    if (_hasText != hasText ||
+        slashQuery != null ||
+        _slashCommandErrorText != null) {
       setState(() {
         _hasText = hasText;
+        if (slashQuery != null) {
+          final commands = _filteredSlashCommands(slashQuery);
+          if (_selectedSlashCommandIndex >= commands.length) {
+            _selectedSlashCommandIndex = 0;
+          }
+        } else {
+          _selectedSlashCommandIndex = 0;
+          _slashCommandErrorText = null;
+        }
       });
     }
     _emitDraftChanged();
+  }
+
+  String? get _slashQuery {
+    final text = widget.controller.text;
+    final selection = widget.controller.selection;
+    if (!selection.isValid || !selection.isCollapsed) {
+      return null;
+    }
+    if (!text.startsWith('/')) {
+      return null;
+    }
+    if (text.contains(RegExp(r'\s'))) {
+      return null;
+    }
+    return text.substring(1).trim();
+  }
+
+  List<_SlashCommand> get _slashCommands {
+    final commands = <_SlashCommand>[
+      const _SlashCommand(
+        id: 'new-project',
+        slash: '/new-project',
+        title: 'New Project',
+        description: 'Open or resume guided New Project intake.',
+        scope: 'global',
+        actionKind: _SlashCommandActionKind.callback,
+      ),
+      const _SlashCommand(
+        id: 'status',
+        slash: '/status',
+        title: 'Status',
+        description: 'Ask for session, backend, workspace, and run status.',
+        scope: 'global',
+        actionKind: _SlashCommandActionKind.sendMessage,
+        payload: 'Show current session, backend, workspace, and run status.',
+      ),
+      const _SlashCommand(
+        id: 'review',
+        slash: '/review',
+        title: 'Review',
+        description: 'Request a focused review of the current workspace.',
+        scope: 'workspace',
+        actionKind: _SlashCommandActionKind.sendMessage,
+        payload:
+            'Review the current workspace changes and call out bugs, risks, and missing tests.',
+      ),
+      const _SlashCommand(
+        id: 'feedback',
+        slash: '/feedback',
+        title: 'Feedback',
+        description: 'Stage a feedback note in the composer.',
+        scope: 'global',
+        actionKind: _SlashCommandActionKind.insertText,
+        payload: 'Feedback: ',
+      ),
+      const _SlashCommand(
+        id: 'compact',
+        slash: '/compact',
+        title: 'Compact',
+        description: 'Ask for a compact conversation summary.',
+        scope: 'session',
+        actionKind: _SlashCommandActionKind.sendMessage,
+        payload:
+            'Compact this conversation into a concise summary with current decisions and next steps.',
+      ),
+      const _SlashCommand(
+        id: 'diff',
+        slash: '/diff',
+        title: 'Diff',
+        description: 'Ask for current workspace changes.',
+        scope: 'workspace',
+        actionKind: _SlashCommandActionKind.sendMessage,
+        payload:
+            'Show the current workspace diff and summarize the changed files.',
+      ),
+      const _SlashCommand(
+        id: 'plan',
+        slash: '/plan',
+        title: 'Plan',
+        description: 'Planning mode is not exposed in this mobile build.',
+        scope: 'global',
+        actionKind: _SlashCommandActionKind.disabled,
+        disabledReason: 'Planning mode is unavailable in this build.',
+      ),
+      const _SlashCommand(
+        id: 'goal',
+        slash: '/goal',
+        title: 'Goal',
+        description: 'Persistent goals are not exposed in this mobile build.',
+        scope: 'global',
+        actionKind: _SlashCommandActionKind.disabled,
+        disabledReason: 'Goal management is unavailable in this build.',
+      ),
+      const _SlashCommand(
+        id: 'workbench',
+        slash: '/workbench',
+        title: 'Workbench',
+        description: 'Open SDD Workbench when supported by the workspace.',
+        scope: 'workbench',
+        actionKind: _SlashCommandActionKind.disabled,
+        disabledReason: 'Workbench command routing is not available here.',
+      ),
+      const _SlashCommand(
+        id: 'apps',
+        slash: '/apps',
+        title: 'Apps',
+        description: 'Open installable apps when available.',
+        scope: 'global',
+        actionKind: _SlashCommandActionKind.disabled,
+        disabledReason: 'Apps catalog routing is not available here.',
+      ),
+      const _SlashCommand(
+        id: 'model',
+        slash: '/model',
+        title: 'Model',
+        description: 'Model selection is not exposed in this composer.',
+        scope: 'global',
+        actionKind: _SlashCommandActionKind.disabled,
+        disabledReason: 'Model selection is unavailable in this composer.',
+      ),
+      const _SlashCommand(
+        id: 'permissions',
+        slash: '/permissions',
+        title: 'Permissions',
+        description: 'Permission state is not exposed by this backend.',
+        scope: 'global',
+        actionKind: _SlashCommandActionKind.disabled,
+        disabledReason: 'Permission metadata is unavailable from this backend.',
+      ),
+    ];
+    if (!widget.isProjectFactoryIntake) {
+      return commands;
+    }
+    return <_SlashCommand>[
+      ...commands,
+      const _SlashCommand(
+        id: 'project-contract',
+        slash: '/project-contract',
+        title: 'Project Contract',
+        description: 'Ask for the current New Project contract preview.',
+        scope: 'new_project',
+        actionKind: _SlashCommandActionKind.sendMessage,
+        payload:
+            'Show the current New Project contract preview with assumptions, blockers, assets, release plan, Workbench/SDD, web preview, and Android plan.',
+      ),
+      const _SlashCommand(
+        id: 'project-build',
+        slash: '/project-build',
+        title: 'Project Build',
+        description: 'Confirm build only after the contract is ready.',
+        scope: 'new_project',
+        actionKind: _SlashCommandActionKind.insertText,
+        payload: 'Confirm the project contract and start the build.',
+      ),
+    ];
+  }
+
+  List<_SlashCommand> _filteredSlashCommands(String query) {
+    final normalized = query.trim();
+    final commands = _slashCommands
+        .where((command) => normalized.isEmpty || command.matches(normalized))
+        .toList(growable: false);
+    return commands;
+  }
+
+  Future<void> _selectHighlightedSlashCommand() async {
+    final query = _slashQuery;
+    if (query == null) {
+      return;
+    }
+    final commands = _filteredSlashCommands(query);
+    if (commands.isEmpty) {
+      setState(() {
+        _slashCommandErrorText = 'Unknown slash command.';
+      });
+      return;
+    }
+    final index = _selectedSlashCommandIndex.clamp(0, commands.length - 1);
+    await _selectSlashCommand(commands[index]);
+  }
+
+  Future<void> _selectSlashCommand(_SlashCommand command) async {
+    if (!command.isEnabled) {
+      setState(() {
+        _slashCommandErrorText = command.disabledReason ??
+            'This command is unavailable in the current context.';
+      });
+      return;
+    }
+    setState(() {
+      _slashCommandErrorText = null;
+      _selectedSlashCommandIndex = 0;
+    });
+    switch (command.actionKind) {
+      case _SlashCommandActionKind.insertText:
+        widget.controller.text = command.payload;
+        widget.controller.selection = TextSelection.collapsed(
+          offset: widget.controller.text.length,
+        );
+        _composerFocusNode.requestFocus();
+        break;
+      case _SlashCommandActionKind.sendMessage:
+      case _SlashCommandActionKind.callback:
+        widget.controller.clear();
+        await widget.onSlashCommand(command.id, command.payload);
+        break;
+      case _SlashCommandActionKind.disabled:
+        break;
+    }
   }
 
   Future<void> _toggleRecording() async {
@@ -5182,9 +5763,8 @@ class _ComposerState extends State<_Composer> {
                   leading: const Icon(Icons.photo_library_outlined),
                   title: const Text('Photo library'),
                   subtitle: const Text('Preview an image and add instructions'),
-                  onTap: () => Navigator.of(context).pop(
-                    _AttachmentSourceAction.image,
-                  ),
+                  onTap: () =>
+                      Navigator.of(context).pop(_AttachmentSourceAction.image),
                 ),
               if (supportsFiles)
                 ListTile(
@@ -5193,9 +5773,8 @@ class _ComposerState extends State<_Composer> {
                   subtitle: const Text(
                     'Attach documents, code, text files, or images',
                   ),
-                  onTap: () => Navigator.of(context).pop(
-                    _AttachmentSourceAction.file,
-                  ),
+                  onTap: () =>
+                      Navigator.of(context).pop(_AttachmentSourceAction.file),
                 ),
             ],
           ),
@@ -5223,9 +5802,7 @@ class _ComposerState extends State<_Composer> {
       return;
     }
     try {
-      final pickedImages = await _imagePicker.pickMultiImage(
-        imageQuality: 90,
-      );
+      final pickedImages = await _imagePicker.pickMultiImage(imageQuality: 90);
       if (pickedImages.isEmpty || !mounted) {
         return;
       }
@@ -5247,9 +5824,9 @@ class _ComposerState extends State<_Composer> {
       if (!mounted) {
         return;
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('$error')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('$error')));
     }
   }
 
@@ -5302,7 +5879,8 @@ class _ComposerState extends State<_Composer> {
           return;
         }
         throw Exception(
-            'The selected files are not accessible on this device.');
+          'The selected files are not accessible on this device.',
+        );
       }
       _appendPendingAttachments(attachments);
       if (skippedImageCount > 0) {
@@ -5312,9 +5890,9 @@ class _ComposerState extends State<_Composer> {
       if (!mounted) {
         return;
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('$error')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('$error')));
     }
   }
 
@@ -5372,9 +5950,9 @@ class _ComposerState extends State<_Composer> {
       if (!mounted) {
         return;
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('$error')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('$error')));
     }
   }
 
@@ -5383,8 +5961,9 @@ class _ComposerState extends State<_Composer> {
       return;
     }
 
-    final stagedAttachments =
-        List<_PendingAttachmentDraft>.from(_pendingAttachments);
+    final stagedAttachments = List<_PendingAttachmentDraft>.from(
+      _pendingAttachments,
+    );
     final recorder = _audioRecorder;
     _audioRecorder = widget.audioRecorderFactory();
     _recordingTicker?.cancel();
@@ -5477,9 +6056,14 @@ class _ComposerState extends State<_Composer> {
     if (_isSubmittingAttachments) {
       return;
     }
+    if (_slashQuery != null) {
+      await _selectHighlightedSlashCommand();
+      return;
+    }
     if (_pendingAttachments.isNotEmpty) {
-      final attachments =
-          List<_PendingAttachmentDraft>.from(_pendingAttachments);
+      final attachments = List<_PendingAttachmentDraft>.from(
+        _pendingAttachments,
+      );
       final prompt = widget.controller.text.trim();
       if (mounted) {
         setState(() {
@@ -5551,8 +6135,9 @@ class _ComposerState extends State<_Composer> {
       return;
     }
     setState(() {
-      _pendingAttachments[index] =
-          _pendingAttachments[index].copyWith(projectAssetRole: role);
+      _pendingAttachments[index] = _pendingAttachments[index].copyWith(
+        projectAssetRole: role,
+      );
     });
     _emitDraftChanged();
   }
@@ -5618,10 +6203,7 @@ class _ComposerState extends State<_Composer> {
       MaterialPageRoute<_ImageEditorResult>(
         fullscreenDialog: true,
         builder: (context) {
-          return _ImageEditorScreen(
-            imageBytes: originalBytes,
-            fileName: name,
-          );
+          return _ImageEditorScreen(imageBytes: originalBytes, fileName: name);
         },
       ),
     );
@@ -5700,8 +6282,9 @@ class _ComposerState extends State<_Composer> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content:
-                Text('Attachment send failed. Draft kept for retry. $error'),
+            content: Text(
+              'Attachment send failed. Draft kept for retry. $error',
+            ),
             duration: const Duration(seconds: 2),
           ),
         );
@@ -5737,8 +6320,9 @@ class _ComposerState extends State<_Composer> {
       );
     }
 
-    final nextAttachments =
-        _filterDisallowedImageAttachments(draft.attachments);
+    final nextAttachments = _filterDisallowedImageAttachments(
+      draft.attachments,
+    );
     if (mounted) {
       setState(() {
         _hasText = nextText.trim().isNotEmpty;
@@ -5907,9 +6491,9 @@ class _ComposerState extends State<_Composer> {
   }
 
   void _showVoiceUnavailableMessage() {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(widget.voiceStatusText)),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(widget.voiceStatusText)));
   }
 }
 
@@ -5950,9 +6534,7 @@ class _PendingAttachmentDraft {
 
   String get identityKey => '${kind.name}:$name:${sizeBytes ?? 0}';
 
-  _PendingAttachmentDraft copyWith({
-    ProjectAssetRole? projectAssetRole,
-  }) {
+  _PendingAttachmentDraft copyWith({ProjectAssetRole? projectAssetRole}) {
     return _PendingAttachmentDraft(
       file: file,
       name: name,
@@ -5975,10 +6557,7 @@ class _RenameChatDraft {
   });
 
   factory _RenameChatDraft.manual(String title) {
-    return _RenameChatDraft._(
-      kind: _RenameChatDraftKind.manual,
-      title: title,
-    );
+    return _RenameChatDraft._(kind: _RenameChatDraftKind.manual, title: title);
   }
 
   factory _RenameChatDraft.generatedText(String? instructions) {
@@ -6076,10 +6655,7 @@ class _RenameChatSheetState extends State<_RenameChatSheet> {
                 const Expanded(
                   child: Text(
                     'Rename chat',
-                    style: TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.w800,
-                    ),
+                    style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800),
                   ),
                 ),
                 IconButton(
@@ -6223,8 +6799,9 @@ class _RenameChatSheetState extends State<_RenameChatSheet> {
 
     return OutlinedButton.icon(
       onPressed: _isSubmitting ? null : _startRecording,
-      icon:
-          Icon(widget.voiceEnabled ? Icons.mic_rounded : Icons.mic_off_rounded),
+      icon: Icon(
+        widget.voiceEnabled ? Icons.mic_rounded : Icons.mic_off_rounded,
+      ),
       label: Text(
         widget.voiceEnabled
             ? 'Record title instruction'
@@ -6236,9 +6813,9 @@ class _RenameChatSheetState extends State<_RenameChatSheet> {
 
   Future<void> _startRecording() async {
     if (!widget.voiceEnabled) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(widget.voiceStatusText)),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(widget.voiceStatusText)));
       return;
     }
     if (_isRecording || _isSubmitting) {
@@ -6263,9 +6840,9 @@ class _RenameChatSheetState extends State<_RenameChatSheet> {
       if (!mounted) {
         return;
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('$error')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('$error')));
     }
   }
 
@@ -6314,9 +6891,9 @@ class _RenameChatSheetState extends State<_RenameChatSheet> {
         setState(() {
           _isSubmitting = false;
         });
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Enter a chat name.')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Enter a chat name.')));
         return;
       }
       Navigator.of(context).pop(_RenameChatDraft.manual(title));
@@ -6373,10 +6950,7 @@ String _presetLabel(AgentPreset preset) {
 }
 
 class _AgentProfilePill extends StatelessWidget {
-  const _AgentProfilePill({
-    required this.label,
-    required this.color,
-  });
+  const _AgentProfilePill({required this.label, required this.color});
 
   final String label;
   final Color color;
@@ -6399,10 +6973,7 @@ class _AgentProfilePill extends StatelessWidget {
           Container(
             width: 8,
             height: 8,
-            decoration: BoxDecoration(
-              color: color,
-              shape: BoxShape.circle,
-            ),
+            decoration: BoxDecoration(color: color, shape: BoxShape.circle),
           ),
           const SizedBox(width: 8),
           Text(
@@ -6710,9 +7281,7 @@ class NewProjectFactoryDialogState extends State<NewProjectFactoryDialog> {
       }
       final bytes = file.bytes;
       if (bytes != null) {
-        picked.add(
-          XFile.fromData(bytes, name: file.name, mimeType: mimeType),
-        );
+        picked.add(XFile.fromData(bytes, name: file.name, mimeType: mimeType));
       }
     }
     if (picked.isEmpty) {
@@ -6874,10 +7443,7 @@ class _ProjectFactoryHistoryDialogState
           ),
         ],
       ),
-      content: SizedBox(
-        width: 620,
-        child: _buildContent(context),
-      ),
+      content: SizedBox(width: 620, child: _buildContent(context)),
       actions: <Widget>[
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
@@ -6895,10 +7461,7 @@ class _ProjectFactoryHistoryDialogState
       );
     }
     if (_error != null) {
-      return SizedBox(
-        height: 160,
-        child: Center(child: Text(_error!)),
-      );
+      return SizedBox(height: 160, child: Center(child: Text(_error!)));
     }
     if (_jobs.isEmpty) {
       return const SizedBox(
@@ -6948,9 +7511,9 @@ class _ProjectFactoryHistoryDialogState
     if (!mounted) {
       return;
     }
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Project workspace opened.')),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('Project workspace opened.')));
   }
 
   Future<void> _openWebPreviews() async {
@@ -7045,10 +7608,7 @@ class _WebPreviewPanelDialogState extends State<WebPreviewPanelDialog> {
           ),
         ],
       ),
-      content: SizedBox(
-        width: 680,
-        child: _buildContent(context),
-      ),
+      content: SizedBox(width: 680, child: _buildContent(context)),
       actions: <Widget>[
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
@@ -7224,8 +7784,9 @@ class WebPreviewInvitesDialog extends StatefulWidget {
 }
 
 class _WebPreviewInvitesDialogState extends State<WebPreviewInvitesDialog> {
-  final TextEditingController _ttlController =
-      TextEditingController(text: '604800');
+  final TextEditingController _ttlController = TextEditingController(
+    text: '604800',
+  );
   bool _singleUse = true;
   bool _loading = true;
   bool _busy = false;
@@ -7521,8 +8082,10 @@ class _ProjectFactoryHistoryTile extends StatelessWidget {
           Text('${job.status} - ${job.currentPhase} - ${job.progress}%'),
           if (job.completedAt != null) Text('Completed: ${job.completedAt}'),
           if (error != null && error.isNotEmpty)
-            Text(error,
-                style: TextStyle(color: Theme.of(context).colorScheme.error)),
+            Text(
+              error,
+              style: TextStyle(color: Theme.of(context).colorScheme.error),
+            ),
           if (job.manualNextStep != null && !job.isReady)
             Text(job.manualNextStep!),
         ],
@@ -7626,9 +8189,7 @@ class ProjectFactoryProgressDialogState
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: <Widget>[
-          LinearProgressIndicator(
-            value: (_job.progress.clamp(0, 100)) / 100,
-          ),
+          LinearProgressIndicator(value: (_job.progress.clamp(0, 100)) / 100),
           const SizedBox(height: 16),
           Text(_job.currentPhase),
           const SizedBox(height: 8),
@@ -7810,34 +8371,32 @@ class _NewChatSheetState extends State<_NewChatSheet> {
                 Flexible(
                   child: ListView(
                     shrinkWrap: true,
-                    children: widget.workspaces.map(
-                      (workspace) {
-                        final isPinned = widget.pinnedWorkspacePaths.contains(
+                    children: widget.workspaces.map((workspace) {
+                      final isPinned = widget.pinnedWorkspacePaths.contains(
+                        workspace.path,
+                      );
+                      return ListTile(
+                        title: Text(workspace.name),
+                        subtitle: Text(
                           workspace.path,
-                        );
-                        return ListTile(
-                          title: Text(workspace.name),
-                          subtitle: Text(
-                            workspace.path,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        trailing: isPinned
+                            ? const Icon(
+                                Icons.bookmark_added_rounded,
+                                color: Color(0xFF55D6BE),
+                              )
+                            : null,
+                        onTap: () => Navigator.of(context).pop(
+                          _NewChatDraft(
+                            workspace: workspace,
+                            agentProfile: _selectedProfile,
+                            turnSummariesEnabled: _turnSummariesEnabled,
                           ),
-                          trailing: isPinned
-                              ? const Icon(
-                                  Icons.bookmark_added_rounded,
-                                  color: Color(0xFF55D6BE),
-                                )
-                              : null,
-                          onTap: () => Navigator.of(context).pop(
-                            _NewChatDraft(
-                              workspace: workspace,
-                              agentProfile: _selectedProfile,
-                              turnSummariesEnabled: _turnSummariesEnabled,
-                            ),
-                          ),
-                        );
-                      },
-                    ).toList(),
+                        ),
+                      );
+                    }).toList(),
                   ),
                 ),
               ],
@@ -7975,9 +8534,7 @@ class _AgentStudioDraft {
 }
 
 class _AgentStudioSheet extends StatefulWidget {
-  const _AgentStudioSheet({
-    required this.session,
-  });
+  const _AgentStudioSheet({required this.session});
 
   final SessionDetail session;
 
@@ -8029,15 +8586,18 @@ class _AgentStudioSheetState extends State<_AgentStudioSheet> {
     _turnSummariesEnabled = widget.session.turnSummariesEnabled;
 
     for (final agent in configuration.agents) {
-      _labelControllers[agent.agentId] =
-          TextEditingController(text: agent.label);
+      _labelControllers[agent.agentId] = TextEditingController(
+        text: agent.label,
+      );
       _modelControllers[agent.agentId] = TextEditingController(
         text: agent.model ?? '',
       );
-      _promptControllers[agent.agentId] =
-          TextEditingController(text: agent.prompt);
-      _turnsControllers[agent.agentId] =
-          TextEditingController(text: agent.maxTurns.toString());
+      _promptControllers[agent.agentId] = TextEditingController(
+        text: agent.prompt,
+      );
+      _turnsControllers[agent.agentId] = TextEditingController(
+        text: agent.maxTurns.toString(),
+      );
       _enabled[agent.agentId] = agent.enabled;
       _visibility[agent.agentId] = agent.visibility;
     }
@@ -8163,8 +8723,9 @@ class _AgentStudioSheetState extends State<_AgentStudioSheet> {
                 const SizedBox(height: 12),
                 DropdownButtonFormField<TurnBudgetMode>(
                   initialValue: _turnBudgetMode,
-                  decoration:
-                      const InputDecoration(labelText: 'Turn budget mode'),
+                  decoration: const InputDecoration(
+                    labelText: 'Turn budget mode',
+                  ),
                   items: const <DropdownMenuItem<TurnBudgetMode>>[
                     DropdownMenuItem(
                       value: TurnBudgetMode.eachAgent,
@@ -8460,10 +9021,7 @@ class _AgentStudioSheetState extends State<_AgentStudioSheet> {
         children: <Widget>[
           const Text(
             'Supervisor Registry',
-            style: TextStyle(
-              color: Colors.white,
-              fontWeight: FontWeight.w700,
-            ),
+            style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700),
           ),
           const SizedBox(height: 6),
           const Text(
@@ -8500,19 +9058,17 @@ class _AgentStudioSheetState extends State<_AgentStudioSheet> {
                 contentPadding: EdgeInsets.zero,
                 value: _supervisorMemberIds.contains(agentId),
                 title: Text(label),
-                subtitle: Text(
-                  switch (agentId) {
-                    AgentId.qa =>
-                      'Validation, tests, regressions, and release risk.',
-                    AgentId.ux =>
-                      'Usability, accessibility, flow, and interface quality.',
-                    AgentId.seniorEngineer =>
-                      'Architecture, implementation strategy, and delivery risk.',
-                    AgentId.scraper =>
-                      'Web extraction, parsing strategy, and source constraints.',
-                    _ => '',
-                  },
-                ),
+                subtitle: Text(switch (agentId) {
+                  AgentId.qa =>
+                    'Validation, tests, regressions, and release risk.',
+                  AgentId.ux =>
+                    'Usability, accessibility, flow, and interface quality.',
+                  AgentId.seniorEngineer =>
+                    'Architecture, implementation strategy, and delivery risk.',
+                  AgentId.scraper =>
+                    'Web extraction, parsing strategy, and source constraints.',
+                  _ => '',
+                }),
                 onChanged: (value) {
                   setState(() {
                     if (value ?? false) {
@@ -8617,10 +9173,7 @@ class _AgentStudioSheetState extends State<_AgentStudioSheet> {
   }
 }
 
-int _normalizeAgentTurns(
-  String rawValue, {
-  required int fallback,
-}) {
+int _normalizeAgentTurns(String rawValue, {required int fallback}) {
   final parsed = int.tryParse(rawValue.trim());
   if (parsed == null) {
     return fallback;
@@ -8629,10 +9182,7 @@ int _normalizeAgentTurns(
 }
 
 class _ImageEditorResult {
-  const _ImageEditorResult({
-    required this.bytes,
-    required this.fileName,
-  });
+  const _ImageEditorResult({required this.bytes, required this.fileName});
 
   final Uint8List? bytes;
   final String? fileName;
@@ -8643,10 +9193,7 @@ enum _ImageEditorMode { crop, draw }
 enum _CropDragTarget { move, topLeft, topRight, bottomLeft, bottomRight }
 
 class _ImageEditorScreen extends StatefulWidget {
-  const _ImageEditorScreen({
-    required this.imageBytes,
-    required this.fileName,
-  });
+  const _ImageEditorScreen({required this.imageBytes, required this.fileName});
 
   final Uint8List imageBytes;
   final String fileName;
@@ -8715,9 +9262,10 @@ class _ImageEditorScreenState extends State<_ImageEditorScreen> {
           TextButton(
             onPressed: _isSaving
                 ? null
-                : () => Navigator.of(context).pop(
-                      const _ImageEditorResult(bytes: null, fileName: null),
-                    ),
+                : () => Navigator.of(
+                      context,
+                    ).pop(
+                        const _ImageEditorResult(bytes: null, fileName: null)),
             child: const Text('Original'),
           ),
           TextButton(
@@ -8734,11 +9282,7 @@ class _ImageEditorScreenState extends State<_ImageEditorScreen> {
       body: SafeArea(
         child: Column(
           children: <Widget>[
-            Expanded(
-              child: Center(
-                child: _buildImageStage(image),
-              ),
-            ),
+            Expanded(child: Center(child: _buildImageStage(image))),
             _buildTools(),
           ],
         ),
@@ -8771,10 +9315,8 @@ class _ImageEditorScreenState extends State<_ImageEditorScreen> {
           width: stageWidth,
           height: stageHeight,
           child: GestureDetector(
-            onPanStart: (details) => _handlePanStart(
-              details.localPosition,
-              stageSize,
-            ),
+            onPanStart: (details) =>
+                _handlePanStart(details.localPosition, stageSize),
             onPanUpdate: (details) => _handlePanUpdate(
               details.localPosition,
               details.delta,
@@ -9079,11 +9621,7 @@ class _ImageEditorPainter extends CustomPainter {
     _paintCropOverlay(canvas, size);
   }
 
-  void _paintStroke(
-    Canvas canvas,
-    Size size,
-    _ImageAnnotationStroke stroke,
-  ) {
+  void _paintStroke(Canvas canvas, Size size, _ImageAnnotationStroke stroke) {
     if (stroke.points.isEmpty) {
       return;
     }
@@ -9234,10 +9772,7 @@ String _editedImageFileName(String fileName) {
 }
 
 @visibleForTesting
-bool isAudioAttachmentDraftInput({
-  required String fileName,
-  String? mimeType,
-}) {
+bool isAudioAttachmentDraftInput({required String fileName, String? mimeType}) {
   final normalizedMimeType = (mimeType ?? '').trim().toLowerCase();
   if (normalizedMimeType.startsWith('audio/')) {
     return true;
@@ -9262,10 +9797,7 @@ Widget buildImageEditorForTest({
   required Uint8List imageBytes,
   required String fileName,
 }) {
-  return _ImageEditorScreen(
-    imageBytes: imageBytes,
-    fileName: fileName,
-  );
+  return _ImageEditorScreen(imageBytes: imageBytes, fileName: fileName);
 }
 
 @visibleForTesting
@@ -9274,13 +9806,12 @@ Widget buildComposerVoiceRecordingHarnessForTest({
   required AudioNoteRecorder Function() audioRecorderFactory,
   required Future<bool> Function(XFile audioFile, {String? message})
       onSendAudio,
-  required Future<bool> Function(
-    List<XFile> attachments, {
-    String? prompt,
-  }) onSendAttachments,
+  required Future<bool> Function(List<XFile> attachments, {String? prompt})
+      onSendAttachments,
   String stagedText = '',
   bool stageAttachment = false,
   bool isProjectFactoryIntake = false,
+  Future<bool> Function(String commandId, String payload)? onSlashCommand,
 }) {
   return _Composer(
     sessionId: 'test-session',
@@ -9313,6 +9844,7 @@ Widget buildComposerVoiceRecordingHarnessForTest({
       );
     },
     onBeginRecording: () async {},
+    onSlashCommand: onSlashCommand ?? (_, __) async => false,
     audioRecorderFactory: audioRecorderFactory,
     isBusy: false,
     voiceEnabled: true,
@@ -9418,7 +9950,9 @@ class _PendingAttachmentTray extends StatelessWidget {
   final bool isProjectFactoryIntake;
   final ValueChanged<_PendingAttachmentDraft> onRemove;
   final void Function(
-      _PendingAttachmentDraft attachment, ProjectAssetRole? role) onRoleChanged;
+    _PendingAttachmentDraft attachment,
+    ProjectAssetRole? role,
+  ) onRoleChanged;
   final VoidCallback onClearAll;
   final bool expanded;
   final VoidCallback onToggleExpanded;
@@ -9528,10 +10062,7 @@ class _PendingAttachmentTray extends StatelessWidget {
                 audioCount: audioCount,
                 fileCount: fileCount,
               ),
-              style: const TextStyle(
-                color: Color(0xFF8B97B5),
-                height: 1.4,
-              ),
+              style: const TextStyle(color: Color(0xFF8B97B5), height: 1.4),
             ),
           ),
           if (expanded) ...<Widget>[
@@ -9623,9 +10154,7 @@ class _PendingAttachmentRow extends StatelessWidget {
                 attachment.name,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  fontWeight: FontWeight.w700,
-                ),
+                style: const TextStyle(fontWeight: FontWeight.w700),
               ),
               if (showProjectAssetRole) ...<Widget>[
                 const SizedBox(height: 8),
@@ -9685,9 +10214,7 @@ class _ProjectAssetRoleSelector extends StatelessWidget {
 }
 
 class _AttachmentPreview extends StatelessWidget {
-  const _AttachmentPreview({
-    required this.attachment,
-  });
+  const _AttachmentPreview({required this.attachment});
 
   final _PendingAttachmentDraft attachment;
 
@@ -9720,9 +10247,7 @@ class _AttachmentPreview extends StatelessWidget {
 }
 
 class _AttachmentFallbackIcon extends StatelessWidget {
-  const _AttachmentFallbackIcon({
-    required this.icon,
-  });
+  const _AttachmentFallbackIcon({required this.icon});
 
   final IconData icon;
 
@@ -9781,9 +10306,7 @@ String _buildAttachmentTraySummary({
 }
 
 class _CodexOptionTray extends StatelessWidget {
-  const _CodexOptionTray({
-    required this.options,
-  });
+  const _CodexOptionTray({required this.options});
 
   final CodexRunOptions options;
 
@@ -9826,11 +10349,7 @@ class _CodexOptionTray extends StatelessWidget {
 
     return Align(
       alignment: Alignment.centerLeft,
-      child: Wrap(
-        spacing: 8,
-        runSpacing: 8,
-        children: pills,
-      ),
+      child: Wrap(spacing: 8, runSpacing: 8, children: pills),
     );
   }
 }
@@ -9872,10 +10391,7 @@ Set<String> normalizeSelectedCodexMcpServerIds(
 }
 
 class _McpAppOpenRequest {
-  const _McpAppOpenRequest({
-    required this.app,
-    this.focusHint,
-  });
+  const _McpAppOpenRequest({required this.app, this.focusHint});
 
   final CodexMcpApp app;
   final String? focusHint;
@@ -10194,8 +10710,9 @@ class _CodexToolsSheetState extends State<_CodexToolsSheet> {
                     spacing: 8,
                     runSpacing: 8,
                     children: orderedSkills.map((skill) {
-                      final selected =
-                          _selectedSkillIds.contains(skill.skillId);
+                      final selected = _selectedSkillIds.contains(
+                        skill.skillId,
+                      );
                       return FilterChip(
                         selected: selected,
                         label: Text(skill.skillId),
@@ -10266,8 +10783,9 @@ class _CodexToolsSheetState extends State<_CodexToolsSheet> {
                     spacing: 8,
                     runSpacing: 8,
                     children: tooling.mcpServers.map((server) {
-                      final selected =
-                          _selectedMcpServerIds.contains(server.serverId);
+                      final selected = _selectedMcpServerIds.contains(
+                        server.serverId,
+                      );
                       return FilterChip(
                         selected: selected,
                         label: Text(server.serverId),
@@ -10280,8 +10798,9 @@ class _CodexToolsSheetState extends State<_CodexToolsSheet> {
                                   if (value) {
                                     _selectedMcpServerIds.add(server.serverId);
                                   } else {
-                                    _selectedMcpServerIds
-                                        .remove(server.serverId);
+                                    _selectedMcpServerIds.remove(
+                                      server.serverId,
+                                    );
                                   }
                                 });
                               }
@@ -10406,9 +10925,7 @@ class _CodexToolsSheetState extends State<_CodexToolsSheet> {
       decoration: BoxDecoration(
         color: const Color(0xFF111C34),
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(
-          color: installStateStyle.$2,
-        ),
+        border: Border.all(color: installStateStyle.$2),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -10578,8 +11095,9 @@ class _CodexToolsSheetState extends State<_CodexToolsSheet> {
                   icon: Icon(
                     isSelected ? Icons.check_circle_outline : Icons.add_link,
                   ),
-                  label:
-                      Text(isSelected ? 'Enabled for run' : 'Enable for run'),
+                  label: Text(
+                    isSelected ? 'Enabled for run' : 'Enable for run',
+                  ),
                 )
               else
                 FilledButton.icon(
@@ -10646,11 +11164,7 @@ class _CodexToolsSheetState extends State<_CodexToolsSheet> {
           const Color(0xFF5A1F28),
           const Color(0xFFFFC4CB),
         ),
-      _ => (
-          'missing',
-          const Color(0xFF2B364D),
-          const Color(0xFFB8C3DA),
-        ),
+      _ => ('missing', const Color(0xFF2B364D), const Color(0xFFB8C3DA)),
     };
   }
 
@@ -10714,9 +11228,7 @@ class _CodexToolsSheetState extends State<_CodexToolsSheet> {
                 children: <Widget>[
                   Text(
                     name,
-                    style: const TextStyle(
-                      fontWeight: FontWeight.w700,
-                    ),
+                    style: const TextStyle(fontWeight: FontWeight.w700),
                   ),
                   if (languages.isNotEmpty)
                     Text(
@@ -11084,11 +11596,7 @@ class _McpAppHostScreenState extends State<_McpAppHostScreen> {
   }
 }
 
-enum _McpAppNoticeTone {
-  info,
-  warning,
-  error,
-}
+enum _McpAppNoticeTone { info, warning, error }
 
 class _McpAppNoticeCard extends StatelessWidget {
   const _McpAppNoticeCard({
@@ -11138,10 +11646,7 @@ class _McpAppNoticeCard extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 6),
-          Text(
-            message,
-            style: TextStyle(color: foregroundColor),
-          ),
+          Text(message, style: TextStyle(color: foregroundColor)),
         ],
       ),
     );
@@ -11198,38 +11703,23 @@ class _McpProjectPreviewCard extends StatelessWidget {
           ],
           Text(
             name,
-            style: const TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.w700,
-            ),
+            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
           ),
           if (path.isNotEmpty) ...<Widget>[
             const SizedBox(height: 6),
-            Text(
-              path,
-              style: const TextStyle(color: Color(0xFF8B97B5)),
-            ),
+            Text(path, style: const TextStyle(color: Color(0xFF8B97B5))),
           ],
           if (languages.isNotEmpty) ...<Widget>[
             const SizedBox(height: 10),
-            Text(
-              languages,
-              style: const TextStyle(color: Color(0xFFDCE5FF)),
-            ),
+            Text(languages, style: const TextStyle(color: Color(0xFFDCE5FF))),
           ],
           if (signatures.isNotEmpty) ...<Widget>[
             const SizedBox(height: 8),
-            Text(
-              signatures,
-              style: const TextStyle(color: Color(0xFF8B97B5)),
-            ),
+            Text(signatures, style: const TextStyle(color: Color(0xFF8B97B5))),
           ],
           if (readme != null && readme.isNotEmpty) ...<Widget>[
             const SizedBox(height: 12),
-            Text(
-              readme,
-              style: const TextStyle(color: Color(0xFFB9C5E3)),
-            ),
+            Text(readme, style: const TextStyle(color: Color(0xFFB9C5E3))),
           ],
         ],
       ),
@@ -11286,10 +11776,7 @@ class _ChatTimelineEntry {
 }
 
 class _ChatDaySeparator extends StatelessWidget {
-  const _ChatDaySeparator({
-    super.key,
-    required this.label,
-  });
+  const _ChatDaySeparator({super.key, required this.label});
 
   final String label;
 

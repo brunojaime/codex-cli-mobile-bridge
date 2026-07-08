@@ -306,6 +306,120 @@ def _build_sqlite_service(
     )
 
 
+def _build_service_with_repository(
+    projects_root: str,
+) -> tuple[MessageService, InMemoryChatRepository]:
+    repository = InMemoryChatRepository(projects_root=projects_root)
+    service = MessageService(
+        repository=repository,
+        execution_provider=_InstantExecutionProvider(),
+        default_workspace_path=projects_root,
+        audio_transcriber=DisabledAudioTranscriber(),
+    )
+    return service, repository
+
+
+def _save_message(
+    repository: InMemoryChatRepository,
+    session_id: str,
+    message_id: str,
+    role: ChatMessageRole,
+    minutes: int,
+) -> ChatMessage:
+    message = ChatMessage(
+        id=message_id,
+        session_id=session_id,
+        role=role,
+        author_type=ChatMessageAuthorType.HUMAN
+        if role == ChatMessageRole.USER
+        else ChatMessageAuthorType.ASSISTANT,
+        content=f"{message_id} content",
+        status=ChatMessageStatus.COMPLETED,
+        created_at=utc_now() + timedelta(minutes=minutes),
+        updated_at=utc_now() + timedelta(minutes=minutes),
+    )
+    repository.save_message(message)
+    return message
+
+
+def test_transcript_window_anchors_at_latest_user_message() -> None:
+    with TemporaryDirectory() as temp_dir:
+        workspace = Path(temp_dir) / "repo"
+        workspace.mkdir()
+        service, repository = _build_service_with_repository(temp_dir)
+        session = service.create_session(workspace_path=str(workspace))
+        _save_message(repository, session.id, "user-1", ChatMessageRole.USER, 1)
+        _save_message(
+            repository, session.id, "assistant-1", ChatMessageRole.ASSISTANT, 2
+        )
+        latest_user = _save_message(
+            repository, session.id, "user-2", ChatMessageRole.USER, 3
+        )
+        _save_message(
+            repository, session.id, "assistant-2", ChatMessageRole.ASSISTANT, 4
+        )
+
+        window = service.get_transcript_window(session.id)
+
+    assert [message.id for message in window.messages] == ["user-2", "assistant-2"]
+    assert window.window_anchor_message_id == latest_user.id
+    assert window.has_older is True
+    assert window.has_newer is False
+    assert window.is_partial is True
+    assert window.oldest_cursor is not None
+
+
+def test_transcript_window_loads_older_page_before_cursor() -> None:
+    with TemporaryDirectory() as temp_dir:
+        workspace = Path(temp_dir) / "repo"
+        workspace.mkdir()
+        service, repository = _build_service_with_repository(temp_dir)
+        session = service.create_session(workspace_path=str(workspace))
+        _save_message(repository, session.id, "user-1", ChatMessageRole.USER, 1)
+        _save_message(
+            repository, session.id, "assistant-1", ChatMessageRole.ASSISTANT, 2
+        )
+        _save_message(repository, session.id, "user-2", ChatMessageRole.USER, 3)
+        _save_message(
+            repository, session.id, "assistant-2", ChatMessageRole.ASSISTANT, 4
+        )
+        initial = service.get_transcript_window(session.id)
+
+        older = service.get_transcript_window(
+            session.id,
+            before=initial.oldest_cursor,
+            limit=1,
+        )
+
+    assert [message.id for message in older.messages] == ["assistant-1"]
+    assert older.has_older is True
+    assert older.has_newer is True
+    assert older.is_partial is True
+
+
+def test_transcript_full_escape_hatch_returns_complete_history() -> None:
+    with TemporaryDirectory() as temp_dir:
+        workspace = Path(temp_dir) / "repo"
+        workspace.mkdir()
+        service, repository = _build_service_with_repository(temp_dir)
+        session = service.create_session(workspace_path=str(workspace))
+        _save_message(repository, session.id, "user-1", ChatMessageRole.USER, 1)
+        _save_message(
+            repository, session.id, "assistant-1", ChatMessageRole.ASSISTANT, 2
+        )
+        _save_message(repository, session.id, "user-2", ChatMessageRole.USER, 3)
+
+        window = service.get_transcript_window(session.id, full=True)
+
+    assert [message.id for message in window.messages] == [
+        "user-1",
+        "assistant-1",
+        "user-2",
+    ]
+    assert window.has_older is False
+    assert window.is_partial is False
+
+
 def test_session_archive_can_be_toggled() -> None:
     with TemporaryDirectory() as temp_dir:
         workspace = Path(temp_dir) / "repo"

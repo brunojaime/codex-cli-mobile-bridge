@@ -4039,6 +4039,9 @@ async def create_session(
 @router.get("/sessions/{session_id}", response_model=SessionDetailResponse)
 async def get_session(
     session_id: str,
+    before: str | None = Query(default=None),
+    limit: int = Query(default=40, ge=1, le=200),
+    transcript: str = Query(default="full"),
     service: MessageService = Depends(get_message_service),
 ) -> SessionDetailResponse:
     session = service.refresh_session(session_id)
@@ -4054,10 +4057,21 @@ async def get_session(
     jobs_by_id = _jobs_by_id_for_messages(service, messages)
 
     refreshed_session = service.refresh_session(session_id) or session
+    try:
+        transcript_window = service.get_transcript_window(
+            session_id,
+            before=before,
+            limit=limit,
+            full=transcript == "full" and before is None,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     return SessionDetailResponse.from_domain(
         refreshed_session,
-        messages=messages,
+        messages=transcript_window.messages,
+        metadata_messages=messages,
+        transcript_window=transcript_window,
         turn_summaries=service.list_turn_summaries(session_id),
         jobs_by_id=jobs_by_id,
         run_configurations_by_id=_run_configurations_by_id_for_session(

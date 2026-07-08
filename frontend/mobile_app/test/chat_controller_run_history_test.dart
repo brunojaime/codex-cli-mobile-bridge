@@ -75,7 +75,12 @@ class _RunHistoryApiClient extends ApiClient {
   }
 
   @override
-  Future<SessionDetail> getSession(String sessionId) async {
+  Future<SessionDetail> getSession(
+    String sessionId, {
+    String? before,
+    int? limit,
+    bool fullTranscript = false,
+  }) async {
     const activeRun = CurrentRunExecution(
       runId: 'run-active',
       state: CurrentRunStageState.running,

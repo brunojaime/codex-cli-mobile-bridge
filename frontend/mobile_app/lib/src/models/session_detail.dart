@@ -5,6 +5,57 @@ import 'conversation_product.dart';
 import 'current_run_execution.dart';
 import 'reviewer_lifecycle_state.dart';
 
+class TranscriptWindow {
+  const TranscriptWindow({
+    this.oldestCursor,
+    this.newestCursor,
+    this.hasOlder = false,
+    this.hasNewer = false,
+    this.windowAnchorMessageId,
+    this.isPartial = false,
+  });
+
+  final String? oldestCursor;
+  final String? newestCursor;
+  final bool hasOlder;
+  final bool hasNewer;
+  final String? windowAnchorMessageId;
+  final bool isPartial;
+
+  factory TranscriptWindow.fromJson(Map<String, dynamic>? json) {
+    if (json == null) {
+      return const TranscriptWindow();
+    }
+    return TranscriptWindow(
+      oldestCursor: json['oldest_cursor'] as String?,
+      newestCursor: json['newest_cursor'] as String?,
+      hasOlder: json['has_older'] as bool? ?? false,
+      hasNewer: json['has_newer'] as bool? ?? false,
+      windowAnchorMessageId: json['window_anchor_message_id'] as String?,
+      isPartial: json['is_partial'] as bool? ?? false,
+    );
+  }
+
+  TranscriptWindow copyWith({
+    String? oldestCursor,
+    String? newestCursor,
+    bool? hasOlder,
+    bool? hasNewer,
+    String? windowAnchorMessageId,
+    bool? isPartial,
+  }) {
+    return TranscriptWindow(
+      oldestCursor: oldestCursor ?? this.oldestCursor,
+      newestCursor: newestCursor ?? this.newestCursor,
+      hasOlder: hasOlder ?? this.hasOlder,
+      hasNewer: hasNewer ?? this.hasNewer,
+      windowAnchorMessageId:
+          windowAnchorMessageId ?? this.windowAnchorMessageId,
+      isPartial: isPartial ?? this.isPartial,
+    );
+  }
+}
+
 class SessionDetail {
   const SessionDetail({
     required this.id,
@@ -19,6 +70,7 @@ class SessionDetail {
     required this.createdAt,
     required this.updatedAt,
     required this.messages,
+    this.transcriptWindow = const TranscriptWindow(),
     this.turnSummaries = const <ChatTurnSummary>[],
     this.agentConfiguration = kDefaultAgentConfiguration,
     this.providerSessionId,
@@ -62,6 +114,7 @@ class SessionDetail {
   final DateTime createdAt;
   final DateTime updatedAt;
   final List<ChatMessage> messages;
+  final TranscriptWindow transcriptWindow;
   final List<ChatTurnSummary> turnSummaries;
   bool get isArchived => archivedAt != null;
 
@@ -91,6 +144,7 @@ class SessionDetail {
     DateTime? createdAt,
     DateTime? updatedAt,
     List<ChatMessage>? messages,
+    TranscriptWindow? transcriptWindow,
     List<ChatTurnSummary>? turnSummaries,
   }) {
     return SessionDetail(
@@ -106,6 +160,7 @@ class SessionDetail {
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
       messages: messages ?? this.messages,
+      transcriptWindow: transcriptWindow ?? this.transcriptWindow,
       turnSummaries: turnSummaries ?? this.turnSummaries,
       providerSessionId: providerSessionId ?? this.providerSessionId,
       reviewerProviderSessionId:
@@ -171,18 +226,21 @@ class SessionDetail {
           : null,
       recentRuns: rawRecentRuns
           .whereType<Map<dynamic, dynamic>>()
-          .map((item) => CurrentRunExecution.fromJson(
-                <String, dynamic>{
-                  for (final entry in item.entries)
-                    if (entry.key is String) entry.key as String: entry.value,
-                },
-              ))
+          .map(
+            (item) => CurrentRunExecution.fromJson(<String, dynamic>{
+              for (final entry in item.entries)
+                if (entry.key is String) entry.key as String: entry.value,
+            }),
+          )
           .toList(growable: false),
       createdAt: DateTime.parse(json['created_at'] as String),
       updatedAt: DateTime.parse(json['updated_at'] as String),
       messages: rawMessages
           .map((item) => ChatMessage.fromJson(item as Map<String, dynamic>))
           .toList(),
+      transcriptWindow: TranscriptWindow.fromJson(
+        json['transcript_window'] as Map<String, dynamic>?,
+      ),
       turnSummaries: rawTurnSummaries
           .whereType<Map<String, dynamic>>()
           .map(ChatTurnSummary.fromJson)

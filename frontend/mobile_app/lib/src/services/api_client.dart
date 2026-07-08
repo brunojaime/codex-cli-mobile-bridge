@@ -40,10 +40,8 @@ class ProjectFactoryUnavailableException implements Exception {
 }
 
 class ApiClient {
-  ApiClient({
-    required this.baseUrl,
-    http.Client? client,
-  }) : _client = client ?? http.Client();
+  ApiClient({required this.baseUrl, http.Client? client})
+      : _client = client ?? http.Client();
 
   final String baseUrl;
   final http.Client _client;
@@ -67,7 +65,8 @@ class ApiClient {
     final payload = jsonDecode(response.body) as List<dynamic>;
     return payload
         .map(
-            (item) => ChatSessionSummary.fromJson(item as Map<String, dynamic>))
+          (item) => ChatSessionSummary.fromJson(item as Map<String, dynamic>),
+        )
         .toList();
   }
 
@@ -79,16 +78,15 @@ class ApiClient {
     }
 
     return ServerHealth.fromJson(
-        jsonDecode(response.body) as Map<String, dynamic>);
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
   }
 
   Future<SynthesizedSpeechClip> synthesizeSpeech(String text) async {
     final response = await _client.post(
       Uri.parse('$baseUrl/audio/speech'),
       headers: {'Content-Type': 'application/json'},
-      body: jsonEncode(<String, dynamic>{
-        'text': text,
-      }),
+      body: jsonEncode(<String, dynamic>{'text': text}),
     );
 
     if (response.statusCode != 200) {
@@ -129,8 +127,9 @@ class ApiClient {
   }
 
   Future<InstallableApp> getInstallableApp(String sourceApp) async {
-    final response =
-        await _client.get(Uri.parse('$baseUrl/installable-apps/$sourceApp'));
+    final response = await _client.get(
+      Uri.parse('$baseUrl/installable-apps/$sourceApp'),
+    );
 
     if (response.statusCode != 200) {
       throw Exception('Failed to fetch installable app: ${response.body}');
@@ -142,8 +141,9 @@ class ApiClient {
   }
 
   Future<ProjectFactoryOptions> getProjectFactoryOptions() async {
-    final response =
-        await _client.get(Uri.parse('$baseUrl/project-factory/options'));
+    final response = await _client.get(
+      Uri.parse('$baseUrl/project-factory/options'),
+    );
 
     if (response.statusCode == 404) {
       throw const ProjectFactoryUnavailableException(
@@ -185,14 +185,15 @@ class ApiClient {
   Future<List<ProjectFactoryDraftSummary>> listProjectFactoryDrafts({
     int limit = 50,
   }) async {
-    final uri = Uri.parse('$baseUrl/project-factory/drafts').replace(
-      queryParameters: <String, String>{'limit': '$limit'},
-    );
+    final uri = Uri.parse(
+      '$baseUrl/project-factory/drafts',
+    ).replace(queryParameters: <String, String>{'limit': '$limit'});
     final response = await _client.get(uri);
 
     if (response.statusCode != 200) {
       throw Exception(
-          'Failed to list project factory drafts: ${response.body}');
+        'Failed to list project factory drafts: ${response.body}',
+      );
     }
 
     final payload = jsonDecode(response.body) as Map<String, dynamic>;
@@ -203,12 +204,14 @@ class ApiClient {
   }
 
   Future<ProjectFactoryDraft> getProjectFactoryDraft(String draftId) async {
-    final response = await _client
-        .get(Uri.parse('$baseUrl/project-factory/drafts/$draftId'));
+    final response = await _client.get(
+      Uri.parse('$baseUrl/project-factory/drafts/$draftId'),
+    );
 
     if (response.statusCode != 200) {
       throw Exception(
-          'Failed to fetch project factory draft: ${response.body}');
+        'Failed to fetch project factory draft: ${response.body}',
+      );
     }
 
     return ProjectFactoryDraft.fromJson(
@@ -242,9 +245,9 @@ class ApiClient {
     if (draftId != null && draftId.trim().isNotEmpty) {
       query['draft_id'] = draftId.trim();
     }
-    final uri = Uri.parse('$baseUrl/project-factory/jobs').replace(
-      queryParameters: query,
-    );
+    final uri = Uri.parse(
+      '$baseUrl/project-factory/jobs',
+    ).replace(queryParameters: query);
     final response = await _client.get(uri);
 
     if (response.statusCode != 200) {
@@ -259,8 +262,9 @@ class ApiClient {
   }
 
   Future<ProjectFactoryJob> getProjectFactoryJob(String jobId) async {
-    final response =
-        await _client.get(Uri.parse('$baseUrl/project-factory/jobs/$jobId'));
+    final response = await _client.get(
+      Uri.parse('$baseUrl/project-factory/jobs/$jobId'),
+    );
 
     if (response.statusCode != 200) {
       throw Exception('Failed to fetch project factory job: ${response.body}');
@@ -272,9 +276,9 @@ class ApiClient {
   }
 
   Future<List<WebPreview>> listWebPreviews({int limit = 50}) async {
-    final uri = Uri.parse('$baseUrl/web-previews').replace(
-      queryParameters: <String, String>{'limit': '$limit'},
-    );
+    final uri = Uri.parse(
+      '$baseUrl/web-previews',
+    ).replace(queryParameters: <String, String>{'limit': '$limit'});
     final response = await _client.get(uri);
 
     if (response.statusCode != 200) {
@@ -289,8 +293,9 @@ class ApiClient {
   }
 
   Future<WebPreview> getWebPreview(String previewId) async {
-    final response =
-        await _client.get(Uri.parse('$baseUrl/web-previews/$previewId'));
+    final response = await _client.get(
+      Uri.parse('$baseUrl/web-previews/$previewId'),
+    );
 
     if (response.statusCode != 200) {
       throw Exception('Failed to fetch web preview: ${response.body}');
@@ -353,9 +358,7 @@ class ApiClient {
     );
   }
 
-  Future<List<WebPreviewInvite>> listWebPreviewInvites(
-    String previewId,
-  ) async {
+  Future<List<WebPreviewInvite>> listWebPreviewInvites(String previewId) async {
     final response = await _client.get(
       Uri.parse('$baseUrl/web-previews/$previewId/invites'),
     );
@@ -444,8 +447,11 @@ class ApiClient {
     final payload = jsonDecode(response.body) as Map<String, dynamic>;
     final assets = payload['assets'] as List<dynamic>? ?? <dynamic>[];
     return assets
-        .map((item) =>
-            ProjectFactoryReferenceAsset.fromJson(item as Map<String, dynamic>))
+        .map(
+          (item) => ProjectFactoryReferenceAsset.fromJson(
+            item as Map<String, dynamic>,
+          ),
+        )
         .toList(growable: false);
   }
 
@@ -457,9 +463,7 @@ class ApiClient {
       'POST',
       Uri.parse('$baseUrl/project-factory/drafts/$draftId/reference-assets'),
     );
-    request.files.add(
-      await _multipartFileFromXFile('asset', image),
-    );
+    request.files.add(await _multipartFileFromXFile('asset', image));
 
     final streamedResponse = await _client.send(request);
     final response = await http.Response.fromStream(streamedResponse);
@@ -476,14 +480,9 @@ class ApiClient {
     XFile file, {
     String source = 'manual_upload',
   }) async {
-    final request = http.MultipartRequest(
-      'POST',
-      Uri.parse('$baseUrl/assets'),
-    );
+    final request = http.MultipartRequest('POST', Uri.parse('$baseUrl/assets'));
     request.fields['source'] = source;
-    request.files.add(
-      await _multipartFileFromXFile('asset', file),
-    );
+    request.files.add(await _multipartFileFromXFile('asset', file));
 
     final streamedResponse = await _client.send(request);
     final response = await http.Response.fromStream(streamedResponse);
@@ -513,7 +512,8 @@ class ApiClient {
 
     if (response.statusCode != 200) {
       throw Exception(
-          'Failed to create asset from chat attachment: ${response.body}');
+        'Failed to create asset from chat attachment: ${response.body}',
+      );
     }
 
     return AssetDepotAsset.fromJson(
@@ -561,9 +561,8 @@ class ApiClient {
     final assets = payload['assets'] as List<dynamic>? ?? <dynamic>[];
     return assets
         .map(
-          (item) => ProjectFactoryDraftAsset.fromJson(
-            item as Map<String, dynamic>,
-          ),
+          (item) =>
+              ProjectFactoryDraftAsset.fromJson(item as Map<String, dynamic>),
         )
         .toList(growable: false);
   }
@@ -583,9 +582,7 @@ class ApiClient {
     }
   }
 
-  Future<CodexToolingSnapshot> getCodexTooling({
-    String? workspacePath,
-  }) async {
+  Future<CodexToolingSnapshot> getCodexTooling({String? workspacePath}) async {
     final uri = Uri.parse('$baseUrl/codex/tooling').replace(
       queryParameters: <String, String>{
         if (workspacePath != null && workspacePath.trim().isNotEmpty)
@@ -680,7 +677,8 @@ class ApiClient {
     }
 
     return SessionDetail.fromJson(
-        jsonDecode(response.body) as Map<String, dynamic>);
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
   }
 
   Future<AgentProfile> createAgentProfile({
@@ -730,16 +728,29 @@ class ApiClient {
         .toList();
   }
 
-  Future<SessionDetail> getSession(String sessionId) async {
-    final response =
-        await _client.get(Uri.parse('$baseUrl/sessions/$sessionId'));
+  Future<SessionDetail> getSession(
+    String sessionId, {
+    String? before,
+    int? limit,
+    bool fullTranscript = false,
+  }) async {
+    final query = <String, String>{
+      if (before != null) 'before': before,
+      if (limit != null) 'limit': '$limit',
+      'transcript': fullTranscript ? 'full' : 'window',
+    };
+    final uri = Uri.parse(
+      '$baseUrl/sessions/$sessionId',
+    ).replace(queryParameters: query.isEmpty ? null : query);
+    final response = await _client.get(uri);
 
     if (response.statusCode != 200) {
       throw Exception('Failed to fetch session: ${response.body}');
     }
 
     return SessionDetail.fromJson(
-        jsonDecode(response.body) as Map<String, dynamic>);
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
   }
 
   Future<SessionDetail> updateAutoMode(
@@ -778,9 +789,7 @@ class ApiClient {
     );
 
     if (response.statusCode != 200) {
-      throw Exception(
-        'Failed to update agent configuration: ${response.body}',
-      );
+      throw Exception('Failed to update agent configuration: ${response.body}');
     }
 
     return SessionDetail.fromJson(
@@ -795,9 +804,7 @@ class ApiClient {
     final response = await _client.put(
       Uri.parse('$baseUrl/sessions/$sessionId/turn-summaries'),
       headers: {'Content-Type': 'application/json'},
-      body: jsonEncode(<String, dynamic>{
-        'enabled': enabled,
-      }),
+      body: jsonEncode(<String, dynamic>{'enabled': enabled}),
     );
 
     if (response.statusCode != 200) {
@@ -845,9 +852,7 @@ class ApiClient {
     final response = await _client.put(
       Uri.parse('$baseUrl/sessions/$sessionId/archive'),
       headers: {'Content-Type': 'application/json'},
-      body: jsonEncode(<String, dynamic>{
-        'archived': archived,
-      }),
+      body: jsonEncode(<String, dynamic>{'archived': archived}),
     );
 
     if (response.statusCode != 200) {
@@ -866,9 +871,7 @@ class ApiClient {
     final response = await _client.put(
       Uri.parse('$baseUrl/sessions/$sessionId/title'),
       headers: {'Content-Type': 'application/json'},
-      body: jsonEncode(<String, dynamic>{
-        'title': title,
-      }),
+      body: jsonEncode(<String, dynamic>{'title': title}),
     );
 
     if (response.statusCode != 200) {
@@ -920,15 +923,14 @@ class ApiClient {
     if (language != null) {
       request.fields['language'] = language;
     }
-    request.files.add(
-      await _multipartFileFromXFile('audio', audioFile),
-    );
+    request.files.add(await _multipartFileFromXFile('audio', audioFile));
 
     final streamedResponse = await _client.send(request);
     final response = await http.Response.fromStream(streamedResponse);
     if (response.statusCode != 200) {
       throw Exception(
-          'Failed to generate chat title from audio: ${response.body}');
+        'Failed to generate chat title from audio: ${response.body}',
+      );
     }
 
     return SessionDetail.fromJson(
@@ -943,9 +945,7 @@ class ApiClient {
     final response = await _client.put(
       Uri.parse('$baseUrl/sessions/$sessionId/agent-profile'),
       headers: {'Content-Type': 'application/json'},
-      body: jsonEncode(<String, dynamic>{
-        'profile_id': profileId,
-      }),
+      body: jsonEncode(<String, dynamic>{'profile_id': profileId}),
     );
 
     if (response.statusCode != 200) {
@@ -1009,13 +1009,12 @@ class ApiClient {
       request.fields['language'] = language;
     }
     if (codexRunOptions != null && !codexRunOptions.isEmpty) {
-      request.fields['codex_options_json'] =
-          jsonEncode(codexRunOptions.toJson());
+      request.fields['codex_options_json'] = jsonEncode(
+        codexRunOptions.toJson(),
+      );
     }
 
-    request.files.add(
-      await _multipartFileFromXFile('audio', audioFile),
-    );
+    request.files.add(await _multipartFileFromXFile('audio', audioFile));
 
     final streamedResponse = await _client.send(request);
     final response = await http.Response.fromStream(streamedResponse);
@@ -1048,13 +1047,12 @@ class ApiClient {
       request.fields['workspace_path'] = workspacePath;
     }
     if (codexRunOptions != null && !codexRunOptions.isEmpty) {
-      request.fields['codex_options_json'] =
-          jsonEncode(codexRunOptions.toJson());
+      request.fields['codex_options_json'] = jsonEncode(
+        codexRunOptions.toJson(),
+      );
     }
 
-    request.files.add(
-      await _multipartFileFromXFile('image', imageFile),
-    );
+    request.files.add(await _multipartFileFromXFile('image', imageFile));
 
     final streamedResponse = await _client.send(request);
     final response = await http.Response.fromStream(streamedResponse);
@@ -1119,8 +1117,9 @@ class ApiClient {
   }
 
   Future<void> deleteFeedbackQueueItem(String id) async {
-    final response =
-        await _client.delete(Uri.parse('$baseUrl/feedback-queue/$id'));
+    final response = await _client.delete(
+      Uri.parse('$baseUrl/feedback-queue/$id'),
+    );
     if (response.statusCode != 204) {
       throw Exception('Failed to delete feedback item: ${response.body}');
     }
@@ -1189,13 +1188,12 @@ class ApiClient {
       request.fields['language'] = language;
     }
     if (codexRunOptions != null && !codexRunOptions.isEmpty) {
-      request.fields['codex_options_json'] =
-          jsonEncode(codexRunOptions.toJson());
+      request.fields['codex_options_json'] = jsonEncode(
+        codexRunOptions.toJson(),
+      );
     }
 
-    request.files.add(
-      await _multipartFileFromXFile('document', documentFile),
-    );
+    request.files.add(await _multipartFileFromXFile('document', documentFile));
 
     final streamedResponse = await _client.send(request);
     final response = await http.Response.fromStream(streamedResponse);
@@ -1236,8 +1234,9 @@ class ApiClient {
       request.fields['language'] = language;
     }
     if (codexRunOptions != null && !codexRunOptions.isEmpty) {
-      request.fields['codex_options_json'] =
-          jsonEncode(codexRunOptions.toJson());
+      request.fields['codex_options_json'] = jsonEncode(
+        codexRunOptions.toJson(),
+      );
     }
 
     for (final attachment in attachments) {
@@ -1268,8 +1267,9 @@ class ApiClient {
   }
 
   Future<JobStatusResponse> cancelJob(String jobId) async {
-    final response =
-        await _client.post(Uri.parse('$baseUrl/jobs/$jobId/cancel'));
+    final response = await _client.post(
+      Uri.parse('$baseUrl/jobs/$jobId/cancel'),
+    );
 
     if (response.statusCode != 200) {
       throw Exception('Failed to cancel job: ${response.body}');
@@ -1280,8 +1280,9 @@ class ApiClient {
   }
 
   Future<JobStatusResponse> retryJob(String jobId) async {
-    final response =
-        await _client.post(Uri.parse('$baseUrl/jobs/$jobId/retry'));
+    final response = await _client.post(
+      Uri.parse('$baseUrl/jobs/$jobId/retry'),
+    );
 
     if (response.statusCode != 202) {
       throw Exception('Failed to retry job: ${response.body}');

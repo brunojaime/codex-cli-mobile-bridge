@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from datetime import datetime
 
 from backend.app.domain.entities.chat_message import ChatMessage
 from backend.app.domain.entities.chat_turn_summary import ChatTurnSummary
@@ -19,6 +20,12 @@ class PersistenceDiagnosticIssue:
     field: str | None
     code: str
     detail: str
+
+
+@dataclass(frozen=True, slots=True)
+class MessageCursor:
+    created_at: datetime
+    message_id: str
 
 
 class PersistenceDataError(RuntimeError):
@@ -133,6 +140,24 @@ class ChatRepository(ABC):
 
     @abstractmethod
     def list_messages(self, session_id: str) -> list[ChatMessage]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def list_messages_before(
+        self,
+        session_id: str,
+        *,
+        before: MessageCursor,
+        limit: int,
+    ) -> list[ChatMessage]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def list_recent_messages(self, session_id: str, *, limit: int) -> list[ChatMessage]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def latest_user_message(self, session_id: str) -> ChatMessage | None:
         raise NotImplementedError
 
     @abstractmethod

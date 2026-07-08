@@ -100,7 +100,12 @@ class _RefreshTrackingApiClient extends ApiClient {
   }
 
   @override
-  Future<SessionDetail> getSession(String sessionId) async {
+  Future<SessionDetail> getSession(
+    String sessionId, {
+    String? before,
+    int? limit,
+    bool fullTranscript = false,
+  }) async {
     getSessionCallCount += 1;
     return SessionDetail(
       id: sessionId,
