@@ -19,6 +19,7 @@ from backend.app.domain.entities.job import Job, JobStatus
 from backend.app.domain.entities.workspace import Workspace
 from backend.app.domain.repositories.chat_repository import (
     ChatRepository,
+    MessageCursor,
     PersistenceDiagnosticIssue,
 )
 
@@ -173,6 +174,53 @@ class InMemoryChatRepository(ChatRepository):
                 ),
                 key=lambda message: message.created_at,
             )
+
+    def list_messages_before(
+        self,
+        session_id: str,
+        *,
+        before: MessageCursor,
+        limit: int,
+    ) -> list[ChatMessage]:
+        with self._lock:
+            messages = [
+                message
+                for message in self._messages.values()
+                if message.session_id == session_id
+                and (message.created_at, message.id)
+                < (before.created_at, before.message_id)
+            ]
+        return sorted(
+            sorted(messages, key=lambda message: (message.created_at, message.id))[
+                -max(0, limit) :
+            ],
+            key=lambda message: (message.created_at, message.id),
+        )
+
+    def list_recent_messages(self, session_id: str, *, limit: int) -> list[ChatMessage]:
+        with self._lock:
+            messages = [
+                message
+                for message in self._messages.values()
+                if message.session_id == session_id
+            ]
+        return sorted(
+            sorted(messages, key=lambda message: (message.created_at, message.id))[
+                -max(0, limit) :
+            ],
+            key=lambda message: (message.created_at, message.id),
+        )
+
+    def latest_user_message(self, session_id: str) -> ChatMessage | None:
+        with self._lock:
+            messages = [
+                message
+                for message in self._messages.values()
+                if message.session_id == session_id and message.role.value == "user"
+            ]
+        if not messages:
+            return None
+        return max(messages, key=lambda message: (message.created_at, message.id))
 
     def list_workspaces(self) -> list[Workspace]:
         if not self._projects_root.exists():

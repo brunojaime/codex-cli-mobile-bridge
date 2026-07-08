@@ -145,7 +145,12 @@ class _FailingAgentProfilesApiClient extends ApiClient {
   }
 
   @override
-  Future<SessionDetail> getSession(String sessionId) async {
+  Future<SessionDetail> getSession(
+    String sessionId, {
+    String? before,
+    int? limit,
+    bool fullTranscript = false,
+  }) async {
     return SessionDetail(
       id: sessionId,
       title: 'Chat A',
@@ -207,7 +212,12 @@ class _MutableRefreshApiClient extends ApiClient {
   }
 
   @override
-  Future<SessionDetail> getSession(String sessionId) async {
+  Future<SessionDetail> getSession(
+    String sessionId, {
+    String? before,
+    int? limit,
+    bool fullTranscript = false,
+  }) async {
     return SessionDetail(
       id: sessionId,
       title: sessionTitle,

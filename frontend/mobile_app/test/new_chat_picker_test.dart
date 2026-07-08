@@ -276,7 +276,12 @@ class _CreateSessionFallbackApiClient extends ApiClient {
   }
 
   @override
-  Future<SessionDetail> getSession(String sessionId) async {
+  Future<SessionDetail> getSession(
+    String sessionId, {
+    String? before,
+    int? limit,
+    bool fullTranscript = false,
+  }) async {
     if (_createdSession != null && _createdSession!.id == sessionId) {
       return _createdSession!;
     }

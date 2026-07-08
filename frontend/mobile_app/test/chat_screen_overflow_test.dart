@@ -1506,7 +1506,12 @@ class _ChatScreenOverflowApiClient extends ApiClient {
   }
 
   @override
-  Future<SessionDetail> getSession(String sessionId) async {
+  Future<SessionDetail> getSession(
+    String sessionId, {
+    String? before,
+    int? limit,
+    bool fullTranscript = false,
+  }) async {
     return _sessions.firstWhere((session) => session.id == sessionId);
   }
 

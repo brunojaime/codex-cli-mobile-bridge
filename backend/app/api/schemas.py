@@ -55,7 +55,10 @@ from backend.app.domain.entities.text_sanitization import (
     sanitize_image_attachment_error_text,
 )
 from backend.app.domain.repositories.chat_repository import PersistenceDiagnosticIssue
-from backend.app.application.services.message_service import BackendDrainStatus
+from backend.app.application.services.message_service import (
+    BackendDrainStatus,
+    TranscriptWindow,
+)
 
 
 class MessageRequest(BaseModel):
@@ -2482,6 +2485,31 @@ class SessionSummaryResponse(BaseModel):
         )
 
 
+class TranscriptWindowResponse(BaseModel):
+    oldest_cursor: str | None = None
+    newest_cursor: str | None = None
+    has_older: bool = False
+    has_newer: bool = False
+    window_anchor_message_id: str | None = None
+    is_partial: bool = False
+
+    @classmethod
+    def from_domain(
+        cls,
+        window: TranscriptWindow | None,
+    ) -> "TranscriptWindowResponse":
+        if window is None:
+            return cls()
+        return cls(
+            oldest_cursor=window.oldest_cursor,
+            newest_cursor=window.newest_cursor,
+            has_older=window.has_older,
+            has_newer=window.has_newer,
+            window_anchor_message_id=window.window_anchor_message_id,
+            is_partial=window.is_partial,
+        )
+
+
 class SessionDetailResponse(BaseModel):
     id: str
     title: str
@@ -2509,6 +2537,9 @@ class SessionDetailResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     messages: list[ChatMessageResponse]
+    transcript_window: TranscriptWindowResponse = Field(
+        default_factory=TranscriptWindowResponse
+    )
     turn_summaries: list[TurnSummaryResponse] = Field(default_factory=list)
 
     @classmethod
@@ -2517,23 +2548,26 @@ class SessionDetailResponse(BaseModel):
         session: ChatSession,
         *,
         messages: list[ChatMessage],
+        metadata_messages: list[ChatMessage] | None = None,
+        transcript_window: TranscriptWindow | None = None,
         turn_summaries: list[ChatTurnSummary] | None = None,
         jobs_by_id: dict[str, Job] | None = None,
         run_configurations_by_id: dict[str, AgentConfiguration] | None = None,
     ) -> "SessionDetailResponse":
+        metadata_messages = metadata_messages or messages
         current_run = derive_current_run_execution(
             session,
-            messages=messages,
+            messages=metadata_messages,
             jobs_by_id=jobs_by_id,
             run_configurations_by_id=run_configurations_by_id,
         )
         recent_runs = derive_recent_run_executions(
             session,
-            messages=messages,
+            messages=metadata_messages,
             jobs_by_id=jobs_by_id,
             run_configurations_by_id=run_configurations_by_id,
         )
-        messages_by_id = {message.id: message for message in messages}
+        messages_by_id = {message.id: message for message in metadata_messages}
         jobs_by_user_message_id = {
             job.user_message_id: job
             for job in (jobs_by_id or {}).values()
@@ -2562,18 +2596,18 @@ class SessionDetailResponse(BaseModel):
             auto_turn_index=session.auto_turn_index,
             reviewer_state=derive_reviewer_lifecycle_state(
                 session,
-                messages=messages,
+                messages=metadata_messages,
                 jobs_by_id=jobs_by_id,
             ),
             conversation_product=ConversationProductResponse.from_domain(
                 derive_conversation_product(
                     session,
-                    messages=messages,
+                    messages=metadata_messages,
                     current_run=current_run,
                     recent_runs=recent_runs,
                 )
             ),
-            topic_description=_topic_description_for_messages(messages),
+            topic_description=_topic_description_for_messages(metadata_messages),
             current_run=CurrentRunExecutionResponse.from_domain(current_run)
             if current_run is not None
             else None,
@@ -2594,6 +2628,9 @@ class SessionDetailResponse(BaseModel):
                 )
                 for message in messages
             ],
+            transcript_window=TranscriptWindowResponse.from_domain(
+                transcript_window
+            ),
             turn_summaries=[
                 TurnSummaryResponse.from_domain(
                     summary,

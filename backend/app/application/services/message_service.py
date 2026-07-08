@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
@@ -58,6 +59,7 @@ from backend.app.domain.entities.text_sanitization import (
 from backend.app.domain.entities.workspace import Workspace
 from backend.app.domain.repositories.chat_repository import (
     ChatRepository,
+    MessageCursor,
     PersistenceDiagnosticIssue,
 )
 from backend.app.infrastructure.execution.base import ExecutionProvider
@@ -167,6 +169,8 @@ _IN_FLIGHT_MESSAGE_STATUSES = {
     ChatMessageStatus.SUBMISSION_PENDING,
     ChatMessageStatus.PENDING,
 }
+_DEFAULT_TRANSCRIPT_PAGE_SIZE = 40
+_MAX_TRANSCRIPT_PAGE_SIZE = 200
 
 
 class MaintenanceModeError(RuntimeError):
@@ -230,6 +234,17 @@ class DocumentSubmission:
     attached_document_name: str
     transcript: str | None = None
     extracted_text_preview: str | None = None
+
+
+@dataclass(slots=True, frozen=True)
+class TranscriptWindow:
+    messages: list[ChatMessage]
+    oldest_cursor: str | None
+    newest_cursor: str | None
+    has_older: bool
+    has_newer: bool
+    window_anchor_message_id: str | None
+    is_partial: bool
 
 
 @dataclass(slots=True, frozen=True)
@@ -675,6 +690,121 @@ class MessageService:
 
     def list_messages(self, session_id: str) -> list[ChatMessage]:
         return self._repository.list_messages(session_id)
+
+    def get_transcript_window(
+        self,
+        session_id: str,
+        *,
+        before: str | None = None,
+        limit: int = _DEFAULT_TRANSCRIPT_PAGE_SIZE,
+        full: bool = False,
+    ) -> TranscriptWindow:
+        normalized_limit = min(max(1, limit), _MAX_TRANSCRIPT_PAGE_SIZE)
+        if full:
+            messages = self._repository.list_messages(session_id)
+            return self._build_transcript_window(
+                messages,
+                has_older=False,
+                has_newer=False,
+                anchor_message_id=None,
+            )
+
+        if before is not None:
+            cursor = self._decode_message_cursor(before)
+            messages = self._repository.list_messages_before(
+                session_id,
+                before=cursor,
+                limit=normalized_limit,
+            )
+            has_older = False
+            if messages:
+                has_older = bool(
+                    self._repository.list_messages_before(
+                        session_id,
+                        before=self._cursor_for_message(messages[0]),
+                        limit=1,
+                    )
+                )
+            return self._build_transcript_window(
+                messages,
+                has_older=has_older,
+                has_newer=True,
+                anchor_message_id=None,
+            )
+
+        all_messages = self._repository.list_messages(session_id)
+        anchor_message = self._repository.latest_user_message(session_id)
+        if anchor_message is None:
+            messages = self._repository.list_recent_messages(
+                session_id,
+                limit=normalized_limit,
+            )
+        else:
+            anchor_key = (anchor_message.created_at, anchor_message.id)
+            messages = [
+                message
+                for message in all_messages
+                if (message.created_at, message.id) >= anchor_key
+            ]
+
+        has_older = False
+        if messages:
+            has_older = bool(
+                self._repository.list_messages_before(
+                    session_id,
+                    before=self._cursor_for_message(messages[0]),
+                    limit=1,
+                )
+            )
+        return self._build_transcript_window(
+            messages,
+            has_older=has_older,
+            has_newer=False,
+            anchor_message_id=anchor_message.id if anchor_message else None,
+        )
+
+    def _build_transcript_window(
+        self,
+        messages: list[ChatMessage],
+        *,
+        has_older: bool,
+        has_newer: bool,
+        anchor_message_id: str | None,
+    ) -> TranscriptWindow:
+        oldest_cursor = self._encode_message_cursor(messages[0]) if messages else None
+        newest_cursor = self._encode_message_cursor(messages[-1]) if messages else None
+        return TranscriptWindow(
+            messages=messages,
+            oldest_cursor=oldest_cursor,
+            newest_cursor=newest_cursor,
+            has_older=has_older,
+            has_newer=has_newer,
+            window_anchor_message_id=anchor_message_id,
+            is_partial=has_older or has_newer,
+        )
+
+    def _cursor_for_message(self, message: ChatMessage) -> MessageCursor:
+        return MessageCursor(created_at=message.created_at, message_id=message.id)
+
+    def _encode_message_cursor(self, message: ChatMessage) -> str:
+        payload = {
+            "created_at": message.created_at.isoformat(),
+            "id": message.id,
+        }
+        raw = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+        return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+    def _decode_message_cursor(self, cursor: str) -> MessageCursor:
+        try:
+            padded = cursor + ("=" * (-len(cursor) % 4))
+            payload = json.loads(base64.urlsafe_b64decode(padded).decode("utf-8"))
+            created_at = datetime.fromisoformat(str(payload["created_at"]))
+            message_id = str(payload["id"])
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise ValueError("Invalid transcript cursor.") from exc
+        if not message_id:
+            raise ValueError("Invalid transcript cursor.")
+        return MessageCursor(created_at=created_at, message_id=message_id)
 
     def update_agent_configuration(
         self,

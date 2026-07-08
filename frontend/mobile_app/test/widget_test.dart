@@ -3851,7 +3851,12 @@ class _FakeApiClient extends ApiClient {
   }
 
   @override
-  Future<SessionDetail> getSession(String sessionId) async {
+  Future<SessionDetail> getSession(
+    String sessionId, {
+    String? before,
+    int? limit,
+    bool fullTranscript = false,
+  }) async {
     final override = sessionOverrides[sessionId];
     if (override != null) {
       return override;

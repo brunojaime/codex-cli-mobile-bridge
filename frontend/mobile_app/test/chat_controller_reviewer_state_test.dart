@@ -69,7 +69,12 @@ class _DelayedSessionApiClient extends ApiClient {
   }
 
   @override
-  Future<SessionDetail> getSession(String sessionId) async {
+  Future<SessionDetail> getSession(
+    String sessionId, {
+    String? before,
+    int? limit,
+    bool fullTranscript = false,
+  }) async {
     await _detailCompleter.future;
     return SessionDetail(
       id: sessionId,

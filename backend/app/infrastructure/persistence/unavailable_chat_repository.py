@@ -9,6 +9,7 @@ from backend.app.domain.entities.job import Job, JobStatus
 from backend.app.domain.entities.workspace import Workspace
 from backend.app.domain.repositories.chat_repository import (
     ChatRepository,
+    MessageCursor,
     PersistenceDiagnosticIssue,
     PersistenceUnavailableError,
 )
@@ -76,6 +77,21 @@ class UnavailableChatRepository(ChatRepository):
         raise PersistenceUnavailableError(self._issue)
 
     def list_messages(self, session_id: str) -> list[ChatMessage]:
+        raise PersistenceUnavailableError(self._issue)
+
+    def list_messages_before(
+        self,
+        session_id: str,
+        *,
+        before: MessageCursor,
+        limit: int,
+    ) -> list[ChatMessage]:
+        raise PersistenceUnavailableError(self._issue)
+
+    def list_recent_messages(self, session_id: str, *, limit: int) -> list[ChatMessage]:
+        raise PersistenceUnavailableError(self._issue)
+
+    def latest_user_message(self, session_id: str) -> ChatMessage | None:
         raise PersistenceUnavailableError(self._issue)
 
     def list_workspaces(self) -> list[Workspace]:

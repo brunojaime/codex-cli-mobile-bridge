@@ -40,6 +40,7 @@ from backend.app.domain.entities.job import Job, JobConversationKind, JobStatus
 from backend.app.domain.entities.workspace import Workspace
 from backend.app.domain.repositories.chat_repository import (
     ChatRepository,
+    MessageCursor,
     PersistenceDataError,
     PersistenceDiagnosticIssue,
 )
@@ -216,11 +217,66 @@ class SqliteChatRepository(ChatRepository):
                 """
                 SELECT * FROM messages
                 WHERE session_id = ?
-                ORDER BY created_at ASC
+                ORDER BY created_at ASC, id ASC
                 """,
                 (session_id,),
             ).fetchall()
         return [self._message_from_row(row) for row in rows]
+
+    def list_messages_before(
+        self,
+        session_id: str,
+        *,
+        before: MessageCursor,
+        limit: int,
+    ) -> list[ChatMessage]:
+        with self._lock, self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM messages
+                WHERE session_id = ?
+                  AND (created_at < ? OR (created_at = ? AND id < ?))
+                ORDER BY created_at DESC, id DESC
+                LIMIT ?
+                """,
+                (
+                    session_id,
+                    before.created_at.isoformat(),
+                    before.created_at.isoformat(),
+                    before.message_id,
+                    max(0, limit),
+                ),
+            ).fetchall()
+        return [
+            self._message_from_row(row)
+            for row in reversed(rows)
+        ]
+
+    def list_recent_messages(self, session_id: str, *, limit: int) -> list[ChatMessage]:
+        with self._lock, self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM messages
+                WHERE session_id = ?
+                ORDER BY created_at DESC, id DESC
+                LIMIT ?
+                """,
+                (session_id, max(0, limit)),
+            ).fetchall()
+        return [self._message_from_row(row) for row in reversed(rows)]
+
+    def latest_user_message(self, session_id: str) -> ChatMessage | None:
+        with self._lock, self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT * FROM messages
+                WHERE session_id = ? AND role = ?
+                ORDER BY created_at DESC, id DESC
+                LIMIT 1
+                """,
+                (session_id, ChatMessageRole.USER.value),
+            ).fetchone()
+        return self._message_from_row(row) if row is not None else None
 
     def list_workspaces(self) -> list[Workspace]:
         if not self._projects_root.exists():
