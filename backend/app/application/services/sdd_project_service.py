@@ -13,6 +13,7 @@ from backend.app.application.services.sdd_standard_service import (
 
 ALLOWED_SDD_EXTENSIONS = frozenset({".md", ".mmd", ".yaml", ".yml", ".json"})
 DEFAULT_SDD_FILE_MAX_BYTES = 256_000
+ARCHIVED_SPEC_DIR_NAMES = frozenset({"archive", "archives", "_archive", ".archive"})
 
 
 class SddProjectError(RuntimeError):
@@ -285,11 +286,7 @@ class SddProjectService:
                 feature_dir = _safe_resolve(raw_feature_dir)
                 if feature_dir is None:
                     continue
-                if (
-                    not feature_dir.is_dir()
-                    or not _is_relative_to(feature_dir, specs_root)
-                    or not _is_relative_to(feature_dir, workspace)
-                ):
+                if not self._is_valid_spec_dir(workspace, specs_root, feature_dir):
                     continue
                 rel_dir = feature_dir.relative_to(workspace).as_posix()
                 if self._allowed_file_exists(workspace, f"{rel_dir}/spec.md"):
@@ -441,6 +438,7 @@ class SddProjectService:
             and feature_dir.is_dir()
             and _is_relative_to(feature_dir, specs_root)
             and _is_relative_to(feature_dir, workspace)
+            and not _is_archived_spec_dir(feature_dir)
         )
 
     def _resolve_spec_dir(
@@ -1280,6 +1278,15 @@ def _safe_resolve(path: Path) -> Path | None:
         return path.resolve()
     except (OSError, RuntimeError):
         return None
+
+
+def _is_archived_spec_dir(path: Path) -> bool:
+    name = path.name.strip().lower()
+    return (
+        name in ARCHIVED_SPEC_DIR_NAMES
+        or name.startswith("archive-")
+        or name.startswith("_archive-")
+    )
 
 
 def _safe_is_file(path: Path) -> bool:

@@ -693,6 +693,7 @@ class SddKanbanCard {
     required this.detail,
     required this.evidence,
     required this.manualCommands,
+    required this.updatedAt,
   });
 
   final String id;
@@ -710,6 +711,7 @@ class SddKanbanCard {
   final String detail;
   final List<Map<String, dynamic>> evidence;
   final List<String> manualCommands;
+  final String updatedAt;
 
   factory SddKanbanCard.fromJson(Map<String, dynamic> json) {
     return SddKanbanCard(
@@ -728,6 +730,7 @@ class SddKanbanCard {
       detail: _trimmedString(json['detail']) ?? '',
       evidence: _mapList(json['evidence']),
       manualCommands: _stringList(json['manualCommands']),
+      updatedAt: _trimmedString(json['updatedAt'] ?? json['updated_at']) ?? '',
     );
   }
 }

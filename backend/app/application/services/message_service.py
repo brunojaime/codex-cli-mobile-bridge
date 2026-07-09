@@ -732,20 +732,10 @@ class MessageService:
                 anchor_message_id=None,
             )
 
-        all_messages = self._repository.list_messages(session_id)
-        anchor_message = self._repository.latest_user_message(session_id)
-        if anchor_message is None:
-            messages = self._repository.list_recent_messages(
-                session_id,
-                limit=normalized_limit,
-            )
-        else:
-            anchor_key = (anchor_message.created_at, anchor_message.id)
-            messages = [
-                message
-                for message in all_messages
-                if (message.created_at, message.id) >= anchor_key
-            ]
+        messages = self._repository.list_recent_messages(
+            session_id,
+            limit=normalized_limit,
+        )
 
         has_older = False
         if messages:
@@ -760,7 +750,7 @@ class MessageService:
             messages,
             has_older=has_older,
             has_newer=False,
-            anchor_message_id=anchor_message.id if anchor_message else None,
+            anchor_message_id=messages[-1].id if messages else None,
         )
 
     def _build_transcript_window(

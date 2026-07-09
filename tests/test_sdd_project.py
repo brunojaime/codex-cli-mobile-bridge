@@ -484,6 +484,26 @@ def test_sdd_project_skips_feature_dir_symlink_escape(tmp_path: Path) -> None:
     assert "specs/<feature>/spec.md" in response.json()["missing_required"]
 
 
+def test_sdd_project_skips_archived_spec_directories(tmp_path: Path) -> None:
+    projects_root = tmp_path / "projects"
+    project = projects_root / "demo"
+    _write_sdd_project(project)
+    archived = project / "specs/_archive-002-old-factory"
+    archived.mkdir()
+    (archived / "spec.md").write_text("# Archived Factory Spec\n")
+    (archived / "plan.md").write_text("# Archived Plan\n")
+    (archived / "tasks.md").write_text("# Archived Tasks\n")
+    client = _client(projects_root)
+
+    response = client.get("/sdd/project", params={"workspace_path": str(project)})
+    projects = client.get("/sdd/projects")
+
+    assert response.status_code == 200
+    assert [spec["id"] for spec in response.json()["specs"]] == ["001-demo"]
+    assert projects.status_code == 200
+    assert projects.json()["projects"][0]["spec_count"] == 1
+
+
 def test_sdd_project_allows_known_workspace_alias_outside_projects_root(
     tmp_path: Path,
 ) -> None:

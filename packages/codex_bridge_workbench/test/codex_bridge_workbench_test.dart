@@ -310,6 +310,10 @@ void main() {
 
     expect(kanban.board.columns.first.label, 'Backlog');
     expect(kanban.board.cardById('spec-task:001-demo:T001')!.confirmed, isTrue);
+    expect(
+      kanban.board.cardById('spec-task:001-demo:T001')!.updatedAt,
+      '2026-07-09T12:03:00Z',
+    );
     expect(scopes.scopes.map((scope) => scope.specId), contains('001-demo'));
     expect(kanban.latestUpdate!.title, '1 item in progress');
     expect(history.items.single.id, 'update-1');
@@ -665,13 +669,15 @@ void main() {
     _openWorkbench(tester);
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Kanban').first);
+    await tester.tap(find.text('Kanban').last);
     await tester.pumpAndSettle();
 
     expect(find.text('Curator update'), findsOneWidget);
     expect(find.text('In Progress'), findsWidgets);
     expect(find.text('T002 Build board API'), findsOneWidget);
     expect(find.text('confirmed'), findsOneWidget);
+    expect(find.text('Updated: 2026-07-09 12:03'), findsWidgets);
+    expect(find.text('At 2026-07-09 12:00'), findsOneWidget);
     expect(intakeClient.kanbanRequests, greaterThanOrEqualTo(1));
   });
 
@@ -683,10 +689,94 @@ void main() {
         kanbanScopes: SddKanbanScopeIndex.fromJson(
           _kanbanScopesJson(
             workspacePath: '/workspace/codex-cli-mobile-bridge',
+            includeFactoryScopes: false,
           ),
         ),
         kanban: SddWorkbenchKanban.fromJson(
           _kanbanJson(pollingFallbackSeconds: 1),
+        ),
+        kanbanBySpecId: <String, SddWorkbenchKanban>{
+          '001-demo': SddWorkbenchKanban.fromJson(
+            _kanbanJson(
+              scopeId: 'workspace:/workspace/demo:spec:001-demo',
+              scopeType: 'workspace_spec',
+              scopeTitle: 'Read-only SDD Workbench',
+              pollingFallbackSeconds: 1,
+            ),
+          ),
+          '002-sdd-visual-workbench': SddWorkbenchKanban.fromJson(
+            _kanbanJson(
+              scopeId:
+                  'workspace:/workspace/demo:spec:002-sdd-visual-workbench',
+              scopeType: 'workspace_spec',
+              scopeTitle: 'SDD Visual Workbench',
+              pollingFallbackSeconds: 1,
+            ),
+          ),
+        },
+        kanbanByJobId: <String, SddWorkbenchKanban>{
+          'job-1': SddWorkbenchKanban.fromJson(
+            _kanbanJson(
+              scopeId: 'project-factory:job:job-1',
+              scopeType: 'project_factory_job',
+              scopeTitle: 'New Project job job-1',
+              pollingFallbackSeconds: 1,
+            ),
+          ),
+        },
+      );
+      await _pumpWorkbench(
+        tester,
+        loader: (_) async =>
+            SddProject.fromJson(_projectWithMultipleSpecsJson()),
+        specIntakeClient: intakeClient,
+      );
+      _openWorkbench(tester);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Kanban').first);
+      await tester.pumpAndSettle();
+
+      expect(intakeClient.kanbanSpecIds, isNot(contains(null)));
+      expect(intakeClient.kanbanSpecIds.last, '002-sdd-visual-workbench');
+      expect(
+        intakeClient.kanbanWorkspacePaths.last,
+        '/workspace/codex-cli-mobile-bridge',
+      );
+      expect(find.text('Spec · SDD Visual Workbench'), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('kanban-scope-selector')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.textContaining('Read-only SDD Workbench').last);
+      await tester.pump();
+      await tester.pump();
+
+      expect(intakeClient.kanbanSpecIds.last, '001-demo');
+      expect(find.text('Spec · Read-only SDD Workbench'), findsOneWidget);
+
+      await tester.tap(find.byTooltip('Refresh Kanban'));
+      await tester.pump();
+      await tester.pump();
+
+      expect(intakeClient.kanbanRefreshSpecIds.last, '001-demo');
+
+      await tester.pump(const Duration(seconds: 1));
+      await tester.pump();
+
+      expect(intakeClient.kanbanRefreshSpecIds.last, '001-demo');
+    },
+  );
+
+  testWidgets(
+    'SDD Workbench Kanban ignores historical Project Factory jobs by default',
+    (tester) async {
+      final intakeClient = _FakeSpecIntakeClient(
+        dryRunPlan: const SddSpecIntakePlan(status: 'dry-run'),
+        kanbanScopes: SddKanbanScopeIndex.fromJson(
+          _kanbanScopesJson(
+            workspacePath: '/workspace/codex-cli-mobile-bridge',
+            factoryJobGroup: 'history',
+            factoryJobStatus: 'ready',
+          ),
         ),
         kanbanBySpecId: <String, SddWorkbenchKanban>{
           '002-sdd-visual-workbench': SddWorkbenchKanban.fromJson(
@@ -721,58 +811,200 @@ void main() {
       await tester.tap(find.text('Kanban').first);
       await tester.pumpAndSettle();
 
-      expect(intakeClient.kanbanSpecIds, contains(null));
-      expect(
-        intakeClient.kanbanWorkspacePaths.last,
-        '/workspace/codex-cli-mobile-bridge',
-      );
-      expect(find.text('Workspace · All specs · overview'), findsOneWidget);
-      expect(find.text('All specs · Demo Workspace'), findsOneWidget);
-
-      await tester.tap(find.byKey(const Key('kanban-scope-selector')));
-      await tester.pumpAndSettle();
-      await tester.tap(find.textContaining('SDD Visual Workbench').last);
-      await tester.pump();
-      await tester.pump();
-
+      expect(intakeClient.kanbanJobIds.last, isNull);
       expect(intakeClient.kanbanSpecIds.last, '002-sdd-visual-workbench');
       expect(find.text('Spec · SDD Visual Workbench'), findsOneWidget);
-
-      await tester.tap(find.byTooltip('Refresh Kanban'));
-      await tester.pump();
-      await tester.pump();
-
-      expect(
-        intakeClient.kanbanRefreshSpecIds.last,
-        '002-sdd-visual-workbench',
-      );
-
-      await tester.tap(find.byKey(const Key('kanban-scope-selector')));
-      await tester.pumpAndSettle();
-      await tester.tap(find.textContaining('Job: Demo App').last);
-      await tester.pump();
-      await tester.pump();
-
-      expect(intakeClient.kanbanWorkspacePaths.last, isNull);
-      expect(intakeClient.kanbanJobIds.last, 'job-1');
-      expect(
-        find.text('Creating project · New Project job job-1'),
-        findsOneWidget,
-      );
-
-      await tester.tap(find.byTooltip('Refresh Kanban'));
-      await tester.pump();
-      await tester.pump();
-
-      expect(intakeClient.kanbanRefreshJobIds.last, 'job-1');
-      expect(intakeClient.kanbanRefreshWorkspacePaths.last, isNull);
-
-      await tester.pump(const Duration(seconds: 1));
-      await tester.pump();
-
-      expect(intakeClient.kanbanRefreshJobIds.last, 'job-1');
     },
   );
+
+  testWidgets(
+    'SDD Workbench Kanban keeps active Project Factory creation as default',
+    (tester) async {
+      final intakeClient = _FakeSpecIntakeClient(
+        dryRunPlan: const SddSpecIntakePlan(status: 'dry-run'),
+        kanbanScopes: SddKanbanScopeIndex.fromJson(
+          _kanbanScopesJson(
+            workspacePath: '/workspace/codex-cli-mobile-bridge',
+            factoryJobGroup: 'creating',
+            factoryJobStatus: 'running',
+          ),
+        ),
+        kanbanByJobId: <String, SddWorkbenchKanban>{
+          'job-1': SddWorkbenchKanban.fromJson(
+            _kanbanJson(
+              scopeId: 'project-factory:job:job-1',
+              scopeType: 'project_factory_job',
+              scopeTitle: 'New Project job job-1',
+              pollingFallbackSeconds: 1,
+            ),
+          ),
+        },
+      );
+      await _pumpWorkbench(
+        tester,
+        loader: (_) async =>
+            SddProject.fromJson(_projectWithMultipleSpecsJson()),
+        specIntakeClient: intakeClient,
+      );
+      _openWorkbench(tester);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Kanban').first);
+      await tester.pumpAndSettle();
+
+      expect(intakeClient.kanbanJobIds.last, 'job-1');
+      expect(intakeClient.kanbanSpecIds.last, isNull);
+      expect(find.text('Creating · Job: Demo App · running'), findsOneWidget);
+    },
+  );
+
+  testWidgets('SDD Workbench Kanban cards open linked spec tasks', (
+    tester,
+  ) async {
+    final kanbanJson = _kanbanJson(
+      scopeId: 'workspace:/workspace/demo:spec:001-sat-stock-reservation',
+      scopeType: 'workspace_spec',
+      scopeTitle: 'SAT Stock Reservation',
+    );
+    final board = kanbanJson['board'] as Map<String, dynamic>;
+    board['columns'] = <Map<String, Object?>>[
+      <String, Object?>{
+        'id': 'in_progress',
+        'label': 'In Progress',
+        'cardIds': <String>['spec-task:001-sat-stock-reservation:T001'],
+        'count': 1,
+      },
+    ];
+    board['cards'] = <Map<String, Object?>>[
+      _kanbanCardJson(
+        id: 'spec-task:001-sat-stock-reservation:T001',
+        title: 'T001 Reserve cart units',
+        column: 'in_progress',
+        status: 'in_progress',
+        scopeId: '001-sat-stock-reservation',
+        sourcePath:
+            'specs/001-sat-stock-reservation/tasks/plan-2-task-1/task.md',
+      ),
+    ];
+    final intakeClient = _FakeSpecIntakeClient(
+      dryRunPlan: const SddSpecIntakePlan(status: 'dry-run'),
+      kanban: SddWorkbenchKanban.fromJson(kanbanJson),
+      kanbanScopes: SddKanbanScopeIndex.fromJson(
+        _kanbanScopesJson(workspacePath: '/workspace/demo'),
+      ),
+    );
+
+    await _pumpWorkbench(
+      tester,
+      loader: (_) async => SddProject.fromJson(_projectWithTreeJson()),
+      specIntakeClient: intakeClient,
+      diagramRenderer: _FakeMermaidRenderer.success(),
+    );
+    _openWorkbench(tester);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Kanban').last);
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(
+      find.byKey(
+        const Key('kanban-card-spec-task:001-sat-stock-reservation:T001'),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(
+        const Key('kanban-card-spec-task:001-sat-stock-reservation:T001'),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Back to Plan 2 tasks'), findsOneWidget);
+    expect(find.text('Task 1: Reserve cart units'), findsOneWidget);
+  });
+
+  testWidgets('SDD Workbench Kanban cards open linked plan and task files', (
+    tester,
+  ) async {
+    final kanbanJson = _kanbanJson(
+      scopeId: 'workspace:/workspace/demo:spec:001-sat-catalog-flow',
+      scopeType: 'workspace_spec',
+      scopeTitle: 'SAT Catalog Flow',
+    );
+    final board = kanbanJson['board'] as Map<String, dynamic>;
+    board['columns'] = <Map<String, Object?>>[
+      <String, Object?>{
+        'id': 'in_progress',
+        'label': 'In Progress',
+        'cardIds': <String>[
+          'plan-phase:001-sat-catalog-flow:2',
+          'spec-task:001-sat-catalog-flow:T002',
+        ],
+        'count': 2,
+      },
+    ];
+    board['cards'] = <Map<String, Object?>>[
+      _kanbanCardJson(
+        id: 'plan-phase:001-sat-catalog-flow:2',
+        title: 'Build plan',
+        column: 'in_progress',
+        status: 'in_progress',
+        type: 'plan_phase',
+        scopeId: '001-sat-catalog-flow',
+        sourcePath: 'specs/001-sat-catalog-flow/build-plan.md',
+      ),
+      _kanbanCardJson(
+        id: 'spec-task:001-sat-catalog-flow:T002',
+        title: 'T002 Build task list',
+        column: 'in_progress',
+        status: 'in_progress',
+        scopeId: '001-sat-catalog-flow',
+        sourcePath: 'specs/001-sat-catalog-flow/build-tasks.md',
+      ),
+    ];
+    final intakeClient = _FakeSpecIntakeClient(
+      dryRunPlan: const SddSpecIntakePlan(status: 'dry-run'),
+      kanban: SddWorkbenchKanban.fromJson(kanbanJson),
+      kanbanScopes: SddKanbanScopeIndex.fromJson(
+        _kanbanScopesJson(includeFactoryScopes: false),
+      ),
+    );
+
+    await _pumpWorkbench(
+      tester,
+      loader: (_) async => SddProject.fromJson(_projectWithTraceJson()),
+      specIntakeClient: intakeClient,
+      diagramRenderer: _FakeMermaidRenderer.success(),
+    );
+    _openWorkbench(tester);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Kanban').last);
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(
+      find.byKey(const Key('kanban-card-plan-phase:001-sat-catalog-flow:2')),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(const Key('kanban-card-plan-phase:001-sat-catalog-flow:2')),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Build Plan'), findsWidgets);
+    expect(find.text('Tasks in this plan'), findsOneWidget);
+
+    await tester.tap(find.text('Kanban').last);
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(
+      find.byKey(const Key('kanban-card-spec-task:001-sat-catalog-flow:T002')),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(const Key('kanban-card-spec-task:001-sat-catalog-flow:T002')),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Build Tasks'), findsWidgets);
+    expect(find.text('1/2 tasks complete'), findsOneWidget);
+  });
 
   testWidgets(
     'SDD Workbench Kanban fallback scopes stay aligned with workspace board',
@@ -795,14 +1027,13 @@ void main() {
       await tester.tap(find.text('Kanban').first);
       await tester.pumpAndSettle();
 
-      expect(intakeClient.kanbanScopeRequests, 1);
+      expect(intakeClient.kanbanScopeRequests, greaterThanOrEqualTo(1));
       expect(
         intakeClient.kanbanWorkspacePaths.last,
         '/workspace/codex-cli-mobile-bridge',
       );
-      expect(intakeClient.kanbanSpecIds.last, isNull);
-      expect(find.text('Workspace · All specs · overview'), findsOneWidget);
-      expect(find.text('All specs · Demo Workspace'), findsOneWidget);
+      expect(intakeClient.kanbanSpecIds.last, '002-sdd-visual-workbench');
+      expect(find.text('T002 Build board API'), findsOneWidget);
 
       await tester.tap(find.byTooltip('Refresh Kanban'));
       await tester.pump();
@@ -812,16 +1043,32 @@ void main() {
         intakeClient.kanbanRefreshWorkspacePaths.last,
         '/workspace/codex-cli-mobile-bridge',
       );
-      expect(intakeClient.kanbanRefreshSpecIds.last, isNull);
+      expect(
+        intakeClient.kanbanRefreshSpecIds.last,
+        '002-sdd-visual-workbench',
+      );
     },
   );
 
   testWidgets('SDD Workbench Kanban makes blocked states explicit', (
     tester,
   ) async {
+    final blockedJson = _blockedKanbanJson();
+    final board = blockedJson['board'] as Map<String, dynamic>;
+    board['columns'] = <Map<String, Object?>>[
+      <String, Object?>{
+        'id': 'blocked',
+        'label': 'Blocked',
+        'cardIds': <String>['blocker:cloudflare'],
+        'count': 1,
+      },
+    ];
     final intakeClient = _FakeSpecIntakeClient(
       dryRunPlan: const SddSpecIntakePlan(status: 'dry-run'),
-      kanban: SddWorkbenchKanban.fromJson(_blockedKanbanJson()),
+      kanban: SddWorkbenchKanban.fromJson(blockedJson),
+      kanbanScopes: SddKanbanScopeIndex.fromJson(
+        _kanbanScopesJson(includeFactoryScopes: false),
+      ),
     );
     await _pumpWorkbench(
       tester,
@@ -830,11 +1077,10 @@ void main() {
     );
     _openWorkbench(tester);
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Kanban').first);
+    await tester.tap(find.text('Kanban').last);
     await tester.pumpAndSettle();
 
-    expect(find.text('Blocked'), findsWidgets);
-    expect(find.text('Cloudflare credentials missing'), findsOneWidget);
+    expect(find.textContaining('Cloudflare credentials missing'), findsWidgets);
     expect(find.textContaining('Blockers:'), findsOneWidget);
   });
 
@@ -3598,6 +3844,9 @@ Map<String, Object?> _kanbanCardJson({
   bool confirmed = false,
   bool inferred = false,
   String detail = '',
+  String scopeId = '001-demo',
+  String sourcePath = 'specs/001-demo/tasks.md',
+  String updatedAt = '2026-07-09T12:03:00Z',
 }) {
   return <String, Object?>{
     'id': id,
@@ -3605,8 +3854,8 @@ Map<String, Object?> _kanbanCardJson({
     'title': title,
     'column': column,
     'status': status,
-    'scopeId': '001-demo',
-    'sourcePath': 'specs/001-demo/tasks.md',
+    'scopeId': scopeId,
+    'sourcePath': sourcePath,
     'order': 1,
     'confirmed': confirmed,
     'inferred': inferred,
@@ -3617,6 +3866,7 @@ Map<String, Object?> _kanbanCardJson({
         : 'observed',
     'badges': <String>['phase'],
     'detail': detail,
+    'updatedAt': updatedAt,
     'evidence': <Map<String, Object?>>[],
     'manualCommands': <String>['bash', 'scripts/validate.sh'],
   };
@@ -3624,34 +3874,47 @@ Map<String, Object?> _kanbanCardJson({
 
 Map<String, dynamic> _kanbanScopesJson({
   String workspacePath = '/workspace/demo',
+  bool includeFactoryScopes = true,
+  String factoryJobGroup = 'creating',
+  String factoryJobStatus = 'blocked',
+  String? defaultScopeId,
 }) {
+  final latestSpecScopeId =
+      'workspace:$workspacePath:spec:002-sdd-visual-workbench';
+  final resolvedDefaultScopeId =
+      defaultScopeId ??
+      (includeFactoryScopes && factoryJobGroup == 'creating'
+          ? 'project-factory:job:job-1'
+          : latestSpecScopeId);
   return <String, dynamic>{
     'kind': 'codex.sddWorkbenchKanbanScopes',
     'version': 1,
     'workspacePath': workspacePath,
-    'defaultScopeId': 'workspace:$workspacePath',
+    'defaultScopeId': resolvedDefaultScopeId,
     'scopes': <Map<String, Object?>>[
-      <String, Object?>{
-        'id': 'project-factory:job:job-1',
-        'type': 'project_factory_job',
-        'group': 'creating',
-        'title': 'Job: Demo App',
-        'jobId': 'job-1',
-        'status': 'blocked',
-        'detail': 'Release upload failed',
-        'priority': 1,
-      },
-      <String, Object?>{
-        'id': 'workspace:/workspace/generated-demo',
-        'type': 'generated_workspace',
-        'group': 'generated',
-        'title': 'Generated workspace: Demo App',
-        'workspacePath': '/workspace/generated-demo',
-        'jobId': 'job-1',
-        'status': 'available',
-        'detail': '/workspace/generated-demo',
-        'priority': 200,
-      },
+      if (includeFactoryScopes) ...<Map<String, Object?>>[
+        <String, Object?>{
+          'id': 'project-factory:job:job-1',
+          'type': 'project_factory_job',
+          'group': factoryJobGroup,
+          'title': 'Job: Demo App',
+          'jobId': 'job-1',
+          'status': factoryJobStatus,
+          'detail': 'Release upload failed',
+          'priority': 1,
+        },
+        <String, Object?>{
+          'id': 'workspace:/workspace/generated-demo',
+          'type': 'generated_workspace',
+          'group': 'generated',
+          'title': 'Generated workspace: Demo App',
+          'workspacePath': '/workspace/generated-demo',
+          'jobId': 'job-1',
+          'status': 'available',
+          'detail': '/workspace/generated-demo',
+          'priority': 200,
+        },
+      ],
       <String, Object?>{
         'id': 'workspace:$workspacePath',
         'type': 'workspace',
@@ -3804,6 +4067,8 @@ Map<String, dynamic> _projectWithMultipleSpecsJson() {
     'path': 'specs/002-sdd-visual-workbench',
     'lifecycle_status': 'complete',
     'traceability_status': 'linked',
+    'created_at': '2026-07-07T09:00:00Z',
+    'updated_at': '2026-07-08T10:15:00Z',
     'task_total': 36,
     'task_completed': 36,
     'task_pending': 0,

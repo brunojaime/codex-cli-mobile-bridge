@@ -1061,10 +1061,27 @@ class _SddProjectView extends StatefulWidget {
 
 class _SddProjectViewState extends State<_SddProjectView> {
   int _selectedIndex = 0;
+  int _specNavigationVersion = 0;
+  _SpecArtifactSelection? _pendingSpecSelection;
 
   void _selectTab(int index) {
     setState(() {
       _selectedIndex = index;
+    });
+  }
+
+  void _openKanbanCard(SddKanbanCard card) {
+    final selection = _selectionForKanbanCard(widget.project, card);
+    if (selection == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('No linked spec artifact for ${card.title}')),
+      );
+      return;
+    }
+    setState(() {
+      _pendingSpecSelection = selection;
+      _specNavigationVersion += 1;
+      _selectedIndex = 2;
     });
   }
 
@@ -1133,10 +1150,16 @@ class _SddProjectViewState extends State<_SddProjectView> {
         onNavigate: _selectTab,
         onCodexAction: widget.onCodexAction,
       ),
-      _KanbanTab(client: client, project: widget.project),
+      _KanbanTab(
+        client: client,
+        project: widget.project,
+        onOpenCard: _openKanbanCard,
+      ),
       _SpecsTab(
         bridgeUrl: widget.bridgeUrl,
         project: widget.project,
+        externalSelection: _pendingSpecSelection,
+        externalSelectionVersion: _specNavigationVersion,
         diagramRenderer: widget.diagramRenderer,
         specIntakeClient: widget.specIntakeClient,
         mediaAttachmentPicker: widget.mediaAttachmentPicker,
@@ -1816,7 +1839,7 @@ class _LatestCuratorOverviewCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return FutureBuilder<SddWorkbenchKanban>(
-      future: client.getKanban(workspacePath: project.workspacePath),
+      future: _loadDefaultScopedKanban(client: client, project: project),
       builder: (context, snapshot) {
         if (snapshot.connectionState != ConnectionState.done) {
           return const _PanelCard(
@@ -1877,11 +1900,128 @@ class _LatestCuratorOverviewCard extends StatelessWidget {
   }
 }
 
+Future<SddWorkbenchKanban> _loadDefaultScopedKanban({
+  required SddExplorerClient client,
+  required SddProject project,
+}) async {
+  SddKanbanScopeOption scope;
+  try {
+    final index = await client.getKanbanScopes(
+      workspacePath: project.workspacePath,
+    );
+    final scopes = index.scopes.isEmpty
+        ? _fallbackKanbanScopes(project)
+        : index.scopes;
+    scope = _defaultKanbanScopeOption(
+      project: project,
+      index: index,
+      scopes: scopes,
+    );
+  } catch (_) {
+    final scopes = _fallbackKanbanScopes(project);
+    scope = _defaultKanbanScopeOption(
+      project: project,
+      index: null,
+      scopes: scopes,
+    );
+  }
+  return client.getKanban(
+    workspacePath: _kanbanRequestWorkspacePath(project: project, scope: scope),
+    specId: scope.specId,
+    draftId: scope.draftId,
+    jobId: scope.jobId,
+  );
+}
+
+SddKanbanScopeOption _defaultKanbanScopeOption({
+  required SddProject project,
+  required SddKanbanScopeIndex? index,
+  required List<SddKanbanScopeOption> scopes,
+}) {
+  final defaultScopeId = index?.defaultScopeId;
+  final creatingScope = _firstCreatingKanbanScope(scopes);
+  if (creatingScope != null) return creatingScope;
+  if (defaultScopeId != null) {
+    for (final scope in scopes) {
+      if (scope.id == defaultScopeId && scope.type != 'workspace') {
+        return scope;
+      }
+    }
+  }
+  final latestSpecScope = _latestKanbanSpecScope(
+    project: project,
+    scopes: scopes,
+  );
+  if (latestSpecScope != null) return latestSpecScope;
+  for (final scope in scopes) {
+    if (scope.type != 'workspace') return scope;
+  }
+  for (final scope in scopes) {
+    if (scope.type == 'workspace' &&
+        scope.workspacePath == project.workspacePath) {
+      return scope;
+    }
+  }
+  return scopes.isEmpty ? _fallbackKanbanWorkspaceScope(project) : scopes.first;
+}
+
+List<SddKanbanScopeOption> _fallbackKanbanScopes(SddProject project) {
+  return <SddKanbanScopeOption>[
+    _fallbackKanbanWorkspaceScope(project),
+    for (var index = 0; index < project.specs.length; index += 1)
+      SddKanbanScopeOption(
+        id: '${project.workspacePath}:spec:${project.specs[index].id}',
+        type: 'workspace_spec',
+        group: 'specs',
+        title: project.specs[index].title.isEmpty
+            ? project.specs[index].id
+            : project.specs[index].title,
+        workspacePath: project.workspacePath,
+        specId: project.specs[index].id,
+        status: project.specs[index].lifecycleStatus,
+        detail: project.specs[index].path,
+        priority: 400 + index,
+      ),
+  ];
+}
+
+SddKanbanScopeOption _fallbackKanbanWorkspaceScope(SddProject project) {
+  return SddKanbanScopeOption(
+    id: '__workspace__',
+    type: 'workspace',
+    group: 'workspace',
+    title: 'All specs',
+    workspacePath: project.workspacePath,
+    status: 'overview',
+    detail: project.workspaceName,
+    priority: 300,
+  );
+}
+
+String? _kanbanRequestWorkspacePath({
+  required SddProject project,
+  required SddKanbanScopeOption? scope,
+}) {
+  if (scope == null || scope.type == 'workspace') {
+    return project.workspacePath;
+  }
+  if (scope.type == 'project_factory_draft' ||
+      scope.type == 'project_factory_job') {
+    return null;
+  }
+  return scope.workspacePath ?? project.workspacePath;
+}
+
 class _KanbanTab extends StatefulWidget {
-  const _KanbanTab({required this.client, required this.project});
+  const _KanbanTab({
+    required this.client,
+    required this.project,
+    required this.onOpenCard,
+  });
 
   final SddExplorerClient client;
   final SddProject project;
+  final ValueChanged<SddKanbanCard> onOpenCard;
 
   @override
   State<_KanbanTab> createState() => _KanbanTabState();
@@ -1898,7 +2038,7 @@ class _KanbanTabState extends State<_KanbanTab> {
   void initState() {
     super.initState();
     _scopesFuture = _loadScopes();
-    _future = _load();
+    _future = _loadInitial();
   }
 
   @override
@@ -1909,7 +2049,7 @@ class _KanbanTabState extends State<_KanbanTab> {
       _pollTimer?.cancel();
       _selectedScope = null;
       _scopesFuture = _loadScopes();
-      _future = _load();
+      _future = _loadInitial();
     }
   }
 
@@ -1917,6 +2057,22 @@ class _KanbanTabState extends State<_KanbanTab> {
     return widget.client.getKanbanScopes(
       workspacePath: widget.project.workspacePath,
     );
+  }
+
+  Future<SddWorkbenchKanban> _loadInitial() async {
+    try {
+      final index = await _scopesFuture;
+      final scopes = index.scopes.isEmpty ? _fallbackScopes() : index.scopes;
+      _selectedScope = _scopeSelection(
+        _defaultScopeOption(index: index, scopes: scopes),
+      );
+    } catch (_) {
+      final scopes = _fallbackScopes();
+      _selectedScope = _scopeSelection(
+        _defaultScopeOption(index: null, scopes: scopes),
+      );
+    }
+    return _load();
   }
 
   Future<SddWorkbenchKanban> _load() {
@@ -1974,6 +2130,11 @@ class _KanbanTabState extends State<_KanbanTab> {
       _selectedScope = nextScope.id == _workspaceScopeId ? null : nextScope;
       _future = _load();
     });
+  }
+
+  SddKanbanScopeOption? _scopeSelection(SddKanbanScopeOption scope) {
+    if (scope.id == _workspaceScopeId) return null;
+    return scope;
   }
 
   void _schedulePolling(SddWorkbenchKanban kanban) {
@@ -2040,6 +2201,7 @@ class _KanbanTabState extends State<_KanbanTab> {
                 client: widget.client,
                 workspacePath: _requestWorkspacePath,
                 onRefresh: _refresh,
+                onOpenCard: widget.onOpenCard,
               );
             },
           ),
@@ -2078,9 +2240,23 @@ class _KanbanTabState extends State<_KanbanTab> {
     required List<SddKanbanScopeOption> scopes,
   }) {
     final defaultScopeId = index?.defaultScopeId;
+    final creatingScope = _firstCreatingKanbanScope(scopes);
+    if (creatingScope != null) return creatingScope;
     if (defaultScopeId != null) {
       for (final scope in scopes) {
-        if (scope.id == defaultScopeId) return scope;
+        if (scope.id == defaultScopeId && scope.type != 'workspace') {
+          return scope;
+        }
+      }
+    }
+    final latestSpecScope = _latestKanbanSpecScope(
+      project: widget.project,
+      scopes: scopes,
+    );
+    if (latestSpecScope != null) return latestSpecScope;
+    for (final scope in scopes) {
+      if (scope.type != 'workspace') {
+        return scope;
       }
     }
     for (final scope in scopes) {
@@ -2111,6 +2287,50 @@ class _KanbanTabState extends State<_KanbanTab> {
         ),
     ];
   }
+}
+
+SddKanbanScopeOption? _firstCreatingKanbanScope(
+  List<SddKanbanScopeOption> scopes,
+) {
+  for (final scope in scopes) {
+    if (scope.group == 'creating') {
+      return scope;
+    }
+  }
+  return null;
+}
+
+SddKanbanScopeOption? _latestKanbanSpecScope({
+  required SddProject project,
+  required List<SddKanbanScopeOption> scopes,
+}) {
+  final specsById = <String, SddSpec>{
+    for (final spec in project.specs) spec.id: spec,
+  };
+  SddKanbanScopeOption? latest;
+  var latestKey = '';
+  for (final scope in scopes) {
+    if (scope.type != 'workspace_spec') continue;
+    final specId = scope.specId;
+    if (specId == null || specId.isEmpty) continue;
+    final spec = specsById[specId];
+    final key = _kanbanSpecRecencyKey(spec: spec, scope: scope);
+    if (latest == null || key.compareTo(latestKey) > 0) {
+      latest = scope;
+      latestKey = key;
+    }
+  }
+  return latest;
+}
+
+String _kanbanSpecRecencyKey({
+  required SddSpec? spec,
+  required SddKanbanScopeOption scope,
+}) {
+  final updatedAt = spec?.updatedAt?.trim() ?? '';
+  final createdAt = spec?.createdAt?.trim() ?? '';
+  final stamp = updatedAt.isNotEmpty ? updatedAt : createdAt;
+  return '$stamp|${scope.specId ?? scope.id}';
 }
 
 class _KanbanScopeSelector extends StatelessWidget {
@@ -2186,12 +2406,14 @@ class _KanbanContent extends StatelessWidget {
     required this.client,
     required this.workspacePath,
     required this.onRefresh,
+    required this.onOpenCard,
   });
 
   final SddWorkbenchKanban kanban;
   final SddExplorerClient client;
   final String? workspacePath;
   final VoidCallback onRefresh;
+  final ValueChanged<SddKanbanCard> onOpenCard;
 
   @override
   Widget build(BuildContext context) {
@@ -2202,7 +2424,11 @@ class _KanbanContent extends StatelessWidget {
             ? Column(
                 children: <Widget>[
                   for (final column in kanban.board.columns)
-                    _KanbanColumnView(column: column, kanban: kanban),
+                    _KanbanColumnView(
+                      column: column,
+                      kanban: kanban,
+                      onOpenCard: onOpenCard,
+                    ),
                 ],
               )
             : SingleChildScrollView(
@@ -2216,6 +2442,7 @@ class _KanbanContent extends StatelessWidget {
                         child: _KanbanColumnView(
                           column: column,
                           kanban: kanban,
+                          onOpenCard: onOpenCard,
                         ),
                       ),
                   ],
@@ -2301,6 +2528,11 @@ class _KanbanHeader extends StatelessWidget {
             children: <Widget>[
               _StatusPill(label: 'Scope', value: kanban.scope.type),
               _StatusPill(label: 'Snapshot', value: kanban.board.snapshotId),
+              if (kanban.board.updatedAt.isNotEmpty)
+                _StatusPill(
+                  label: 'Updated',
+                  value: _compactTimestamp(kanban.board.updatedAt),
+                ),
               _StatusPill(
                 label: 'Polling',
                 value:
@@ -2328,6 +2560,13 @@ String _kanbanScopePrefix(String type) {
   };
 }
 
+String _compactTimestamp(String timestamp) {
+  if (timestamp.length >= 16 && timestamp.contains('T')) {
+    return timestamp.substring(0, 16).replaceFirst('T', ' ');
+  }
+  return timestamp;
+}
+
 class _CuratorUpdatePanel extends StatelessWidget {
   const _CuratorUpdatePanel({required this.update});
 
@@ -2348,6 +2587,16 @@ class _CuratorUpdatePanel extends StatelessWidget {
             update.title,
             style: const TextStyle(fontWeight: FontWeight.w800),
           ),
+          if (update.timestamp.isNotEmpty) ...<Widget>[
+            const SizedBox(height: 3),
+            Text(
+              'At ${_compactTimestamp(update.timestamp)}',
+              style: const TextStyle(
+                color: _WorkbenchColors.secondaryText,
+                fontSize: 12,
+              ),
+            ),
+          ],
           const SizedBox(height: 4),
           Text(update.summary),
           if (update.blockers.isNotEmpty) ...<Widget>[
@@ -2369,10 +2618,15 @@ class _CuratorUpdatePanel extends StatelessWidget {
 }
 
 class _KanbanColumnView extends StatelessWidget {
-  const _KanbanColumnView({required this.column, required this.kanban});
+  const _KanbanColumnView({
+    required this.column,
+    required this.kanban,
+    required this.onOpenCard,
+  });
 
   final SddKanbanColumn column;
   final SddWorkbenchKanban kanban;
+  final ValueChanged<SddKanbanCard> onOpenCard;
 
   @override
   Widget build(BuildContext context) {
@@ -2409,7 +2663,8 @@ class _KanbanColumnView extends StatelessWidget {
               style: TextStyle(color: _WorkbenchColors.secondaryText),
             )
           else
-            for (final card in cards) _KanbanCardView(card: card),
+            for (final card in cards)
+              _KanbanCardView(card: card, onOpen: () => onOpenCard(card)),
         ],
       ),
     );
@@ -2417,76 +2672,103 @@ class _KanbanColumnView extends StatelessWidget {
 }
 
 class _KanbanCardView extends StatelessWidget {
-  const _KanbanCardView({required this.card});
+  const _KanbanCardView({required this.card, required this.onOpen});
 
   final SddKanbanCard card;
+  final VoidCallback onOpen;
 
   @override
   Widget build(BuildContext context) {
     final warning = card.column == 'blocked';
-    return Container(
-      margin: const EdgeInsets.only(top: 8),
-      padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        color: warning
-            ? _WorkbenchColors.warningSurface
-            : _WorkbenchColors.background,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(
-          color: warning ? _WorkbenchColors.warning : _WorkbenchColors.border,
-        ),
-      ),
+    return InkWell(
+      key: Key('kanban-card-${card.id}'),
+      onTap: onOpen,
+      borderRadius: BorderRadius.circular(8),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
-          Text(card.title, style: const TextStyle(fontWeight: FontWeight.w800)),
-          const SizedBox(height: 6),
-          Wrap(
-            spacing: 6,
-            runSpacing: 6,
-            children: <Widget>[
-              _SmallBadge(card.type),
-              _SmallBadge(card.status),
-              _SmallBadge(card.confirmed ? 'confirmed' : card.confidence),
-              if (card.inferred) const _SmallBadge('inferred'),
-              for (final badge in card.badges.take(3)) _SmallBadge(badge),
-            ],
-          ),
-          if (card.detail.isNotEmpty) ...<Widget>[
-            const SizedBox(height: 6),
-            Text(
-              card.detail,
-              maxLines: 3,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: _WorkbenchColors.secondaryText,
-                fontSize: 12,
+          Container(
+            margin: const EdgeInsets.only(top: 8),
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: warning
+                  ? _WorkbenchColors.warningSurface
+                  : _WorkbenchColors.background,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(
+                color: warning
+                    ? _WorkbenchColors.warning
+                    : _WorkbenchColors.border,
               ),
             ),
-          ],
-          const SizedBox(height: 6),
-          Row(
-            children: <Widget>[
-              Expanded(
-                child: Text(
-                  card.sourcePath,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: _WorkbenchColors.secondaryText,
-                    fontSize: 11,
-                  ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Text(
+                  card.title,
+                  style: const TextStyle(fontWeight: FontWeight.w800),
                 ),
-              ),
-              if (card.manualCommands.isNotEmpty)
-                IconButton(
-                  tooltip: 'Copy manual command',
-                  onPressed: () => Clipboard.setData(
-                    ClipboardData(text: card.manualCommands.join(' ')),
-                  ),
-                  icon: const Icon(Icons.content_copy_rounded, size: 16),
+                const SizedBox(height: 6),
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
+                  children: <Widget>[
+                    _SmallBadge(card.type),
+                    _SmallBadge(card.status),
+                    _SmallBadge(card.confirmed ? 'confirmed' : card.confidence),
+                    if (card.inferred) const _SmallBadge('inferred'),
+                    for (final badge in card.badges.take(3)) _SmallBadge(badge),
+                  ],
                 ),
-            ],
+                if (card.detail.isNotEmpty) ...<Widget>[
+                  const SizedBox(height: 6),
+                  Text(
+                    card.detail,
+                    maxLines: 3,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: _WorkbenchColors.secondaryText,
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
+                if (card.updatedAt.isNotEmpty) ...<Widget>[
+                  const SizedBox(height: 6),
+                  Text(
+                    'Updated: ${_compactTimestamp(card.updatedAt)}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: _WorkbenchColors.secondaryText,
+                      fontSize: 11,
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 6),
+                Row(
+                  children: <Widget>[
+                    Expanded(
+                      child: Text(
+                        card.sourcePath,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: _WorkbenchColors.secondaryText,
+                          fontSize: 11,
+                        ),
+                      ),
+                    ),
+                    if (card.manualCommands.isNotEmpty)
+                      IconButton(
+                        tooltip: 'Copy manual command',
+                        onPressed: () => Clipboard.setData(
+                          ClipboardData(text: card.manualCommands.join(' ')),
+                        ),
+                        icon: const Icon(Icons.content_copy_rounded, size: 16),
+                      ),
+                  ],
+                ),
+              ],
+            ),
           ),
         ],
       ),
@@ -2802,6 +3084,8 @@ class _SpecsTab extends StatefulWidget {
   const _SpecsTab({
     required this.bridgeUrl,
     required this.project,
+    required this.externalSelection,
+    required this.externalSelectionVersion,
     required this.diagramRenderer,
     required this.specIntakeClient,
     required this.mediaAttachmentPicker,
@@ -2814,6 +3098,8 @@ class _SpecsTab extends StatefulWidget {
 
   final String bridgeUrl;
   final SddProject project;
+  final _SpecArtifactSelection? externalSelection;
+  final int externalSelectionVersion;
   final MermaidDiagramRenderer diagramRenderer;
   final SddExplorerClient? specIntakeClient;
   final SddMediaAttachmentPicker? mediaAttachmentPicker;
@@ -2843,6 +3129,11 @@ class _SpecsTabState extends State<_SpecsTab> {
   void initState() {
     super.initState();
     _project = widget.project;
+    final externalSelection = widget.externalSelection;
+    if (externalSelection != null) {
+      _selection = _validatedSelection(externalSelection, _project.specs);
+      _showDetail = true;
+    }
   }
 
   @override
@@ -2854,6 +3145,21 @@ class _SpecsTabState extends State<_SpecsTab> {
       _loadingSpecIds.clear();
       _specErrors.clear();
       _showDetail = false;
+    }
+    if (oldWidget.externalSelectionVersion != widget.externalSelectionVersion &&
+        widget.externalSelection != null) {
+      _selection = _validatedSelection(
+        widget.externalSelection!,
+        _project.specs,
+      );
+      _showDetail = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        _hydrateSpecIfNeeded(_selection.specIndex);
+        if (_detailScrollController.hasClients) {
+          _detailScrollController.jumpTo(0);
+        }
+      });
     }
   }
 
@@ -4931,6 +5237,104 @@ _SpecArtifactSelection _validatedSelection(
   }
   final first = _firstAvailableArtifact(spec);
   return _SpecArtifactSelection(specIndex: specIndex, kind: first);
+}
+
+_SpecArtifactSelection? _selectionForKanbanCard(
+  SddProject project,
+  SddKanbanCard card,
+) {
+  final sourcePath = _normalizedArtifactPath(card.sourcePath);
+  for (final entry in project.specs.indexed) {
+    final specIndex = entry.$1;
+    final spec = entry.$2;
+    if (!_cardBelongsToSpec(card, spec, sourcePath)) continue;
+    final tree = spec.tree;
+    if (tree != null) {
+      for (final planEntry in tree.plans.indexed) {
+        final plan = planEntry.$2;
+        if (_pathsMatch(sourcePath, plan.file?.path)) {
+          return _SpecArtifactSelection(
+            specIndex: specIndex,
+            kind: _SpecArtifactKind.treePlan,
+            artifactIndex: planEntry.$1,
+          );
+        }
+        for (final taskEntry in plan.tasks.indexed) {
+          if (_pathsMatch(sourcePath, taskEntry.$2.file?.path)) {
+            return _SpecArtifactSelection(
+              specIndex: specIndex,
+              kind: _SpecArtifactKind.treeTask,
+              artifactIndex: planEntry.$1,
+              taskIndex: taskEntry.$1,
+            );
+          }
+        }
+      }
+      if (_pathsMatch(sourcePath, tree.file?.path) ||
+          _pathsMatch(sourcePath, spec.spec?.path)) {
+        return _SpecArtifactSelection(
+          specIndex: specIndex,
+          kind: _SpecArtifactKind.treeSpec,
+        );
+      }
+    }
+    final planIndex = _filePathIndex(spec.allPlanFiles, sourcePath);
+    if (planIndex != null) {
+      return _SpecArtifactSelection(
+        specIndex: specIndex,
+        kind: _SpecArtifactKind.plan,
+        artifactIndex: planIndex,
+      );
+    }
+    final taskIndex = _filePathIndex(spec.allTaskFiles, sourcePath);
+    if (taskIndex != null) {
+      return _SpecArtifactSelection(
+        specIndex: specIndex,
+        kind: _SpecArtifactKind.tasks,
+        artifactIndex: taskIndex,
+      );
+    }
+    final specFileIndex = _filePathIndex(spec.allSpecFiles, sourcePath);
+    if (specFileIndex != null) {
+      return _SpecArtifactSelection(
+        specIndex: specIndex,
+        kind: _SpecArtifactKind.spec,
+        artifactIndex: specFileIndex,
+      );
+    }
+    if (card.scopeId == spec.id || sourcePath.contains('/${spec.id}/')) {
+      return _SpecArtifactSelection(
+        specIndex: specIndex,
+        kind: _firstAvailableArtifact(spec),
+      );
+    }
+  }
+  return null;
+}
+
+bool _cardBelongsToSpec(SddKanbanCard card, SddSpec spec, String sourcePath) {
+  if (card.scopeId == spec.id) return true;
+  final specPath = _normalizedArtifactPath(spec.path);
+  return sourcePath == specPath ||
+      sourcePath.startsWith('$specPath/') ||
+      sourcePath.contains('/${spec.id}/');
+}
+
+int? _filePathIndex(List<SddFile> files, String sourcePath) {
+  for (final entry in files.indexed) {
+    if (_pathsMatch(sourcePath, entry.$2.path)) return entry.$1;
+  }
+  return null;
+}
+
+bool _pathsMatch(String sourcePath, String? candidatePath) {
+  if (candidatePath == null || candidatePath.trim().isEmpty) return false;
+  final candidate = _normalizedArtifactPath(candidatePath);
+  return sourcePath == candidate || sourcePath.endsWith('/$candidate');
+}
+
+String _normalizedArtifactPath(String path) {
+  return path.trim().replaceAll('\\', '/').replaceFirst(RegExp(r'^/+'), '');
 }
 
 _SpecArtifactKind _firstAvailableArtifact(SddSpec spec) {

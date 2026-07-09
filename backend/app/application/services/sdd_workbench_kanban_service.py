@@ -42,6 +42,7 @@ _TASK_ID_RE = re.compile(r"\b(T\d{3,4})\b")
 _HISTORY_LIMIT = 80
 _POLL_INTERVAL_SECONDS = 30
 _DEBOUNCE_SECONDS = 1.5
+_ARCHIVED_SPEC_DIR_NAMES = frozenset({"archive", "archives", "_archive", ".archive"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,10 +72,16 @@ class SddWorkbenchKanbanService:
         scopes: list[dict[str, Any]] = []
         default_scope_id: str | None = None
         if project is not None and workspace is not None:
-            default_scope_id = f"workspace:{project.workspace_path}"
+            workspace_scope_id = f"workspace:{project.workspace_path}"
+            latest_spec = _latest_project_spec(project)
+            default_scope_id = (
+                f"workspace:{project.workspace_path}:spec:{latest_spec.id}"
+                if latest_spec is not None
+                else workspace_scope_id
+            )
             scopes.append(
                 {
-                    "id": default_scope_id,
+                    "id": workspace_scope_id,
                     "type": "workspace",
                     "group": "workspace",
                     "title": "All specs",
@@ -96,6 +103,8 @@ class SddWorkbenchKanbanService:
                         "status": _spec_scope_status(spec),
                         "detail": spec.path,
                         "priority": 400 + index,
+                        "createdAt": spec.metadata.created_at,
+                        "updatedAt": spec.metadata.updated_at,
                     }
                 )
         scopes.extend(self._project_factory_scope_options(workspace=workspace))
@@ -111,11 +120,7 @@ class SddWorkbenchKanbanService:
             "version": 1,
             "workspacePath": str(workspace) if workspace is not None else None,
             "scopes": scopes,
-            "defaultScopeId": default_scope_id
-            if default_scope_id is not None
-            else scopes[0]["id"]
-            if scopes
-            else None,
+            "defaultScopeId": _default_scope_id(scopes, fallback=default_scope_id),
         }
 
     def build_board(
@@ -290,16 +295,18 @@ class SddWorkbenchKanbanService:
             draft_id = str(draft.get("draft_id") or "").strip()
             if not draft_id:
                 continue
+            draft_status = str(draft.get("status") or "draft")
+            draft_active = _is_active_project_factory_draft(draft)
             scopes.append(
                 {
                     "id": f"project-factory:draft:{draft_id}",
                     "type": "project_factory_draft",
-                    "group": "creating",
+                    "group": "creating" if draft_active else "history",
                     "title": f"Draft: {draft.get('name') or draft_id}",
                     "draftId": draft_id,
-                    "status": str(draft.get("status") or "draft"),
+                    "status": draft_status,
                     "detail": str(draft.get("primary_goal") or ""),
-                    "priority": 100 + index,
+                    "priority": 100 + index if draft_active else 650 + index,
                 }
             )
         for index, job in enumerate(jobs, start=1):
@@ -310,18 +317,20 @@ class SddWorkbenchKanbanService:
             target_path = str(
                 job.get("target_path") or job.get("project_path") or ""
             ).strip()
+            job_status = str(job.get("status") or "queued")
+            job_active = _is_active_project_factory_job(job)
             scopes.append(
                 {
                     "id": f"project-factory:job:{job_id}",
                     "type": "project_factory_job",
-                    "group": "creating",
+                    "group": "creating" if job_active else "history",
                     "title": f"Job: {job.get('name') or job_id}",
                     "draftId": draft_id,
                     "jobId": job_id,
                     "workspacePath": target_path or None,
-                    "status": str(job.get("status") or "queued"),
+                    "status": job_status,
                     "detail": str(job.get("message") or job.get("error") or ""),
-                    "priority": index,
+                    "priority": index if job_active else 600 + index,
                 }
             )
             if target_path:
@@ -669,7 +678,11 @@ class SddWorkbenchKanbanService:
                 roots = (
                     [workspace / "specs" / spec_id]
                     if spec_id
-                    else sorted((workspace / "specs").glob("*"))
+                    else [
+                        root
+                        for root in sorted((workspace / "specs").glob("*"))
+                        if not _is_archived_spec_dir(root)
+                    ]
                 )
                 for root in roots:
                     path = root / relative
@@ -923,6 +936,79 @@ def _spec_scope_status(spec: SddSpec) -> str:
     return lifecycle or "planned"
 
 
+def _latest_project_spec(project: SddProject) -> SddSpec | None:
+    if not project.specs:
+        return None
+    return max(
+        project.specs,
+        key=lambda spec: (
+            spec.metadata.updated_at or spec.metadata.created_at or "",
+            spec.id,
+        ),
+    )
+
+
+def _default_scope_id(
+    scopes: list[dict[str, Any]], *, fallback: str | None
+) -> str | None:
+    for scope in scopes:
+        scope_group = str(scope.get("group") or "")
+        if scope_group == "creating":
+            scope_id = scope.get("id")
+            return str(scope_id) if scope_id else None
+    if fallback is not None:
+        return fallback
+    for scope in scopes:
+        if str(scope.get("type") or "") != "workspace":
+            scope_id = scope.get("id")
+            return str(scope_id) if scope_id else None
+    if scopes:
+        return str(scopes[0].get("id") or "")
+    return None
+
+
+def _is_active_project_factory_draft(draft: dict[str, Any]) -> bool:
+    status = str(draft.get("status") or "draft").strip().lower()
+    return status not in {
+        "ready",
+        "completed",
+        "generated",
+        "failed",
+        "interrupted",
+        "cancelled",
+        "canceled",
+        "deleted",
+        "archived",
+    }
+
+
+def _is_active_project_factory_job(job: dict[str, Any]) -> bool:
+    status = str(job.get("status") or "queued").strip().lower()
+    if status in {"queued", "running"}:
+        return True
+    if status != "blocked":
+        return False
+    actionable_text = str(
+        job.get("message") or job.get("error") or job.get("current_phase") or ""
+    ).strip()
+    if actionable_text:
+        return True
+    preview = job.get("initial_preview_release")
+    if isinstance(preview, dict):
+        if str(preview.get("status") or "").strip().lower() == "blocked":
+            return True
+        raw_phase_statuses = preview.get("phaseStatuses") or preview.get(
+            "phase_statuses"
+        )
+        if isinstance(raw_phase_statuses, dict):
+            for phase in raw_phase_statuses.values():
+                if not isinstance(phase, dict):
+                    continue
+                if str(phase.get("status") or "").strip().lower() == "blocked":
+                    return True
+    return False
+
+
 def _tree_task_records(spec: SddSpec) -> list[dict[str, Any]]:
     if spec.tree is None:
         return []
@@ -1044,6 +1130,7 @@ def _spec_task_card(
         badges=[str(record.get("phaseTitle") or "Phase")],
         evidence=evidence,
         detail=str(record.get("description") or ""),
+        updated_at=_spec_updated_at(spec),
     )
 
 
@@ -1104,6 +1191,7 @@ def _plan_phase_cards(
                     }
                 ],
                 detail=f"{done} of {total} tasks complete.",
+                updated_at=_spec_updated_at(spec),
             )
         )
     return cards
@@ -1463,6 +1551,7 @@ def _card(
     evidence: list[dict[str, Any]],
     detail: str = "",
     manual_commands: list[Any] | None = None,
+    updated_at: str | None = None,
 ) -> dict[str, Any]:
     payload = {
         "id": card_id,
@@ -1485,6 +1574,8 @@ def _card(
         "evidence": evidence,
         "manualCommands": manual_commands or [],
     }
+    if updated_at:
+        payload["updatedAt"] = updated_at
     payload["evidenceHash"] = _hash_payload(
         {
             "id": card_id,
@@ -1495,6 +1586,10 @@ def _card(
         }
     )
     return payload
+
+
+def _spec_updated_at(spec: SddSpec) -> str | None:
+    return spec.metadata.updated_at or spec.metadata.created_at
 
 
 def _task_column(
@@ -1774,6 +1869,15 @@ def _rel(path: Path, workspace: Path) -> str:
         return path.relative_to(workspace).as_posix()
     except ValueError:
         return str(path)
+
+
+def _is_archived_spec_dir(path: Path) -> bool:
+    name = path.name.strip().lower()
+    return (
+        name in _ARCHIVED_SPEC_DIR_NAMES
+        or name.startswith("archive-")
+        or name.startswith("_archive-")
+    )
 
 
 def _read_tail(path: Path, *, limit: int) -> str:

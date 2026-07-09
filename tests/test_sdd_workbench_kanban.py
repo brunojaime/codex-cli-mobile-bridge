@@ -32,6 +32,7 @@ def test_kanban_projection_maps_tasks_deterministically_and_persists_history(
     cards = {card["id"]: card for card in first["board"]["cards"]}
     assert cards["spec-task:001-demo:T001"]["column"] == "done"
     assert cards["spec-task:001-demo:T001"]["confirmed"] is True
+    assert cards["spec-task:001-demo:T001"]["updatedAt"] == "2026-07-09T12:03:00Z"
     assert cards["spec-task:001-demo:T002"]["column"] == "ready"
     assert cards["spec-task:001-demo:T003"]["column"] == "backlog"
     assert cards["review-finding:reviews-review-notes.md"]["column"] == "review"
@@ -244,7 +245,7 @@ def test_kanban_scope_index_lists_workspace_factory_and_generated_scopes(
 
     scopes = {scope["id"]: scope for scope in payload["scopes"]}
     assert payload["scopes"][0]["id"] == "project-factory:job:job-1"
-    assert payload["defaultScopeId"] == f"workspace:{project.workspace_path}"
+    assert payload["defaultScopeId"] == "project-factory:job:job-1"
     assert scopes[f"workspace:{project.workspace_path}"]["type"] == "workspace"
     assert scopes[f"workspace:{project.workspace_path}:spec:001-demo"] == {
         "id": f"workspace:{project.workspace_path}:spec:001-demo",
@@ -256,6 +257,8 @@ def test_kanban_scope_index_lists_workspace_factory_and_generated_scopes(
         "status": "in_progress",
         "detail": "specs/001-demo",
         "priority": 401,
+        "createdAt": "2026-07-08T12:00:00Z",
+        "updatedAt": "2026-07-09T12:03:00Z",
     }
     assert scopes["project-factory:draft:draft-1"]["type"] == "project_factory_draft"
     assert scopes["project-factory:job:job-1"]["jobId"] == "job-1"
@@ -265,6 +268,149 @@ def test_kanban_scope_index_lists_workspace_factory_and_generated_scopes(
 
     factory_only = service.build_scopes()
     assert factory_only["defaultScopeId"] == "project-factory:job:job-1"
+
+
+def test_kanban_scope_index_defaults_to_latest_workspace_spec(
+    tmp_path: Path,
+) -> None:
+    projects_root = tmp_path / "projects"
+    project_path = projects_root / "demo"
+    _write_kanban_project(project_path)
+    _write_kanban_spec(
+        project_path,
+        spec_id="002-latest",
+        title="Latest Spec",
+        created_at="2026-07-09T09:00:00Z",
+        updated_at="2026-07-10T12:03:00Z",
+    )
+    project_service = SddProjectService(projects_root=str(projects_root))
+    project = project_service.get_project(str(project_path))
+    service = SddWorkbenchKanbanService(projects_root=projects_root)
+
+    payload = service.build_scopes(workspace=project_path, project=project)
+
+    assert (
+        payload["defaultScopeId"]
+        == f"workspace:{project.workspace_path}:spec:002-latest"
+    )
+    assert payload["defaultScopeId"] != f"workspace:{project.workspace_path}"
+    scopes = {scope["id"]: scope for scope in payload["scopes"]}
+    latest_scope = scopes[f"workspace:{project.workspace_path}:spec:002-latest"]
+    assert latest_scope["type"] == "workspace_spec"
+    assert latest_scope["updatedAt"] == "2026-07-10T12:03:00Z"
+
+
+def test_kanban_scope_index_ignores_historical_project_factory_job_for_default(
+    tmp_path: Path,
+) -> None:
+    projects_root = tmp_path / "projects"
+    project_path = projects_root / "demo"
+    _write_kanban_project(project_path)
+    _write_kanban_spec(
+        project_path,
+        spec_id="002-latest",
+        title="Latest Spec",
+        created_at="2026-07-09T09:00:00Z",
+        updated_at="2026-07-10T12:03:00Z",
+    )
+    project_service = SddProjectService(projects_root=str(projects_root))
+    project = project_service.get_project(str(project_path))
+    service = SddWorkbenchKanbanService(
+        projects_root=projects_root,
+        project_factory_service=_FakeProjectFactoryService(
+            include_draft=False,
+            job_status="ready",
+            job_message="",
+            job_error="",
+            job_current_phase="",
+        ),
+    )
+
+    payload = service.build_scopes(workspace=project_path, project=project)
+
+    assert (
+        payload["defaultScopeId"]
+        == f"workspace:{project.workspace_path}:spec:002-latest"
+    )
+    scopes = {scope["id"]: scope for scope in payload["scopes"]}
+    assert scopes["project-factory:job:job-1"]["group"] == "history"
+
+
+def test_kanban_scope_index_keeps_active_creation_jobs_as_default(
+    tmp_path: Path,
+) -> None:
+    projects_root = tmp_path / "projects"
+    project_path = projects_root / "demo"
+    _write_kanban_project(project_path)
+    _write_kanban_spec(
+        project_path,
+        spec_id="002-latest",
+        title="Latest Spec",
+        created_at="2026-07-09T09:00:00Z",
+        updated_at="2026-07-10T12:03:00Z",
+    )
+    project_service = SddProjectService(projects_root=str(projects_root))
+    project = project_service.get_project(str(project_path))
+
+    for status in ("queued", "running", "blocked"):
+        service = SddWorkbenchKanbanService(
+            projects_root=projects_root,
+            project_factory_service=_FakeProjectFactoryService(
+                include_draft=False,
+                job_status=status,
+            ),
+        )
+
+        payload = service.build_scopes(workspace=project_path, project=project)
+
+        assert payload["defaultScopeId"] == "project-factory:job:job-1"
+        scopes = {scope["id"]: scope for scope in payload["scopes"]}
+        assert scopes["project-factory:job:job-1"]["group"] == "creating"
+
+
+def test_kanban_scope_index_latest_spec_tie_breaks_by_updated_created_and_id(
+    tmp_path: Path,
+) -> None:
+    projects_root = tmp_path / "projects"
+    project_path = projects_root / "demo"
+    _write_kanban_project(project_path)
+    _write_kanban_spec(
+        project_path,
+        spec_id="002-created-only",
+        title="Created Only",
+        created_at="2026-07-10T12:03:00Z",
+        updated_at=None,
+    )
+    _write_kanban_spec(
+        project_path,
+        spec_id="003-updated",
+        title="Updated",
+        created_at="2026-07-01T09:00:00Z",
+        updated_at="2026-07-11T12:03:00Z",
+    )
+    _write_kanban_spec(
+        project_path,
+        spec_id="004-alpha",
+        title="Alpha Tie",
+        created_at="2026-07-12T12:03:00Z",
+        updated_at=None,
+    )
+    _write_kanban_spec(
+        project_path,
+        spec_id="005-zeta",
+        title="Zeta Tie",
+        created_at="2026-07-12T12:03:00Z",
+        updated_at=None,
+    )
+    project_service = SddProjectService(projects_root=str(projects_root))
+    service = SddWorkbenchKanbanService(projects_root=projects_root)
+
+    payload = service.build_scopes(
+        workspace=project_path,
+        project=project_service.get_project(str(project_path)),
+    )
+
+    assert payload["defaultScopeId"].endswith(":spec:005-zeta")
 
 
 def test_kanban_scheduler_refreshes_active_scope_from_source_changes(
@@ -342,15 +488,33 @@ def test_kanban_preserves_project_factory_history_when_workspace_appears(
 
 
 class _FakeProjectFactoryService:
-    def __init__(self, *, target_path: Path | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        target_path: Path | None = None,
+        include_draft: bool = True,
+        draft_status: str = "valid",
+        job_status: str = "blocked",
+        job_message: str = "Release upload failed",
+        job_error: str = "Missing GH token",
+        job_current_phase: str = "android_preview_release",
+    ) -> None:
         self._target_path = str(target_path) if target_path is not None else ""
+        self._include_draft = include_draft
+        self._draft_status = draft_status
+        self._job_status = job_status
+        self._job_message = job_message
+        self._job_error = job_error
+        self._job_current_phase = job_current_phase
 
     def list_drafts(self, *, limit: int = 50):
+        if not self._include_draft:
+            return ()
         return (
             {
                 "draft_id": "draft-1",
                 "name": "Demo App",
-                "status": "valid",
+                "status": self._draft_status,
                 "ok": True,
                 "primary_goal": "Book appointments",
                 "first_release_mode": "preview",
@@ -363,10 +527,10 @@ class _FakeProjectFactoryService:
                 "job_id": "job-1",
                 "draft_id": "draft-1",
                 "name": "Demo App",
-                "status": "blocked",
-                "current_phase": "android_preview_release",
-                "message": "Release upload failed",
-                "error": "Missing GH token",
+                "status": self._job_status,
+                "current_phase": self._job_current_phase,
+                "message": self._job_message,
+                "error": self._job_error,
                 "target_path": self._target_path,
                 "project_path": self._target_path,
                 "initial_preview_release": {
@@ -419,6 +583,20 @@ def _write_kanban_project(project: Path) -> None:
     )
     (spec_dir / "spec.md").write_text(
         "# Demo Spec\n",
+        encoding="utf-8",
+    )
+    (spec_dir / "metadata.yaml").write_text(
+        textwrap.dedent(
+            """\
+            status: active
+            created_at: 2026-07-08T12:00:00Z
+            updated_at: 2026-07-09T12:03:00Z
+            tasks:
+              total: 3
+              completed: 1
+              pending: 2
+            """
+        ),
         encoding="utf-8",
     )
     (spec_dir / "plan.md").write_text(
@@ -505,5 +683,42 @@ def _write_kanban_project(project: Path) -> None:
                 "mockOrDemo": False,
             }
         ),
+        encoding="utf-8",
+    )
+
+
+def _write_kanban_spec(
+    project: Path,
+    *,
+    spec_id: str,
+    title: str,
+    created_at: str,
+    updated_at: str | None,
+) -> None:
+    spec_dir = project / f"specs/{spec_id}"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text(f"# {title}\n", encoding="utf-8")
+    metadata = [
+        f"title: {title}",
+        "status: active",
+        f"created_at: {created_at}",
+    ]
+    if updated_at is not None:
+        metadata.append(f"updated_at: {updated_at}")
+    metadata.extend(
+        [
+            "tasks:",
+            "  total: 1",
+            "  completed: 0",
+            "  pending: 1",
+            "",
+        ]
+    )
+    (spec_dir / "metadata.yaml").write_text(
+        "\n".join(metadata),
+        encoding="utf-8",
+    )
+    (spec_dir / "tasks.md").write_text(
+        "# Tasks\n- [ ] T001 Keep latest canvas scoped\n",
         encoding="utf-8",
     )

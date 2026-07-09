@@ -21,6 +21,7 @@ INDEX_FILENAMES = (
     "context-index.yaml",
 )
 SPEC_PREFIX_BYTES = 8192
+ARCHIVED_SPEC_DIR_NAMES = frozenset({"archive", "archives", "_archive", ".archive"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -201,13 +202,20 @@ def _fingerprint_sources(workspace: Path) -> tuple[Path, ...]:
             for path in workspace.glob(pattern)
             if path.is_file() and _is_relative_to(path.resolve(), workspace)
         )
-    return tuple(sorted(set(paths), key=lambda item: item.as_posix()))
+    return tuple(
+        sorted(
+            {path for path in paths if not _is_archived_spec_path(path, workspace)},
+            key=lambda item: item.as_posix(),
+        )
+    )
 
 
 def _spec_entries(workspace: Path) -> dict[str, dict[str, str]]:
     entries: dict[str, dict[str, str]] = {}
     for spec_path in sorted(workspace.glob("specs/*/spec.md")):
         if not spec_path.is_file():
+            continue
+        if _is_archived_spec_path(spec_path, workspace):
             continue
         prefix = _read_prefix(spec_path)
         spec_id = spec_path.parent.name
@@ -229,6 +237,8 @@ def _diagram_entries(workspace: Path) -> dict[str, dict[str, str]]:
         ]
     ):
         if not diagram_path.is_file():
+            continue
+        if _is_archived_spec_path(diagram_path, workspace):
             continue
         relative = diagram_path.relative_to(workspace).as_posix()
         metadata = _read_optional_yaml(diagram_path.with_suffix(".yaml"))
@@ -403,6 +413,22 @@ def _yaml_scalar(value: Any) -> str:
 
 def _is_string_list(value: object) -> bool:
     return isinstance(value, list) and all(isinstance(item, str) for item in value)
+
+
+def _is_archived_spec_path(path: Path, workspace: Path) -> bool:
+    try:
+        relative = path.relative_to(workspace)
+    except ValueError:
+        return False
+    parts = relative.parts
+    if not parts or parts[0] != "specs" or len(parts) < 2:
+        return False
+    spec_dir_name = parts[1].strip().lower()
+    return (
+        spec_dir_name in ARCHIVED_SPEC_DIR_NAMES
+        or spec_dir_name.startswith("archive-")
+        or spec_dir_name.startswith("_archive-")
+    )
 
 
 def _is_relative_to(path: Path, root: Path) -> bool:

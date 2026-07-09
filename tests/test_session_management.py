@@ -342,27 +342,34 @@ def _save_message(
     return message
 
 
-def test_transcript_window_anchors_at_latest_user_message() -> None:
+def test_transcript_window_starts_at_recent_messages_and_anchors_at_latest() -> None:
     with TemporaryDirectory() as temp_dir:
         workspace = Path(temp_dir) / "repo"
         workspace.mkdir()
         service, repository = _build_service_with_repository(temp_dir)
         session = service.create_session(workspace_path=str(workspace))
-        _save_message(repository, session.id, "user-1", ChatMessageRole.USER, 1)
-        _save_message(
-            repository, session.id, "assistant-1", ChatMessageRole.ASSISTANT, 2
-        )
-        latest_user = _save_message(
-            repository, session.id, "user-2", ChatMessageRole.USER, 3
-        )
-        _save_message(
-            repository, session.id, "assistant-2", ChatMessageRole.ASSISTANT, 4
+        for index in range(1, 9):
+            role = (
+                ChatMessageRole.USER
+                if index % 2 == 1
+                else ChatMessageRole.ASSISTANT
+            )
+            _save_message(repository, session.id, f"message-{index}", role, index)
+        latest = _save_message(
+            repository, session.id, "message-9", ChatMessageRole.USER, 9
         )
 
-        window = service.get_transcript_window(session.id)
+        window = service.get_transcript_window(session.id, limit=6)
 
-    assert [message.id for message in window.messages] == ["user-2", "assistant-2"]
-    assert window.window_anchor_message_id == latest_user.id
+    assert [message.id for message in window.messages] == [
+        "message-4",
+        "message-5",
+        "message-6",
+        "message-7",
+        "message-8",
+        "message-9",
+    ]
+    assert window.window_anchor_message_id == latest.id
     assert window.has_older is True
     assert window.has_newer is False
     assert window.is_partial is True
@@ -383,7 +390,7 @@ def test_transcript_window_loads_older_page_before_cursor() -> None:
         _save_message(
             repository, session.id, "assistant-2", ChatMessageRole.ASSISTANT, 4
         )
-        initial = service.get_transcript_window(session.id)
+        initial = service.get_transcript_window(session.id, limit=2)
 
         older = service.get_transcript_window(
             session.id,
@@ -424,7 +431,7 @@ def test_transcript_window_cursor_uses_message_id_as_tie_breaker() -> None:
             )
             repository.save_message(message)
 
-        initial = service.get_transcript_window(session.id)
+        initial = service.get_transcript_window(session.id, limit=2)
         older = service.get_transcript_window(
             session.id,
             before=initial.oldest_cursor,

@@ -58,6 +58,7 @@ void main() {
     await controller.refreshSessions();
     await controller.selectSession('session-1');
 
+    expect(apiClient.initialSessionLimits, <int>[6]);
     expect(controller.messages.map((message) => message.id), <String>[
       'user-2',
       'assistant-2',
@@ -66,6 +67,7 @@ void main() {
     final loaded = await controller.loadOlderMessages();
 
     expect(loaded, isTrue);
+    expect(apiClient.olderSessionLimits, <int>[5]);
     expect(controller.messages.map((message) => message.id), <String>[
       'assistant-1',
       'user-2',
@@ -91,6 +93,9 @@ void main() {
 class _PagedSessionApiClient extends ApiClient {
   _PagedSessionApiClient() : super(baseUrl: 'http://bridge.test');
 
+  final List<int> initialSessionLimits = <int>[];
+  final List<int> olderSessionLimits = <int>[];
+
   @override
   Future<List<ChatSessionSummary>> listSessions() async {
     return <ChatSessionSummary>[
@@ -114,6 +119,7 @@ class _PagedSessionApiClient extends ApiClient {
     bool fullTranscript = false,
   }) async {
     if (before != null) {
+      olderSessionLimits.add(limit ?? -1);
       return _sessionDetail(
         messages: <ChatMessage>[
           _message('assistant-1', 1),
@@ -128,6 +134,7 @@ class _PagedSessionApiClient extends ApiClient {
         ),
       );
     }
+    initialSessionLimits.add(limit ?? -1);
     return _sessionDetail(
       messages: <ChatMessage>[
         _message('user-2', 2, isUser: true),

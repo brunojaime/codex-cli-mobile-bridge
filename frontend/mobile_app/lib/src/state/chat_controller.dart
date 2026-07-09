@@ -24,8 +24,11 @@ class ChatController extends ChangeNotifier {
     required ApiClient apiClient,
     ChatNotificationService notificationService =
         const NoopChatNotificationService(),
-  }) : _apiClient = apiClient,
-       _notificationService = notificationService;
+  })  : _apiClient = apiClient,
+        _notificationService = notificationService;
+
+  static const int initialTranscriptMessageLimit = 6;
+  static const int olderTranscriptPageLimit = 5;
 
   final ApiClient _apiClient;
   final ChatNotificationService _notificationService;
@@ -117,8 +120,8 @@ class ChatController extends ChangeNotifier {
     JobStatusResponse? primarySnapshot;
     final activeSession =
         _currentSession != null && _currentSession!.id == sessionId
-        ? _currentSession
-        : null;
+            ? _currentSession
+            : null;
     ChatSessionSummary? sessionSummary;
     for (final session in _sessions) {
       if (session.id == sessionId) {
@@ -147,12 +150,12 @@ class ChatController extends ChangeNotifier {
       primaryAgentId: primarySnapshot?.agentId ?? AgentId.generator,
       primaryAgentLabel: primarySnapshot != null
           ? (_resolveConfiguredAgentLabel(
-                  primarySnapshot,
-                  activeSession,
-                  sessionSummary,
-                ) ??
-                primarySnapshot.agentLabel ??
-                _defaultAgentLabel(primarySnapshot.agentId))
+                primarySnapshot,
+                activeSession,
+                sessionSummary,
+              ) ??
+              primarySnapshot.agentLabel ??
+              _defaultAgentLabel(primarySnapshot.agentId))
           : _defaultAgentLabel(AgentId.generator),
       primaryAgentSeed: primarySnapshot != null
           ? agentIdToJson(primarySnapshot.agentId)
@@ -368,8 +371,8 @@ class ChatController extends ChangeNotifier {
         {'profiles': final List<dynamic> profiles} => profiles,
         final List<dynamic> profiles => profiles,
         _ => throw const FormatException(
-          'Expected either a JSON array or an object with a profiles array.',
-        ),
+            'Expected either a JSON array or an object with a profiles array.',
+          ),
       };
       final profiles = rawProfiles
           .map((item) => AgentProfile.fromJson(item as Map<String, dynamic>))
@@ -506,7 +509,10 @@ class ChatController extends ChangeNotifier {
 
     _setLoading(true);
     try {
-      final session = await _apiClient.getSession(sessionId);
+      final session = await _apiClient.getSession(
+        sessionId,
+        limit: initialTranscriptMessageLimit,
+      );
       _currentSession = _overlaySessionWithJobSnapshots(session);
       _selectedSessionId = sessionId;
       _olderMessagesError = null;
@@ -543,6 +549,7 @@ class ChatController extends ChangeNotifier {
       final olderPage = await _apiClient.getSession(
         currentSession.id,
         before: cursor,
+        limit: olderTranscriptPageLimit,
       );
       if (_currentSession?.id != currentSession.id) {
         return false;
@@ -608,22 +615,20 @@ class ChatController extends ChangeNotifier {
         return false;
       }
       final currentConfiguration = currentSession.agentConfiguration;
-      final updatedAgents = currentConfiguration.agents
-          .map((agent) {
-            switch (agent.agentId) {
-              case AgentId.reviewer:
-                return agent.copyWith(
-                  enabled: enabled,
-                  maxTurns: maxTurns,
-                  prompt: reviewerPrompt ?? agent.prompt,
-                );
-              case AgentId.summary:
-                return agent.copyWith(enabled: false, maxTurns: 0);
-              default:
-                return agent;
-            }
-          })
-          .toList(growable: false);
+      final updatedAgents = currentConfiguration.agents.map((agent) {
+        switch (agent.agentId) {
+          case AgentId.reviewer:
+            return agent.copyWith(
+              enabled: enabled,
+              maxTurns: maxTurns,
+              prompt: reviewerPrompt ?? agent.prompt,
+            );
+          case AgentId.summary:
+            return agent.copyWith(enabled: false, maxTurns: 0);
+          default:
+            return agent;
+        }
+      }).toList(growable: false);
       final session = await _apiClient.updateAgentConfiguration(
         sessionId,
         configuration: currentConfiguration.copyWith(
@@ -710,7 +715,7 @@ class ChatController extends ChangeNotifier {
 
     final configChanged =
         currentSession.agentConfiguration.toJson().toString() !=
-        configuration.toJson().toString();
+            configuration.toJson().toString();
     final turnSummariesChanged =
         currentSession.turnSummariesEnabled != turnSummariesEnabled;
 
@@ -1093,7 +1098,10 @@ class ChatController extends ChangeNotifier {
       return;
     }
 
-    final session = await _apiClient.getSession(_selectedSessionId!);
+    final session = await _apiClient.getSession(
+      _selectedSessionId!,
+      limit: initialTranscriptMessageLimit,
+    );
     _currentSession = _overlaySessionWithJobSnapshots(
       _mergeWithCurrentSession(session),
     );
@@ -1192,8 +1200,7 @@ class ChatController extends ChangeNotifier {
         continue;
       }
       final jobStatus = message.jobStatus ?? '';
-      final isPending =
-          message.isPendingLike ||
+      final isPending = message.isPendingLike ||
           jobStatus == 'pending' ||
           jobStatus == 'running';
       if (!isPending) {
@@ -1327,18 +1334,16 @@ class ChatController extends ChangeNotifier {
   }
 
   SessionDetail _overlaySessionWithJobSnapshots(SessionDetail session) {
-    final messages = session.messages
-        .map((message) {
-          if (message.jobId == null) {
-            return message;
-          }
-          final snapshot = _jobSnapshots[message.jobId!];
-          if (snapshot == null) {
-            return message;
-          }
-          return _applySnapshotToMessage(message, snapshot);
-        })
-        .toList(growable: false);
+    final messages = session.messages.map((message) {
+      if (message.jobId == null) {
+        return message;
+      }
+      final snapshot = _jobSnapshots[message.jobId!];
+      if (snapshot == null) {
+        return message;
+      }
+      return _applySnapshotToMessage(message, snapshot);
+    }).toList(growable: false);
     var currentRun = session.currentRun;
     var recentRuns = session.recentRuns;
     for (final snapshot in _jobSnapshots.values) {
@@ -1692,8 +1697,7 @@ class ChatController extends ChangeNotifier {
     }
 
     final summary = _sessionSummaryForId(sessionId);
-    final configuration =
-        currentSession?.agentConfiguration ??
+    final configuration = currentSession?.agentConfiguration ??
         summary?.agentConfiguration ??
         kDefaultAgentConfiguration;
     final normalized = configuration;
@@ -1906,9 +1910,9 @@ class ChatController extends ChangeNotifier {
   String _formatActionError(String prefix, Object error) {
     final detail = '$error'.trim().replaceFirst(RegExp(r'^Exception:\s*'), '');
     final normalizedPrefix = prefix.trim().replaceFirst(
-      RegExp(r'[.:!?]+$'),
-      '',
-    );
+          RegExp(r'[.:!?]+$'),
+          '',
+        );
     if (detail.isEmpty) {
       return prefix;
     }
@@ -1931,21 +1935,19 @@ CurrentRunExecution? _applySnapshotToRun(
   }
 
   var didUpdate = false;
-  final stages = currentRun.stages
-      .map((stage) {
-        if (stage.jobId != snapshot.jobId) {
-          return stage;
-        }
-        didUpdate = true;
-        return stage.copyWith(
-          state: _stageStateFromJobStatus(snapshot.status),
-          jobStatus: snapshot.status,
-          latestActivity: snapshot.latestActivity,
-          updatedAt: snapshot.updatedAt ?? stage.updatedAt,
-          completedAt: snapshot.completedAt ?? stage.completedAt,
-        );
-      })
-      .toList(growable: false);
+  final stages = currentRun.stages.map((stage) {
+    if (stage.jobId != snapshot.jobId) {
+      return stage;
+    }
+    didUpdate = true;
+    return stage.copyWith(
+      state: _stageStateFromJobStatus(snapshot.status),
+      jobStatus: snapshot.status,
+      latestActivity: snapshot.latestActivity,
+      updatedAt: snapshot.updatedAt ?? stage.updatedAt,
+      completedAt: snapshot.completedAt ?? stage.completedAt,
+    );
+  }).toList(growable: false);
 
   if (!didUpdate) {
     return currentRun;
@@ -1969,15 +1971,13 @@ List<CurrentRunExecution> _applySnapshotToRuns(
   }
 
   var didUpdate = false;
-  final updatedRuns = runs
-      .map((run) {
-        final updatedRun = _applySnapshotToRun(run, snapshot);
-        if (!identical(updatedRun, run)) {
-          didUpdate = true;
-        }
-        return updatedRun!;
-      })
-      .toList(growable: false);
+  final updatedRuns = runs.map((run) {
+    final updatedRun = _applySnapshotToRun(run, snapshot);
+    if (!identical(updatedRun, run)) {
+      didUpdate = true;
+    }
+    return updatedRun!;
+  }).toList(growable: false);
   return didUpdate ? updatedRuns : runs;
 }
 

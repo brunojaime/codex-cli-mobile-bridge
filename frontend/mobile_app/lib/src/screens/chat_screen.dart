@@ -307,6 +307,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   bool _isLoadingCodexTooling = false;
   bool _isOpeningWorkspacePicker = false;
   String? _lastObservedSessionId;
+  String? _lastObservedNewestMessageId;
   final Map<String, _ComposerDraft> _sessionDrafts = <String, _ComposerDraft>{};
   final Map<String, String> _projectFactoryDraftIdBySession =
       <String, String>{};
@@ -2139,7 +2140,7 @@ Defaults si el usuario no modifica nada:
 - auth: login/registro + Google pending credentials;
 - admin/domain management: incluido;
 - notificaciones: incluido;
-- workflow al confirmar: $generatorRuns generator/reviewer pairs; cada generator pass va seguido inmediatamente por su reviewer pass antes del siguiente generator.
+- workflow al confirmar: $generatorRuns generator passes y $reviewerRuns reviewer passes; cada generator pass va seguido inmediatamente por su reviewer pass antes del siguiente generator.
 - business types sugeridos si necesita elegir: $businessTypes.
 - first release default: Initial Preview Release, no produccion.
 - admin emails iniciales: requeridos antes del marker build-ready; si faltan, preguntalos y no avances.
@@ -4009,9 +4010,18 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
   void _handleChatControllerChanged() {
     _markCurrentSessionAsRead();
     final currentSessionId = _chatController.selectedSessionId;
+    final currentMessages = _chatController.currentSession?.messages;
+    final newestMessageId = currentMessages == null || currentMessages.isEmpty
+        ? null
+        : currentMessages.last.id;
     final sessionChanged = currentSessionId != _lastObservedSessionId;
+    final firstRealMessageLoad = !sessionChanged &&
+        currentSessionId != null &&
+        newestMessageId != null &&
+        _lastObservedNewestMessageId == null;
     if (sessionChanged) {
       _lastObservedSessionId = currentSessionId;
+      _lastObservedNewestMessageId = newestMessageId;
       final currentSession = _chatController.currentSession;
       if (currentSession != null) {
         _replyPlaybackService.seedSession(currentSession);
@@ -4029,10 +4039,12 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
         });
       }
       _updateStickToBottom(true);
+    } else if (newestMessageId != _lastObservedNewestMessageId) {
+      _lastObservedNewestMessageId = newestMessageId;
     }
 
     if (_stickToBottom) {
-      _scrollToBottom(jumpToBottom: sessionChanged);
+      _scrollToBottom(jumpToBottom: sessionChanged || firstRealMessageLoad);
     }
 
     unawaited(
@@ -4818,6 +4830,30 @@ class _OlderMessagesRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final hasError = errorText != null;
+    if (!hasError) {
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 12),
+        child: Center(
+          child: SizedBox(
+            width: 36,
+            height: 36,
+            child: Center(
+              child: isLoading
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+            ),
+          ),
+        ),
+      );
+    }
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: Center(
@@ -4841,28 +4877,20 @@ class _OlderMessagesRow extends StatelessWidget {
                       child: CircularProgressIndicator(strokeWidth: 2),
                     )
                   else
-                    Icon(
-                      hasError
-                          ? Icons.error_outline_rounded
-                          : Icons.history_rounded,
+                    const Icon(
+                      Icons.error_outline_rounded,
                       size: 18,
-                      color: hasError
-                          ? const Color(0xFFFFB4A8)
-                          : const Color(0xFF8CA8FF),
+                      color: Color(0xFFFFB4A8),
                     ),
                   const SizedBox(width: 10),
-                  Flexible(
+                  const Flexible(
                     child: Text(
-                      hasError
-                          ? 'Older messages failed to load.'
-                          : 'Loading older messages...',
-                      style: const TextStyle(color: Color(0xFFDCE5FF)),
+                      'Older messages failed to load.',
+                      style: TextStyle(color: Color(0xFFDCE5FF)),
                     ),
                   ),
-                  if (hasError) ...<Widget>[
-                    const SizedBox(width: 8),
-                    TextButton(onPressed: onRetry, child: const Text('Retry')),
-                  ],
+                  const SizedBox(width: 8),
+                  TextButton(onPressed: onRetry, child: const Text('Retry')),
                 ],
               ),
             ),

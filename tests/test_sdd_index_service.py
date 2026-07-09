@@ -152,6 +152,29 @@ def test_spec_index_uses_prefix_only_and_does_not_capture_full_body(
     assert "read_policy: prefix_only_no_full_spec_body" in spec_index
 
 
+def test_spec_index_skips_archived_spec_directories(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    _write_index_project(project)
+    archived = project / "specs/_archive-002-old-factory"
+    archived.mkdir()
+    (archived / "spec.md").write_text("# Archived Factory Spec\n")
+    (archived / "plan.md").write_text("# Archived Plan\n")
+    (archived / "tasks.md").write_text("# Archived Tasks\n")
+    standard = _standard()
+
+    status = SddIndexService().ensure_indexes(
+        project,
+        standard=standard,
+        auto_regenerate=True,
+    )
+
+    spec_index = (project / ".sdd/spec-index.yaml").read_text()
+    assert status.state == "regenerated"
+    assert "001-demo" in spec_index
+    assert "_archive-002-old-factory" not in spec_index
+    assert "Archived Factory Spec" not in spec_index
+
+
 def test_validator_reports_missing_index_status_and_historical_metadata_warning(
     tmp_path: Path,
 ) -> None:
