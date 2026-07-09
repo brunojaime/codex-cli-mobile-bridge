@@ -225,6 +225,46 @@
           "status": "planned",
           "description": "T024 Add blocked status for paid-resource requirements without operator confirmation",
           "file": "tasks/plan-3-task-11/task.md"
+        },
+        {
+          "id": "plan-3-task-12",
+          "number": 12,
+          "title": "T086 Generate Cloudflare Preview API Worker routes for generated app contracts",
+          "status": "planned",
+          "description": "Generate Worker API handlers for health, config, auth/session, admin basics, catalog/domain CRUD, notifications, and app updates under /<app-slug>/api.",
+          "file": "tasks/plan-3-task-12/task.md"
+        },
+        {
+          "id": "plan-3-task-13",
+          "number": 13,
+          "title": "T087 Generate D1 schema and data access layer for preview auth, sessions, app updates, and domain records",
+          "status": "planned",
+          "description": "Create app-scoped D1 tables and query helpers so preview API data persists without using mock or local storage.",
+          "file": "tasks/plan-3-task-13/task.md"
+        },
+        {
+          "id": "plan-3-task-14",
+          "number": 14,
+          "title": "T088 Implement preview bootstrap and invite-to-admin flow for first usable login",
+          "status": "planned",
+          "description": "Seed or create only required preview admin/bootstrap state and expose a secure path for first login without demo role selectors.",
+          "file": "tasks/plan-3-task-14/task.md"
+        },
+        {
+          "id": "plan-3-task-15",
+          "number": 15,
+          "title": "T089 Add local Worker harness and smoke tests for Preview API v1 endpoints",
+          "status": "planned",
+          "description": "Test /<app-slug>/api/health, auth, catalog/domain CRUD, notifications, app updates, D1 persistence, and cross-app isolation locally.",
+          "file": "tasks/plan-3-task-15/task.md"
+        },
+        {
+          "id": "plan-3-task-16",
+          "number": 16,
+          "title": "T090 Verify deployed preview API routes before Android preview release can run",
+          "status": "planned",
+          "description": "Gate Android preview publication on deployed /<app-slug>/api health plus representative authenticated and persistence checks.",
+          "file": "tasks/plan-3-task-16/task.md"
         }
       ]
     },

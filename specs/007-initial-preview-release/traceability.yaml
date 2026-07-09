@@ -9,7 +9,7 @@ requirements:
     title: Cloudflare preview URL and API are required
     acceptance_criteria: [AC-002, AC-003, AC-008]
     plans: [cloudflare-preview-backend-readiness]
-    tasks: [T014, T015, T016, T017, T018, T019, T020, T021, T022, T023, T024]
+    tasks: [T014, T015, T016, T017, T018, T019, T020, T021, T022, T023, T024, T086, T087, T088, T089, T090]
   FR-003:
     title: Generated apps support preview runtime profile
     acceptance_criteria: [AC-004]

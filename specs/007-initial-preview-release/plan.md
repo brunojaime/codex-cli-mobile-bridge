@@ -18,7 +18,7 @@ This file is the legacy index for tools that expect a root `plan.md`. The canoni
 
 - File: [`plans/03-cloudflare-preview-backend-readiness/plan.md`](plans/03-cloudflare-preview-backend-readiness/plan.md)
 - Status: `planned`
-- Tasks: `11`
+- Tasks: `16`
 
 ## Plan 4: Generated App Runtime Profile
 

@@ -34,6 +34,11 @@ This file is the legacy task index. Task numbering is local to each plan in `tre
 - [ ] T022 Verify app/tenant scoping for D1 records. ([Task 9](./tasks/plan-3-task-9/task.md))
 - [ ] T023 Add cost posture report before paid resources can be used. ([Task 10](./tasks/plan-3-task-10/task.md))
 - [ ] T024 Add blocked status for paid-resource requirements without operator confirmation. ([Task 11](./tasks/plan-3-task-11/task.md))
+- [ ] T086 Generate Cloudflare Preview API Worker routes for generated app contracts. ([Task 12](./tasks/plan-3-task-12/task.md))
+- [ ] T087 Generate D1 schema and data access layer for preview auth, sessions, app updates, and domain records. ([Task 13](./tasks/plan-3-task-13/task.md))
+- [ ] T088 Implement preview bootstrap and invite-to-admin flow for first usable login. ([Task 14](./tasks/plan-3-task-14/task.md))
+- [ ] T089 Add local Worker harness and smoke tests for Preview API v1 endpoints. ([Task 15](./tasks/plan-3-task-15/task.md))
+- [ ] T090 Verify deployed preview API routes before Android preview release can run. ([Task 16](./tasks/plan-3-task-16/task.md))
 
 ## Plan 4: Generated App Runtime Profile
 

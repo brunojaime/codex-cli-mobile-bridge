@@ -182,6 +182,7 @@ APP_SLUG=<app-slug>
 Cloudflare provisioning must provide:
 
 - stable preview route: `https://preview.nienfos.com/<app-slug>`;
+- API route prefix: `https://preview.nienfos.com/<app-slug>/api`;
 - API route for generated app clients;
 - D1 database or tenant-scoped D1 schema;
 - migrations for generated domain entities;
@@ -190,6 +191,22 @@ Cloudflare provisioning must provide:
 - app update metadata endpoint;
 - health endpoint;
 - disable/expire controls.
+
+The Preview API is not satisfied by a static web-preview Worker. The Worker or
+bound Cloudflare runtime must implement the generated app's required API surface
+under `/<app-slug>/api`, including:
+
+- `GET /health`;
+- auth/session endpoints required by the generated Flutter app;
+- app config and app-update metadata endpoints;
+- generated catalog/domain CRUD endpoints;
+- generated admin read/write endpoints needed for first validation;
+- generated notification endpoints;
+- app-scoped D1 reads and writes with cross-app isolation.
+
+The Factory must not build or publish an Android preview APK until the deployed
+Preview API passes health, authentication, representative persistence, and
+app-scope isolation smoke tests.
 
 The Factory must report `blocked` if Cloudflare apply is disabled, credentials
 are missing, D1 migration fails, the Worker health check fails, or the stable URL
