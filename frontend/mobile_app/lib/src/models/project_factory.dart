@@ -139,6 +139,7 @@ class ProjectFactoryDraftRequest {
     this.platforms = const <String>['ios', 'android', 'web'],
     this.backend = 'fastapi',
     this.logoMode = 'generate',
+    this.firstReleaseMode = 'preview',
     this.visualReferencePaths = const <String>[],
   });
 
@@ -149,6 +150,7 @@ class ProjectFactoryDraftRequest {
   final List<String> platforms;
   final String backend;
   final String logoMode;
+  final String firstReleaseMode;
   final List<String> visualReferencePaths;
 
   Map<String, dynamic> toJson() {
@@ -160,6 +162,7 @@ class ProjectFactoryDraftRequest {
       'platforms': platforms,
       'backend': backend,
       'logoMode': logoMode,
+      'firstReleaseMode': firstReleaseMode,
       'visualReferencePaths': visualReferencePaths,
     };
   }
@@ -170,11 +173,15 @@ class ProjectFactoryDraft {
     required this.draftId,
     required this.createdAt,
     required this.manifestPlan,
+    this.firstReleaseMode = 'preview',
+    this.initialPreviewRelease = InitialPreviewRelease.empty,
   });
 
   final String draftId;
   final String createdAt;
   final Map<String, dynamic> manifestPlan;
+  final String firstReleaseMode;
+  final InitialPreviewRelease initialPreviewRelease;
 
   factory ProjectFactoryDraft.fromJson(Map<String, dynamic> json) {
     return ProjectFactoryDraft(
@@ -182,6 +189,13 @@ class ProjectFactoryDraft {
       createdAt: json['created_at'] as String,
       manifestPlan: (json['manifest_plan'] as Map<String, dynamic>?) ??
           <String, dynamic>{},
+      firstReleaseMode: json['firstReleaseMode'] as String? ??
+          json['first_release_mode'] as String? ??
+          'preview',
+      initialPreviewRelease: InitialPreviewRelease.fromJson(
+        _mapFromJson(
+            json['initialPreviewRelease'] ?? json['initial_preview_release']),
+      ),
     );
   }
 }
@@ -199,6 +213,8 @@ class ProjectFactoryDraftSummary {
     this.slug,
     this.targetPath,
     this.error,
+    this.firstReleaseMode = 'preview',
+    this.initialPreviewRelease = InitialPreviewRelease.empty,
   });
 
   final String id;
@@ -212,6 +228,8 @@ class ProjectFactoryDraftSummary {
   final String createdAt;
   final String? targetPath;
   final String? error;
+  final String firstReleaseMode;
+  final InitialPreviewRelease initialPreviewRelease;
 
   factory ProjectFactoryDraftSummary.fromJson(Map<String, dynamic> json) {
     return ProjectFactoryDraftSummary(
@@ -226,8 +244,144 @@ class ProjectFactoryDraftSummary {
       createdAt: json['created_at'] as String? ?? '',
       targetPath: json['target_path'] as String?,
       error: json['error'] as String?,
+      firstReleaseMode: json['firstReleaseMode'] as String? ??
+          json['first_release_mode'] as String? ??
+          'preview',
+      initialPreviewRelease: InitialPreviewRelease.fromJson(
+        _mapFromJson(
+            json['initialPreviewRelease'] ?? json['initial_preview_release']),
+      ),
     );
   }
+}
+
+class InitialPreviewReleasePhaseStatus {
+  const InitialPreviewReleasePhaseStatus({
+    required this.status,
+    required this.message,
+    required this.command,
+    this.exitCode,
+  });
+
+  final String status;
+  final String message;
+  final List<String> command;
+  final int? exitCode;
+
+  factory InitialPreviewReleasePhaseStatus.fromJson(
+    Map<String, dynamic> json,
+  ) {
+    return InitialPreviewReleasePhaseStatus(
+      status: json['status'] as String? ?? 'pending',
+      message: json['message'] as String? ?? '',
+      command: _stringList(json['command']),
+      exitCode: _intOrNull(json['exit_code'] ?? json['exitCode']),
+    );
+  }
+
+  String get commandText => command.join(' ');
+}
+
+class InitialPreviewRelease {
+  const InitialPreviewRelease({
+    required this.sourceApp,
+    required this.previewUrl,
+    required this.apiBaseUrl,
+    required this.runtimeProfile,
+    required this.apiRuntime,
+    required this.releaseChannel,
+    required this.releaseTagPattern,
+    required this.productionReady,
+    required this.mockOrDemo,
+    required this.status,
+    required this.currentPhase,
+    required this.phaseStatuses,
+    required this.manualCommandHints,
+    this.blockerText,
+  });
+
+  static const empty = InitialPreviewRelease(
+    sourceApp: '',
+    previewUrl: null,
+    apiBaseUrl: null,
+    runtimeProfile: 'preview',
+    apiRuntime: 'cloudflare_preview',
+    releaseChannel: 'preview',
+    releaseTagPattern: 'android-preview-v*',
+    productionReady: false,
+    mockOrDemo: false,
+    status: 'draft',
+    currentPhase: 'draft',
+    phaseStatuses: <String, InitialPreviewReleasePhaseStatus>{},
+    manualCommandHints: <String>[],
+  );
+
+  final String sourceApp;
+  final String? previewUrl;
+  final String? apiBaseUrl;
+  final String runtimeProfile;
+  final String apiRuntime;
+  final String releaseChannel;
+  final String releaseTagPattern;
+  final bool productionReady;
+  final bool mockOrDemo;
+  final String status;
+  final String currentPhase;
+  final Map<String, InitialPreviewReleasePhaseStatus> phaseStatuses;
+  final String? blockerText;
+  final List<String> manualCommandHints;
+
+  factory InitialPreviewRelease.fromJson(Map<String, dynamic> json) {
+    final rawPhases =
+        _mapFromJson(json['phaseStatuses'] ?? json['phase_statuses']);
+    return InitialPreviewRelease(
+      sourceApp:
+          json['sourceApp'] as String? ?? json['source_app'] as String? ?? '',
+      previewUrl:
+          json['previewUrl'] as String? ?? json['preview_url'] as String?,
+      apiBaseUrl:
+          json['apiBaseUrl'] as String? ?? json['api_base_url'] as String?,
+      runtimeProfile: json['runtimeProfile'] as String? ??
+          json['runtime_profile'] as String? ??
+          'preview',
+      apiRuntime: json['apiRuntime'] as String? ??
+          json['api_runtime'] as String? ??
+          'cloudflare_preview',
+      releaseChannel: json['releaseChannel'] as String? ??
+          json['release_channel'] as String? ??
+          'preview',
+      releaseTagPattern: json['releaseTagPattern'] as String? ??
+          json['release_tag_pattern'] as String? ??
+          'android-preview-v*',
+      productionReady: json['productionReady'] as bool? ??
+          json['production_ready'] as bool? ??
+          false,
+      mockOrDemo:
+          json['mockOrDemo'] as bool? ?? json['mock_or_demo'] as bool? ?? false,
+      status: json['status'] as String? ?? 'draft',
+      currentPhase: json['currentPhase'] as String? ??
+          json['current_phase'] as String? ??
+          'draft',
+      phaseStatuses: rawPhases.map(
+        (key, value) => MapEntry(
+          key,
+          InitialPreviewReleasePhaseStatus.fromJson(_mapFromJson(value)),
+        ),
+      ),
+      blockerText:
+          json['blockerText'] as String? ?? json['blocker_text'] as String?,
+      manualCommandHints: _stringList(
+        json['manualCommandHints'] ?? json['manual_command_hints'],
+      ),
+    );
+  }
+
+  bool get hasPreviewUrl => previewUrl != null && previewUrl!.trim().isNotEmpty;
+  bool get isReady => status == 'ready' || status == 'completed';
+  bool get isBlocked => status == 'blocked';
+  String get productionReadinessLabel =>
+      productionReady ? 'Production ready' : 'Production pending';
+  String get mockDemoLabel => mockOrDemo ? 'Mock/demo' : 'Real preview data';
 }
 
 class ProjectFactoryJob {
@@ -241,6 +395,8 @@ class ProjectFactoryJob {
     required this.message,
     required this.manifestPlan,
     required this.stepLogs,
+    this.firstReleaseMode = 'preview',
+    this.initialPreviewRelease = InitialPreviewRelease.empty,
     this.startedAt,
     this.completedAt,
     this.error,
@@ -257,6 +413,8 @@ class ProjectFactoryJob {
   final String message;
   final Map<String, dynamic> manifestPlan;
   final List<Map<String, dynamic>> stepLogs;
+  final String firstReleaseMode;
+  final InitialPreviewRelease initialPreviewRelease;
   final String? startedAt;
   final String? completedAt;
   final String? error;
@@ -300,6 +458,13 @@ class ProjectFactoryJob {
       stepLogs: ((json['step_logs'] as List<dynamic>?) ?? <dynamic>[])
           .whereType<Map<String, dynamic>>()
           .toList(growable: false),
+      firstReleaseMode: json['firstReleaseMode'] as String? ??
+          json['first_release_mode'] as String? ??
+          'preview',
+      initialPreviewRelease: InitialPreviewRelease.fromJson(
+        _mapFromJson(
+            json['initialPreviewRelease'] ?? json['initial_preview_release']),
+      ),
       startedAt: json['started_at'] as String?,
       completedAt: json['completed_at'] as String?,
       error: json['error'] as String?,
@@ -327,6 +492,8 @@ class ProjectFactoryJobSummary {
     this.error,
     this.message,
     this.manualNextStep,
+    this.firstReleaseMode = 'preview',
+    this.initialPreviewRelease = InitialPreviewRelease.empty,
   });
 
   final String id;
@@ -345,6 +512,8 @@ class ProjectFactoryJobSummary {
   final String? error;
   final String? message;
   final String? manualNextStep;
+  final String firstReleaseMode;
+  final InitialPreviewRelease initialPreviewRelease;
 
   bool get isReady => status == 'ready' || status == 'completed';
   bool get isTerminal =>
@@ -371,6 +540,13 @@ class ProjectFactoryJobSummary {
       error: json['error'] as String?,
       message: json['message'] as String?,
       manualNextStep: json['manual_next_step'] as String?,
+      firstReleaseMode: json['firstReleaseMode'] as String? ??
+          json['first_release_mode'] as String? ??
+          'preview',
+      initialPreviewRelease: InitialPreviewRelease.fromJson(
+        _mapFromJson(
+            json['initialPreviewRelease'] ?? json['initial_preview_release']),
+      ),
     );
   }
 }
@@ -538,4 +714,20 @@ List<Map<String, dynamic>> _mapList(Object? value) {
     return <Map<String, dynamic>>[];
   }
   return value.whereType<Map<String, dynamic>>().toList(growable: false);
+}
+
+Map<String, dynamic> _mapFromJson(Object? value) {
+  if (value is Map<String, dynamic>) {
+    return value;
+  }
+  if (value is Map) {
+    return value.map((key, item) => MapEntry(key.toString(), item));
+  }
+  return <String, dynamic>{};
+}
+
+int? _intOrNull(Object? value) {
+  if (value is int) return value;
+  if (value is String) return int.tryParse(value);
+  return null;
 }

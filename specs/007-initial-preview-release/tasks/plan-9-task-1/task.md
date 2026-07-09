@@ -6,4 +6,4 @@ Plan: `Validation And Regression Coverage`
 
 ## Checklist
 
-- [ ] T072 Add regression test that first release defaults to preview.
+- [x] T072 Add regression test that first release defaults to preview.

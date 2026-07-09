@@ -6,5 +6,5 @@ Plan: `Generated App Runtime Profile`
 
 ## Checklist
 
-- [ ] T025 Generate `APP_RUNTIME_PROFILE=preview` support for Flutter web and
+- [x] T025 Generate `APP_RUNTIME_PROFILE=preview` support for Flutter web and
       Android.

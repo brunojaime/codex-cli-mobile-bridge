@@ -44,7 +44,7 @@ def test_web_preview_plan_is_stable_and_persisted(tmp_path: Path) -> None:
     assert first["plan_hash"] == second["plan_hash"]
     assert first["preview_url"] == "https://preview.nienfos.com/clinica-norte"
     assert first["health_url"] == (
-        "https://preview.nienfos.com/clinica-norte/__preview/health"
+        "https://preview.nienfos.com/clinica-norte/api/health"
     )
     assert {
         "kind": "worker_secret",
@@ -262,7 +262,7 @@ def test_web_preview_deploy_api_plan_status_list_and_apply_gate(
     assert blocked_response.json()["detail"]["code"] == "apply_disabled"
     assert status_response.status_code == 200
     assert status_response.json()["preview_id"] == "wp-clinica-norte"
-    assert status_response.json()["health_url"].endswith("/__preview/health")
+    assert status_response.json()["health_url"].endswith("/api/health")
     assert list_response.status_code == 200
     assert list_response.json()["previews"][0]["preview_id"] == "wp-clinica-norte"
     assert missing_response.status_code == 404

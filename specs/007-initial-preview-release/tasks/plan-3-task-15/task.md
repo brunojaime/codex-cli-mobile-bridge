@@ -6,8 +6,8 @@ Plan: `Cloudflare Preview Backend Readiness`
 
 ## Checklist
 
-- [ ] Extend the local Worker harness to exercise `/<app-slug>/api/health`,
+- [x] Extend the local Worker harness to exercise `/<app-slug>/api/health`,
       auth/session, representative domain CRUD, notifications, and app-update
       endpoints against fake D1.
-- [ ] Assert persistence, app scoping, and no static-asset fallback for API
+- [x] Assert persistence, app scoping, and no static-asset fallback for API
       requests.

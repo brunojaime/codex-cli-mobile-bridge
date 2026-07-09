@@ -6,4 +6,4 @@ Plan: `Factory Runner Orchestration`
 
 ## Checklist
 
-- [ ] T058 Run Cloudflare preview apply after GitHub publication.
+- [x] T058 Run Cloudflare preview apply after GitHub publication.

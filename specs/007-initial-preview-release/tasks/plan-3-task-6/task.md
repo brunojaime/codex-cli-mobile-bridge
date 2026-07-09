@@ -6,4 +6,4 @@ Plan: `Cloudflare Preview Backend Readiness`
 
 ## Checklist
 
-- [ ] T019 Apply D1 migrations idempotently.
+- [x] T019 Apply D1 migrations idempotently.

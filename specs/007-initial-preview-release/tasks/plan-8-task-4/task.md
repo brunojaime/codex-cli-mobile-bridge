@@ -6,4 +6,4 @@ Plan: `Mobile And Workbench UX`
 
 ## Checklist
 
-- [ ] T068 Show release channel, tag, signing mode, and production readiness.
+- [x] T068 Show release channel, tag, signing mode, and production readiness.

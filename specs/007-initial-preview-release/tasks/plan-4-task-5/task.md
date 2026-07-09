@@ -6,4 +6,4 @@ Plan: `Generated App Runtime Profile`
 
 ## Checklist
 
-- [ ] T029 Route preview API clients through Preview API v1.
+- [x] T029 Route preview API clients through Preview API v1.

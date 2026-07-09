@@ -6,8 +6,8 @@ Plan: `Cloudflare Preview Backend Readiness`
 
 ## Checklist
 
-- [ ] Gate Android preview release on deployed Preview API checks for health,
+- [x] Gate Android preview release on deployed Preview API checks for health,
       authentication, representative persistence, app updates, and app-scope
       isolation.
-- [ ] Return `blocked` with concrete diagnostics when any deployed Preview API
+- [x] Return `blocked` with concrete diagnostics when any deployed Preview API
       route is missing or returns static preview content instead of API JSON.

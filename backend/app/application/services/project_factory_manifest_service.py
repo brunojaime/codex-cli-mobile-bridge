@@ -13,10 +13,13 @@ DEFAULT_BACKEND = "fastapi"
 DEFAULT_FRONTEND = "flutter"
 DEFAULT_CREATION_GENERATOR_RUNS = 20
 DEFAULT_CREATION_REVIEWER_RUNS = 20
+DEFAULT_FIRST_RELEASE_MODE = "preview"
 
 ALLOWED_PLATFORMS = frozenset({"ios", "android", "web"})
 ALLOWED_BACKENDS = frozenset({"fastapi", "go", "none"})
 ALLOWED_LOGO_MODES = frozenset({"upload", "generate", "placeholder"})
+ALLOWED_FIRST_RELEASE_MODES = frozenset({"preview", "mock"})
+BLOCKED_INITIAL_RELEASE_MODES = frozenset({"production", "promote", "promotion", "real"})
 SLUG_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]{0,78}[a-z0-9]$")
 
 
@@ -29,6 +32,7 @@ class ProjectFactoryManifestInput:
     platforms: tuple[str, ...] = DEFAULT_PLATFORMS
     backend: str = DEFAULT_BACKEND
     logo_mode: str = "generate"
+    first_release_mode: str = DEFAULT_FIRST_RELEASE_MODE
     visual_reference_paths: tuple[str, ...] = ()
     visual_reference_assets: tuple[Mapping[str, object], ...] = ()
     project_assets: tuple[Mapping[str, object], ...] = ()
@@ -59,6 +63,7 @@ class ProjectFactoryManifestPlan:
             "status": self.status,
             "target_path": self.target_path,
             "manifest_path": self.manifest_path,
+            "first_release_mode": _first_release_mode_from_manifest(self.manifest),
             "manifest": self.manifest,
             "errors": [
                 {
@@ -95,6 +100,10 @@ class ProjectFactoryManifestService:
         self._validate_platforms(request.platforms, errors)
         self._validate_backend(request.backend, errors)
         self._validate_logo_mode(request.logo_mode, errors)
+        first_release_mode = normalize_first_release_mode(
+            request.first_release_mode,
+            errors,
+        )
         self._validate_visual_reference_paths(request.visual_reference_paths, errors)
 
         target_path: Path | None = None
@@ -126,6 +135,7 @@ class ProjectFactoryManifestService:
                 platforms=request.platforms,
                 backend=request.backend,
                 logo_mode=request.logo_mode,
+                first_release_mode=first_release_mode,
                 visual_reference_paths=request.visual_reference_paths,
                 visual_reference_assets=request.visual_reference_assets,
                 project_assets=request.project_assets,
@@ -318,6 +328,7 @@ def _build_manifest(
     platforms: tuple[str, ...],
     backend: str,
     logo_mode: str,
+    first_release_mode: str,
     visual_reference_paths: tuple[str, ...],
     visual_reference_assets: tuple[Mapping[str, object], ...],
     project_assets: tuple[Mapping[str, object], ...],
@@ -342,9 +353,19 @@ def _build_manifest(
         },
         "runtime_profiles": {
             "required": True,
-            "default_profile": "real",
-            "allowed": ["mock", "real", "staging"],
+            "default_profile": "preview",
+            "first_release_mode": first_release_mode,
+            "allowed": ["mock", "preview", "real", "staging"],
             "env": "APP_RUNTIME_PROFILE",
+            "preview": {
+                "default_for_initial_release": True,
+                "backend_required": True,
+                "mock_or_demo": False,
+                "api_runtime": "cloudflare_preview",
+                "api_base_url": f"https://preview.nienfos.com/{slug}/api",
+                "data_persistence": "cloudflare_d1",
+                "release_tag_patterns": ["android-preview-v*"],
+            },
             "mock": {
                 "opt_in": True,
                 "backend_required": False,
@@ -464,6 +485,7 @@ def _build_manifest(
                 "mode": "generator_reviewer_batches",
                 "generator_runs": DEFAULT_CREATION_GENERATOR_RUNS,
                 "reviewer_runs": DEFAULT_CREATION_REVIEWER_RUNS,
+                "first_release_mode": first_release_mode,
             },
         },
         "sdd": {
@@ -472,10 +494,15 @@ def _build_manifest(
             "required_artifacts": ["spec.md", "plan.md", "tasks.md", "metadata.yaml"],
         },
         "release": {
-            "default_runtime_profile": "real",
-            "mock_or_demo_release_required": True,
-            "productive_release_required": True,
+            "first_release_mode": first_release_mode,
+            "default_runtime_profile": "preview",
+            "initial_preview_release_required": True,
+            "mock_or_demo_release_required": False,
+            "mock_or_demo_release_opt_in": True,
+            "productive_release_required": False,
             "ci_contracts": [
+                "android-preview-v tags must use APP_RUNTIME_PROFILE=preview",
+                "android-preview-v tags must use https://preview.nienfos.com/<slug>/api",
                 "android-v tags must not use APP_RUNTIME_PROFILE=mock",
                 "android-v tags must not use LOCAL_DATA_MODE=true",
                 "productive releases must not use localhost, placeholder, or example API URLs",
@@ -502,6 +529,49 @@ def _build_manifest(
 
 def _normalize_business_type(value: str) -> str:
     return _normalize_slug(value.strip()).replace("-", "_")
+
+
+def normalize_first_release_mode(
+    value: str | None,
+    errors: list[ProjectFactoryValidationError] | None = None,
+) -> str:
+    raw = (value or DEFAULT_FIRST_RELEASE_MODE).strip().lower()
+    aliases = {
+        "demo": "mock",
+        "local": "mock",
+        "mock-demo": "mock",
+        "mock_demo": "mock",
+    }
+    mode = aliases.get(raw, raw)
+    if mode in ALLOWED_FIRST_RELEASE_MODES:
+        return mode
+    message = (
+        "firstReleaseMode must be preview by default or mock when an explicit "
+        "demo/mock release is requested. Production/promotion is not part of "
+        "initial release creation."
+    )
+    if errors is not None:
+        code = (
+            "production_initial_release_not_supported"
+            if mode in BLOCKED_INITIAL_RELEASE_MODES
+            else "unsupported_first_release_mode"
+        )
+        errors.append(ProjectFactoryValidationError(code, "first_release_mode", message))
+    return DEFAULT_FIRST_RELEASE_MODE
+
+
+def _first_release_mode_from_manifest(manifest: Mapping[str, Any]) -> str:
+    runtime_profiles = manifest.get("runtime_profiles")
+    if isinstance(runtime_profiles, Mapping):
+        mode = runtime_profiles.get("first_release_mode")
+        if isinstance(mode, str) and mode.strip():
+            return mode
+    release = manifest.get("release")
+    if isinstance(release, Mapping):
+        mode = release.get("first_release_mode")
+        if isinstance(mode, str) and mode.strip():
+            return mode
+    return DEFAULT_FIRST_RELEASE_MODE
 
 
 def _normalize_slug(value: str) -> str:

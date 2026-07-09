@@ -6,4 +6,4 @@ Plan: `Operations Documentation`
 
 ## Checklist
 
-- [ ] T084 Document promotion from preview to production.
+- [x] T084 Document promotion from preview to production.

@@ -6,5 +6,5 @@ Plan: `Mobile And Workbench UX`
 
 ## Checklist
 
-- [ ] T069 Show production release as pending/not requested after preview
+- [x] T069 Show production release as pending/not requested after preview
       success.

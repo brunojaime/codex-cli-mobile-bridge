@@ -50,9 +50,13 @@ const String _projectFactoryGeneratorPrompt =
     'project details from the conversation, ask concise questions, use any '
     'attached images as visual references, produce a preview before generation, '
     'and only create files after explicit confirmation. When confirmed, use the '
-    'bridge Project Factory workflow and keep specs, plan, tasks, reference '
-    'assets, Flutter, FastAPI, auth, RBAC, admin, notifications, validation, '
-    'and workspace handoff consistent.';
+    'bridge Project Factory workflow. The default first release is an Initial '
+    'Preview Release: real Cloudflare Preview API, persistent D1 data, '
+    'https://preview.nienfos.com/<slug> and /api, android-preview-v* APK, '
+    'Codex Mobile Apps Bridge registration, production not ready, and no '
+    'mock/demo data unless the user explicitly asks for a mock/demo APK. Keep '
+    'specs, plan, tasks, reference assets, Flutter, FastAPI, auth, RBAC, admin, '
+    'notifications, validation, and workspace handoff consistent.';
 const String _projectFactoryReviewerPrompt =
     'You are reviewing the New Project Factory generator. Check that the '
     'project brief, defaults, visual references, roles, auth, admin, '
@@ -1808,6 +1812,7 @@ Defaults si el usuario no modifica nada:
 - notificaciones: incluido;
 - workflow al confirmar: $generatorRuns generator runs + $reviewerRuns reviewer runs.
 - business types sugeridos si necesita elegir: $businessTypes.
+- first release default: Initial Preview Release, no produccion.
 
 Si el usuario no sabe el nombre, rubro o titulo, proponelo a partir de lo que cuente. Para colores y look and feel no inventes como definitivo: preguntale o propone 2-3 direcciones y espera confirmacion. Antes de crear nada, devolve un preview corto del proyecto que vas a armar y pedi confirmacion explicita tipo "ok, dale para adelante".
 
@@ -1817,7 +1822,8 @@ Contrato semi-obligatorio antes del build:
 - Cada pregunta debe traer 2-4 respuestas sugeridas, marcar recomendada cuando aplique y permitir una opcion tipo "lo inferis vos".
 - Para cada respuesta, deja claro si es user, inferred, default, asset, prior_context o system y si la confianza es low, medium o high.
 - Los diagramas baseline a validar son: componentes, clases, DER/ERD y deployment. Agrega otros si el dominio lo pide.
-- El preview previo al build debe incluir: brief normalizado, slug, business type, objetivo, plataformas, backend, entidades del dominio, roles/permisos, assets/logo/icono, Workbench/SDD, web preview, Android/installable app, release/runtime profile, defaults asumidos, blockers externos, riesgos, validacion y que hara generator/reviewer.
+- El preview previo al build debe incluir: brief normalizado, slug, business type, objetivo, plataformas, backend, entidades del dominio, roles/permisos, assets/logo/icono, Workbench/SDD, defaults asumidos, blockers externos, riesgos, validacion y que hara generator/reviewer.
+- En release/runtime profile, describi el Initial Preview Release por defecto: URL `https://preview.nienfos.com/<slug>`, API real `https://preview.nienfos.com/<slug>/api`, runtime profile `preview`, API runtime `cloudflare_preview`, persistencia Cloudflare D1, APK `android-preview-v*`, Bridge registration en Codex Mobile Apps, checks de health/smoke/APK/Bridge, produccion pendiente/no solicitada y mock/demo solamente si el usuario lo pide explicitamente.
 - Persisti el contrato en la conversacion: cuando cambie algo, muestra una version resumida del contrato y los pendientes.
 - No incluyas la linea $kProjectFactoryReadyForBuildMarker hasta que el contrato este ready_for_review y el usuario haya validado explicitamente ese preview.
 - Si el usuario pide construir antes de readiness, responde solo con las preguntas o blockers minimos que faltan.
@@ -7481,6 +7487,9 @@ class _ProjectFactoryHistoryDialogState
           onOpen: _jobs[index].isReady && _jobs[index].projectPath != null
               ? () => _openProject(_jobs[index].projectPath!)
               : null,
+          onOpenPreview: _jobs[index].initialPreviewRelease.hasPreviewUrl
+              ? (url) => _openPreviewUrl(url)
+              : null,
         ),
       ),
     );
@@ -7514,6 +7523,19 @@ class _ProjectFactoryHistoryDialogState
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(const SnackBar(content: Text('Project workspace opened.')));
+  }
+
+  Future<void> _openPreviewUrl(String url) async {
+    final callback = widget.onOpenWebPreviewUrl;
+    if (callback != null) {
+      await callback(url);
+      return;
+    }
+    final uri = Uri.tryParse(url);
+    if (uri == null) {
+      return;
+    }
+    await launchUrl(uri, mode: LaunchMode.externalApplication);
   }
 
   Future<void> _openWebPreviews() async {
@@ -8063,11 +8085,13 @@ class _ProjectFactoryHistoryTile extends StatelessWidget {
     required this.job,
     required this.onWatch,
     required this.onOpen,
+    required this.onOpenPreview,
   });
 
   final ProjectFactoryJobSummary job;
   final VoidCallback onWatch;
   final VoidCallback? onOpen;
+  final Future<void> Function(String url)? onOpenPreview;
 
   @override
   Widget build(BuildContext context) {
@@ -8088,6 +8112,14 @@ class _ProjectFactoryHistoryTile extends StatelessWidget {
             ),
           if (job.manualNextStep != null && !job.isReady)
             Text(job.manualNextStep!),
+          const SizedBox(height: 8),
+          _InitialPreviewReleasePanel(
+            release: job.initialPreviewRelease,
+            compact: true,
+            onOpenPreview: onOpenPreview == null
+                ? null
+                : (url) => unawaited(onOpenPreview!(url)),
+          ),
         ],
       ),
       trailing: Wrap(
@@ -8095,6 +8127,13 @@ class _ProjectFactoryHistoryTile extends StatelessWidget {
         children: <Widget>[
           if (!job.isReady)
             TextButton(onPressed: onWatch, child: const Text('Details')),
+          if (job.initialPreviewRelease.hasPreviewUrl && onOpenPreview != null)
+            OutlinedButton(
+              onPressed: () => unawaited(
+                onOpenPreview!(job.initialPreviewRelease.previewUrl!),
+              ),
+              child: const Text('Open preview'),
+            ),
           if (job.isReady && onOpen != null)
             FilledButton(onPressed: onOpen, child: const Text('Open')),
         ],
@@ -8102,6 +8141,162 @@ class _ProjectFactoryHistoryTile extends StatelessWidget {
       onTap: job.isReady && onOpen != null ? onOpen : onWatch,
     );
   }
+}
+
+class _InitialPreviewReleasePanel extends StatelessWidget {
+  const _InitialPreviewReleasePanel({
+    required this.release,
+    this.compact = false,
+    this.showPhases = false,
+    this.onOpenPreview,
+  });
+
+  final InitialPreviewRelease release;
+  final bool compact;
+  final bool showPhases;
+  final void Function(String url)? onOpenPreview;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final previewUrl = release.previewUrl?.trim() ?? '';
+    final apiUrl = release.apiBaseUrl?.trim() ?? '';
+    final blocker = release.blockerText?.trim() ?? '';
+    if (previewUrl.isEmpty &&
+        release.sourceApp.isEmpty &&
+        release.status == 'draft' &&
+        blocker.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    final commands = release.manualCommandHints
+        .where((command) => command.trim().isNotEmpty)
+        .toList(growable: false);
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color:
+            theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.35),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Padding(
+        padding: EdgeInsets.all(compact ? 8 : 12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Wrap(
+              spacing: 8,
+              runSpacing: 6,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: <Widget>[
+                const Icon(Icons.rocket_launch_outlined, size: 18),
+                Text(
+                  'Initial Preview: ${release.status} / ${release.currentPhase}',
+                  style: theme.textTheme.labelLarge,
+                ),
+                _PreviewChip(label: 'profile ${release.runtimeProfile}'),
+                _PreviewChip(label: 'channel ${release.releaseChannel}'),
+                _PreviewChip(label: release.releaseTagPattern),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Text('Preview URL: ${previewUrl.isEmpty ? 'pending' : previewUrl}'),
+            if (!compact)
+              Text('API URL: ${apiUrl.isEmpty ? 'pending' : apiUrl}'),
+            if (!compact) ...<Widget>[
+              Text('D1 persistence: Cloudflare preview'),
+              Text('Android APK: android-preview-v*'),
+              Text('Bridge registration: required'),
+              Text('Signing mode: preview release workflow'),
+            ],
+            Text(release.productionReadinessLabel),
+            Text(release.mockDemoLabel),
+            const Text('Production release: pending / not requested'),
+            if (blocker.isNotEmpty) ...<Widget>[
+              const SizedBox(height: 6),
+              Text(
+                blocker,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.error,
+                ),
+              ),
+            ],
+            if (showPhases && release.phaseStatuses.isNotEmpty) ...<Widget>[
+              const SizedBox(height: 8),
+              ...release.phaseStatuses.entries.map(
+                (entry) => Text('${entry.key}: ${entry.value.status}'),
+              ),
+            ],
+            if (previewUrl.isNotEmpty || commands.isNotEmpty) ...<Widget>[
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                runSpacing: 6,
+                children: <Widget>[
+                  if (previewUrl.isNotEmpty)
+                    OutlinedButton.icon(
+                      onPressed: () =>
+                          unawaited(_copyPreviewText(context, previewUrl)),
+                      icon: const Icon(Icons.copy),
+                      label: const Text('Copy preview URL'),
+                    ),
+                  ...commands.take(compact ? 1 : 3).map((command) {
+                    return OutlinedButton.icon(
+                      onPressed: () =>
+                          unawaited(_copyPreviewText(context, command)),
+                      icon: const Icon(Icons.copy),
+                      label: Text(compact ? 'Copy command' : command),
+                    );
+                  }),
+                ],
+              ),
+            ],
+            if (!compact &&
+                previewUrl.isNotEmpty &&
+                onOpenPreview != null) ...<Widget>[
+              const SizedBox(height: 8),
+              FilledButton.icon(
+                onPressed: () => onOpenPreview!(previewUrl),
+                icon: const Icon(Icons.open_in_browser),
+                label: const Text('Open preview'),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _PreviewChip extends StatelessWidget {
+  const _PreviewChip({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Chip(
+      label: Text(label),
+      visualDensity: VisualDensity.compact,
+      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+    );
+  }
+}
+
+Future<void> _copyPreviewText(BuildContext context, String value) async {
+  await Clipboard.setData(ClipboardData(text: value));
+  if (!context.mounted) {
+    return;
+  }
+  ScaffoldMessenger.of(
+    context,
+  ).showSnackBar(const SnackBar(content: Text('Copied.')));
+}
+
+Future<void> _openPreviewUrl(BuildContext context, String url) async {
+  final uri = Uri.tryParse(url);
+  if (uri == null) {
+    return;
+  }
+  await launchUrl(uri, mode: LaunchMode.externalApplication);
 }
 
 IconData _iconForProjectFactoryStatus(String status) {
@@ -8185,20 +8380,38 @@ class ProjectFactoryProgressDialogState
     final ready = _job.isReady;
     return AlertDialog(
       title: const Text('New project'),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: <Widget>[
-          LinearProgressIndicator(value: (_job.progress.clamp(0, 100)) / 100),
-          const SizedBox(height: 16),
-          Text(_job.currentPhase),
-          const SizedBox(height: 8),
-          Text(_job.message),
-          if (failed && _job.error != null) ...<Widget>[
-            const SizedBox(height: 8),
-            Text(_job.error!),
-          ],
-        ],
+      content: SizedBox(
+        width: 620,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxHeight: 460),
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: <Widget>[
+                LinearProgressIndicator(
+                  value: (_job.progress.clamp(0, 100)) / 100,
+                ),
+                const SizedBox(height: 16),
+                Text(_job.currentPhase),
+                const SizedBox(height: 8),
+                Text(_job.message),
+                const SizedBox(height: 12),
+                _InitialPreviewReleasePanel(
+                  release: _job.initialPreviewRelease,
+                  showPhases: true,
+                  onOpenPreview: _job.initialPreviewRelease.hasPreviewUrl
+                      ? (url) => unawaited(_openPreviewUrl(context, url))
+                      : null,
+                ),
+                if (failed && _job.error != null) ...<Widget>[
+                  const SizedBox(height: 8),
+                  Text(_job.error!),
+                ],
+              ],
+            ),
+          ),
+        ),
       ),
       actions: <Widget>[
         if (failed)
@@ -8242,6 +8455,7 @@ class ProjectFactoryProgressDialogState
           message: 'Could not refresh project job.',
           manifestPlan: _job.manifestPlan,
           stepLogs: _job.stepLogs,
+          initialPreviewRelease: _job.initialPreviewRelease,
           error: error.toString(),
           generationResult: _job.generationResult,
         );

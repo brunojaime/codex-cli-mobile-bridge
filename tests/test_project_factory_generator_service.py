@@ -59,9 +59,14 @@ def test_generator_writes_foundation_and_rolls_no_secrets(tmp_path: Path) -> Non
     assert (project / "scripts/validate_generated_project.sh").is_file()
     assert (project / "scripts/validate_publication_ready.sh").is_file()
     assert (project / "scripts/validate_release_profiles.sh").is_file()
+    assert (project / "scripts/validate_preview_release_profiles.sh").is_file()
     assert (project / "scripts/finalize_local_commit.sh").is_file()
     assert (project / "scripts/publish_project.sh").is_file()
+    assert (project / "scripts/apply_cloudflare_preview.sh").is_file()
+    assert (project / "scripts/smoke_preview_api.sh").is_file()
+    assert (project / "scripts/publish_android_preview_release.sh").is_file()
     assert (project / "scripts/publish_android_release.sh").is_file()
+    assert (project / "scripts/validate_initial_preview_release.sh").is_file()
     assert (project / "scripts/register_installable_app.sh").is_file()
     assert (project / "scripts/build_web_preview.sh").is_file()
     assert (project / "scripts/validate_web_preview.sh").is_file()
@@ -70,9 +75,11 @@ def test_generator_writes_foundation_and_rolls_no_secrets(tmp_path: Path) -> Non
     assert (project / "deploy/web-preview/wrangler.toml.example").is_file()
     assert (project / "deploy/web-preview/worker/src/index.js").is_file()
     assert (project / ".github/workflows/android-release.yml").is_file()
+    assert (project / ".github/workflows/android-preview-release.yml").is_file()
     assert (project / "codex-bridge.yaml").is_file()
     assert (project / "docs/workbench.md").is_file()
     assert (project / "release/runtime-profiles.md").is_file()
+    assert (project / "release/preview-runtime.json").is_file()
     assert (project / "release/release-contracts.yaml").is_file()
     assert (project / "apps/mobile/.gitkeep").is_file()
     assert (project / "backend/.gitkeep").is_file()
@@ -265,9 +272,22 @@ def test_generator_writes_executable_publish_script(tmp_path: Path) -> None:
     validation_content = validation_script.read_text(encoding="utf-8")
     assert "origin remote is not configured" in validation_content
     assert "local HEAD is not pushed" in validation_content
-    assert "missing apps/mobile/android" in validation_content
-    assert "GitHub release $expected_tag has no APK asset" in validation_content
-    assert "validate_release_profiles.sh" in validation_content
+    assert "validate_initial_preview_release.sh" in validation_content
+    assert "initial preview release ready" in (
+        tmp_path / "clinica-norte/scripts/validate_initial_preview_release.sh"
+    ).read_text(encoding="utf-8")
+
+    android_preview_script = tmp_path / "clinica-norte/scripts/publish_android_preview_release.sh"
+    assert android_preview_script.is_file()
+    assert android_preview_script.stat().st_mode & stat.S_IXUSR
+    android_preview_content = android_preview_script.read_text(encoding="utf-8")
+    assert "apps/mobile/android is required" in android_preview_content
+    assert "android-preview-v${version//+/-build.}" in android_preview_content
+    assert "scripts/smoke_preview_api.sh" in android_preview_content
+    assert "APP_RUNTIME_PROFILE=preview" in android_preview_content
+    assert "DEBUG_PREVIEW_SIGNING" in android_preview_content
+    assert "https://preview.nienfos.com/$SOURCE_APP/api" in android_preview_content
+    assert "git push origin \"$tag\"" in android_preview_content
 
     android_release_script = tmp_path / "clinica-norte/scripts/publish_android_release.sh"
     assert android_release_script.is_file()
@@ -287,10 +307,31 @@ def test_generator_writes_executable_publish_script(tmp_path: Path) -> None:
     assert release_profile_script.stat().st_mode & stat.S_IXUSR
     release_profile_content = release_profile_script.read_text(encoding="utf-8")
     assert "APP_RUNTIME_PROFILE" in release_profile_content
+    assert "android-preview-v*" in release_profile_content
+    assert "APP_RUNTIME_PROFILE=preview" in release_profile_content
     assert "android-mock-" in release_profile_content
     assert "productive android-v* tags cannot use" in release_profile_content
     assert "API_BASE_URL" in release_profile_content
     assert "codex-bridge.yaml" in release_profile_content
+    preview_profile_script = (
+        tmp_path / "clinica-norte/scripts/validate_preview_release_profiles.sh"
+    )
+    assert preview_profile_script.is_file()
+    assert preview_profile_script.stat().st_mode & stat.S_IXUSR
+    preview_profile_content = preview_profile_script.read_text(encoding="utf-8")
+    assert "release/preview-runtime.json" in preview_profile_content
+    assert "release/preview-signing-policy.json" in preview_profile_content
+    assert "DEBUG_PREVIEW_SIGNING_ACKNOWLEDGED" in preview_profile_content
+    assert "deploy/web-preview/web-preview-manifest.yaml" in preview_profile_content
+    assert "scripts/validate_release_profiles.sh" in preview_profile_content
+
+    d1_apply_script = tmp_path / "clinica-norte/scripts/apply_preview_d1_migrations.sh"
+    assert d1_apply_script.is_file()
+    assert d1_apply_script.stat().st_mode & stat.S_IXUSR
+    assert "wrangler d1 execute" in d1_apply_script.read_text(encoding="utf-8")
+    assert "scripts/apply_preview_d1_migrations.sh" in (
+        tmp_path / "clinica-norte/scripts/apply_cloudflare_preview.sh"
+    ).read_text(encoding="utf-8")
 
 
 def test_generated_release_profile_script_enforces_real_and_mock_contracts(
@@ -342,6 +383,23 @@ def test_generated_release_profile_script_enforces_real_and_mock_contracts(
     assert mock.returncode == 0, mock.stdout + mock.stderr
     assert "profile=mock" in mock.stdout
 
+    preview = subprocess.run(
+        [str(script)],
+        cwd=project,
+        env={
+            **os.environ,
+            "APP_RELEASE_TAG": "android-preview-v0.1.0-build.1",
+            "APP_RUNTIME_PROFILE": "preview",
+            "API_RUNTIME": "cloudflare_preview",
+            "API_BASE_URL": "https://preview.nienfos.com/clinica-norte/api",
+        },
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert preview.returncode == 0, preview.stdout + preview.stderr
+    assert "profile=preview" in preview.stdout
+
     bad_productive = subprocess.run(
         [str(script)],
         cwd=project,
@@ -359,6 +417,352 @@ def test_generated_release_profile_script_enforces_real_and_mock_contracts(
     assert "productive android-v* tags cannot use APP_RUNTIME_PROFILE=mock" in (
         bad_productive.stdout + bad_productive.stderr
     )
+
+
+def test_generated_release_profile_script_rejects_bad_preview_contracts(
+    tmp_path: Path,
+) -> None:
+    manifest_plan = ProjectFactoryManifestService(
+        projects_root=tmp_path,
+    ).plan_manifest(
+        ProjectFactoryManifestInput(
+            name="Clinica Norte",
+            business_type="medical",
+            primary_goal="Reservar turnos",
+        )
+    )
+    ProjectFactoryGeneratorService().generate(manifest_plan)
+
+    project = tmp_path / "clinica-norte"
+    script = project / "scripts/validate_release_profiles.sh"
+    cases = [
+        (
+            {
+                "APP_RELEASE_TAG": "android-preview-v0.1.0-build.1",
+                "APP_RUNTIME_PROFILE": "mock",
+                "API_RUNTIME": "cloudflare_preview",
+                "API_BASE_URL": "https://preview.nienfos.com/clinica-norte/api",
+            },
+            "android-preview-v* tags require APP_RUNTIME_PROFILE=preview",
+        ),
+        (
+            {
+                "APP_RELEASE_TAG": "android-preview-v0.1.0-build.1",
+                "APP_RUNTIME_PROFILE": "preview",
+                "API_RUNTIME": "cloudflare_preview",
+                "API_BASE_URL": "http://127.0.0.1:8000",
+            },
+            "preview releases require API_BASE_URL=https://preview.nienfos.com/<slug>/api",
+        ),
+        (
+            {
+                "APP_RELEASE_TAG": "android-preview-v0.1.0-build.1",
+                "APP_RUNTIME_PROFILE": "preview",
+                "API_RUNTIME": "cloudflare_preview",
+                "API_BASE_URL": "https://placeholder.invalid/api",
+            },
+            "preview releases require API_BASE_URL=https://preview.nienfos.com/<slug>/api",
+        ),
+        (
+            {
+                "APP_RELEASE_TAG": "android-preview-v0.1.0-build.1",
+                "APP_RUNTIME_PROFILE": "preview",
+                "API_RUNTIME": "cloudflare_preview",
+                "API_BASE_URL": "https://preview.nienfos.com/clinica-norte/api",
+                "LOCAL_DATA_MODE": "true",
+            },
+            "preview releases cannot use LOCAL_DATA_MODE=true",
+        ),
+    ]
+    for env_overrides, expected in cases:
+        completed = subprocess.run(
+            [str(script)],
+            cwd=project,
+            env={**os.environ, **env_overrides},
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        assert completed.returncode != 0
+        assert expected in completed.stdout + completed.stderr
+
+
+def test_generated_android_preview_release_blocks_wrong_api_before_git_or_network(
+    tmp_path: Path,
+) -> None:
+    manifest_plan = ProjectFactoryManifestService(
+        projects_root=tmp_path,
+    ).plan_manifest(
+        ProjectFactoryManifestInput(
+            name="Clinica Norte",
+            business_type="medical",
+            primary_goal="Reservar turnos",
+        )
+    )
+    ProjectFactoryGeneratorService().generate(manifest_plan)
+
+    project = tmp_path / "clinica-norte"
+    (project / "apps/mobile/android").mkdir(parents=True)
+    completed = subprocess.run(
+        ["scripts/publish_android_preview_release.sh", "--push", "--watch"],
+        cwd=project,
+        env={
+            **os.environ,
+            "APP_RUNTIME_PROFILE": "preview",
+            "API_RUNTIME": "cloudflare_preview",
+            "API_BASE_URL": "https://example.com/clinica-norte/api",
+        },
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 2
+    output = completed.stdout + completed.stderr
+    assert (
+        "initial preview API must be https://preview.nienfos.com/clinica-norte/api"
+        in output
+    )
+    assert "not inside a git repository" not in output
+    assert not _git(["tag"], project).stdout.strip()
+
+
+def test_generated_initial_preview_validation_rejects_bad_bridge_registration(
+    tmp_path: Path,
+) -> None:
+    manifest_plan = ProjectFactoryManifestService(
+        projects_root=tmp_path,
+    ).plan_manifest(
+        ProjectFactoryManifestInput(
+            name="Clinica Norte",
+            business_type="medical",
+            primary_goal="Reservar turnos",
+        )
+    )
+    ProjectFactoryGeneratorService().generate(manifest_plan)
+
+    project = tmp_path / "clinica-norte"
+    _git(["remote", "add", "origin", "https://github.com/acme/clinica-norte.git"], project)
+    (project / "scripts/smoke_preview_api.sh").write_text(
+        "#!/usr/bin/env bash\nexit 0\n",
+        encoding="utf-8",
+    )
+    (project / "scripts/smoke_preview_api.sh").chmod(0o755)
+
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_gh = fake_bin / "gh"
+    fake_gh.write_text(
+        "#!/usr/bin/env bash\n"
+        "if [[ \"$1 $2\" == \"release view\" ]]; then\n"
+        "  printf 'clinica-norte.apk\\n'\n"
+        "  exit 0\n"
+        "fi\n"
+        "exit 2\n",
+        encoding="utf-8",
+    )
+    fake_gh.chmod(0o755)
+    fake_curl = fake_bin / "curl"
+    cases = [
+        (
+            {
+                "releaseChannel": "stable",
+                "releaseTagPattern": "android-preview-v*",
+                "previewUrl": "https://preview.nienfos.com/clinica-norte",
+                "runtimeProfile": "preview",
+                "productionReady": False,
+                "mockOrDemo": False,
+            },
+            "Bridge registration is not preview channel",
+        ),
+        (
+            {
+                "releaseChannel": "preview",
+                "releaseTagPattern": "android-v*",
+                "previewUrl": "https://preview.nienfos.com/clinica-norte",
+                "runtimeProfile": "preview",
+                "productionReady": False,
+                "mockOrDemo": False,
+            },
+            "Bridge registration does not use android-preview-v*",
+        ),
+        (
+            {
+                "releaseChannel": "preview",
+                "releaseTagPattern": "android-preview-v*",
+                "previewUrl": "https://preview.nienfos.com/clinica-norte",
+                "runtimeProfile": "preview",
+                "productionReady": True,
+                "mockOrDemo": False,
+            },
+            "Bridge registration productionReady must be false",
+        ),
+        (
+            {
+                "releaseChannel": "preview",
+                "releaseTagPattern": "android-preview-v*",
+                "previewUrl": "https://preview.nienfos.com/clinica-norte",
+                "runtimeProfile": "preview",
+                "productionReady": False,
+                "mockOrDemo": True,
+            },
+            "Bridge registration mockOrDemo must be false",
+        ),
+    ]
+    for payload, expected in cases:
+        detail = {
+            "sourceApp": "clinica-norte",
+            "apkUrl": "https://bridge/apk",
+            **payload,
+        }
+        fake_curl.write_text(
+            "#!/usr/bin/env bash\n"
+            "cat <<'JSON'\n"
+            f"{json.dumps(detail)}\n"
+            "JSON\n",
+            encoding="utf-8",
+        )
+        fake_curl.chmod(0o755)
+
+        completed = subprocess.run(
+            ["scripts/validate_initial_preview_release.sh"],
+            cwd=project,
+            env={
+                **os.environ,
+                "PATH": f"{fake_bin}:{os.environ['PATH']}",
+                "BRIDGE_URL": "https://bridge.test",
+            },
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+        assert completed.returncode != 0
+        assert expected in completed.stdout + completed.stderr
+
+
+def test_generated_initial_preview_validation_checks_expected_apk_sha256(
+    tmp_path: Path,
+) -> None:
+    manifest_plan = ProjectFactoryManifestService(
+        projects_root=tmp_path,
+    ).plan_manifest(
+        ProjectFactoryManifestInput(
+            name="Clinica Norte",
+            business_type="medical",
+            primary_goal="Reservar turnos",
+        )
+    )
+    ProjectFactoryGeneratorService().generate(manifest_plan)
+
+    project = tmp_path / "clinica-norte"
+    _git(["remote", "add", "origin", "https://github.com/acme/clinica-norte.git"], project)
+    (project / "scripts/smoke_preview_api.sh").write_text(
+        "#!/usr/bin/env bash\nexit 0\n",
+        encoding="utf-8",
+    )
+    (project / "scripts/smoke_preview_api.sh").chmod(0o755)
+
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_gh = fake_bin / "gh"
+    fake_gh.write_text(
+        "#!/usr/bin/env bash\n"
+        "if [[ \"$1 $2\" == \"release view\" ]]; then\n"
+        "  printf 'clinica-norte.apk\\n'\n"
+        "  exit 0\n"
+        "fi\n"
+        "exit 2\n",
+        encoding="utf-8",
+    )
+    fake_gh.chmod(0o755)
+    fake_curl = fake_bin / "curl"
+    fake_curl.write_text(
+        "#!/usr/bin/env bash\n"
+        "args=\"$*\"\n"
+        "if [[ \"$args\" == *'https://bridge.test/apk'* ]]; then\n"
+        "  out=/tmp/project-factory-preview.apk\n"
+        "  while [[ $# -gt 0 ]]; do\n"
+        "    if [[ \"$1\" == '-o' ]]; then out=\"$2\"; shift 2; else shift; fi\n"
+        "  done\n"
+        "  printf 'real-apk-bytes' > \"$out\"\n"
+        "  exit 0\n"
+        "fi\n"
+        "cat <<'JSON'\n"
+        '{"sourceApp":"clinica-norte","releaseChannel":"preview",'
+        '"releaseTagPattern":"android-preview-v*",'
+        '"previewUrl":"https://preview.nienfos.com/clinica-norte",'
+        '"runtimeProfile":"preview","productionReady":false,'
+        '"mockOrDemo":false,"apkUrl":"https://bridge.test/apk"}\n'
+        "JSON\n",
+        encoding="utf-8",
+    )
+    fake_curl.chmod(0o755)
+
+    completed = subprocess.run(
+        ["scripts/validate_initial_preview_release.sh"],
+        cwd=project,
+        env={
+            **os.environ,
+            "PATH": f"{fake_bin}:{os.environ['PATH']}",
+            "BRIDGE_URL": "https://bridge.test",
+            "EXPECTED_SHA256": "0" * 64,
+        },
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode != 0
+    assert "Preview APK checksum does not match EXPECTED_SHA256" in (
+        completed.stdout + completed.stderr
+    )
+    assert "verifying preview APK bytes with EXPECTED_SHA256 via download" in (
+        completed.stdout + completed.stderr
+    )
+
+
+def test_generated_preview_release_shell_and_workflow_syntax(tmp_path: Path) -> None:
+    manifest_plan = ProjectFactoryManifestService(
+        projects_root=tmp_path,
+    ).plan_manifest(
+        ProjectFactoryManifestInput(
+            name="Clinica Norte",
+            business_type="medical",
+            primary_goal="Reservar turnos",
+        )
+    )
+    ProjectFactoryGeneratorService().generate(manifest_plan)
+
+    project = tmp_path / "clinica-norte"
+    scripts = [
+        "scripts/apply_cloudflare_preview.sh",
+        "scripts/smoke_preview_api.sh",
+        "scripts/publish_android_preview_release.sh",
+        "scripts/register_installable_app.sh",
+        "scripts/validate_initial_preview_release.sh",
+        "scripts/validate_publication_ready.sh",
+        "scripts/validate_release_profiles.sh",
+        "scripts/validate_preview_release_profiles.sh",
+    ]
+    for script in scripts:
+        completed = subprocess.run(
+            ["bash", "-n", script],
+            cwd=project,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        assert completed.returncode == 0, completed.stdout + completed.stderr
+
+    yaml = pytest.importorskip("yaml")
+    for workflow in [
+        ".github/workflows/android-preview-release.yml",
+        ".github/workflows/android-release.yml",
+    ]:
+        payload = yaml.safe_load((project / workflow).read_text(encoding="utf-8"))
+        assert isinstance(payload, dict)
+        assert "jobs" in payload
 
 
 def test_generated_android_release_workflow_defaults_to_real_runtime(
@@ -379,6 +783,9 @@ def test_generated_android_release_workflow_defaults_to_real_runtime(
     workflow = (
         tmp_path / "clinica-norte/.github/workflows/android-release.yml"
     ).read_text(encoding="utf-8")
+    preview_workflow = (
+        tmp_path / "clinica-norte/.github/workflows/android-preview-release.yml"
+    ).read_text(encoding="utf-8")
     assert 'default: "real"' in workflow
     assert "APP_RUNTIME_PROFILE:" in workflow
     assert "github.event.inputs.runtime_profile" in workflow
@@ -387,6 +794,11 @@ def test_generated_android_release_workflow_defaults_to_real_runtime(
     assert 'LOCAL_DATA_MODE: "false"' in workflow
     assert 'args+=(--dart-define=APP_RUNTIME_PROFILE="$APP_RUNTIME_PROFILE")' in workflow
     assert 'args+=(--dart-define=API_BASE_URL="$API_BASE_URL")' in workflow
+    assert '"android-preview-v*"' in preview_workflow
+    assert "APP_RUNTIME_PROFILE: preview" in preview_workflow
+    assert "API_RUNTIME: cloudflare_preview" in preview_workflow
+    assert '--dart-define=API_BASE_URL="$API_BASE_URL"' in preview_workflow
+    assert "prerelease: true" in preview_workflow
 
 
 def test_generated_contract_docs_have_coherent_minimum_content(
@@ -408,26 +820,352 @@ def test_generated_contract_docs_have_coherent_minimum_content(
     contracts = (project / "release/release-contracts.yaml").read_text(
         encoding="utf-8"
     )
+    preview_runtime = json.loads(
+        (project / "release/preview-runtime.json").read_text(encoding="utf-8")
+    )
+    promotion = json.loads(
+        (project / "release/promotion-contract.json").read_text(encoding="utf-8")
+    )
+    cost_posture = json.loads(
+        (project / "release/cloudflare-cost-posture.json").read_text(encoding="utf-8")
+    )
+    signing_policy = json.loads(
+        (project / "release/preview-signing-policy.json").read_text(
+            encoding="utf-8"
+        )
+    )
     runtime_doc = (project / "release/runtime-profiles.md").read_text(
+        encoding="utf-8"
+    )
+    promotion_doc = (project / "release/promotion-runbook.md").read_text(
+        encoding="utf-8"
+    )
+    signing_doc = (project / "release/android-preview-signing.md").read_text(
+        encoding="utf-8"
+    )
+    operations_doc = (project / "release/preview-operations-runbook.md").read_text(
+        encoding="utf-8"
+    )
+    false_ready_doc = (project / "release/false-readiness-runbook.md").read_text(
         encoding="utf-8"
     )
     bridge = (project / "codex-bridge.yaml").read_text(encoding="utf-8")
     workbench = (project / "docs/workbench.md").read_text(encoding="utf-8")
 
     assert "runtime_profiles:" in contracts
+    assert "initial_preview_release:" in contracts
     assert "productive_release:" in contracts
     assert "mock_release:" in contracts
+    assert "opt_in: true" in contracts
+    assert "required: false" in contracts
     assert "codex_mobile_catalog:" in contracts
     assert "scripts/register_installable_app.sh" in contracts
     assert "web_preview:" in contracts
     assert "scripts/validate_web_preview.sh" in contracts
+    assert "preview_to_production_promotion:" in contracts
+    assert "release/promotion-contract.json" in contracts
+    assert "cloudflare_cost_posture:" in contracts
+    assert "scripts/validate_cloudflare_cost_posture.sh" in contracts
+    assert "https://preview.nienfos.com/clinica-norte/api" in contracts
+    assert preview_runtime["sourceApp"] == "clinica-norte"
+    assert preview_runtime["previewUrl"] == "https://preview.nienfos.com/clinica-norte"
+    assert preview_runtime["apiBaseUrl"] == (
+        "https://preview.nienfos.com/clinica-norte/api"
+    )
+    assert preview_runtime["runtimeProfile"] == "preview"
+    assert preview_runtime["apiRuntime"] == "cloudflare_preview"
+    assert preview_runtime["releaseChannel"] == "preview"
+    assert preview_runtime["releaseTagPattern"] == "android-preview-v*"
+    assert preview_runtime["productionReady"] is False
+    assert preview_runtime["mockOrDemo"] is False
+    assert promotion["initialPreview"]["productionReady"] is False
+    assert promotion["initialPreview"]["tagPattern"] == "android-preview-v*"
+    assert promotion["productionPromotion"]["tagPattern"] == "android-v*"
+    assert promotion["productionPromotion"]["runtimeProfile"] == "real"
+    assert promotion["mockDemo"]["tagPatterns"] == [
+        "android-mock-v*",
+        "android-local-v*",
+    ]
+    assert cost_posture["policy"] == "free_compatible"
+    assert cost_posture["paidResourcesAllowed"] is False
+    assert all(item["paid"] is False for item in cost_posture["resources"])
+    assert signing_policy["defaultSigningMode"] == "preview"
+    assert signing_policy["debugPreview"]["enabled"] is False
+    assert signing_policy["productionReady"] is False
+    assert signing_policy["mockOrDemo"] is False
     assert "APP_RUNTIME_PROFILE=real" in runtime_doc
     assert "APP_RUNTIME_PROFILE=preview" in runtime_doc
+    assert "android-preview-vX.Y.Z-build.N" in runtime_doc
     assert "android-mock-vX.Y.Z-build.N" in runtime_doc
+    assert "Mock/demo releases are never part of the default initial release" in (
+        runtime_doc
+    )
+    assert "android-v<version>" in promotion_doc
+    assert "Never reuse preview or mock APKs for production" in promotion_doc
+    assert "productionReady=false" in signing_doc
+    assert "release/preview-signing-policy.json" in signing_doc
+    assert "DEBUG_PREVIEW_SIGNING_ACKNOWLEDGED=true" in signing_doc
+    assert "scripts/validate_cloudflare_cost_posture.sh" in operations_doc
+    assert "False Readiness Examples" in false_ready_doc
     assert "sourceApp: clinica-norte" in bridge
     assert "workbench-sdd/v1" in bridge
     assert "APP_RUNTIME_PROFILE=real" in workbench
     assert "hidden or disabled" in " ".join(workbench.split())
+
+
+def test_generated_cloudflare_cost_posture_script_blocks_paid_resources(
+    tmp_path: Path,
+) -> None:
+    manifest_plan = ProjectFactoryManifestService(
+        projects_root=tmp_path,
+    ).plan_manifest(
+        ProjectFactoryManifestInput(
+            name="Clinica Norte",
+            business_type="medical",
+            primary_goal="Reservar turnos",
+        )
+    )
+    ProjectFactoryGeneratorService().generate(manifest_plan)
+
+    project = tmp_path / "clinica-norte"
+    script = project / "scripts/validate_cloudflare_cost_posture.sh"
+    assert script.is_file()
+    assert script.stat().st_mode & stat.S_IXUSR
+    assert "scripts/validate_cloudflare_cost_posture.sh" in (
+        project / "scripts/apply_cloudflare_preview.sh"
+    ).read_text(encoding="utf-8")
+
+    completed = subprocess.run(
+        ["scripts/validate_cloudflare_cost_posture.sh"],
+        cwd=project,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert "cloudflare cost posture ok" in completed.stdout
+
+    report_path = project / "release/cloudflare-cost-posture.json"
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    report["paidResourcesAllowed"] = True
+    report["resources"].append({"type": "r2", "name": "paid-assets", "paid": True})
+    report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+
+    blocked = subprocess.run(
+        ["scripts/validate_cloudflare_cost_posture.sh"],
+        cwd=project,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert blocked.returncode != 0
+    assert "CLOUDFLARE_PAID_RESOURCES_CONFIRMED=true" in blocked.stderr
+
+    confirmed = subprocess.run(
+        ["scripts/validate_cloudflare_cost_posture.sh"],
+        cwd=project,
+        env={
+            **os.environ,
+            "CLOUDFLARE_PAID_RESOURCES_CONFIRMED": "true",
+            "CLOUDFLARE_PAID_RESOURCES_REASON": "operator accepted R2 preview cost",
+        },
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert confirmed.returncode == 0, confirmed.stdout + confirmed.stderr
+
+
+def test_generated_domain_d1_migration_is_app_scoped_and_idempotent(
+    tmp_path: Path,
+) -> None:
+    manifest_plan = ProjectFactoryManifestService(
+        projects_root=tmp_path,
+    ).plan_manifest(
+        ProjectFactoryManifestInput(
+            name="Clinica Norte",
+            business_type="medical",
+            primary_goal="Reservar turnos",
+        )
+    )
+    ProjectFactoryGeneratorService().generate(manifest_plan)
+
+    project = tmp_path / "clinica-norte"
+    sql = (
+        project / "deploy/web-preview/d1/migrations/0002_domain_entities.sql"
+    ).read_text(encoding="utf-8")
+
+    assert "CREATE TABLE IF NOT EXISTS preview_domain_entities" in sql
+    assert "CREATE TABLE IF NOT EXISTS preview_domain_entity_events" in sql
+    assert "source_app TEXT NOT NULL" in sql
+    assert "app_slug TEXT NOT NULL" in sql
+    assert "CREATE INDEX IF NOT EXISTS idx_preview_domain_entities_app_entity" in sql
+    assert "CREATE INDEX IF NOT EXISTS idx_preview_domain_entity_events_app_entity" in sql
+
+
+def test_generated_apply_preview_d1_migrations_blocks_and_reapplies_safely(
+    tmp_path: Path,
+) -> None:
+    manifest_plan = ProjectFactoryManifestService(
+        projects_root=tmp_path,
+    ).plan_manifest(
+        ProjectFactoryManifestInput(
+            name="Clinica Norte",
+            business_type="medical",
+            primary_goal="Reservar turnos",
+        )
+    )
+    ProjectFactoryGeneratorService().generate(manifest_plan)
+
+    project = tmp_path / "clinica-norte"
+    blocked = subprocess.run(
+        ["scripts/apply_preview_d1_migrations.sh"],
+        cwd=project,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert blocked.returncode == 2
+    assert "PREVIEW_D1_DATABASE" in blocked.stderr
+
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    calls = tmp_path / "wrangler-calls.log"
+    fake_wrangler = fake_bin / "wrangler"
+    fake_wrangler.write_text(
+        "#!/usr/bin/env bash\n"
+        "printf '%s\\n' \"$*\" >> \"$WRANGLER_CALLS\"\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    fake_wrangler.chmod(0o755)
+
+    env = {
+        **os.environ,
+        "PATH": f"{fake_bin}:{os.environ['PATH']}",
+        "WRANGLER_CALLS": str(calls),
+        "PREVIEW_D1_DATABASE": "preview-db",
+        "WRANGLER_AUTH_READY": "true",
+    }
+    first = subprocess.run(
+        ["scripts/apply_preview_d1_migrations.sh"],
+        cwd=project,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    second = subprocess.run(
+        ["scripts/apply_preview_d1_migrations.sh"],
+        cwd=project,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert first.returncode == 0, first.stdout + first.stderr
+    assert second.returncode == 0, second.stdout + second.stderr
+    lines = calls.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 4
+    assert all(line.startswith("d1 execute preview-db --remote --file") for line in lines)
+    assert any("0001_preview_invites.sql" in line for line in lines)
+    assert any("0002_domain_entities.sql" in line for line in lines)
+
+
+def test_generated_preview_signing_policy_blocks_debug_without_metadata(
+    tmp_path: Path,
+) -> None:
+    manifest_plan = ProjectFactoryManifestService(
+        projects_root=tmp_path,
+    ).plan_manifest(
+        ProjectFactoryManifestInput(
+            name="Clinica Norte",
+            business_type="medical",
+            primary_goal="Reservar turnos",
+        )
+    )
+    ProjectFactoryGeneratorService().generate(manifest_plan)
+
+    project = tmp_path / "clinica-norte"
+    policy = json.loads(
+        (project / "release/preview-signing-policy.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert policy["defaultSigningMode"] == "preview"
+    assert policy["debugPreview"]["enabled"] is False
+
+    blocked = subprocess.run(
+        ["scripts/validate_preview_release_profiles.sh"],
+        cwd=project,
+        env={
+            **os.environ,
+            "DEBUG_PREVIEW_SIGNING": "true",
+            "DEBUG_PREVIEW_SIGNING_ACKNOWLEDGED": "true",
+            "DEBUG_PREVIEW_SIGNING_REASON": "temporary QA build",
+            "APP_RELEASE_TAG": "android-preview-v0.1.0-build.1",
+        },
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert blocked.returncode != 0
+    assert "debugPreview.enabled=true" in blocked.stderr
+
+
+def test_generated_preview_signing_policy_allows_explicit_debug_preview(
+    tmp_path: Path,
+) -> None:
+    manifest_plan = ProjectFactoryManifestService(
+        projects_root=tmp_path,
+    ).plan_manifest(
+        ProjectFactoryManifestInput(
+            name="Clinica Norte",
+            business_type="medical",
+            primary_goal="Reservar turnos",
+        )
+    )
+    ProjectFactoryGeneratorService().generate(manifest_plan)
+
+    project = tmp_path / "clinica-norte"
+    policy_path = project / "release/preview-signing-policy.json"
+    policy = json.loads(policy_path.read_text(encoding="utf-8"))
+    policy["debugPreview"]["enabled"] = True
+    policy_path.write_text(json.dumps(policy, indent=2), encoding="utf-8")
+
+    accepted = subprocess.run(
+        ["scripts/validate_preview_release_profiles.sh"],
+        cwd=project,
+        env={
+            **os.environ,
+            "DEBUG_PREVIEW_SIGNING": "true",
+            "DEBUG_PREVIEW_SIGNING_ACKNOWLEDGED": "true",
+            "DEBUG_PREVIEW_SIGNING_REASON": "temporary QA build",
+            "APP_RELEASE_TAG": "android-preview-v0.1.0-build.1",
+        },
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert accepted.returncode == 0, accepted.stdout + accepted.stderr
+
+    wrong_tag = subprocess.run(
+        ["scripts/validate_preview_release_profiles.sh"],
+        cwd=project,
+        env={
+            **os.environ,
+            "DEBUG_PREVIEW_SIGNING": "true",
+            "DEBUG_PREVIEW_SIGNING_ACKNOWLEDGED": "true",
+            "DEBUG_PREVIEW_SIGNING_REASON": "temporary QA build",
+            "APP_RELEASE_TAG": "android-v0.1.0-build.1",
+        },
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert wrong_tag.returncode != 0
+    assert "android-preview-v* tags" in wrong_tag.stderr
 
 
 def test_generated_project_registers_installable_app_contract(
@@ -450,10 +1188,33 @@ def test_generated_project_registers_installable_app_contract(
     assert script.is_file()
     assert script.stat().st_mode & stat.S_IXUSR
     content = script.read_text(encoding="utf-8")
-    assert 'SOURCE_APP="${SOURCE_APP:-clinica-norte}"' in content
-    assert 'DISPLAY_NAME="${DISPLAY_NAME:-Clinica Norte}"' in content
+    assert "RUNTIME_CONTRACT=\"$ROOT_DIR/release/preview-runtime.json\"" in content
+    assert "RT_SOURCE_APP" in content
+    assert 'SOURCE_APP="${SOURCE_APP:-${RT_SOURCE_APP:-clinica-norte}}"' in content
+    assert (
+        'DISPLAY_NAME="${DISPLAY_NAME:-${RT_DISPLAY_NAME:-Clinica Norte Preview}}"'
+        in content
+    )
     assert 'BRIDGE_URL="${BRIDGE_URL:-}"' in content
     assert "BRIDGE_REGISTRATION_TOKEN" in content
+    assert (
+        'RELEASE_TAG_PATTERN="${RELEASE_TAG_PATTERN:-${RT_RELEASE_TAG_PATTERN:-android-preview-v*}}"'
+        in content
+    )
+    assert 'RELEASE_CHANNEL="${RELEASE_CHANNEL:-${RT_RELEASE_CHANNEL:-preview}}"' in content
+    assert (
+        'PREVIEW_URL="${PREVIEW_URL:-${RT_PREVIEW_URL:-https://preview.nienfos.com/clinica-norte}}"'
+        in content
+    )
+    assert 'RUNTIME_PROFILE="${RUNTIME_PROFILE:-${RT_RUNTIME_PROFILE:-preview}}"' in content
+    assert (
+        'PRODUCTION_READY="${PRODUCTION_READY:-${RT_PRODUCTION_READY:-false}}"'
+        in content
+    )
+    assert 'MOCK_OR_DEMO="${MOCK_OR_DEMO:-${RT_MOCK_OR_DEMO:-false}}"' in content
+    assert '"previewUrl": os.environ["PREVIEW_URL"]' in content
+    assert '"productionReady": os.environ.get("PRODUCTION_READY"' in content
+    assert '"mockOrDemo": os.environ.get("MOCK_OR_DEMO"' in content
     assert "--dry-run" in content
     assert "gh release view" in content
     assert 'POST "$BRIDGE_URL/installable-apps"' in content
@@ -489,7 +1250,7 @@ def test_generated_register_installable_app_script_dry_run_uses_release_asset(
     fake_gh = fake_bin / "gh"
     fake_gh.write_text(
         "#!/usr/bin/env bash\n"
-        "if [[ \"$1 $2 $3\" == \"release view android-v0.1.0-build.1\" ]]; then\n"
+        "if [[ \"$1 $2 $3\" == \"release view android-preview-v0.1.0-build.1\" ]]; then\n"
         "  printf 'clinica-norte.apk\\n'\n"
         "  exit 0\n"
         "fi\n"
@@ -507,7 +1268,7 @@ def test_generated_register_installable_app_script_dry_run_uses_release_asset(
             "BRIDGE_URL": "http://bridge.test",
             "BRIDGE_REGISTRATION_TOKEN": "token",
             "GITHUB_REPO": "brunojaime/clinica-norte",
-            "APP_RELEASE_TAG": "android-v0.1.0-build.1",
+            "APP_RELEASE_TAG": "android-preview-v0.1.0-build.1",
             "LATEST_ASSET_NAME": "clinica-norte.apk",
         },
         text=True,
@@ -518,7 +1279,88 @@ def test_generated_register_installable_app_script_dry_run_uses_release_asset(
     assert completed.returncode == 0, completed.stdout + completed.stderr
     assert '"sourceApp": "clinica-norte"' in completed.stdout
     assert '"latestAssetName": "clinica-norte.apk"' in completed.stdout
+    assert '"previewUrl": "https://preview.nienfos.com/clinica-norte"' in (
+        completed.stdout
+    )
+    assert '"runtimeProfile": "preview"' in completed.stdout
+    assert '"productionReady": false' in completed.stdout
+    assert '"mockOrDemo": false' in completed.stdout
     assert "dry-run: release and asset were verified" in completed.stdout
+
+
+def test_generated_register_installable_app_script_posts_preview_metadata(
+    tmp_path: Path,
+) -> None:
+    manifest_plan = ProjectFactoryManifestService(
+        projects_root=tmp_path,
+    ).plan_manifest(
+        ProjectFactoryManifestInput(
+            name="Clinica Norte",
+            business_type="medical",
+            primary_goal="Reservar turnos",
+        )
+    )
+    ProjectFactoryGeneratorService().generate(manifest_plan)
+
+    project = tmp_path / "clinica-norte"
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_gh = fake_bin / "gh"
+    fake_gh.write_text(
+        "#!/usr/bin/env bash\n"
+        "if [[ \"$1 $2 $3\" == \"release view android-preview-v0.1.0-build.1\" ]]; then\n"
+        "  printf 'clinica-norte.apk\\n'\n"
+        "  exit 0\n"
+        "fi\n"
+        "exit 2\n",
+        encoding="utf-8",
+    )
+    fake_gh.chmod(0o755)
+    fake_curl = fake_bin / "curl"
+    fake_curl.write_text(
+        "#!/usr/bin/env bash\n"
+        "args=\"$*\"\n"
+        "if [[ \"$args\" == *'-I'* ]]; then exit 0; fi\n"
+        "if [[ \"$args\" == *'/installable-apps/clinica-norte'* ]]; then\n"
+        "  cat <<'JSON'\n"
+        '{"sourceApp":"clinica-norte","displayName":"Clinica Norte Preview",'
+        '"releaseChannel":"preview","releaseTagPattern":"android-preview-v*",'
+        '"latestAssetName":"clinica-norte.apk",'
+        '"previewUrl":"https://preview.nienfos.com/clinica-norte",'
+        '"runtimeProfile":"preview","productionReady":false,'
+        '"mockOrDemo":false,"apkUrl":"https://bridge.test/apk",'
+        '"installStatusHint":"available"}\n'
+        "JSON\n"
+        "  exit 0\n"
+        "fi\n"
+        "cat <<'JSON'\n"
+        '{"sourceApp":"clinica-norte","displayName":"Clinica Norte Preview"}\n'
+        "JSON\n",
+        encoding="utf-8",
+    )
+    fake_curl.chmod(0o755)
+
+    completed = subprocess.run(
+        ["scripts/register_installable_app.sh"],
+        cwd=project,
+        env={
+            **os.environ,
+            "PATH": f"{fake_bin}:{os.environ['PATH']}",
+            "BRIDGE_URL": "https://bridge.test",
+            "BRIDGE_REGISTRATION_TOKEN": "token",
+            "GITHUB_REPO": "brunojaime/clinica-norte",
+            "APP_RELEASE_TAG": "android-preview-v0.1.0-build.1",
+        },
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert "registered installable app: clinica-norte -> Clinica Norte Preview" in (
+        completed.stdout
+    )
+    assert "apk url: https://bridge.test/apk" in completed.stdout
 
 
 def test_generated_flutter_mock_seed_selector_is_mock_profile_only(
@@ -675,6 +1517,12 @@ def test_generated_web_preview_bundle_is_validable_locally(tmp_path: Path) -> No
     assert "APP_RUNTIME_PROFILE" in build_script.read_text(encoding="utf-8")
     worker_text = worker.read_text(encoding="utf-8")
     assert "/__preview/health" in worker_text
+    assert "/api/health" in worker_text
+    assert "/api/auth/login" in worker_text
+    assert "/api/admin/bootstrap" in worker_text
+    assert "/api/app-updates/current" in worker_text
+    assert "/api/domain/" in worker_text
+    assert "/api/notifications" in worker_text
     assert "ASSETS.fetch" in worker_text
     assert "WEB_PREVIEW_INVITE_SECRET" in worker_text
     assert "PREVIEW_DB" in worker_text
@@ -691,6 +1539,11 @@ def test_generated_web_preview_bundle_is_validable_locally(tmp_path: Path) -> No
     assert "WEB_PREVIEW_INVITE_SECRET" in wrangler.read_text(encoding="utf-8")
     migration_text = d1_migration.read_text(encoding="utf-8")
     assert "CREATE TABLE IF NOT EXISTS preview_invites" in migration_text
+    assert "CREATE TABLE IF NOT EXISTS preview_users" in migration_text
+    assert "CREATE TABLE IF NOT EXISTS preview_sessions" in migration_text
+    assert "CREATE TABLE IF NOT EXISTS preview_app_updates" in migration_text
+    assert "CREATE TABLE IF NOT EXISTS preview_domain_records" in migration_text
+    assert "CREATE TABLE IF NOT EXISTS preview_notifications" in migration_text
     assert "token_sha256" in migration_text
     assert "used_at" in migration_text
     assert "revoked_at" in migration_text
@@ -710,10 +1563,16 @@ def test_generated_web_preview_bundle_is_validable_locally(tmp_path: Path) -> No
     assert payload["source_app"] == "clinica-norte"
     assert payload["stable_url"] == "https://preview.nienfos.com/clinica-norte"
     assert payload["runtime"]["type"] == "cloudflare_worker_assets"
-    assert payload["runtime"]["default_profile"] == "real"
+    assert payload["runtime"]["default_profile"] == "preview"
     assert payload["runtime"]["api_runtime"] == "cloudflare_preview"
-    assert payload["runtime"]["health_path"] == "/__preview/health"
+    assert payload["runtime"]["api_base_url"] == (
+        "https://preview.nienfos.com/clinica-norte/api"
+    )
+    assert payload["runtime"]["health_path"] == "/api/health"
     assert payload["runtime"]["asset_binding"] == "ASSETS"
+    assert payload["first_release"]["mode"] == "preview"
+    assert payload["first_release"]["android_tag_pattern"] == "android-preview-v*"
+    assert payload["first_release"]["data_persistence"] == "cloudflare_d1"
     assert payload["access"]["mode"] == "invite_token"
     assert payload["access"]["single_use"] is True
     assert payload["access"]["d1_binding"] == "PREVIEW_DB"
@@ -730,6 +1589,12 @@ def test_generated_web_preview_bundle_is_validable_locally(tmp_path: Path) -> No
     assert payload["cloudflare"]["resources"]["d1_database"] == "nienfos-preview"
     assert "/clinica-norte/__preview/health" in payload["expected_routes"]
     assert "/clinica-norte/__preview/access" in payload["expected_routes"]
+    assert "/clinica-norte/api/health" in payload["expected_routes"]
+    assert "/clinica-norte/api/auth/login" in payload["expected_routes"]
+    assert "/clinica-norte/api/app-updates/current" in payload["expected_routes"]
+    assert payload["preview_api_v1"]["base_url"] == (
+        "https://preview.nienfos.com/clinica-norte/api"
+    )
 
 
 def test_generated_web_preview_validation_accepts_real_and_blocks_mock(

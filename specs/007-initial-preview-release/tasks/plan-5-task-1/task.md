@@ -6,4 +6,4 @@ Plan: `Android Preview Release Workflow`
 
 ## Checklist
 
-- [ ] T034 Generate `.github/workflows/android-preview-release.yml`.
+- [x] T034 Generate `.github/workflows/android-preview-release.yml`.

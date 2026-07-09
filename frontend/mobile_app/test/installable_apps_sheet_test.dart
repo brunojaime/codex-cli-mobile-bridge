@@ -41,6 +41,51 @@ void main() {
     expect(find.text('Unavailable'), findsOneWidget);
   });
 
+  testWidgets('shows preview app metadata and installability', (tester) async {
+    await tester.pumpWidget(_harness(http.Response(_previewAppsJson(), 200)));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Clinica Norte Preview'), findsOneWidget);
+    expect(find.text('0.1.0+1  •  Available'), findsOneWidget);
+    expect(find.textContaining('Channel: preview'), findsOneWidget);
+    expect(find.textContaining('Profile: preview'), findsOneWidget);
+    expect(find.textContaining('Production pending'), findsOneWidget);
+    expect(find.textContaining('Real preview data'), findsOneWidget);
+    expect(find.text('Preview: https://preview.nienfos.com/clinica-norte'),
+        findsOneWidget);
+    expect(
+        find.textContaining('android-preview-v0.1.0-build.1'), findsOneWidget);
+    expect(find.text('Install'), findsOneWidget);
+  });
+
+  testWidgets('shows clear non-installable preview states', (tester) async {
+    await tester.pumpWidget(
+      _harness(http.Response(_previewAppsJson(includeApk: false), 200)),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Clinica Norte Preview'), findsOneWidget);
+    expect(find.textContaining('Missing APK asset'), findsOneWidget);
+    expect(find.text('Unavailable'), findsOneWidget);
+    expect(find.textContaining('Production pending'), findsOneWidget);
+  });
+
+  testWidgets('renders production and mock flags for preview apps',
+      (tester) async {
+    await tester.pumpWidget(
+      _harness(
+        http.Response(
+          _previewAppsJson(productionReady: true, mockOrDemo: true),
+          200,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('Production ready'), findsOneWidget);
+    expect(find.textContaining('Mock/demo'), findsOneWidget);
+  });
+
   testWidgets('install button downloads and opens installer', (tester) async {
     final controller = _RecordingInstallController();
     addTearDown(controller.dispose);
@@ -173,6 +218,53 @@ String _appsJson({String? sha256, String? apkUrl}) {
         "available": false,
         "enabled": false,
         "installStatusHint": "disabled"
+      }
+    ]
+  }
+  ''';
+}
+
+String _previewAppsJson({
+  bool includeApk = true,
+  bool productionReady = false,
+  bool mockOrDemo = false,
+}) {
+  final apkFields = includeApk
+      ? '''
+        "latestVersion": "0.1.0",
+        "latestBuild": 1,
+        "releaseTag": "android-preview-v0.1.0-build.1",
+        "apkUrl": "http://bridge.test/app-updates/clinica-norte/apk/tag/clinica-norte.apk",
+        "apkAssetName": "clinica-norte.apk",
+        "sizeBytes": 2097152,
+      '''
+      : '''
+        "releaseTag": "android-preview-v0.1.0-build.1",
+        "apkAssetName": "clinica-norte.apk",
+      ''';
+  return '''
+  {
+    "kind": "codex.installableApps",
+    "version": 1,
+    "apps": [
+      {
+        "kind": "codex.installableApp",
+        "version": 1,
+        "sourceApp": "clinica-norte",
+        "displayName": "Clinica Norte Preview",
+        "repo": "brunojaime/clinica-norte",
+        "releaseChannel": "preview",
+        $apkFields
+        "sha256": null,
+        "available": $includeApk,
+        "enabled": true,
+        "packageId": "com.clinica.norte",
+        "installStatusHint": "${includeApk ? 'available' : 'missing_apk_asset'}",
+        "previewUrl": "https://preview.nienfos.com/clinica-norte",
+        "runtimeProfile": "preview",
+        "productionReady": $productionReady,
+        "mockOrDemo": $mockOrDemo,
+        "releaseMetadata": {"initialPreviewRelease": true}
       }
     ]
   }

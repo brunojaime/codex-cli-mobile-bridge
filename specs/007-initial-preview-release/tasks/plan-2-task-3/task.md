@@ -6,4 +6,4 @@ Plan: `Project Factory Contract Updates`
 
 ## Checklist
 
-- [ ] T009 Add explicit production and mock/demo opt-in validation.
+- [x] T009 Add explicit production and mock/demo opt-in validation.

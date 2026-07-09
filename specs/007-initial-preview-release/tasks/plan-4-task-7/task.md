@@ -6,5 +6,5 @@ Plan: `Generated App Runtime Profile`
 
 ## Checklist
 
-- [ ] T031 Fail preview validation on localhost, example URLs, or missing
+- [x] T031 Fail preview validation on localhost, example URLs, or missing
       preview API URL.

@@ -6,4 +6,4 @@ Plan: `Generated App Runtime Profile`
 
 ## Checklist
 
-- [ ] T033 Add generated Flutter tests for preview runtime selection.
+- [x] T033 Add generated Flutter tests for preview runtime selection.

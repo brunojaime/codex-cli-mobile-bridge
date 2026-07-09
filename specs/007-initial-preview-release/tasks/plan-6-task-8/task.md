@@ -6,4 +6,4 @@ Plan: `Bridge Installable-App Registration`
 
 ## Checklist
 
-- [ ] T052 Block with manual command when registration token is missing.
+- [x] T052 Block with manual command when registration token is missing.

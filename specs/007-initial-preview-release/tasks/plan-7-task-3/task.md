@@ -6,4 +6,4 @@ Plan: `Factory Runner Orchestration`
 
 ## Checklist
 
-- [ ] T057 Run GitHub repository create/verify/push before preview release.
+- [x] T057 Run GitHub repository create/verify/push before preview release.

@@ -6,4 +6,4 @@ Plan: `Mobile And Workbench UX`
 
 ## Checklist
 
-- [ ] T070 Show exact blockers and manual commands for missing config.
+- [x] T070 Show exact blockers and manual commands for missing config.

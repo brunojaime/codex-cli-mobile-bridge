@@ -6,4 +6,4 @@ Plan: `Release Mode Contract`
 
 ## Checklist
 
-- [ ] T006 Add contract tests for mutually exclusive release modes.
+- [x] T006 Add contract tests for mutually exclusive release modes.

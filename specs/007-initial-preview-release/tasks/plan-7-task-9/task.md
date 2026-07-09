@@ -6,4 +6,4 @@ Plan: `Factory Runner Orchestration`
 
 ## Checklist
 
-- [ ] T063 Persist per-phase status, logs, blockers, and manual next steps.
+- [x] T063 Persist per-phase status, logs, blockers, and manual next steps.

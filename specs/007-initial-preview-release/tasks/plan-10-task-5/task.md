@@ -6,4 +6,4 @@ Plan: `Operations Documentation`
 
 ## Checklist
 
-- [ ] T083 Document preview update, disable, extend, and troubleshooting.
+- [x] T083 Document preview update, disable, extend, and troubleshooting.

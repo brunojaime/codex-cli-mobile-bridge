@@ -6,4 +6,4 @@ Plan: `Bridge Installable-App Registration`
 
 ## Checklist
 
-- [ ] T045 Extend Bridge registration payload with `release_channel=preview`.
+- [x] T045 Extend Bridge registration payload with `release_channel=preview`.

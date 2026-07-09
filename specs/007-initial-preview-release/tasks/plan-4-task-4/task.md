@@ -6,4 +6,4 @@ Plan: `Generated App Runtime Profile`
 
 ## Checklist
 
-- [ ] T028 Generate `APP_SLUG` runtime define.
+- [x] T028 Generate `APP_SLUG` runtime define.

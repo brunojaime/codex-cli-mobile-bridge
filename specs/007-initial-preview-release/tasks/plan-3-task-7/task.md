@@ -6,4 +6,4 @@ Plan: `Cloudflare Preview Backend Readiness`
 
 ## Checklist
 
-- [ ] T020 Seed only required preview bootstrap/admin data, not fake demo data.
+- [x] T020 Seed only required preview bootstrap/admin data, not fake demo data.

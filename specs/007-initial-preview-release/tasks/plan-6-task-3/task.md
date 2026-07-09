@@ -6,4 +6,4 @@ Plan: `Bridge Installable-App Registration`
 
 ## Checklist
 
-- [ ] T047 Include preview URL in installable-app metadata.
+- [x] T047 Include preview URL in installable-app metadata.

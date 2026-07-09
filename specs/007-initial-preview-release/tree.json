@@ -10,7 +10,7 @@
       "id": "plan-1",
       "number": 1,
       "title": "Release Mode Contract",
-      "status": "planned",
+      "status": "completed",
       "description": "Define the first-release state model before changing runner behavior.",
       "file": "plans/01-release-mode-contract/plan.md",
       "tasks": [
@@ -18,7 +18,7 @@
           "id": "plan-1-task-1",
           "number": 1,
           "title": "T001 Add preview release mode to Project Factory planning models",
-          "status": "planned",
+          "status": "completed",
           "description": "T001 Add preview release mode to Project Factory planning models",
           "file": "tasks/plan-1-task-1/task.md"
         },
@@ -26,7 +26,7 @@
           "id": "plan-1-task-2",
           "number": 2,
           "title": "T002 Define release profile metadata for preview, real, and mock",
-          "status": "planned",
+          "status": "completed",
           "description": "T002 Define release profile metadata for preview, real, and mock",
           "file": "tasks/plan-1-task-2/task.md"
         },
@@ -34,7 +34,7 @@
           "id": "plan-1-task-3",
           "number": 3,
           "title": "T003 Define tag prefixes: android-preview-v*, android-v*, and android-mock-v*",
-          "status": "planned",
+          "status": "completed",
           "description": "T003 Define tag prefixes: android-preview-v*, android-v*, and android-mock-v*",
           "file": "tasks/plan-1-task-3/task.md"
         },
@@ -42,7 +42,7 @@
           "id": "plan-1-task-4",
           "number": 4,
           "title": "T004 Define job readiness rules for Initial Preview Release",
-          "status": "planned",
+          "status": "completed",
           "description": "T004 Define job readiness rules for Initial Preview Release",
           "file": "tasks/plan-1-task-4/task.md"
         },
@@ -50,7 +50,7 @@
           "id": "plan-1-task-5",
           "number": 5,
           "title": "T005 Define preview-to-production promotion metadata",
-          "status": "planned",
+          "status": "completed",
           "description": "T005 Define preview-to-production promotion metadata",
           "file": "tasks/plan-1-task-5/task.md"
         },
@@ -58,7 +58,7 @@
           "id": "plan-1-task-6",
           "number": 6,
           "title": "T006 Add contract tests for mutually exclusive release modes",
-          "status": "planned",
+          "status": "completed",
           "description": "T006 Add contract tests for mutually exclusive release modes",
           "file": "tasks/plan-1-task-6/task.md"
         }
@@ -68,7 +68,7 @@
       "id": "plan-2",
       "number": 2,
       "title": "Project Factory Contract Updates",
-      "status": "planned",
+      "status": "completed",
       "description": "Update Factory intake, generated metadata, and final reports so the expected first release is explicit.",
       "file": "plans/02-project-factory-contract-updates/plan.md",
       "tasks": [
@@ -76,7 +76,7 @@
           "id": "plan-2-task-1",
           "number": 1,
           "title": "T007 Add first-release mode to draft request/response schemas",
-          "status": "planned",
+          "status": "completed",
           "description": "T007 Add first-release mode to draft request/response schemas",
           "file": "tasks/plan-2-task-1/task.md"
         },
@@ -84,7 +84,7 @@
           "id": "plan-2-task-2",
           "number": 2,
           "title": "T008 Default first-release mode to preview",
-          "status": "planned",
+          "status": "completed",
           "description": "T008 Default first-release mode to preview",
           "file": "tasks/plan-2-task-2/task.md"
         },
@@ -92,7 +92,7 @@
           "id": "plan-2-task-3",
           "number": 3,
           "title": "T009 Add explicit production and mock/demo opt-in validation",
-          "status": "planned",
+          "status": "completed",
           "description": "T009 Add explicit production and mock/demo opt-in validation",
           "file": "tasks/plan-2-task-3/task.md"
         },
@@ -100,7 +100,7 @@
           "id": "plan-2-task-4",
           "number": 4,
           "title": "T010 Update chat-first New Project prompt to describe Initial Preview Release as the default",
-          "status": "planned",
+          "status": "completed",
           "description": "T010 Update chat-first New Project prompt to describe Initial Preview Release as the default",
           "file": "tasks/plan-2-task-4/task.md"
         },
@@ -108,7 +108,7 @@
           "id": "plan-2-task-5",
           "number": 5,
           "title": "T011 Update build-ready preview text with Cloudflare URL, D1 persistence, Android APK, Bridge registration, and production-not-ready state",
-          "status": "planned",
+          "status": "completed",
           "description": "T011 Update build-ready preview text with Cloudflare URL, D1 persistence, Android APK, Bridge registration, and production-not-ready state",
           "file": "tasks/plan-2-task-5/task.md"
         },
@@ -116,7 +116,7 @@
           "id": "plan-2-task-6",
           "number": 6,
           "title": "T012 Add Initial Preview Release fields to job history/status payloads",
-          "status": "planned",
+          "status": "done",
           "description": "T012 Add Initial Preview Release fields to job history/status payloads",
           "file": "tasks/plan-2-task-6/task.md"
         },
@@ -124,7 +124,7 @@
           "id": "plan-2-task-7",
           "number": 7,
           "title": "T013 Update generated release/ docs to explain preview, production, and mock/demo channels",
-          "status": "planned",
+          "status": "completed",
           "description": "T013 Update generated release/ docs to explain preview, production, and mock/demo channels",
           "file": "tasks/plan-2-task-7/task.md"
         }
@@ -134,7 +134,7 @@
       "id": "plan-3",
       "number": 3,
       "title": "Cloudflare Preview Backend Readiness",
-      "status": "planned",
+      "status": "completed",
       "description": "Reuse Web Preview Delivery as the backend for initial releases.",
       "file": "plans/03-cloudflare-preview-backend-readiness/plan.md",
       "tasks": [
@@ -142,7 +142,7 @@
           "id": "plan-3-task-1",
           "number": 1,
           "title": "T014 Reuse Cloudflare doctor results as a hard gate for preview apply",
-          "status": "planned",
+          "status": "completed",
           "description": "T014 Reuse Cloudflare doctor results as a hard gate for preview apply",
           "file": "tasks/plan-3-task-1/task.md"
         },
@@ -150,7 +150,7 @@
           "id": "plan-3-task-2",
           "number": 2,
           "title": "T015 Add preview apply enablement flag and blocked output when disabled",
-          "status": "planned",
+          "status": "completed",
           "description": "T015 Add preview apply enablement flag and blocked output when disabled",
           "file": "tasks/plan-3-task-2/task.md"
         },
@@ -158,7 +158,7 @@
           "id": "plan-3-task-3",
           "number": 3,
           "title": "T016 Provision or verify https://preview.nienfos.com/<app-slug>",
-          "status": "planned",
+          "status": "completed",
           "description": "T016 Provision or verify https://preview.nienfos.com/<app-slug>",
           "file": "tasks/plan-3-task-3/task.md"
         },
@@ -166,7 +166,7 @@
           "id": "plan-3-task-4",
           "number": 4,
           "title": "T017 Provision or select D1 database/scope for the generated app",
-          "status": "planned",
+          "status": "completed",
           "description": "T017 Provision or select D1 database/scope for the generated app",
           "file": "tasks/plan-3-task-4/task.md"
         },
@@ -174,7 +174,7 @@
           "id": "plan-3-task-5",
           "number": 5,
           "title": "T018 Generate D1 migrations from generated domain entities",
-          "status": "planned",
+          "status": "completed",
           "description": "T018 Generate D1 migrations from generated domain entities",
           "file": "tasks/plan-3-task-5/task.md"
         },
@@ -182,7 +182,7 @@
           "id": "plan-3-task-6",
           "number": 6,
           "title": "T019 Apply D1 migrations idempotently",
-          "status": "planned",
+          "status": "completed",
           "description": "T019 Apply D1 migrations idempotently",
           "file": "tasks/plan-3-task-6/task.md"
         },
@@ -190,7 +190,7 @@
           "id": "plan-3-task-7",
           "number": 7,
           "title": "T020 Seed only required preview bootstrap/admin data, not fake demo data",
-          "status": "planned",
+          "status": "completed",
           "description": "T020 Seed only required preview bootstrap/admin data, not fake demo data",
           "file": "tasks/plan-3-task-7/task.md"
         },
@@ -198,7 +198,7 @@
           "id": "plan-3-task-8",
           "number": 8,
           "title": "T021 Verify preview API /health",
-          "status": "planned",
+          "status": "completed",
           "description": "T021 Verify preview API /health",
           "file": "tasks/plan-3-task-8/task.md"
         },
@@ -206,7 +206,7 @@
           "id": "plan-3-task-9",
           "number": 9,
           "title": "T022 Verify app/tenant scoping for D1 records",
-          "status": "planned",
+          "status": "completed",
           "description": "T022 Verify app/tenant scoping for D1 records",
           "file": "tasks/plan-3-task-9/task.md"
         },
@@ -214,7 +214,7 @@
           "id": "plan-3-task-10",
           "number": 10,
           "title": "T023 Add cost posture report before paid resources can be used",
-          "status": "planned",
+          "status": "completed",
           "description": "T023 Add cost posture report before paid resources can be used",
           "file": "tasks/plan-3-task-10/task.md"
         },
@@ -222,7 +222,7 @@
           "id": "plan-3-task-11",
           "number": 11,
           "title": "T024 Add blocked status for paid-resource requirements without operator confirmation",
-          "status": "planned",
+          "status": "completed",
           "description": "T024 Add blocked status for paid-resource requirements without operator confirmation",
           "file": "tasks/plan-3-task-11/task.md"
         },
@@ -230,7 +230,7 @@
           "id": "plan-3-task-12",
           "number": 12,
           "title": "T086 Generate Cloudflare Preview API Worker routes for generated app contracts",
-          "status": "planned",
+          "status": "completed",
           "description": "Generate Worker API handlers for health, config, auth/session, admin basics, catalog/domain CRUD, notifications, and app updates under /<app-slug>/api.",
           "file": "tasks/plan-3-task-12/task.md"
         },
@@ -238,7 +238,7 @@
           "id": "plan-3-task-13",
           "number": 13,
           "title": "T087 Generate D1 schema and data access layer for preview auth, sessions, app updates, and domain records",
-          "status": "planned",
+          "status": "completed",
           "description": "Create app-scoped D1 tables and query helpers so preview API data persists without using mock or local storage.",
           "file": "tasks/plan-3-task-13/task.md"
         },
@@ -246,7 +246,7 @@
           "id": "plan-3-task-14",
           "number": 14,
           "title": "T088 Implement preview bootstrap and invite-to-admin flow for first usable login",
-          "status": "planned",
+          "status": "completed",
           "description": "Seed or create only required preview admin/bootstrap state and expose a secure path for first login without demo role selectors.",
           "file": "tasks/plan-3-task-14/task.md"
         },
@@ -254,7 +254,7 @@
           "id": "plan-3-task-15",
           "number": 15,
           "title": "T089 Add local Worker harness and smoke tests for Preview API v1 endpoints",
-          "status": "planned",
+          "status": "completed",
           "description": "Test /<app-slug>/api/health, auth, catalog/domain CRUD, notifications, app updates, D1 persistence, and cross-app isolation locally.",
           "file": "tasks/plan-3-task-15/task.md"
         },
@@ -262,7 +262,7 @@
           "id": "plan-3-task-16",
           "number": 16,
           "title": "T090 Verify deployed preview API routes before Android preview release can run",
-          "status": "planned",
+          "status": "completed",
           "description": "Gate Android preview publication on deployed /<app-slug>/api health plus representative authenticated and persistence checks.",
           "file": "tasks/plan-3-task-16/task.md"
         }
@@ -272,7 +272,7 @@
       "id": "plan-4",
       "number": 4,
       "title": "Generated App Runtime Profile",
-      "status": "planned",
+      "status": "completed",
       "description": "Make generated Flutter apps able to run against preview from both web and Android.",
       "file": "plans/04-generated-app-runtime-profile/plan.md",
       "tasks": [
@@ -280,7 +280,7 @@
           "id": "plan-4-task-1",
           "number": 1,
           "title": "T025 Generate APP_RUNTIME_PROFILE=preview support for Flutter web and Android",
-          "status": "planned",
+          "status": "completed",
           "description": "T025 Generate APP_RUNTIME_PROFILE=preview support for Flutter web and Android",
           "file": "tasks/plan-4-task-1/task.md"
         },
@@ -288,7 +288,7 @@
           "id": "plan-4-task-2",
           "number": 2,
           "title": "T026 Generate API_RUNTIME=cloudflare_preview support",
-          "status": "planned",
+          "status": "completed",
           "description": "T026 Generate API_RUNTIME=cloudflare_preview support",
           "file": "tasks/plan-4-task-2/task.md"
         },
@@ -296,7 +296,7 @@
           "id": "plan-4-task-3",
           "number": 3,
           "title": "T027 Generate preview API_BASE_URL using the stable preview app route",
-          "status": "planned",
+          "status": "completed",
           "description": "T027 Generate preview API_BASE_URL using the stable preview app route",
           "file": "tasks/plan-4-task-3/task.md"
         },
@@ -304,7 +304,7 @@
           "id": "plan-4-task-4",
           "number": 4,
           "title": "T028 Generate APP_SLUG runtime define",
-          "status": "planned",
+          "status": "completed",
           "description": "T028 Generate APP_SLUG runtime define",
           "file": "tasks/plan-4-task-4/task.md"
         },
@@ -312,7 +312,7 @@
           "id": "plan-4-task-5",
           "number": 5,
           "title": "T029 Route preview API clients through Preview API v1",
-          "status": "planned",
+          "status": "completed",
           "description": "T029 Route preview API clients through Preview API v1",
           "file": "tasks/plan-4-task-5/task.md"
         },
@@ -320,7 +320,7 @@
           "id": "plan-4-task-6",
           "number": 6,
           "title": "T030 Keep FastAPI real/staging clients separate from preview clients",
-          "status": "planned",
+          "status": "completed",
           "description": "T030 Keep FastAPI real/staging clients separate from preview clients",
           "file": "tasks/plan-4-task-6/task.md"
         },
@@ -328,7 +328,7 @@
           "id": "plan-4-task-7",
           "number": 7,
           "title": "T031 Fail preview validation on localhost, example URLs, or missing preview API URL",
-          "status": "planned",
+          "status": "completed",
           "description": "T031 Fail preview validation on localhost, example URLs, or missing preview API URL",
           "file": "tasks/plan-4-task-7/task.md"
         },
@@ -336,7 +336,7 @@
           "id": "plan-4-task-8",
           "number": 8,
           "title": "T032 Fail preview validation when mock/local seeded data is the primary runtime",
-          "status": "planned",
+          "status": "completed",
           "description": "T032 Fail preview validation when mock/local seeded data is the primary runtime",
           "file": "tasks/plan-4-task-8/task.md"
         },
@@ -344,7 +344,7 @@
           "id": "plan-4-task-9",
           "number": 9,
           "title": "T033 Add generated Flutter tests for preview runtime selection",
-          "status": "planned",
+          "status": "completed",
           "description": "T033 Add generated Flutter tests for preview runtime selection",
           "file": "tasks/plan-4-task-9/task.md"
         }
@@ -354,7 +354,7 @@
       "id": "plan-5",
       "number": 5,
       "title": "Android Preview Release Workflow",
-      "status": "planned",
+      "status": "completed",
       "description": "Add a preview-specific Android release lane.",
       "file": "plans/05-android-preview-release-workflow/plan.md",
       "tasks": [
@@ -362,7 +362,7 @@
           "id": "plan-5-task-1",
           "number": 1,
           "title": "T034 Generate .github/workflows/android-preview-release.yml",
-          "status": "planned",
+          "status": "completed",
           "description": "T034 Generate .github/workflows/android-preview-release.yml",
           "file": "tasks/plan-5-task-1/task.md"
         },
@@ -370,7 +370,7 @@
           "id": "plan-5-task-2",
           "number": 2,
           "title": "T035 Generate scripts/publish_android_preview_release.sh",
-          "status": "planned",
+          "status": "completed",
           "description": "T035 Generate scripts/publish_android_preview_release.sh",
           "file": "tasks/plan-5-task-2/task.md"
         },
@@ -378,7 +378,7 @@
           "id": "plan-5-task-3",
           "number": 3,
           "title": "T036 Generate scripts/validate_preview_release_profiles.sh",
-          "status": "planned",
+          "status": "done",
           "description": "T036 Generate scripts/validate_preview_release_profiles.sh",
           "file": "tasks/plan-5-task-3/task.md"
         },
@@ -386,7 +386,7 @@
           "id": "plan-5-task-4",
           "number": 4,
           "title": "T037 Build preview APKs with preview runtime defines",
-          "status": "planned",
+          "status": "completed",
           "description": "T037 Build preview APKs with preview runtime defines",
           "file": "tasks/plan-5-task-4/task.md"
         },
@@ -394,7 +394,7 @@
           "id": "plan-5-task-5",
           "number": 5,
           "title": "T038 Write release/preview-runtime.json",
-          "status": "planned",
+          "status": "done",
           "description": "T038 Write release/preview-runtime.json",
           "file": "tasks/plan-5-task-5/task.md"
         },
@@ -402,7 +402,7 @@
           "id": "plan-5-task-6",
           "number": 6,
           "title": "T039 Publish GitHub releases with android-preview-v* tags",
-          "status": "planned",
+          "status": "completed",
           "description": "T039 Publish GitHub releases with android-preview-v* tags",
           "file": "tasks/plan-5-task-6/task.md"
         },
@@ -410,7 +410,7 @@
           "id": "plan-5-task-7",
           "number": 7,
           "title": "T040 Verify APK asset presence and checksum",
-          "status": "planned",
+          "status": "completed",
           "description": "T040 Verify APK asset presence and checksum",
           "file": "tasks/plan-5-task-7/task.md"
         },
@@ -418,7 +418,7 @@
           "id": "plan-5-task-8",
           "number": 8,
           "title": "T041 Verify app updater metadata points to the preview channel",
-          "status": "planned",
+          "status": "completed",
           "description": "T041 Verify app updater metadata points to the preview channel",
           "file": "tasks/plan-5-task-8/task.md"
         },
@@ -426,7 +426,7 @@
           "id": "plan-5-task-9",
           "number": 9,
           "title": "T042 Allow debug-preview signing only with explicit metadata",
-          "status": "planned",
+          "status": "completed",
           "description": "T042 Allow debug-preview signing only with explicit metadata",
           "file": "tasks/plan-5-task-9/task.md"
         },
@@ -434,7 +434,7 @@
           "id": "plan-5-task-10",
           "number": 10,
           "title": "T043 Keep android-v* productive signing gates unchanged",
-          "status": "planned",
+          "status": "completed",
           "description": "T043 Keep android-v* productive signing gates unchanged",
           "file": "tasks/plan-5-task-10/task.md"
         },
@@ -442,7 +442,7 @@
           "id": "plan-5-task-11",
           "number": 11,
           "title": "T044 Add tests for preview release tag and metadata validation",
-          "status": "planned",
+          "status": "completed",
           "description": "T044 Add tests for preview release tag and metadata validation",
           "file": "tasks/plan-5-task-11/task.md"
         }
@@ -452,7 +452,7 @@
       "id": "plan-6",
       "number": 6,
       "title": "Bridge Installable-App Registration",
-      "status": "planned",
+      "status": "completed",
       "description": "Register the preview APK as an installable app entry.",
       "file": "plans/06-bridge-installable-app-registration/plan.md",
       "tasks": [
@@ -460,7 +460,7 @@
           "id": "plan-6-task-1",
           "number": 1,
           "title": "T045 Extend Bridge registration payload with release_channel=preview",
-          "status": "planned",
+          "status": "completed",
           "description": "T045 Extend Bridge registration payload with release_channel=preview",
           "file": "tasks/plan-6-task-1/task.md"
         },
@@ -468,7 +468,7 @@
           "id": "plan-6-task-2",
           "number": 2,
           "title": "T046 Register display name as <App Name> Preview",
-          "status": "planned",
+          "status": "completed",
           "description": "T046 Register display name as <App Name> Preview",
           "file": "tasks/plan-6-task-2/task.md"
         },
@@ -476,7 +476,7 @@
           "id": "plan-6-task-3",
           "number": 3,
           "title": "T047 Include preview URL in installable-app metadata",
-          "status": "planned",
+          "status": "completed",
           "description": "T047 Include preview URL in installable-app metadata",
           "file": "tasks/plan-6-task-3/task.md"
         },
@@ -484,7 +484,7 @@
           "id": "plan-6-task-4",
           "number": 4,
           "title": "T048 Include runtime profile, tag, APK asset, and update metadata",
-          "status": "planned",
+          "status": "completed",
           "description": "T048 Include runtime profile, tag, APK asset, and update metadata",
           "file": "tasks/plan-6-task-4/task.md"
         },
@@ -492,7 +492,7 @@
           "id": "plan-6-task-5",
           "number": 5,
           "title": "T049 Include production_ready=false and mock_or_demo=false",
-          "status": "planned",
+          "status": "completed",
           "description": "T049 Include production_ready=false and mock_or_demo=false",
           "file": "tasks/plan-6-task-5/task.md"
         },
@@ -500,7 +500,7 @@
           "id": "plan-6-task-6",
           "number": 6,
           "title": "T050 Verify Bridge catalog lookup by source_app",
-          "status": "planned",
+          "status": "completed",
           "description": "T050 Verify Bridge catalog lookup by source_app",
           "file": "tasks/plan-6-task-6/task.md"
         },
@@ -508,7 +508,7 @@
           "id": "plan-6-task-7",
           "number": 7,
           "title": "T051 Block with manual command when BRIDGE_URL is missing",
-          "status": "planned",
+          "status": "completed",
           "description": "T051 Block with manual command when BRIDGE_URL is missing",
           "file": "tasks/plan-6-task-7/task.md"
         },
@@ -516,7 +516,7 @@
           "id": "plan-6-task-8",
           "number": 8,
           "title": "T052 Block with manual command when registration token is missing",
-          "status": "planned",
+          "status": "completed",
           "description": "T052 Block with manual command when registration token is missing",
           "file": "tasks/plan-6-task-8/task.md"
         },
@@ -524,7 +524,7 @@
           "id": "plan-6-task-9",
           "number": 9,
           "title": "T053 Add tests for successful preview app registration",
-          "status": "planned",
+          "status": "completed",
           "description": "T053 Add tests for successful preview app registration",
           "file": "tasks/plan-6-task-9/task.md"
         },
@@ -532,7 +532,7 @@
           "id": "plan-6-task-10",
           "number": 10,
           "title": "T054 Add tests for blocked registration config",
-          "status": "planned",
+          "status": "completed",
           "description": "T054 Add tests for blocked registration config",
           "file": "tasks/plan-6-task-10/task.md"
         }
@@ -542,7 +542,7 @@
       "id": "plan-7",
       "number": 7,
       "title": "Factory Runner Orchestration",
-      "status": "planned",
+      "status": "completed",
       "description": "Orchestrate the complete first-release pipeline.",
       "file": "plans/07-factory-runner-orchestration/plan.md",
       "tasks": [
@@ -550,7 +550,7 @@
           "id": "plan-7-task-1",
           "number": 1,
           "title": "T055 Add initial_preview_release phase group to Factory jobs",
-          "status": "planned",
+          "status": "completed",
           "description": "T055 Add initial_preview_release phase group to Factory jobs",
           "file": "tasks/plan-7-task-1/task.md"
         },
@@ -558,7 +558,7 @@
           "id": "plan-7-task-2",
           "number": 2,
           "title": "T056 Run local generated-project validation before preview publication",
-          "status": "planned",
+          "status": "completed",
           "description": "T056 Run local generated-project validation before preview publication",
           "file": "tasks/plan-7-task-2/task.md"
         },
@@ -566,7 +566,7 @@
           "id": "plan-7-task-3",
           "number": 3,
           "title": "T057 Run GitHub repository create/verify/push before preview release",
-          "status": "planned",
+          "status": "completed",
           "description": "T057 Run GitHub repository create/verify/push before preview release",
           "file": "tasks/plan-7-task-3/task.md"
         },
@@ -574,7 +574,7 @@
           "id": "plan-7-task-4",
           "number": 4,
           "title": "T058 Run Cloudflare preview apply after GitHub publication",
-          "status": "planned",
+          "status": "completed",
           "description": "T058 Run Cloudflare preview apply after GitHub publication",
           "file": "tasks/plan-7-task-4/task.md"
         },
@@ -582,7 +582,7 @@
           "id": "plan-7-task-5",
           "number": 5,
           "title": "T059 Run web preview smoke tests after Cloudflare apply",
-          "status": "planned",
+          "status": "completed",
           "description": "T059 Run web preview smoke tests after Cloudflare apply",
           "file": "tasks/plan-7-task-5/task.md"
         },
@@ -590,7 +590,7 @@
           "id": "plan-7-task-6",
           "number": 6,
           "title": "T060 Run Android preview release after preview API health passes",
-          "status": "planned",
+          "status": "completed",
           "description": "T060 Run Android preview release after preview API health passes",
           "file": "tasks/plan-7-task-6/task.md"
         },
@@ -598,7 +598,7 @@
           "id": "plan-7-task-7",
           "number": 7,
           "title": "T061 Run Bridge registration after APK asset verification",
-          "status": "planned",
+          "status": "completed",
           "description": "T061 Run Bridge registration after APK asset verification",
           "file": "tasks/plan-7-task-7/task.md"
         },
@@ -606,7 +606,7 @@
           "id": "plan-7-task-8",
           "number": 8,
           "title": "T062 Run final readiness validation across GitHub, Cloudflare, Android, updater metadata, and Bridge",
-          "status": "planned",
+          "status": "completed",
           "description": "T062 Run final readiness validation across GitHub, Cloudflare, Android, updater metadata, and Bridge",
           "file": "tasks/plan-7-task-8/task.md"
         },
@@ -614,7 +614,7 @@
           "id": "plan-7-task-9",
           "number": 9,
           "title": "T063 Persist per-phase status, logs, blockers, and manual next steps",
-          "status": "planned",
+          "status": "completed",
           "description": "T063 Persist per-phase status, logs, blockers, and manual next steps",
           "file": "tasks/plan-7-task-9/task.md"
         },
@@ -622,7 +622,7 @@
           "id": "plan-7-task-10",
           "number": 10,
           "title": "T064 Recover interrupted preview release jobs without duplicating resources",
-          "status": "planned",
+          "status": "completed",
           "description": "T064 Recover interrupted preview release jobs without duplicating resources",
           "file": "tasks/plan-7-task-10/task.md"
         }
@@ -632,7 +632,7 @@
       "id": "plan-8",
       "number": 8,
       "title": "Mobile And Workbench UX",
-      "status": "planned",
+      "status": "completed",
       "description": "Expose the first-release result without making preview look like production.",
       "file": "plans/08-mobile-and-workbench-ux/plan.md",
       "tasks": [
@@ -640,7 +640,7 @@
           "id": "plan-8-task-1",
           "number": 1,
           "title": "T065 Show Initial Preview Release status in Project Factory History",
-          "status": "planned",
+          "status": "completed",
           "description": "T065 Show Initial Preview Release status in Project Factory History",
           "file": "tasks/plan-8-task-1/task.md"
         },
@@ -648,7 +648,7 @@
           "id": "plan-8-task-2",
           "number": 2,
           "title": "T066 Add open/copy preview URL actions",
-          "status": "planned",
+          "status": "completed",
           "description": "T066 Add open/copy preview URL actions",
           "file": "tasks/plan-8-task-2/task.md"
         },
@@ -656,7 +656,7 @@
           "id": "plan-8-task-3",
           "number": 3,
           "title": "T067 Show Android preview APK install state through Apps catalog",
-          "status": "planned",
+          "status": "completed",
           "description": "T067 Show Android preview APK install state through Apps catalog",
           "file": "tasks/plan-8-task-3/task.md"
         },
@@ -664,7 +664,7 @@
           "id": "plan-8-task-4",
           "number": 4,
           "title": "T068 Show release channel, tag, signing mode, and production readiness",
-          "status": "planned",
+          "status": "completed",
           "description": "T068 Show release channel, tag, signing mode, and production readiness",
           "file": "tasks/plan-8-task-4/task.md"
         },
@@ -672,7 +672,7 @@
           "id": "plan-8-task-5",
           "number": 5,
           "title": "T069 Show production release as pending/not requested after preview success",
-          "status": "planned",
+          "status": "completed",
           "description": "T069 Show production release as pending/not requested after preview success",
           "file": "tasks/plan-8-task-5/task.md"
         },
@@ -680,7 +680,7 @@
           "id": "plan-8-task-6",
           "number": 6,
           "title": "T070 Show exact blockers and manual commands for missing config",
-          "status": "planned",
+          "status": "completed",
           "description": "T070 Show exact blockers and manual commands for missing config",
           "file": "tasks/plan-8-task-6/task.md"
         },
@@ -688,7 +688,7 @@
           "id": "plan-8-task-7",
           "number": 7,
           "title": "T071 Add Workbench readiness fields for preview URL, APK, Bridge registration, and blockers",
-          "status": "planned",
+          "status": "completed",
           "description": "T071 Add Workbench readiness fields for preview URL, APK, Bridge registration, and blockers",
           "file": "tasks/plan-8-task-7/task.md"
         }
@@ -698,7 +698,7 @@
       "id": "plan-9",
       "number": 9,
       "title": "Validation And Regression Coverage",
-      "status": "planned",
+      "status": "completed",
       "description": "Add tests that prevent historical false-readiness regressions and preview/production mixups.",
       "file": "plans/09-validation-and-regression-coverage/plan.md",
       "tasks": [
@@ -706,7 +706,7 @@
           "id": "plan-9-task-1",
           "number": 1,
           "title": "T072 Add regression test that first release defaults to preview",
-          "status": "planned",
+          "status": "completed",
           "description": "T072 Add regression test that first release defaults to preview",
           "file": "tasks/plan-9-task-1/task.md"
         },
@@ -714,7 +714,7 @@
           "id": "plan-9-task-2",
           "number": 2,
           "title": "T073 Add regression test that jobs cannot report ready without Cloudflare preview success",
-          "status": "planned",
+          "status": "completed",
           "description": "T073 Add regression test that jobs cannot report ready without Cloudflare preview success",
           "file": "tasks/plan-9-task-2/task.md"
         },
@@ -722,7 +722,7 @@
           "id": "plan-9-task-3",
           "number": 3,
           "title": "T074 Add regression test that jobs cannot report ready without Bridge preview registration",
-          "status": "planned",
+          "status": "completed",
           "description": "T074 Add regression test that jobs cannot report ready without Bridge preview registration",
           "file": "tasks/plan-9-task-3/task.md"
         },
@@ -730,7 +730,7 @@
           "id": "plan-9-task-4",
           "number": 4,
           "title": "T075 Add validation test that preview APK points to preview API",
-          "status": "planned",
+          "status": "completed",
           "description": "T075 Add validation test that preview APK points to preview API",
           "file": "tasks/plan-9-task-4/task.md"
         },
@@ -738,7 +738,7 @@
           "id": "plan-9-task-5",
           "number": 5,
           "title": "T076 Add validation test that preview APK does not use localhost, placeholder, or mock primary data paths",
-          "status": "planned",
+          "status": "completed",
           "description": "T076 Add validation test that preview APK does not use localhost, placeholder, or mock primary data paths",
           "file": "tasks/plan-9-task-5/task.md"
         },
@@ -746,7 +746,7 @@
           "id": "plan-9-task-6",
           "number": 6,
           "title": "T077 Add validation test that android-v* still requires production backend health and release signing",
-          "status": "planned",
+          "status": "completed",
           "description": "T077 Add validation test that android-v* still requires production backend health and release signing",
           "file": "tasks/plan-9-task-6/task.md"
         },
@@ -754,7 +754,7 @@
           "id": "plan-9-task-7",
           "number": 7,
           "title": "T078 Add validation test that mock/demo releases stay visibly separate from preview releases",
-          "status": "planned",
+          "status": "completed",
           "description": "T078 Add validation test that mock/demo releases stay visibly separate from preview releases",
           "file": "tasks/plan-9-task-7/task.md"
         }
@@ -764,7 +764,7 @@
       "id": "plan-10",
       "number": 10,
       "title": "Operations Documentation",
-      "status": "planned",
+      "status": "completed",
       "description": "Document how operators run and troubleshoot the new flow.",
       "file": "plans/10-operations-documentation/plan.md",
       "tasks": [
@@ -772,7 +772,7 @@
           "id": "plan-10-task-1",
           "number": 1,
           "title": "T079 Document Initial Preview Release required environment variables",
-          "status": "planned",
+          "status": "completed",
           "description": "T079 Document Initial Preview Release required environment variables",
           "file": "tasks/plan-10-task-1/task.md"
         },
@@ -780,7 +780,7 @@
           "id": "plan-10-task-2",
           "number": 2,
           "title": "T080 Document Cloudflare apply, D1, Worker, DNS, and cost guardrails",
-          "status": "planned",
+          "status": "completed",
           "description": "T080 Document Cloudflare apply, D1, Worker, DNS, and cost guardrails",
           "file": "tasks/plan-10-task-2/task.md"
         },
@@ -788,7 +788,7 @@
           "id": "plan-10-task-3",
           "number": 3,
           "title": "T081 Document Android preview signing policy",
-          "status": "planned",
+          "status": "completed",
           "description": "T081 Document Android preview signing policy",
           "file": "tasks/plan-10-task-3/task.md"
         },
@@ -796,7 +796,7 @@
           "id": "plan-10-task-4",
           "number": 4,
           "title": "T082 Document Bridge preview registration and manual fallback",
-          "status": "planned",
+          "status": "completed",
           "description": "T082 Document Bridge preview registration and manual fallback",
           "file": "tasks/plan-10-task-4/task.md"
         },
@@ -804,7 +804,7 @@
           "id": "plan-10-task-5",
           "number": 5,
           "title": "T083 Document preview update, disable, extend, and troubleshooting",
-          "status": "planned",
+          "status": "completed",
           "description": "T083 Document preview update, disable, extend, and troubleshooting",
           "file": "tasks/plan-10-task-5/task.md"
         },
@@ -812,7 +812,7 @@
           "id": "plan-10-task-6",
           "number": 6,
           "title": "T084 Document promotion from preview to production",
-          "status": "planned",
+          "status": "completed",
           "description": "T084 Document promotion from preview to production",
           "file": "tasks/plan-10-task-6/task.md"
         },
@@ -820,7 +820,7 @@
           "id": "plan-10-task-7",
           "number": 7,
           "title": "T085 Update Project Factory runbooks with generic false-readiness failure examples",
-          "status": "planned",
+          "status": "completed",
           "description": "T085 Update Project Factory runbooks with generic false-readiness failure examples",
           "file": "tasks/plan-10-task-7/task.md"
         }

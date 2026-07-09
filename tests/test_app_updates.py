@@ -246,6 +246,50 @@ def test_default_registry_includes_sat_catalog_updates() -> None:
     )
 
 
+def test_registry_parses_preview_metadata_booleans_explicitly() -> None:
+    base = _registry_item(
+        productionReady=False,
+        mockOrDemo=True,
+        runtimeProfile="preview",
+        previewUrl="https://preview.nienfos.com/adjornos",
+    )
+
+    config = AppUpdateRegistry.from_mapping({"adjornos": base}).get("adjornos")
+    assert config.production_ready is False
+    assert config.mock_or_demo is True
+    assert config.runtime_profile == "preview"
+    assert config.preview_url == "https://preview.nienfos.com/adjornos"
+
+    string_config = AppUpdateRegistry.from_mapping(
+        {
+            "adjornos": _registry_item(
+                productionReady="false",
+                mockOrDemo="true",
+                runtimeProfile="Preview",
+                previewUrl="https://preview.nienfos.com/adjornos",
+            )
+        }
+    ).get("adjornos")
+    assert string_config.production_ready is False
+    assert string_config.mock_or_demo is True
+    assert string_config.runtime_profile == "preview"
+
+    with pytest.raises(ValueError, match="productionReady"):
+        AppUpdateRegistry.from_mapping(
+            {"adjornos": _registry_item(productionReady="nope")}
+        )
+    with pytest.raises(ValueError, match="mockOrDemo"):
+        AppUpdateRegistry.from_mapping({"adjornos": _registry_item(mockOrDemo="")})
+    with pytest.raises(ValueError, match="runtimeProfile"):
+        AppUpdateRegistry.from_mapping(
+            {"adjornos": _registry_item(runtimeProfile="local")}
+        )
+    with pytest.raises(ValueError, match="previewUrl"):
+        AppUpdateRegistry.from_mapping(
+            {"adjornos": _registry_item(previewUrl="http://preview.nienfos.com/app")}
+        )
+
+
 def test_sat_catalog_app_update_returns_latest_feedback_release(
     tmp_path: Path,
 ) -> None:
@@ -911,6 +955,14 @@ def test_installable_app_registration_updates_registry_without_restart(
             "verifiedPackageIds": {
                 "android-v0.1.0-build.1": "com.adjornos.app",
             },
+            "previewUrl": "https://preview.nienfos.com/adjornos",
+            "runtimeProfile": "preview",
+            "productionReady": False,
+            "mockOrDemo": False,
+            "releaseMetadata": {
+                "initialPreviewRelease": True,
+                "releaseTagPattern": "android-v*",
+            },
             "enabled": True,
         },
     )
@@ -920,6 +972,11 @@ def test_installable_app_registration_updates_registry_without_restart(
     registry = json.loads((tmp_path / "app_updates.json").read_text(encoding="utf-8"))
     assert registry["adjornos"]["displayName"] == "Adjornos"
     assert registry["adjornos"]["repo"] == "brunojaime/adjornos"
+    assert registry["adjornos"]["previewUrl"] == "https://preview.nienfos.com/adjornos"
+    assert registry["adjornos"]["runtimeProfile"] == "preview"
+    assert registry["adjornos"]["productionReady"] is False
+    assert registry["adjornos"]["mockOrDemo"] is False
+    assert registry["adjornos"]["releaseMetadata"]["initialPreviewRelease"] is True
 
     detail = client.get("/installable-apps/adjornos")
 
@@ -931,6 +988,14 @@ def test_installable_app_registration_updates_registry_without_restart(
     assert app["apkUrl"].startswith("http://testserver/app-updates/adjornos/apk/")
     assert "github.com" not in app["apkUrl"]
     assert app["packageId"] == "com.adjornos.app"
+    assert app["releaseTagPattern"] == "android-v*"
+    assert app["apkAssetPattern"] == "adjornos*.apk"
+    assert app["latestAssetName"] == "adjornos.apk"
+    assert app["previewUrl"] == "https://preview.nienfos.com/adjornos"
+    assert app["runtimeProfile"] == "preview"
+    assert app["productionReady"] is False
+    assert app["mockOrDemo"] is False
+    assert app["releaseMetadata"]["initialPreviewRelease"] is True
 
 
 def test_installable_app_registration_rejects_unsafe_values(tmp_path: Path) -> None:
@@ -1024,11 +1089,23 @@ def test_installable_app_registration_rejects_invalid_metadata(
         headers={"X-Bridge-Registration-Token": "test-registration-token"},
         json={**base_payload, "apkUrl": "https://github.com/example/app.apk"},
     )
+    invalid_runtime_profile = client.post(
+        "/installable-apps",
+        headers={"X-Bridge-Registration-Token": "test-registration-token"},
+        json={**base_payload, "runtimeProfile": "local"},
+    )
+    invalid_preview_url = client.post(
+        "/installable-apps",
+        headers={"X-Bridge-Registration-Token": "test-registration-token"},
+        json={**base_payload, "previewUrl": "http://preview.nienfos.com/adjornos"},
+    )
 
     assert invalid_package.status_code == 400
     assert invalid_asset.status_code == 400
     assert invalid_pattern.status_code == 400
     assert arbitrary_url.status_code == 422
+    assert invalid_runtime_profile.status_code == 400
+    assert invalid_preview_url.status_code == 400
 
 
 def test_installable_app_registration_is_idempotent_and_updates_metadata(
@@ -1532,6 +1609,23 @@ def _build_app_update_client(
         registry_path=registry_path,
     )
     return TestClient(app)
+
+
+def _registry_item(**overrides: object) -> dict[str, object]:
+    item: dict[str, object] = {
+        "displayName": "Adjornos",
+        "repo": "brunojaime/adjornos",
+        "releaseTagPattern": "android-preview-v*",
+        "apkAssetPattern": "adjornos*.apk",
+        "latestAssetName": "adjornos.apk",
+        "requiredMinimumBuild": None,
+        "releaseChannel": "preview",
+        "expectedPackageId": None,
+        "verifiedPackageIds": {},
+        "enabled": True,
+    }
+    item.update(overrides)
+    return item
 
 
 def _release(

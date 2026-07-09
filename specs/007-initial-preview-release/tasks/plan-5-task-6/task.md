@@ -6,4 +6,4 @@ Plan: `Android Preview Release Workflow`
 
 ## Checklist
 
-- [ ] T039 Publish GitHub releases with `android-preview-v*` tags.
+- [x] T039 Publish GitHub releases with `android-preview-v*` tags.

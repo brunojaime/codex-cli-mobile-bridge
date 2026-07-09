@@ -1710,8 +1710,16 @@ async def list_app_updates(
                 enabled=config.enabled,
                 required_minimum_build=config.required_minimum_build,
                 release_channel=config.release_channel,
+                release_tag_pattern=config.release_tag_pattern,
+                apk_asset_pattern=config.apk_asset_pattern,
+                latest_asset_name=config.latest_asset_name,
                 private_install=config.release_channel == "private-install",
                 expected_package_id=config.expected_package_id,
+                preview_url=config.preview_url,
+                runtime_profile=config.runtime_profile,
+                production_ready=config.production_ready,
+                mock_or_demo=config.mock_or_demo,
+                release_metadata=config.release_metadata or {},
             )
             for config in container.app_update_service.list_apps()
         ],
@@ -1769,6 +1777,11 @@ async def register_installable_app(
             release_channel=payload.release_channel,
             expected_package_id=payload.expected_package_id,
             verified_package_ids=payload.verified_package_ids,
+            preview_url=payload.preview_url,
+            runtime_profile=payload.runtime_profile,
+            production_ready=payload.production_ready,
+            mock_or_demo=payload.mock_or_demo,
+            release_metadata=payload.release_metadata,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -1778,8 +1791,16 @@ async def register_installable_app(
         enabled=config.enabled,
         required_minimum_build=config.required_minimum_build,
         release_channel=config.release_channel,
+        release_tag_pattern=config.release_tag_pattern,
+        apk_asset_pattern=config.apk_asset_pattern,
+        latest_asset_name=config.latest_asset_name,
         private_install=config.release_channel == "private-install",
         expected_package_id=config.expected_package_id,
+        preview_url=config.preview_url,
+        runtime_profile=config.runtime_profile,
+        production_ready=config.production_ready,
+        mock_or_demo=config.mock_or_demo,
+        release_metadata=config.release_metadata or {},
     )
 
 
@@ -4565,6 +4586,9 @@ async def _installable_app_for_config(
         display_name=result.display_name or config.display_name,
         repo=config.repo,
         release_channel=result.release_channel,
+        release_tag_pattern=config.release_tag_pattern,
+        apk_asset_pattern=config.apk_asset_pattern,
+        latest_asset_name=config.latest_asset_name,
         latest_version=result.latest_version,
         latest_build=result.latest_build,
         release_tag=result.release_tag,
@@ -4576,6 +4600,11 @@ async def _installable_app_for_config(
         enabled=True,
         package_id=result.package_id or config.expected_package_id,
         install_status_hint=install_status_hint,
+        preview_url=config.preview_url,
+        runtime_profile=config.runtime_profile,
+        production_ready=config.production_ready,
+        mock_or_demo=config.mock_or_demo,
+        release_metadata=config.release_metadata or {},
     )
 
 
@@ -4590,6 +4619,9 @@ def _installable_app_response_from_config(
         display_name=config.display_name,
         repo=config.repo,
         release_channel=config.release_channel,
+        release_tag_pattern=config.release_tag_pattern,
+        apk_asset_pattern=config.apk_asset_pattern,
+        latest_asset_name=config.latest_asset_name,
         latest_version=None,
         latest_build=None,
         release_tag=None,
@@ -4601,6 +4633,11 @@ def _installable_app_response_from_config(
         enabled=enabled,
         package_id=config.expected_package_id,
         install_status_hint=install_status_hint,
+        preview_url=config.preview_url,
+        runtime_profile=config.runtime_profile,
+        production_ready=config.production_ready,
+        mock_or_demo=config.mock_or_demo,
+        release_metadata=config.release_metadata or {},
     )
 
 
@@ -4776,6 +4813,7 @@ def _project_factory_manifest_input(
         platforms=tuple(request.platforms),
         backend=request.backend,
         logo_mode=request.logo_mode,
+        first_release_mode=request.first_release_mode,
         visual_reference_paths=tuple(request.visual_reference_paths),
     )
 

@@ -6,5 +6,5 @@ Plan: `Factory Runner Orchestration`
 
 ## Checklist
 
-- [ ] T064 Recover interrupted preview release jobs without duplicating
+- [x] T064 Recover interrupted preview release jobs without duplicating
       resources.

@@ -6,4 +6,4 @@ Plan: `Operations Documentation`
 
 ## Checklist
 
-- [ ] T082 Document Bridge preview registration and manual fallback.
+- [x] T082 Document Bridge preview registration and manual fallback.

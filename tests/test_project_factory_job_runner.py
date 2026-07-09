@@ -6,6 +6,8 @@ from pathlib import Path
 import pytest
 
 from backend.app.application.services.project_factory_generator_service import (
+    ProjectFactoryGeneratedFile,
+    ProjectFactoryGenerationResult,
     ProjectFactoryGeneratorService,
 )
 from backend.app.application.services.project_factory_job_runner import (
@@ -74,27 +76,77 @@ def test_project_factory_runner_remote_publication_runs_required_phases(
         event_sink=events.append,
     )
 
-    assert process_runner.calls[-4:] == [
+    assert ("bash", "scripts/validate_generated_project.sh") in process_runner.calls
+    assert process_runner.calls.index(
+        ("bash", "scripts/validate_generated_project.sh")
+    ) < process_runner.calls.index(("bash", "scripts/publish_project.sh"))
+    assert process_runner.calls[-6:] == [
         ("bash", "scripts/publish_project.sh"),
-        ("bash", "scripts/publish_android_release.sh", "--push", "--watch"),
+        ("bash", "scripts/apply_cloudflare_preview.sh"),
+        ("bash", "scripts/smoke_preview_api.sh"),
+        (
+            "bash",
+            "scripts/publish_android_preview_release.sh",
+            "--push",
+            "--watch",
+        ),
         ("bash", "scripts/register_installable_app.sh"),
-        ("bash", "scripts/validate_publication_ready.sh"),
+        ("bash", "scripts/validate_initial_preview_release.sh"),
     ]
     completed_phases = [
         event["phase"] for event in events if event["status"] == "completed"
     ]
-    assert completed_phases[-4:] == [
+    assert completed_phases[-6:] == [
         "github_publish",
-        "android_release",
+        "cloudflare_preview_apply",
+        "preview_api_smoke",
+        "android_preview_release",
         "installable_app_registration",
         "publish_verification",
     ]
 
 
+def test_project_factory_runner_remote_publication_can_rerun_satisfied_phases(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "clinica-norte"
+    project.mkdir()
+    process_runner = _FakeProcessRunner()
+    runner = ProjectFactoryJobRunner(
+        generator_service=_ReusableProjectGenerator(project),
+        process_runner=process_runner,
+    )
+
+    context = _context(
+        tmp_path,
+        generator_runs=0,
+        reviewer_runs=0,
+        publication_validation_mode="remote",
+    )
+    runner.run(context, event_sink=lambda _event: None)
+    runner.run(context, event_sink=lambda _event: None)
+
+    remote_sequence = [
+        ("bash", "scripts/publish_project.sh"),
+        ("bash", "scripts/apply_cloudflare_preview.sh"),
+        ("bash", "scripts/smoke_preview_api.sh"),
+        (
+            "bash",
+            "scripts/publish_android_preview_release.sh",
+            "--push",
+            "--watch",
+        ),
+        ("bash", "scripts/register_installable_app.sh"),
+        ("bash", "scripts/validate_initial_preview_release.sh"),
+    ]
+    for command in remote_sequence:
+        assert process_runner.calls.count(command) == 2
+
+
 def test_project_factory_runner_remote_publication_reports_blocked_phase(
     tmp_path: Path,
 ) -> None:
-    process_runner = _FakeProcessRunner(fail_call=4, fail_returncode=2)
+    process_runner = _FakeProcessRunner(fail_call=5, fail_returncode=2)
     runner = _runner(tmp_path, process_runner)
     events: list[dict[str, object]] = []
 
@@ -112,6 +164,32 @@ def test_project_factory_runner_remote_publication_reports_blocked_phase(
     blocked = [event for event in events if event["status"] == "blocked"]
     assert blocked[-1]["phase"] == "github_publish"
     assert blocked[-1]["exit_code"] == 2
+
+
+def test_project_factory_runner_remote_publication_requires_generated_validation(
+    tmp_path: Path,
+) -> None:
+    process_runner = _FakeProcessRunner(fail_call=2, fail_returncode=9)
+    runner = _runner(tmp_path, process_runner)
+    events: list[dict[str, object]] = []
+
+    with pytest.raises(ProjectFactoryJobRunnerError):
+        runner.run(
+            _context(
+                tmp_path,
+                generator_runs=0,
+                reviewer_runs=0,
+                run_generated_validation=False,
+                publication_validation_mode="remote",
+            ),
+            event_sink=events.append,
+        )
+
+    assert ("bash", "scripts/validate_generated_project.sh") in process_runner.calls
+    assert ("bash", "scripts/publish_project.sh") not in process_runner.calls
+    failed = [event for event in events if event["status"] == "failed"]
+    assert failed[-1]["phase"] == "finalize_validation"
+    assert failed[-1]["exit_code"] == 9
 
 
 def test_project_factory_runner_blocks_when_publish_script_is_missing(
@@ -137,10 +215,10 @@ def test_project_factory_runner_blocks_when_publish_script_is_missing(
     assert "missing script" in blocked[-1]["stderr"]
 
 
-def test_project_factory_runner_blocks_when_android_release_is_missing(
+def test_project_factory_runner_blocks_when_cloudflare_preview_apply_is_missing(
     tmp_path: Path,
 ) -> None:
-    process_runner = _MissingScriptProcessRunner("scripts/publish_android_release.sh")
+    process_runner = _MissingScriptProcessRunner("scripts/apply_cloudflare_preview.sh")
     runner = _runner(tmp_path, process_runner)
     events: list[dict[str, object]] = []
 
@@ -156,7 +234,55 @@ def test_project_factory_runner_blocks_when_android_release_is_missing(
         )
 
     blocked = [event for event in events if event["status"] == "blocked"]
-    assert blocked[-1]["phase"] == "android_release"
+    assert blocked[-1]["phase"] == "cloudflare_preview_apply"
+    assert "missing script" in blocked[-1]["stderr"]
+
+
+def test_project_factory_runner_blocks_when_preview_api_smoke_is_missing(
+    tmp_path: Path,
+) -> None:
+    process_runner = _MissingScriptProcessRunner("scripts/smoke_preview_api.sh")
+    runner = _runner(tmp_path, process_runner)
+    events: list[dict[str, object]] = []
+
+    with pytest.raises(ProjectFactoryJobRunnerBlockedError):
+        runner.run(
+            _context(
+                tmp_path,
+                generator_runs=0,
+                reviewer_runs=0,
+                publication_validation_mode="remote",
+            ),
+            event_sink=events.append,
+        )
+
+    blocked = [event for event in events if event["status"] == "blocked"]
+    assert blocked[-1]["phase"] == "preview_api_smoke"
+    assert "missing script" in blocked[-1]["stderr"]
+
+
+def test_project_factory_runner_blocks_when_android_preview_release_is_missing(
+    tmp_path: Path,
+) -> None:
+    process_runner = _MissingScriptProcessRunner(
+        "scripts/publish_android_preview_release.sh"
+    )
+    runner = _runner(tmp_path, process_runner)
+    events: list[dict[str, object]] = []
+
+    with pytest.raises(ProjectFactoryJobRunnerBlockedError):
+        runner.run(
+            _context(
+                tmp_path,
+                generator_runs=0,
+                reviewer_runs=0,
+                publication_validation_mode="remote",
+            ),
+            event_sink=events.append,
+        )
+
+    blocked = [event for event in events if event["status"] == "blocked"]
+    assert blocked[-1]["phase"] == "android_preview_release"
     assert "missing script" in blocked[-1]["stderr"]
 
 
@@ -254,7 +380,7 @@ def test_project_factory_runner_failure_keeps_project_and_reports_error(
 def test_project_factory_runner_blocks_when_remote_publication_fails(
     tmp_path: Path,
 ) -> None:
-    process_runner = _FakeProcessRunner(fail_call=4)
+    process_runner = _FakeProcessRunner(fail_call=5)
     runner = _runner(tmp_path, process_runner)
     events: list[dict[str, object]] = []
 
@@ -333,6 +459,23 @@ class _MissingScriptProcessRunner(_FakeProcessRunner):
                 stderr=f"missing script: {self.missing_script}",
             )
         return ProjectFactoryProcessResult(returncode=0, stdout="ok", stderr="")
+
+
+class _ReusableProjectGenerator:
+    def __init__(self, project_path: Path) -> None:
+        self.project_path = project_path
+
+    def generate(self, manifest_plan, *, reference_assets=(), project_assets=()):
+        return ProjectFactoryGenerationResult(
+            ok=True,
+            status="ready",
+            target_path=str(self.project_path),
+            generated_files=(
+                ProjectFactoryGeneratedFile(path=".codex/project.yaml", size_bytes=0),
+            ),
+            git_status="existing",
+            message="Existing project foundation verified.",
+        )
 
 
 def _runner(tmp_path: Path, process_runner: _FakeProcessRunner) -> ProjectFactoryJobRunner:

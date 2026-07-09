@@ -6,4 +6,4 @@ Plan: `Operations Documentation`
 
 ## Checklist
 
-- [ ] T079 Document Initial Preview Release required environment variables.
+- [x] T079 Document Initial Preview Release required environment variables.

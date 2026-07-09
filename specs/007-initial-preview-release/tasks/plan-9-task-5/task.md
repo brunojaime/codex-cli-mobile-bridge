@@ -6,5 +6,5 @@ Plan: `Validation And Regression Coverage`
 
 ## Checklist
 
-- [ ] T076 Add validation test that preview APK does not use localhost,
+- [x] T076 Add validation test that preview APK does not use localhost,
       placeholder, or mock primary data paths.

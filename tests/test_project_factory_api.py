@@ -81,7 +81,19 @@ def test_project_factory_draft_and_dry_run_are_write_free(tmp_path: Path) -> Non
     assert draft_response.status_code == 200
     draft = draft_response.json()
     draft_id = draft["draft_id"]
+    assert draft["firstReleaseMode"] == "preview"
+    assert draft["manifest_plan"]["first_release_mode"] == "preview"
     assert draft["manifest_plan"]["ok"] is True
+    assert draft["initialPreviewRelease"]["previewUrl"] == (
+        "https://preview.nienfos.com/clinica-norte"
+    )
+    assert draft["initialPreviewRelease"]["apiBaseUrl"] == (
+        "https://preview.nienfos.com/clinica-norte/api"
+    )
+    assert draft["initialPreviewRelease"]["runtimeProfile"] == "preview"
+    assert draft["initialPreviewRelease"]["releaseTagPattern"] == "android-preview-v*"
+    assert draft["initialPreviewRelease"]["productionReady"] is False
+    assert draft["initialPreviewRelease"]["mockOrDemo"] is False
     assert draft["manifest_plan"]["manifest"]["codex"]["creation_workflow"][
         "generator_runs"
     ] == 20
@@ -92,8 +104,54 @@ def test_project_factory_draft_and_dry_run_are_write_free(tmp_path: Path) -> Non
     assert dry_run_response.status_code == 200
     dry_run = dry_run_response.json()
     assert dry_run["ok"] is True
+    assert dry_run["firstReleaseMode"] == "preview"
     assert dry_run["target_path"] == str(tmp_path / "clinica-norte")
     assert not (tmp_path / "clinica-norte").exists()
+
+
+def test_project_factory_first_release_mode_is_explicit_and_validated(
+    tmp_path: Path,
+) -> None:
+    client = _client(tmp_path)
+
+    mock_response = client.post(
+        "/project-factory/drafts",
+        json={
+            "name": "Demo Norte",
+            "businessType": "retail",
+            "primaryGoal": "Mostrar demo local",
+            "firstReleaseMode": "mock",
+        },
+    )
+
+    assert mock_response.status_code == 200
+    mock_payload = mock_response.json()
+    assert mock_payload["firstReleaseMode"] == "mock"
+    assert mock_payload["manifest_plan"]["first_release_mode"] == "mock"
+    assert mock_payload["manifest_plan"]["manifest"]["release"]["first_release_mode"] == (
+        "mock"
+    )
+
+    production_response = client.post(
+        "/project-factory/drafts",
+        json={
+            "name": "Produccion Norte",
+            "businessType": "retail",
+            "primaryGoal": "Publicar produccion",
+            "firstReleaseMode": "production",
+        },
+    )
+
+    assert production_response.status_code == 200
+    production_payload = production_response.json()
+    assert production_payload["firstReleaseMode"] == "production"
+    assert production_payload["manifest_plan"]["ok"] is False
+    assert production_payload["manifest_plan"]["errors"][0]["field"] == (
+        "first_release_mode"
+    )
+    assert "Production/promotion is not part" in (
+        production_payload["manifest_plan"]["errors"][0]["message"]
+    )
 
 
 def test_project_factory_persists_draft_and_finished_job_across_clients(
@@ -396,6 +454,10 @@ def test_project_factory_generate_creates_local_project_foundation(tmp_path: Pat
     assert (project / ".codex/project.yaml").is_file()
     assert (project / "AGENTS.md").is_file()
     assert (project / "README.md").is_file()
+    assert (project / "scripts/publish_android_preview_release.sh").is_file()
+    assert (project / "scripts/apply_cloudflare_preview.sh").is_file()
+    assert (project / "scripts/smoke_preview_api.sh").is_file()
+    assert (project / "scripts/validate_initial_preview_release.sh").is_file()
     assert (project / "scripts/publish_android_release.sh").is_file()
     assert (project / "specs/001-product-foundation/spec.md").is_file()
     assert (project / "specs/001-product-foundation/plan.md").is_file()
@@ -447,6 +509,7 @@ def test_ready_job_without_remote_publication_is_audited_to_blocked(
     assert ready_response.status_code == 200
     job_id = ready_response.json()["job_id"]
     assert ready_response.json()["status"] == "ready"
+    assert ready_response.json()["initialPreviewRelease"]["status"] == "ready"
 
     remote_client = _client(tmp_path, publication_validation_mode="remote")
     audited_response = remote_client.get(f"/project-factory/jobs/{job_id}")
@@ -456,10 +519,29 @@ def test_ready_job_without_remote_publication_is_audited_to_blocked(
     assert audited["status"] == "blocked"
     assert audited["current_phase"] == "publish_verification"
     assert "missing verified GitHub release" in audited["message"]
+    initial_preview = audited["initialPreviewRelease"]
+    assert initial_preview["status"] == "blocked"
+    assert initial_preview["currentPhase"] == "publish_verification"
+    assert initial_preview["previewUrl"] == "https://preview.nienfos.com/catalogo-autos"
+    assert initial_preview["apiBaseUrl"] == (
+        "https://preview.nienfos.com/catalogo-autos/api"
+    )
+    assert initial_preview["runtimeProfile"] == "preview"
+    assert initial_preview["releaseChannel"] == "preview"
+    assert initial_preview["releaseTagPattern"] == "android-preview-v*"
+    assert initial_preview["productionReady"] is False
+    assert initial_preview["mockOrDemo"] is False
+    assert "missing verified GitHub release" in initial_preview["blockerText"]
+    assert initial_preview["phaseStatuses"]["publish_verification"]["status"] == (
+        "blocked"
+    )
+    assert "scripts/validate_initial_preview_release.sh" in (
+        initial_preview["manualCommandHints"]
+    )
     assert audited["step_logs"][-1]["status"] == "blocked"
     assert audited["step_logs"][-1]["command"] == [
         "bash",
-        "scripts/validate_publication_ready.sh",
+        "scripts/validate_initial_preview_release.sh",
     ]
     assert "origin remote is not configured" in audited["step_logs"][-1]["stderr"]
 
@@ -468,6 +550,46 @@ def test_ready_job_without_remote_publication_is_audited_to_blocked(
     summaries = list_response.json()["jobs"]
     assert summaries[0]["status"] == "blocked"
     assert summaries[0]["manual_next_step"]
+    assert summaries[0]["initialPreviewRelease"]["status"] == "blocked"
+
+
+def test_remote_project_factory_ready_job_exposes_initial_preview_status(
+    tmp_path: Path,
+) -> None:
+    client = _client(tmp_path, publication_validation_mode="local")
+    draft_id = _create_draft(client, "Preview Norte")
+    ready_response = client.post(f"/project-factory/drafts/{draft_id}/generate")
+    assert ready_response.status_code == 200
+    job_id = ready_response.json()["job_id"]
+    project = tmp_path / "preview-norte"
+    validation_script = project / "scripts/validate_initial_preview_release.sh"
+    validation_script.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    validation_script.chmod(0o755)
+
+    remote_client = _client(tmp_path, publication_validation_mode="remote")
+    response = remote_client.get(f"/project-factory/jobs/{job_id}")
+    list_response = remote_client.get("/project-factory/jobs")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "ready"
+    initial_preview = payload["initialPreviewRelease"]
+    assert initial_preview["status"] == "ready"
+    assert initial_preview["previewUrl"] == "https://preview.nienfos.com/preview-norte"
+    assert initial_preview["apiBaseUrl"] == (
+        "https://preview.nienfos.com/preview-norte/api"
+    )
+    assert initial_preview["runtimeProfile"] == "preview"
+    assert initial_preview["releaseChannel"] == "preview"
+    assert initial_preview["releaseTagPattern"] == "android-preview-v*"
+    assert initial_preview["phaseStatuses"]["publish_verification"]["status"] == (
+        "completed"
+    )
+    assert initial_preview["blockerText"] is None
+    assert list_response.status_code == 200
+    summary_preview = list_response.json()["jobs"][0]["initialPreviewRelease"]
+    assert summary_preview["status"] == "ready"
+    assert summary_preview["previewUrl"] == initial_preview["previewUrl"]
 
 
 def test_project_factory_generate_duplicate_returns_conflict(tmp_path: Path) -> None:

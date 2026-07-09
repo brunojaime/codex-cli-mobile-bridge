@@ -6,4 +6,4 @@ Plan: `Cloudflare Preview Backend Readiness`
 
 ## Checklist
 
-- [ ] T016 Provision or verify `https://preview.nienfos.com/<app-slug>`.
+- [x] T016 Provision or verify `https://preview.nienfos.com/<app-slug>`.

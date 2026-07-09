@@ -6,4 +6,4 @@ Plan: `Cloudflare Preview Backend Readiness`
 
 ## Checklist
 
-- [ ] T015 Add preview apply enablement flag and blocked output when disabled.
+- [x] T015 Add preview apply enablement flag and blocked output when disabled.

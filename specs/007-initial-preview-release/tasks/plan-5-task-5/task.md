@@ -6,4 +6,4 @@ Plan: `Android Preview Release Workflow`
 
 ## Checklist
 
-- [ ] T038 Write `release/preview-runtime.json`.
+- [x] T038 Write `release/preview-runtime.json`.

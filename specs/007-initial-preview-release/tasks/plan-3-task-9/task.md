@@ -6,4 +6,4 @@ Plan: `Cloudflare Preview Backend Readiness`
 
 ## Checklist
 
-- [ ] T022 Verify app/tenant scoping for D1 records.
+- [x] T022 Verify app/tenant scoping for D1 records.

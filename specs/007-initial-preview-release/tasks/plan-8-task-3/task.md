@@ -6,4 +6,4 @@ Plan: `Mobile And Workbench UX`
 
 ## Checklist
 
-- [ ] T067 Show Android preview APK install state through Apps catalog.
+- [x] T067 Show Android preview APK install state through Apps catalog.

@@ -71,3 +71,28 @@ notes:
   - tasks.md is the normative task list.
   - tree.json groups the normative tasks by implementation phase for Workbench navigation.
   - specs/005-new-project-factory and specs/006-web-preview-delivery are required implementation context.
+
+implementation_status:
+  completed_tasks: 90
+  pending_tasks: 0
+  status: implemented
+  completed_scope:
+    - Default initial release contract is preview with real Cloudflare Preview API and D1 paths.
+    - Generated Worker serves Preview API v1 routes under /<app-slug>/api.
+    - Android preview release lane, smoke gates, Bridge registration gate, and runner ordering are implemented.
+    - Bridge registration persists previewUrl, runtimeProfile, productionReady, mockOrDemo, and release metadata.
+    - Regression coverage blocks mock/local/placeholder preview releases and false-ready publication paths.
+    - Generated final readiness can verify preview APK bytes against EXPECTED_SHA256.
+    - Generated preview runtime contract and dedicated preview release profile validator are emitted.
+    - Project Factory draft/job/history payloads expose initialPreviewRelease status, phase states, blockers, and manual command hints.
+    - Mobile Project Factory history/progress shows preview status, blockers, manual commands, open/copy preview actions, and production-not-ready state.
+    - Mobile Apps catalog exposes preview installability, runtime/channel/tag/signing metadata, preview URL, and production/mock flags.
+    - Workbench backend response exposes preview readiness fields for preview URL, API URL, APK, Bridge registration, blockers, and next actions.
+    - Project Factory requests and responses expose explicit firstReleaseMode with preview default and mock-only opt-in validation.
+    - Generated promotion metadata and runbooks keep android-preview-v*, android-v*, and mock/local tags separate.
+    - Generated Cloudflare cost posture artifact and validation script block paid resources until explicit operator confirmation.
+    - Generated operations runbooks cover Android preview signing, preview update/disable/extend/troubleshooting, and false-readiness examples.
+    - Generated domain-entity D1 migrations are app-scoped and idempotent, with a Wrangler apply script wired before Cloudflare preview apply.
+    - Debug-preview signing is blocked unless generated metadata and explicit environment acknowledgement are both present.
+    - Remote publication scripts and runner coverage support rerunning already-satisfied preview publication phases without duplicating resources or hiding mismatches.
+  pending_scope: []

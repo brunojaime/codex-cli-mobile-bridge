@@ -6,5 +6,5 @@ Plan: `Project Factory Contract Updates`
 
 ## Checklist
 
-- [ ] T013 Update generated `release/` docs to explain preview, production, and
+- [x] T013 Update generated `release/` docs to explain preview, production, and
       mock/demo channels.

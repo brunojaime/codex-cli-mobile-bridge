@@ -41,10 +41,21 @@ def test_valid_manifest_includes_required_product_defaults(tmp_path: Path) -> No
         "fastapi-runtime-profiles-auth-rbac-admin-notifications-v1"
     )
     assert manifest["runtime_profiles"]["env"] == "APP_RUNTIME_PROFILE"
-    assert manifest["runtime_profiles"]["default_profile"] == "real"
+    assert manifest["runtime_profiles"]["default_profile"] == "preview"
+    assert manifest["runtime_profiles"]["preview"]["default_for_initial_release"] is True
+    assert manifest["runtime_profiles"]["preview"]["api_runtime"] == (
+        "cloudflare_preview"
+    )
+    assert manifest["runtime_profiles"]["preview"]["api_base_url"] == (
+        "https://preview.nienfos.com/clinica-norte/api"
+    )
     assert manifest["runtime_profiles"]["mock"]["opt_in"] is True
     assert manifest["runtime_profiles"]["real"]["default_for_productive_release"] is True
     assert manifest["runtime_profiles"]["real"]["mock_or_demo"] is False
+    assert manifest["release"]["initial_preview_release_required"] is True
+    assert manifest["release"]["mock_or_demo_release_required"] is False
+    assert manifest["release"]["mock_or_demo_release_opt_in"] is True
+    assert manifest["release"]["productive_release_required"] is False
     assert manifest["auth"]["required"] is True
     assert manifest["auth"]["google_login"] is True
     assert manifest["auth"]["google_credentials_status"] == "pending_credentials"

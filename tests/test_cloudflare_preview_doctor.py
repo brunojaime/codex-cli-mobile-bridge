@@ -100,7 +100,7 @@ def test_cloudflare_provisioning_planner_is_dry_run_and_side_effect_free() -> No
     assert plan["dry_run"] is True
     assert plan["side_effects"] == []
     assert plan["runtime_type"] == "cloudflare_worker_assets"
-    assert plan["health_path"] == "/__preview/health"
+    assert plan["health_path"] == "/api/health"
     resources = {(item["kind"], item.get("name")) for item in plan["resources"]}
     assert ("dns_record", "preview.nienfos.com") in resources
     assert ("worker_script", "nienfos-preview-runtime") in resources
@@ -123,7 +123,7 @@ def test_cloudflare_planner_can_use_generated_web_preview_manifest() -> None:
     assert ("pages_project", "nienfos-preview-web") in resources
     assert plan["dry_run"] is True
     assert plan["runtime_type"] == "cloudflare_worker_assets"
-    assert plan["health_path"] == "/__preview/health"
+    assert plan["health_path"] == "/api/health"
     assert plan["access_mode"] == "invite_token"
     assert plan["required_worker_secrets"] == ["WEB_PREVIEW_INVITE_SECRET"]
     secret_resources = [

@@ -6,5 +6,5 @@ Plan: `Release Mode Contract`
 
 ## Checklist
 
-- [ ] T003 Define tag prefixes: `android-preview-v*`, `android-v*`, and
+- [x] T003 Define tag prefixes: `android-preview-v*`, `android-v*`, and
       `android-mock-v*`.

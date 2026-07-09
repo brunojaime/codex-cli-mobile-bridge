@@ -6,5 +6,5 @@ Plan: `Generated App Runtime Profile`
 
 ## Checklist
 
-- [ ] T032 Fail preview validation when mock/local seeded data is the primary
+- [x] T032 Fail preview validation when mock/local seeded data is the primary
       runtime.

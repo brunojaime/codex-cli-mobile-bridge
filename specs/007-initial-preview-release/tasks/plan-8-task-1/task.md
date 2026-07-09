@@ -6,4 +6,4 @@ Plan: `Mobile And Workbench UX`
 
 ## Checklist
 
-- [ ] T065 Show Initial Preview Release status in Project Factory History.
+- [x] T065 Show Initial Preview Release status in Project Factory History.

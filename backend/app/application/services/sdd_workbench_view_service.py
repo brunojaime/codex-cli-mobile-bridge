@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+import json
 from pathlib import Path
 
 from backend.app.application.services.sdd_llm_instruction_service import (
@@ -133,6 +134,7 @@ class SddWorkbenchView:
     baselines: tuple[SddWorkbenchBaselineView, ...]
     traceability_matrix: tuple[SddWorkbenchTraceabilityRow, ...]
     impact_queue: tuple[SddWorkbenchImpactQueueItem, ...]
+    preview_readiness: dict[str, object]
 
     def to_payload(self) -> dict[str, object]:
         return {
@@ -147,6 +149,7 @@ class SddWorkbenchView:
             "baselines": [asdict(item) for item in self.baselines],
             "traceability_matrix": [asdict(item) for item in self.traceability_matrix],
             "impact_queue": [asdict(item) for item in self.impact_queue],
+            "preview_readiness": self.preview_readiness,
         }
 
 
@@ -198,7 +201,86 @@ class SddWorkbenchViewService:
             baselines=_baselines(project, workspace),
             traceability_matrix=_traceability_matrix(project, workspace),
             impact_queue=_impact_queue(project, workspace),
+            preview_readiness=_preview_readiness(workspace),
         )
+
+
+def _preview_readiness(workspace: Path) -> dict[str, object]:
+    runtime_path = workspace / "release" / "preview-runtime.json"
+    if not runtime_path.is_file():
+        return {
+            "available": False,
+            "status": "missing",
+            "runtimeContractPath": "release/preview-runtime.json",
+            "blockers": [
+                "release/preview-runtime.json is missing.",
+            ],
+            "nextActions": [
+                "Generate or restore release/preview-runtime.json before reporting Initial Preview readiness."
+            ],
+        }
+    try:
+        payload = json.loads(runtime_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return {
+            "available": False,
+            "status": "invalid",
+            "runtimeContractPath": "release/preview-runtime.json",
+            "error": str(exc),
+            "blockers": [
+                "release/preview-runtime.json could not be parsed.",
+            ],
+            "nextActions": [
+                "Fix release/preview-runtime.json so Workbench can read preview readiness."
+            ],
+        }
+    if not isinstance(payload, dict):
+        return {
+            "available": False,
+            "status": "invalid",
+            "runtimeContractPath": "release/preview-runtime.json",
+            "error": "Runtime contract must be a JSON object.",
+            "blockers": [
+                "release/preview-runtime.json must contain a JSON object.",
+            ],
+            "nextActions": [
+                "Fix release/preview-runtime.json so Workbench can read preview readiness."
+            ],
+        }
+    bridge = payload.get("bridge") if isinstance(payload.get("bridge"), dict) else {}
+    production_ready = payload.get("productionReady") is True
+    mock_or_demo = payload.get("mockOrDemo") is True
+    blockers: list[str] = []
+    if production_ready:
+        blockers.append("Initial Preview Release must not be marked productionReady.")
+    if mock_or_demo:
+        blockers.append("Initial Preview Release must not be marked mockOrDemo.")
+    return {
+        "available": True,
+        "status": "ready" if not blockers else "blocked",
+        "runtimeContractPath": "release/preview-runtime.json",
+        "sourceApp": payload.get("sourceApp"),
+        "previewUrl": payload.get("previewUrl"),
+        "apiBaseUrl": payload.get("apiBaseUrl"),
+        "runtimeProfile": payload.get("runtimeProfile"),
+        "apiRuntime": payload.get("apiRuntime"),
+        "releaseChannel": payload.get("releaseChannel"),
+        "releaseTagPattern": payload.get("releaseTagPattern"),
+        "apkAssetPattern": payload.get("apkAssetPattern"),
+        "latestAssetName": payload.get("latestAssetName"),
+        "androidPreviewApk": payload.get("latestAssetName")
+        or payload.get("apkAssetPattern")
+        or "android-preview-v*.apk",
+        "bridgeRegistrationRequired": True,
+        "productionReady": production_ready,
+        "mockOrDemo": mock_or_demo,
+        "bridge": bridge,
+        "blockers": blockers,
+        "nextActions": [
+            "Run scripts/validate_preview_release_profiles.sh.",
+            "Run scripts/validate_initial_preview_release.sh before marking release ready.",
+        ],
+    }
 
 
 def _health(

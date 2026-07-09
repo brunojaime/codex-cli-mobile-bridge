@@ -6,4 +6,4 @@ Plan: `Android Preview Release Workflow`
 
 ## Checklist
 
-- [ ] T043 Keep `android-v*` productive signing gates unchanged.
+- [x] T043 Keep `android-v*` productive signing gates unchanged.

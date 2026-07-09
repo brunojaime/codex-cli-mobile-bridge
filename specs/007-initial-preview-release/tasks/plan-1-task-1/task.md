@@ -6,4 +6,4 @@ Plan: `Release Mode Contract`
 
 ## Checklist
 
-- [ ] T001 Add `preview` release mode to Project Factory planning models.
+- [x] T001 Add `preview` release mode to Project Factory planning models.

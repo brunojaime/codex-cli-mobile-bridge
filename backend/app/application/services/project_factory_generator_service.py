@@ -184,19 +184,37 @@ def _project_files(manifest: dict[str, Any]) -> dict[str, str]:
         ".github/workflows/android-release.yml": _generated_android_release_workflow(
             slug,
         ),
+        ".github/workflows/android-preview-release.yml": (
+            _generated_android_preview_release_workflow(slug)
+        ),
         "scripts/finalize_local_commit.sh": _finalize_local_commit_script(),
         "scripts/publish_project.sh": _publish_script(),
+        "scripts/publish_android_preview_release.sh": (
+            _publish_android_preview_release_script(slug)
+        ),
         "scripts/publish_android_release.sh": _publish_android_release_script(),
         "scripts/register_installable_app.sh": _register_installable_app_script(
             slug,
             name,
         ),
+        "scripts/apply_cloudflare_preview.sh": _apply_cloudflare_preview_script(slug),
+        "scripts/apply_preview_d1_migrations.sh": _apply_preview_d1_migrations_script(),
+        "scripts/validate_cloudflare_cost_posture.sh": (
+            _cloudflare_cost_posture_check_script()
+        ),
+        "scripts/smoke_preview_api.sh": _smoke_preview_api_script(slug),
         "scripts/build_web_preview.sh": _build_web_preview_script(slug),
         "scripts/deploy_web_preview.sh": _deploy_web_preview_script(slug),
         "scripts/validate_web_preview.sh": _validate_web_preview_script(slug),
         "scripts/validate_generated_project.sh": _validation_script(),
+        "scripts/validate_initial_preview_release.sh": (
+            _initial_preview_release_validation_script(slug)
+        ),
         "scripts/validate_publication_ready.sh": _publication_validation_script(),
         "scripts/validate_release_profiles.sh": _release_profile_validation_script(),
+        "scripts/validate_preview_release_profiles.sh": (
+            _preview_release_profile_validation_script(slug)
+        ),
         "deploy/web-preview/README.md": _web_preview_readme(slug, name),
         "deploy/web-preview/web-preview-manifest.yaml": _to_yaml(
             _web_preview_manifest_payload(slug, name)
@@ -210,6 +228,9 @@ def _project_files(manifest: dict[str, Any]) -> dict[str, str]:
         ),
         "deploy/web-preview/d1/migrations/0001_preview_invites.sql": (
             _web_preview_d1_invites_migration()
+        ),
+        "deploy/web-preview/d1/migrations/0002_domain_entities.sql": (
+            _web_preview_d1_domain_entities_migration(slug)
         ),
         "specs/001-product-foundation/spec.md": _initial_spec(
             name,
@@ -294,8 +315,16 @@ def _project_files(manifest: dict[str, Any]) -> dict[str, str]:
             "Google Play release readiness items and pending credentials will be tracked here.",
         ),
         "release/runtime-profiles.md": _runtime_profiles_doc(name),
+        "release/preview-runtime.json": _preview_runtime_json(slug, name),
+        "release/preview-signing-policy.json": _preview_signing_policy_json(slug),
+        "release/promotion-contract.json": _promotion_contract_json(slug, name),
+        "release/cloudflare-cost-posture.json": _cloudflare_cost_posture_json(slug),
         "release/release-contracts.yaml": _release_contracts_yaml(slug),
         "release/release-output-template.md": _release_output_template(),
+        "release/promotion-runbook.md": _promotion_runbook_doc(slug, name),
+        "release/android-preview-signing.md": _android_preview_signing_doc(slug),
+        "release/preview-operations-runbook.md": _preview_operations_runbook(slug),
+        "release/false-readiness-runbook.md": _false_readiness_runbook(slug),
     }
     files.update(_baseline_diagram_files(name, business_type, primary_goal))
     files.update(_initial_task_node_files())
@@ -489,15 +518,28 @@ def _web_preview_manifest_payload(slug: str, name: str) -> dict[str, Any]:
         "stable_url": f"https://preview.nienfos.com/{slug}",
         "runtime": {
             "type": "cloudflare_worker_assets",
-            "default_profile": "real",
+            "default_profile": "preview",
             "allowed_profiles": ["real", "staging", "preview", "mock"],
             "api_runtime": "cloudflare_preview",
-            "api_base_url": "https://preview.nienfos.com",
+            "api_base_url": f"https://preview.nienfos.com/{slug}/api",
             "app_slug": slug,
-            "health_path": "/__preview/health",
+            "health_path": "/api/health",
             "asset_binding": "ASSETS",
             "spa_fallback": "index.html",
             "mock_preview_requires_opt_in": True,
+        },
+        "first_release": {
+            "mode": "preview",
+            "runtime_profile": "preview",
+            "api_runtime": "cloudflare_preview",
+            "api_base_url": f"https://preview.nienfos.com/{slug}/api",
+            "preview_url": f"https://preview.nienfos.com/{slug}",
+            "android_tag_pattern": "android-preview-v*",
+            "android_release_channel": "preview",
+            "backend_required": True,
+            "mock_or_demo": False,
+            "data_persistence": "cloudflare_d1",
+            "production_android_release_deferred": True,
         },
         "access": {
             "mode": "invite_token",
@@ -511,7 +553,7 @@ def _web_preview_manifest_payload(slug: str, name: str) -> dict[str, Any]:
             "d1_binding": "PREVIEW_DB",
             "migrations_dir": "deploy/web-preview/d1/migrations",
             "required_worker_secrets": ["WEB_PREVIEW_INVITE_SECRET"],
-            "public_paths": ["/__preview/health"],
+            "public_paths": ["/__preview/health", "/api/health"],
         },
         "build": {
             "flutter_project": "apps/mobile",
@@ -549,16 +591,24 @@ def _web_preview_manifest_payload(slug: str, name: str) -> dict[str, Any]:
             f"/{slug}/",
             f"/{slug}/__preview/health",
             f"/{slug}/__preview/access",
+            f"/{slug}/api/health",
+            f"/{slug}/api/auth/login",
+            f"/{slug}/api/auth/me",
+            f"/{slug}/api/app-updates/current",
+            f"/{slug}/api/domain/{{entity}}",
+            f"/{slug}/api/notifications",
             f"/{slug}/apps/{slug}/config",
             f"/{slug}/dashboard",
         ],
         "preview_api_v1": {
-            "health": "/__preview/health",
+            "base_url": f"https://preview.nienfos.com/{slug}/api",
+            "health": "/api/health",
             "app_config": f"/apps/{slug}/config",
-            "auth": ["/auth/login", "/auth/logout", "/auth/me"],
-            "admin": ["/admin/users", "/admin/roles"],
-            "notifications": ["/notifications", "/notifications/{id}"],
-            "domain_crud": "/domain/{entity}",
+            "auth": ["/api/auth/login", "/api/auth/logout", "/api/auth/me"],
+            "admin": ["/api/admin/bootstrap", "/api/admin/users", "/api/admin/roles"],
+            "notifications": ["/api/notifications", "/api/notifications/{id}"],
+            "domain_crud": "/api/domain/{entity}",
+            "app_updates": "/api/app-updates/current",
         },
     }
 
@@ -584,9 +634,10 @@ scripts/validate_web_preview.sh
 ## Build web artifact
 
 ```bash
-API_BASE_URL=https://preview.nienfos.com \\
-APP_RUNTIME_PROFILE=real \\
+API_BASE_URL=https://preview.nienfos.com/{slug}/api \\
+APP_RUNTIME_PROFILE=preview \\
 API_RUNTIME=cloudflare_preview \\
+APP_SLUG={slug} \\
 scripts/build_web_preview.sh
 ```
 
@@ -616,6 +667,17 @@ operator secrets configured. Missing gates return explicit errors such as
 
 The generated preview defaults to `access.mode=invite_token`. Health is public,
 but the SPA and static assets require a signed invite token.
+
+The generated Worker is also the first real backend for the app. Its Preview API
+is served from:
+
+```text
+https://preview.nienfos.com/{slug}/api
+```
+
+It must pass health, auth/session, D1 persistence, app-update metadata, domain
+CRUD, notifications, and app-scope isolation smoke tests before an
+`android-preview-v*` APK can be released or registered in Codex Mobile Apps.
 
 1. The Bridge operator configures `WEB_PREVIEW_INVITE_SECRET` on the Bridge.
 2. The Worker gets the same value as an operator-managed Worker secret:
@@ -677,6 +739,10 @@ not_found_handling = "single-page-application"
 
 [vars]
 PREVIEW_ACCESS_MODE = "invite_token"
+APP_RUNTIME_PROFILE = "preview"
+API_RUNTIME = "cloudflare_preview"
+APP_SLUG = "{slug}"
+API_BASE_URL = "https://preview.nienfos.com/{slug}/api"
 # Configure the real value as a Worker secret, not here:
 # wrangler secret put WEB_PREVIEW_INVITE_SECRET
 """
@@ -711,13 +777,131 @@ CREATE TABLE IF NOT EXISTS preview_access_attempts (
   status TEXT NOT NULL,
   created_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS preview_users (
+  user_id TEXT PRIMARY KEY,
+  source_app TEXT NOT NULL,
+  app_slug TEXT NOT NULL,
+  email TEXT NOT NULL,
+  display_name TEXT NOT NULL,
+  password_hash TEXT NOT NULL,
+  roles_json TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE(source_app, app_slug, email)
+);
+
+CREATE INDEX IF NOT EXISTS idx_preview_users_app_email
+  ON preview_users(source_app, app_slug, email);
+
+CREATE TABLE IF NOT EXISTS preview_sessions (
+  session_id TEXT PRIMARY KEY,
+  source_app TEXT NOT NULL,
+  app_slug TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  token_sha256 TEXT NOT NULL UNIQUE,
+  created_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  revoked_at TEXT,
+  FOREIGN KEY(user_id) REFERENCES preview_users(user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_preview_sessions_token
+  ON preview_sessions(token_sha256);
+
+CREATE TABLE IF NOT EXISTS preview_app_updates (
+  source_app TEXT NOT NULL,
+  app_slug TEXT NOT NULL,
+  release_channel TEXT NOT NULL DEFAULT 'preview',
+  release_tag TEXT NOT NULL,
+  version TEXT NOT NULL,
+  build_number TEXT NOT NULL,
+  apk_url TEXT,
+  sha256 TEXT,
+  metadata_json TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL,
+  PRIMARY KEY(source_app, app_slug, release_channel)
+);
+
+CREATE TABLE IF NOT EXISTS preview_domain_records (
+  record_id TEXT PRIMARY KEY,
+  source_app TEXT NOT NULL,
+  app_slug TEXT NOT NULL,
+  entity TEXT NOT NULL,
+  payload_json TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_preview_domain_records_app_entity
+  ON preview_domain_records(source_app, app_slug, entity);
+
+CREATE TABLE IF NOT EXISTS preview_notifications (
+  notification_id TEXT PRIMARY KEY,
+  source_app TEXT NOT NULL,
+  app_slug TEXT NOT NULL,
+  user_id TEXT,
+  title TEXT NOT NULL,
+  body TEXT NOT NULL,
+  read_at TEXT,
+  created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_preview_notifications_app_user
+  ON preview_notifications(source_app, app_slug, user_id);
+"""
+
+
+def _web_preview_d1_domain_entities_migration(slug: str) -> str:
+    return f"""-- Generated domain entity storage for {slug} Initial Preview Release.
+-- This migration is intentionally separate from auth/session/update tables.
+-- It is app-scoped and idempotent so it can be safely reapplied.
+
+CREATE TABLE IF NOT EXISTS preview_domain_entities (
+  entity_id TEXT PRIMARY KEY,
+  source_app TEXT NOT NULL,
+  app_slug TEXT NOT NULL,
+  entity_type TEXT NOT NULL,
+  external_key TEXT,
+  display_name TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'active',
+  payload_json TEXT NOT NULL DEFAULT '{{}}',
+  created_by_user_id TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE(source_app, app_slug, entity_type, external_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_preview_domain_entities_app_entity
+  ON preview_domain_entities(source_app, app_slug, entity_type);
+
+CREATE INDEX IF NOT EXISTS idx_preview_domain_entities_app_status
+  ON preview_domain_entities(source_app, app_slug, status);
+
+CREATE TABLE IF NOT EXISTS preview_domain_entity_events (
+  event_id TEXT PRIMARY KEY,
+  source_app TEXT NOT NULL,
+  app_slug TEXT NOT NULL,
+  entity_id TEXT NOT NULL,
+  event_type TEXT NOT NULL,
+  payload_json TEXT NOT NULL DEFAULT '{{}}',
+  created_at TEXT NOT NULL,
+  FOREIGN KEY(entity_id) REFERENCES preview_domain_entities(entity_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_preview_domain_entity_events_app_entity
+  ON preview_domain_entity_events(source_app, app_slug, entity_id);
+
+CREATE INDEX IF NOT EXISTS idx_preview_domain_entity_events_app_type
+  ON preview_domain_entity_events(source_app, app_slug, event_type);
 """
 
 
 def _web_preview_worker_js(slug: str, name: str) -> str:
     template = """const SOURCE_APP = '__SOURCE_APP__';
 const DISPLAY_NAME = __DISPLAY_NAME__;
-const DEFAULT_RUNTIME_PROFILE = 'real';
+const DEFAULT_RUNTIME_PROFILE = 'preview';
+const API_RUNTIME = 'cloudflare_preview';
 const ACCESS_MODE = 'invite_token';
 const INVITE_AUDIENCE = 'codex.web-preview';
 const INVITE_SCOPE = 'web_preview:access';
@@ -843,6 +1027,46 @@ async function sha256Hex(value) {
   return Array.from(new Uint8Array(digest))
     .map((byte) => byte.toString(16).padStart(2, '0'))
     .join('');
+}
+
+function nowIso() {
+  return new Date().toISOString();
+}
+
+function randomId(prefix) {
+  return `${prefix}_${crypto.randomUUID().replace(/-/g, '')}`;
+}
+
+function previewApiBaseUrl(env) {
+  return (env.API_BASE_URL || `https://preview.nienfos.com/${SOURCE_APP}/api`).replace(/\/+$/, '');
+}
+
+async function readJson(request) {
+  try {
+    return await request.json();
+  } catch (_error) {
+    return {};
+  }
+}
+
+function requirePreviewD1(env) {
+  if (!env.PREVIEW_DB || typeof env.PREVIEW_DB.prepare !== 'function') {
+    return {
+      ok: false,
+      response: json({
+        error: {
+          code: 'd1_required',
+          message: 'Cloudflare D1 PREVIEW_DB binding is required.',
+        },
+      }, { status: 503 }),
+    };
+  }
+  return { ok: true };
+}
+
+async function passwordHash(env, password) {
+  const pepper = env.PREVIEW_AUTH_SECRET || env.WEB_PREVIEW_INVITE_SECRET || SOURCE_APP;
+  return sha256Hex(`${pepper}:${password}`);
 }
 
 function base64UrlJson(payload) {
@@ -1030,6 +1254,405 @@ async function verifyAccessSession(env, token) {
   return { ok: true, payload };
 }
 
+function apiError(code, message, status = 400) {
+  return json({ error: { code, message } }, { status });
+}
+
+async function countPreviewUsers(env) {
+  const row = await env.PREVIEW_DB
+    .prepare(
+      `SELECT COUNT(*) AS count
+       FROM preview_users
+       WHERE source_app = ?1 AND app_slug = ?2`,
+    )
+    .bind(SOURCE_APP, SOURCE_APP)
+    .first();
+  return Number(row?.count || 0);
+}
+
+async function createPreviewUser(env, { email, password, displayName, roles }) {
+  const timestamp = nowIso();
+  const user = {
+    user_id: randomId('usr'),
+    source_app: SOURCE_APP,
+    app_slug: SOURCE_APP,
+    email: String(email || '').trim().toLowerCase(),
+    display_name: String(displayName || email || 'Preview Admin').trim(),
+    password_hash: await passwordHash(env, password),
+    roles_json: JSON.stringify(roles || ['owner', 'admin']),
+    created_at: timestamp,
+    updated_at: timestamp,
+  };
+  await env.PREVIEW_DB
+    .prepare(
+      `INSERT INTO preview_users
+       (user_id, source_app, app_slug, email, display_name, password_hash, roles_json, created_at, updated_at)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)`,
+    )
+    .bind(
+      user.user_id,
+      user.source_app,
+      user.app_slug,
+      user.email,
+      user.display_name,
+      user.password_hash,
+      user.roles_json,
+      user.created_at,
+      user.updated_at,
+    )
+    .run();
+  return user;
+}
+
+async function findPreviewUserByEmail(env, email) {
+  return env.PREVIEW_DB
+    .prepare(
+      `SELECT user_id, source_app, app_slug, email, display_name, password_hash, roles_json
+       FROM preview_users
+       WHERE source_app = ?1 AND app_slug = ?2 AND email = ?3
+       LIMIT 1`,
+    )
+    .bind(SOURCE_APP, SOURCE_APP, String(email || '').trim().toLowerCase())
+    .first();
+}
+
+function publicUser(row) {
+  return {
+    id: row.user_id,
+    email: row.email,
+    displayName: row.display_name,
+    roles: JSON.parse(row.roles_json || '[]'),
+    sourceApp: row.source_app,
+    appSlug: row.app_slug,
+  };
+}
+
+async function createPreviewSession(env, user) {
+  const token = base64UrlEncode(crypto.getRandomValues(new Uint8Array(32)));
+  const tokenHash = await sha256Hex(token);
+  const sessionId = randomId('ses');
+  const createdAt = nowIso();
+  const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+  await env.PREVIEW_DB
+    .prepare(
+      `INSERT INTO preview_sessions
+       (session_id, source_app, app_slug, user_id, token_sha256, created_at, expires_at, revoked_at)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL)`,
+    )
+    .bind(sessionId, SOURCE_APP, SOURCE_APP, user.user_id, tokenHash, createdAt, expiresAt)
+    .run();
+  return { token, expiresAt };
+}
+
+async function requireApiSession(env, request) {
+  const auth = request.headers.get('authorization') || '';
+  if (!auth.toLowerCase().startsWith('bearer ')) {
+    return { ok: false, response: apiError('missing_bearer_token', 'Authorization bearer token is required.', 401) };
+  }
+  const tokenHash = await sha256Hex(auth.slice(7).trim());
+  const session = await env.PREVIEW_DB
+    .prepare(
+      `SELECT session_id, source_app, app_slug, user_id, expires_at, revoked_at
+       FROM preview_sessions
+       WHERE source_app = ?1 AND app_slug = ?2 AND token_sha256 = ?3
+       LIMIT 1`,
+    )
+    .bind(SOURCE_APP, SOURCE_APP, tokenHash)
+    .first();
+  if (!session || session.revoked_at || Date.parse(session.expires_at) <= Date.now()) {
+    return { ok: false, response: apiError('invalid_session', 'Preview session is missing or expired.', 401) };
+  }
+  const user = await env.PREVIEW_DB
+    .prepare(
+      `SELECT user_id, source_app, app_slug, email, display_name, roles_json
+       FROM preview_users
+       WHERE source_app = ?1 AND app_slug = ?2 AND user_id = ?3
+       LIMIT 1`,
+    )
+    .bind(SOURCE_APP, SOURCE_APP, session.user_id)
+    .first();
+  if (!user) {
+    return { ok: false, response: apiError('invalid_session_user', 'Preview session user was not found.', 401) };
+  }
+  return { ok: true, user, session };
+}
+
+async function handlePreviewHealth(env) {
+  return json({
+    status: 'ok',
+    source_app: SOURCE_APP,
+    app_slug: SOURCE_APP,
+    display_name: DISPLAY_NAME,
+    runtime_profile: env.APP_RUNTIME_PROFILE || DEFAULT_RUNTIME_PROFILE,
+    runtime: API_RUNTIME,
+    api_base_url: previewApiBaseUrl(env),
+    d1_bound: Boolean(env.PREVIEW_DB),
+    d1_persistent: Boolean(env.PREVIEW_DB),
+    assets_bound: Boolean(env.ASSETS),
+    version: env.PREVIEW_VERSION || null,
+    commit: env.PREVIEW_COMMIT_SHA || null,
+    deployed_at: env.PREVIEW_DEPLOYED_AT || null,
+  });
+}
+
+async function handlePreviewBootstrap(request, env) {
+  const d1 = requirePreviewD1(env);
+  if (!d1.ok) return d1.response;
+  const body = await readJson(request);
+  const expectedToken = env.PREVIEW_ADMIN_BOOTSTRAP_TOKEN || '';
+  if (expectedToken && body.bootstrapToken !== expectedToken) {
+    return apiError('invalid_bootstrap_token', 'Bootstrap token is invalid.', 403);
+  }
+  if (!expectedToken && env.PREVIEW_ALLOW_INSECURE_BOOTSTRAP !== 'true') {
+    return apiError('bootstrap_token_required', 'PREVIEW_ADMIN_BOOTSTRAP_TOKEN is required for deployed bootstrap.', 403);
+  }
+  const email = String(body.email || env.PREVIEW_ADMIN_EMAIL || '').trim().toLowerCase();
+  const password = String(body.password || env.PREVIEW_ADMIN_PASSWORD || '');
+  if (!email || !password) {
+    return apiError('admin_credentials_required', 'Admin email and password are required.', 400);
+  }
+  let user = await findPreviewUserByEmail(env, email);
+  if (!user) {
+    const userCount = await countPreviewUsers(env);
+    const roles = userCount === 0 ? ['owner', 'admin'] : ['admin'];
+    user = await createPreviewUser(env, {
+      email,
+      password,
+      displayName: body.displayName || 'Preview Admin',
+      roles,
+    });
+  }
+  const session = await createPreviewSession(env, user);
+  return json({
+    status: 'ready',
+    sourceApp: SOURCE_APP,
+    appSlug: SOURCE_APP,
+    user: publicUser(user),
+    accessToken: session.token,
+    tokenType: 'bearer',
+    expiresAt: session.expiresAt,
+  });
+}
+
+async function handlePreviewLogin(request, env) {
+  const d1 = requirePreviewD1(env);
+  if (!d1.ok) return d1.response;
+  const body = await readJson(request);
+  const user = await findPreviewUserByEmail(env, body.email);
+  if (!user || user.password_hash !== await passwordHash(env, String(body.password || ''))) {
+    return apiError('invalid_credentials', 'Email or password is invalid.', 401);
+  }
+  const session = await createPreviewSession(env, user);
+  return json({
+    access_token: session.token,
+    token_type: 'bearer',
+    expires_at: session.expiresAt,
+    user: publicUser(user),
+  });
+}
+
+async function handlePreviewMe(request, env) {
+  const d1 = requirePreviewD1(env);
+  if (!d1.ok) return d1.response;
+  const session = await requireApiSession(env, request);
+  if (!session.ok) return session.response;
+  return json(publicUser(session.user));
+}
+
+async function handlePreviewLogout(request, env) {
+  const d1 = requirePreviewD1(env);
+  if (!d1.ok) return d1.response;
+  const auth = request.headers.get('authorization') || '';
+  if (!auth.toLowerCase().startsWith('bearer ')) {
+    return json({ ok: true });
+  }
+  const tokenHash = await sha256Hex(auth.slice(7).trim());
+  await env.PREVIEW_DB
+    .prepare(
+      `UPDATE preview_sessions
+       SET revoked_at = ?1
+       WHERE source_app = ?2 AND app_slug = ?3 AND token_sha256 = ?4 AND revoked_at IS NULL`,
+    )
+    .bind(nowIso(), SOURCE_APP, SOURCE_APP, tokenHash)
+    .run();
+  return json({ ok: true });
+}
+
+async function handlePreviewAdmin(request, env, assetPath) {
+  const d1 = requirePreviewD1(env);
+  if (!d1.ok) return d1.response;
+  const session = await requireApiSession(env, request);
+  if (!session.ok) return session.response;
+  const roles = JSON.parse(session.user.roles_json || '[]');
+  if (!roles.includes('owner') && !roles.includes('admin')) {
+    return apiError('admin_role_required', 'Admin role is required.', 403);
+  }
+  if (request.method === 'GET' && assetPath === '/api/admin/roles') {
+    return json(['owner', 'admin', 'member', 'customer']);
+  }
+  if (request.method === 'GET' && assetPath === '/api/admin/users') {
+    const rows = await env.PREVIEW_DB
+      .prepare(
+        `SELECT user_id, source_app, app_slug, email, display_name, roles_json
+         FROM preview_users
+         WHERE source_app = ?1 AND app_slug = ?2
+         ORDER BY created_at ASC`,
+      )
+      .bind(SOURCE_APP, SOURCE_APP)
+      .all();
+    return json((rows.results || []).map(publicUser));
+  }
+  return apiError('preview_admin_route_not_found', `Preview admin route not found: ${assetPath}`, 404);
+}
+
+async function handlePreviewAppUpdate(env) {
+  const d1 = requirePreviewD1(env);
+  if (!d1.ok) return d1.response;
+  const row = await env.PREVIEW_DB
+    .prepare(
+      `SELECT release_channel, release_tag, version, build_number, apk_url, sha256, metadata_json
+       FROM preview_app_updates
+       WHERE source_app = ?1 AND app_slug = ?2 AND release_channel = 'preview'
+       LIMIT 1`,
+    )
+    .bind(SOURCE_APP, SOURCE_APP)
+    .first();
+  return json({
+    sourceApp: SOURCE_APP,
+    appSlug: SOURCE_APP,
+    releaseChannel: 'preview',
+    runtimeProfile: env.APP_RUNTIME_PROFILE || DEFAULT_RUNTIME_PROFILE,
+    apiRuntime: API_RUNTIME,
+    apiBaseUrl: previewApiBaseUrl(env),
+    releaseTag: row?.release_tag || env.APP_RELEASE_TAG || null,
+    version: row?.version || env.PREVIEW_VERSION || '0.1.0',
+    buildNumber: row?.build_number || env.PREVIEW_BUILD_ID || '1',
+    apkUrl: row?.apk_url || env.PREVIEW_APK_URL || null,
+    sha256: row?.sha256 || null,
+    mockOrDemo: false,
+    backendRequired: true,
+    metadata: row?.metadata_json ? JSON.parse(row.metadata_json) : {},
+  });
+}
+
+async function handlePreviewDomain(request, env, entity) {
+  const d1 = requirePreviewD1(env);
+  if (!d1.ok) return d1.response;
+  const session = await requireApiSession(env, request);
+  if (!session.ok) return session.response;
+  if (!/^[A-Za-z][A-Za-z0-9_-]{0,63}$/.test(entity || '')) {
+    return apiError('invalid_entity', 'Domain entity must be a stable identifier.', 400);
+  }
+  if (request.method === 'GET') {
+    const rows = await env.PREVIEW_DB
+      .prepare(
+        `SELECT record_id, source_app, app_slug, entity, payload_json, created_at, updated_at
+         FROM preview_domain_records
+         WHERE source_app = ?1 AND app_slug = ?2 AND entity = ?3
+         ORDER BY created_at DESC`,
+      )
+      .bind(SOURCE_APP, SOURCE_APP, entity)
+      .all();
+    return json({
+      sourceApp: SOURCE_APP,
+      appSlug: SOURCE_APP,
+      entity,
+      records: (rows.results || []).map((row) => ({
+        id: row.record_id,
+        sourceApp: row.source_app,
+        appSlug: row.app_slug,
+        entity: row.entity,
+        payload: JSON.parse(row.payload_json || '{}'),
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+      })),
+    });
+  }
+  if (request.method === 'POST') {
+    const payload = await readJson(request);
+    const timestamp = nowIso();
+    const recordId = randomId('rec');
+    await env.PREVIEW_DB
+      .prepare(
+        `INSERT INTO preview_domain_records
+         (record_id, source_app, app_slug, entity, payload_json, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)`,
+      )
+      .bind(recordId, SOURCE_APP, SOURCE_APP, entity, JSON.stringify(payload), timestamp, timestamp)
+      .run();
+    return json({
+      id: recordId,
+      sourceApp: SOURCE_APP,
+      appSlug: SOURCE_APP,
+      entity,
+      payload,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    }, { status: 201 });
+  }
+  return apiError('method_not_allowed', 'Method not allowed.', 405);
+}
+
+async function handlePreviewNotifications(request, env) {
+  const d1 = requirePreviewD1(env);
+  if (!d1.ok) return d1.response;
+  const session = await requireApiSession(env, request);
+  if (!session.ok) return session.response;
+  const rows = await env.PREVIEW_DB
+    .prepare(
+      `SELECT notification_id, source_app, app_slug, user_id, title, body, read_at, created_at
+       FROM preview_notifications
+       WHERE source_app = ?1 AND app_slug = ?2 AND (user_id IS NULL OR user_id = ?3)
+       ORDER BY created_at DESC`,
+    )
+    .bind(SOURCE_APP, SOURCE_APP, session.user.user_id)
+    .all();
+  return json({
+    sourceApp: SOURCE_APP,
+    appSlug: SOURCE_APP,
+    notifications: (rows.results || []).map((row) => ({
+      id: row.notification_id,
+      title: row.title,
+      body: row.body,
+      readAt: row.read_at,
+      createdAt: row.created_at,
+    })),
+  });
+}
+
+async function handlePreviewApi(request, env, assetPath) {
+  // Preview domain CRUD route: /api/domain/{entity}
+  if (request.method === 'GET' && assetPath === '/api/health') {
+    return handlePreviewHealth(env);
+  }
+  if (request.method === 'POST' && assetPath === '/api/admin/bootstrap') {
+    return handlePreviewBootstrap(request, env);
+  }
+  if (request.method === 'POST' && assetPath === '/api/auth/login') {
+    return handlePreviewLogin(request, env);
+  }
+  if (request.method === 'GET' && assetPath === '/api/auth/me') {
+    return handlePreviewMe(request, env);
+  }
+  if (request.method === 'POST' && assetPath === '/api/auth/logout') {
+    return handlePreviewLogout(request, env);
+  }
+  if (assetPath === '/api/admin/users' || assetPath === '/api/admin/roles') {
+    return handlePreviewAdmin(request, env, assetPath);
+  }
+  if (request.method === 'GET' && assetPath === '/api/app-updates/current') {
+    return handlePreviewAppUpdate(env);
+  }
+  if (request.method === 'GET' && assetPath === '/api/notifications') {
+    return handlePreviewNotifications(request, env);
+  }
+  const domainMatch = assetPath.match(/^\/api\/domain\/([^/]+)\/?$/);
+  if (domainMatch) {
+    return handlePreviewDomain(request, env, domainMatch[1]);
+  }
+  return apiError('preview_api_route_not_found', `Preview API route not found: ${assetPath}`, 404);
+}
+
 function accessDenied(code, status) {
   return json({
     error: {
@@ -1139,8 +1762,9 @@ export default {
         app_slug: appSlug || SOURCE_APP,
         display_name: DISPLAY_NAME,
         runtime_profile: env.APP_RUNTIME_PROFILE || DEFAULT_RUNTIME_PROFILE,
-        runtime: 'cloudflare_preview',
+        runtime: API_RUNTIME,
         runtime_type: 'cloudflare_worker_assets',
+        api_base_url: previewApiBaseUrl(env),
         access_mode: ACCESS_MODE,
         build_id: env.PREVIEW_BUILD_ID || null,
         version: env.PREVIEW_VERSION || null,
@@ -1151,6 +1775,10 @@ export default {
       });
     }
 
+    if (assetPath === '/api' || assetPath.startsWith('/api/')) {
+      return handlePreviewApi(request, env, assetPath);
+    }
+
     const configMatch = assetPath.match(/^\\/apps\\/([^/]+)\\/config\\/?$/);
     if (request.method === 'GET' && configMatch) {
       return json({
@@ -1158,9 +1786,9 @@ export default {
         source_app: SOURCE_APP,
         display_name: DISPLAY_NAME,
         runtime_profile: env.APP_RUNTIME_PROFILE || DEFAULT_RUNTIME_PROFILE,
-        api_runtime: 'cloudflare_preview',
-        api_base_url: 'https://preview.nienfos.com',
-        health_path: '/__preview/health',
+        api_runtime: API_RUNTIME,
+        api_base_url: previewApiBaseUrl(env),
+        health_path: '/api/health',
         access_mode: ACCESS_MODE,
       });
     }
@@ -1334,30 +1962,150 @@ for (const row of [
 ]) {
   d1Rows.set(`${row.invite_id}:${row.token_sha256}`, row);
 }
+const previewUsers = new Map();
+const previewSessions = new Map();
+const previewDomainRecords = [];
+const previewNotifications = [
+  {
+    notification_id: 'ntf-local',
+    source_app: '__SOURCE_APP__',
+    app_slug: '__SOURCE_APP__',
+    user_id: null,
+    title: 'Preview ready',
+    body: 'Local smoke notification',
+    read_at: null,
+    created_at: new Date().toISOString(),
+  },
+];
 
 function fakeD1() {
   return {
     prepare(sql) {
+      const normalized = sql.replace(/\s+/g, ' ').trim().toLowerCase();
       return {
         bind(...args) {
           return {
             async first() {
-              const [inviteId, tokenHash, sourceApp, appSlug] = args;
-              const row = d1Rows.get(`${inviteId}:${tokenHash}`);
-              if (!row || row.source_app !== sourceApp || row.app_slug !== appSlug) {
+              if (normalized.includes('from preview_invites')) {
+                const [inviteId, tokenHash, sourceApp, appSlug] = args;
+                const row = d1Rows.get(`${inviteId}:${tokenHash}`);
+                if (!row || row.source_app !== sourceApp || row.app_slug !== appSlug) {
+                  return null;
+                }
+                return { ...row };
+              }
+              if (normalized.includes('count(*) as count') && normalized.includes('from preview_users')) {
+                const [sourceApp, appSlug] = args;
+                return {
+                  count: [...previewUsers.values()].filter((row) => row.source_app === sourceApp && row.app_slug === appSlug).length,
+                };
+              }
+              if (normalized.includes('from preview_users') && normalized.includes('email =')) {
+                const [sourceApp, appSlug, email] = args;
+                return [...previewUsers.values()].find((row) => row.source_app === sourceApp && row.app_slug === appSlug && row.email === email) || null;
+              }
+              if (normalized.includes('from preview_sessions')) {
+                const [sourceApp, appSlug, tokenHash] = args;
+                return [...previewSessions.values()].find((row) => row.source_app === sourceApp && row.app_slug === appSlug && row.token_sha256 === tokenHash) || null;
+              }
+              if (normalized.includes('from preview_users') && normalized.includes('user_id =')) {
+                const [sourceApp, appSlug, userId] = args;
+                const row = previewUsers.get(userId);
+                if (!row || row.source_app !== sourceApp || row.app_slug !== appSlug) {
+                  return null;
+                }
+                return { ...row };
+              }
+              if (normalized.includes('from preview_app_updates')) {
                 return null;
               }
-              return { ...row };
+              return null;
             },
             async run() {
-              const [_usedAt, inviteId, tokenHash] = args;
-              const row = d1Rows.get(`${inviteId}:${tokenHash}`);
-              if (!row || row.used_at || row.revoked_at) {
+              if (normalized.startsWith('update preview_invites')) {
+                const [_usedAt, inviteId, tokenHash] = args;
+                const row = d1Rows.get(`${inviteId}:${tokenHash}`);
+                if (!row || row.used_at || row.revoked_at) {
+                  return { meta: { changes: 0 } };
+                }
+                row.used_at = _usedAt;
+                d1Rows.set(`${inviteId}:${tokenHash}`, row);
+                return { meta: { changes: 1 } };
+              }
+              if (normalized.startsWith('update preview_sessions')) {
+                const [revokedAt, sourceApp, appSlug, tokenHash] = args;
+                for (const [sessionId, row] of previewSessions.entries()) {
+                  if (row.source_app === sourceApp && row.app_slug === appSlug && row.token_sha256 === tokenHash && !row.revoked_at) {
+                    previewSessions.set(sessionId, { ...row, revoked_at: revokedAt });
+                    return { meta: { changes: 1 } };
+                  }
+                }
                 return { meta: { changes: 0 } };
               }
-              row.used_at = _usedAt;
-              d1Rows.set(`${inviteId}:${tokenHash}`, row);
-              return { meta: { changes: 1 } };
+              if (normalized.startsWith('insert into preview_users')) {
+                const [userId, sourceApp, appSlug, email, displayName, passwordHash, rolesJson, createdAt, updatedAt] = args;
+                previewUsers.set(userId, {
+                  user_id: userId,
+                  source_app: sourceApp,
+                  app_slug: appSlug,
+                  email,
+                  display_name: displayName,
+                  password_hash: passwordHash,
+                  roles_json: rolesJson,
+                  created_at: createdAt,
+                  updated_at: updatedAt,
+                });
+                return { meta: { changes: 1 } };
+              }
+              if (normalized.startsWith('insert into preview_sessions')) {
+                const [sessionId, sourceApp, appSlug, userId, tokenHash, createdAt, expiresAt] = args;
+                previewSessions.set(sessionId, {
+                  session_id: sessionId,
+                  source_app: sourceApp,
+                  app_slug: appSlug,
+                  user_id: userId,
+                  token_sha256: tokenHash,
+                  created_at: createdAt,
+                  expires_at: expiresAt,
+                  revoked_at: null,
+                });
+                return { meta: { changes: 1 } };
+              }
+              if (normalized.startsWith('insert into preview_domain_records')) {
+                const [recordId, sourceApp, appSlug, entity, payloadJson, createdAt, updatedAt] = args;
+                previewDomainRecords.push({
+                  record_id: recordId,
+                  source_app: sourceApp,
+                  app_slug: appSlug,
+                  entity,
+                  payload_json: payloadJson,
+                  created_at: createdAt,
+                  updated_at: updatedAt,
+                });
+                return { meta: { changes: 1 } };
+              }
+              return { meta: { changes: 0 } };
+            },
+            async all() {
+              if (normalized.includes('from preview_users')) {
+                const [sourceApp, appSlug] = args;
+                return {
+                  results: [...previewUsers.values()].filter((row) => row.source_app === sourceApp && row.app_slug === appSlug),
+                };
+              }
+              if (normalized.includes('from preview_domain_records')) {
+                const [sourceApp, appSlug, entity] = args;
+                return {
+                  results: previewDomainRecords.filter((row) => row.source_app === sourceApp && row.app_slug === appSlug && row.entity === entity),
+                };
+              }
+              if (normalized.includes('from preview_notifications')) {
+                const [sourceApp, appSlug, userId] = args;
+                return {
+                  results: previewNotifications.filter((row) => row.source_app === sourceApp && row.app_slug === appSlug && (!row.user_id || row.user_id === userId)),
+                };
+              }
+              return { results: [] };
             },
           };
         },
@@ -1373,7 +2121,12 @@ const assets = new Map([
 ]);
 
 const env = {{
-  APP_RUNTIME_PROFILE: 'real',
+  APP_RUNTIME_PROFILE: 'preview',
+  API_RUNTIME: 'cloudflare_preview',
+  API_BASE_URL: 'https://preview.nienfos.com/__SOURCE_APP__/api',
+  APP_SLUG: '__SOURCE_APP__',
+  PREVIEW_ALLOW_INSECURE_BOOTSTRAP: 'true',
+  PREVIEW_ADMIN_BOOTSTRAP_TOKEN: 'local-bootstrap-token',
   PREVIEW_BUILD_ID: 'local-harness',
   PREVIEW_COMMIT_SHA: 'test-commit',
   WEB_PREVIEW_INVITE_SECRET: secret,
@@ -1390,9 +2143,91 @@ async function fetchPath(path) {{
   return worker.fetch(new Request(`https://preview.nienfos.com${{path}}`), env, {{}});
 }}
 
+async function fetchJson(path, options = {}) {{
+  const headers = new Headers(options.headers || {});
+  if (options.body && !headers.has('content-type')) {
+    headers.set('content-type', 'application/json');
+  }
+  return worker.fetch(
+    new Request(`https://preview.nienfos.com${{path}}`, {
+      method: options.method || 'GET',
+      headers,
+      body: options.body ? JSON.stringify(options.body) : undefined,
+    }),
+    env,
+    {{}},
+  );
+}}
+
 const health = await fetchPath('/__SOURCE_APP__/__preview/health');
 assert.equal(health.status, 200);
 assert.equal((await health.json()).source_app, '__SOURCE_APP__');
+
+const apiHealth = await fetchJson('/__SOURCE_APP__/api/health');
+assert.equal(apiHealth.status, 200);
+const apiHealthBody = await apiHealth.json();
+assert.equal(apiHealthBody.runtime, 'cloudflare_preview');
+assert.equal(apiHealthBody.api_base_url, 'https://preview.nienfos.com/__SOURCE_APP__/api');
+assert.equal(apiHealthBody.d1_bound, true);
+
+const bootstrap = await fetchJson('/__SOURCE_APP__/api/admin/bootstrap', {
+  method: 'POST',
+  body: {
+    bootstrapToken: 'local-bootstrap-token',
+    email: 'admin@example.com',
+    password: 'preview-password',
+  },
+});
+assert.equal(bootstrap.status, 200);
+const bootstrapBody = await bootstrap.json();
+assert.equal(bootstrapBody.user.sourceApp, '__SOURCE_APP__');
+assert.match(bootstrapBody.accessToken, /.+/);
+
+const login = await fetchJson('/__SOURCE_APP__/api/auth/login', {
+  method: 'POST',
+  body: { email: 'admin@example.com', password: 'preview-password' },
+});
+assert.equal(login.status, 200);
+const loginBody = await login.json();
+assert.equal(loginBody.user.appSlug, '__SOURCE_APP__');
+const apiAuth = { authorization: `Bearer ${loginBody.access_token}` };
+
+const me = await fetchJson('/__SOURCE_APP__/api/auth/me', { headers: apiAuth });
+assert.equal(me.status, 200);
+assert.equal((await me.json()).email, 'admin@example.com');
+
+const roles = await fetchJson('/__SOURCE_APP__/api/admin/roles', { headers: apiAuth });
+assert.equal(roles.status, 200);
+assert.ok((await roles.json()).includes('owner'));
+
+const users = await fetchJson('/__SOURCE_APP__/api/admin/users', { headers: apiAuth });
+assert.equal(users.status, 200);
+assert.equal((await users.json()).length, 1);
+
+const createdRecord = await fetchJson('/__SOURCE_APP__/api/domain/customers', {
+  method: 'POST',
+  headers: apiAuth,
+  body: { name: 'Ada Lovelace', status: 'lead' },
+});
+assert.equal(createdRecord.status, 201);
+assert.equal((await createdRecord.json()).sourceApp, '__SOURCE_APP__');
+
+const records = await fetchJson('/__SOURCE_APP__/api/domain/customers', { headers: apiAuth });
+assert.equal(records.status, 200);
+const recordsBody = await records.json();
+assert.equal(recordsBody.sourceApp, '__SOURCE_APP__');
+assert.equal(recordsBody.records.length, 1);
+assert.equal(recordsBody.records[0].payload.name, 'Ada Lovelace');
+
+const notifications = await fetchJson('/__SOURCE_APP__/api/notifications', { headers: apiAuth });
+assert.equal(notifications.status, 200);
+assert.equal((await notifications.json()).notifications.length, 1);
+
+const updates = await fetchJson('/__SOURCE_APP__/api/app-updates/current');
+assert.equal(updates.status, 200);
+const updatesBody = await updates.json();
+assert.equal(updatesBody.releaseChannel, 'preview');
+assert.equal(updatesBody.mockOrDemo, false);
 
 const blocked = await fetchPath('/__SOURCE_APP__/dashboard/orders');
 assert.equal(blocked.status, 401);
@@ -1470,9 +2305,9 @@ fail() {{
 ROOT_DIR="$(cd "$(dirname "${{BASH_SOURCE[0]}}")/.." && pwd)"
 MOBILE_DIR="$ROOT_DIR/apps/mobile"
 APP_SLUG="${{APP_SLUG:-{slug}}}"
-APP_RUNTIME_PROFILE="${{APP_RUNTIME_PROFILE:-real}}"
+APP_RUNTIME_PROFILE="${{APP_RUNTIME_PROFILE:-preview}}"
 API_RUNTIME="${{API_RUNTIME:-cloudflare_preview}}"
-API_BASE_URL="${{API_BASE_URL:-https://preview.nienfos.com}}"
+API_BASE_URL="${{API_BASE_URL:-https://preview.nienfos.com/{slug}/api}}"
 WEB_PREVIEW_BUILD_DIR="${{WEB_PREVIEW_BUILD_DIR:-$ROOT_DIR/build/web-preview/$APP_SLUG}}"
 
 case "$APP_RUNTIME_PROFILE" in
@@ -1581,10 +2416,11 @@ WORKER="$ROOT_DIR/deploy/web-preview/worker/src/index.js"
 WORKER_HARNESS="$ROOT_DIR/deploy/web-preview/worker/local_preview_test.mjs"
 WRANGLER_EXAMPLE="$ROOT_DIR/deploy/web-preview/wrangler.toml.example"
 D1_MIGRATION="$ROOT_DIR/deploy/web-preview/d1/migrations/0001_preview_invites.sql"
+DOMAIN_D1_MIGRATION="$ROOT_DIR/deploy/web-preview/d1/migrations/0002_domain_entities.sql"
 APP_SLUG="${{APP_SLUG:-{slug}}}"
-APP_RUNTIME_PROFILE="${{APP_RUNTIME_PROFILE:-real}}"
+APP_RUNTIME_PROFILE="${{APP_RUNTIME_PROFILE:-preview}}"
 API_RUNTIME="${{API_RUNTIME:-cloudflare_preview}}"
-API_BASE_URL="${{API_BASE_URL:-https://preview.nienfos.com}}"
+API_BASE_URL="${{API_BASE_URL:-https://preview.nienfos.com/{slug}/api}}"
 WEB_PREVIEW_BUILD_DIR="${{WEB_PREVIEW_BUILD_DIR:-$ROOT_DIR/build/web-preview/$APP_SLUG}}"
 REQUIRE_WEB_BUILD_OUTPUT="${{REQUIRE_WEB_BUILD_OUTPUT:-false}}"
 
@@ -1609,6 +2445,7 @@ fi
 [[ -f "$WORKER_HARNESS" ]] || fail "missing deploy/web-preview/worker/local_preview_test.mjs"
 [[ -f "$WRANGLER_EXAMPLE" ]] || fail "missing deploy/web-preview/wrangler.toml.example"
 [[ -f "$D1_MIGRATION" ]] || fail "missing deploy/web-preview/d1/migrations/0001_preview_invites.sql"
+[[ -f "$DOMAIN_D1_MIGRATION" ]] || fail "missing deploy/web-preview/d1/migrations/0002_domain_entities.sql"
 [[ -f "$ROOT_DIR/apps/mobile/pubspec.yaml" ]] || fail "missing apps/mobile/pubspec.yaml"
 [[ -f "$ROOT_DIR/apps/mobile/lib/main.dart" ]] || fail "missing apps/mobile/lib/main.dart"
 
@@ -1640,8 +2477,9 @@ checks = (
     ("stable_url", payload.get("stable_url"), "https://preview.nienfos.com/" + expected_slug),
     ("runtime.type", runtime.get("type") if isinstance(runtime, dict) else None, "cloudflare_worker_assets"),
     ("runtime.api_runtime", runtime.get("api_runtime") if isinstance(runtime, dict) else None, "cloudflare_preview"),
-    ("runtime.default_profile", runtime.get("default_profile") if isinstance(runtime, dict) else None, "real"),
-    ("runtime.health_path", runtime.get("health_path") if isinstance(runtime, dict) else None, "/__preview/health"),
+    ("runtime.default_profile", runtime.get("default_profile") if isinstance(runtime, dict) else None, "preview"),
+    ("runtime.api_base_url", runtime.get("api_base_url") if isinstance(runtime, dict) else None, "https://preview.nienfos.com/" + expected_slug + "/api"),
+    ("runtime.health_path", runtime.get("health_path") if isinstance(runtime, dict) else None, "/api/health"),
     ("runtime.asset_binding", runtime.get("asset_binding") if isinstance(runtime, dict) else None, "ASSETS"),
     ("build.output_dir", build.get("output_dir") if isinstance(build, dict) else None, "build/web-preview/" + expected_slug),
     ("build.asset_entrypoint", build.get("asset_entrypoint") if isinstance(build, dict) else None, "index.html"),
@@ -1659,12 +2497,22 @@ for label, actual, expected in checks:
         raise SystemExit("%s mismatch: expected %r, got %r" % (label, expected, actual))
 if not isinstance(expected_routes, list) or "/" + expected_slug + "/__preview/health" not in expected_routes:
     raise SystemExit("expected_routes must include the preview health route")
+if not isinstance(expected_routes, list) or "/" + expected_slug + "/api/health" not in expected_routes:
+    raise SystemExit("expected_routes must include the Preview API health route")
+first_release = payload.get("first_release")
+if not isinstance(first_release, dict) or first_release.get("mode") != "preview":
+    raise SystemExit("first_release.mode must be preview")
+if first_release.get("android_tag_pattern") != "android-preview-v*":
+    raise SystemExit("first_release.android_tag_pattern must be android-preview-v*")
 if not isinstance(access, dict) or "WEB_PREVIEW_INVITE_SECRET" not in access.get("required_worker_secrets", []):
     raise SystemExit("access.required_worker_secrets must include WEB_PREVIEW_INVITE_SECRET")
 PY
 
 grep -q 'export default' "$WORKER" || fail "worker module export missing"
 grep -q '/__preview/health' "$WORKER" || fail "worker health route missing"
+grep -q '/api/health' "$WORKER" || fail "worker Preview API health route missing"
+grep -q '/api/auth/login' "$WORKER" || fail "worker Preview API auth route missing"
+grep -q '/api/domain/' "$WORKER" || fail "worker Preview API domain route missing"
 grep -q 'ASSETS' "$WORKER" || fail "worker asset binding missing"
 grep -q 'asset_not_found' "$WORKER" || fail "worker asset 404 missing"
 grep -q 'content-security-policy' "$WORKER" || fail "worker security headers missing"
@@ -1677,6 +2525,16 @@ grep -q 'PREVIEW_DB' "$WRANGLER_EXAMPLE" || fail "wrangler D1 binding missing"
 grep -q 'binding = "ASSETS"' "$WRANGLER_EXAMPLE" || fail "wrangler assets binding missing"
 grep -q 'WEB_PREVIEW_INVITE_SECRET' "$WRANGLER_EXAMPLE" || fail "wrangler invite secret documentation missing"
 grep -q 'CREATE TABLE IF NOT EXISTS preview_invites' "$D1_MIGRATION" || fail "D1 preview_invites migration missing"
+grep -q 'CREATE TABLE IF NOT EXISTS preview_users' "$D1_MIGRATION" || fail "D1 preview_users migration missing"
+grep -q 'CREATE TABLE IF NOT EXISTS preview_sessions' "$D1_MIGRATION" || fail "D1 preview_sessions migration missing"
+grep -q 'CREATE TABLE IF NOT EXISTS preview_domain_records' "$D1_MIGRATION" || fail "D1 preview_domain_records migration missing"
+grep -q 'CREATE TABLE IF NOT EXISTS preview_notifications' "$D1_MIGRATION" || fail "D1 preview_notifications migration missing"
+grep -q 'CREATE TABLE IF NOT EXISTS preview_app_updates' "$D1_MIGRATION" || fail "D1 preview_app_updates migration missing"
+grep -q 'CREATE TABLE IF NOT EXISTS preview_domain_entities' "$DOMAIN_D1_MIGRATION" || fail "D1 preview_domain_entities migration missing"
+grep -q 'CREATE TABLE IF NOT EXISTS preview_domain_entity_events' "$DOMAIN_D1_MIGRATION" || fail "D1 preview_domain_entity_events migration missing"
+grep -q 'source_app TEXT NOT NULL' "$DOMAIN_D1_MIGRATION" || fail "D1 domain migration source_app scope missing"
+grep -q 'app_slug TEXT NOT NULL' "$DOMAIN_D1_MIGRATION" || fail "D1 domain migration app_slug scope missing"
+grep -q 'CREATE INDEX IF NOT EXISTS idx_preview_domain_entities_app_entity' "$DOMAIN_D1_MIGRATION" || fail "D1 domain entity index must be idempotent"
 grep -q 'token_sha256' "$D1_MIGRATION" || fail "D1 token hash column missing"
 grep -q 'used_at' "$D1_MIGRATION" || fail "D1 used_at column missing"
 grep -q 'revoked_at' "$D1_MIGRATION" || fail "D1 revoked_at column missing"
@@ -1863,9 +2721,9 @@ else
 fi
 
 cd "$ROOT_DIR"
-APP_RUNTIME_PROFILE=real \
+APP_RUNTIME_PROFILE=preview \
 API_RUNTIME=cloudflare_preview \
-API_BASE_URL=https://preview.nienfos.com \
+API_BASE_URL=https://preview.nienfos.com/${APP_SLUG:-$(basename "$ROOT_DIR")}/api \
 scripts/validate_web_preview.sh
 
 echo "generated project validation completed"
@@ -1945,18 +2803,23 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${{BASH_SOURCE[0]}}")/.." && pwd)"
 DRY_RUN=false
 BRIDGE_URL="${{BRIDGE_URL:-}}"
-SOURCE_APP="${{SOURCE_APP:-{slug}}}"
-DISPLAY_NAME="${{DISPLAY_NAME:-{name}}}"
-RELEASE_TAG_PATTERN="${{RELEASE_TAG_PATTERN:-android-v*}}"
-APK_ASSET_PATTERN="${{APK_ASSET_PATTERN:-${{SOURCE_APP}}*.apk}}"
-LATEST_ASSET_NAME="${{LATEST_ASSET_NAME:-${{SOURCE_APP}}.apk}}"
-RELEASE_CHANNEL="${{RELEASE_CHANNEL:-stable}}"
+SOURCE_APP="${{SOURCE_APP:-}}"
+DISPLAY_NAME="${{DISPLAY_NAME:-}}"
+RELEASE_TAG_PATTERN="${{RELEASE_TAG_PATTERN:-}}"
+APK_ASSET_PATTERN="${{APK_ASSET_PATTERN:-}}"
+LATEST_ASSET_NAME="${{LATEST_ASSET_NAME:-}}"
+RELEASE_CHANNEL="${{RELEASE_CHANNEL:-}}"
+PREVIEW_URL="${{PREVIEW_URL:-}}"
+RUNTIME_PROFILE="${{RUNTIME_PROFILE:-}}"
+PRODUCTION_READY="${{PRODUCTION_READY:-}}"
+MOCK_OR_DEMO="${{MOCK_OR_DEMO:-}}"
 ENABLED="${{ENABLED:-true}}"
 REQUIRE_INSTALLABLE_APK="${{REQUIRE_INSTALLABLE_APK:-true}}"
 EXPECTED_PACKAGE_ID="${{EXPECTED_PACKAGE_ID:-}}"
 EXPECTED_SHA256="${{EXPECTED_SHA256:-}}"
 APP_RELEASE_TAG="${{APP_RELEASE_TAG:-}}"
 BRIDGE_REGISTRATION_TOKEN="${{BRIDGE_REGISTRATION_TOKEN:-${{INSTALLABLE_APPS_REGISTRATION_TOKEN:-}}}}"
+RUNTIME_CONTRACT="$ROOT_DIR/release/preview-runtime.json"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -1980,6 +2843,48 @@ while [[ $# -gt 0 ]]; do
 done
 
 cd "$ROOT_DIR"
+
+if [[ -f "$RUNTIME_CONTRACT" ]]; then
+  eval "$(python3 - "$RUNTIME_CONTRACT" <<'PY'
+from __future__ import annotations
+
+import json
+import shlex
+import sys
+from pathlib import Path
+
+payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+fields = {{
+    "RT_SOURCE_APP": payload.get("sourceApp"),
+    "RT_DISPLAY_NAME": payload.get("displayName"),
+    "RT_RELEASE_TAG_PATTERN": payload.get("releaseTagPattern"),
+    "RT_APK_ASSET_PATTERN": payload.get("apkAssetPattern"),
+    "RT_LATEST_ASSET_NAME": payload.get("latestAssetName"),
+    "RT_RELEASE_CHANNEL": payload.get("releaseChannel"),
+    "RT_PREVIEW_URL": payload.get("previewUrl"),
+    "RT_RUNTIME_PROFILE": payload.get("runtimeProfile"),
+    "RT_PRODUCTION_READY": payload.get("productionReady"),
+    "RT_MOCK_OR_DEMO": payload.get("mockOrDemo"),
+}}
+for key, value in fields.items():
+    if isinstance(value, bool):
+        value = "true" if value else "false"
+    if value is not None:
+        print(f"{{key}}={{shlex.quote(str(value))}}")
+PY
+)"
+fi
+
+SOURCE_APP="${{SOURCE_APP:-${{RT_SOURCE_APP:-{slug}}}}}"
+DISPLAY_NAME="${{DISPLAY_NAME:-${{RT_DISPLAY_NAME:-{name} Preview}}}}"
+RELEASE_TAG_PATTERN="${{RELEASE_TAG_PATTERN:-${{RT_RELEASE_TAG_PATTERN:-android-preview-v*}}}}"
+APK_ASSET_PATTERN="${{APK_ASSET_PATTERN:-${{RT_APK_ASSET_PATTERN:-${{SOURCE_APP}}*.apk}}}}"
+LATEST_ASSET_NAME="${{LATEST_ASSET_NAME:-${{RT_LATEST_ASSET_NAME:-${{SOURCE_APP}}.apk}}}}"
+RELEASE_CHANNEL="${{RELEASE_CHANNEL:-${{RT_RELEASE_CHANNEL:-preview}}}}"
+PREVIEW_URL="${{PREVIEW_URL:-${{RT_PREVIEW_URL:-https://preview.nienfos.com/{slug}}}}}"
+RUNTIME_PROFILE="${{RUNTIME_PROFILE:-${{RT_RUNTIME_PROFILE:-preview}}}}"
+PRODUCTION_READY="${{PRODUCTION_READY:-${{RT_PRODUCTION_READY:-false}}}}"
+MOCK_OR_DEMO="${{MOCK_OR_DEMO:-${{RT_MOCK_OR_DEMO:-false}}}}"
 
 if [[ -z "$BRIDGE_URL" ]]; then
   echo "BRIDGE_URL is required. Example: BRIDGE_URL=http://127.0.0.1:8000 $0" >&2
@@ -2005,11 +2910,12 @@ if [[ -z "$GITHUB_REPO" || "$GITHUB_REPO" != */* ]]; then
 fi
 export SOURCE_APP DISPLAY_NAME GITHUB_REPO RELEASE_TAG_PATTERN APK_ASSET_PATTERN
 export LATEST_ASSET_NAME RELEASE_CHANNEL ENABLED EXPECTED_PACKAGE_ID EXPECTED_SHA256
+export PREVIEW_URL RUNTIME_PROFILE PRODUCTION_READY MOCK_OR_DEMO
 
 if [[ -z "$APP_RELEASE_TAG" && -f apps/mobile/pubspec.yaml ]]; then
   version="$(awk '/^version:/ {{ print $2; exit }}' apps/mobile/pubspec.yaml)"
   if [[ -n "$version" ]]; then
-    APP_RELEASE_TAG="android-v${{version//+/-build.}}"
+    APP_RELEASE_TAG="android-preview-v${{version//+/-build.}}"
   fi
 fi
 if [[ -z "$APP_RELEASE_TAG" ]]; then
@@ -2067,6 +2973,15 @@ payload = {{
     "latestAssetName": os.environ["LATEST_ASSET_NAME"],
     "releaseChannel": os.environ["RELEASE_CHANNEL"],
     "enabled": os.environ.get("ENABLED", "true").lower() == "true",
+    "previewUrl": os.environ["PREVIEW_URL"],
+    "runtimeProfile": os.environ["RUNTIME_PROFILE"],
+    "productionReady": os.environ.get("PRODUCTION_READY", "false").lower() == "true",
+    "mockOrDemo": os.environ.get("MOCK_OR_DEMO", "false").lower() == "true",
+    "releaseMetadata": {{
+        "initialPreviewRelease": True,
+        "releaseTagPattern": os.environ["RELEASE_TAG_PATTERN"],
+        "latestAssetName": os.environ["LATEST_ASSET_NAME"],
+    }},
 }}
 package_id = os.environ.get("EXPECTED_PACKAGE_ID", "").strip()
 if package_id:
@@ -2148,6 +3063,324 @@ if ! git diff --cached --quiet; then
 fi
 
 printf 'local git commit ready\n'
+'''
+
+
+def _apply_cloudflare_preview_script(slug: str) -> str:
+    return f'''#!/usr/bin/env bash
+set -euo pipefail
+
+fail() {{
+  printf 'cloudflare preview apply blocked: %s\\n' "$*" >&2
+  exit 2
+}}
+
+ROOT_DIR="$(cd "$(dirname "${{BASH_SOURCE[0]}}")/.." && pwd)"
+cd "$ROOT_DIR"
+
+[[ -f deploy/web-preview/web-preview-manifest.yaml ]] || fail "missing deploy/web-preview/web-preview-manifest.yaml"
+[[ -f deploy/web-preview/worker/src/index.js ]] || fail "missing Preview API Worker"
+[[ -f deploy/web-preview/d1/migrations/0001_preview_invites.sql ]] || fail "missing D1 migration"
+[[ -f deploy/web-preview/d1/migrations/0002_domain_entities.sql ]] || fail "missing domain D1 migration"
+[[ "${{APP_RUNTIME_PROFILE:-preview}}" == "preview" ]] || fail "APP_RUNTIME_PROFILE must be preview for initial release"
+[[ "${{API_RUNTIME:-cloudflare_preview}}" == "cloudflare_preview" ]] || fail "API_RUNTIME must be cloudflare_preview"
+
+BRIDGE_URL="${{BRIDGE_URL:-http://127.0.0.1:8000}}"
+BRIDGE_URL="${{BRIDGE_URL%/}}"
+SOURCE_APP="${{SOURCE_APP:-{slug}}}"
+export BRIDGE_URL SOURCE_APP PROJECT_PATH="${{PROJECT_PATH:-$ROOT_DIR}}"
+
+scripts/validate_web_preview.sh
+scripts/validate_cloudflare_cost_posture.sh
+scripts/apply_preview_d1_migrations.sh
+
+plan_json="$(BRIDGE_URL="$BRIDGE_URL" SOURCE_APP="$SOURCE_APP" PROJECT_PATH="$PROJECT_PATH" scripts/deploy_web_preview.sh --plan)"
+printf '%s\\n' "$plan_json" > /tmp/project-factory-cloudflare-preview-plan.json
+EXPECTED_PLAN_HASH="${{EXPECTED_PLAN_HASH:-$(python3 - <<'PY'
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+payload = json.loads(Path("/tmp/project-factory-cloudflare-preview-plan.json").read_text())
+print(payload.get("planHash") or payload.get("plan_hash") or payload.get("hash") or "")
+PY
+)}}"
+[[ -n "$EXPECTED_PLAN_HASH" ]] || fail "Bridge plan did not include planHash"
+
+CONFIRM_APPLY="${{CONFIRM_APPLY:-true}}" \\
+EXPECTED_PLAN_HASH="$EXPECTED_PLAN_HASH" \\
+BRIDGE_URL="$BRIDGE_URL" \\
+SOURCE_APP="$SOURCE_APP" \\
+PROJECT_PATH="$PROJECT_PATH" \\
+scripts/deploy_web_preview.sh --apply > /tmp/project-factory-cloudflare-preview-apply.json
+
+python3 - <<'PY'
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+payload = json.loads(Path("/tmp/project-factory-cloudflare-preview-apply.json").read_text())
+status = str(payload.get("status") or payload.get("state") or "").lower()
+if status and status not in {{"ready", "applied", "deployed", "ok"}}:
+    raise SystemExit(f"Cloudflare preview apply returned non-ready status: {{status}}")
+print("cloudflare preview apply completed")
+PY
+'''
+
+
+def _apply_preview_d1_migrations_script() -> str:
+    return r'''#!/usr/bin/env bash
+set -euo pipefail
+
+fail() {
+  printf 'preview D1 migration apply blocked: %s\n' "$*" >&2
+  exit 2
+}
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+MIGRATIONS_DIR="$ROOT_DIR/deploy/web-preview/d1/migrations"
+DATABASE="${PREVIEW_D1_DATABASE:-${CLOUDFLARE_D1_DATABASE:-}}"
+
+[[ -d "$MIGRATIONS_DIR" ]] || fail "missing deploy/web-preview/d1/migrations"
+[[ -n "$DATABASE" ]] || fail "set PREVIEW_D1_DATABASE or CLOUDFLARE_D1_DATABASE"
+command -v wrangler >/dev/null 2>&1 || fail "wrangler is required to apply D1 migrations"
+if [[ -z "${CLOUDFLARE_API_TOKEN:-}" && "${WRANGLER_AUTH_READY:-false}" != "true" ]]; then
+  fail "set CLOUDFLARE_API_TOKEN or WRANGLER_AUTH_READY=true"
+fi
+
+shopt -s nullglob
+migrations=("$MIGRATIONS_DIR"/*.sql)
+(( ${#migrations[@]} > 0 )) || fail "no D1 migration files found"
+
+for migration in "${migrations[@]}"; do
+  printf 'applying preview D1 migration: %s\n' "${migration#$ROOT_DIR/}"
+  wrangler d1 execute "$DATABASE" --remote --file "$migration"
+done
+
+printf 'preview D1 migrations applied: %s\n' "$DATABASE"
+'''
+
+
+def _smoke_preview_api_script(slug: str) -> str:
+    return f'''#!/usr/bin/env bash
+set -euo pipefail
+
+fail() {{
+  printf 'preview api smoke failed: %s\\n' "$*" >&2
+  exit 2
+}}
+
+SOURCE_APP="${{SOURCE_APP:-{slug}}}"
+PREVIEW_API_BASE_URL="${{PREVIEW_API_BASE_URL:-${{API_BASE_URL:-https://preview.nienfos.com/$SOURCE_APP/api}}}}"
+PREVIEW_API_BASE_URL="${{PREVIEW_API_BASE_URL%/}}"
+
+[[ "$PREVIEW_API_BASE_URL" == "https://preview.nienfos.com/$SOURCE_APP/api" ]] || \\
+  fail "PREVIEW_API_BASE_URL must be https://preview.nienfos.com/$SOURCE_APP/api"
+
+python3 - "$PREVIEW_API_BASE_URL" "$SOURCE_APP" <<'PY'
+from __future__ import annotations
+
+import json
+import os
+import sys
+import urllib.error
+import urllib.request
+
+base_url, source_app = sys.argv[1], sys.argv[2]
+email = os.environ.get("PREVIEW_ADMIN_EMAIL", "admin.preview@example.com")
+password = os.environ.get("PREVIEW_ADMIN_PASSWORD", "")
+bootstrap_token = os.environ.get("PREVIEW_ADMIN_BOOTSTRAP_TOKEN", "")
+
+def request(method: str, path: str, payload: dict | None = None, token: str | None = None) -> tuple[int, dict]:
+    headers = {{"content-type": "application/json"}}
+    if token:
+        headers["authorization"] = f"Bearer {{token}}"
+    data = json.dumps(payload).encode() if payload is not None else None
+    req = urllib.request.Request(base_url + path, data=data, headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=30) as response:
+            raw = response.read().decode()
+            return response.status, json.loads(raw) if raw else {{}}
+    except urllib.error.HTTPError as exc:
+        raw = exc.read().decode()
+        try:
+            body = json.loads(raw)
+        except Exception:
+            body = {{"raw": raw}}
+        return exc.code, body
+
+status, health = request("GET", "/health")
+if status != 200 or health.get("runtime") != "cloudflare_preview" or health.get("source_app") != source_app:
+    raise SystemExit(f"health failed: {{status}} {{health}}")
+if not health.get("d1_bound"):
+    raise SystemExit("health did not report d1_bound=true")
+
+if not password:
+    raise SystemExit("PREVIEW_ADMIN_PASSWORD is required for deployed auth smoke")
+
+if bootstrap_token:
+    status, bootstrap = request(
+        "POST",
+        "/admin/bootstrap",
+        {{"bootstrapToken": bootstrap_token, "email": email, "password": password}},
+    )
+    if status not in (200, 409):
+        raise SystemExit(f"bootstrap failed: {{status}} {{bootstrap}}")
+
+status, login = request("POST", "/auth/login", {{"email": email, "password": password}})
+if status != 200 or not login.get("access_token"):
+    raise SystemExit(f"login failed: {{status}} {{login}}")
+token = login["access_token"]
+
+status, me = request("GET", "/auth/me", token=token)
+if status != 200 or me.get("sourceApp") != source_app:
+    raise SystemExit(f"me failed: {{status}} {{me}}")
+
+status, created = request("POST", "/domain/smoke_records", {{"name": "preview-smoke"}}, token=token)
+if status != 201 or created.get("sourceApp") != source_app:
+    raise SystemExit(f"domain create failed: {{status}} {{created}}")
+
+status, listed = request("GET", "/domain/smoke_records", token=token)
+if status != 200 or not listed.get("records"):
+    raise SystemExit(f"domain list failed: {{status}} {{listed}}")
+if any(row.get("sourceApp") != source_app or row.get("appSlug") != source_app for row in listed["records"]):
+    raise SystemExit("domain list returned cross-app records")
+
+status, notifications = request("GET", "/notifications", token=token)
+if status != 200 or "notifications" not in notifications:
+    raise SystemExit(f"notifications failed: {{status}} {{notifications}}")
+
+status, updates = request("GET", "/app-updates/current")
+if status != 200 or updates.get("releaseChannel") != "preview" or updates.get("mockOrDemo") is not False:
+    raise SystemExit(f"app update metadata failed: {{status}} {{updates}}")
+
+print(f"preview api smoke passed: {{base_url}}")
+PY
+'''
+
+
+def _publish_android_preview_release_script(slug: str) -> str:
+    return f'''#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${{BASH_SOURCE[0]}}")/.." && pwd)"
+cd "$ROOT_DIR"
+
+fail_blocked() {{
+  printf 'android preview release blocked: %s\\n' "$*" >&2
+  exit 2
+}}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --push)
+      shift
+      ;;
+    --watch)
+      WAIT_FOR_ANDROID_RELEASE=true
+      shift
+      ;;
+    --no-watch)
+      WAIT_FOR_ANDROID_RELEASE=false
+      shift
+      ;;
+    *)
+      fail_blocked "unknown argument: $1"
+      ;;
+  esac
+done
+
+SOURCE_APP="${{SOURCE_APP:-{slug}}}"
+PREVIEW_API_BASE_URL="${{PREVIEW_API_BASE_URL:-${{API_BASE_URL:-https://preview.nienfos.com/$SOURCE_APP/api}}}}"
+PREVIEW_API_BASE_URL="${{PREVIEW_API_BASE_URL%/}}"
+DEBUG_PREVIEW_SIGNING="${{DEBUG_PREVIEW_SIGNING:-false}}"
+DEBUG_PREVIEW_SIGNING_ACKNOWLEDGED="${{DEBUG_PREVIEW_SIGNING_ACKNOWLEDGED:-false}}"
+DEBUG_PREVIEW_SIGNING_REASON="${{DEBUG_PREVIEW_SIGNING_REASON:-}}"
+export DEBUG_PREVIEW_SIGNING DEBUG_PREVIEW_SIGNING_ACKNOWLEDGED DEBUG_PREVIEW_SIGNING_REASON
+
+[[ -f apps/mobile/pubspec.yaml ]] || fail_blocked "apps/mobile/pubspec.yaml is required"
+[[ -d apps/mobile/android ]] || fail_blocked "apps/mobile/android is required; run 'cd apps/mobile && flutter create --platforms=android .'"
+[[ "$PREVIEW_API_BASE_URL" == "https://preview.nienfos.com/$SOURCE_APP/api" ]] || \\
+  fail_blocked "initial preview API must be https://preview.nienfos.com/$SOURCE_APP/api"
+[[ "${{APP_RUNTIME_PROFILE:-preview}}" == "preview" ]] || fail_blocked "APP_RUNTIME_PROFILE must be preview"
+[[ "${{API_RUNTIME:-cloudflare_preview}}" == "cloudflare_preview" ]] || fail_blocked "API_RUNTIME must be cloudflare_preview"
+
+scripts/smoke_preview_api.sh
+
+git rev-parse --is-inside-work-tree >/dev/null 2>&1 || fail_blocked "not inside a git repository"
+git rev-parse --verify HEAD >/dev/null 2>&1 || fail_blocked "no git commit exists"
+if [[ -n "$(git status --porcelain)" ]]; then
+  git status --short >&2
+  fail_blocked "working tree must be clean before tagging the preview release"
+fi
+
+origin_url="$(git remote get-url origin 2>/dev/null || true)"
+[[ -n "$origin_url" ]] || fail_blocked "origin remote is not configured"
+repo_ref="$origin_url"
+repo_ref="${{repo_ref#https://github.com/}}"
+repo_ref="${{repo_ref#git@github.com:}}"
+repo_ref="${{repo_ref%.git}}"
+[[ "$repo_ref" == */* ]] || fail_blocked "origin remote must point to a GitHub owner/repo"
+
+if command -v gh >/dev/null 2>&1 && [[ "${{SKIP_GITHUB_API_BASE_URL_VAR_CHECK:-false}}" != "true" ]]; then
+  workflow_api_base_url="$(
+    gh variable list --repo "$repo_ref" --json name,value --jq '.[] | select(.name == "API_BASE_URL") | .value' 2>/dev/null || true
+  )"
+  [[ -n "$workflow_api_base_url" ]] || fail_blocked "GitHub Actions variable API_BASE_URL is not configured for $repo_ref"
+  [[ "${{workflow_api_base_url%/}}" == "$PREVIEW_API_BASE_URL" ]] || \\
+    fail_blocked "GitHub Actions variable API_BASE_URL does not match the preview API"
+fi
+
+branch="$(git symbolic-ref --short HEAD 2>/dev/null || true)"
+[[ -n "$branch" ]] || fail_blocked "HEAD is detached; release from a named branch"
+upstream="$(git rev-parse --abbrev-ref --symbolic-full-name '@{{u}}' 2>/dev/null || true)"
+[[ -n "$upstream" ]] || fail_blocked "current branch has no upstream"
+local_head="$(git rev-parse HEAD)"
+remote_head="$(git rev-parse "$upstream" 2>/dev/null || true)"
+[[ "$local_head" == "$remote_head" ]] || fail_blocked "local HEAD is not pushed to $upstream"
+
+version="$(awk '/^version:/ {{ print $2; exit }}' apps/mobile/pubspec.yaml)"
+[[ -n "$version" ]] || fail_blocked "apps/mobile/pubspec.yaml has no version"
+tag="${{APP_ANDROID_PREVIEW_RELEASE_TAG:-android-preview-v${{version//+/-build.}}}}"
+
+APP_RELEASE_TAG="$tag" \\
+APP_RUNTIME_PROFILE=preview \\
+API_RUNTIME=cloudflare_preview \\
+APP_SLUG="$SOURCE_APP" \\
+API_BASE_URL="$PREVIEW_API_BASE_URL" \\
+scripts/validate_preview_release_profiles.sh
+
+if git rev-parse --verify "refs/tags/$tag" >/dev/null 2>&1; then
+  tag_commit="$(git rev-list -n 1 "$tag")"
+  [[ "$tag_commit" == "$local_head" ]] || fail_blocked "existing tag $tag does not point at HEAD"
+else
+  git tag "$tag"
+fi
+
+git push origin "$tag"
+
+if [[ "${{WAIT_FOR_ANDROID_RELEASE:-true}}" != "true" ]]; then
+  printf 'android preview release tag pushed: %s\\n' "$tag"
+  exit 0
+fi
+
+command -v gh >/dev/null 2>&1 || fail_blocked "gh is required to verify GitHub release assets"
+timeout="${{ANDROID_RELEASE_TIMEOUT_SECONDS:-1800}}"
+poll="${{ANDROID_RELEASE_POLL_SECONDS:-15}}"
+deadline=$((SECONDS + timeout))
+while (( SECONDS <= deadline )); do
+  assets="$(gh release view "$tag" --repo "$repo_ref" --json assets --jq '.assets[].name' 2>/dev/null || true)"
+  if printf '%s\\n' "$assets" | grep -Fx "${{SOURCE_APP}}.apk" >/dev/null; then
+    printf 'android preview release completed: %s\\n' "$tag"
+    printf '%s\\n' "$assets"
+    exit 0
+  fi
+  sleep "$poll"
+done
+
+fail_blocked "GitHub release $tag did not expose $SOURCE_APP.apk within ${{timeout}}s"
 '''
 
 
@@ -2310,6 +3543,12 @@ local_head="$(git rev-parse HEAD)"
 remote_head="$(git rev-parse "$upstream" 2>/dev/null || true)"
 [[ "$local_head" == "$remote_head" ]] || fail "local HEAD is not pushed to $upstream"
 
+if [[ -x "$ROOT_DIR/scripts/validate_initial_preview_release.sh" ]]; then
+  "$ROOT_DIR/scripts/validate_initial_preview_release.sh"
+  printf 'publication validation completed: initial preview release ready\n'
+  exit 0
+fi
+
 if [[ -f apps/mobile/pubspec.yaml ]]; then
   [[ -d apps/mobile/android ]] || fail "missing apps/mobile/android; Android APK release cannot build"
   version="$(awk '/^version:/ { print $2; exit }' apps/mobile/pubspec.yaml)"
@@ -2336,6 +3575,242 @@ printf 'publication validation completed\n'
 '''
 
 
+def _preview_release_profile_validation_script(slug: str) -> str:
+    return f'''#!/usr/bin/env bash
+set -euo pipefail
+
+fail() {{
+  printf 'preview release profile validation failed: %s\\n' "$*" >&2
+  exit 1
+}}
+
+ROOT_DIR="$(cd "$(dirname "${{BASH_SOURCE[0]}}")/.." && pwd)"
+cd "$ROOT_DIR"
+
+RUNTIME_CONTRACT="$ROOT_DIR/release/preview-runtime.json"
+WEB_PREVIEW_MANIFEST="$ROOT_DIR/deploy/web-preview/web-preview-manifest.yaml"
+SIGNING_POLICY="$ROOT_DIR/release/preview-signing-policy.json"
+[[ -f "$RUNTIME_CONTRACT" ]] || fail "missing release/preview-runtime.json"
+[[ -f "$WEB_PREVIEW_MANIFEST" ]] || fail "missing deploy/web-preview/web-preview-manifest.yaml"
+[[ -f "$SIGNING_POLICY" ]] || fail "missing release/preview-signing-policy.json"
+
+python3 - "$RUNTIME_CONTRACT" "$WEB_PREVIEW_MANIFEST" "{slug}" <<'PY'
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+
+try:
+    import yaml
+except ModuleNotFoundError as exc:
+    raise SystemExit("PyYAML is required to validate web-preview-manifest.yaml") from exc
+
+runtime_path, manifest_path, expected_slug = sys.argv[1], sys.argv[2], sys.argv[3]
+runtime = json.loads(Path(runtime_path).read_text(encoding="utf-8"))
+manifest = yaml.safe_load(Path(manifest_path).read_text(encoding="utf-8"))
+if not isinstance(runtime, dict):
+    raise SystemExit("release/preview-runtime.json must be a JSON object")
+if not isinstance(manifest, dict):
+    raise SystemExit("web-preview-manifest.yaml must be a YAML object")
+manifest_runtime = manifest.get("runtime") if isinstance(manifest.get("runtime"), dict) else {{}}
+first_release = manifest.get("first_release") if isinstance(manifest.get("first_release"), dict) else {{}}
+checks = (
+    ("sourceApp", runtime.get("sourceApp"), expected_slug),
+    ("previewUrl", runtime.get("previewUrl"), f"https://preview.nienfos.com/{{expected_slug}}"),
+    ("apiBaseUrl", runtime.get("apiBaseUrl"), f"https://preview.nienfos.com/{{expected_slug}}/api"),
+    ("runtimeProfile", runtime.get("runtimeProfile"), "preview"),
+    ("apiRuntime", runtime.get("apiRuntime"), "cloudflare_preview"),
+    ("releaseChannel", runtime.get("releaseChannel"), "preview"),
+    ("releaseTagPattern", runtime.get("releaseTagPattern"), "android-preview-v*"),
+    ("productionReady", runtime.get("productionReady"), False),
+    ("mockOrDemo", runtime.get("mockOrDemo"), False),
+    ("manifest.source_app", manifest.get("source_app"), expected_slug),
+    ("manifest.stable_url", manifest.get("stable_url"), runtime.get("previewUrl")),
+    ("manifest.runtime.api_base_url", manifest_runtime.get("api_base_url"), runtime.get("apiBaseUrl")),
+    ("manifest.runtime.default_profile", manifest_runtime.get("default_profile"), runtime.get("runtimeProfile")),
+    ("manifest.runtime.api_runtime", manifest_runtime.get("api_runtime"), runtime.get("apiRuntime")),
+    ("manifest.first_release.mode", first_release.get("mode"), "preview"),
+    ("manifest.first_release.android_tag_pattern", first_release.get("android_tag_pattern"), runtime.get("releaseTagPattern")),
+)
+for label, actual, expected in checks:
+    if actual != expected:
+        raise SystemExit(f"{{label}} mismatch: expected {{expected!r}}, got {{actual!r}}")
+bridge = runtime.get("bridge")
+if not isinstance(bridge, dict) or bridge.get("verificationEndpoint") != f"/installable-apps/{{expected_slug}}":
+    raise SystemExit("bridge.verificationEndpoint mismatch")
+metadata = runtime.get("releaseMetadata")
+if not isinstance(metadata, dict) or metadata.get("initialPreviewRelease") is not True:
+    raise SystemExit("releaseMetadata.initialPreviewRelease must be true")
+PY
+
+python3 - "$SIGNING_POLICY" <<'PY'
+from __future__ import annotations
+
+import json
+import os
+import sys
+from pathlib import Path
+
+policy = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+if not isinstance(policy, dict):
+    raise SystemExit("release/preview-signing-policy.json must be a JSON object")
+if policy.get("defaultSigningMode") != "preview":
+    raise SystemExit("defaultSigningMode must remain preview")
+if policy.get("productionReady") is not False or policy.get("mockOrDemo") is not False:
+    raise SystemExit("preview signing policy must not be production or mock/demo")
+debug = policy.get("debugPreview")
+if not isinstance(debug, dict):
+    raise SystemExit("debugPreview signing policy is required")
+debug_requested = os.environ.get("DEBUG_PREVIEW_SIGNING", "").lower() == "true"
+if not debug_requested:
+    if debug.get("enabled") is True:
+        raise SystemExit("debugPreview.enabled requires DEBUG_PREVIEW_SIGNING=true")
+    raise SystemExit(0)
+if debug.get("enabled") is not True:
+    raise SystemExit("DEBUG_PREVIEW_SIGNING=true requires debugPreview.enabled=true")
+if os.environ.get("DEBUG_PREVIEW_SIGNING_ACKNOWLEDGED", "").lower() != "true":
+    raise SystemExit("debug preview signing requires DEBUG_PREVIEW_SIGNING_ACKNOWLEDGED=true")
+if not os.environ.get("DEBUG_PREVIEW_SIGNING_REASON", "").strip():
+    raise SystemExit("debug preview signing requires DEBUG_PREVIEW_SIGNING_REASON")
+tag = os.environ.get("APP_RELEASE_TAG", "")
+if tag and not tag.startswith("android-preview-v"):
+    raise SystemExit("debug preview signing can only use android-preview-v* tags")
+PY
+
+API_BASE_URL="$(python3 - "$RUNTIME_CONTRACT" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+print(json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))["apiBaseUrl"])
+PY
+)" \\
+APP_RUNTIME_PROFILE=preview \\
+API_RUNTIME=cloudflare_preview \\
+APP_RELEASE_TAG="${{APP_RELEASE_TAG:-android-preview-v0.0.0-build.0}}" \\
+scripts/validate_release_profiles.sh
+
+printf 'preview release profile validation completed\\n'
+'''
+
+
+def _initial_preview_release_validation_script(slug: str) -> str:
+    return f'''#!/usr/bin/env bash
+set -euo pipefail
+
+fail() {{
+  printf 'initial preview release validation failed: %s\\n' "$*" >&2
+  exit 1
+}}
+
+ROOT_DIR="$(cd "$(dirname "${{BASH_SOURCE[0]}}")/.." && pwd)"
+cd "$ROOT_DIR"
+
+SOURCE_APP="${{SOURCE_APP:-{slug}}}"
+PREVIEW_API_BASE_URL="${{PREVIEW_API_BASE_URL:-${{API_BASE_URL:-https://preview.nienfos.com/$SOURCE_APP/api}}}}"
+PREVIEW_API_BASE_URL="${{PREVIEW_API_BASE_URL%/}}"
+[[ "$PREVIEW_API_BASE_URL" == "https://preview.nienfos.com/$SOURCE_APP/api" ]] || \\
+  fail "Preview API must be https://preview.nienfos.com/$SOURCE_APP/api"
+
+scripts/validate_preview_release_profiles.sh
+
+origin_url="$(git remote get-url origin 2>/dev/null || true)"
+[[ -n "$origin_url" ]] || fail "origin remote is not configured"
+repo_ref="$origin_url"
+repo_ref="${{repo_ref#https://github.com/}}"
+repo_ref="${{repo_ref#git@github.com:}}"
+repo_ref="${{repo_ref%.git}}"
+[[ "$repo_ref" == */* ]] || fail "origin remote must point to a GitHub owner/repo"
+
+version="$(awk '/^version:/ {{ print $2; exit }}' apps/mobile/pubspec.yaml)"
+[[ -n "$version" ]] || fail "apps/mobile/pubspec.yaml has no version"
+expected_tag="${{APP_ANDROID_PREVIEW_RELEASE_TAG:-android-preview-v${{version//+/-build.}}}}"
+
+if ! command -v gh >/dev/null 2>&1; then
+  fail "gh is required to verify Android preview APK release assets"
+fi
+assets="$(gh release view "$expected_tag" --repo "$repo_ref" --json assets --jq '.assets[].name' 2>/dev/null || true)"
+[[ -n "$assets" ]] || fail "GitHub release $expected_tag is missing or has no assets"
+printf '%s\\n' "$assets" | grep -Fx "$SOURCE_APP.apk" >/dev/null || fail "GitHub release $expected_tag has no $SOURCE_APP.apk asset"
+
+scripts/smoke_preview_api.sh
+
+[[ -n "${{BRIDGE_URL:-}}" ]] || fail "BRIDGE_URL is required to verify Codex Mobile Apps registration"
+detail="$(curl -fsS "${{BRIDGE_URL%/}}/installable-apps/$SOURCE_APP")" || fail "Bridge registration lookup failed"
+printf '%s\\n' "$detail" > /tmp/project-factory-installable-app-detail.json
+python3 - "$SOURCE_APP" "$expected_tag" "$ROOT_DIR/release/preview-runtime.json" "$ROOT_DIR/deploy/web-preview/web-preview-manifest.yaml" <<'PY'
+from __future__ import annotations
+
+import json
+import os
+import re
+import sys
+from pathlib import Path
+try:
+    import yaml
+except ModuleNotFoundError as exc:
+    raise SystemExit("PyYAML is required to validate web-preview-manifest.yaml") from exc
+
+source_app, expected_tag, runtime_path, manifest_path = sys.argv[1:5]
+detail = json.loads(Path("/tmp/project-factory-installable-app-detail.json").read_text())
+runtime = json.loads(Path(runtime_path).read_text(encoding="utf-8"))
+manifest = yaml.safe_load(Path(manifest_path).read_text(encoding="utf-8"))
+if detail.get("sourceApp") != source_app:
+    raise SystemExit("Bridge registration sourceApp mismatch")
+if detail.get("releaseChannel") != runtime.get("releaseChannel"):
+    raise SystemExit("Bridge registration is not preview channel")
+if detail.get("releaseTagPattern") != runtime.get("releaseTagPattern"):
+    raise SystemExit("Bridge registration does not use android-preview-v*")
+if detail.get("previewUrl") != runtime.get("previewUrl"):
+    raise SystemExit("Bridge registration previewUrl mismatch")
+if detail.get("runtimeProfile") != runtime.get("runtimeProfile"):
+    raise SystemExit("Bridge registration runtimeProfile must be preview")
+if detail.get("productionReady") is not False:
+    raise SystemExit("Bridge registration productionReady must be false")
+if detail.get("mockOrDemo") is not False:
+    raise SystemExit("Bridge registration mockOrDemo must be false")
+if not detail.get("apkUrl"):
+    raise SystemExit("Bridge registration does not expose apkUrl")
+manifest_runtime = manifest.get("runtime") if isinstance(manifest, dict) and isinstance(manifest.get("runtime"), dict) else {{}}
+if manifest.get("stable_url") != runtime.get("previewUrl"):
+    raise SystemExit("web-preview manifest stable_url disagrees with preview-runtime.json")
+if manifest_runtime.get("api_base_url") != runtime.get("apiBaseUrl"):
+    raise SystemExit("web-preview manifest api_base_url disagrees with preview-runtime.json")
+if manifest_runtime.get("default_profile") != runtime.get("runtimeProfile"):
+    raise SystemExit("web-preview manifest runtime profile disagrees with preview-runtime.json")
+metadata = detail.get("releaseMetadata")
+if isinstance(metadata, dict):
+    if metadata.get("initialPreviewRelease") is not True:
+        raise SystemExit("Bridge registration releaseMetadata.initialPreviewRelease must be true")
+    if metadata.get("releaseTagPattern") != runtime.get("releaseTagPattern"):
+        raise SystemExit("Bridge registration release metadata tag pattern mismatch")
+expected_sha = os.environ.get("EXPECTED_SHA256", "").strip().lower()
+if expected_sha:
+    if not re.fullmatch(r"[a-fA-F0-9]{{64}}", expected_sha):
+        raise SystemExit("EXPECTED_SHA256 must be 64 hex characters")
+    print(detail["apkUrl"])
+print(f"initial preview release ready: {{source_app}} {{expected_tag}}")
+PY
+
+if [[ -n "${{EXPECTED_SHA256:-}}" ]]; then
+  apk_url="$(python3 - <<'PY'
+import json
+from pathlib import Path
+
+detail = json.loads(Path("/tmp/project-factory-installable-app-detail.json").read_text())
+print(detail["apkUrl"])
+PY
+)"
+  printf 'verifying preview APK bytes with EXPECTED_SHA256 via download: %s\\n' "$apk_url"
+  curl -fsSL "$apk_url" -o /tmp/project-factory-preview.apk
+  actual_sha="$(sha256sum /tmp/project-factory-preview.apk | awk '{{ print $1 }}')"
+  [[ "${{actual_sha,,}}" == "${{EXPECTED_SHA256,,}}" ]] || fail "Preview APK checksum does not match EXPECTED_SHA256"
+  printf 'preview APK checksum verified: %s\\n' "$actual_sha"
+fi
+'''
+
+
 def _release_profile_validation_script() -> str:
     return r'''#!/usr/bin/env bash
 set -euo pipefail
@@ -2353,11 +3828,19 @@ API_URL="${API_BASE_URL:-}"
 METADATA_FILE="${RELEASE_METADATA_FILE:-$ROOT_DIR/release/release-metadata.yaml}"
 
 case "$PROFILE" in
-  mock|real|staging) ;;
-  *) fail "APP_RUNTIME_PROFILE must be mock, real, or staging" ;;
+  mock|real|staging|preview) ;;
+  *) fail "APP_RUNTIME_PROFILE must be mock, real, staging, or preview" ;;
 esac
 
-if [[ "$TAG" == android-v* ]]; then
+if [[ "$TAG" == android-preview-v* ]]; then
+  [[ "$PROFILE" == "preview" ]] || fail "android-preview-v* tags require APP_RUNTIME_PROFILE=preview"
+  [[ "${API_RUNTIME:-cloudflare_preview}" == "cloudflare_preview" ]] || fail "android-preview-v* tags require API_RUNTIME=cloudflare_preview"
+  [[ -n "$API_URL" ]] || fail "preview releases require API_BASE_URL"
+  [[ "$API_URL" == https://preview.nienfos.com/*/api ]] || fail "preview releases require API_BASE_URL=https://preview.nienfos.com/<slug>/api"
+  [[ "$LOCAL_DATA_MODE" != "true" ]] || fail "preview releases cannot use LOCAL_DATA_MODE=true"
+  [[ "$API_URL" != *localhost* && "$API_URL" != *127.0.0.1* && "$API_URL" != *10.0.2.2* ]] || fail "preview releases cannot use local API_BASE_URL=$API_URL"
+  [[ "$API_URL" != *example* && "$API_URL" != *placeholder* ]] || fail "preview releases cannot use placeholder API_BASE_URL=$API_URL"
+elif [[ "$TAG" == android-v* ]]; then
   [[ "$PROFILE" == "real" || "$PROFILE" == "staging" ]] || fail "productive android-v* tags cannot use APP_RUNTIME_PROFILE=$PROFILE"
   [[ "$LOCAL_DATA_MODE" != "true" ]] || fail "productive android-v* tags cannot use LOCAL_DATA_MODE=true"
   [[ -n "$API_URL" ]] || fail "productive releases require API_BASE_URL"
@@ -2370,6 +3853,11 @@ else
 fi
 
 if [[ -f "$METADATA_FILE" ]]; then
+  if [[ "$TAG" == android-preview-v* ]]; then
+    grep -Eq '^runtime_profile:\s*preview\s*$' "$METADATA_FILE" || fail "preview metadata must declare runtime_profile=preview"
+    grep -Eq '^mock_or_demo:\s*false\s*$' "$METADATA_FILE" || fail "preview metadata must declare mock_or_demo=false"
+    grep -Eq '^backend_required:\s*true\s*$' "$METADATA_FILE" || fail "preview metadata must declare backend_required=true"
+  fi
   if [[ "$TAG" == android-v* ]]; then
     grep -Eq '^runtime_profile:\s*(real|staging)\s*$' "$METADATA_FILE" || fail "productive metadata must declare runtime_profile real/staging"
     grep -Eq '^mock_or_demo:\s*false\s*$' "$METADATA_FILE" || fail "productive metadata must declare mock_or_demo=false"
@@ -2382,7 +3870,7 @@ if [[ -f "$METADATA_FILE" ]]; then
   fi
 fi
 
-if [[ "$TAG" == android-v* ]]; then
+if [[ "$TAG" == android-preview-v* || "$TAG" == android-v* ]]; then
   if grep -RInE "defaultValue:\s*'mock'|runtimeProfile\s*=\s*'mock'|LOCAL_DATA_MODE\s*=\s*true|const bool.fromEnvironment\('LOCAL_DATA_MODE',\s*defaultValue:\s*true\)" \
       "$ROOT_DIR/apps/mobile/lib" "$ROOT_DIR/backend/app" >/tmp/project-factory-release-profile-grep.txt 2>/dev/null; then
     cat /tmp/project-factory-release-profile-grep.txt >&2
@@ -2474,6 +3962,79 @@ jobs:
 """
 
 
+def _generated_android_preview_release_workflow(slug: str) -> str:
+    return f"""name: Android Preview Release
+
+on:
+  push:
+    tags:
+      - "android-preview-v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-preview-release:
+    runs-on: ubuntu-latest
+    env:
+      APP_RUNTIME_PROFILE: preview
+      API_RUNTIME: cloudflare_preview
+      APP_SLUG: {slug}
+      API_BASE_URL: ${{{{ vars.API_BASE_URL }}}}
+      LOCAL_DATA_MODE: "false"
+      DEBUG_PREVIEW_SIGNING: ${{{{ vars.DEBUG_PREVIEW_SIGNING || 'false' }}}}
+      DEBUG_PREVIEW_SIGNING_ACKNOWLEDGED: ${{{{ vars.DEBUG_PREVIEW_SIGNING_ACKNOWLEDGED || 'false' }}}}
+      DEBUG_PREVIEW_SIGNING_REASON: ${{{{ vars.DEBUG_PREVIEW_SIGNING_REASON || '' }}}}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - name: Validate preview release profile contract
+        run: scripts/validate_preview_release_profiles.sh
+
+      - name: Flutter dependencies
+        working-directory: apps/mobile
+        run: flutter pub get
+
+      - name: Analyze
+        working-directory: apps/mobile
+        run: flutter analyze
+
+      - name: Test
+        working-directory: apps/mobile
+        run: flutter test
+
+      - name: Build Android preview APK
+        working-directory: apps/mobile
+        run: |
+          flutter build apk --release \\
+            --dart-define=APP_RUNTIME_PROFILE="$APP_RUNTIME_PROFILE" \\
+            --dart-define=API_RUNTIME="$API_RUNTIME" \\
+            --dart-define=API_BASE_URL="$API_BASE_URL" \\
+            --dart-define=APP_SLUG="$APP_SLUG" \\
+            --dart-define=CODEX_FEEDBACK_BRIDGE_URL="${{{{ vars.CODEX_FEEDBACK_BRIDGE_URL }}}}" \\
+            --dart-define=CODEX_FEEDBACK_ENABLED="${{{{ vars.CODEX_FEEDBACK_ENABLED || 'false' }}}}"
+          cp build/app/outputs/flutter-apk/app-release.apk build/app/outputs/flutter-apk/{slug}.apk
+
+      - name: Publish GitHub preview release
+        uses: softprops/action-gh-release@v2
+        with:
+          prerelease: true
+          files: apps/mobile/build/app/outputs/flutter-apk/{slug}.apk
+          generate_release_notes: true
+"""
+
+
 def _runtime_profiles_doc(name: str) -> str:
     return f"""# Runtime Profiles
 
@@ -2486,14 +4047,19 @@ def _runtime_profiles_doc(name: str) -> str:
   `mock_or_demo=false`, and hidden Workbench/dev tools.
 - `APP_RUNTIME_PROFILE=staging`: real backend path for pre-production testing.
 - `APP_RUNTIME_PROFILE=preview`: web preview path against the shared
-  Cloudflare Preview API runtime.
+  Cloudflare Preview API runtime. This is the default first release profile and
+  uses `https://preview.nienfos.com/<slug>/api`.
 - `APP_RUNTIME_PROFILE=mock`: opt-in demo path. Does not require backend and may
   show seed role selection.
 
 ## Release Tags
 
-- Productive: `android-vX.Y.Z-build.N`
+- Initial preview: `android-preview-vX.Y.Z-build.N`
+- Productive promotion: `android-vX.Y.Z-build.N`
 - Mock/demo: `android-mock-vX.Y.Z-build.N` or `android-local-vX.Y.Z-build.N`
+
+Mock/demo releases are never part of the default initial release. They require an
+explicit opt-in request and must use the visible mock/local tag prefixes above.
 
 Run before any release:
 
@@ -2509,15 +4075,32 @@ def _release_contracts_yaml(slug: str) -> str:
             "schema_version": 1,
             "source_app": slug,
             "runtime_profiles": {
-                "default": "real",
-                "allowed": ["mock", "real", "staging"],
+                "default": "preview",
+                "allowed": ["mock", "preview", "real", "staging"],
                 "env": "APP_RUNTIME_PROFILE",
+            },
+            "initial_preview_release": {
+                "tag_patterns": ["android-preview-v*"],
+                "runtime_profile": "preview",
+                "api_runtime": "cloudflare_preview",
+                "api_base_url": f"https://preview.nienfos.com/{slug}/api",
+                "mock_or_demo": False,
+                "backend_required": True,
+                "data_persistence": "cloudflare_d1",
+                "required_gates": [
+                    "cloudflare_health",
+                    "preview_api_smoke",
+                    "github_preview_apk_release",
+                    "codex_mobile_apps_registration",
+                ],
             },
             "mock_release": {
                 "tag_patterns": ["android-mock-v*", "android-local-v*"],
                 "runtime_profile": "mock",
                 "mock_or_demo": True,
                 "backend_required": False,
+                "required": False,
+                "opt_in": True,
                 "seed_role_selector": True,
             },
             "productive_release": {
@@ -2525,6 +4108,9 @@ def _release_contracts_yaml(slug: str) -> str:
                 "runtime_profile": "real",
                 "mock_or_demo": False,
                 "backend_required": True,
+                "promotion_metadata": "release/promotion-contract.json",
+                "requires_preview_success": True,
+                "must_not_reuse_preview_tag": True,
                 "forbidden": [
                     "LOCAL_DATA_MODE=true",
                     "localhost API_BASE_URL",
@@ -2533,6 +4119,19 @@ def _release_contracts_yaml(slug: str) -> str:
                     "visible Workbench UI",
                     "hardcoded demo data",
                 ],
+            },
+            "preview_to_production_promotion": {
+                "artifact": "release/promotion-contract.json",
+                "initial_preview_is_production": False,
+                "preview_tag_pattern": "android-preview-v*",
+                "production_tag_pattern": "android-v*",
+                "mock_tag_patterns": ["android-mock-v*", "android-local-v*"],
+            },
+            "cloudflare_cost_posture": {
+                "artifact": "release/cloudflare-cost-posture.json",
+                "validation_script": "scripts/validate_cloudflare_cost_posture.sh",
+                "default_policy": "free_compatible",
+                "paid_resources_require_operator_confirmation": True,
             },
             "workbench": {
                 "required": True,
@@ -2555,7 +4154,8 @@ def _release_contracts_yaml(slug: str) -> str:
                 "build_script": "scripts/build_web_preview.sh",
                 "validation_script": "scripts/validate_web_preview.sh",
                 "api_runtime": "cloudflare_preview",
-                "default_runtime_profile": "real",
+                "default_runtime_profile": "preview",
+                "api_base_url": f"https://preview.nienfos.com/{slug}/api",
                 "cloudflare_resources": {
                     "worker_name": "nienfos-preview-runtime",
                     "pages_project": "nienfos-preview-web",
@@ -2567,12 +4167,220 @@ def _release_contracts_yaml(slug: str) -> str:
     )
 
 
+def _cloudflare_cost_posture_json(slug: str) -> str:
+    return (
+        json.dumps(
+            {
+                "schemaVersion": 1,
+                "sourceApp": slug,
+                "policy": "free_compatible",
+                "paidResourcesAllowed": False,
+                "operatorConfirmationRequiredForPaid": True,
+                "operatorConfirmationEnv": "CLOUDFLARE_PAID_RESOURCES_CONFIRMED",
+                "resources": [
+                    {"type": "worker", "name": "nienfos-preview-runtime", "paid": False},
+                    {"type": "d1", "name": f"{slug}-preview", "paid": False},
+                    {"type": "pages", "name": "nienfos-preview-web", "paid": False},
+                ],
+                "blockedPaidResourceTypes": ["r2", "durable_objects", "queues"],
+                "manualOverride": {
+                    "env": "CLOUDFLARE_PAID_RESOURCES_CONFIRMED",
+                    "requiredValue": "true",
+                    "reasonEnv": "CLOUDFLARE_PAID_RESOURCES_REASON",
+                },
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n"
+    )
+
+
+def _promotion_contract_json(slug: str, name: str) -> str:
+    return (
+        json.dumps(
+            {
+                "schemaVersion": 1,
+                "sourceApp": slug,
+                "displayName": name,
+                "initialPreview": {
+                    "productionReady": False,
+                    "releaseChannel": "preview",
+                    "tagPattern": "android-preview-v*",
+                    "runtimeProfile": "preview",
+                    "apiRuntime": "cloudflare_preview",
+                    "apiBaseUrl": f"https://preview.nienfos.com/{slug}/api",
+                    "dataPersistence": "cloudflare_d1",
+                    "mockOrDemo": False,
+                },
+                "productionPromotion": {
+                    "releaseChannel": "production",
+                    "tagPattern": "android-v*",
+                    "runtimeProfile": "real",
+                    "requiresSeparateBackend": True,
+                    "requiresProductionSigning": True,
+                    "requiresPreviewGates": [
+                        "cloudflare_preview_health",
+                        "preview_api_smoke",
+                        "android_preview_apk_release",
+                        "bridge_preview_registration",
+                    ],
+                    "requiresProductionGates": [
+                        "production_backend_health",
+                        "production_api_base_url",
+                        "production_signing_key",
+                        "mock_or_demo_false",
+                        "app_update_channel_production",
+                    ],
+                    "forbidden": [
+                        "android-preview-v* tag reuse",
+                        "android-mock-v* tag reuse",
+                        "android-local-v* tag reuse",
+                        "LOCAL_DATA_MODE=true",
+                        "placeholder API_BASE_URL",
+                        "localhost API_BASE_URL",
+                    ],
+                },
+                "mockDemo": {
+                    "optInOnly": True,
+                    "tagPatterns": ["android-mock-v*", "android-local-v*"],
+                    "mustNotPromoteToProduction": True,
+                },
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n"
+    )
+
+
+def _preview_signing_policy_json(slug: str) -> str:
+    return (
+        json.dumps(
+            {
+                "schemaVersion": 1,
+                "sourceApp": slug,
+                "releaseChannel": "preview",
+                "releaseTagPattern": "android-preview-v*",
+                "defaultSigningMode": "preview",
+                "productionReady": False,
+                "mockOrDemo": False,
+                "debugPreview": {
+                    "enabled": False,
+                    "requiresEnv": {
+                        "DEBUG_PREVIEW_SIGNING": "true",
+                        "DEBUG_PREVIEW_SIGNING_ACKNOWLEDGED": "true",
+                        "DEBUG_PREVIEW_SIGNING_REASON": "non-empty",
+                    },
+                    "visibleReleaseScope": "android-preview-v* only",
+                    "mustNotUseProductionTag": True,
+                    "mustNotUseMockTag": True,
+                },
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n"
+    )
+
+
+def _cloudflare_cost_posture_check_script() -> str:
+    return r'''#!/usr/bin/env bash
+set -euo pipefail
+
+fail() {
+  printf 'cloudflare cost posture blocked: %s\n' "$*" >&2
+  exit 2
+}
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+REPORT="$ROOT_DIR/release/cloudflare-cost-posture.json"
+[[ -f "$REPORT" ]] || fail "missing release/cloudflare-cost-posture.json"
+
+python3 - "$REPORT" <<'PY'
+from __future__ import annotations
+
+import json
+import os
+import sys
+from pathlib import Path
+
+payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+if not isinstance(payload, dict):
+    raise SystemExit("release/cloudflare-cost-posture.json must be a JSON object")
+
+resources = payload.get("resources") or []
+paid = [
+    item for item in resources
+    if isinstance(item, dict) and item.get("paid") is True
+]
+paid_allowed = payload.get("paidResourcesAllowed") is True
+confirmed = os.environ.get("CLOUDFLARE_PAID_RESOURCES_CONFIRMED", "").lower() == "true"
+reason = os.environ.get("CLOUDFLARE_PAID_RESOURCES_REASON", "").strip()
+
+if paid and not paid_allowed:
+    names = ", ".join(str(item.get("name") or item.get("type") or "unknown") for item in paid)
+    raise SystemExit(f"paid resources present but paidResourcesAllowed=false: {names}")
+if paid and not confirmed:
+    raise SystemExit(
+        "paid Cloudflare resources require CLOUDFLARE_PAID_RESOURCES_CONFIRMED=true"
+    )
+if paid and not reason:
+    raise SystemExit("paid Cloudflare resources require CLOUDFLARE_PAID_RESOURCES_REASON")
+
+print("cloudflare cost posture ok")
+PY
+'''
+
+
+def _preview_runtime_json(slug: str, name: str) -> str:
+    return (
+        json.dumps(
+            {
+                "schemaVersion": 1,
+                "sourceApp": slug,
+                "displayName": f"{name} Preview",
+                "previewUrl": f"https://preview.nienfos.com/{slug}",
+                "apiBaseUrl": f"https://preview.nienfos.com/{slug}/api",
+                "runtimeProfile": "preview",
+                "apiRuntime": "cloudflare_preview",
+                "releaseChannel": "preview",
+                "releaseTagPattern": "android-preview-v*",
+                "apkAssetPattern": f"{slug}*.apk",
+                "latestAssetName": f"{slug}.apk",
+                "productionReady": False,
+                "mockOrDemo": False,
+                "bridge": {
+                    "endpoint": "/installable-apps",
+                    "verificationEndpoint": f"/installable-apps/{slug}",
+                    "requiresApkUrl": True,
+                },
+                "releaseMetadata": {
+                    "initialPreviewRelease": True,
+                    "releaseTagPattern": "android-preview-v*",
+                    "latestAssetName": f"{slug}.apk",
+                    "runtimeProfile": "preview",
+                    "apiRuntime": "cloudflare_preview",
+                },
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n"
+    )
+
+
 def _release_output_template() -> str:
     return """# Factory Final Output
 
 - commit_hash:
 - repo_url:
 - branch:
+- preview_api_base_url:
+- cloudflare_preview_status:
+- preview_api_smoke_status:
+- android_preview_release_tag:
+- android_preview_apk_url:
 - mock_release_tag:
 - productive_release_tag:
 - apk_urls:
@@ -2585,6 +4393,198 @@ def _release_output_template() -> str:
 - installable_app_url:
 - tests_executed:
 - blockers:
+"""
+
+
+def _promotion_runbook_doc(slug: str, name: str) -> str:
+    return f"""# Preview To Production Promotion
+
+`{name}` starts with an Initial Preview Release. That preview is installable, but
+it is not production.
+
+## Separation Contract
+
+- Preview tags use `android-preview-v*`.
+- Production promotion tags use `android-v*`.
+- Mock/demo tags use `android-mock-v*` or `android-local-v*`.
+- Never reuse preview or mock APKs for production.
+- Never promote `LOCAL_DATA_MODE=true`, localhost, placeholder API URLs, or seed
+  demo users.
+
+## Required Before Promotion
+
+Read `release/promotion-contract.json` and verify:
+
+```bash
+python3 -m json.tool release/promotion-contract.json
+scripts/validate_release_profiles.sh
+```
+
+Promotion can only happen after:
+
+- Preview API health and smoke checks passed.
+- `android-preview-v*` APK was published and registered in Bridge.
+- A real production backend exists.
+- `API_BASE_URL` points to that production backend, not
+  `https://preview.nienfos.com/{slug}/api`.
+- Android production signing credentials are configured.
+- App update metadata reports production channel and `mockOrDemo=false`.
+
+## Promotion Command Shape
+
+```bash
+APP_RELEASE_TAG=android-v<version> \\
+APP_RUNTIME_PROFILE=real \\
+API_BASE_URL=https://api.example.com \\
+LOCAL_DATA_MODE=false \\
+scripts/validate_release_profiles.sh
+
+scripts/publish_android_release.sh
+```
+"""
+
+
+def _android_preview_signing_doc(slug: str) -> str:
+    return f"""# Android Preview Signing Policy
+
+Initial Preview Release uses `android-preview-v*` and `APP_RUNTIME_PROFILE=preview`.
+It is user-installable for validation, but it is not production.
+
+## Preview Signing
+
+- Preview APKs may use preview/debug-compatible signing only when release
+  metadata remains `productionReady=false`.
+- The APK must point to `https://preview.nienfos.com/{slug}/api`.
+- Bridge registration must keep `releaseChannel=preview`,
+  `runtimeProfile=preview`, `productionReady=false`, and `mockOrDemo=false`.
+
+## Debug Preview Rules
+
+If debug-preview signing is used, make it visible in the release notes and do not
+tag it as `android-v*`. The default generated metadata blocks debug-preview
+signing:
+
+```bash
+python3 -m json.tool release/preview-signing-policy.json
+```
+
+To allow it temporarily, `release/preview-signing-policy.json` must set
+`debugPreview.enabled=true` and the release environment must include:
+
+```bash
+DEBUG_PREVIEW_SIGNING=true
+DEBUG_PREVIEW_SIGNING_ACKNOWLEDGED=true
+DEBUG_PREVIEW_SIGNING_REASON="temporary QA build"
+```
+
+```bash
+APP_RELEASE_TAG=android-preview-v<version> \\
+APP_RUNTIME_PROFILE=preview \\
+API_RUNTIME=cloudflare_preview \\
+API_BASE_URL=https://preview.nienfos.com/{slug}/api \\
+scripts/publish_android_preview_release.sh
+```
+
+Production signing is reserved for the later `android-v*` promotion path.
+"""
+
+
+def _preview_operations_runbook(slug: str) -> str:
+    return f"""# Preview Update Disable Extend Troubleshooting
+
+The preview lane uses real Cloudflare Preview API and persistent D1 data. Mock or
+demo data is opt-in only and must use visible mock/local tags.
+
+## Update Preview
+
+```bash
+scripts/validate_generated_project.sh
+scripts/validate_cloudflare_cost_posture.sh
+scripts/apply_cloudflare_preview.sh
+scripts/smoke_preview_api.sh
+scripts/publish_android_preview_release.sh
+scripts/register_installable_app.sh
+scripts/validate_initial_preview_release.sh
+```
+
+## Disable Preview
+
+Disable the Bridge catalog entry first, then stop sharing the preview URL:
+
+```bash
+BRIDGE_URL=http://127.0.0.1:8000 \\
+BRIDGE_REGISTRATION_TOKEN=<token> \\
+ENABLED=false \\
+scripts/register_installable_app.sh
+```
+
+## Extend Preview
+
+Add new real Preview API routes under `deploy/web-preview/worker/src/index.js`,
+add D1 schema changes, then rerun:
+
+```bash
+scripts/validate_web_preview.sh
+scripts/apply_cloudflare_preview.sh
+scripts/smoke_preview_api.sh
+```
+
+## Troubleshooting
+
+- Missing Cloudflare config: run `scripts/deploy_web_preview.sh --plan` and fill
+  Bridge Cloudflare settings.
+- Paid-resource blocker: inspect `release/cloudflare-cost-posture.json`; only set
+  `CLOUDFLARE_PAID_RESOURCES_CONFIRMED=true` with a real reason.
+- Wrong API URL: `API_BASE_URL` must be `https://preview.nienfos.com/{slug}/api`.
+- Bridge missing APK: publish `android-preview-v*`, then rerun
+  `scripts/register_installable_app.sh`.
+"""
+
+
+def _false_readiness_runbook(slug: str) -> str:
+    return f"""# False Readiness Examples
+
+A Project Factory job is not ready until Cloudflare health, Preview API smoke,
+Android preview release, and Bridge registration all pass.
+
+## Blocked Examples
+
+```bash
+APP_RELEASE_TAG=android-preview-v1.0.0 \\
+APP_RUNTIME_PROFILE=mock \\
+API_BASE_URL=https://preview.nienfos.com/{slug}/api \\
+scripts/validate_release_profiles.sh
+```
+
+Fails because preview cannot use mock as the primary runtime.
+
+```bash
+APP_RELEASE_TAG=android-preview-v1.0.0 \\
+APP_RUNTIME_PROFILE=preview \\
+API_BASE_URL=http://localhost:8000 \\
+scripts/validate_release_profiles.sh
+```
+
+Fails because installable preview releases cannot use localhost.
+
+```bash
+APP_RELEASE_TAG=android-v1.0.0 \\
+APP_RUNTIME_PROFILE=preview \\
+API_BASE_URL=https://preview.nienfos.com/{slug}/api \\
+scripts/validate_release_profiles.sh
+```
+
+Fails because production promotion must use `APP_RUNTIME_PROFILE=real` and a real
+production backend.
+
+## Final Gate
+
+```bash
+scripts/validate_initial_preview_release.sh
+```
+
+This final gate verifies the preview runtime contract, Cloudflare manifest,
+GitHub release/APK metadata, and Bridge installable-app metadata agree.
 """
 
 

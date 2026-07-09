@@ -6,4 +6,4 @@ Plan: `Android Preview Release Workflow`
 
 ## Checklist
 
-- [ ] T035 Generate `scripts/publish_android_preview_release.sh`.
+- [x] T035 Generate `scripts/publish_android_preview_release.sh`.

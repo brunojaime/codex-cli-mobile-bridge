@@ -6,5 +6,5 @@ Plan: `Factory Runner Orchestration`
 
 ## Checklist
 
-- [ ] T062 Run final readiness validation across GitHub, Cloudflare, Android,
+- [x] T062 Run final readiness validation across GitHub, Cloudflare, Android,
       updater metadata, and Bridge.

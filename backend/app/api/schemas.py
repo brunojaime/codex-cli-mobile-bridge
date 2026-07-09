@@ -88,6 +88,7 @@ class ProjectFactoryDraftRequest(BaseModel):
     platforms: list[str] = Field(default_factory=lambda: ["ios", "android", "web"])
     backend: str = "fastapi"
     logo_mode: str = Field(default="generate", alias="logoMode")
+    first_release_mode: str = Field(default="preview", alias="firstReleaseMode")
     visual_reference_paths: list[str] = Field(
         default_factory=list,
         alias="visualReferencePaths",
@@ -107,14 +108,23 @@ class ProjectFactoryOptionsResponse(BaseModel):
 
 
 class ProjectFactoryDraftResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     kind: str
     version: int
     draft_id: str
     created_at: str
+    first_release_mode: str = Field(default="preview", alias="firstReleaseMode")
     manifest_plan: dict[str, Any]
+    initial_preview_release: dict[str, Any] = Field(
+        default_factory=dict,
+        alias="initialPreviewRelease",
+    )
 
 
 class ProjectFactoryDraftSummaryResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     id: str
     draft_id: str
     name: str
@@ -126,6 +136,11 @@ class ProjectFactoryDraftSummaryResponse(BaseModel):
     created_at: str
     target_path: str | None = None
     error: str | None = None
+    first_release_mode: str = Field(default="preview", alias="firstReleaseMode")
+    initial_preview_release: dict[str, Any] = Field(
+        default_factory=dict,
+        alias="initialPreviewRelease",
+    )
 
 
 class ProjectFactoryDraftsResponse(BaseModel):
@@ -135,18 +150,27 @@ class ProjectFactoryDraftsResponse(BaseModel):
 
 
 class ProjectFactoryDryRunResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     kind: str
     version: int
     ok: bool
     status: str
     target_path: str | None
     manifest_path: str | None
+    first_release_mode: str = Field(default="preview", alias="firstReleaseMode")
     manifest: dict[str, Any]
     errors: list[dict[str, Any]]
     next_actions: list[str]
+    initial_preview_release: dict[str, Any] = Field(
+        default_factory=dict,
+        alias="initialPreviewRelease",
+    )
 
 
 class ProjectFactoryJobResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     kind: str
     version: int
     job_id: str
@@ -162,12 +186,19 @@ class ProjectFactoryJobResponse(BaseModel):
     error: str | None = None
     project_path: str | None = None
     message: str
+    first_release_mode: str = Field(default="preview", alias="firstReleaseMode")
     manifest_plan: dict[str, Any]
     step_logs: list[dict[str, Any]] = Field(default_factory=list)
     generation_result: dict[str, Any] | None = None
+    initial_preview_release: dict[str, Any] = Field(
+        default_factory=dict,
+        alias="initialPreviewRelease",
+    )
 
 
 class ProjectFactoryJobSummaryResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     id: str
     job_id: str
     draft_id: str
@@ -184,6 +215,11 @@ class ProjectFactoryJobSummaryResponse(BaseModel):
     error: str | None = None
     message: str | None = None
     manual_next_step: str | None = None
+    first_release_mode: str = Field(default="preview", alias="firstReleaseMode")
+    initial_preview_release: dict[str, Any] = Field(
+        default_factory=dict,
+        alias="initialPreviewRelease",
+    )
 
 
 class ProjectFactoryJobsResponse(BaseModel):
@@ -488,8 +524,19 @@ class AppUpdateRegistryItemResponse(BaseModel):
         alias="requiredMinimumBuild",
     )
     release_channel: str = Field(default="stable", alias="releaseChannel")
+    release_tag_pattern: str | None = Field(default=None, alias="releaseTagPattern")
+    apk_asset_pattern: str | None = Field(default=None, alias="apkAssetPattern")
+    latest_asset_name: str | None = Field(default=None, alias="latestAssetName")
     private_install: bool = Field(default=False, alias="privateInstall")
     expected_package_id: str | None = Field(default=None, alias="expectedPackageId")
+    preview_url: str | None = Field(default=None, alias="previewUrl")
+    runtime_profile: str | None = Field(default=None, alias="runtimeProfile")
+    production_ready: bool | None = Field(default=None, alias="productionReady")
+    mock_or_demo: bool | None = Field(default=None, alias="mockOrDemo")
+    release_metadata: dict[str, object] = Field(
+        default_factory=dict,
+        alias="releaseMetadata",
+    )
 
 
 class AppUpdateRegistryResponse(BaseModel):
@@ -536,6 +583,9 @@ class InstallableAppResponse(BaseModel):
     display_name: str = Field(alias="displayName")
     repo: str
     release_channel: str = Field(default="stable", alias="releaseChannel")
+    release_tag_pattern: str | None = Field(default=None, alias="releaseTagPattern")
+    apk_asset_pattern: str | None = Field(default=None, alias="apkAssetPattern")
+    latest_asset_name: str | None = Field(default=None, alias="latestAssetName")
     latest_version: str | None = Field(default=None, alias="latestVersion")
     latest_build: int | None = Field(default=None, alias="latestBuild")
     release_tag: str | None = Field(default=None, alias="releaseTag")
@@ -547,6 +597,14 @@ class InstallableAppResponse(BaseModel):
     enabled: bool
     package_id: str | None = Field(default=None, alias="packageId")
     install_status_hint: str = Field(alias="installStatusHint")
+    preview_url: str | None = Field(default=None, alias="previewUrl")
+    runtime_profile: str | None = Field(default=None, alias="runtimeProfile")
+    production_ready: bool | None = Field(default=None, alias="productionReady")
+    mock_or_demo: bool | None = Field(default=None, alias="mockOrDemo")
+    release_metadata: dict[str, object] = Field(
+        default_factory=dict,
+        alias="releaseMetadata",
+    )
 
 
 class InstallableAppsResponse(BaseModel):
@@ -601,6 +659,24 @@ class InstallableAppRegistrationRequest(BaseModel):
     verified_package_ids: dict[str, str] = Field(
         default_factory=dict,
         alias="verifiedPackageIds",
+    )
+    preview_url: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=300,
+        alias="previewUrl",
+    )
+    runtime_profile: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=80,
+        alias="runtimeProfile",
+    )
+    production_ready: bool | None = Field(default=None, alias="productionReady")
+    mock_or_demo: bool | None = Field(default=None, alias="mockOrDemo")
+    release_metadata: dict[str, object] = Field(
+        default_factory=dict,
+        alias="releaseMetadata",
     )
     enabled: bool = True
 
@@ -1583,6 +1659,7 @@ class SddWorkbenchViewResponse(BaseModel):
     impact_queue: list[SddWorkbenchImpactQueueItemResponse] = Field(
         default_factory=list,
     )
+    preview_readiness: dict[str, Any] = Field(default_factory=dict)
 
 
 class CodexMcpAppInstallResponse(BaseModel):

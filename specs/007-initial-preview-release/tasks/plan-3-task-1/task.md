@@ -6,4 +6,4 @@ Plan: `Cloudflare Preview Backend Readiness`
 
 ## Checklist
 
-- [ ] T014 Reuse Cloudflare doctor results as a hard gate for preview apply.
+- [x] T014 Reuse Cloudflare doctor results as a hard gate for preview apply.

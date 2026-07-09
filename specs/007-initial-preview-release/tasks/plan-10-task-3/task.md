@@ -6,4 +6,4 @@ Plan: `Operations Documentation`
 
 ## Checklist
 
-- [ ] T081 Document Android preview signing policy.
+- [x] T081 Document Android preview signing policy.

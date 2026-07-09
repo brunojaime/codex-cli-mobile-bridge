@@ -6,5 +6,5 @@ Plan: `Cloudflare Preview Backend Readiness`
 
 ## Checklist
 
-- [ ] T024 Add blocked status for paid-resource requirements without operator
+- [x] T024 Add blocked status for paid-resource requirements without operator
       confirmation.

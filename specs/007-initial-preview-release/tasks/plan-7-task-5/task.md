@@ -6,4 +6,4 @@ Plan: `Factory Runner Orchestration`
 
 ## Checklist
 
-- [ ] T059 Run web preview smoke tests after Cloudflare apply.
+- [x] T059 Run web preview smoke tests after Cloudflare apply.

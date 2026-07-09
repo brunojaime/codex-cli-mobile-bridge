@@ -6,4 +6,4 @@ Plan: `Bridge Installable-App Registration`
 
 ## Checklist
 
-- [ ] T054 Add tests for blocked registration config.
+- [x] T054 Add tests for blocked registration config.

@@ -249,6 +249,40 @@ class _InstallableAppCard extends StatelessWidget {
                 style: theme.textTheme.bodySmall,
               ),
             ],
+            if (app.isPreview ||
+                app.runtimeProfile != null ||
+                app.productionReady != null ||
+                app.mockOrDemo != null) ...[
+              const SizedBox(height: 8),
+              Text(
+                [
+                  'Channel: ${app.releaseChannel}',
+                  if (app.runtimeProfile != null)
+                    'Profile: ${app.runtimeProfile}',
+                  'Signing: preview',
+                  app.isProductionReady
+                      ? 'Production ready'
+                      : 'Production pending',
+                  app.isMockOrDemo ? 'Mock/demo' : 'Real preview data',
+                ].join('  •  '),
+                style: theme.textTheme.bodySmall,
+              ),
+            ],
+            if (app.hasPreviewUrl) ...[
+              const SizedBox(height: 4),
+              Text('Preview: ${app.previewUrl}',
+                  style: theme.textTheme.bodySmall),
+            ],
+            if (app.releaseTag != null || app.apkAssetName != null) ...[
+              const SizedBox(height: 4),
+              Text(
+                [
+                  if (app.releaseTag != null) app.releaseTag!,
+                  if (app.apkAssetName != null) app.apkAssetName!,
+                ].join('  •  '),
+                style: theme.textTheme.bodySmall,
+              ),
+            ],
             if (statusText != null) ...[
               const SizedBox(height: 8),
               Text(statusText!, style: theme.textTheme.bodySmall),

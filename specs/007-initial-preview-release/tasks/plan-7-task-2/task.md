@@ -6,4 +6,4 @@ Plan: `Factory Runner Orchestration`
 
 ## Checklist
 
-- [ ] T056 Run local generated-project validation before preview publication.
+- [x] T056 Run local generated-project validation before preview publication.

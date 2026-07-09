@@ -6,4 +6,4 @@ Plan: `Android Preview Release Workflow`
 
 ## Checklist
 
-- [ ] T041 Verify app updater metadata points to the preview channel.
+- [x] T041 Verify app updater metadata points to the preview channel.

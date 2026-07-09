@@ -6,4 +6,4 @@ Plan: `Factory Runner Orchestration`
 
 ## Checklist
 
-- [ ] T061 Run Bridge registration after APK asset verification.
+- [x] T061 Run Bridge registration after APK asset verification.

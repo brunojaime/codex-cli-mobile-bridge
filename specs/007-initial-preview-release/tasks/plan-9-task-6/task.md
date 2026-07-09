@@ -6,5 +6,5 @@ Plan: `Validation And Regression Coverage`
 
 ## Checklist
 
-- [ ] T077 Add validation test that `android-v*` still requires production
+- [x] T077 Add validation test that `android-v*` still requires production
       backend health and release signing.

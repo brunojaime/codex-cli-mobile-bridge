@@ -6,4 +6,4 @@ Plan: `Bridge Installable-App Registration`
 
 ## Checklist
 
-- [ ] T048 Include runtime profile, tag, APK asset, and update metadata.
+- [x] T048 Include runtime profile, tag, APK asset, and update metadata.

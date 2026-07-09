@@ -6,4 +6,4 @@ Plan: `Project Factory Contract Updates`
 
 ## Checklist
 
-- [ ] T008 Default first-release mode to `preview`.
+- [x] T008 Default first-release mode to `preview`.

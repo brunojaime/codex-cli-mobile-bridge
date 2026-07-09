@@ -6,4 +6,4 @@ Plan: `Release Mode Contract`
 
 ## Checklist
 
-- [ ] T005 Define preview-to-production promotion metadata.
+- [x] T005 Define preview-to-production promotion metadata.

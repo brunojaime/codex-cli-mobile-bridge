@@ -6,4 +6,4 @@ Plan: `Factory Runner Orchestration`
 
 ## Checklist
 
-- [ ] T060 Run Android preview release after preview API health passes.
+- [x] T060 Run Android preview release after preview API health passes.

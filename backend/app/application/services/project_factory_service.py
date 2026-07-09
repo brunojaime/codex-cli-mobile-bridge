@@ -28,6 +28,7 @@ from backend.app.application.services.project_factory_manifest_service import (
     DEFAULT_BACKEND,
     DEFAULT_CREATION_GENERATOR_RUNS,
     DEFAULT_CREATION_REVIEWER_RUNS,
+    DEFAULT_FIRST_RELEASE_MODE,
     DEFAULT_PLATFORMS,
     ProjectFactoryManifestInput,
     ProjectFactoryManifestPlan,
@@ -58,7 +59,11 @@ class ProjectFactoryDraft:
             "version": 1,
             "draft_id": self.id,
             "created_at": self.created_at,
+            "first_release_mode": self.request.first_release_mode,
             "manifest_plan": self.manifest_plan.to_payload(),
+            "initial_preview_release": _initial_preview_release_status(
+                manifest=self.manifest_plan.manifest,
+            ),
         }
 
 
@@ -99,8 +104,18 @@ class ProjectFactoryJob:
             "error": self.error,
             "project_path": self.project_path,
             "message": self.message,
+            "first_release_mode": _first_release_mode_from_manifest_plan(
+                self.manifest_plan,
+            ),
             "manifest_plan": self.manifest_plan.to_payload(),
             "step_logs": logs,
+            "initial_preview_release": _initial_preview_release_status(
+                manifest=self.manifest_plan.manifest,
+                status=self.status,
+                current_phase=self.current_phase,
+                blocker_text=self.error if self.status == "blocked" else None,
+                step_logs=logs,
+            ),
         }
         if self.generation_result is not None:
             payload["generation_result"] = self.generation_result.to_payload()
@@ -507,7 +522,15 @@ class ProjectFactoryService:
         if not project_path_value:
             return
         project_path = Path(project_path_value).expanduser().resolve()
-        command = ("bash", "scripts/validate_publication_ready.sh")
+        initial_preview_script = (
+            project_path / "scripts/validate_initial_preview_release.sh"
+        )
+        command = (
+            "bash",
+            "scripts/validate_initial_preview_release.sh"
+            if initial_preview_script.is_file()
+            else "scripts/validate_publication_ready.sh",
+        )
         script = project_path / command[1]
         if not script.is_file():
             self._block_ready_job_publication(
@@ -515,7 +538,7 @@ class ProjectFactoryService:
                 command=command,
                 message=(
                     "Existing ready job is missing "
-                    "`scripts/validate_publication_ready.sh`; publication cannot "
+                    f"`{command[1]}`; publication cannot "
                     "be verified."
                 ),
                 stdout="",
@@ -730,6 +753,7 @@ class ProjectFactoryService:
             platforms=draft.request.platforms,
             backend=draft.request.backend,
             logo_mode=draft.request.logo_mode,
+            first_release_mode=draft.request.first_release_mode,
             visual_reference_paths=draft.request.visual_reference_paths,
             visual_reference_assets=tuple(
                 asset.to_manifest_item() for asset in assets
@@ -857,6 +881,10 @@ def _draft_summary(draft: ProjectFactoryDraft) -> dict[str, object]:
         "created_at": draft.created_at,
         "target_path": draft.manifest_plan.target_path,
         "error": _summary_error(draft.manifest_plan.errors),
+        "first_release_mode": draft.request.first_release_mode,
+        "initial_preview_release": _initial_preview_release_status(
+            manifest=manifest,
+        ),
     }
 
 
@@ -884,6 +912,14 @@ def _job_summary(job: ProjectFactoryJob) -> dict[str, object]:
         "error": _truncate_summary(job.error),
         "message": _truncate_summary(job.message),
         "manual_next_step": _manual_next_step(job),
+        "first_release_mode": _first_release_mode_from_manifest_plan(job.manifest_plan),
+        "initial_preview_release": _initial_preview_release_status(
+            manifest=manifest,
+            status=job.status,
+            current_phase=job.current_phase,
+            blocker_text=job.error if job.status == "blocked" else None,
+            step_logs=list(job.step_logs or []),
+        ),
     }
 
 
@@ -891,6 +927,20 @@ def _summary_error(errors: tuple[ProjectFactoryValidationError, ...]) -> str | N
     if not errors:
         return None
     return _truncate_summary("; ".join(error.message for error in errors))
+
+
+def _first_release_mode_from_manifest_plan(plan: ProjectFactoryManifestPlan) -> str:
+    release = plan.manifest.get("release")
+    if isinstance(release, dict):
+        mode = release.get("first_release_mode")
+        if isinstance(mode, str) and mode.strip():
+            return mode
+    runtime = plan.manifest.get("runtime_profiles")
+    if isinstance(runtime, dict):
+        mode = runtime.get("first_release_mode")
+        if isinstance(mode, str) and mode.strip():
+            return mode
+    return DEFAULT_FIRST_RELEASE_MODE
 
 
 def _manual_next_step(job: ProjectFactoryJob) -> str | None:
@@ -905,6 +955,87 @@ def _manual_next_step(job: ProjectFactoryJob) -> str | None:
     if job.status in {"failed", "interrupted", "blocked"}:
         return "Open job details, inspect step logs, and create a new draft if regeneration is required."
     return "Reopen this job to continue watching progress."
+
+
+def _initial_preview_release_status(
+    *,
+    manifest: dict[str, object],
+    status: str | None = None,
+    current_phase: str | None = None,
+    blocker_text: str | None = None,
+    step_logs: list[dict[str, object]] | None = None,
+) -> dict[str, object]:
+    slug = str(manifest.get("slug") or "")
+    preview_url = f"https://preview.nienfos.com/{slug}" if slug else None
+    api_url = f"{preview_url}/api" if preview_url else None
+    phases = (
+        "github_publish",
+        "cloudflare_preview_apply",
+        "preview_api_smoke",
+        "android_preview_release",
+        "installable_app_registration",
+        "publish_verification",
+    )
+    phase_statuses: dict[str, dict[str, object]] = {
+        phase: {
+            "status": "pending",
+            "message": "",
+            "command": _manual_command_for_phase(phase),
+        }
+        for phase in phases
+    }
+    for event in step_logs or []:
+        phase = str(event.get("phase") or "")
+        if phase not in phase_statuses:
+            continue
+        phase_statuses[phase] = {
+            "status": str(event.get("status") or "pending"),
+            "message": _truncate_summary(str(event.get("message") or "")) or "",
+            "command": list(event.get("command") or _manual_command_for_phase(phase)),
+            "exit_code": event.get("exit_code"),
+        }
+    if status == "ready":
+        for phase in phases:
+            phase_statuses[phase]["status"] = "completed"
+    return {
+        "sourceApp": slug,
+        "previewUrl": preview_url,
+        "apiBaseUrl": api_url,
+        "runtimeProfile": "preview",
+        "apiRuntime": "cloudflare_preview",
+        "releaseChannel": "preview",
+        "releaseTagPattern": "android-preview-v*",
+        "productionReady": False,
+        "mockOrDemo": False,
+        "status": status or "draft",
+        "currentPhase": current_phase or "draft",
+        "phaseStatuses": phase_statuses,
+        "blockerText": _truncate_summary(blocker_text, limit=1000),
+        "manualCommandHints": [
+            "scripts/apply_cloudflare_preview.sh",
+            "scripts/smoke_preview_api.sh",
+            "scripts/publish_android_preview_release.sh --push --watch",
+            "scripts/register_installable_app.sh",
+            "scripts/validate_initial_preview_release.sh",
+        ],
+    }
+
+
+def _manual_command_for_phase(phase: str) -> list[str]:
+    commands = {
+        "github_publish": ["bash", "scripts/publish_project.sh"],
+        "cloudflare_preview_apply": ["bash", "scripts/apply_cloudflare_preview.sh"],
+        "preview_api_smoke": ["bash", "scripts/smoke_preview_api.sh"],
+        "android_preview_release": [
+            "bash",
+            "scripts/publish_android_preview_release.sh",
+            "--push",
+            "--watch",
+        ],
+        "installable_app_registration": ["bash", "scripts/register_installable_app.sh"],
+        "publish_verification": ["bash", "scripts/validate_initial_preview_release.sh"],
+    }
+    return commands.get(phase, [])
 
 
 def _ready_message(local_message: str, *, publication_validation_mode: str) -> str:
@@ -978,6 +1109,7 @@ def _draft_storage_payload(draft: ProjectFactoryDraft) -> dict[str, object]:
             "platforms": list(draft.request.platforms),
             "backend": draft.request.backend,
             "logo_mode": draft.request.logo_mode,
+            "first_release_mode": draft.request.first_release_mode,
             "visual_reference_paths": list(draft.request.visual_reference_paths),
             "visual_reference_assets": [
                 dict(item) for item in draft.request.visual_reference_assets
@@ -1055,6 +1187,9 @@ def _request_from_payload(payload: dict[str, object]) -> ProjectFactoryManifestI
         ),
         backend=str(payload.get("backend") or DEFAULT_BACKEND),
         logo_mode=str(payload.get("logo_mode") or "generate"),
+        first_release_mode=str(
+            payload.get("first_release_mode") or DEFAULT_FIRST_RELEASE_MODE
+        ),
         visual_reference_paths=tuple(
             str(item)
             for item in payload.get("visual_reference_paths", [])

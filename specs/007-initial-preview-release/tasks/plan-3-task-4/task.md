@@ -6,4 +6,4 @@ Plan: `Cloudflare Preview Backend Readiness`
 
 ## Checklist
 
-- [ ] T017 Provision or select D1 database/scope for the generated app.
+- [x] T017 Provision or select D1 database/scope for the generated app.

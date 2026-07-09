@@ -6,4 +6,4 @@ Plan: `Bridge Installable-App Registration`
 
 ## Checklist
 
-- [ ] T053 Add tests for successful preview app registration.
+- [x] T053 Add tests for successful preview app registration.

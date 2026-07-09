@@ -6,4 +6,4 @@ Plan: `Validation And Regression Coverage`
 
 ## Checklist
 
-- [ ] T075 Add validation test that preview APK points to preview API.
+- [x] T075 Add validation test that preview APK points to preview API.

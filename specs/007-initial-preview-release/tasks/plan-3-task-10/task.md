@@ -6,4 +6,4 @@ Plan: `Cloudflare Preview Backend Readiness`
 
 ## Checklist
 
-- [ ] T023 Add cost posture report before paid resources can be used.
+- [x] T023 Add cost posture report before paid resources can be used.

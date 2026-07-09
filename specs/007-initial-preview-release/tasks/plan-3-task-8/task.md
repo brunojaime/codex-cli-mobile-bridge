@@ -6,4 +6,4 @@ Plan: `Cloudflare Preview Backend Readiness`
 
 ## Checklist
 
-- [ ] T021 Verify preview API `/health`.
+- [x] T021 Verify preview API `/health`.

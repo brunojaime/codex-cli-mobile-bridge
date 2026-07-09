@@ -6,5 +6,5 @@ Plan: `Mobile And Workbench UX`
 
 ## Checklist
 
-- [ ] T071 Add Workbench readiness fields for preview URL, APK, Bridge
+- [x] T071 Add Workbench readiness fields for preview URL, APK, Bridge
       registration, and blockers.

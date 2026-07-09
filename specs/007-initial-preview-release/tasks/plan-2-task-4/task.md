@@ -6,5 +6,5 @@ Plan: `Project Factory Contract Updates`
 
 ## Checklist
 
-- [ ] T010 Update chat-first New Project prompt to describe Initial Preview
+- [x] T010 Update chat-first New Project prompt to describe Initial Preview
       Release as the default.

@@ -488,7 +488,7 @@ class CloudflareProvisioningPlanner:
             pages_project=self._settings.preview_pages_project_name.strip(),
             r2_bucket=(self._settings.preview_r2_bucket_name or "").strip(),
             runtime_type="cloudflare_worker_assets",
-            health_path="/__preview/health",
+            health_path="/api/health",
         )
 
     def plan_for_manifest(self, manifest: dict[str, Any]) -> dict[str, Any]:
@@ -513,7 +513,7 @@ class CloudflareProvisioningPlanner:
             if resources.get("r2_bucket") is not None
             else "",
             runtime_type=str(runtime.get("type") or "cloudflare_worker_assets"),
-            health_path=str(runtime.get("health_path") or "/__preview/health"),
+            health_path=str(runtime.get("health_path") or "/api/health"),
             access_mode=str(access.get("mode") or "public"),
             required_worker_secrets=tuple(access.get("required_worker_secrets") or ()),
             d1_binding=d1_binding,

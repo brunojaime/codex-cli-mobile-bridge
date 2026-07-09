@@ -102,6 +102,48 @@ void main() {
     expect(result!.status, 'ready');
   });
 
+  testWidgets('project factory progress shows running preview release state',
+      (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Builder(
+            builder: (context) {
+              return TextButton(
+                onPressed: () async {
+                  await showDialog<ProjectFactoryJob>(
+                    context: context,
+                    builder: (context) => ProjectFactoryProgressDialog(
+                      initialJob: _job(
+                        status: 'running',
+                        progress: 60,
+                        preview: _previewRelease(status: 'running'),
+                      ),
+                      pollInterval: const Duration(minutes: 1),
+                      pollJob: (_) async =>
+                          _job(status: 'running', progress: 60),
+                    ),
+                  );
+                },
+                child: const Text('Running preview'),
+              );
+            },
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('Running preview'));
+    await tester.pump();
+
+    expect(find.textContaining('Initial Preview: running'), findsOneWidget);
+    expect(find.text('API URL: https://preview.nienfos.com/clinica-norte/api'),
+        findsOneWidget);
+    expect(find.text('D1 persistence: Cloudflare preview'), findsOneWidget);
+    expect(find.text('Production release: pending / not requested'),
+        findsOneWidget);
+  });
+
   testWidgets('project factory progress dialog treats interrupted as terminal',
       (tester) async {
     ProjectFactoryJob? result;
@@ -182,6 +224,48 @@ void main() {
     expect(result!.status, 'blocked');
   });
 
+  testWidgets('project factory progress shows blocked preview release blockers',
+      (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Builder(
+            builder: (context) {
+              return TextButton(
+                onPressed: () async {
+                  await showDialog<ProjectFactoryJob>(
+                    context: context,
+                    builder: (context) => ProjectFactoryProgressDialog(
+                      initialJob: _job(
+                        status: 'blocked',
+                        progress: 100,
+                        preview: _previewRelease(
+                          status: 'blocked',
+                          blockerText: 'Bridge registration missing',
+                        ),
+                      ),
+                      pollJob: (_) async =>
+                          _job(status: 'ready', progress: 100),
+                    ),
+                  );
+                },
+                child: const Text('Blocked preview'),
+              );
+            },
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('Blocked preview'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('Initial Preview: blocked'), findsOneWidget);
+    expect(find.text('Bridge registration missing'), findsOneWidget);
+    expect(find.text('scripts/register_installable_app.sh'), findsOneWidget);
+    expect(find.text('Close'), findsOneWidget);
+  });
+
   testWidgets('project factory history shows empty state', (tester) async {
     await tester.pumpWidget(
       MaterialApp(
@@ -255,6 +339,43 @@ void main() {
     expect(openedPath, '/projects/clinica-norte');
   });
 
+  testWidgets('project factory history shows ready preview release action',
+      (tester) async {
+    String? openedPreview;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ProjectFactoryHistoryDialog(
+            listJobs: () async => <ProjectFactoryJobSummary>[
+              _jobSummary(
+                status: 'ready',
+                progress: 100,
+                preview: _previewRelease(status: 'ready'),
+              ),
+            ],
+            getJob: (_) async => _job(status: 'ready', progress: 100),
+            onOpenProjectPath: (_) async {},
+            onOpenWebPreviewUrl: (url) async {
+              openedPreview = url;
+            },
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('Initial Preview: ready'), findsOneWidget);
+    expect(find.text('Preview URL: https://preview.nienfos.com/clinica-norte'),
+        findsOneWidget);
+    expect(find.text('Production release: pending / not requested'),
+        findsOneWidget);
+    await tester.ensureVisible(find.text('Open preview'));
+    await tester.tap(find.text('Open preview'));
+    await tester.pumpAndSettle();
+    expect(openedPreview, 'https://preview.nienfos.com/clinica-norte');
+  });
+
   testWidgets('project factory history shows failed and interrupted errors',
       (tester) async {
     await tester.pumpWidget(
@@ -278,6 +399,7 @@ void main() {
 
     await tester.pumpAndSettle();
     expect(find.text('Failed run'), findsOneWidget);
+    await tester.ensureVisible(find.text('Restarted'));
     expect(find.text('Restarted'), findsOneWidget);
   });
 
@@ -407,7 +529,11 @@ void main() {
   });
 }
 
-ProjectFactoryJob _job({required String status, required int progress}) {
+ProjectFactoryJob _job({
+  required String status,
+  required int progress,
+  InitialPreviewRelease? preview,
+}) {
   return ProjectFactoryJob(
     jobId: 'pf-job-1',
     draftId: 'pf-draft-1',
@@ -420,6 +546,7 @@ ProjectFactoryJob _job({required String status, required int progress}) {
       'target_path': '/projects/clinica-norte',
     },
     stepLogs: const <Map<String, dynamic>>[],
+    initialPreviewRelease: preview ?? InitialPreviewRelease.empty,
     generationResult: status == 'ready'
         ? const <String, dynamic>{'target_path': '/projects/clinica-norte'}
         : null,
@@ -430,6 +557,7 @@ ProjectFactoryJobSummary _jobSummary({
   required String status,
   required int progress,
   String? error,
+  InitialPreviewRelease? preview,
 }) {
   return ProjectFactoryJobSummary(
     id: 'pf-job-1',
@@ -447,6 +575,40 @@ ProjectFactoryJobSummary _jobSummary({
     error: error,
     message: status,
     manualNextStep: status == 'ready' ? null : 'Inspect logs',
+    initialPreviewRelease: preview ?? InitialPreviewRelease.empty,
+  );
+}
+
+InitialPreviewRelease _previewRelease({
+  required String status,
+  String? blockerText,
+}) {
+  return InitialPreviewRelease(
+    sourceApp: 'clinica-norte',
+    previewUrl: 'https://preview.nienfos.com/clinica-norte',
+    apiBaseUrl: 'https://preview.nienfos.com/clinica-norte/api',
+    runtimeProfile: 'preview',
+    apiRuntime: 'cloudflare_preview',
+    releaseChannel: 'preview',
+    releaseTagPattern: 'android-preview-v*',
+    productionReady: false,
+    mockOrDemo: false,
+    status: status,
+    currentPhase: status == 'blocked' ? 'publish_verification' : status,
+    blockerText: blockerText,
+    phaseStatuses: <String, InitialPreviewReleasePhaseStatus>{
+      'publish_verification': InitialPreviewReleasePhaseStatus(
+        status: status == 'ready' ? 'completed' : status,
+        message: blockerText ?? status,
+        command: const <String>[
+          'bash',
+          'scripts/validate_initial_preview_release.sh',
+        ],
+      ),
+    },
+    manualCommandHints: const <String>[
+      'scripts/register_installable_app.sh',
+    ],
   );
 }
 

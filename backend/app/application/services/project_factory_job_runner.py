@@ -25,15 +25,25 @@ ALLOWED_ENV_KEYS = frozenset(
         "ANDROID_RELEASE_POLL_SECONDS",
         "ANDROID_RELEASE_TIMEOUT_SECONDS",
         "API_BASE_URL",
+        "API_RUNTIME",
         "APP_ANDROID_RELEASE_TAG",
+        "APP_ANDROID_PREVIEW_RELEASE_TAG",
         "APP_RELEASE_TAG",
         "APP_RUNTIME_PROFILE",
+        "APP_SLUG",
         "APK_ASSET_PATTERN",
         "BRIDGE_REGISTRATION_TOKEN",
         "BRIDGE_URL",
+        "CONFIRM_APPLY",
         "CODEX_HOME",
+        "CLOUDFLARE_API_TOKEN",
+        "CLOUDFLARE_D1_DATABASE",
         "DISPLAY_NAME",
+        "DEBUG_PREVIEW_SIGNING",
+        "DEBUG_PREVIEW_SIGNING_ACKNOWLEDGED",
+        "DEBUG_PREVIEW_SIGNING_REASON",
         "ENABLED",
+        "EXPECTED_PLAN_HASH",
         "GH_TOKEN",
         "GITHUB_OWNER",
         "GITHUB_REPO",
@@ -48,7 +58,13 @@ ALLOWED_ENV_KEYS = frozenset(
         "LOGNAME",
         "OPENAI_API_KEY",
         "PATH",
+        "PREVIEW_ADMIN_BOOTSTRAP_TOKEN",
+        "PREVIEW_ADMIN_EMAIL",
+        "PREVIEW_ADMIN_PASSWORD",
+        "PREVIEW_API_BASE_URL",
+        "PREVIEW_D1_DATABASE",
         "PROJECT_FACTORY_FINAL_COMMIT_MESSAGE",
+        "PROJECT_PATH",
         "PUBLISH_BRANCH",
         "RELEASE_CHANNEL",
         "RELEASE_TAG_PATTERN",
@@ -152,7 +168,7 @@ class ProjectFactoryJobRunner:
         event_sink: ProjectFactoryEventSink,
     ) -> ProjectFactoryRunnerResult:
         remote_publication = context.publication_validation_mode == "remote"
-        publication_steps = 3 if remote_publication else 0
+        publication_steps = 5 if remote_publication else 0
         total_steps = (
             6 + publication_steps + context.generator_runs + context.reviewer_runs
         )
@@ -231,7 +247,10 @@ class ProjectFactoryJobRunner:
             encoding="utf-8",
         )
         validation_command = ("bash", "scripts/validate_generated_project.sh")
-        if context.run_generated_validation:
+        must_run_generated_validation = (
+            context.run_generated_validation or remote_publication
+        )
+        if must_run_generated_validation:
             try:
                 result = self._process_runner.run(
                     argv=validation_command,
@@ -278,7 +297,12 @@ class ProjectFactoryJobRunner:
                 _event(
                     "finalize_validation",
                     "completed",
-                    "Generated project validation completed.",
+                    (
+                        "Generated project validation completed. "
+                        "Remote publication gate satisfied."
+                        if remote_publication
+                        else "Generated project validation completed."
+                    ),
                     _progress(completed_steps, total_steps),
                     command=validation_command,
                     stdout=result.stdout,
@@ -338,9 +362,36 @@ class ProjectFactoryJobRunner:
             )
             completed_steps = self._run_command_step(
                 project_path=project_path,
-                argv=("bash", "scripts/publish_android_release.sh", "--push", "--watch"),
-                phase="android_release",
-                label="Android release",
+                argv=("bash", "scripts/apply_cloudflare_preview.sh"),
+                phase="cloudflare_preview_apply",
+                label="Cloudflare preview apply",
+                completed_steps=completed_steps,
+                total_steps=total_steps,
+                event_sink=event_sink,
+                timeout_seconds=context.timeout_seconds,
+                block_on_failure=True,
+            )
+            completed_steps = self._run_command_step(
+                project_path=project_path,
+                argv=("bash", "scripts/smoke_preview_api.sh"),
+                phase="preview_api_smoke",
+                label="Preview API smoke",
+                completed_steps=completed_steps,
+                total_steps=total_steps,
+                event_sink=event_sink,
+                timeout_seconds=context.timeout_seconds,
+                block_on_failure=True,
+            )
+            completed_steps = self._run_command_step(
+                project_path=project_path,
+                argv=(
+                    "bash",
+                    "scripts/publish_android_preview_release.sh",
+                    "--push",
+                    "--watch",
+                ),
+                phase="android_preview_release",
+                label="Android preview release",
                 completed_steps=completed_steps,
                 total_steps=total_steps,
                 event_sink=event_sink,
@@ -360,9 +411,18 @@ class ProjectFactoryJobRunner:
             )
         completed_steps = self._run_command_step(
             project_path=project_path,
-            argv=("bash", "scripts/validate_publication_ready.sh"),
+            argv=(
+                "bash",
+                "scripts/validate_initial_preview_release.sh"
+                if remote_publication
+                else "scripts/validate_publication_ready.sh",
+            ),
             phase="publish_verification",
-            label="Publication verification",
+            label=(
+                "Initial preview release verification"
+                if remote_publication
+                else "Publication verification"
+            ),
             completed_steps=completed_steps,
             total_steps=total_steps,
             event_sink=event_sink,
@@ -649,12 +709,16 @@ real and verifiable.
 Required outcome:
 - Run the generated validation script and fix failures.
 - Commit all intended project files.
-- Keep `scripts/publish_project.sh`, `scripts/publish_android_release.sh`,
-  `scripts/register_installable_app.sh`, `scripts/validate_publication_ready.sh`,
-  and `.github/workflows/android-release.yml` present and executable.
+- Keep `scripts/publish_project.sh`, `scripts/apply_cloudflare_preview.sh`,
+  `scripts/smoke_preview_api.sh`, `scripts/publish_android_preview_release.sh`,
+  `scripts/register_installable_app.sh`,
+  `scripts/validate_initial_preview_release.sh`, and
+  `.github/workflows/android-preview-release.yml` present and executable.
 - Prepare any source fixes needed before the runner executes those scripts.
-- Do not use mock/demo data, placeholder API URLs, or local demo mode unless
-  the user explicitly requested a demo/mock release.
+- The initial release must be `android-preview-v*` against
+  `https://preview.nienfos.com/<slug>/api`; do not publish `android-v*` yet.
+- Do not use mock/demo data, placeholder API URLs, invented backends, or local
+  demo mode unless the user explicitly requested a demo/mock release.
 - If credentials or release configuration are missing, leave a concrete blocker
   and let the publication phase report `blocked` instead of claiming the app is
   installable.

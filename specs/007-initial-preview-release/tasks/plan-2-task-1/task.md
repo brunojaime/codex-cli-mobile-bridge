@@ -6,4 +6,4 @@ Plan: `Project Factory Contract Updates`
 
 ## Checklist
 
-- [ ] T007 Add first-release mode to draft request/response schemas.
+- [x] T007 Add first-release mode to draft request/response schemas.

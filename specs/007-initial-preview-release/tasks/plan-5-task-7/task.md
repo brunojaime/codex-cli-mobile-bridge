@@ -6,4 +6,4 @@ Plan: `Android Preview Release Workflow`
 
 ## Checklist
 
-- [ ] T040 Verify APK asset presence and checksum.
+- [x] T040 Verify APK asset presence and checksum.

@@ -6,5 +6,5 @@ Plan: `Validation And Regression Coverage`
 
 ## Checklist
 
-- [ ] T078 Add validation test that mock/demo releases stay visibly separate
+- [x] T078 Add validation test that mock/demo releases stay visibly separate
       from preview releases.

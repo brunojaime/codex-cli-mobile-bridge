@@ -11,6 +11,7 @@ import time
 from pathlib import Path
 from collections.abc import Iterator
 from typing import Any, Protocol
+from urllib.parse import urlparse
 
 import httpx
 
@@ -28,6 +29,11 @@ class AppUpdateConfig:
     release_channel: str = "stable"
     expected_package_id: str | None = None
     verified_package_ids: dict[str, str] | None = None
+    preview_url: str | None = None
+    runtime_profile: str | None = None
+    production_ready: bool | None = None
+    mock_or_demo: bool | None = None
+    release_metadata: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -282,6 +288,11 @@ class AppUpdateService:
         release_channel: str = "stable",
         expected_package_id: str | None = None,
         verified_package_ids: dict[str, str] | None = None,
+        preview_url: str | None = None,
+        runtime_profile: str | None = None,
+        production_ready: bool | None = None,
+        mock_or_demo: bool | None = None,
+        release_metadata: dict[str, Any] | None = None,
     ) -> AppUpdateConfig:
         if self._registry_path is None:
             raise ValueError("App update registry path is not writable.")
@@ -321,6 +332,19 @@ class AppUpdateService:
             "verifiedPackageIds": normalized_verified_package_ids,
             "enabled": enabled,
         }
+        if preview_url is not None:
+            entry["previewUrl"] = _validate_preview_url(preview_url)
+        if runtime_profile is not None:
+            entry["runtimeProfile"] = _validate_runtime_profile(runtime_profile)
+        if production_ready is not None:
+            entry["productionReady"] = _parse_registry_bool(
+                production_ready,
+                "productionReady",
+            )
+        if mock_or_demo is not None:
+            entry["mockOrDemo"] = _parse_registry_bool(mock_or_demo, "mockOrDemo")
+        if release_metadata is not None:
+            entry["releaseMetadata"] = dict(release_metadata)
         config = _config_from_raw(normalized_source_app, entry)
         with self._lock:
             payload = self._read_registry_payload()
@@ -598,6 +622,31 @@ def _config_from_raw(source_app: str, raw_config: dict[str, Any]) -> AppUpdateCo
             str(key): str(value)
             for key, value in (raw_config.get("verifiedPackageIds") or {}).items()
         },
+        preview_url=(
+            _validate_preview_url(raw_config["previewUrl"])
+            if raw_config.get("previewUrl") is not None
+            else None
+        ),
+        runtime_profile=(
+            _validate_runtime_profile(raw_config["runtimeProfile"])
+            if raw_config.get("runtimeProfile") is not None
+            else None
+        ),
+        production_ready=(
+            _parse_registry_bool(raw_config["productionReady"], "productionReady")
+            if raw_config.get("productionReady") is not None
+            else None
+        ),
+        mock_or_demo=(
+            _parse_registry_bool(raw_config["mockOrDemo"], "mockOrDemo")
+            if raw_config.get("mockOrDemo") is not None
+            else None
+        ),
+        release_metadata=(
+            dict(raw_config["releaseMetadata"])
+            if isinstance(raw_config.get("releaseMetadata"), dict)
+            else None
+        ),
     )
 
 
@@ -613,6 +662,11 @@ def _config_to_raw(config: AppUpdateConfig) -> dict[str, Any]:
         "expectedPackageId": config.expected_package_id,
         "verifiedPackageIds": config.verified_package_ids or {},
         "enabled": config.enabled,
+        "previewUrl": config.preview_url,
+        "runtimeProfile": config.runtime_profile,
+        "productionReady": config.production_ready,
+        "mockOrDemo": config.mock_or_demo,
+        "releaseMetadata": config.release_metadata or {},
     }
 
 
@@ -661,8 +715,37 @@ def _select_apk_asset(
 
 
 def _validate_channel(channel: str) -> None:
-    if channel not in {"stable", "prerelease", "private-install", "all"}:
+    if channel not in {"stable", "preview", "prerelease", "private-install", "all"}:
         raise ValueError("Unsupported app update channel.")
+
+
+def _parse_registry_bool(value: Any, field_name: str) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized == "true":
+            return True
+        if normalized == "false":
+            return False
+    raise ValueError(f"{field_name} must be a boolean or 'true'/'false' string.")
+
+
+def _validate_runtime_profile(value: Any) -> str:
+    profile = _non_empty_string(str(value), "runtimeProfile").lower()
+    if profile not in {"mock", "preview", "real", "staging"}:
+        raise ValueError(
+            "runtimeProfile must be one of mock, preview, real, or staging."
+        )
+    return profile
+
+
+def _validate_preview_url(value: Any) -> str:
+    url = _non_empty_string(str(value), "previewUrl")
+    parsed = urlparse(url)
+    if parsed.scheme != "https" or not parsed.netloc:
+        raise ValueError("previewUrl must be an HTTPS URL.")
+    return url
 
 
 def _validate_source_app(source_app: str) -> str:
@@ -717,7 +800,7 @@ def _release_allowed_for_channel(release: GitHubRelease, channel: str) -> bool:
     _validate_channel(channel)
     if channel == "stable":
         return not release.prerelease
-    if channel in {"prerelease", "private-install"}:
+    if channel in {"preview", "prerelease", "private-install"}:
         return release.prerelease
     return True
 

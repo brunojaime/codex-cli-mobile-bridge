@@ -6,5 +6,5 @@ Plan: `Validation And Regression Coverage`
 
 ## Checklist
 
-- [ ] T073 Add regression test that jobs cannot report `ready` without
+- [x] T073 Add regression test that jobs cannot report `ready` without
       Cloudflare preview success.

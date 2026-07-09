@@ -34,12 +34,24 @@ void main() {
       'enabled': true,
       'packageId': 'com.sat.showroom',
       'installStatusHint': 'available',
+      'previewUrl': 'https://preview.nienfos.com/sat-showroom',
+      'runtimeProfile': 'preview',
+      'productionReady': false,
+      'mockOrDemo': false,
+      'releaseMetadata': <String, dynamic>{
+        'initialPreviewRelease': true,
+      },
     });
 
     expect(app.sourceApp, 'sat-showroom');
     expect(app.title, 'SAT Showroom');
     expect(app.versionLabel, '1.0.0+12');
     expect(app.canInstall, isTrue);
+    expect(app.previewUrl, 'https://preview.nienfos.com/sat-showroom');
+    expect(app.runtimeProfile, 'preview');
+    expect(app.isProductionReady, isFalse);
+    expect(app.isMockOrDemo, isFalse);
+    expect(app.releaseMetadata['initialPreviewRelease'], isTrue);
   });
 
   test('api client lists and fetches installable apps', () async {
@@ -74,7 +86,12 @@ void main() {
                   "available": true,
                   "enabled": true,
                   "packageId": "com.sat.showroom",
-                  "installStatusHint": "available"
+                  "installStatusHint": "available",
+                  "previewUrl": "https://preview.nienfos.com/sat-showroom",
+                  "runtimeProfile": "preview",
+                  "productionReady": false,
+                  "mockOrDemo": false,
+                  "releaseMetadata": {"initialPreviewRelease": true}
                 }
               ]
             }
@@ -153,6 +170,7 @@ void main() {
               request.body, contains('"businessType":"medical_appointments"'));
           expect(request.body,
               contains('"primaryGoal":"Pacientes reservan turnos"'));
+          expect(request.body, contains('"firstReleaseMode":"preview"'));
           return http.Response(
             '''
             {
@@ -160,10 +178,27 @@ void main() {
               "version": 1,
               "draft_id": "pf-draft-1",
               "created_at": "2026-07-07T00:00:00Z",
-              "manifest_plan": {
-                "ok": true,
-                "target_path": "/projects/clinica-norte"
-              }
+              "firstReleaseMode": "preview",
+            "manifest_plan": {
+              "ok": true,
+              "first_release_mode": "preview",
+              "target_path": "/projects/clinica-norte"
+            },
+            "initialPreviewRelease": {
+              "sourceApp": "clinica-norte",
+              "previewUrl": "https://preview.nienfos.com/clinica-norte",
+              "apiBaseUrl": "https://preview.nienfos.com/clinica-norte/api",
+              "runtimeProfile": "preview",
+              "apiRuntime": "cloudflare_preview",
+              "releaseChannel": "preview",
+              "releaseTagPattern": "android-preview-v*",
+              "productionReady": false,
+              "mockOrDemo": false,
+              "status": "draft",
+              "currentPhase": "draft",
+              "phaseStatuses": {},
+              "manualCommandHints": ["scripts/validate_initial_preview_release.sh"]
+            }
             }
             ''',
             200,
@@ -184,9 +219,33 @@ void main() {
             "status": "ready",
             "current_step": "ready",
             "message": "Local project foundation generated.",
+            "firstReleaseMode": "preview",
             "manifest_plan": {
               "ok": true,
+              "first_release_mode": "preview",
               "target_path": "/projects/clinica-norte"
+            },
+            "initialPreviewRelease": {
+              "sourceApp": "clinica-norte",
+              "previewUrl": "https://preview.nienfos.com/clinica-norte",
+              "apiBaseUrl": "https://preview.nienfos.com/clinica-norte/api",
+              "runtimeProfile": "preview",
+              "apiRuntime": "cloudflare_preview",
+              "releaseChannel": "preview",
+              "releaseTagPattern": "android-preview-v*",
+              "productionReady": false,
+              "mockOrDemo": false,
+              "status": "ready",
+              "currentPhase": "publish_verification",
+              "phaseStatuses": {
+                "publish_verification": {
+                  "status": "completed",
+                  "message": "ok",
+                  "command": ["bash", "scripts/validate_initial_preview_release.sh"],
+                  "exit_code": 0
+                }
+              },
+              "manualCommandHints": ["scripts/validate_initial_preview_release.sh"]
             },
             "generation_result": {
               "target_path": "/projects/clinica-norte"
@@ -211,10 +270,20 @@ void main() {
       ),
     );
     expect(draft.draftId, 'pf-draft-1');
+    expect(draft.firstReleaseMode, 'preview');
+    expect(
+      draft.initialPreviewRelease.previewUrl,
+      'https://preview.nienfos.com/clinica-norte',
+    );
 
     final job = await client.generateProjectFactoryDraft(draft.draftId);
     expect(job.isReady, isTrue);
+    expect(job.firstReleaseMode, 'preview');
     expect(job.targetPath, '/projects/clinica-norte');
+    expect(job.initialPreviewRelease.releaseChannel, 'preview');
+    expect(
+        job.initialPreviewRelease.phaseStatuses['publish_verification']?.status,
+        'completed');
   });
 
   test('project factory options 404 reports backend update action', () async {
@@ -449,7 +518,22 @@ void main() {
                   "ok": true,
                   "created_at": "2026-07-07T00:00:00Z",
                   "target_path": "/projects/clinica-norte",
-                  "error": null
+                  "error": null,
+                  "initialPreviewRelease": {
+                    "sourceApp": "clinica-norte",
+                    "previewUrl": "https://preview.nienfos.com/clinica-norte",
+                    "apiBaseUrl": "https://preview.nienfos.com/clinica-norte/api",
+                    "runtimeProfile": "preview",
+                    "apiRuntime": "cloudflare_preview",
+                    "releaseChannel": "preview",
+                    "releaseTagPattern": "android-preview-v*",
+                    "productionReady": false,
+                    "mockOrDemo": false,
+                    "status": "draft",
+                    "currentPhase": "draft",
+                    "phaseStatuses": {},
+                    "manualCommandHints": []
+                  }
                 }
               ]
             }
@@ -484,7 +568,29 @@ void main() {
                 "target_path": "/projects/clinica-norte",
                 "error": "Restarted",
                 "message": "Restarted",
-                "manual_next_step": "Inspect logs"
+                "manual_next_step": "Inspect logs",
+                "initialPreviewRelease": {
+                  "sourceApp": "clinica-norte",
+                  "previewUrl": "https://preview.nienfos.com/clinica-norte",
+                  "apiBaseUrl": "https://preview.nienfos.com/clinica-norte/api",
+                  "runtimeProfile": "preview",
+                  "apiRuntime": "cloudflare_preview",
+                  "releaseChannel": "preview",
+                  "releaseTagPattern": "android-preview-v*",
+                  "productionReady": false,
+                  "mockOrDemo": false,
+                  "status": "blocked",
+                  "currentPhase": "publish_verification",
+                  "blockerText": "Bridge registration missing",
+                  "phaseStatuses": {
+                    "publish_verification": {
+                      "status": "blocked",
+                      "message": "Bridge registration missing",
+                      "command": ["bash", "scripts/validate_initial_preview_release.sh"]
+                    }
+                  },
+                  "manualCommandHints": ["scripts/register_installable_app.sh"]
+                }
               }
             ]
           }
@@ -506,6 +612,9 @@ void main() {
     expect(jobs.single.status, 'interrupted');
     expect(jobs.single.isTerminal, isTrue);
     expect(jobs.single.manualNextStep, 'Inspect logs');
+    expect(jobs.single.initialPreviewRelease.isBlocked, isTrue);
+    expect(jobs.single.initialPreviewRelease.blockerText,
+        'Bridge registration missing');
   });
 
   test('web preview client parses status and invite operations', () async {

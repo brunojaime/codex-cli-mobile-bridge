@@ -6,4 +6,4 @@ Plan: `Bridge Installable-App Registration`
 
 ## Checklist
 
-- [ ] T050 Verify Bridge catalog lookup by `source_app`.
+- [x] T050 Verify Bridge catalog lookup by `source_app`.

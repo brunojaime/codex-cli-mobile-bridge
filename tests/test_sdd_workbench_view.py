@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import textwrap
 from pathlib import Path
+import json
 
 from fastapi.testclient import TestClient
 
@@ -61,6 +62,53 @@ def test_sdd_workbench_view_returns_health_compliance_and_context_preview(
         "Workbench default -> project profile -> project overrides" in item
         for item in preview["routing_decisions"]
     )
+
+
+def test_sdd_workbench_view_exposes_preview_readiness_contract(
+    tmp_path: Path,
+) -> None:
+    projects_root = tmp_path / "projects"
+    project = projects_root / "demo"
+    _write_project(project)
+    (project / "release").mkdir()
+    (project / "release/preview-runtime.json").write_text(
+        json.dumps(
+            {
+                "sourceApp": "demo",
+                "previewUrl": "https://preview.nienfos.com/demo",
+                "apiBaseUrl": "https://preview.nienfos.com/demo/api",
+                "runtimeProfile": "preview",
+                "apiRuntime": "cloudflare_preview",
+                "releaseChannel": "preview",
+                "releaseTagPattern": "android-preview-v*",
+                "apkAssetPattern": "app-release.apk",
+                "latestAssetName": "app-release.apk",
+                "productionReady": False,
+                "mockOrDemo": False,
+                "bridge": {"verificationEndpoint": "/installable-apps/demo"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    client = _client(projects_root, codex_workdir=str(project))
+
+    response = client.get("/sdd/workbench/view", params={"workspace_path": str(project)})
+
+    assert response.status_code == 200
+    readiness = response.json()["preview_readiness"]
+    assert readiness["available"] is True
+    assert readiness["status"] == "ready"
+    assert readiness["previewUrl"] == "https://preview.nienfos.com/demo"
+    assert readiness["apiBaseUrl"] == "https://preview.nienfos.com/demo/api"
+    assert readiness["runtimeProfile"] == "preview"
+    assert readiness["releaseChannel"] == "preview"
+    assert readiness["releaseTagPattern"] == "android-preview-v*"
+    assert readiness["androidPreviewApk"] == "app-release.apk"
+    assert readiness["bridgeRegistrationRequired"] is True
+    assert readiness["productionReady"] is False
+    assert readiness["mockOrDemo"] is False
+    assert readiness["blockers"] == []
+    assert readiness["bridge"]["verificationEndpoint"] == "/installable-apps/demo"
 
 
 def test_sdd_workbench_view_surfaces_unknown_standard_as_blocked(

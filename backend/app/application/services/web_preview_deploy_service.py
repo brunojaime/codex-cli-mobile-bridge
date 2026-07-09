@@ -104,7 +104,7 @@ class WebPreviewDeployService:
         cloudflare_plan = planner.plan_for_manifest(manifest)
         preview_id = _preview_id(source_app)
         plan_hash = _plan_hash(manifest, cloudflare_plan)
-        health_path = str(cloudflare_plan.get("health_path") or "/__preview/health")
+        health_path = str(cloudflare_plan.get("health_path") or "/api/health")
         preview_url = str(manifest.get("stable_url") or "")
         payload = {
             "kind": "codex.webPreview",

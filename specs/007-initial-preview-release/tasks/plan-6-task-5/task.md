@@ -6,4 +6,4 @@ Plan: `Bridge Installable-App Registration`
 
 ## Checklist
 
-- [ ] T049 Include `production_ready=false` and `mock_or_demo=false`.
+- [x] T049 Include `production_ready=false` and `mock_or_demo=false`.

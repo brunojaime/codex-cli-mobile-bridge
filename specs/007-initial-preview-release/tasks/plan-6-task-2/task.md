@@ -6,4 +6,4 @@ Plan: `Bridge Installable-App Registration`
 
 ## Checklist
 
-- [ ] T046 Register display name as `<App Name> Preview`.
+- [x] T046 Register display name as `<App Name> Preview`.
