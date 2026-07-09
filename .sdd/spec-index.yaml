@@ -61,3 +61,13 @@ specs:
     title: New Project Guided Intake
     status: draft
     summary: Add a guided question-and-contract layer before New Project build execution.
+  012-chat-transcript-lazy-loading:
+    path: specs/012-chat-transcript-lazy-loading/spec.md
+    title: Chat Transcript Lazy Loading
+    status: draft
+    summary: Load chat transcripts from the latest user exchange and fetch older messages lazily.
+  013-workbench-kanban-curator:
+    path: specs/013-workbench-kanban-curator/spec.md
+    title: Workbench Kanban Curator
+    status: active
+    summary: Add a deterministic Workbench Kanban and read-only curator updates for active specs, generator/reviewer runs, and New Project work.

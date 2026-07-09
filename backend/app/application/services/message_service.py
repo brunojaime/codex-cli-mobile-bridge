@@ -502,6 +502,7 @@ class MessageService:
         sessions = self._repository.list_sessions()
         for session in sessions:
             self._reconcile_reserved_follow_ups(session)
+        self._reconcile_stale_active_agent_runs(sessions)
 
         active_jobs: list[Job] = []
         for stored_job in self._repository.list_jobs(statuses=_ACTIVE_JOB_STATUSES):
@@ -522,6 +523,33 @@ class MessageService:
                     in_flight_message_ids.append(message.id)
 
         return active_jobs, active_session_ids, in_flight_message_ids
+
+    def _reconcile_stale_active_agent_runs(self, sessions: list[ChatSession]) -> None:
+        active_jobs = self._repository.list_jobs(statuses=_ACTIVE_JOB_STATUSES)
+        active_job_keys = {
+            (job.session_id, job.run_id)
+            for job in active_jobs
+            if job.run_id is not None
+        }
+
+        for session in sessions:
+            active_run_id = session.active_agent_run_id
+            if active_run_id is None:
+                continue
+            if (session.id, active_run_id) in active_job_keys:
+                continue
+            has_in_flight_message = any(
+                message.run_id == active_run_id
+                and message.status in _IN_FLIGHT_MESSAGE_STATUSES
+                for message in self._repository.list_messages(session.id)
+            )
+            if has_in_flight_message:
+                continue
+            self._complete_agent_run(
+                session=session,
+                run_id=active_run_id,
+                completed_turn_index=session.active_agent_turn_index,
+            )
 
     def _reconcile_jobs_for_drain(self) -> None:
         for job in self._repository.list_jobs(statuses=_ACTIVE_JOB_STATUSES):
