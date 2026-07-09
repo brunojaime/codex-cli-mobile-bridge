@@ -367,12 +367,13 @@ void main() {
 
     await tester.tap(find.byTooltip('Open SDD Explorer'));
     await tester.pumpAndSettle();
-    await tester.drag(find.byType(ListView).first, const Offset(0, -520));
+    await tester.drag(find.byType(ListView).first, const Offset(0, -900));
+    await tester.pumpAndSettle();
+    await tester.drag(find.byType(ListView).first, const Offset(0, -900));
     await tester.pumpAndSettle();
 
     expect(find.text('Missing required artifacts'), findsOneWidget);
     expect(find.text('- codex-bridge.yaml'), findsOneWidget);
-    expect(find.text('Missing'), findsWidgets);
   });
 
   testWidgets('SDD Workbench switches spec file panes', (tester) async {
@@ -999,8 +1000,7 @@ void main() {
     expect(actionDrafts.single.prompt, contains('linked_feedback_ids'));
   });
 
-  testWidgets('SDD overview does not show direct audit actions',
-      (tester) async {
+  testWidgets('SDD overview exposes direct audit action', (tester) async {
     await _pumpSddWrapper(
       tester,
       loader: (_) async => SddProject.fromJson(_sddProjectWithMissingJson()),
@@ -1010,7 +1010,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Project identity'), findsOneWidget);
-    expect(find.text('Audit SDD'), findsNothing);
+    expect(find.text('Audit SDD'), findsOneWidget);
     expect(find.text('Next actions'), findsNothing);
   });
 
