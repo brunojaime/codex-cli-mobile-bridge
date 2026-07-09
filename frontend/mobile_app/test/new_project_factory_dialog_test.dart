@@ -589,7 +589,7 @@ InitialPreviewRelease _previewRelease({
     apiBaseUrl: 'https://preview.nienfos.com/clinica-norte/api',
     runtimeProfile: 'preview',
     apiRuntime: 'cloudflare_preview',
-    releaseChannel: 'preview',
+    releaseChannel: 'prerelease',
     releaseTagPattern: 'android-preview-v*',
     productionReady: false,
     mockOrDemo: false,

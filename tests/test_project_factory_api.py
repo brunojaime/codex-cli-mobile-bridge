@@ -527,7 +527,7 @@ def test_ready_job_without_remote_publication_is_audited_to_blocked(
         "https://preview.nienfos.com/catalogo-autos/api"
     )
     assert initial_preview["runtimeProfile"] == "preview"
-    assert initial_preview["releaseChannel"] == "preview"
+    assert initial_preview["releaseChannel"] == "prerelease"
     assert initial_preview["releaseTagPattern"] == "android-preview-v*"
     assert initial_preview["productionReady"] is False
     assert initial_preview["mockOrDemo"] is False
@@ -580,7 +580,7 @@ def test_remote_project_factory_ready_job_exposes_initial_preview_status(
         "https://preview.nienfos.com/preview-norte/api"
     )
     assert initial_preview["runtimeProfile"] == "preview"
-    assert initial_preview["releaseChannel"] == "preview"
+    assert initial_preview["releaseChannel"] == "prerelease"
     assert initial_preview["releaseTagPattern"] == "android-preview-v*"
     assert initial_preview["phaseStatuses"]["publish_verification"]["status"] == (
         "completed"

@@ -2,8 +2,8 @@ id: 013-workbench-kanban-curator
 slug: 013-workbench-kanban-curator
 title: Workbench Kanban Curator
 description: Add a deterministic Workbench Kanban and read-only curator updates for active specs, generator/reviewer runs, and New Project work.
-status: active
-last_run_state: planned
+status: complete
+last_run_state: implemented
 generated:
   title: false
   description: false
@@ -11,8 +11,8 @@ generated:
   user_pinned_description: true
 tasks:
   total: 34
-  completed: 0
-  pending: 34
+  completed: 34
+  pending: 0
 diagrams:
   total: 0
   items: {}
@@ -21,3 +21,4 @@ available_files:
   - plan.md
   - tasks.md
   - tree.json
+  - traceability.yaml

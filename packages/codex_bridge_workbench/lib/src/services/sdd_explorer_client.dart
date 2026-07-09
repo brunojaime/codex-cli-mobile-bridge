@@ -93,6 +93,95 @@ class SddExplorerClient {
         .toList(growable: false);
   }
 
+  Future<SddWorkbenchKanban> getKanban({
+    String? workspacePath,
+    String? specId,
+    String? draftId,
+    String? jobId,
+  }) async {
+    final uri = Uri.parse('$baseUrl/sdd/workbench/kanban').replace(
+      queryParameters: _kanbanQueryParameters(
+        workspacePath: workspacePath,
+        specId: specId,
+        draftId: draftId,
+        jobId: jobId,
+      ),
+    );
+    final response = await _client.get(uri);
+    if (response.statusCode != 200) {
+      throw Exception('Failed to load Workbench Kanban: ${response.body}');
+    }
+    return SddWorkbenchKanban.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<SddWorkbenchKanban> refreshKanban({
+    String? workspacePath,
+    String? specId,
+    String? draftId,
+    String? jobId,
+  }) async {
+    final uri = Uri.parse('$baseUrl/sdd/workbench/kanban/refresh').replace(
+      queryParameters: _kanbanQueryParameters(
+        workspacePath: workspacePath,
+        specId: specId,
+        draftId: draftId,
+        jobId: jobId,
+      ),
+    );
+    final response = await _client.post(uri);
+    if (response.statusCode != 200) {
+      throw Exception('Failed to refresh Workbench Kanban: ${response.body}');
+    }
+    return SddWorkbenchKanban.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<SddKanbanHistory> getKanbanHistory({
+    String? workspacePath,
+    String? scopeId,
+    int limit = 50,
+  }) async {
+    final query = <String, String>{'limit': '$limit'};
+    _putIfPresent(query, 'workspace_path', workspacePath);
+    _putIfPresent(query, 'scope_id', scopeId);
+    final uri = Uri.parse(
+      '$baseUrl/sdd/workbench/kanban/history',
+    ).replace(queryParameters: query);
+    final response = await _client.get(uri);
+    if (response.statusCode != 200) {
+      throw Exception('Failed to load Kanban history: ${response.body}');
+    }
+    return SddKanbanHistory.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<SddCuratorUpdate> getKanbanHistoryItem({
+    required String updateId,
+    String? workspacePath,
+    String? scopeId,
+  }) async {
+    final query = <String, String>{};
+    _putIfPresent(query, 'workspace_path', workspacePath);
+    _putIfPresent(query, 'scope_id', scopeId);
+    final uri = Uri.parse(
+      '$baseUrl/sdd/workbench/kanban/history/$updateId',
+    ).replace(queryParameters: query);
+    final response = await _client.get(uri);
+    if (response.statusCode != 200) {
+      throw Exception('Failed to load Kanban history item: ${response.body}');
+    }
+    final payload = jsonDecode(response.body) as Map<String, dynamic>;
+    final update = payload['update'];
+    if (update is! Map<String, dynamic>) {
+      throw Exception('Failed to load Kanban history item: malformed response');
+    }
+    return SddCuratorUpdate.fromJson(update);
+  }
+
   Future<SddProject?> loadDefaultProject() async {
     final index = await listProjects();
     if (index.projects.isEmpty) {
@@ -838,4 +927,25 @@ List<String> _strings(Object? value) {
       .map((item) => item?.toString() ?? '')
       .where((item) => item.trim().isNotEmpty)
       .toList(growable: false);
+}
+
+Map<String, String> _kanbanQueryParameters({
+  String? workspacePath,
+  String? specId,
+  String? draftId,
+  String? jobId,
+}) {
+  final query = <String, String>{};
+  _putIfPresent(query, 'workspace_path', workspacePath);
+  _putIfPresent(query, 'spec_id', specId);
+  _putIfPresent(query, 'draft_id', draftId);
+  _putIfPresent(query, 'job_id', jobId);
+  return query;
+}
+
+void _putIfPresent(Map<String, String> query, String key, String? value) {
+  final trimmed = value?.trim();
+  if (trimmed != null && trimmed.isNotEmpty) {
+    query[key] = trimmed;
+  }
 }

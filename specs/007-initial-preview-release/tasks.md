@@ -68,7 +68,7 @@ This file is the legacy task index. Task numbering is local to each plan in `tre
 
 ## Plan 6: Bridge Installable-App Registration
 
-- [x] T045 Extend Bridge registration payload with release_channel=preview. ([Task 1](./tasks/plan-6-task-1/task.md))
+- [x] T045 Extend Bridge registration payload with release_channel=prerelease. ([Task 1](./tasks/plan-6-task-1/task.md))
 - [x] T046 Register display name as <App Name> Preview. ([Task 2](./tasks/plan-6-task-2/task.md))
 - [x] T047 Include preview URL in installable-app metadata. ([Task 3](./tasks/plan-6-task-3/task.md))
 - [x] T048 Include runtime profile, tag, APK asset, and update metadata. ([Task 4](./tasks/plan-6-task-4/task.md))
@@ -121,9 +121,22 @@ This file is the legacy task index. Task numbering is local to each plan in `tre
 - [x] T083 Document preview update, disable, extend, and troubleshooting. ([Task 5](./tasks/plan-10-task-5/task.md))
 - [x] T084 Document promotion from preview to production. ([Task 6](./tasks/plan-10-task-6/task.md))
 - [x] T085 Update Project Factory runbooks with generic false-readiness failure examples. ([Task 7](./tasks/plan-10-task-7/task.md))
+
+## Plan 11: Preview Completeness Hardening
+
+- [x] T091 Enforce `prerelease` Bridge/GitHub channel and exact `/installable-apps/{sourceApp}` preview lookup. ([Task 1](./tasks/plan-11-task-1/task.md))
+- [x] T092 Generate Workbench visibility gating and Flutter tests for preview owner/admin access. ([Task 2](./tasks/plan-11-task-2/task.md))
+- [x] T093 Require classic Cloudflare Worker format for `application/javascript` deploys. ([Task 3](./tasks/plan-11-task-3/task.md))
+- [x] T094 Fail Cloudflare doctor when Workers Routes edit access is missing. ([Task 4](./tasks/plan-11-task-4/task.md))
+- [x] T095 Validate preview runtime profiles across all generated sources of truth. ([Task 5](./tasks/plan-11-task-5/task.md))
+- [x] T096 Regenerate and validate final release output freshness and anti-overpromise fields. ([Task 6](./tasks/plan-11-task-6/task.md))
+
 ## Completion Notes
 
 All tasks in this spec are marked complete. The implementation remains scoped to
 Initial Preview Release: production `android-v*` promotion is documented and
 contracted, but actual production release execution remains a later promotion
-workflow outside the initial-preview path.
+workflow outside the initial-preview path. The hardening pass makes preview
+completion fail closed when Workbench visibility, Cloudflare route permissions,
+Bridge installable prerelease metadata, Worker deploy format, profile metadata,
+or final release output evidence is missing.

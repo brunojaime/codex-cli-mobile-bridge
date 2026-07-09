@@ -1662,6 +1662,32 @@ class SddWorkbenchViewResponse(BaseModel):
     preview_readiness: dict[str, Any] = Field(default_factory=dict)
 
 
+class SddWorkbenchKanbanResponse(BaseModel):
+    kind: str = "codex.sddWorkbenchKanban"
+    version: int = 1
+    scope: dict[str, Any]
+    board: dict[str, Any]
+    latestUpdate: dict[str, Any] = Field(default_factory=dict)
+    historySummary: dict[str, Any] = Field(default_factory=dict)
+    curator: dict[str, Any] = Field(default_factory=dict)
+    evidence: list[dict[str, Any]] = Field(default_factory=list)
+    continuity: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class SddWorkbenchKanbanHistoryResponse(BaseModel):
+    kind: str = "codex.sddWorkbenchKanbanHistory"
+    version: int = 1
+    scopeId: str | None = None
+    history: list[dict[str, Any]] = Field(default_factory=list)
+    count: int = 0
+
+
+class SddWorkbenchKanbanHistoryItemResponse(BaseModel):
+    kind: str = "codex.sddWorkbenchKanbanHistoryItem"
+    version: int = 1
+    update: dict[str, Any]
+
+
 class CodexMcpAppInstallResponse(BaseModel):
     app_id: str
     server_id: str

@@ -420,6 +420,254 @@ class SddDiagram extends SddFile {
   }
 }
 
+class SddWorkbenchKanban {
+  const SddWorkbenchKanban({
+    required this.scope,
+    required this.board,
+    required this.latestUpdate,
+    required this.historySummary,
+    required this.curator,
+    required this.evidence,
+    required this.continuity,
+  });
+
+  final SddKanbanScope scope;
+  final SddKanbanBoard board;
+  final SddCuratorUpdate? latestUpdate;
+  final Map<String, dynamic> historySummary;
+  final Map<String, dynamic> curator;
+  final List<Map<String, dynamic>> evidence;
+  final List<Map<String, dynamic>> continuity;
+
+  factory SddWorkbenchKanban.fromJson(Map<String, dynamic> json) {
+    return SddWorkbenchKanban(
+      scope: SddKanbanScope.fromJson(_mapValue(json['scope'])),
+      board: SddKanbanBoard.fromJson(_mapValue(json['board'])),
+      latestUpdate: _mapValueOrNull(json['latestUpdate']) == null
+          ? null
+          : SddCuratorUpdate.fromJson(_mapValue(json['latestUpdate'])),
+      historySummary: _mapValue(json['historySummary']),
+      curator: _mapValue(json['curator']),
+      evidence: _mapList(json['evidence']),
+      continuity: _mapList(json['continuity']),
+    );
+  }
+}
+
+class SddKanbanScope {
+  const SddKanbanScope({
+    required this.id,
+    required this.type,
+    required this.title,
+    this.workspacePath,
+    this.specId,
+    this.draftId,
+    this.jobId,
+  });
+
+  final String id;
+  final String type;
+  final String title;
+  final String? workspacePath;
+  final String? specId;
+  final String? draftId;
+  final String? jobId;
+
+  factory SddKanbanScope.fromJson(Map<String, dynamic> json) {
+    return SddKanbanScope(
+      id: json['id'] as String? ?? '',
+      type: json['type'] as String? ?? 'workspace',
+      title: json['title'] as String? ?? 'Workbench',
+      workspacePath: _trimmedString(json['workspacePath']),
+      specId: _trimmedString(json['specId']),
+      draftId: _trimmedString(json['draftId']),
+      jobId: _trimmedString(json['jobId']),
+    );
+  }
+}
+
+class SddKanbanBoard {
+  const SddKanbanBoard({
+    required this.snapshotId,
+    required this.evidenceHash,
+    required this.updatedAt,
+    required this.columns,
+    required this.cards,
+    required this.counts,
+    required this.delta,
+    required this.refresh,
+  });
+
+  final String snapshotId;
+  final String evidenceHash;
+  final String updatedAt;
+  final List<SddKanbanColumn> columns;
+  final List<SddKanbanCard> cards;
+  final Map<String, int> counts;
+  final Map<String, dynamic> delta;
+  final Map<String, dynamic> refresh;
+
+  factory SddKanbanBoard.fromJson(Map<String, dynamic> json) {
+    return SddKanbanBoard(
+      snapshotId: json['snapshotId'] as String? ?? '',
+      evidenceHash: json['evidenceHash'] as String? ?? '',
+      updatedAt: json['updatedAt'] as String? ?? '',
+      columns: _kanbanColumnList(json['columns']),
+      cards: _kanbanCardList(json['cards']),
+      counts: _intMap(json['counts']),
+      delta: _mapValue(json['delta']),
+      refresh: _mapValue(json['refresh']),
+    );
+  }
+
+  SddKanbanCard? cardById(String id) {
+    for (final card in cards) {
+      if (card.id == id) return card;
+    }
+    return null;
+  }
+}
+
+class SddKanbanColumn {
+  const SddKanbanColumn({
+    required this.id,
+    required this.label,
+    required this.cardIds,
+    required this.count,
+  });
+
+  final String id;
+  final String label;
+  final List<String> cardIds;
+  final int count;
+
+  factory SddKanbanColumn.fromJson(Map<String, dynamic> json) {
+    return SddKanbanColumn(
+      id: json['id'] as String? ?? '',
+      label: json['label'] as String? ?? '',
+      cardIds: _stringList(json['cardIds']),
+      count: _intValue(json['count']) ?? 0,
+    );
+  }
+}
+
+class SddKanbanCard {
+  const SddKanbanCard({
+    required this.id,
+    required this.type,
+    required this.title,
+    required this.column,
+    required this.status,
+    required this.scopeId,
+    required this.sourcePath,
+    required this.order,
+    required this.confirmed,
+    required this.inferred,
+    required this.confidence,
+    required this.badges,
+    required this.detail,
+    required this.evidence,
+    required this.manualCommands,
+  });
+
+  final String id;
+  final String type;
+  final String title;
+  final String column;
+  final String status;
+  final String scopeId;
+  final String sourcePath;
+  final int order;
+  final bool confirmed;
+  final bool inferred;
+  final String confidence;
+  final List<String> badges;
+  final String detail;
+  final List<Map<String, dynamic>> evidence;
+  final List<String> manualCommands;
+
+  factory SddKanbanCard.fromJson(Map<String, dynamic> json) {
+    return SddKanbanCard(
+      id: json['id'] as String? ?? '',
+      type: json['type'] as String? ?? 'card',
+      title: json['title'] as String? ?? 'Untitled card',
+      column: json['column'] as String? ?? 'backlog',
+      status: json['status'] as String? ?? '',
+      scopeId: json['scopeId'] as String? ?? '',
+      sourcePath: json['sourcePath'] as String? ?? '',
+      order: _intValue(json['order']) ?? 0,
+      confirmed: _boolValue(json['confirmed']) ?? false,
+      inferred: _boolValue(json['inferred']) ?? false,
+      confidence: json['confidence'] as String? ?? 'observed',
+      badges: _stringList(json['badges']),
+      detail: _trimmedString(json['detail']) ?? '',
+      evidence: _mapList(json['evidence']),
+      manualCommands: _stringList(json['manualCommands']),
+    );
+  }
+}
+
+class SddCuratorUpdate {
+  const SddCuratorUpdate({
+    required this.id,
+    required this.timestamp,
+    required this.title,
+    required this.summary,
+    required this.changedCards,
+    required this.changedCounts,
+    required this.importantEvidence,
+    required this.blockers,
+    required this.risks,
+    required this.nextWatch,
+  });
+
+  final String id;
+  final String timestamp;
+  final String title;
+  final String summary;
+  final List<String> changedCards;
+  final Map<String, dynamic> changedCounts;
+  final List<Map<String, dynamic>> importantEvidence;
+  final List<String> blockers;
+  final List<String> risks;
+  final String nextWatch;
+
+  factory SddCuratorUpdate.fromJson(Map<String, dynamic> json) {
+    return SddCuratorUpdate(
+      id: json['id'] as String? ?? '',
+      timestamp: json['timestamp'] as String? ?? '',
+      title: json['title'] as String? ?? 'Curator update',
+      summary: json['summary'] as String? ?? '',
+      changedCards: _stringList(json['changedCards']),
+      changedCounts: _mapValue(json['changedCounts']),
+      importantEvidence: _mapList(json['importantEvidence']),
+      blockers: _stringList(json['blockers']),
+      risks: _stringList(json['risks']),
+      nextWatch: json['nextWatch'] as String? ?? '',
+    );
+  }
+}
+
+class SddKanbanHistory {
+  const SddKanbanHistory({required this.scopeId, required this.items});
+
+  final String? scopeId;
+  final List<SddCuratorUpdate> items;
+
+  factory SddKanbanHistory.fromJson(Map<String, dynamic> json) {
+    final rawHistory = json['history'];
+    return SddKanbanHistory(
+      scopeId: _trimmedString(json['scopeId']),
+      items: rawHistory is List
+          ? rawHistory
+                .whereType<Map<String, dynamic>>()
+                .map(SddCuratorUpdate.fromJson)
+                .toList(growable: false)
+          : const <SddCuratorUpdate>[],
+    );
+  }
+}
+
 SddFile? _fileFromJson(Object? value) {
   if (value is! Map<String, dynamic>) return null;
   return SddFile.fromJson(value);
@@ -493,6 +741,53 @@ List<SddSpec> _specList(Object? value) {
       .whereType<Map<String, dynamic>>()
       .map(SddSpec.fromJson)
       .toList(growable: false);
+}
+
+List<SddKanbanColumn> _kanbanColumnList(Object? value) {
+  if (value is! List) return const <SddKanbanColumn>[];
+  return value
+      .whereType<Map<String, dynamic>>()
+      .map(SddKanbanColumn.fromJson)
+      .toList(growable: false);
+}
+
+List<SddKanbanCard> _kanbanCardList(Object? value) {
+  if (value is! List) return const <SddKanbanCard>[];
+  return value
+      .whereType<Map<String, dynamic>>()
+      .map(SddKanbanCard.fromJson)
+      .toList(growable: false);
+}
+
+Map<String, dynamic> _mapValue(Object? value) {
+  if (value is Map<String, dynamic>) return value;
+  if (value is Map) {
+    return value.map((key, value) => MapEntry(key.toString(), value));
+  }
+  return <String, dynamic>{};
+}
+
+Map<String, dynamic>? _mapValueOrNull(Object? value) {
+  if (value is Map<String, dynamic>) return value;
+  if (value is Map) {
+    return value.map((key, value) => MapEntry(key.toString(), value));
+  }
+  return null;
+}
+
+List<Map<String, dynamic>> _mapList(Object? value) {
+  if (value is! List) return const <Map<String, dynamic>>[];
+  return value
+      .whereType<Map>()
+      .map((item) => item.map((key, value) => MapEntry(key.toString(), value)))
+      .toList(growable: false);
+}
+
+Map<String, int> _intMap(Object? value) {
+  if (value is! Map) return const <String, int>{};
+  return value.map(
+    (key, value) => MapEntry(key.toString(), _intValue(value) ?? 0),
+  );
 }
 
 List<String> _stringList(Object? value) {

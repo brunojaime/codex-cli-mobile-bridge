@@ -190,7 +190,7 @@ void main() {
               "apiBaseUrl": "https://preview.nienfos.com/clinica-norte/api",
               "runtimeProfile": "preview",
               "apiRuntime": "cloudflare_preview",
-              "releaseChannel": "preview",
+              "releaseChannel": "prerelease",
               "releaseTagPattern": "android-preview-v*",
               "productionReady": false,
               "mockOrDemo": false,
@@ -231,7 +231,7 @@ void main() {
               "apiBaseUrl": "https://preview.nienfos.com/clinica-norte/api",
               "runtimeProfile": "preview",
               "apiRuntime": "cloudflare_preview",
-              "releaseChannel": "preview",
+              "releaseChannel": "prerelease",
               "releaseTagPattern": "android-preview-v*",
               "productionReady": false,
               "mockOrDemo": false,
@@ -280,7 +280,7 @@ void main() {
     expect(job.isReady, isTrue);
     expect(job.firstReleaseMode, 'preview');
     expect(job.targetPath, '/projects/clinica-norte');
-    expect(job.initialPreviewRelease.releaseChannel, 'preview');
+    expect(job.initialPreviewRelease.releaseChannel, 'prerelease');
     expect(
         job.initialPreviewRelease.phaseStatuses['publish_verification']?.status,
         'completed');
@@ -525,7 +525,7 @@ void main() {
                     "apiBaseUrl": "https://preview.nienfos.com/clinica-norte/api",
                     "runtimeProfile": "preview",
                     "apiRuntime": "cloudflare_preview",
-                    "releaseChannel": "preview",
+                    "releaseChannel": "prerelease",
                     "releaseTagPattern": "android-preview-v*",
                     "productionReady": false,
                     "mockOrDemo": false,
@@ -575,7 +575,7 @@ void main() {
                   "apiBaseUrl": "https://preview.nienfos.com/clinica-norte/api",
                   "runtimeProfile": "preview",
                   "apiRuntime": "cloudflare_preview",
-                  "releaseChannel": "preview",
+                  "releaseChannel": "prerelease",
                   "releaseTagPattern": "android-preview-v*",
                   "productionReady": false,
                   "mockOrDemo": false,

@@ -1003,7 +1003,7 @@ def _initial_preview_release_status(
         "apiBaseUrl": api_url,
         "runtimeProfile": "preview",
         "apiRuntime": "cloudflare_preview",
-        "releaseChannel": "preview",
+        "releaseChannel": "prerelease",
         "releaseTagPattern": "android-preview-v*",
         "productionReady": False,
         "mockOrDemo": False,

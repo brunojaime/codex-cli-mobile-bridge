@@ -7,7 +7,7 @@
       "id": "plan-1",
       "number": 1,
       "title": "Kanban Domain Contract",
-      "status": "planned",
+      "status": "completed",
       "description": "Define board, card, scope, evidence, and history contracts.",
       "file": "plans/01-kanban-domain-contract/plan.md",
       "tasks": [
@@ -15,7 +15,7 @@
           "id": "plan-1-task-1",
           "number": 1,
           "title": "T001 Define Kanban scope model for workspace specs and New Project draft/job scopes",
-          "status": "planned",
+          "status": "completed",
           "description": "Represent repository workspaces, specs, New Project drafts, and jobs as stable board scopes.",
           "file": "tasks/plan-1-task-1/task.md"
         },
@@ -23,7 +23,7 @@
           "id": "plan-1-task-2",
           "number": 2,
           "title": "T002 Define deterministic board snapshot, column, card, and ordering schema",
-          "status": "planned",
+          "status": "completed",
           "description": "Create stable payloads for columns, cards, ordering, counts, and snapshot identity.",
           "file": "tasks/plan-1-task-2/task.md"
         },
@@ -31,7 +31,7 @@
           "id": "plan-1-task-3",
           "number": 3,
           "title": "T003 Define evidence, source, confidence, and confirmed-versus-inferred semantics",
-          "status": "planned",
+          "status": "completed",
           "description": "Separate authoritative task state from observed activity and inferred run evidence.",
           "file": "tasks/plan-1-task-3/task.md"
         },
@@ -39,7 +39,7 @@
           "id": "plan-1-task-4",
           "number": 4,
           "title": "T004 Define Curator update, latest pointer, history item, and retention schema",
-          "status": "planned",
+          "status": "completed",
           "description": "Define latest update and append-only history storage outside SDD artifacts.",
           "file": "tasks/plan-1-task-4/task.md"
         },
@@ -47,7 +47,7 @@
           "id": "plan-1-task-5",
           "number": 5,
           "title": "T005 Define API response contracts for board snapshot, latest update, and history",
-          "status": "planned",
+          "status": "completed",
           "description": "Specify backend contracts used by the Workbench Kanban UI.",
           "file": "tasks/plan-1-task-5/task.md"
         }
@@ -57,7 +57,7 @@
       "id": "plan-2",
       "number": 2,
       "title": "Deterministic SDD Projection",
-      "status": "planned",
+      "status": "completed",
       "description": "Compute board state from existing SDD artifacts without writing back to them.",
       "file": "plans/02-deterministic-sdd-projection/plan.md",
       "tasks": [
@@ -65,7 +65,7 @@
           "id": "plan-2-task-1",
           "number": 1,
           "title": "T006 Implement SDD task parser integration for `tasks.md`, `tree.json`, metadata, and plan phases",
-          "status": "planned",
+          "status": "completed",
           "description": "Load task, phase, and status data from existing SDD files.",
           "file": "tasks/plan-2-task-1/task.md"
         },
@@ -73,7 +73,7 @@
           "id": "plan-2-task-2",
           "number": 2,
           "title": "T007 Implement deterministic task-to-column mapping rules",
-          "status": "planned",
+          "status": "completed",
           "description": "Map planned, active, review, blocked, and done task evidence to fixed columns.",
           "file": "tasks/plan-2-task-2/task.md"
         },
@@ -81,7 +81,7 @@
           "id": "plan-2-task-3",
           "number": 3,
           "title": "T008 Implement phase progress and ready/backlog ordering rules",
-          "status": "planned",
+          "status": "completed",
           "description": "Order cards predictably by phase, dependency, task number, and source identity.",
           "file": "tasks/plan-2-task-3/task.md"
         },
@@ -89,7 +89,7 @@
           "id": "plan-2-task-4",
           "number": 4,
           "title": "T009 Implement board delta calculation between snapshots",
-          "status": "planned",
+          "status": "completed",
           "description": "Detect card moves, changed evidence, new cards, removed cards, and count changes.",
           "file": "tasks/plan-2-task-4/task.md"
         },
@@ -97,7 +97,7 @@
           "id": "plan-2-task-5",
           "number": 5,
           "title": "T010 Persist projection/cache state outside SDD artifacts",
-          "status": "planned",
+          "status": "completed",
           "description": "Cache board snapshots and deltas without mutating spec files.",
           "file": "tasks/plan-2-task-5/task.md"
         },
@@ -105,7 +105,7 @@
           "id": "plan-2-task-6",
           "number": 6,
           "title": "T011 Add API endpoint to fetch current Kanban board for a scope",
-          "status": "planned",
+          "status": "completed",
           "description": "Expose the deterministic board snapshot to Workbench clients.",
           "file": "tasks/plan-2-task-6/task.md"
         },
@@ -113,7 +113,7 @@
           "id": "plan-2-task-7",
           "number": 7,
           "title": "T012 Add API endpoint or stream support for board refresh metadata",
-          "status": "planned",
+          "status": "completed",
           "description": "Expose snapshot version, updated time, and refresh hints.",
           "file": "tasks/plan-2-task-7/task.md"
         }
@@ -123,7 +123,7 @@
       "id": "plan-3",
       "number": 3,
       "title": "Passive Run Observer",
-      "status": "planned",
+      "status": "completed",
       "description": "Collect read-only evidence from active runs, jobs, commands, tests, and generated repositories.",
       "file": "plans/03-passive-run-observer/plan.md",
       "tasks": [
@@ -131,7 +131,7 @@
           "id": "plan-3-task-1",
           "number": 1,
           "title": "T013 Observe persisted Project Factory job and draft state as read-only evidence",
-          "status": "planned",
+          "status": "completed",
           "description": "Read current New Project progress without changing Project Factory behavior.",
           "file": "tasks/plan-3-task-1/task.md"
         },
@@ -139,7 +139,7 @@
           "id": "plan-3-task-2",
           "number": 2,
           "title": "T014 Create run-step cards for active Generator, Reviewer, command, test, build, and release steps",
-          "status": "planned",
+          "status": "completed",
           "description": "Represent observed run activity separately from confirmed SDD task cards.",
           "file": "tasks/plan-3-task-2/task.md"
         },
@@ -147,7 +147,7 @@
           "id": "plan-3-task-3",
           "number": 3,
           "title": "T015 Observe Codex/session transcript or JSONL sources when available without requiring full transcript downloads",
-          "status": "planned",
+          "status": "completed",
           "description": "Use bounded transcript windows or JSONL tails as optional evidence sources.",
           "file": "tasks/plan-3-task-3/task.md"
         },
@@ -155,7 +155,7 @@
           "id": "plan-3-task-4",
           "number": 4,
           "title": "T016 Observe generated repository creation and map draft/job scope to workspace scope",
-          "status": "planned",
+          "status": "completed",
           "description": "Preserve continuity when New Project work moves into the created repository.",
           "file": "tasks/plan-3-task-4/task.md"
         },
@@ -163,7 +163,7 @@
           "id": "plan-3-task-5",
           "number": 5,
           "title": "T017 Observe command, test, build, and release outcomes as blocker or validation evidence",
-          "status": "planned",
+          "status": "completed",
           "description": "Convert failures and passing checks into board evidence without assigning task completion.",
           "file": "tasks/plan-3-task-5/task.md"
         },
@@ -171,7 +171,7 @@
           "id": "plan-3-task-6",
           "number": 6,
           "title": "T018 Parse Reviewer findings from existing artifacts or messages when safely detectable",
-          "status": "planned",
+          "status": "completed",
           "description": "Create review-finding cards when findings are explicit and sourceable.",
           "file": "tasks/plan-3-task-6/task.md"
         },
@@ -179,7 +179,7 @@
           "id": "plan-3-task-7",
           "number": 7,
           "title": "T019 Implement change-triggered projection refresh with polling fallback",
-          "status": "planned",
+          "status": "completed",
           "description": "Refresh the board from filesystem/job events and periodic fallback polling.",
           "file": "tasks/plan-3-task-7/task.md"
         }
@@ -189,7 +189,7 @@
       "id": "plan-4",
       "number": 4,
       "title": "Curator Agent And History",
-      "status": "planned",
+      "status": "completed",
       "description": "Generate friendly read-only updates and preserve a useful update timeline.",
       "file": "plans/04-curator-agent-and-history/plan.md",
       "tasks": [
@@ -197,7 +197,7 @@
           "id": "plan-4-task-1",
           "number": 1,
           "title": "T020 Define Curator prompt and read-only input envelope",
-          "status": "planned",
+          "status": "completed",
           "description": "Limit Curator inputs to board snapshots, deltas, evidence, and previous update context.",
           "file": "tasks/plan-4-task-1/task.md"
         },
@@ -205,7 +205,7 @@
           "id": "plan-4-task-2",
           "number": 2,
           "title": "T021 Implement Curator scheduler with debounce, interval, and active-scope gating",
-          "status": "planned",
+          "status": "completed",
           "description": "Run updates after meaningful changes and periodically while work is active.",
           "file": "tasks/plan-4-task-2/task.md"
         },
@@ -213,7 +213,7 @@
           "id": "plan-4-task-3",
           "number": 3,
           "title": "T022 Implement Curator update generation with evidence hashing and no-op dedupe",
-          "status": "planned",
+          "status": "completed",
           "description": "Avoid duplicate history entries when observed state has not changed.",
           "file": "tasks/plan-4-task-3/task.md"
         },
@@ -221,7 +221,7 @@
           "id": "plan-4-task-4",
           "number": 4,
           "title": "T023 Persist latest Curator update and append-only history outside SDD artifacts",
-          "status": "planned",
+          "status": "completed",
           "description": "Store latest and historical updates without touching spec files.",
           "file": "tasks/plan-4-task-4/task.md"
         },
@@ -229,7 +229,7 @@
           "id": "plan-4-task-5",
           "number": 5,
           "title": "T024 Add history query and detail APIs",
-          "status": "planned",
+          "status": "completed",
           "description": "Expose reverse-chronological history and full update details to the UI.",
           "file": "tasks/plan-4-task-5/task.md"
         }
@@ -239,7 +239,7 @@
       "id": "plan-5",
       "number": 5,
       "title": "Workbench Kanban UI",
-      "status": "planned",
+      "status": "completed",
       "description": "Render the Kanban board, latest update, and history in Workbench.",
       "file": "plans/05-workbench-kanban-ui/plan.md",
       "tasks": [
@@ -247,7 +247,7 @@
           "id": "plan-5-task-1",
           "number": 1,
           "title": "T025 Add Workbench Kanban primary tab and routing",
-          "status": "planned",
+          "status": "completed",
           "description": "Add a first-class Kanban route in the Workbench for active spec scopes.",
           "file": "tasks/plan-5-task-1/task.md"
         },
@@ -255,7 +255,7 @@
           "id": "plan-5-task-2",
           "number": 2,
           "title": "T026 Render Kanban board columns, cards, badges, counts, and empty/loading/error states",
-          "status": "planned",
+          "status": "completed",
           "description": "Build the main board experience with stable card dimensions and clear states.",
           "file": "tasks/plan-5-task-2/task.md"
         },
@@ -263,7 +263,7 @@
           "id": "plan-5-task-3",
           "number": 3,
           "title": "T027 Render latest Curator update panel in Kanban",
-          "status": "planned",
+          "status": "completed",
           "description": "Show the newest Curator summary beside or above the board depending on viewport.",
           "file": "tasks/plan-5-task-3/task.md"
         },
@@ -271,7 +271,7 @@
           "id": "plan-5-task-4",
           "number": 4,
           "title": "T028 Add `View history` list and history detail view",
-          "status": "planned",
+          "status": "completed",
           "description": "Let users inspect prior Curator updates and their evidence.",
           "file": "tasks/plan-5-task-4/task.md"
         },
@@ -279,7 +279,7 @@
           "id": "plan-5-task-5",
           "number": 5,
           "title": "T029 Add compact latest Curator update card to Workbench overview",
-          "status": "planned",
+          "status": "completed",
           "description": "Surface the newest update outside the Kanban tab.",
           "file": "tasks/plan-5-task-5/task.md"
         },
@@ -287,7 +287,7 @@
           "id": "plan-5-task-6",
           "number": 6,
           "title": "T030 Add responsive mobile layout for Kanban and history",
-          "status": "planned",
+          "status": "completed",
           "description": "Ensure the board, update panel, and history are usable on phone screens.",
           "file": "tasks/plan-5-task-6/task.md"
         }
@@ -297,7 +297,7 @@
       "id": "plan-6",
       "number": 6,
       "title": "Validation And Rollout",
-      "status": "planned",
+      "status": "completed",
       "description": "Validate the projection, observer, Curator, UI, and non-interference guarantees.",
       "file": "plans/06-validation-and-rollout/plan.md",
       "tasks": [
@@ -305,7 +305,7 @@
           "id": "plan-6-task-1",
           "number": 1,
           "title": "T031 Add backend tests for deterministic projection and task-state mapping",
-          "status": "planned",
+          "status": "completed",
           "description": "Cover stable snapshots, column mapping, ordering, and source artifact changes.",
           "file": "tasks/plan-6-task-1/task.md"
         },
@@ -313,7 +313,7 @@
           "id": "plan-6-task-2",
           "number": 2,
           "title": "T032 Add backend tests for passive observer inputs, Curator dedupe, and history persistence",
-          "status": "planned",
+          "status": "completed",
           "description": "Cover observed evidence, no-op dedupe, latest pointer, and append-only history.",
           "file": "tasks/plan-6-task-2/task.md"
         },
@@ -321,7 +321,7 @@
           "id": "plan-6-task-3",
           "number": 3,
           "title": "T033 Add Flutter tests for Kanban board, latest update, history, and responsive states",
-          "status": "planned",
+          "status": "completed",
           "description": "Cover the user-visible Workbench Kanban experience.",
           "file": "tasks/plan-6-task-3/task.md"
         },
@@ -329,7 +329,7 @@
           "id": "plan-6-task-4",
           "number": 4,
           "title": "T034 Add New Project continuity regression tests and verify Generator/Reviewer behavior remains unchanged",
-          "status": "planned",
+          "status": "completed",
           "description": "Confirm draft/job-to-workspace continuity and no behavioral changes to Generator or Reviewer.",
           "file": "tasks/plan-6-task-4/task.md"
         }

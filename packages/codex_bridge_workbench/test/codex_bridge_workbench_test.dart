@@ -219,6 +219,59 @@ void main() {
     expect(paths, <String>['/sdd/project/summary', '/sdd/project']);
   });
 
+  test('SDD client parses Workbench Kanban board and history', () async {
+    final paths = <String>[];
+    final client = SddExplorerClient(
+      baseUrl: 'http://bridge.test',
+      client: MockClient((request) async {
+        paths.add(request.url.path);
+        if (request.url.path == '/sdd/workbench/kanban') {
+          expect(
+            request.url.queryParameters['workspace_path'],
+            '/workspace/demo',
+          );
+          return http.Response(jsonEncode(_kanbanJson()), 200);
+        }
+        if (request.url.path == '/sdd/workbench/kanban/history') {
+          return http.Response(jsonEncode(_kanbanHistoryJson()), 200);
+        }
+        if (request.url.path == '/sdd/workbench/kanban/history/update-1') {
+          return http.Response(
+            jsonEncode(<String, Object?>{
+              'kind': 'codex.sddWorkbenchKanbanHistoryItem',
+              'version': 1,
+              'update': _kanbanUpdateJson(id: 'update-1'),
+            }),
+            200,
+          );
+        }
+        return http.Response('not found', 404);
+      }),
+    );
+
+    final kanban = await client.getKanban(workspacePath: '/workspace/demo');
+    final history = await client.getKanbanHistory(
+      workspacePath: '/workspace/demo',
+      scopeId: kanban.scope.id,
+    );
+    final update = await client.getKanbanHistoryItem(
+      updateId: 'update-1',
+      workspacePath: '/workspace/demo',
+      scopeId: kanban.scope.id,
+    );
+
+    expect(kanban.board.columns.first.label, 'Backlog');
+    expect(kanban.board.cardById('spec-task:001-demo:T001')!.confirmed, isTrue);
+    expect(kanban.latestUpdate!.title, '1 item in progress');
+    expect(history.items.single.id, 'update-1');
+    expect(update.id, 'update-1');
+    expect(paths, <String>[
+      '/sdd/workbench/kanban',
+      '/sdd/workbench/kanban/history',
+      '/sdd/workbench/kanban/history/update-1',
+    ]);
+  });
+
   test('SDD project model parses spec SCM metadata', () {
     final project = SddProject.fromJson(_projectJson());
     final spec = project.specs.single;
@@ -380,12 +433,89 @@ void main() {
     _openWorkbench(tester);
     await tester.pumpAndSettle();
 
-    expect(find.byType(NavigationBar), findsOneWidget);
+    expect(
+      find.byKey(const Key('sdd-workbench-bottom-navigation')),
+      findsOneWidget,
+    );
     expect(find.text('Inside this spec'), findsNothing);
 
     await tester.tap(find.text('Specs').first);
     await tester.pumpAndSettle();
     expect(find.text('Bridge Contract'), findsOneWidget);
+  });
+
+  testWidgets('SDD Workbench renders Kanban board and latest Curator update', (
+    tester,
+  ) async {
+    final intakeClient = _FakeSpecIntakeClient(
+      dryRunPlan: const SddSpecIntakePlan(status: 'dry-run'),
+      kanban: SddWorkbenchKanban.fromJson(_kanbanJson()),
+    );
+    await _pumpWorkbench(
+      tester,
+      loader: (_) async => SddProject.fromJson(_projectJson()),
+      specIntakeClient: intakeClient,
+    );
+    _openWorkbench(tester);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Kanban').first);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Curator update'), findsOneWidget);
+    expect(find.text('In Progress'), findsWidgets);
+    expect(find.text('T002 Build board API'), findsOneWidget);
+    expect(find.text('confirmed'), findsOneWidget);
+    expect(intakeClient.kanbanRequests, greaterThanOrEqualTo(1));
+  });
+
+  testWidgets('SDD Workbench Kanban makes blocked states explicit', (
+    tester,
+  ) async {
+    final intakeClient = _FakeSpecIntakeClient(
+      dryRunPlan: const SddSpecIntakePlan(status: 'dry-run'),
+      kanban: SddWorkbenchKanban.fromJson(_blockedKanbanJson()),
+    );
+    await _pumpWorkbench(
+      tester,
+      loader: (_) async => SddProject.fromJson(_projectJson()),
+      specIntakeClient: intakeClient,
+    );
+    _openWorkbench(tester);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Kanban').first);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Blocked'), findsWidgets);
+    expect(find.text('Cloudflare credentials missing'), findsOneWidget);
+    expect(find.textContaining('Blockers:'), findsOneWidget);
+  });
+
+  testWidgets('SDD Workbench Kanban opens Curator history detail', (
+    tester,
+  ) async {
+    final intakeClient = _FakeSpecIntakeClient(
+      dryRunPlan: const SddSpecIntakePlan(status: 'dry-run'),
+      kanban: SddWorkbenchKanban.fromJson(_kanbanJson()),
+      kanbanHistory: SddKanbanHistory.fromJson(_kanbanHistoryJson()),
+    );
+    await _pumpWorkbench(
+      tester,
+      loader: (_) async => SddProject.fromJson(_projectJson()),
+      specIntakeClient: intakeClient,
+    );
+    _openWorkbench(tester);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Kanban').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('View history'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Curator history'), findsOneWidget);
+    await tester.tap(find.text('1 item in progress').last);
+    await tester.pumpAndSettle();
+    expect(find.text('Curator update detail'), findsOneWidget);
+    expect(find.textContaining('Watch active run steps'), findsWidgets);
   });
 
   testWidgets('workbench hydrates selected spec lazily and caches detail', (
@@ -2804,6 +2934,216 @@ Future<void> _pumpWorkbench(
   );
 }
 
+Map<String, dynamic> _kanbanJson() {
+  return <String, dynamic>{
+    'kind': 'codex.sddWorkbenchKanban',
+    'version': 1,
+    'scope': <String, Object?>{
+      'id': 'workspace:/workspace/demo',
+      'type': 'workspace',
+      'title': 'Demo Workspace',
+      'workspacePath': '/workspace/demo',
+    },
+    'board': <String, Object?>{
+      'snapshotId': 'kanban-123',
+      'evidenceHash': 'hash-123',
+      'updatedAt': '2026-07-09T12:00:00Z',
+      'columns': <Map<String, Object?>>[
+        <String, Object?>{
+          'id': 'backlog',
+          'label': 'Backlog',
+          'cardIds': <String>[],
+          'count': 0,
+        },
+        <String, Object?>{
+          'id': 'ready',
+          'label': 'Ready',
+          'cardIds': <String>['spec-task:001-demo:T001'],
+          'count': 1,
+        },
+        <String, Object?>{
+          'id': 'in_progress',
+          'label': 'In Progress',
+          'cardIds': <String>['spec-task:001-demo:T002'],
+          'count': 1,
+        },
+        <String, Object?>{
+          'id': 'review',
+          'label': 'Review',
+          'cardIds': <String>['review-finding:review-notes'],
+          'count': 1,
+        },
+        <String, Object?>{
+          'id': 'blocked',
+          'label': 'Blocked',
+          'cardIds': <String>[],
+          'count': 0,
+        },
+        <String, Object?>{
+          'id': 'done',
+          'label': 'Done',
+          'cardIds': <String>[],
+          'count': 0,
+        },
+      ],
+      'cards': <Map<String, Object?>>[
+        _kanbanCardJson(
+          id: 'spec-task:001-demo:T001',
+          title: 'T001 Define board contract',
+          column: 'ready',
+          status: 'planned',
+          confirmed: true,
+        ),
+        _kanbanCardJson(
+          id: 'spec-task:001-demo:T002',
+          title: 'T002 Build board API',
+          column: 'in_progress',
+          status: 'in_progress',
+          inferred: true,
+        ),
+        _kanbanCardJson(
+          id: 'review-finding:review-notes',
+          title: 'Reviewer finding observed',
+          column: 'review',
+          status: 'unresolved',
+          type: 'review_finding',
+          inferred: true,
+        ),
+      ],
+      'counts': <String, Object?>{
+        'backlog': 0,
+        'ready': 1,
+        'in_progress': 1,
+        'review': 1,
+        'blocked': 0,
+        'done': 0,
+      },
+      'delta': <String, Object?>{
+        'changed': true,
+        'summary': <String, Object?>{
+          'added': 3,
+          'removed': 0,
+          'moved': 0,
+          'changed': 0,
+        },
+      },
+      'refresh': <String, Object?>{
+        'mode': 'change-triggered',
+        'pollingFallbackSeconds': 30,
+      },
+    },
+    'latestUpdate': _kanbanUpdateJson(),
+    'historySummary': <String, Object?>{
+      'count': 1,
+      'latestUpdateId': 'update-1',
+      'noOp': false,
+    },
+    'curator': <String, Object?>{
+      'readOnly': true,
+      'promptVersion': 'workbench-kanban-curator/v1',
+    },
+    'evidence': <Map<String, Object?>>[],
+    'continuity': <Map<String, Object?>>[],
+  };
+}
+
+Map<String, dynamic> _blockedKanbanJson() {
+  final json = _kanbanJson();
+  final board = json['board'] as Map<String, dynamic>;
+  final columns = board['columns'] as List<Map<String, Object?>>;
+  for (final column in columns) {
+    if (column['id'] == 'blocked') {
+      column['cardIds'] = <String>['blocker:cloudflare'];
+      column['count'] = 1;
+    }
+  }
+  (board['cards'] as List<Map<String, Object?>>).add(
+    _kanbanCardJson(
+      id: 'blocker:cloudflare',
+      title: 'Cloudflare credentials missing',
+      column: 'blocked',
+      status: 'blocked',
+      type: 'blocker',
+      detail: 'Set CLOUDFLARE_API_TOKEN before preview apply.',
+    ),
+  );
+  board['counts'] = <String, Object?>{
+    'backlog': 0,
+    'ready': 1,
+    'in_progress': 1,
+    'review': 1,
+    'blocked': 1,
+    'done': 0,
+  };
+  json['latestUpdate'] = _kanbanUpdateJson(
+    title: '1 blocker visible',
+    blockers: <String>['Cloudflare credentials missing'],
+  );
+  return json;
+}
+
+Map<String, Object?> _kanbanCardJson({
+  required String id,
+  required String title,
+  required String column,
+  required String status,
+  String type = 'spec_task',
+  bool confirmed = false,
+  bool inferred = false,
+  String detail = '',
+}) {
+  return <String, Object?>{
+    'id': id,
+    'type': type,
+    'title': title,
+    'column': column,
+    'status': status,
+    'scopeId': '001-demo',
+    'sourcePath': 'specs/001-demo/tasks.md',
+    'order': 1,
+    'confirmed': confirmed,
+    'inferred': inferred,
+    'confidence': confirmed
+        ? 'confirmed'
+        : inferred
+        ? 'inferred'
+        : 'observed',
+    'badges': <String>['phase'],
+    'detail': detail,
+    'evidence': <Map<String, Object?>>[],
+    'manualCommands': <String>['bash', 'scripts/validate.sh'],
+  };
+}
+
+Map<String, dynamic> _kanbanHistoryJson() {
+  return <String, dynamic>{
+    'kind': 'codex.sddWorkbenchKanbanHistory',
+    'version': 1,
+    'scopeId': 'workspace:/workspace/demo',
+    'history': <Map<String, Object?>>[_kanbanUpdateJson()],
+    'count': 1,
+  };
+}
+
+Map<String, Object?> _kanbanUpdateJson({
+  String id = 'update-1',
+  String title = '1 item in progress',
+  List<String> blockers = const <String>[],
+}) {
+  return <String, Object?>{
+    'id': id,
+    'timestamp': '2026-07-09T12:00:00Z',
+    'title': title,
+    'summary': 'Demo Workspace has active Kanban movement.',
+    'changedCards': <String>['spec-task:001-demo:T002'],
+    'changedCounts': <String, Object?>{'added': 1},
+    'importantEvidence': <Map<String, Object?>>[],
+    'blockers': blockers,
+    'risks': <String>['Inferred cards are observational only.'],
+    'nextWatch': 'Watch active run steps and task status updates.',
+  };
+}
+
 Map<String, dynamic> _projectJson() {
   return <String, dynamic>{
     'kind': 'codex.sddProject',
@@ -3199,6 +3539,8 @@ class _FakeSpecIntakeClient extends SddExplorerClient {
     this.activity,
     this.cancelJob,
     this.retryJob,
+    this.kanban,
+    this.kanbanHistory,
   }) : super(baseUrl: 'http://bridge.test');
 
   final SddSpecIntakePlan dryRunPlan;
@@ -3212,6 +3554,8 @@ class _FakeSpecIntakeClient extends SddExplorerClient {
   final SddActivitySnapshot? activity;
   final SddCodexJobStatus? cancelJob;
   final SddCodexJobRetryResult? retryJob;
+  final SddWorkbenchKanban? kanban;
+  final SddKanbanHistory? kanbanHistory;
   SddSpecIntakeDraft? lastDraft;
   String? uploadedWorkspacePath;
   SddMediaAttachmentDraft? uploadedAttachment;
@@ -3222,11 +3566,53 @@ class _FakeSpecIntakeClient extends SddExplorerClient {
   int activityRequests = 0;
   int cancelRequests = 0;
   int retryRequests = 0;
+  int kanbanRequests = 0;
+  int kanbanRefreshRequests = 0;
 
   @override
   Future<SddSpecIntakePlan> dryRunSpecIntake(SddSpecIntakeDraft draft) async {
     lastDraft = draft;
     return dryRunPlan;
+  }
+
+  @override
+  Future<SddWorkbenchKanban> getKanban({
+    String? workspacePath,
+    String? specId,
+    String? draftId,
+    String? jobId,
+  }) async {
+    kanbanRequests += 1;
+    return kanban ?? SddWorkbenchKanban.fromJson(_kanbanJson());
+  }
+
+  @override
+  Future<SddWorkbenchKanban> refreshKanban({
+    String? workspacePath,
+    String? specId,
+    String? draftId,
+    String? jobId,
+  }) async {
+    kanbanRefreshRequests += 1;
+    return kanban ?? SddWorkbenchKanban.fromJson(_kanbanJson());
+  }
+
+  @override
+  Future<SddKanbanHistory> getKanbanHistory({
+    String? workspacePath,
+    String? scopeId,
+    int limit = 50,
+  }) async {
+    return kanbanHistory ?? SddKanbanHistory.fromJson(_kanbanHistoryJson());
+  }
+
+  @override
+  Future<SddCuratorUpdate> getKanbanHistoryItem({
+    required String updateId,
+    String? workspacePath,
+    String? scopeId,
+  }) async {
+    return SddCuratorUpdate.fromJson(_kanbanUpdateJson(id: updateId));
   }
 
   @override

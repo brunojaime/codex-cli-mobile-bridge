@@ -74,7 +74,9 @@ class InstallableApp {
 
   String get title => displayName.trim().isEmpty ? sourceApp : displayName;
   bool get isPreview =>
-      releaseChannel == 'preview' || runtimeProfile == 'preview';
+      releaseChannel == 'prerelease' ||
+      releaseChannel == 'preview' ||
+      runtimeProfile == 'preview';
   bool get isProductionReady => productionReady ?? false;
   bool get isMockOrDemo => mockOrDemo ?? false;
   bool get hasPreviewUrl => previewUrl != null && previewUrl!.trim().isNotEmpty;

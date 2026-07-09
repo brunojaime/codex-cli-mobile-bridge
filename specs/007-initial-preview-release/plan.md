@@ -62,6 +62,12 @@ This file is the legacy index for tools that expect a root `plan.md`. The canoni
 - Status: `planned`
 - Tasks: `7`
 
+## Plan 11: Preview Completeness Hardening
+
+- File: [`plans/11-preview-completeness-hardening/plan.md`](plans/11-preview-completeness-hardening/plan.md)
+- Status: `completed`
+- Tasks: `6`
+
 ## Notes
 
 ### Implementation Order
@@ -74,3 +80,5 @@ This file is the legacy index for tools that expect a root `plan.md`. The canoni
 6. Runner orchestration.
 7. Mobile/Workbench visibility.
 8. End-to-end validation and docs.
+9. Preview completeness hardening for Workbench, Cloudflare route permissions,
+   classic Worker format, Bridge prerelease lookup, and release output freshness.

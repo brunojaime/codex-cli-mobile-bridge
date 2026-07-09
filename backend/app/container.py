@@ -27,6 +27,9 @@ from backend.app.application.services.sdd_project_service import SddProjectServi
 from backend.app.application.services.sdd_workbench_view_service import (
     SddWorkbenchViewService,
 )
+from backend.app.application.services.sdd_workbench_kanban_service import (
+    SddWorkbenchKanbanService,
+)
 from backend.app.application.services.feedback_queue_service import FeedbackQueueService
 from backend.app.domain.repositories.chat_repository import (
     ChatRepository,
@@ -80,6 +83,7 @@ class AppContainer:
     app_update_service: AppUpdateService
     sdd_project_service: SddProjectService
     sdd_workbench_view_service: SddWorkbenchViewService
+    sdd_workbench_kanban_service: SddWorkbenchKanbanService
     sdd_codex_job_service: SddCodexJobService
     project_factory_service: ProjectFactoryService
     cloudflare_preview_doctor_service: CloudflarePreviewDoctorService
@@ -173,6 +177,10 @@ def build_container(settings: Settings | None = None) -> AppContainer:
         ),
         async_jobs=resolved_settings.project_factory_async_jobs,
     )
+    sdd_workbench_kanban_service = SddWorkbenchKanbanService(
+        projects_root=resolved_settings.projects_root,
+        project_factory_service=project_factory_service,
+    )
     cloudflare_preview_doctor_service = CloudflarePreviewDoctorService(
         settings=resolved_settings,
     )
@@ -191,6 +199,7 @@ def build_container(settings: Settings | None = None) -> AppContainer:
         app_update_service=app_update_service,
         sdd_project_service=sdd_project_service,
         sdd_workbench_view_service=sdd_workbench_view_service,
+        sdd_workbench_kanban_service=sdd_workbench_kanban_service,
         sdd_codex_job_service=sdd_codex_job_service,
         project_factory_service=project_factory_service,
         cloudflare_preview_doctor_service=cloudflare_preview_doctor_service,

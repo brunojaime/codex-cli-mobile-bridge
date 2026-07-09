@@ -173,7 +173,7 @@ def test_generator_writes_fastapi_backend_v1_and_compileall_passes(
     assert (backend / "tests/test_backend.py").is_file()
 
     env_example = (backend / ".env.example").read_text(encoding="utf-8")
-    assert "APP_RUNTIME_PROFILE=real" in env_example
+    assert "APP_RUNTIME_PROFILE=preview" in env_example
     assert "APP_RELEASE_TAG=" in env_example
     assert "SECRET_KEY=" in env_example
     assert "ADMIN_INITIAL_PASSWORD=" in env_example
@@ -573,11 +573,11 @@ def test_generated_initial_preview_validation_rejects_bad_bridge_registration(
                 "productionReady": False,
                 "mockOrDemo": False,
             },
-            "Bridge registration is not preview channel",
+            "Bridge registration is not prerelease channel",
         ),
         (
             {
-                "releaseChannel": "preview",
+                "releaseChannel": "prerelease",
                 "releaseTagPattern": "android-v*",
                 "previewUrl": "https://preview.nienfos.com/clinica-norte",
                 "runtimeProfile": "preview",
@@ -588,7 +588,7 @@ def test_generated_initial_preview_validation_rejects_bad_bridge_registration(
         ),
         (
             {
-                "releaseChannel": "preview",
+                "releaseChannel": "prerelease",
                 "releaseTagPattern": "android-preview-v*",
                 "previewUrl": "https://preview.nienfos.com/clinica-norte",
                 "runtimeProfile": "preview",
@@ -599,7 +599,7 @@ def test_generated_initial_preview_validation_rejects_bad_bridge_registration(
         ),
         (
             {
-                "releaseChannel": "preview",
+                "releaseChannel": "prerelease",
                 "releaseTagPattern": "android-preview-v*",
                 "previewUrl": "https://preview.nienfos.com/clinica-norte",
                 "runtimeProfile": "preview",
@@ -612,6 +612,8 @@ def test_generated_initial_preview_validation_rejects_bad_bridge_registration(
     for payload, expected in cases:
         detail = {
             "sourceApp": "clinica-norte",
+            "available": True,
+            "releaseTag": "android-preview-v0.1.0-build.1",
             "apkUrl": "https://bridge/apk",
             **payload,
         }
@@ -689,8 +691,9 @@ def test_generated_initial_preview_validation_checks_expected_apk_sha256(
         "  exit 0\n"
         "fi\n"
         "cat <<'JSON'\n"
-        '{"sourceApp":"clinica-norte","releaseChannel":"preview",'
+        '{"sourceApp":"clinica-norte","releaseChannel":"prerelease",'
         '"releaseTagPattern":"android-preview-v*",'
+        '"releaseTag":"android-preview-v0.1.0-build.1","available":true,'
         '"previewUrl":"https://preview.nienfos.com/clinica-norte",'
         '"runtimeProfile":"preview","productionReady":false,'
         '"mockOrDemo":false,"apkUrl":"https://bridge.test/apk"}\n'
@@ -874,7 +877,7 @@ def test_generated_contract_docs_have_coherent_minimum_content(
     )
     assert preview_runtime["runtimeProfile"] == "preview"
     assert preview_runtime["apiRuntime"] == "cloudflare_preview"
-    assert preview_runtime["releaseChannel"] == "preview"
+    assert preview_runtime["releaseChannel"] == "prerelease"
     assert preview_runtime["releaseTagPattern"] == "android-preview-v*"
     assert preview_runtime["productionReady"] is False
     assert preview_runtime["mockOrDemo"] is False
@@ -1201,7 +1204,7 @@ def test_generated_project_registers_installable_app_contract(
         'RELEASE_TAG_PATTERN="${RELEASE_TAG_PATTERN:-${RT_RELEASE_TAG_PATTERN:-android-preview-v*}}"'
         in content
     )
-    assert 'RELEASE_CHANNEL="${RELEASE_CHANNEL:-${RT_RELEASE_CHANNEL:-preview}}"' in content
+    assert 'RELEASE_CHANNEL="${RELEASE_CHANNEL:-${RT_RELEASE_CHANNEL:-prerelease}}"' in content
     assert (
         'PREVIEW_URL="${PREVIEW_URL:-${RT_PREVIEW_URL:-https://preview.nienfos.com/clinica-norte}}"'
         in content
@@ -1324,7 +1327,8 @@ def test_generated_register_installable_app_script_posts_preview_metadata(
         "if [[ \"$args\" == *'/installable-apps/clinica-norte'* ]]; then\n"
         "  cat <<'JSON'\n"
         '{"sourceApp":"clinica-norte","displayName":"Clinica Norte Preview",'
-        '"releaseChannel":"preview","releaseTagPattern":"android-preview-v*",'
+        '"releaseChannel":"prerelease","releaseTagPattern":"android-preview-v*",'
+        '"releaseTag":"android-preview-v0.1.0-build.1","available":true,'
         '"latestAssetName":"clinica-norte.apk",'
         '"previewUrl":"https://preview.nienfos.com/clinica-norte",'
         '"runtimeProfile":"preview","productionReady":false,'
@@ -1386,7 +1390,7 @@ def test_generated_flutter_mock_seed_selector_is_mock_profile_only(
     )
     screens = (mobile / "lib/src/screens.dart").read_text(encoding="utf-8")
 
-    assert "defaultValue: 'real'" in main
+    assert "defaultValue: 'preview'" in main
     assert "API_RUNTIME" in main
     assert "APP_SLUG" in main
     assert "config.isMock" in main

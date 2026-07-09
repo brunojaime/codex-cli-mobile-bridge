@@ -79,7 +79,7 @@ def test_sdd_workbench_view_exposes_preview_readiness_contract(
                 "apiBaseUrl": "https://preview.nienfos.com/demo/api",
                 "runtimeProfile": "preview",
                 "apiRuntime": "cloudflare_preview",
-                "releaseChannel": "preview",
+                "releaseChannel": "prerelease",
                 "releaseTagPattern": "android-preview-v*",
                 "apkAssetPattern": "app-release.apk",
                 "latestAssetName": "app-release.apk",
@@ -101,7 +101,7 @@ def test_sdd_workbench_view_exposes_preview_readiness_contract(
     assert readiness["previewUrl"] == "https://preview.nienfos.com/demo"
     assert readiness["apiBaseUrl"] == "https://preview.nienfos.com/demo/api"
     assert readiness["runtimeProfile"] == "preview"
-    assert readiness["releaseChannel"] == "preview"
+    assert readiness["releaseChannel"] == "prerelease"
     assert readiness["releaseTagPattern"] == "android-preview-v*"
     assert readiness["androidPreviewApk"] == "app-release.apk"
     assert readiness["bridgeRegistrationRequired"] is True
@@ -109,6 +109,83 @@ def test_sdd_workbench_view_exposes_preview_readiness_contract(
     assert readiness["mockOrDemo"] is False
     assert readiness["blockers"] == []
     assert readiness["bridge"]["verificationEndpoint"] == "/installable-apps/demo"
+
+
+def test_sdd_workbench_view_blocks_stale_preview_release_channel(
+    tmp_path: Path,
+) -> None:
+    projects_root = tmp_path / "projects"
+    project = projects_root / "demo"
+    _write_project(project)
+    (project / "release").mkdir()
+    (project / "release/preview-runtime.json").write_text(
+        json.dumps(
+            {
+                "sourceApp": "demo",
+                "previewUrl": "https://preview.nienfos.com/demo",
+                "apiBaseUrl": "https://preview.nienfos.com/demo/api",
+                "runtimeProfile": "preview",
+                "apiRuntime": "cloudflare_preview",
+                "releaseChannel": "preview",
+                "releaseTagPattern": "android-preview-v*",
+                "productionReady": False,
+                "mockOrDemo": False,
+            }
+        ),
+        encoding="utf-8",
+    )
+    client = _client(projects_root, codex_workdir=str(project))
+
+    response = client.get("/sdd/workbench/view", params={"workspace_path": str(project)})
+
+    assert response.status_code == 200
+    readiness = response.json()["preview_readiness"]
+    assert readiness["available"] is True
+    assert readiness["status"] == "blocked"
+    assert readiness["releaseChannel"] == "preview"
+    assert "Initial Preview Release releaseChannel must be prerelease." in (
+        readiness["blockers"]
+    )
+
+
+def test_sdd_workbench_view_blocks_invalid_preview_runtime_contract(
+    tmp_path: Path,
+) -> None:
+    projects_root = tmp_path / "projects"
+    project = projects_root / "demo"
+    _write_project(project)
+    (project / "release").mkdir()
+    (project / "release/preview-runtime.json").write_text(
+        json.dumps(
+            {
+                "sourceApp": "demo",
+                "previewUrl": "https://preview.nienfos.com/demo",
+                "apiBaseUrl": "https://preview.nienfos.com/demo/api",
+                "runtimeProfile": "real",
+                "apiRuntime": "fastapi",
+                "releaseChannel": "stable",
+                "releaseTagPattern": "android-v*",
+                "productionReady": True,
+                "mockOrDemo": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    client = _client(projects_root, codex_workdir=str(project))
+
+    response = client.get("/sdd/workbench/view", params={"workspace_path": str(project)})
+
+    assert response.status_code == 200
+    blockers = response.json()["preview_readiness"]["blockers"]
+    assert "Initial Preview Release runtimeProfile must be preview." in blockers
+    assert "Initial Preview Release apiRuntime must be cloudflare_preview." in blockers
+    assert "Initial Preview Release releaseChannel must be prerelease." in blockers
+    assert (
+        "Initial Preview Release releaseTagPattern must be android-preview-v*."
+        in blockers
+    )
+    assert "Initial Preview Release productionReady must be false." in blockers
+    assert "Initial Preview Release mockOrDemo must be false." in blockers
 
 
 def test_sdd_workbench_view_surfaces_unknown_standard_as_blocked(

@@ -1,7 +1,7 @@
-import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../models/sdd_project.dart';
 import '../models/sdd_submission_result.dart';
@@ -402,6 +402,9 @@ class _SddExplorerPanelState extends State<SddExplorerPanel> {
                           bridgeUrl: widget.bridgeUrl,
                           project: project,
                           activity: _activity,
+                          showOverviewCurator:
+                              widget.specIntakeClient != null ||
+                              widget.loader == null,
                           diagramRenderer: widget.diagramRenderer,
                           specIntakeClient: widget.specIntakeClient,
                           mediaAttachmentPicker: widget.mediaAttachmentPicker,
@@ -888,6 +891,7 @@ class _SddProjectView extends StatefulWidget {
     required this.bridgeUrl,
     required this.project,
     required this.activity,
+    required this.showOverviewCurator,
     required this.diagramRenderer,
     required this.specIntakeClient,
     required this.mediaAttachmentPicker,
@@ -901,6 +905,7 @@ class _SddProjectView extends StatefulWidget {
   final String bridgeUrl;
   final SddProject project;
   final SddDashboardActivity activity;
+  final bool showOverviewCurator;
   final MermaidDiagramRenderer diagramRenderer;
   final SddExplorerClient? specIntakeClient;
   final SddMediaAttachmentPicker? mediaAttachmentPicker;
@@ -945,24 +950,36 @@ class _SddProjectViewState extends State<_SddProjectView> {
 
   @override
   Widget build(BuildContext context) {
+    final client =
+        widget.specIntakeClient ?? SddExplorerClient(baseUrl: widget.bridgeUrl);
     const destinations = <_WorkbenchNavigationDestination>[
       _WorkbenchNavigationDestination(
         label: 'Overview',
+        compactLabel: 'Home',
         icon: Icons.dashboard_outlined,
         selectedIcon: Icons.dashboard_rounded,
       ),
       _WorkbenchNavigationDestination(
+        label: 'Kanban',
+        compactLabel: 'Kan',
+        icon: Icons.view_kanban_outlined,
+        selectedIcon: Icons.view_kanban_rounded,
+      ),
+      _WorkbenchNavigationDestination(
         label: 'Specs',
+        compactLabel: 'Spec',
         icon: Icons.view_list_outlined,
         selectedIcon: Icons.view_list_rounded,
       ),
       _WorkbenchNavigationDestination(
         label: 'Diagrams',
+        compactLabel: 'Diag',
         icon: Icons.account_tree_outlined,
         selectedIcon: Icons.account_tree_rounded,
       ),
       _WorkbenchNavigationDestination(
         label: 'Governance',
+        compactLabel: 'Gov',
         icon: Icons.verified_outlined,
         selectedIcon: Icons.verified_rounded,
       ),
@@ -971,8 +988,11 @@ class _SddProjectViewState extends State<_SddProjectView> {
       _OverviewTab(
         project: widget.project,
         activity: widget.activity,
+        client: client,
+        showCuratorUpdate: widget.showOverviewCurator,
         onNavigate: _selectTab,
       ),
+      _KanbanTab(client: client, project: widget.project),
       _SpecsTab(
         bridgeUrl: widget.bridgeUrl,
         project: widget.project,
@@ -1010,7 +1030,7 @@ class _SddProjectViewState extends State<_SddProjectView> {
               child: Stack(
                 children: <Widget>[
                   Positioned.fill(child: pages[_selectedIndex]),
-                  if (_selectedIndex == 1)
+                  if (_selectedIndex == 2)
                     Positioned(
                       right: 16,
                       bottom: 16,
@@ -1042,9 +1062,11 @@ class _WorkbenchNavigationDestination {
     required this.label,
     required this.icon,
     required this.selectedIcon,
+    this.compactLabel,
   });
 
   final String label;
+  final String? compactLabel;
   final IconData icon;
   final IconData selectedIcon;
 }
@@ -1070,16 +1092,17 @@ class _WorkbenchTopNavigation extends StatelessWidget {
         ),
       ),
       child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 8),
           child: Row(
             children: <Widget>[
               for (var index = 0; index < destinations.length; index++)
-                _WorkbenchTopNavigationButton(
-                  destination: destinations[index],
-                  selected: selectedIndex == index,
-                  onTap: () => onSelected(index),
+                Expanded(
+                  child: _WorkbenchTopNavigationButton(
+                    destination: destinations[index],
+                    selected: selectedIndex == index,
+                    onTap: () => onSelected(index),
+                  ),
                 ),
             ],
           ),
@@ -1107,19 +1130,36 @@ class _WorkbenchTopNavigationButton extends StatelessWidget {
         : _WorkbenchColors.secondaryText;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 2),
-      child: TextButton.icon(
-        onPressed: onTap,
-        icon: Icon(
-          selected ? destination.selectedIcon : destination.icon,
-          color: color,
-          size: 17,
-        ),
-        label: Text(destination.label),
-        style: TextButton.styleFrom(
-          foregroundColor: color,
-          minimumSize: const Size(0, 38),
-          padding: const EdgeInsets.symmetric(horizontal: 10),
-          textStyle: const TextStyle(fontWeight: FontWeight.w800),
+      child: Material(
+        color: selected
+            ? _WorkbenchColors.primary.withValues(alpha: 0.08)
+            : Colors.transparent,
+        borderRadius: BorderRadius.circular(6),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(6),
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 9),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: <Widget>[
+                Icon(
+                  selected ? destination.selectedIcon : destination.icon,
+                  color: color,
+                  size: 17,
+                ),
+                const SizedBox(width: 5),
+                Flexible(
+                  child: Text(
+                    destination.label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(color: color, fontWeight: FontWeight.w800),
+                  ),
+                ),
+              ],
+            ),
+          ),
         ),
       ),
     );
@@ -1144,18 +1184,73 @@ class _WorkbenchBottomNavigation extends StatelessWidget {
         color: _WorkbenchColors.surface,
         border: Border(top: BorderSide(color: _WorkbenchColors.border)),
       ),
-      child: NavigationBar(
-        selectedIndex: selectedIndex,
-        onDestinationSelected: onSelected,
-        labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
-        destinations: <NavigationDestination>[
-          for (final destination in destinations)
-            NavigationDestination(
-              icon: Icon(destination.icon),
-              selectedIcon: Icon(destination.selectedIcon),
-              label: destination.label,
-            ),
-        ],
+      child: SafeArea(
+        top: false,
+        child: SizedBox(
+          key: const Key('sdd-workbench-bottom-navigation'),
+          height: 64,
+          child: Row(
+            children: <Widget>[
+              for (var index = 0; index < destinations.length; index++)
+                Expanded(
+                  child: _WorkbenchBottomNavigationButton(
+                    destination: destinations[index],
+                    selected: selectedIndex == index,
+                    onTap: () => onSelected(index),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _WorkbenchBottomNavigationButton extends StatelessWidget {
+  const _WorkbenchBottomNavigationButton({
+    required this.destination,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final _WorkbenchNavigationDestination destination;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = selected
+        ? _WorkbenchColors.primary
+        : _WorkbenchColors.secondaryText;
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 6),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              Icon(
+                selected ? destination.selectedIcon : destination.icon,
+                color: color,
+                size: 22,
+              ),
+              const SizedBox(height: 3),
+              Text(
+                destination.compactLabel ?? destination.label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: color,
+                  fontSize: 11,
+                  fontWeight: selected ? FontWeight.w800 : FontWeight.w500,
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -1194,11 +1289,15 @@ class _OverviewTab extends StatelessWidget {
   const _OverviewTab({
     required this.project,
     required this.activity,
+    required this.client,
+    required this.showCuratorUpdate,
     required this.onNavigate,
   });
 
   final SddProject project;
   final SddDashboardActivity activity;
+  final SddExplorerClient client;
+  final bool showCuratorUpdate;
   final ValueChanged<int> onNavigate;
 
   @override
@@ -1221,12 +1320,12 @@ class _OverviewTab extends StatelessWidget {
             _MetricTile(
               label: 'Specs',
               value: '${project.specs.length}',
-              onTap: () => onNavigate(1),
+              onTap: () => onNavigate(2),
             ),
             _MetricTile(
               label: 'Diagrams',
               value: '${diagrams.length}',
-              onTap: () => onNavigate(2),
+              onTap: () => onNavigate(3),
             ),
             _MetricTile(
               label: 'Tasks',
@@ -1239,11 +1338,17 @@ class _OverviewTab extends StatelessWidget {
             _MetricTile(
               label: 'Slice docs',
               value: '${_sliceDocCount(project)}',
-              onTap: () => onNavigate(1),
+              onTap: () => onNavigate(2),
             ),
           ],
         ),
         const SizedBox(height: 14),
+        if (showCuratorUpdate && MediaQuery.sizeOf(context).width >= 620)
+          _LatestCuratorOverviewCard(
+            client: client,
+            project: project,
+            onOpenKanban: () => onNavigate(1),
+          ),
         _PanelCard(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -1300,6 +1405,758 @@ class _OverviewTab extends StatelessWidget {
       ],
     );
   }
+}
+
+class _LatestCuratorOverviewCard extends StatelessWidget {
+  const _LatestCuratorOverviewCard({
+    required this.client,
+    required this.project,
+    required this.onOpenKanban,
+  });
+
+  final SddExplorerClient client;
+  final SddProject project;
+  final VoidCallback onOpenKanban;
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<SddWorkbenchKanban>(
+      future: client.getKanban(workspacePath: project.workspacePath),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState != ConnectionState.done) {
+          return const _PanelCard(
+            child: _InlineLoading(label: 'Loading Curator update'),
+          );
+        }
+        if (snapshot.hasError) {
+          return _PanelCard(
+            child: Text(
+              'Curator update unavailable: ${snapshot.error}',
+              style: const TextStyle(color: _WorkbenchColors.secondaryText),
+            ),
+          );
+        }
+        final update = snapshot.data?.latestUpdate;
+        if (update == null) {
+          return const SizedBox.shrink();
+        }
+        return _PanelCard(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Row(
+                children: <Widget>[
+                  const Icon(
+                    Icons.auto_awesome_outlined,
+                    size: 18,
+                    color: _WorkbenchColors.primary,
+                  ),
+                  const SizedBox(width: 8),
+                  const Expanded(
+                    child: Text(
+                      'Latest Curator update',
+                      style: TextStyle(fontWeight: FontWeight.w800),
+                    ),
+                  ),
+                  TextButton(
+                    onPressed: onOpenKanban,
+                    child: const Text('Kanban'),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Text(
+                update.title,
+                style: const TextStyle(fontWeight: FontWeight.w800),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                update.summary,
+                style: const TextStyle(color: _WorkbenchColors.secondaryText),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _KanbanTab extends StatefulWidget {
+  const _KanbanTab({required this.client, required this.project});
+
+  final SddExplorerClient client;
+  final SddProject project;
+
+  @override
+  State<_KanbanTab> createState() => _KanbanTabState();
+}
+
+class _KanbanTabState extends State<_KanbanTab> {
+  late Future<SddWorkbenchKanban> _future;
+
+  @override
+  void initState() {
+    super.initState();
+    _future = _load();
+  }
+
+  @override
+  void didUpdateWidget(_KanbanTab oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.project.workspacePath != widget.project.workspacePath ||
+        oldWidget.client != widget.client) {
+      _future = _load();
+    }
+  }
+
+  Future<SddWorkbenchKanban> _load() {
+    return widget.client.getKanban(workspacePath: widget.project.workspacePath);
+  }
+
+  void _refresh() {
+    setState(() {
+      _future = widget.client.refreshKanban(
+        workspacePath: widget.project.workspacePath,
+      );
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<SddWorkbenchKanban>(
+      future: _future,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState != ConnectionState.done) {
+          return const _KanbanLoading();
+        }
+        if (snapshot.hasError) {
+          return _KanbanError(
+            errorText: snapshot.error.toString(),
+            onRetry: _refresh,
+          );
+        }
+        final kanban = snapshot.data;
+        if (kanban == null || kanban.board.cards.isEmpty) {
+          return _KanbanEmpty(onRetry: _refresh);
+        }
+        return _KanbanContent(
+          kanban: kanban,
+          client: widget.client,
+          workspacePath: widget.project.workspacePath,
+          onRefresh: _refresh,
+        );
+      },
+    );
+  }
+}
+
+class _KanbanContent extends StatelessWidget {
+  const _KanbanContent({
+    required this.kanban,
+    required this.client,
+    required this.workspacePath,
+    required this.onRefresh,
+  });
+
+  final SddWorkbenchKanban kanban;
+  final SddExplorerClient client;
+  final String workspacePath;
+  final VoidCallback onRefresh;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final compact = constraints.maxWidth < 720;
+        final board = compact
+            ? Column(
+                children: <Widget>[
+                  for (final column in kanban.board.columns)
+                    _KanbanColumnView(column: column, kanban: kanban),
+                ],
+              )
+            : SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    for (final column in kanban.board.columns)
+                      SizedBox(
+                        width: 238,
+                        child: _KanbanColumnView(
+                          column: column,
+                          kanban: kanban,
+                        ),
+                      ),
+                  ],
+                ),
+              );
+        return ListView(
+          padding: const EdgeInsets.fromLTRB(14, 12, 14, 24),
+          children: <Widget>[
+            _KanbanHeader(
+              kanban: kanban,
+              client: client,
+              workspacePath: workspacePath,
+              onRefresh: onRefresh,
+            ),
+            if (kanban.latestUpdate != null)
+              _CuratorUpdatePanel(update: kanban.latestUpdate!),
+            board,
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _KanbanHeader extends StatelessWidget {
+  const _KanbanHeader({
+    required this.kanban,
+    required this.client,
+    required this.workspacePath,
+    required this.onRefresh,
+  });
+
+  final SddWorkbenchKanban kanban;
+  final SddExplorerClient client;
+  final String workspacePath;
+  final VoidCallback onRefresh;
+
+  @override
+  Widget build(BuildContext context) {
+    return _PanelCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Row(
+            children: <Widget>[
+              const Icon(
+                Icons.view_kanban_outlined,
+                color: _WorkbenchColors.primary,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  kanban.scope.title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w900,
+                    fontSize: 16,
+                  ),
+                ),
+              ),
+              IconButton(
+                tooltip: 'Refresh Kanban',
+                onPressed: onRefresh,
+                icon: const Icon(Icons.refresh_rounded),
+              ),
+              TextButton.icon(
+                onPressed: () => _showKanbanHistory(
+                  context,
+                  client: client,
+                  workspacePath: workspacePath,
+                  scopeId: kanban.scope.id,
+                ),
+                icon: const Icon(Icons.history_rounded, size: 18),
+                label: const Text('View history'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: <Widget>[
+              _StatusPill(label: 'Scope', value: kanban.scope.type),
+              _StatusPill(label: 'Snapshot', value: kanban.board.snapshotId),
+              _StatusPill(
+                label: 'Polling',
+                value:
+                    '${kanban.board.refresh['pollingFallbackSeconds'] ?? 30}s',
+              ),
+              _StatusPill(
+                label: 'Read-only Curator',
+                value: kanban.curator['readOnly'] == true ? 'on' : 'off',
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _CuratorUpdatePanel extends StatelessWidget {
+  const _CuratorUpdatePanel({required this.update});
+
+  final SddCuratorUpdate update;
+
+  @override
+  Widget build(BuildContext context) {
+    return _PanelCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          const Text(
+            'Curator update',
+            style: TextStyle(fontWeight: FontWeight.w800),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            update.title,
+            style: const TextStyle(fontWeight: FontWeight.w800),
+          ),
+          const SizedBox(height: 4),
+          Text(update.summary),
+          if (update.blockers.isNotEmpty) ...<Widget>[
+            const SizedBox(height: 8),
+            Text(
+              'Blockers: ${update.blockers.join(', ')}',
+              style: const TextStyle(color: _WorkbenchColors.warning),
+            ),
+          ],
+          const SizedBox(height: 8),
+          Text(
+            update.nextWatch,
+            style: const TextStyle(color: _WorkbenchColors.secondaryText),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _KanbanColumnView extends StatelessWidget {
+  const _KanbanColumnView({required this.column, required this.kanban});
+
+  final SddKanbanColumn column;
+  final SddWorkbenchKanban kanban;
+
+  @override
+  Widget build(BuildContext context) {
+    final cards = column.cardIds
+        .map(kanban.board.cardById)
+        .whereType<SddKanbanCard>()
+        .toList(growable: false);
+    return Container(
+      margin: const EdgeInsets.only(right: 10, bottom: 10),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: _WorkbenchColors.surfaceHigh,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: _WorkbenchColors.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          Row(
+            children: <Widget>[
+              Expanded(
+                child: Text(
+                  column.label,
+                  style: const TextStyle(fontWeight: FontWeight.w900),
+                ),
+              ),
+              _CountBadge(count: column.count),
+            ],
+          ),
+          const SizedBox(height: 8),
+          if (cards.isEmpty)
+            const Text(
+              'No cards',
+              style: TextStyle(color: _WorkbenchColors.secondaryText),
+            )
+          else
+            for (final card in cards) _KanbanCardView(card: card),
+        ],
+      ),
+    );
+  }
+}
+
+class _KanbanCardView extends StatelessWidget {
+  const _KanbanCardView({required this.card});
+
+  final SddKanbanCard card;
+
+  @override
+  Widget build(BuildContext context) {
+    final warning = card.column == 'blocked';
+    return Container(
+      margin: const EdgeInsets.only(top: 8),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: warning
+            ? _WorkbenchColors.warningSurface
+            : _WorkbenchColors.background,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          color: warning ? _WorkbenchColors.warning : _WorkbenchColors.border,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Text(card.title, style: const TextStyle(fontWeight: FontWeight.w800)),
+          const SizedBox(height: 6),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: <Widget>[
+              _SmallBadge(card.type),
+              _SmallBadge(card.status),
+              _SmallBadge(card.confirmed ? 'confirmed' : card.confidence),
+              if (card.inferred) const _SmallBadge('inferred'),
+              for (final badge in card.badges.take(3)) _SmallBadge(badge),
+            ],
+          ),
+          if (card.detail.isNotEmpty) ...<Widget>[
+            const SizedBox(height: 6),
+            Text(
+              card.detail,
+              maxLines: 3,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: _WorkbenchColors.secondaryText,
+                fontSize: 12,
+              ),
+            ),
+          ],
+          const SizedBox(height: 6),
+          Row(
+            children: <Widget>[
+              Expanded(
+                child: Text(
+                  card.sourcePath,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: _WorkbenchColors.secondaryText,
+                    fontSize: 11,
+                  ),
+                ),
+              ),
+              if (card.manualCommands.isNotEmpty)
+                IconButton(
+                  tooltip: 'Copy manual command',
+                  onPressed: () => Clipboard.setData(
+                    ClipboardData(text: card.manualCommands.join(' ')),
+                  ),
+                  icon: const Icon(Icons.content_copy_rounded, size: 16),
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _InlineLoading extends StatelessWidget {
+  const _InlineLoading({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: <Widget>[
+        const SizedBox(
+          width: 16,
+          height: 16,
+          child: CircularProgressIndicator(strokeWidth: 2),
+        ),
+        const SizedBox(width: 10),
+        Text(label),
+      ],
+    );
+  }
+}
+
+class _KanbanLoading extends StatelessWidget {
+  const _KanbanLoading();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Center(child: _InlineLoading(label: 'Loading Kanban'));
+  }
+}
+
+class _KanbanError extends StatelessWidget {
+  const _KanbanError({required this.errorText, required this.onRetry});
+
+  final String errorText;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 24),
+      children: <Widget>[
+        _InfoCard(title: 'Kanban unavailable', detail: errorText),
+        OutlinedButton.icon(
+          onPressed: onRetry,
+          icon: const Icon(Icons.refresh_rounded),
+          label: const Text('Retry Kanban'),
+        ),
+      ],
+    );
+  }
+}
+
+class _KanbanEmpty extends StatelessWidget {
+  const _KanbanEmpty({required this.onRetry});
+
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 24),
+      children: <Widget>[
+        const _InfoCard(
+          title: 'No Kanban cards',
+          detail:
+              'No SDD tasks, run steps, or Project Factory evidence is visible.',
+        ),
+        OutlinedButton.icon(
+          onPressed: onRetry,
+          icon: const Icon(Icons.refresh_rounded),
+          label: const Text('Refresh Kanban'),
+        ),
+      ],
+    );
+  }
+}
+
+class _StatusPill extends StatelessWidget {
+  const _StatusPill({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+      decoration: BoxDecoration(
+        color: _WorkbenchColors.background,
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: _WorkbenchColors.border),
+      ),
+      child: Text('$label: $value', style: const TextStyle(fontSize: 12)),
+    );
+  }
+}
+
+class _SmallBadge extends StatelessWidget {
+  const _SmallBadge(this.label);
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+      decoration: BoxDecoration(
+        color: _WorkbenchColors.sourceBackground,
+        borderRadius: BorderRadius.circular(5),
+      ),
+      child: Text(
+        label,
+        style: const TextStyle(
+          color: _WorkbenchColors.secondaryText,
+          fontSize: 11,
+        ),
+      ),
+    );
+  }
+}
+
+class _CountBadge extends StatelessWidget {
+  const _CountBadge({required this.count});
+
+  final int count;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 26,
+      height: 22,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: _WorkbenchColors.primary.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Text(
+        '$count',
+        style: const TextStyle(
+          color: _WorkbenchColors.primary,
+          fontWeight: FontWeight.w900,
+          fontSize: 12,
+        ),
+      ),
+    );
+  }
+}
+
+void _showKanbanHistory(
+  BuildContext context, {
+  required SddExplorerClient client,
+  required String workspacePath,
+  required String scopeId,
+}) {
+  showDialog<void>(
+    context: context,
+    builder: (dialogContext) {
+      return Theme(
+        data: _workbenchTheme(dialogContext),
+        child: AlertDialog(
+          title: const Text('Curator history'),
+          content: SizedBox(
+            width: 520,
+            child: FutureBuilder<SddKanbanHistory>(
+              future: client.getKanbanHistory(
+                workspacePath: workspacePath,
+                scopeId: scopeId,
+              ),
+              builder: (context, snapshot) {
+                if (snapshot.connectionState != ConnectionState.done) {
+                  return const _InlineLoading(label: 'Loading history');
+                }
+                if (snapshot.hasError) {
+                  return Text('History unavailable: ${snapshot.error}');
+                }
+                final items =
+                    snapshot.data?.items ?? const <SddCuratorUpdate>[];
+                if (items.isEmpty) {
+                  return const Text('No Curator updates yet.');
+                }
+                return SizedBox(
+                  height: 360,
+                  child: ListView.separated(
+                    itemCount: items.length,
+                    separatorBuilder: (context, index) =>
+                        const Divider(color: _WorkbenchColors.border),
+                    itemBuilder: (context, index) {
+                      final item = items[index];
+                      return ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        title: Text(item.title),
+                        subtitle: Text(
+                          '${item.timestamp}\n${item.summary}',
+                          maxLines: 3,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        isThreeLine: true,
+                        trailing: item.blockers.isEmpty
+                            ? null
+                            : const Icon(
+                                Icons.warning_amber_rounded,
+                                color: _WorkbenchColors.warning,
+                              ),
+                        onTap: () => _showKanbanHistoryDetail(
+                          dialogContext,
+                          client: client,
+                          workspacePath: workspacePath,
+                          scopeId: scopeId,
+                          updateId: item.id,
+                        ),
+                      );
+                    },
+                  ),
+                );
+              },
+            ),
+          ),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('Close'),
+            ),
+          ],
+        ),
+      );
+    },
+  );
+}
+
+void _showKanbanHistoryDetail(
+  BuildContext context, {
+  required SddExplorerClient client,
+  required String workspacePath,
+  required String scopeId,
+  required String updateId,
+}) {
+  showDialog<void>(
+    context: context,
+    builder: (dialogContext) {
+      return Theme(
+        data: _workbenchTheme(dialogContext),
+        child: AlertDialog(
+          title: const Text('Curator update detail'),
+          content: SizedBox(
+            width: 520,
+            child: FutureBuilder<SddCuratorUpdate>(
+              future: client.getKanbanHistoryItem(
+                updateId: updateId,
+                workspacePath: workspacePath,
+                scopeId: scopeId,
+              ),
+              builder: (context, snapshot) {
+                if (snapshot.connectionState != ConnectionState.done) {
+                  return const _InlineLoading(label: 'Loading update');
+                }
+                if (snapshot.hasError) {
+                  return Text('Update unavailable: ${snapshot.error}');
+                }
+                final update = snapshot.data;
+                if (update == null) return const Text('Update not found.');
+                return SingleChildScrollView(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: <Widget>[
+                      Text(
+                        update.title,
+                        style: const TextStyle(fontWeight: FontWeight.w900),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(update.summary),
+                      const SizedBox(height: 10),
+                      _KeyValueLine(
+                        label: 'Changed',
+                        value: update.changedCards.isEmpty
+                            ? 'None'
+                            : update.changedCards.join(', '),
+                      ),
+                      _KeyValueLine(
+                        label: 'Blockers',
+                        value: update.blockers.isEmpty
+                            ? 'None'
+                            : update.blockers.join(', '),
+                        warning: update.blockers.isNotEmpty,
+                      ),
+                      _KeyValueLine(label: 'Next', value: update.nextWatch),
+                    ],
+                  ),
+                );
+              },
+            ),
+          ),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('Close'),
+            ),
+          ],
+        ),
+      );
+    },
+  );
 }
 
 class _SpecsTab extends StatefulWidget {
@@ -2031,12 +2888,10 @@ class _SpecIntakeComposerState extends State<_SpecIntakeComposer> {
               segments: const <ButtonSegment<SddSpecIntakeMode>>[
                 ButtonSegment<SddSpecIntakeMode>(
                   value: SddSpecIntakeMode.newSpec,
-                  icon: Icon(Icons.note_add_outlined),
                   label: Text('New spec'),
                 ),
                 ButtonSegment<SddSpecIntakeMode>(
                   value: SddSpecIntakeMode.existingSpec,
-                  icon: Icon(Icons.edit_document),
                   label: Text('Existing'),
                 ),
               ],
@@ -2333,7 +3188,8 @@ class _IntakeAttachmentAction extends StatelessWidget {
           onTap: configured ? onPressed : null,
           borderRadius: BorderRadius.circular(8),
           child: Container(
-            constraints: const BoxConstraints(minWidth: 92, minHeight: 38),
+            width: 112,
+            constraints: const BoxConstraints(minHeight: 38),
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(8),
@@ -2348,12 +3204,16 @@ class _IntakeAttachmentAction extends StatelessWidget {
               children: <Widget>[
                 Icon(icon, size: 17, color: color),
                 const SizedBox(width: 7),
-                Text(
-                  label,
-                  style: TextStyle(
-                    color: color,
-                    fontWeight: FontWeight.w800,
-                    fontSize: 12,
+                Flexible(
+                  child: Text(
+                    label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: color,
+                      fontWeight: FontWeight.w800,
+                      fontSize: 12,
+                    ),
                   ),
                 ),
                 if (!configured) ...[

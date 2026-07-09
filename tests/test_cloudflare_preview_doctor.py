@@ -70,6 +70,7 @@ def test_cloudflare_doctor_validates_required_cloudflare_surfaces() -> None:
     assert checks["preview_dns_record"]["status"] == "present"
     assert checks["workers_access"]["ok"] is True
     assert checks["preview_worker_script"]["ok"] is True
+    assert checks["workers_routes_edit_access"]["ok"] is True
     assert checks["d1_access"]["ok"] is True
     assert checks["pages_project"]["ok"] is True
     assert checks["r2_optional_access"]["ok"] is True
@@ -91,6 +92,34 @@ def test_cloudflare_doctor_blocks_missing_preview_dns_record() -> None:
     checks = {item["code"]: item for item in payload["checks"]}
     assert checks["preview_dns_record"]["ok"] is False
     assert checks["preview_dns_record"]["status"] == "missing"
+
+
+def test_cloudflare_doctor_blocks_missing_workers_routes_edit_permission() -> None:
+    service = CloudflarePreviewDoctorService(
+        settings=_configured_settings(),
+        client=_FakeCloudflareClient(
+            dns_records=[
+                {
+                    "id": "dns-1",
+                    "name": "preview.nienfos.com",
+                    "type": "CNAME",
+                },
+            ],
+            worker_routes_result=CloudflareLookupResult(
+                ok=False,
+                status_code=403,
+                error="Workers Routes: Edit permission missing",
+            ),
+        ),
+    )
+
+    payload = service.doctor()
+
+    assert payload["ok"] is False
+    assert payload["status"] == "blocked"
+    checks = {item["code"]: item for item in payload["checks"]}
+    assert checks["workers_routes_edit_access"]["ok"] is False
+    assert "Workers Routes: Edit" in checks["workers_routes_edit_access"]["detail"]
 
 
 def test_cloudflare_provisioning_planner_is_dry_run_and_side_effect_free() -> None:
@@ -180,7 +209,17 @@ def test_http_cloudflare_client_uses_expected_paths_and_tokens(monkeypatch) -> N
     client.deploy_worker_script(
         account_id="acct-1",
         script_name="preview-worker",
-        script_content="export default {};",
+        script_content="addEventListener('fetch', event => event.respondWith(new Response('ok')));",
+    )
+    client.list_worker_routes(zone_id="zone-1", pattern="preview.nienfos.com/*")
+    client.create_worker_route(
+        zone_id="zone-1",
+        payload={"pattern": "preview.nienfos.com/app/*", "script": "preview-worker"},
+    )
+    client.update_worker_route(
+        zone_id="zone-1",
+        route_id="route-1",
+        payload={"pattern": "preview.nienfos.com/app/*", "script": "preview-worker"},
     )
     client.list_d1_databases("acct-1")
     client.create_d1_database(account_id="acct-1", name="preview-d1")
@@ -209,16 +248,25 @@ def test_http_cloudflare_client_uses_expected_paths_and_tokens(monkeypatch) -> N
         "/accounts/acct-1/workers/scripts/preview-worker",
     )
     assert calls[4]["headers"]["Content-Type"] == "application/javascript"
-    assert calls[5]["url"].endswith("/accounts/acct-1/d1/database")
+    assert calls[5]["method"] == "GET"
+    assert calls[5]["url"].endswith(
+        "/zones/zone-1/workers/routes?pattern=preview.nienfos.com%2F%2A",
+    )
+    assert calls[5]["headers"]["Authorization"] == "Bearer dns-token"
     assert calls[6]["method"] == "POST"
-    assert calls[6]["url"].endswith("/accounts/acct-1/d1/database")
-    assert calls[6]["json"] == {"name": "preview-d1"}
-    assert calls[7]["method"] == "POST"
-    assert calls[7]["url"].endswith("/accounts/acct-1/d1/database/d1-1/query")
-    assert calls[7]["json"] == {"sql": "SELECT 1", "params": []}
-    assert calls[8]["url"].endswith("/accounts/acct-1/pages/projects/preview-pages")
+    assert calls[6]["url"].endswith("/zones/zone-1/workers/routes")
+    assert calls[7]["method"] == "PUT"
+    assert calls[7]["url"].endswith("/zones/zone-1/workers/routes/route-1")
+    assert calls[8]["url"].endswith("/accounts/acct-1/d1/database")
     assert calls[9]["method"] == "POST"
-    assert calls[9]["url"].endswith("/accounts/acct-1/pages/projects")
+    assert calls[9]["url"].endswith("/accounts/acct-1/d1/database")
+    assert calls[9]["json"] == {"name": "preview-d1"}
+    assert calls[10]["method"] == "POST"
+    assert calls[10]["url"].endswith("/accounts/acct-1/d1/database/d1-1/query")
+    assert calls[10]["json"] == {"sql": "SELECT 1", "params": []}
+    assert calls[11]["url"].endswith("/accounts/acct-1/pages/projects/preview-pages")
+    assert calls[12]["method"] == "POST"
+    assert calls[12]["url"].endswith("/accounts/acct-1/pages/projects")
 
 
 def _configured_settings() -> Settings:
@@ -242,10 +290,15 @@ class _FakeCloudflareClient:
         *,
         dns_records: list[dict[str, Any]] | None = None,
         r2_result: CloudflareLookupResult | None = None,
+        worker_routes_result: CloudflareLookupResult | None = None,
     ) -> None:
         self.calls: list[str] = []
         self._dns_records = dns_records or []
         self._r2_result = r2_result or CloudflareLookupResult(
+            ok=True,
+            payload={"result": []},
+        )
+        self._worker_routes_result = worker_routes_result or CloudflareLookupResult(
             ok=True,
             payload={"result": []},
         )
@@ -312,6 +365,34 @@ class _FakeCloudflareClient:
             ok=True,
             payload={"result": {"id": script_name, "size": len(script_content)}},
         )
+
+    def list_worker_routes(
+        self,
+        *,
+        zone_id: str,
+        pattern: str,
+    ) -> CloudflareLookupResult:
+        self.calls.append(f"list_worker_routes:{zone_id}:{pattern}")
+        return self._worker_routes_result
+
+    def create_worker_route(
+        self,
+        *,
+        zone_id: str,
+        payload: dict[str, Any],
+    ) -> CloudflareLookupResult:
+        self.calls.append(f"create_worker_route:{zone_id}")
+        return CloudflareLookupResult(ok=True, payload={"result": payload})
+
+    def update_worker_route(
+        self,
+        *,
+        zone_id: str,
+        route_id: str,
+        payload: dict[str, Any],
+    ) -> CloudflareLookupResult:
+        self.calls.append(f"update_worker_route:{zone_id}:{route_id}")
+        return CloudflareLookupResult(ok=True, payload={"result": payload})
 
     def list_d1_databases(self, account_id: str) -> CloudflareLookupResult:
         self.calls.append(f"list_d1_databases:{account_id}")

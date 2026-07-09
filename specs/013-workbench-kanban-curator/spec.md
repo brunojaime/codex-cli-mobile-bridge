@@ -1,7 +1,7 @@
 # Workbench Kanban Curator
 
 id: 013-workbench-kanban-curator
-status: active
+status: complete
 owner: codex-mobile-bridge
 
 ## Intent

@@ -1,0 +1,89 @@
+spec_id: 013-workbench-kanban-curator
+status: complete
+requirements:
+  R-001-kanban-domain-contract:
+    acceptance_criteria:
+      - Stable scope, board, column, card, evidence, and history payloads exist.
+      - Confirmed task state is separated from inferred observer evidence.
+    tasks:
+      - T001
+      - T002
+      - T003
+      - T004
+      - T005
+    implementation:
+      - backend/app/application/services/sdd_workbench_kanban_service.py
+      - backend/app/api/schemas.py
+      - backend/app/api/routes.py
+  R-002-deterministic-sdd-projection:
+    acceptance_criteria:
+      - SDD tasks, tree plans, metadata, phases, ordering, deltas, and cache are deterministic.
+      - Projection state is stored outside SDD artifacts.
+    tasks:
+      - T006
+      - T007
+      - T008
+      - T009
+      - T010
+      - T011
+      - T012
+    implementation:
+      - backend/app/application/services/sdd_workbench_kanban_service.py
+      - tests/test_sdd_workbench_kanban.py
+  R-003-passive-run-observer:
+    acceptance_criteria:
+      - Project Factory drafts/jobs, run artifacts, JSONL tails, generated workspace mapping, validation outcomes, and reviewer findings are observed read-only.
+      - Generator and Reviewer behavior remains unchanged.
+    tasks:
+      - T013
+      - T014
+      - T015
+      - T016
+      - T017
+      - T018
+      - T019
+    implementation:
+      - backend/app/application/services/sdd_workbench_kanban_service.py
+      - backend/app/container.py
+      - tests/test_sdd_workbench_kanban.py
+  R-004-curator-history:
+    acceptance_criteria:
+      - Curator input envelope is read-only and history is append-only with evidence-hash dedupe.
+      - Latest update, history list, and history detail APIs are available.
+    tasks:
+      - T020
+      - T021
+      - T022
+      - T023
+      - T024
+    implementation:
+      - backend/app/application/services/sdd_workbench_kanban_service.py
+      - backend/app/api/routes.py
+      - tests/test_sdd_workbench_kanban.py
+  R-005-workbench-kanban-ui:
+    acceptance_criteria:
+      - Workbench has a Kanban tab with responsive board, latest update, history, clear states, and compact overview card.
+    tasks:
+      - T025
+      - T026
+      - T027
+      - T028
+      - T029
+      - T030
+    implementation:
+      - packages/codex_bridge_workbench/lib/src/models/sdd_project.dart
+      - packages/codex_bridge_workbench/lib/src/services/sdd_explorer_client.dart
+      - packages/codex_bridge_workbench/lib/src/widgets/sdd_explorer_panel.dart
+      - packages/codex_bridge_workbench/test/codex_bridge_workbench_test.dart
+  R-006-validation:
+    acceptance_criteria:
+      - Backend projection/API and Flutter UI states are covered by regression tests.
+      - New Project continuity is covered without changing Generator/Reviewer behavior.
+    tasks:
+      - T031
+      - T032
+      - T033
+      - T034
+    implementation:
+      - tests/test_sdd_workbench_kanban.py
+      - packages/codex_bridge_workbench/test/codex_bridge_workbench_test.dart

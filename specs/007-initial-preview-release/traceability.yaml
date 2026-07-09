@@ -60,6 +60,11 @@ requirements:
     acceptance_criteria: [AC-011, AC-012]
     plans: [project-factory-contract-updates, operations-documentation]
     tasks: [T011, T012, T013, T079, T080, T081, T082, T083, T084, T085]
+  FR-013:
+    title: Preview completeness hardening fails closed
+    acceptance_criteria: [AC-013, AC-014, AC-015, AC-016, AC-017]
+    plans: [preview-completeness-hardening]
+    tasks: [T091, T092, T093, T094, T095, T096]
 artifacts:
   spec: spec.md
   plan: plan.md
@@ -73,7 +78,7 @@ notes:
   - specs/005-new-project-factory and specs/006-web-preview-delivery are required implementation context.
 
 implementation_status:
-  completed_tasks: 90
+  completed_tasks: 96
   pending_tasks: 0
   status: implemented
   completed_scope:
@@ -95,4 +100,10 @@ implementation_status:
     - Generated domain-entity D1 migrations are app-scoped and idempotent, with a Wrangler apply script wired before Cloudflare preview apply.
     - Debug-preview signing is blocked unless generated metadata and explicit environment acknowledgement are both present.
     - Remote publication scripts and runner coverage support rerunning already-satisfied preview publication phases without duplicating resources or hiding mismatches.
+    - Preview releases use Bridge/GitHub `prerelease` channel and validate exact installable-app lookup fields.
+    - Generated Flutter Workbench visibility is role/profile-gated and tested for preview owner/admin access.
+    - Generated Cloudflare Workers use classic `addEventListener('fetch', ...)` format for `application/javascript` deploys.
+    - Cloudflare doctor blocks explicitly when Workers Routes edit access is missing.
+    - Preview profile validation cross-checks `.codex/project.yaml`, release contracts, web preview manifest, backend config, Flutter config, and workflow metadata.
+    - Final release output is regenerated from current evidence and fails stale or overpromising output.
   pending_scope: []

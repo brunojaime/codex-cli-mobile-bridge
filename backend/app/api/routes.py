@@ -131,6 +131,9 @@ from backend.app.api.schemas import (
     SddSpecResponse,
     SddSpecTreeResponse,
     SddTaskNodeResponse,
+    SddWorkbenchKanbanHistoryItemResponse,
+    SddWorkbenchKanbanHistoryResponse,
+    SddWorkbenchKanbanResponse,
     SddWorkbenchViewResponse,
     TurnSummaryConfigRequest,
     WebPreviewDeployRequest,
@@ -1020,6 +1023,137 @@ async def get_sdd_workbench_view(
         allow_degraded=allow_degraded,
     )
     return SddWorkbenchViewResponse(**view.to_payload())
+
+
+@router.get("/sdd/workbench/kanban", response_model=SddWorkbenchKanbanResponse)
+async def get_sdd_workbench_kanban(
+    workspace_path: str | None = Query(default=None),
+    spec_id: str | None = Query(default=None),
+    draft_id: str | None = Query(default=None),
+    job_id: str | None = Query(default=None),
+    container: AppContainer = Depends(get_container),
+) -> SddWorkbenchKanbanResponse:
+    project: SddProject | None = None
+    workspace: Path | None = None
+    if workspace_path:
+        try:
+            project = await run_in_threadpool(
+                container.sdd_project_service.get_project,
+                workspace_path,
+            )
+            workspace = Path(project.workspace_path)
+        except SddWorkspacePathError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if workspace is None and not (draft_id or job_id):
+        raise HTTPException(
+            status_code=400,
+            detail="workspace_path, draft_id, or job_id is required.",
+        )
+    result = await run_in_threadpool(
+        container.sdd_workbench_kanban_service.build_board,
+        workspace=workspace,
+        project=project,
+        spec_id=spec_id,
+        draft_id=draft_id,
+        job_id=job_id,
+    )
+    return SddWorkbenchKanbanResponse(**result.payload)
+
+
+@router.post("/sdd/workbench/kanban/refresh", response_model=SddWorkbenchKanbanResponse)
+async def refresh_sdd_workbench_kanban(
+    workspace_path: str | None = Query(default=None),
+    spec_id: str | None = Query(default=None),
+    draft_id: str | None = Query(default=None),
+    job_id: str | None = Query(default=None),
+    container: AppContainer = Depends(get_container),
+) -> SddWorkbenchKanbanResponse:
+    project: SddProject | None = None
+    workspace: Path | None = None
+    if workspace_path:
+        try:
+            project = await run_in_threadpool(
+                container.sdd_project_service.get_project,
+                workspace_path,
+            )
+            workspace = Path(project.workspace_path)
+        except SddWorkspacePathError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if workspace is None and not (draft_id or job_id):
+        raise HTTPException(
+            status_code=400,
+            detail="workspace_path, draft_id, or job_id is required.",
+        )
+    result = await run_in_threadpool(
+        container.sdd_workbench_kanban_service.build_board,
+        workspace=workspace,
+        project=project,
+        spec_id=spec_id,
+        draft_id=draft_id,
+        job_id=job_id,
+        force_refresh=True,
+    )
+    return SddWorkbenchKanbanResponse(**result.payload)
+
+
+@router.get(
+    "/sdd/workbench/kanban/history",
+    response_model=SddWorkbenchKanbanHistoryResponse,
+)
+async def get_sdd_workbench_kanban_history(
+    workspace_path: str | None = Query(default=None),
+    scope_id: str | None = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=80),
+    container: AppContainer = Depends(get_container),
+) -> SddWorkbenchKanbanHistoryResponse:
+    workspace: Path | None = None
+    if workspace_path:
+        try:
+            project = await run_in_threadpool(
+                container.sdd_project_service.get_project_summary,
+                workspace_path,
+            )
+            workspace = Path(project.workspace_path)
+        except SddWorkspacePathError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+    payload = await run_in_threadpool(
+        container.sdd_workbench_kanban_service.history,
+        workspace=workspace,
+        scope_id=scope_id,
+        limit=limit,
+    )
+    return SddWorkbenchKanbanHistoryResponse(**payload)
+
+
+@router.get(
+    "/sdd/workbench/kanban/history/{update_id}",
+    response_model=SddWorkbenchKanbanHistoryItemResponse,
+)
+async def get_sdd_workbench_kanban_history_item(
+    update_id: str,
+    workspace_path: str | None = Query(default=None),
+    scope_id: str | None = Query(default=None),
+    container: AppContainer = Depends(get_container),
+) -> SddWorkbenchKanbanHistoryItemResponse:
+    workspace: Path | None = None
+    if workspace_path:
+        try:
+            project = await run_in_threadpool(
+                container.sdd_project_service.get_project_summary,
+                workspace_path,
+            )
+            workspace = Path(project.workspace_path)
+        except SddWorkspacePathError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+    payload = await run_in_threadpool(
+        container.sdd_workbench_kanban_service.history_item,
+        update_id=update_id,
+        workspace=workspace,
+        scope_id=scope_id,
+    )
+    if payload is None:
+        raise HTTPException(status_code=404, detail="Curator update not found.")
+    return SddWorkbenchKanbanHistoryItemResponse(**payload)
 
 
 @router.post("/sdd/specs/dry-run", response_model=SddSpecCreationDryRunResponse)

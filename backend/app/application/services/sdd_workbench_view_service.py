@@ -248,13 +248,27 @@ def _preview_readiness(workspace: Path) -> dict[str, object]:
             ],
         }
     bridge = payload.get("bridge") if isinstance(payload.get("bridge"), dict) else {}
-    production_ready = payload.get("productionReady") is True
-    mock_or_demo = payload.get("mockOrDemo") is True
+    production_ready_value = payload.get("productionReady")
+    mock_or_demo_value = payload.get("mockOrDemo")
+    production_ready = production_ready_value is True
+    mock_or_demo = mock_or_demo_value is True
     blockers: list[str] = []
-    if production_ready:
-        blockers.append("Initial Preview Release must not be marked productionReady.")
-    if mock_or_demo:
-        blockers.append("Initial Preview Release must not be marked mockOrDemo.")
+    if payload.get("runtimeProfile") != "preview":
+        blockers.append("Initial Preview Release runtimeProfile must be preview.")
+    if payload.get("apiRuntime") != "cloudflare_preview":
+        blockers.append(
+            "Initial Preview Release apiRuntime must be cloudflare_preview.",
+        )
+    if payload.get("releaseChannel") != "prerelease":
+        blockers.append("Initial Preview Release releaseChannel must be prerelease.")
+    if payload.get("releaseTagPattern") != "android-preview-v*":
+        blockers.append(
+            "Initial Preview Release releaseTagPattern must be android-preview-v*.",
+        )
+    if production_ready_value is not False:
+        blockers.append("Initial Preview Release productionReady must be false.")
+    if mock_or_demo_value is not False:
+        blockers.append("Initial Preview Release mockOrDemo must be false.")
     return {
         "available": True,
         "status": "ready" if not blockers else "blocked",

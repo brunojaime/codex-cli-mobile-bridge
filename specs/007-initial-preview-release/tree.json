@@ -459,9 +459,9 @@
         {
           "id": "plan-6-task-1",
           "number": 1,
-          "title": "T045 Extend Bridge registration payload with release_channel=preview",
+          "title": "T045 Extend Bridge registration payload with release_channel=prerelease",
           "status": "completed",
-          "description": "T045 Extend Bridge registration payload with release_channel=preview",
+          "description": "T045 Extend Bridge registration payload with release_channel=prerelease",
           "file": "tasks/plan-6-task-1/task.md"
         },
         {
@@ -823,6 +823,64 @@
           "status": "completed",
           "description": "T085 Update Project Factory runbooks with generic false-readiness failure examples",
           "file": "tasks/plan-10-task-7/task.md"
+        }
+      ]
+    },
+    {
+      "id": "plan-11",
+      "number": 11,
+      "title": "Preview Completeness Hardening",
+      "status": "completed",
+      "description": "Fail closed unless preview APK, Cloudflare, API, D1, Workbench, Bridge, metadata, Worker format, and release output evidence all agree.",
+      "file": "plans/11-preview-completeness-hardening/plan.md",
+      "tasks": [
+        {
+          "id": "plan-11-task-1",
+          "number": 1,
+          "title": "T091 Enforce prerelease Bridge/GitHub channel and exact /installable-apps/{sourceApp} preview lookup",
+          "status": "completed",
+          "description": "Use prerelease channel and verify available APK metadata through Bridge.",
+          "file": "tasks/plan-11-task-1/task.md"
+        },
+        {
+          "id": "plan-11-task-2",
+          "number": 2,
+          "title": "T092 Generate Workbench visibility gating and Flutter tests for preview owner/admin access",
+          "status": "completed",
+          "description": "Ensure preview APKs expose Workbench for owner/admin and hide it in real runtime.",
+          "file": "tasks/plan-11-task-2/task.md"
+        },
+        {
+          "id": "plan-11-task-3",
+          "number": 3,
+          "title": "T093 Require classic Cloudflare Worker format for application/javascript deploys",
+          "status": "completed",
+          "description": "Generate addEventListener fetch Workers and reject export default for classic deploy mode.",
+          "file": "tasks/plan-11-task-3/task.md"
+        },
+        {
+          "id": "plan-11-task-4",
+          "number": 4,
+          "title": "T094 Fail Cloudflare doctor when Workers Routes edit access is missing",
+          "status": "completed",
+          "description": "Make missing Workers Routes edit capability an explicit Cloudflare doctor blocker.",
+          "file": "tasks/plan-11-task-4/task.md"
+        },
+        {
+          "id": "plan-11-task-5",
+          "number": 5,
+          "title": "T095 Validate preview runtime profiles across all generated sources of truth",
+          "status": "completed",
+          "description": "Fail validation when mock, preview, real, or staging is missing from a source of truth.",
+          "file": "tasks/plan-11-task-5/task.md"
+        },
+        {
+          "id": "plan-11-task-6",
+          "number": 6,
+          "title": "T096 Regenerate and validate final release output freshness and anti-overpromise fields",
+          "status": "completed",
+          "description": "Update release output from current evidence and fail stale or overpromising output.",
+          "file": "tasks/plan-11-task-6/task.md"
         }
       ]
     }

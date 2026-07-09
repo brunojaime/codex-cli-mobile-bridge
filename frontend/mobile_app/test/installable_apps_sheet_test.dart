@@ -47,7 +47,7 @@ void main() {
 
     expect(find.text('Clinica Norte Preview'), findsOneWidget);
     expect(find.text('0.1.0+1  •  Available'), findsOneWidget);
-    expect(find.textContaining('Channel: preview'), findsOneWidget);
+    expect(find.textContaining('Channel: prerelease'), findsOneWidget);
     expect(find.textContaining('Profile: preview'), findsOneWidget);
     expect(find.textContaining('Production pending'), findsOneWidget);
     expect(find.textContaining('Real preview data'), findsOneWidget);
@@ -253,7 +253,7 @@ String _previewAppsJson({
         "sourceApp": "clinica-norte",
         "displayName": "Clinica Norte Preview",
         "repo": "brunojaime/clinica-norte",
-        "releaseChannel": "preview",
+        "releaseChannel": "prerelease",
         $apkFields
         "sha256": null,
         "available": $includeApk,

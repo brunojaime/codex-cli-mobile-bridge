@@ -1619,7 +1619,7 @@ def _registry_item(**overrides: object) -> dict[str, object]:
         "apkAssetPattern": "adjornos*.apk",
         "latestAssetName": "adjornos.apk",
         "requiredMinimumBuild": None,
-        "releaseChannel": "preview",
+        "releaseChannel": "prerelease",
         "expectedPackageId": None,
         "verifiedPackageIds": {},
         "enabled": True,

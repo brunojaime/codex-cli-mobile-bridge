@@ -260,7 +260,7 @@ The Bridge catalog entry must make preview status visible:
 source_app: <app-slug>
 display_name: "<Project Name> Preview"
 runtime_profile: preview
-release_channel: preview
+release_channel: prerelease
 preview_url: https://preview.nienfos.com/<app-slug>
 apk_release_tag: android-preview-v0.1.0-build.1
 production_ready: false
@@ -317,7 +317,7 @@ initial_preview_release:
   bridge:
     status: registered | blocked | failed
     source_app: <app-slug>
-    catalog_channel: preview
+    catalog_channel: prerelease
   validation:
     generated_project: pass | fail | skipped
     cloudflare_health: pass | fail | skipped
@@ -361,6 +361,50 @@ operator explicitly confirms.
 - Keep production release gates stricter than preview gates.
 - Make `preview`, `real`, and `mock` mutually explicit in release metadata.
 
+## Hardening Contract
+
+Initial Preview Release uses `runtime_profile=preview`, Android tags
+`android-preview-v*`, and Bridge/GitHub release channel `prerelease`.
+`mock_or_demo=false`, `backend_required=true`, and `production_ready=false` are
+required in generated release metadata, Bridge registration, updater metadata,
+and final release output. Productive `android-v*` release publication remains
+blocked until explicit promotion.
+
+Workbench visibility is part of preview completeness:
+
+- `mock`: Workbench visible.
+- `preview`: Workbench visible for `owner`/`admin`, or explicitly authorized
+  developer mode.
+- `staging`: internal/developer-authorized only.
+- `real`: Workbench hidden.
+
+Generated Flutter tests must fail if `APP_RUNTIME_PROFILE=preview` does not show
+a Workbench entry for `owner` or `admin`, or if `APP_RUNTIME_PROFILE=real` shows
+Workbench.
+
+The generated Cloudflare Worker must match the Bridge deploy mode. When Bridge
+uploads `application/javascript` classic Worker code, the generated Worker must
+use `addEventListener('fetch', ...)` and must not use `export default`.
+Validation must fail if the generated Worker format and deploy mode diverge.
+
+Bridge verification is required through `/installable-apps/{sourceApp}`. The
+response must include `available=true`, `apkUrl`, `releaseTag` matching
+`android-preview-v*`, `releaseChannel=prerelease`, and a 64-character SHA256
+when a checksum is available.
+
+Cloudflare readiness must explicitly validate DNS read/edit, Worker script
+edit, Workers Routes read/edit, D1 create/query, and Pages read/create when
+Pages is used. Missing `Workers Routes: Edit` must be an explicit doctor
+failure. Apply cannot be marked ready unless the public health route, Preview
+API health route, Worker route, D1 migrations, and DNS state are verified.
+
+`release/release-output-template.md` is updated by final preview validation with
+current commit, push state, APK URL, APK SHA256 if available, GitHub release URL,
+Bridge installable URL, Cloudflare URLs, validations executed, and remaining
+blockers. Validation fails if the output is stale for the current commit or
+claims preview/release/installable/API readiness without the corresponding
+Cloudflare, APK, Bridge, Workbench, or D1 evidence.
+
 ## Relationship To Existing Specs
 
 This section is normative implementation routing, not background. An agent
@@ -398,3 +442,15 @@ required for later `android-v*` releases.
   installable-app registration, validation, and blockers.
 - AC-012: Generated release docs explain how to promote from preview to
   production later.
+- AC-013: Preview APKs show Workbench for `owner`/`admin` and hide it in
+  productive `real` releases.
+- AC-014: `/installable-apps/{sourceApp}` returns `available=true`, `apkUrl`,
+  `releaseTag=android-preview-v*`, `releaseChannel=prerelease`, and checksum
+  when available before the job can be complete.
+- AC-015: Cloudflare doctor and apply fail explicitly when Workers Routes edit,
+  D1 migration, public health, API health, route, or DNS verification is
+  missing.
+- AC-016: Generated Worker format is classic `addEventListener('fetch', ...)`
+  when deployed as `application/javascript`.
+- AC-017: Final release output is regenerated from current evidence and cannot
+  be stale or overpromise readiness.

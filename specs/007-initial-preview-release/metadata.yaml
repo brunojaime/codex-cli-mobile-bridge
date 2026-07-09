@@ -10,8 +10,8 @@ generated:
   user_pinned_title: true
   user_pinned_description: true
 tasks:
-  total: 90
-  completed: 90
+  total: 96
+  completed: 96
   pending: 0
 diagrams:
   total: 1
@@ -23,7 +23,8 @@ diagrams:
 source_digests:
   diagrams/initial-preview-release-flow.mmd: b32e43f5edb004c827fdb7a9f765f70975866024becb25708d52947f5a307f41
   diagrams/initial-preview-release-flow.yaml: 7a1c6fec49a4a54b9bdf26de708e27e6477793fe7eb26795ea4a2b52a6fc88ef
-  plan.md: 59972ff872353348ae2c69733a15c52bdc32b961a8a7bc9e47caab2eb685adff
-  spec.md: a5eccf94ca13af384223bf5888beb0010a3ac026c160df98c584f94e397c6edf
-  tasks.md: fb20f7afe0ffd3a10a4f0c3c52c0e271a0c959d55c000e332f970a52fb56fc2e
-  traceability.yaml: e8be38ff46d874c93eb72e9277baabf786dfc4cf48de1f58714e20adb3af795c
+  plan.md: f2771ae2512352a61042263414846cd4d684c15655e973ff0508ab02bc0a48ef
+  spec.md: ed504d973b5df4fd110ed34727a6d8b76f6476af3760dda5ff8c4038505896c7
+  tasks.md: 155c87ca764873f18a4d135acd31b938c371a7897d2ec03b1d944ad5ad86795a
+  traceability.yaml: cdea0abc8bf4dacd801c46850285e2dd4c005926a96674d4c9d6f2720f68b46c
+  tree.json: d9aa282af18bf4fe99909a35f78d67d0558a61c3ec39acaf37bdf7896654409b

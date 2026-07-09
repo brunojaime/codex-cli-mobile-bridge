@@ -306,7 +306,7 @@ class InitialPreviewRelease {
     apiBaseUrl: null,
     runtimeProfile: 'preview',
     apiRuntime: 'cloudflare_preview',
-    releaseChannel: 'preview',
+    releaseChannel: 'prerelease',
     releaseTagPattern: 'android-preview-v*',
     productionReady: false,
     mockOrDemo: false,
@@ -349,7 +349,7 @@ class InitialPreviewRelease {
           'cloudflare_preview',
       releaseChannel: json['releaseChannel'] as String? ??
           json['release_channel'] as String? ??
-          'preview',
+          'prerelease',
       releaseTagPattern: json['releaseTagPattern'] as String? ??
           json['release_tag_pattern'] as String? ??
           'android-preview-v*',

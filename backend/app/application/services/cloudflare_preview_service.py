@@ -70,6 +70,31 @@ class CloudflareClient(Protocol):
     ) -> CloudflareLookupResult:
         ...
 
+    def list_worker_routes(
+        self,
+        *,
+        zone_id: str,
+        pattern: str,
+    ) -> CloudflareLookupResult:
+        ...
+
+    def create_worker_route(
+        self,
+        *,
+        zone_id: str,
+        payload: dict[str, Any],
+    ) -> CloudflareLookupResult:
+        ...
+
+    def update_worker_route(
+        self,
+        *,
+        zone_id: str,
+        route_id: str,
+        payload: dict[str, Any],
+    ) -> CloudflareLookupResult:
+        ...
+
     def list_d1_databases(self, account_id: str) -> CloudflareLookupResult:
         ...
 
@@ -430,6 +455,16 @@ class CloudflarePreviewDoctorService:
         )
         checks.append(
             _check_from_lookup(
+                "workers_routes_edit_access",
+                client.list_worker_routes(
+                    zone_id=self._settings.cloudflare_zone_id or "",
+                    pattern=f"{self._settings.preview_base_domain}/*",
+                ),
+                "Workers Routes: Edit permission is required to create or update preview routes.",
+            ),
+        )
+        checks.append(
+            _check_from_lookup(
                 "d1_access",
                 client.list_d1_databases(self._settings.cloudflare_account_id or ""),
                 "D1 database list must be readable.",
@@ -460,6 +495,7 @@ class CloudflarePreviewDoctorService:
             "preview_dns_record",
             "workers_access",
             "preview_worker_script",
+            "workers_routes_edit_access",
             "d1_access",
             "pages_project",
         }
