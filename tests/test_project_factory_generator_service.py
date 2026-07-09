@@ -265,6 +265,7 @@ def test_generator_writes_executable_publish_script(tmp_path: Path) -> None:
     validation_content = validation_script.read_text(encoding="utf-8")
     assert "origin remote is not configured" in validation_content
     assert "local HEAD is not pushed" in validation_content
+    assert "missing apps/mobile/android" in validation_content
     assert "GitHub release $expected_tag has no APK asset" in validation_content
     assert "validate_release_profiles.sh" in validation_content
 
@@ -272,7 +273,11 @@ def test_generator_writes_executable_publish_script(tmp_path: Path) -> None:
     assert android_release_script.is_file()
     assert android_release_script.stat().st_mode & stat.S_IXUSR
     android_release_content = android_release_script.read_text(encoding="utf-8")
+    assert "apps/mobile/android is required" in android_release_content
     assert "API_BASE_URL is required for a real Android release" in android_release_content
+    assert "GitHub Actions variable API_BASE_URL is not configured" in (
+        android_release_content
+    )
     assert "real Android release cannot use APP_RUNTIME_PROFILE=mock" in android_release_content
     assert "git push origin \"$tag\"" in android_release_content
     assert "GitHub release $tag did not expose an APK asset" in android_release_content

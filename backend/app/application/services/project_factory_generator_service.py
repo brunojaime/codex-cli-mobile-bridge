@@ -2183,6 +2183,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 [[ -f apps/mobile/pubspec.yaml ]] || fail_blocked "apps/mobile/pubspec.yaml is required"
+[[ -d apps/mobile/android ]] || fail_blocked "apps/mobile/android is required; run 'cd apps/mobile && flutter create --platforms=android .'"
 [[ -n "${API_BASE_URL:-}" ]] || fail_blocked "API_BASE_URL is required for a real Android release"
 [[ "${API_BASE_URL:-}" != *localhost* && "${API_BASE_URL:-}" != *127.0.0.1* && "${API_BASE_URL:-}" != *10.0.2.2* ]] || \
   fail_blocked "API_BASE_URL must not point at a local backend"
@@ -2203,6 +2204,15 @@ repo_ref="${repo_ref#https://github.com/}"
 repo_ref="${repo_ref#git@github.com:}"
 repo_ref="${repo_ref%.git}"
 [[ "$repo_ref" == */* ]] || fail_blocked "origin remote must point to a GitHub owner/repo"
+
+if command -v gh >/dev/null 2>&1 && [[ "${SKIP_GITHUB_API_BASE_URL_VAR_CHECK:-false}" != "true" ]]; then
+  workflow_api_base_url="$(
+    gh variable list --repo "$repo_ref" --json name,value --jq '.[] | select(.name == "API_BASE_URL") | .value' 2>/dev/null || true
+  )"
+  [[ -n "$workflow_api_base_url" ]] || fail_blocked "GitHub Actions variable API_BASE_URL is not configured for $repo_ref"
+  [[ "${workflow_api_base_url%/}" == "${API_BASE_URL%/}" ]] || \
+    fail_blocked "GitHub Actions variable API_BASE_URL does not match the requested API_BASE_URL"
+fi
 
 branch="$(git symbolic-ref --short HEAD 2>/dev/null || true)"
 [[ -n "$branch" ]] || fail_blocked "HEAD is detached; release from a named branch"
@@ -2301,6 +2311,7 @@ remote_head="$(git rev-parse "$upstream" 2>/dev/null || true)"
 [[ "$local_head" == "$remote_head" ]] || fail "local HEAD is not pushed to $upstream"
 
 if [[ -f apps/mobile/pubspec.yaml ]]; then
+  [[ -d apps/mobile/android ]] || fail "missing apps/mobile/android; Android APK release cannot build"
   version="$(awk '/^version:/ { print $2; exit }' apps/mobile/pubspec.yaml)"
   [[ -n "$version" ]] || fail "apps/mobile/pubspec.yaml has no version"
   expected_tag="${APP_ANDROID_RELEASE_TAG:-android-v${version//+/-build.}}"
