@@ -831,6 +831,28 @@ def test_backend_drain_reconciles_stale_in_flight_jobs() -> None:
     assert failed_session.active_agent_run_id is None
 
 
+def test_backend_drain_reconciles_stale_active_agent_run_without_work() -> None:
+    repository = InMemoryChatRepository(projects_root="..")
+    _client, container, _provider = build_drain_client(repository=repository)
+
+    session = container.message_service.create_session(title="stale run")
+    session.active_agent_run_id = "stale-run"
+    session.active_agent_turn_index = 3
+    repository.save_session(session)
+
+    drain_status = container.message_service.set_backend_drain(True)
+
+    assert drain_status.ready_to_restart is True
+    assert drain_status.active_job_count == 0
+    assert drain_status.active_session_ids == []
+    assert drain_status.in_flight_message_ids == []
+
+    persisted_session = repository.get_session(session.id)
+    assert persisted_session is not None
+    assert persisted_session.active_agent_run_id is None
+    assert persisted_session.active_agent_turn_index == 3
+
+
 def build_slow_audio_clients() -> tuple[TestClient, TestClient]:
     settings = Settings(
         codex_command="python3 tests/fixtures/fake_codex.py",
