@@ -1,0 +1,6 @@
+diagram_id: entity-relationship
+diagram_type: data-impact
+scope: feature
+status: draft
+owner: project
+source: specs/002-sdd-visual-workbench/diagrams/entity-relationship.mmd

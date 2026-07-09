@@ -76,6 +76,9 @@ jobs:
           args+=(--dart-define=API_BASE_URL="$bridge_url")
           args+=(--dart-define=CODEX_APP_UPDATER_ENABLED=true)
           args+=(--dart-define=CODEX_APP_UPDATER_BRIDGE_URL="$bridge_url")
+          args+=(--dart-define=CODEX_APP_UPDATER_AUTO_INSTALL=true)
+          args+=(--dart-define=CODEX_BRIDGE_DEV_MODE=true)
+          args+=(--dart-define=CODEX_BRIDGE_WORKSPACE_PATH=codex-cli-mobile-bridge)
           flutter build apk --release "${args[@]}"
 
       - name: Prepare release artifacts
@@ -86,6 +89,7 @@ jobs:
           cp frontend/mobile_app/build/app/outputs/flutter-apk/app-release.apk "release-artifacts/codex-mobile-${{ steps.app_version.outputs.safe }}.apk"
 
       - name: Upload workflow artifact
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
         continue-on-error: true
         uses: actions/upload-artifact@v7
         with:

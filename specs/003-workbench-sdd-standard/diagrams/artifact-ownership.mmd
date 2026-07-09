@@ -1,0 +1,52 @@
+flowchart TD
+    subgraph Workbench["Workbench-owned standard"]
+        Standard["workbench-sdd/v1"]
+        StandardFile["backend/app/infrastructure/config/sdd_standards/workbench-sdd/v1.yaml"]
+        StandardLoader["SddStandardService"]
+        Taxonomy["Artifact and diagram taxonomy"]
+        Schemas["Metadata and index schemas"]
+        ContextPacks["Context pack presets"]
+        Validators["Validators and doctor checks"]
+        PromptRules["LLM operating rules"]
+    end
+
+    subgraph Manifest["Project adoption manifest"]
+        BridgeYaml["codex-bridge.yaml"]
+        Roots["Project roots"]
+        Domains["Declared domains"]
+        Policies["Protected baselines and overrides"]
+    end
+
+    subgraph Project["Project-owned content"]
+        Constitution[".specify/memory/constitution.md"]
+        Architecture["architecture/"]
+        Domain["domain/"]
+        Data["data/"]
+        Specs["specs/<id-slug>/"]
+    end
+
+    subgraph Generated["Generated navigation"]
+        SpecIndex[".sdd/spec-index.yaml"]
+        DiagramIndex[".sdd/diagram-index.yaml"]
+        ModuleIndex[".sdd/module-index.yaml"]
+        ContextIndex[".sdd/context-index.yaml"]
+    end
+
+    Standard --> BridgeYaml
+    Standard --> StandardFile
+    StandardFile --> StandardLoader
+    StandardLoader --> BridgeYaml
+    Standard --> Taxonomy
+    Standard --> Schemas
+    Standard --> ContextPacks
+    Standard --> Validators
+    Standard --> PromptRules
+    BridgeYaml --> Roots
+    BridgeYaml --> Domains
+    BridgeYaml --> Policies
+    Roots --> Project
+    Project --> Generated
+    Schemas --> Generated
+    ContextPacks --> ContextIndex
+    Validators --> Project
+    PromptRules --> ContextPacks

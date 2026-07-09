@@ -58,6 +58,8 @@ _NEXT_STEP_STATES = (
     RunStageState.NOT_SCHEDULED,
     RunStageState.WAITING,
 )
+
+
 def derive_conversation_product(
     session: ChatSession,
     *,
@@ -217,12 +219,16 @@ def _current_focus(
 
     label = _agent_label(session, _agent_id_for_stage(stage.stage))
     if stage.state == RunStageState.RUNNING:
-        activity = _compact_text(_sanitize_product_text(stage.latest_activity), limit=120)
+        activity = _compact_text(
+            _sanitize_product_text(stage.latest_activity), limit=120
+        )
         if activity:
             return f"{label} is active: {activity}"
         return f"{label} is working now."
     if stage.state == RunStageState.FAILED:
-        activity = _compact_text(_sanitize_product_text(stage.latest_activity), limit=120)
+        activity = _compact_text(
+            _sanitize_product_text(stage.latest_activity), limit=120
+        )
         if activity:
             return f"{label} failed: {activity}"
         return f"{label} failed and needs attention."

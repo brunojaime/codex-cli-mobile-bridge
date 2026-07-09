@@ -1,0 +1,29 @@
+id: 007-initial-preview-release
+slug: 007-initial-preview-release
+title: Initial Preview Release
+description: Make every New Project first release a Cloudflare-backed preview with persistent D1 data, stable preview URL, Android APK, and Bridge installable-app registration.
+status: draft
+last_run_state: metadata-refreshed
+generated:
+  title: false
+  description: false
+  user_pinned_title: true
+  user_pinned_description: true
+tasks:
+  total: 85
+  completed: 0
+  pending: 85
+diagrams:
+  total: 1
+  items:
+    diagrams-initial-preview-release-flow-mmd:
+      path: diagrams/initial-preview-release-flow.mmd
+      diagram_type: sequence
+      metadata_path: diagrams/initial-preview-release-flow.yaml
+source_digests:
+  diagrams/initial-preview-release-flow.mmd: b32e43f5edb004c827fdb7a9f765f70975866024becb25708d52947f5a307f41
+  diagrams/initial-preview-release-flow.yaml: 7a1c6fec49a4a54b9bdf26de708e27e6477793fe7eb26795ea4a2b52a6fc88ef
+  plan.md: e154860ee4163c4be7482533c869ae4cd1009be65f16a6828f942f3063de700e
+  spec.md: 2aa03c9913f76b8602019dc1eae1f6e154b42266ba68c9c7ed52164475769a3c
+  tasks.md: 358e46114775d34fc49e8ab639285a54cf3a47430b16eabd24bd4cbb03b98a32
+  traceability.yaml: 113a0334bc4c906c0bd25f95d139709a14e641d68d2bfcef1599f6933e69b2f2

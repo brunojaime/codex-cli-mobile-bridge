@@ -147,7 +147,9 @@ CONFIGURABLE_AGENT_IDS = (
     *SUPERVISOR_AGENT_IDS,
 )
 _CONFIGURABLE_AGENT_ID_VALUES = {agent_id.value for agent_id in CONFIGURABLE_AGENT_IDS}
-_SUPERVISOR_MEMBER_ID_VALUES = {agent_id.value for agent_id in SUPERVISOR_MEMBER_AGENT_IDS}
+_SUPERVISOR_MEMBER_ID_VALUES = {
+    agent_id.value for agent_id in SUPERVISOR_MEMBER_AGENT_IDS
+}
 
 _DEFAULT_LABELS = {
     AgentId.GENERATOR: "Generator",
@@ -209,7 +211,7 @@ _DEFAULT_TRIGGER_INTERVALS = {
     AgentId.SENIOR_ENGINEER: 0,
     AgentId.SCRAPER: 0,
 }
-_DEFAULT_DETERMINISTIC_SUMMARY_INTERVAL = 4
+_DEFAULT_DETERMINISTIC_SUMMARY_INTERVAL = 3
 _DEFAULT_SUPERVISOR_SUMMARY_WINDOW_START = 3
 _DEFAULT_SUPERVISOR_SUMMARY_WINDOW_END = 6
 
@@ -302,7 +304,9 @@ def _read_supervisor_members(raw: object | None) -> tuple[AgentId, ...]:
         except ValueError as exc:
             raise ValueError("Supervisor member ids contain an unknown agent.") from exc
         if agent_id not in SUPERVISOR_MEMBER_AGENT_IDS:
-            raise ValueError("Supervisor member ids must reference specialist agents only.")
+            raise ValueError(
+                "Supervisor member ids must reference specialist agents only."
+            )
         if agent_id in seen:
             continue
         seen.add(agent_id)
@@ -343,7 +347,9 @@ class AgentDefinition:
     def normalized(self) -> "AgentDefinition":
         label = " ".join(self.label.split()).strip()
         if not label:
-            raise ValueError(f"Agent {self.agent_id.value} must have a non-empty label.")
+            raise ValueError(
+                f"Agent {self.agent_id.value} must have a non-empty label."
+            )
         if len(label) > _MAX_AGENT_LABEL_LENGTH:
             raise ValueError(
                 f"Agent {self.agent_id.value} label exceeds {_MAX_AGENT_LABEL_LENGTH} characters."
@@ -351,7 +357,9 @@ class AgentDefinition:
 
         prompt = self.prompt.strip()
         if self.enabled and not prompt:
-            raise ValueError(f"Enabled agent {self.agent_id.value} must have a non-empty prompt.")
+            raise ValueError(
+                f"Enabled agent {self.agent_id.value} must have a non-empty prompt."
+            )
         if len(prompt) > _MAX_AGENT_PROMPT_LENGTH:
             raise ValueError(
                 f"Agent {self.agent_id.value} prompt exceeds {_MAX_AGENT_PROMPT_LENGTH} characters."
@@ -363,7 +371,9 @@ class AgentDefinition:
             )
 
         if self.max_turns < 0:
-            raise ValueError(f"Agent {self.agent_id.value} max_turns must be non-negative.")
+            raise ValueError(
+                f"Agent {self.agent_id.value} max_turns must be non-negative."
+            )
         if self.trigger_interval < 0:
             raise ValueError(
                 f"Agent {self.agent_id.value} trigger_interval must be non-negative."
@@ -560,11 +570,14 @@ class AgentConfiguration:
             agent_type=AgentType.GENERATOR,
             enabled=True,
             label=normalized_agents[AgentId.GENERATOR].label,
-            prompt=normalized_agents[AgentId.GENERATOR].prompt or _DEFAULT_GENERATOR_PROMPT,
+            prompt=normalized_agents[AgentId.GENERATOR].prompt
+            or _DEFAULT_GENERATOR_PROMPT,
             visibility=AgentVisibilityMode.VISIBLE,
             max_turns=max(1, normalized_agents[AgentId.GENERATOR].max_turns),
             trigger_interval=0,
-            provider_session_id=normalized_agents[AgentId.GENERATOR].provider_session_id,
+            provider_session_id=normalized_agents[
+                AgentId.GENERATOR
+            ].provider_session_id,
             model=normalized_agents[AgentId.GENERATOR].model,
         ).normalized()
 
@@ -574,11 +587,14 @@ class AgentConfiguration:
                 agent_type=AgentType.SUMMARY,
                 enabled=True,
                 label=normalized_agents[AgentId.SUMMARY].label,
-                prompt=normalized_agents[AgentId.SUMMARY].prompt or _DEFAULT_SUMMARY_PROMPT,
+                prompt=normalized_agents[AgentId.SUMMARY].prompt
+                or _DEFAULT_SUMMARY_PROMPT,
                 visibility=normalized_agents[AgentId.SUMMARY].visibility,
                 max_turns=max(1, normalized_agents[AgentId.SUMMARY].max_turns),
                 trigger_interval=summary_trigger_interval,
-                provider_session_id=normalized_agents[AgentId.SUMMARY].provider_session_id,
+                provider_session_id=normalized_agents[
+                    AgentId.SUMMARY
+                ].provider_session_id,
                 model=normalized_agents[AgentId.SUMMARY].model,
             ).normalized()
 
@@ -597,7 +613,11 @@ class AgentConfiguration:
                 model=specialist.model,
             ).normalized()
 
-        if not any(agent.enabled for agent in normalized_agents.values() if agent.agent_id != AgentId.GENERATOR):
+        if not any(
+            agent.enabled
+            for agent in normalized_agents.values()
+            if agent.agent_id != AgentId.GENERATOR
+        ):
             preset = AgentPreset.SOLO
         elif normalized_agents[AgentId.SUMMARY].enabled:
             preset = AgentPreset.TRIAD
@@ -656,13 +676,19 @@ class AgentConfiguration:
         configuration = cls.default()
         configuration.preset = AgentPreset.REVIEW if enabled else AgentPreset.SOLO
         configuration.turn_budget_mode = TurnBudgetMode.EACH_AGENT
-        configuration.agents[AgentId.GENERATOR].provider_session_id = generator_provider_session_id
+        configuration.agents[
+            AgentId.GENERATOR
+        ].provider_session_id = generator_provider_session_id
         configuration.agents[AgentId.REVIEWER].enabled = enabled
         configuration.agents[AgentId.REVIEWER].max_turns = max(0, max_turns)
         configuration.agents[AgentId.REVIEWER].prompt = (
-            reviewer_prompt.strip() if reviewer_prompt and reviewer_prompt.strip() else _DEFAULT_REVIEWER_PROMPT
+            reviewer_prompt.strip()
+            if reviewer_prompt and reviewer_prompt.strip()
+            else _DEFAULT_REVIEWER_PROMPT
         )
-        configuration.agents[AgentId.REVIEWER].provider_session_id = reviewer_provider_session_id
+        configuration.agents[
+            AgentId.REVIEWER
+        ].provider_session_id = reviewer_provider_session_id
         configuration.agents[AgentId.SUMMARY].enabled = False
         configuration.agents[AgentId.SUMMARY].max_turns = 0
         return configuration.normalized()
@@ -697,7 +723,9 @@ class AgentConfiguration:
             if unknown_agent_ids:
                 raise ValueError("Agent configuration contains unknown agent ids.")
 
-        supervisor_member_ids = _read_supervisor_members(raw.get("supervisor_member_ids"))
+        supervisor_member_ids = _read_supervisor_members(
+            raw.get("supervisor_member_ids")
+        )
         raw_summary_strategy = raw.get("summary_strategy")
         if raw_summary_strategy is None:
             trigger_interval_fallback = _DEFAULT_DETERMINISTIC_SUMMARY_INTERVAL
@@ -758,7 +786,9 @@ class AgentConfiguration:
         agents: dict[AgentId, AgentDefinition] = {}
         for agent_id in CONFIGURABLE_AGENT_IDS:
             default = default_agent_definition(agent_id, preset=preset)
-            candidate_raw = raw_agents.get(agent_id.value) if isinstance(raw_agents, dict) else None
+            candidate_raw = (
+                raw_agents.get(agent_id.value) if isinstance(raw_agents, dict) else None
+            )
             if candidate_raw is None:
                 agents[agent_id] = default
                 continue
@@ -772,14 +802,19 @@ class AgentConfiguration:
                 )
                 candidate_type = AgentType(
                     normalize_agent_enum_value(
-                        str(candidate_raw.get("agent_type") or _default_type(agent_id).value)
+                        str(
+                            candidate_raw.get("agent_type")
+                            or _default_type(agent_id).value
+                        )
                     )
                 )
                 visibility = AgentVisibilityMode(
                     str(candidate_raw.get("visibility") or default.visibility.value)
                 )
             except ValueError as exc:
-                raise ValueError(f"Agent {agent_id.value} contains an invalid enum value.") from exc
+                raise ValueError(
+                    f"Agent {agent_id.value} contains an invalid enum value."
+                ) from exc
 
             if candidate_id != agent_id:
                 raise ValueError(f"Malformed config for agent {agent_id.value}.")
@@ -791,7 +826,9 @@ class AgentConfiguration:
                 label=_read_str_field(candidate_raw, "label", default.label),
                 prompt=_read_str_field(candidate_raw, "prompt", default.prompt),
                 visibility=visibility,
-                max_turns=_read_int_field(candidate_raw, "max_turns", default.max_turns),
+                max_turns=_read_int_field(
+                    candidate_raw, "max_turns", default.max_turns
+                ),
                 trigger_interval=_read_int_field(
                     candidate_raw,
                     "trigger_interval",

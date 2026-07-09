@@ -1,0 +1,58 @@
+kind: codex.bridge.project
+version: 1
+project:
+  id: codex-cli-mobile-bridge
+  name: Codex CLI Mobile Bridge
+sdd:
+  required: true
+  standard: workbench-sdd/v1
+  project_type: bridge_backend
+  devModeFlag: CODEX_BRIDGE_DEV_MODE
+  constitution: .specify/memory/constitution.md
+  specs: specs
+  architecture: architecture
+  domain_root: domain
+  data_root: data
+  generated_index_root: .sdd
+  diagramsSourceOfTruth: mmd
+  renderedDiagramCache: .codex-bridge/cache/diagrams
+  dashboardScope: current-workspace
+  protected_baseline:
+    - architecture/components.mmd
+    - architecture/deployment.mmd
+    - architecture/classes.mmd
+    - architecture/entity-relationship.mmd
+  context_rules:
+    domains:
+      workbench:
+        modules:
+          - backend/app/application/services
+          - backend/app/api
+          - packages/codex_bridge_workbench/lib
+        preferred_context:
+          - specs/003-workbench-sdd-standard/spec.md
+          - specs/003-workbench-sdd-standard/tasks.md
+    excluded_paths:
+      - .git
+      - .codex-bridge/cache
+      - frontend/mobile_app/build
+    candidate_limits:
+      related_specs: 5
+      related_diagrams: 3
+  requiredDiagramCategories:
+    - component
+    - deployment
+    - sequence
+    - class
+    - entity-relationship
+    - use-case
+  diagramChangeRequests:
+    enabled: true
+    selectionKinds:
+      - node
+      - edge
+      - region
+frontend:
+  wrapper:
+    compileTimeFlag: CODEX_BRIDGE_DEV_MODE
+    disabledBehavior: return-child-unchanged

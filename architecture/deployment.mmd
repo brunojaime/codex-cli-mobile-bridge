@@ -1,0 +1,40 @@
+flowchart TB
+    subgraph AndroidDevice["Physical location: Android device"]
+        App["Flutter app"]
+        Wrapper["Codex dev wrapper, compile-time gated"]
+        Panel["Project-local SDD panel"]
+    end
+
+    subgraph BridgeHost["Physical location: configured Bridge backend host"]
+        Api["FastAPI backend"]
+        FeedbackStore["Feedback persistence"]
+        CodexRuntime["Codex CLI runtime"]
+        DiagramCache["Rendered diagram cache"]
+    end
+
+    subgraph WorkspaceHost["Physical location: project filesystem host"]
+        ProjectsRoot["PROJECTS_ROOT"]
+        Workspace["Current workspace"]
+        SddFiles["SDD markdown and Mermaid files"]
+        RealRuntimeConfig["Real backend, updater, feedback, release config"]
+    end
+
+    subgraph ReleaseSystems["Physical location: configured release/update systems"]
+        GitHub["GitHub repository and releases"]
+        UpdateEndpoint["Configured update endpoint"]
+        BackendDeps["Project backend dependencies"]
+    end
+
+    App --> Wrapper
+    Wrapper --> Panel
+    Panel --> Api
+    Api --> FeedbackStore
+    Api --> CodexRuntime
+    Api --> DiagramCache
+    Api --> ProjectsRoot
+    ProjectsRoot --> Workspace
+    Workspace --> SddFiles
+    Workspace --> RealRuntimeConfig
+    RealRuntimeConfig --> GitHub
+    RealRuntimeConfig --> UpdateEndpoint
+    RealRuntimeConfig --> BackendDeps

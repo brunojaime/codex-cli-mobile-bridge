@@ -1,0 +1,6 @@
+diagram_id: codex-cli-orchestration
+diagram_type: sequence
+scope: feature
+status: draft
+owner: project
+source: specs/004-workbench-scm-spec-intake/diagrams/codex-cli-orchestration.mmd

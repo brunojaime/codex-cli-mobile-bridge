@@ -27,7 +27,10 @@ from backend.app.domain.entities.agent_configuration import (
     normalize_agent_enum_value,
 )
 from backend.app.domain.entities.agent_run import AgentRun
-from backend.app.domain.entities.agent_profile import AgentProfile, builtin_agent_profiles_by_id
+from backend.app.domain.entities.agent_profile import (
+    AgentProfile,
+    builtin_agent_profiles_by_id,
+)
 from backend.app.domain.entities.chat_session import ChatSession
 from backend.app.domain.entities.chat_turn_summary import (
     ChatTurnSummary,
@@ -150,7 +153,10 @@ class SqliteChatRepository(ChatRepository):
     def list_sessions(self) -> list[ChatSession]:
         with self._lock, self._connect() as connection:
             rows = connection.execute(
-                "SELECT * FROM sessions ORDER BY updated_at DESC",
+                """
+                SELECT * FROM sessions
+                ORDER BY updated_at DESC, created_at DESC, id DESC
+                """,
             ).fetchall()
         return [self._session_from_row(row) for row in rows]
 
@@ -455,11 +461,28 @@ class SqliteChatRepository(ChatRepository):
             "turn_summary_checkpoint_initialized",
             "INTEGER NOT NULL DEFAULT 0",
         )
-        self._ensure_column(connection, "sessions", "agent_profile_id", "TEXT NOT NULL DEFAULT 'default'")
-        self._ensure_column(connection, "sessions", "agent_profile_name", "TEXT NOT NULL DEFAULT 'Generator'")
-        self._ensure_column(connection, "sessions", "agent_profile_color", "TEXT NOT NULL DEFAULT '#55D6BE'")
+        self._ensure_column(
+            connection,
+            "sessions",
+            "agent_profile_id",
+            "TEXT NOT NULL DEFAULT 'default'",
+        )
+        self._ensure_column(
+            connection,
+            "sessions",
+            "agent_profile_name",
+            "TEXT NOT NULL DEFAULT 'Generator'",
+        )
+        self._ensure_column(
+            connection,
+            "sessions",
+            "agent_profile_color",
+            "TEXT NOT NULL DEFAULT '#55D6BE'",
+        )
         self._ensure_column(connection, "sessions", "provider_session_id", "TEXT")
-        self._ensure_column(connection, "sessions", "reviewer_provider_session_id", "TEXT")
+        self._ensure_column(
+            connection, "sessions", "reviewer_provider_session_id", "TEXT"
+        )
         self._ensure_column(connection, "sessions", "agent_configuration_json", "TEXT")
         self._ensure_column(connection, "sessions", "active_agent_run_id", "TEXT")
         self._ensure_column(
@@ -504,12 +527,22 @@ class SqliteChatRepository(ChatRepository):
         self._ensure_column(connection, "jobs", "phase", "TEXT")
         self._ensure_column(connection, "jobs", "latest_activity", "TEXT")
         self._ensure_column(connection, "jobs", "completed_at", "TEXT")
-        self._ensure_column(connection, "messages", "author_type", "TEXT NOT NULL DEFAULT 'human'")
-        self._ensure_column(connection, "messages", "agent_id", "TEXT NOT NULL DEFAULT 'generator'")
-        self._ensure_column(connection, "messages", "agent_type", "TEXT NOT NULL DEFAULT 'generator'")
+        self._ensure_column(
+            connection, "messages", "author_type", "TEXT NOT NULL DEFAULT 'human'"
+        )
+        self._ensure_column(
+            connection, "messages", "agent_id", "TEXT NOT NULL DEFAULT 'generator'"
+        )
+        self._ensure_column(
+            connection, "messages", "agent_type", "TEXT NOT NULL DEFAULT 'generator'"
+        )
         self._ensure_column(connection, "messages", "agent_label", "TEXT")
-        self._ensure_column(connection, "messages", "visibility", "TEXT NOT NULL DEFAULT 'visible'")
-        self._ensure_column(connection, "messages", "trigger_source", "TEXT NOT NULL DEFAULT 'system'")
+        self._ensure_column(
+            connection, "messages", "visibility", "TEXT NOT NULL DEFAULT 'visible'"
+        )
+        self._ensure_column(
+            connection, "messages", "trigger_source", "TEXT NOT NULL DEFAULT 'system'"
+        )
         self._ensure_column(connection, "messages", "run_id", "TEXT")
         self._ensure_column(connection, "messages", "dedupe_key", "TEXT")
         self._ensure_column(connection, "messages", "submission_token", "TEXT")
@@ -555,9 +588,15 @@ class SqliteChatRepository(ChatRepository):
             "conversation_kind",
             "TEXT NOT NULL DEFAULT 'primary'",
         )
-        self._ensure_column(connection, "jobs", "agent_id", "TEXT NOT NULL DEFAULT 'generator'")
-        self._ensure_column(connection, "jobs", "agent_type", "TEXT NOT NULL DEFAULT 'generator'")
-        self._ensure_column(connection, "jobs", "trigger_source", "TEXT NOT NULL DEFAULT 'user'")
+        self._ensure_column(
+            connection, "jobs", "agent_id", "TEXT NOT NULL DEFAULT 'generator'"
+        )
+        self._ensure_column(
+            connection, "jobs", "agent_type", "TEXT NOT NULL DEFAULT 'generator'"
+        )
+        self._ensure_column(
+            connection, "jobs", "trigger_source", "TEXT NOT NULL DEFAULT 'user'"
+        )
         self._ensure_column(connection, "jobs", "run_id", "TEXT")
         self._ensure_column(connection, "jobs", "submission_token", "TEXT")
         self._ensure_column(
@@ -626,7 +665,9 @@ class SqliteChatRepository(ChatRepository):
                 field="workspace_name",
             ),
             turn_summaries_enabled=bool(row["turn_summaries_enabled"]),
-            turn_summary_checkpoint_message_id=row["turn_summary_checkpoint_message_id"],
+            turn_summary_checkpoint_message_id=row[
+                "turn_summary_checkpoint_message_id"
+            ],
             turn_summary_checkpoint_initialized=bool(
                 row["turn_summary_checkpoint_initialized"]
             ),
@@ -815,9 +856,7 @@ class SqliteChatRepository(ChatRepository):
             else ChatMessageAuthorType.HUMAN
         )
         default_agent_id = (
-            AgentId.GENERATOR
-            if role == ChatMessageRole.ASSISTANT
-            else AgentId.USER
+            AgentId.GENERATOR if role == ChatMessageRole.ASSISTANT else AgentId.USER
         )
         default_agent_type = (
             AgentType.GENERATOR
@@ -850,7 +889,10 @@ class SqliteChatRepository(ChatRepository):
             default_trigger_source,
         )
 
-        if role == ChatMessageRole.ASSISTANT and author_type == ChatMessageAuthorType.HUMAN:
+        if (
+            role == ChatMessageRole.ASSISTANT
+            and author_type == ChatMessageAuthorType.HUMAN
+        ):
             author_type = ChatMessageAuthorType.ASSISTANT
         if (
             role == ChatMessageRole.USER
@@ -1210,8 +1252,7 @@ class SqliteChatRepository(ChatRepository):
         connection: sqlite3.Connection,
     ) -> list[str]:
         return [
-            row[0]
-            for row in connection.execute("PRAGMA integrity_check").fetchall()
+            row[0] for row in connection.execute("PRAGMA integrity_check").fetchall()
         ]
 
     def _table_columns(
@@ -1330,7 +1371,9 @@ class SqliteChatRepository(ChatRepository):
                 code=f"invalid_{field}",
                 detail="Expected valid JSON.",
             ) from exc
-        if not isinstance(payload, list) or not all(isinstance(item, str) for item in payload):
+        if not isinstance(payload, list) or not all(
+            isinstance(item, str) for item in payload
+        ):
             raise PersistenceDataError(
                 table=table,
                 row_id=row_id,
@@ -1869,7 +1912,9 @@ class SqliteChatRepository(ChatRepository):
                 message.dedupe_key,
                 message.submission_token,
                 message.reason_code.value if message.reason_code is not None else None,
-                message.recovery_action.value if message.recovery_action is not None else None,
+                message.recovery_action.value
+                if message.recovery_action is not None
+                else None,
                 message.recovered_from_message_id,
                 message.superseded_by_message_id,
                 message.content,

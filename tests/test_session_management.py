@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from collections.abc import Callable
 from dataclasses import replace
 from datetime import timedelta
@@ -25,10 +26,49 @@ from backend.app.domain.entities.chat_turn_summary import (
 from backend.app.domain.entities.codex_options import CodexRunOptions
 from backend.app.domain.entities.job import utc_now
 from backend.app.domain.entities.job import JobStatus
-from backend.app.infrastructure.execution.base import ExecutionProvider, ExecutionSnapshot
-from backend.app.infrastructure.persistence.in_memory_chat_repository import InMemoryChatRepository
-from backend.app.infrastructure.persistence.sqlite_chat_repository import SqliteChatRepository
-from backend.app.infrastructure.transcription.disabled_transcriber import DisabledAudioTranscriber
+from backend.app.infrastructure.execution.base import (
+    ExecutionProvider,
+    ExecutionSnapshot,
+)
+from backend.app.infrastructure.persistence.in_memory_chat_repository import (
+    InMemoryChatRepository,
+)
+from backend.app.infrastructure.persistence.sqlite_chat_repository import (
+    SqliteChatRepository,
+)
+from backend.app.infrastructure.transcription.disabled_transcriber import (
+    DisabledAudioTranscriber,
+)
+
+
+_TITLE_GENERATION_PROMPT_PREFIX = "Create a concise, specific chat title"
+
+
+def _is_title_generation_prompt(message: str) -> bool:
+    return message.startswith(_TITLE_GENERATION_PROMPT_PREFIX)
+
+
+def _wait_until(
+    predicate: Callable[[], bool],
+    *,
+    timeout_seconds: float = 1.0,
+) -> None:
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        if predicate():
+            return
+        time.sleep(0.01)
+    assert predicate()
+
+
+def _title_generation_calls(
+    provider: "_InstantExecutionProvider",
+) -> list[tuple[str, str | None]]:
+    return [
+        (message, model)
+        for message, model in provider.calls
+        if _is_title_generation_prompt(message)
+    ]
 
 
 class _InstantExecutionProvider(ExecutionProvider):
@@ -53,7 +93,7 @@ class _InstantExecutionProvider(ExecutionProvider):
         self.calls.append((message, model))
         response = (
             "Release checklist"
-            if message.startswith("Create a concise chat title")
+            if _is_title_generation_prompt(message)
             else f"Completed: {message}"
         )
         self._snapshots[job_id] = ExecutionSnapshot(
@@ -229,6 +269,7 @@ class _DelayedTurnSummaryExecutionProvider(ExecutionProvider):
     def get_latest_activity(self, job_id: str) -> str | None:
         return self.get_snapshot(job_id).latest_activity
 
+
 def _build_service(
     projects_root: str,
     *,
@@ -286,6 +327,54 @@ def test_session_archive_can_be_toggled() -> None:
         assert restored.archived_at is None
 
 
+def test_session_can_be_renamed_manually() -> None:
+    with TemporaryDirectory() as temp_dir:
+        workspace = Path(temp_dir) / "repo"
+        workspace.mkdir()
+        service = _build_service(temp_dir)
+
+        session = service.create_session(workspace_path=str(workspace))
+        renamed = service.rename_session(
+            session_id=session.id,
+            title="  Release planning   notes  ",
+        )
+
+        assert renamed.title == "Release planning notes"
+        assert renamed.title_is_placeholder is False
+
+
+def test_generated_session_title_uses_instructions_and_clears_placeholder() -> None:
+    with TemporaryDirectory() as temp_dir:
+        workspace = Path(temp_dir) / "repo"
+        workspace.mkdir()
+        provider = _InstantExecutionProvider()
+        service = _build_service(temp_dir, execution_provider=provider)
+
+        session = service.create_session(workspace_path=str(workspace))
+        service._repository.save_message(
+            ChatMessage(
+                id="message-1",
+                session_id=session.id,
+                role=ChatMessageRole.USER,
+                author_type=ChatMessageAuthorType.HUMAN,
+                content="Fix the release checklist bugs",
+                status=ChatMessageStatus.COMPLETED,
+            )
+        )
+
+        renamed = service.generate_session_title(
+            session_id=session.id,
+            instructions="Make it about release QA",
+        )
+
+        assert renamed.title == "Release checklist"
+        assert renamed.title_is_placeholder is False
+        title_prompts = _title_generation_calls(provider)
+        assert title_prompts
+        assert "User title instructions:" in title_prompts[-1][0]
+        assert "Make it about release QA" in title_prompts[-1][0]
+
+
 def test_sqlite_session_round_trip_preserves_optional_archived_at() -> None:
     with TemporaryDirectory() as temp_dir:
         workspace = Path(temp_dir) / "repo"
@@ -310,6 +399,80 @@ def test_sqlite_session_round_trip_preserves_optional_archived_at() -> None:
 
         assert restored is not None
         assert restored.archived_at == archived_at
+
+
+def test_repositories_list_sessions_by_recent_activity_with_deterministic_ties() -> (
+    None
+):
+    with TemporaryDirectory() as temp_dir:
+        workspace_a = Path(temp_dir) / "project-a"
+        workspace_b = Path(temp_dir) / "project-b"
+        workspace_a.mkdir()
+        workspace_b.mkdir()
+        timestamp = utc_now()
+        sessions = [
+            ChatSession(
+                id="a-old",
+                title="A old",
+                workspace_path=str(workspace_a),
+                workspace_name=workspace_a.name,
+                created_at=timestamp - timedelta(hours=4),
+                updated_at=timestamp - timedelta(hours=3),
+            ),
+            ChatSession(
+                id="a-new",
+                title="A new",
+                workspace_path=str(workspace_a),
+                workspace_name=workspace_a.name,
+                created_at=timestamp - timedelta(hours=2),
+                updated_at=timestamp,
+            ),
+            ChatSession(
+                id="b-newer-created",
+                title="B newer created",
+                workspace_path=str(workspace_b),
+                workspace_name=workspace_b.name,
+                created_at=timestamp - timedelta(minutes=30),
+                updated_at=timestamp,
+            ),
+            ChatSession(
+                id="b-older-created",
+                title="B older created",
+                workspace_path=str(workspace_b),
+                workspace_name=workspace_b.name,
+                created_at=timestamp - timedelta(hours=1),
+                updated_at=timestamp,
+            ),
+        ]
+        repositories = [
+            InMemoryChatRepository(projects_root=temp_dir),
+            SqliteChatRepository(
+                database_path=str(Path(temp_dir) / "chat.sqlite3"),
+                projects_root=temp_dir,
+            ),
+        ]
+
+        for repository in repositories:
+            for session in sessions:
+                repository.save_session(session)
+
+            listed = repository.list_sessions()
+            assert [session.id for session in listed] == [
+                "b-newer-created",
+                "b-older-created",
+                "a-new",
+                "a-old",
+            ]
+            assert [
+                session.id
+                for session in listed
+                if session.workspace_path == str(workspace_a)
+            ] == ["a-new", "a-old"]
+            assert [
+                session.id
+                for session in listed
+                if session.workspace_path == str(workspace_b)
+            ] == ["b-newer-created", "b-older-created"]
 
 
 def test_sqlite_session_round_trip_preserves_turn_summary_checkpoint() -> None:
@@ -388,7 +551,9 @@ def test_sqlite_turn_summary_round_trip_preserves_source_message_snapshot() -> N
         assert restored[0].source_messages == summary.source_messages
 
 
-def test_turn_summary_response_falls_back_to_live_message_content_for_legacy_summaries() -> None:
+def test_turn_summary_response_falls_back_to_live_message_content_for_legacy_summaries() -> (
+    None
+):
     timestamp = utc_now()
     summary = ChatTurnSummary(
         id="legacy-summary",
@@ -499,7 +664,9 @@ def test_turn_summary_prompt_sanitizes_stale_image_attachment_errors() -> None:
         ) in prompt
 
 
-def test_turn_summary_waits_longer_than_four_seconds_for_hidden_summary_completion() -> None:
+def test_turn_summary_waits_longer_than_four_seconds_for_hidden_summary_completion() -> (
+    None
+):
     with TemporaryDirectory() as temp_dir:
         workspace = Path(temp_dir) / "repo"
         workspace.mkdir()
@@ -549,37 +716,65 @@ def test_placeholder_session_title_is_generated_after_four_user_turns() -> None:
     with TemporaryDirectory() as temp_dir:
         workspace = Path(temp_dir) / "repo"
         workspace.mkdir()
-        service = _build_service(temp_dir)
+        provider = _InstantExecutionProvider()
+        service = _build_service(temp_dir, execution_provider=provider)
 
         session = service.create_session(workspace_path=str(workspace))
+        assert session.title == "New chat"
         assert session.title_is_placeholder is True
 
-        for index in range(4):
-            service.submit_message(
-                f"Turn {index + 1}: investigate the release checklist flow",
-                session_id=session.id,
-            )
+        service.submit_message(
+            "Turn 1: investigate the release checklist flow",
+            session_id=session.id,
+        )
 
+        _wait_until(
+            lambda: (
+                (service.get_session(session.id) or session).title
+                == "Release checklist"
+            )
+        )
         updated = service.get_session(session.id)
         assert updated is not None
         assert updated.title == "Release checklist"
-        assert updated.title_is_placeholder is False
+        assert updated.title_is_placeholder is True
+        assert len(_title_generation_calls(provider)) == 1
+
+        service.submit_message(
+            "Turn 2: refresh the release checklist scope",
+            session_id=session.id,
+        )
+
+        _wait_until(lambda: len(_title_generation_calls(provider)) == 2)
+        refreshed = service.get_session(session.id)
+        assert refreshed is not None
+        assert refreshed.title == "Release checklist"
+        assert refreshed.title_is_placeholder is True
 
 
 def test_manual_session_title_is_not_replaced_by_auto_generation() -> None:
     with TemporaryDirectory() as temp_dir:
         workspace = Path(temp_dir) / "repo"
         workspace.mkdir()
-        service = _build_service(temp_dir)
+        provider = _InstantExecutionProvider()
+        service = _build_service(temp_dir, execution_provider=provider)
 
         session = service.create_session(
             title="Manual title",
             workspace_path=str(workspace),
         )
 
-        for index in range(4):
+        with patch.object(
+            service,
+            "_queue_session_title_refresh",
+            side_effect=service._maybe_finalize_session_title,
+        ):
             service.submit_message(
-                f"Turn {index + 1}: discuss the manual title behavior",
+                "Turn 1: discuss the manual title behavior",
+                session_id=session.id,
+            )
+            service.submit_message(
+                "Turn 2: keep manual title behavior",
                 session_id=session.id,
             )
 
@@ -587,6 +782,7 @@ def test_manual_session_title_is_not_replaced_by_auto_generation() -> None:
         assert updated is not None
         assert updated.title == "Manual title"
         assert updated.title_is_placeholder is False
+        assert _title_generation_calls(provider) == []
 
 
 def test_placeholder_title_generation_uses_configured_title_model() -> None:
@@ -601,18 +797,45 @@ def test_placeholder_title_generation_uses_configured_title_model() -> None:
         )
 
         session = service.create_session(workspace_path=str(workspace))
-        for index in range(4):
-            service.submit_message(
-                f"Turn {index + 1}: investigate the release checklist flow",
-                session_id=session.id,
+        service.submit_message(
+            "Turn 1: investigate the release checklist flow",
+            session_id=session.id,
+        )
+
+        _wait_until(lambda: len(_title_generation_calls(provider)) == 1)
+        title_calls = [model for _message, model in _title_generation_calls(provider)]
+        assert title_calls == ["gpt-5.4-mini"]
+
+
+def test_implicit_session_starts_with_placeholder_title_before_generation() -> None:
+    with TemporaryDirectory() as temp_dir:
+        workspace = Path(temp_dir) / "repo"
+        workspace.mkdir()
+        service = _build_service(temp_dir)
+
+        with patch.object(service, "_queue_session_title_refresh") as queue_refresh:
+            job = service.submit_message(
+                "Investigate the implicit session title path",
+                workspace_path=str(workspace),
             )
 
-        title_calls = [
-            model
-            for message, model in provider.calls
-            if message.startswith("Create a concise chat title")
-        ]
-        assert title_calls == ["gpt-5.4-mini"]
+        queue_refresh.assert_called_once_with(job.session_id)
+        created = service.get_session(job.session_id)
+        assert created is not None
+        assert created.title == "New chat"
+        assert created.title_is_placeholder is True
+
+        service._maybe_finalize_session_title(job.session_id)
+        _wait_until(
+            lambda: (
+                (service.get_session(job.session_id) or created).title
+                == "Release checklist"
+            )
+        )
+        updated = service.get_session(job.session_id)
+        assert updated is not None
+        assert updated.title == "Release checklist"
+        assert updated.title_is_placeholder is True
 
 
 def test_submit_message_uses_agent_model_override() -> None:
@@ -669,7 +892,9 @@ def test_turn_summary_toggle_can_be_updated() -> None:
         assert updated.turn_summary_checkpoint_initialized is True
 
 
-def test_new_session_created_enabled_still_summarizes_first_four_terminal_messages() -> None:
+def test_new_session_created_enabled_still_summarizes_first_four_terminal_messages() -> (
+    None
+):
     with TemporaryDirectory() as temp_dir:
         workspace = Path(temp_dir) / "repo"
         workspace.mkdir()
@@ -726,7 +951,9 @@ def test_new_session_created_enabled_still_summarizes_first_four_terminal_messag
         }
 
 
-def test_failed_visible_jobs_still_trigger_turn_summary_after_four_terminal_messages() -> None:
+def test_failed_visible_jobs_still_trigger_turn_summary_after_four_terminal_messages() -> (
+    None
+):
     with TemporaryDirectory() as temp_dir:
         workspace = Path(temp_dir) / "repo"
         workspace.mkdir()
@@ -755,9 +982,7 @@ def test_failed_visible_jobs_still_trigger_turn_summary_after_four_terminal_mess
         summary_message_ids = set(summaries[0].source_message_ids)
         all_messages = service.list_messages(session.id)
         summarized_messages = [
-            message
-            for message in all_messages
-            if message.id in summary_message_ids
+            message for message in all_messages if message.id in summary_message_ids
         ]
         assert {message.content for message in summarized_messages} == {
             "Failed turn one",
@@ -765,10 +990,18 @@ def test_failed_visible_jobs_still_trigger_turn_summary_after_four_terminal_mess
             "Failed turn two",
             "Visible job failed.",
         }
-        assert sum(message.status == ChatMessageStatus.FAILED for message in summarized_messages) == 2
+        assert (
+            sum(
+                message.status == ChatMessageStatus.FAILED
+                for message in summarized_messages
+            )
+            == 2
+        )
 
 
-def test_turn_summary_provenance_snapshot_is_immutable_after_source_message_mutation() -> None:
+def test_turn_summary_provenance_snapshot_is_immutable_after_source_message_mutation() -> (
+    None
+):
     with TemporaryDirectory() as temp_dir:
         workspace = Path(temp_dir) / "repo"
         workspace.mkdir()
@@ -785,9 +1018,13 @@ def test_turn_summary_provenance_snapshot_is_immutable_after_source_message_muta
             turn_summaries_enabled=True,
         )
 
-        first_job = service.submit_message("Immutable snapshot turn one", session_id=session.id)
+        first_job = service.submit_message(
+            "Immutable snapshot turn one", session_id=session.id
+        )
         service.get_job(first_job.id)
-        second_job = service.submit_message("Immutable snapshot turn two", session_id=session.id)
+        second_job = service.submit_message(
+            "Immutable snapshot turn two", session_id=session.id
+        )
         service.get_job(second_job.id)
 
         summaries = service.list_turn_summaries(session.id)
@@ -795,7 +1032,9 @@ def test_turn_summary_provenance_snapshot_is_immutable_after_source_message_muta
         original_summary = summaries[0]
         original_response = TurnSummaryResponse.from_domain(
             original_summary,
-            messages_by_id={message.id: message for message in service.list_messages(session.id)},
+            messages_by_id={
+                message.id: message for message in service.list_messages(session.id)
+            },
         )
 
         mutated_message_id = original_summary.source_message_ids[-1]
@@ -811,13 +1050,17 @@ def test_turn_summary_provenance_snapshot_is_immutable_after_source_message_muta
         updated_summary = service.list_turn_summaries(session.id)[0]
         updated_response = TurnSummaryResponse.from_domain(
             updated_summary,
-            messages_by_id={message.id: message for message in service.list_messages(session.id)},
+            messages_by_id={
+                message.id: message for message in service.list_messages(session.id)
+            },
         )
 
         assert updated_response.source_messages == original_response.source_messages
 
 
-def test_enable_mid_chat_does_not_summarize_old_history_and_waits_for_new_window() -> None:
+def test_enable_mid_chat_does_not_summarize_old_history_and_waits_for_new_window() -> (
+    None
+):
     with TemporaryDirectory() as temp_dir:
         workspace = Path(temp_dir) / "repo"
         workspace.mkdir()
@@ -866,7 +1109,9 @@ def test_enable_mid_chat_does_not_summarize_old_history_and_waits_for_new_window
         assert len(summaries) == 1
         assert len(summaries[0].source_message_ids) == 4
         assert any(
-            call[0].startswith("Summarize these recent chat updates for future context.")
+            call[0].startswith(
+                "Summarize these recent chat updates for future context."
+            )
             for call in provider.calls
         )
 
@@ -952,7 +1197,9 @@ def test_disable_then_reenable_turn_summaries_resets_window() -> None:
         }
 
 
-def test_sqlite_legacy_enabled_session_is_repaired_without_backfilling_history() -> None:
+def test_sqlite_legacy_enabled_session_is_repaired_without_backfilling_history() -> (
+    None
+):
     with TemporaryDirectory() as temp_dir:
         workspace = Path(temp_dir) / "repo"
         workspace.mkdir()
@@ -965,9 +1212,13 @@ def test_sqlite_legacy_enabled_session_is_repaired_without_backfilling_history()
         )
 
         session = service.create_session(workspace_path=str(workspace))
-        history_job_1 = service.submit_message("Legacy history turn one", session_id=session.id)
+        history_job_1 = service.submit_message(
+            "Legacy history turn one", session_id=session.id
+        )
         service.get_job(history_job_1.id)
-        history_job_2 = service.submit_message("Legacy history turn two", session_id=session.id)
+        history_job_2 = service.submit_message(
+            "Legacy history turn two", session_id=session.id
+        )
         service.get_job(history_job_2.id)
 
         repository = SqliteChatRepository(
@@ -1027,7 +1278,9 @@ def test_sqlite_legacy_enabled_session_is_repaired_without_backfilling_history()
         }
 
 
-def test_sqlite_legacy_enabled_session_with_existing_summary_keeps_unsummarized_tail() -> None:
+def test_sqlite_legacy_enabled_session_with_existing_summary_keeps_unsummarized_tail() -> (
+    None
+):
     with TemporaryDirectory() as temp_dir:
         workspace = Path(temp_dir) / "repo"
         workspace.mkdir()
@@ -1044,14 +1297,20 @@ def test_sqlite_legacy_enabled_session_with_existing_summary_keeps_unsummarized_
             turn_summaries_enabled=True,
         )
 
-        first_job = service.submit_message("First summary turn one", session_id=session.id)
+        first_job = service.submit_message(
+            "First summary turn one", session_id=session.id
+        )
         service.get_job(first_job.id)
-        second_job = service.submit_message("First summary turn two", session_id=session.id)
+        second_job = service.submit_message(
+            "First summary turn two", session_id=session.id
+        )
         service.get_job(second_job.id)
         initial_summaries = service.list_turn_summaries(session.id)
         assert len(initial_summaries) == 1
 
-        tail_job = service.submit_message("Unsummarized tail turn", session_id=session.id)
+        tail_job = service.submit_message(
+            "Unsummarized tail turn", session_id=session.id
+        )
         service.get_job(tail_job.id)
         assert len(service.list_turn_summaries(session.id)) == 1
 

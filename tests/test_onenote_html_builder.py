@@ -5,10 +5,7 @@ import sys
 
 
 _SKILL_SCRIPTS = (
-    Path(__file__).resolve().parents[1]
-    / "skills"
-    / "onenote-connect"
-    / "scripts"
+    Path(__file__).resolve().parents[1] / "skills" / "onenote-connect" / "scripts"
 )
 if str(_SKILL_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SKILL_SCRIPTS))
@@ -77,7 +74,9 @@ def test_build_append_fragment_plain_text_escapes_literal_markup() -> None:
     assert "<html>literal</html>" not in fragment
 
 
-def test_merge_document_with_assets_plain_text_escapes_literal_markup(tmp_path: Path) -> None:
+def test_merge_document_with_assets_plain_text_escapes_literal_markup(
+    tmp_path: Path,
+) -> None:
     image_path = tmp_path / "image.png"
     image_path.write_bytes(b"binary-image")
     assets = prepare_asset_parts([image_path])
@@ -102,7 +101,9 @@ def test_build_replace_fragment_supports_assets_only(tmp_path: Path) -> None:
 
     fragment = build_replace_fragment(assets=assets)
 
-    assert fragment == '<div><p><img src="name:imageBlock1" alt="image.png" /></p></div>'
+    assert (
+        fragment == '<div><p><img src="name:imageBlock1" alt="image.png" /></p></div>'
+    )
 
 
 def test_build_replace_fragment_supports_mixed_text_and_assets(tmp_path: Path) -> None:

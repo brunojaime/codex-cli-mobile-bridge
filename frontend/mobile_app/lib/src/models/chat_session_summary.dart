@@ -27,6 +27,8 @@ class ChatSessionSummary {
     this.autoTurnIndex = 0,
     this.reviewerState = ReviewerLifecycleState.off,
     this.conversationProduct,
+    this.topicDescription,
+    this.lastMessageAt,
     this.lastMessagePreview,
     this.hasPendingMessages = false,
   });
@@ -52,11 +54,14 @@ class ChatSessionSummary {
   final int autoTurnIndex;
   final ReviewerLifecycleState reviewerState;
   final ConversationProduct? conversationProduct;
+  final String? topicDescription;
   final DateTime createdAt;
   final DateTime updatedAt;
+  final DateTime? lastMessageAt;
   final String? lastMessagePreview;
   final bool hasPendingMessages;
   bool get isArchived => archivedAt != null;
+  DateTime get latestActivityAt => lastMessageAt ?? createdAt;
 
   factory ChatSessionSummary.fromJson(Map<String, dynamic> json) {
     final rawAgentConfiguration = json['agent_configuration'];
@@ -93,8 +98,12 @@ class ChatSessionSummary {
               json['conversation_product'] as Map<String, dynamic>,
             )
           : null,
+      topicDescription: json['topic_description'] as String?,
       createdAt: DateTime.parse(json['created_at'] as String),
       updatedAt: DateTime.parse(json['updated_at'] as String),
+      lastMessageAt: json['last_message_at'] != null
+          ? DateTime.parse(json['last_message_at'] as String)
+          : null,
       lastMessagePreview: json['last_message_preview'] as String?,
       hasPendingMessages: json['has_pending_messages'] as bool? ?? false,
     );

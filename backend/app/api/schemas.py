@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+import re
 from typing import Any, Literal
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
@@ -64,12 +65,306 @@ class MessageRequest(BaseModel):
     codex_options: "CodexRunOptionsRequest | None" = None
 
 
+class ProjectFactoryDraftRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    name: str = Field(..., min_length=1, max_length=80)
+    business_type: str = Field(
+        ...,
+        min_length=1,
+        max_length=80,
+        alias="businessType",
+    )
+    primary_goal: str = Field(
+        ...,
+        min_length=1,
+        max_length=500,
+        alias="primaryGoal",
+    )
+    slug: str | None = Field(default=None, max_length=80)
+    platforms: list[str] = Field(default_factory=lambda: ["ios", "android", "web"])
+    backend: str = "fastapi"
+    logo_mode: str = Field(default="generate", alias="logoMode")
+    visual_reference_paths: list[str] = Field(
+        default_factory=list,
+        alias="visualReferencePaths",
+    )
+
+
+class ProjectFactoryOptionsResponse(BaseModel):
+    kind: str
+    version: int
+    default_platforms: list[str]
+    platforms: list[str]
+    default_backend: str
+    backends: list[str]
+    logo_modes: list[str]
+    business_types: list[str]
+    creation_workflow: dict[str, Any]
+
+
+class ProjectFactoryDraftResponse(BaseModel):
+    kind: str
+    version: int
+    draft_id: str
+    created_at: str
+    manifest_plan: dict[str, Any]
+
+
+class ProjectFactoryDraftSummaryResponse(BaseModel):
+    id: str
+    draft_id: str
+    name: str
+    slug: str | None = None
+    business_type: str
+    primary_goal: str
+    status: str
+    ok: bool
+    created_at: str
+    target_path: str | None = None
+    error: str | None = None
+
+
+class ProjectFactoryDraftsResponse(BaseModel):
+    kind: str = "codex.projectFactoryDrafts"
+    version: int = 1
+    drafts: list[ProjectFactoryDraftSummaryResponse]
+
+
+class ProjectFactoryDryRunResponse(BaseModel):
+    kind: str
+    version: int
+    ok: bool
+    status: str
+    target_path: str | None
+    manifest_path: str | None
+    manifest: dict[str, Any]
+    errors: list[dict[str, Any]]
+    next_actions: list[str]
+
+
+class ProjectFactoryJobResponse(BaseModel):
+    kind: str
+    version: int
+    job_id: str
+    draft_id: str
+    created_at: str
+    updated_at: str
+    status: str
+    current_step: str
+    current_phase: str
+    progress: int
+    started_at: str | None = None
+    completed_at: str | None = None
+    error: str | None = None
+    project_path: str | None = None
+    message: str
+    manifest_plan: dict[str, Any]
+    step_logs: list[dict[str, Any]] = Field(default_factory=list)
+    generation_result: dict[str, Any] | None = None
+
+
+class ProjectFactoryJobSummaryResponse(BaseModel):
+    id: str
+    job_id: str
+    draft_id: str
+    name: str | None = None
+    slug: str | None = None
+    status: str
+    current_phase: str
+    progress: int
+    created_at: str
+    started_at: str | None = None
+    completed_at: str | None = None
+    project_path: str | None = None
+    target_path: str | None = None
+    error: str | None = None
+    message: str | None = None
+    manual_next_step: str | None = None
+
+
+class ProjectFactoryJobsResponse(BaseModel):
+    kind: str = "codex.projectFactoryJobs"
+    version: int = 1
+    jobs: list[ProjectFactoryJobSummaryResponse]
+
+
+class ProjectFactoryReferenceAssetResponse(BaseModel):
+    id: str
+    draft_id: str
+    original_filename: str
+    content_type: str
+    size_bytes: int
+    created_at: str
+    storage_path: str
+
+
+class ProjectFactoryReferenceAssetsResponse(BaseModel):
+    kind: str = "codex.projectFactoryReferenceAssets"
+    version: int = 1
+    draft_id: str
+    assets: list[ProjectFactoryReferenceAssetResponse]
+
+
+class ProjectFactoryReferenceAssetDeleteResponse(BaseModel):
+    kind: str = "codex.projectFactoryReferenceAssetDelete"
+    version: int = 1
+    draft_id: str
+    asset_id: str
+    deleted: bool
+
+
+class AssetDepotItemResponse(BaseModel):
+    asset_id: str
+    id: str
+    original_filename: str
+    content_type: str
+    size_bytes: int
+    sha256: str
+    created_at: str
+    storage_path: str
+    source: str
+
+
+class AssetDepotListResponse(BaseModel):
+    kind: str = "codex.assetDepotAssets"
+    version: int = 1
+    assets: list[AssetDepotItemResponse]
+
+
+class AssetDepotDeleteResponse(BaseModel):
+    kind: str = "codex.assetDepotDelete"
+    version: int = 1
+    asset_id: str
+    deleted: bool
+
+
+class AssetDepotFromJobAttachmentRequest(BaseModel):
+    job_id: str
+    attachment_index: int = Field(default=0, ge=0)
+    source: str = Field(default="chat_upload", max_length=80)
+
+
+class ProjectFactoryDraftAssetLinkRequest(BaseModel):
+    asset_id: str = Field(..., max_length=80)
+    role: str = Field(..., max_length=80)
+    notes: str = Field(default="", max_length=1000)
+
+
+class ProjectFactoryDraftAssetResponse(BaseModel):
+    draft_id: str
+    asset_id: str
+    role: str
+    notes: str
+    linked_at: str
+    original_filename: str
+    content_type: str
+    size_bytes: int
+    sha256: str
+    storage_path: str
+    source: str
+
+
+class ProjectFactoryDraftAssetsResponse(BaseModel):
+    kind: str = "codex.projectFactoryDraftAssets"
+    version: int = 1
+    draft_id: str
+    assets: list[ProjectFactoryDraftAssetResponse]
+
+
+class ProjectFactoryDoctorResponse(BaseModel):
+    kind: str
+    version: int
+    ok: bool
+    status: str
+    projects_root: str
+    checks: list[dict[str, Any]]
+    toolchain: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    web_preview: dict[str, Any] = Field(default_factory=dict)
+
+
+class WebPreviewPlanRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    project_path: str | None = Field(default=None, alias="projectPath")
+    manifest_path: str | None = Field(default=None, alias="manifestPath")
+    source_app: str | None = Field(default=None, alias="sourceApp")
+
+
+class WebPreviewDeployRequest(WebPreviewPlanRequest):
+    confirm_apply: bool = Field(default=False, alias="confirmApply")
+    expected_plan_hash: str | None = Field(default=None, alias="expectedPlanHash")
+
+
+class WebPreviewResponse(BaseModel):
+    kind: str
+    version: int
+    preview_id: str
+    source_app: str
+    project_path: str
+    manifest_path: str
+    status: str
+    preview_url: str
+    health_url: str | None = None
+    plan_hash: str
+    planned_resources: list[dict[str, Any]]
+    applied_resources: list[dict[str, Any]]
+    invite_sync_summary: dict[str, Any] | None = None
+    error: str | None = None
+    logs: list[dict[str, Any]] = Field(default_factory=list)
+    created_at: str
+    completed_at: str | None = None
+
+
+class WebPreviewListResponse(BaseModel):
+    kind: str = "codex.webPreviews"
+    version: int = 1
+    previews: list[WebPreviewResponse]
+
+
+class WebPreviewInviteCreateRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    ttl_seconds: int | None = Field(default=None, alias="ttlSeconds", gt=0)
+    single_use: bool = Field(default=True, alias="singleUse")
+
+
+class WebPreviewInviteResponse(BaseModel):
+    kind: str
+    version: int
+    invite_id: str
+    preview_id: str
+    source_app: str
+    app_slug: str
+    audience: str
+    scope: str
+    created_at: str
+    expires_at: str
+    single_use: bool = True
+    used_at: str | None = None
+    revoked_at: str | None = None
+    sync_status: str = "not_deployed"
+    synced_at: str | None = None
+    sync_error: str | None = None
+    token_sha256: str
+    invite_url: str | None = None
+    token: str | None = None
+
+
+class WebPreviewInviteListResponse(BaseModel):
+    kind: str = "codex.webPreviewInvites"
+    version: int = 1
+    invites: list[WebPreviewInviteResponse]
+
+
 class FeedbackPointRequest(BaseModel):
     x: float
     y: float
 
 
 class FeedbackQueueItemRequest(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
     id: str | None = Field(default=None, max_length=160)
     sourceApp: str = Field(
         default="unknown",
@@ -81,8 +376,13 @@ class FeedbackQueueItemRequest(BaseModel):
         max_length=160,
         validation_alias=AliasChoices("sourceDisplayName", "source_display_name"),
     )
-    comment: str = Field(..., min_length=1, max_length=10000)
+    comment: str = Field(default="", max_length=10000)
     createdAt: str | None = None
+    feedbackKind: str | None = Field(
+        default=None,
+        max_length=120,
+        validation_alias=AliasChoices("feedbackKind", "feedback_kind"),
+    )
     screenshotMimeType: str = Field(default="image/png", max_length=80)
     screenshotPngBase64: str | None = None
     selectionPoints: list[FeedbackPointRequest] = Field(default_factory=list)
@@ -96,6 +396,30 @@ class FeedbackQueueItemRequest(BaseModel):
     audioByteLength: int | None = None
     audioBase64: str | None = None
     audioTranscript: str | None = Field(default=None, max_length=20000)
+    imageCapture: dict[str, Any] = Field(
+        default_factory=dict,
+        validation_alias=AliasChoices("imageCapture", "image_capture"),
+    )
+    guidedTrace: dict[str, Any] = Field(
+        default_factory=dict,
+        validation_alias=AliasChoices("guidedTrace", "guided_trace"),
+    )
+    specTarget: dict[str, Any] = Field(
+        default_factory=dict,
+        validation_alias=AliasChoices("specTarget", "spec_target"),
+    )
+
+    @model_validator(mode="after")
+    def require_feedback_content(self) -> "FeedbackQueueItemRequest":
+        if (
+            self.comment.strip()
+            or str(self.screenshotPngBase64 or "").strip()
+            or str(self.audioBase64 or "").strip()
+            or self.imageCapture
+            or self.guidedTrace
+        ):
+            return self
+        raise ValueError("Feedback item has no comment, screenshot, audio, or trace.")
 
 
 class FeedbackQueueItemResponse(BaseModel):
@@ -111,6 +435,10 @@ class FeedbackQueueItemResponse(BaseModel):
     selection_points: list[dict[str, float]] = Field(default_factory=list)
     selection_bounds: dict[str, float] = Field(default_factory=dict)
     context_metadata: dict[str, Any] = Field(default_factory=dict)
+    feedback_kind: str | None = None
+    image_capture: dict[str, Any] = Field(default_factory=dict)
+    guided_trace: dict[str, Any] = Field(default_factory=dict)
+    spec_target: dict[str, Any] = Field(default_factory=dict)
     audio_mime_type: str | None = None
     audio_duration_ms: int | None = None
     audio_byte_length: int | None = None
@@ -156,6 +484,9 @@ class AppUpdateRegistryItemResponse(BaseModel):
         default=None,
         alias="requiredMinimumBuild",
     )
+    release_channel: str = Field(default="stable", alias="releaseChannel")
+    private_install: bool = Field(default=False, alias="privateInstall")
+    expected_package_id: str | None = Field(default=None, alias="expectedPackageId")
 
 
 class AppUpdateRegistryResponse(BaseModel):
@@ -185,8 +516,90 @@ class AppUpdateResponse(BaseModel):
     sha256: str | None = None
     size_bytes: int | None = Field(default=None, alias="sizeBytes")
     release_notes: str | None = Field(default=None, alias="releaseNotes")
+    release_channel: str = Field(default="stable", alias="releaseChannel")
+    release_prerelease: bool = Field(default=False, alias="releasePrerelease")
+    private_install: bool = Field(default=False, alias="privateInstall")
+    package_id: str | None = Field(default=None, alias="packageId")
     required: bool
     available: bool
+
+
+class InstallableAppResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    kind: str = "codex.installableApp"
+    version: int = 1
+    source_app: str = Field(alias="sourceApp")
+    display_name: str = Field(alias="displayName")
+    repo: str
+    release_channel: str = Field(default="stable", alias="releaseChannel")
+    latest_version: str | None = Field(default=None, alias="latestVersion")
+    latest_build: int | None = Field(default=None, alias="latestBuild")
+    release_tag: str | None = Field(default=None, alias="releaseTag")
+    apk_url: str | None = Field(default=None, alias="apkUrl")
+    apk_asset_name: str | None = Field(default=None, alias="apkAssetName")
+    size_bytes: int | None = Field(default=None, alias="sizeBytes")
+    sha256: str | None = None
+    available: bool
+    enabled: bool
+    package_id: str | None = Field(default=None, alias="packageId")
+    install_status_hint: str = Field(alias="installStatusHint")
+
+
+class InstallableAppsResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    kind: str = "codex.installableApps"
+    version: int = 1
+    apps: list[InstallableAppResponse]
+
+
+class InstallableAppRegistrationRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    source_app: str = Field(..., min_length=1, max_length=120, alias="sourceApp")
+    display_name: str = Field(..., min_length=1, max_length=160, alias="displayName")
+    repo: str = Field(..., min_length=3, max_length=200)
+    release_tag_pattern: str = Field(
+        default="android-v*",
+        min_length=1,
+        max_length=120,
+        alias="releaseTagPattern",
+    )
+    apk_asset_pattern: str = Field(
+        default="*.apk",
+        min_length=1,
+        max_length=160,
+        alias="apkAssetPattern",
+    )
+    latest_asset_name: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=160,
+        alias="latestAssetName",
+    )
+    required_minimum_build: int | None = Field(
+        default=None,
+        ge=0,
+        alias="requiredMinimumBuild",
+    )
+    release_channel: str = Field(
+        default="stable",
+        min_length=1,
+        max_length=40,
+        alias="releaseChannel",
+    )
+    expected_package_id: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=200,
+        alias="expectedPackageId",
+    )
+    verified_package_ids: dict[str, str] = Field(
+        default_factory=dict,
+        alias="verifiedPackageIds",
+    )
+    enabled: bool = True
 
 
 class FeedbackBatchStartRequest(BaseModel):
@@ -223,6 +636,10 @@ class FeedbackBatchStartRequest(BaseModel):
     message: str | None = Field(default=None, max_length=10000)
     session_id: str | None = None
     workspace_path: str | None = None
+    release_target: dict[str, Any] = Field(
+        default_factory=dict,
+        validation_alias=AliasChoices("release_target", "releaseTarget"),
+    )
     codex_options: "CodexRunOptionsRequest | None" = None
 
 
@@ -428,6 +845,743 @@ class CodexMcpAppResponse(BaseModel):
     protocol_error: str | None = None
 
 
+class SpecTargetRequest(BaseModel):
+    mode: Literal["none", "new_spec", "existing_spec"]
+    spec_id: str | None = Field(
+        default=None,
+        max_length=160,
+        validation_alias=AliasChoices("spec_id", "specId"),
+    )
+    artifact: Literal["auto", "spec", "plan", "tasks", "diagram"] = "auto"
+
+
+class SpecIntakeRegionRequest(BaseModel):
+    x: float
+    y: float
+    width: float
+    height: float
+
+
+class SpecIntakeMediaItemRequest(BaseModel):
+    kind: Literal[
+        "text",
+        "audio",
+        "image",
+        "crop",
+        "marked_region",
+        "screenshot_batch",
+        "image_sequence",
+    ]
+    mime_type: str | None = Field(
+        default=None,
+        max_length=120,
+        validation_alias=AliasChoices("mime_type", "mimeType"),
+    )
+    byte_size: int | None = Field(
+        default=None,
+        ge=0,
+        validation_alias=AliasChoices("byte_size", "byteSize"),
+    )
+    filename: str | None = Field(default=None, max_length=255)
+    sha256: str | None = Field(default=None, max_length=128)
+    text: str | None = Field(default=None, max_length=65536)
+    transcript: str | None = Field(default=None, max_length=20000)
+    duration_ms: int | None = Field(
+        default=None,
+        ge=0,
+        validation_alias=AliasChoices("duration_ms", "durationMs"),
+    )
+    source_ref: str | None = Field(
+        default=None,
+        max_length=255,
+        validation_alias=AliasChoices("source_ref", "sourceRef"),
+    )
+    payload_ref: str | None = Field(
+        default=None,
+        max_length=500,
+        validation_alias=AliasChoices("payload_ref", "payloadRef"),
+    )
+    region: SpecIntakeRegionRequest | None = None
+    image_count: int | None = Field(
+        default=None,
+        ge=0,
+        validation_alias=AliasChoices("image_count", "imageCount"),
+    )
+    frame_count: int | None = Field(
+        default=None,
+        ge=0,
+        validation_alias=AliasChoices("frame_count", "frameCount"),
+    )
+    audio_track_count: int | None = Field(
+        default=None,
+        ge=0,
+        validation_alias=AliasChoices("audio_track_count", "audioTrackCount"),
+    )
+    timeline_ms: list[int] = Field(
+        default_factory=list,
+        validation_alias=AliasChoices("timeline_ms", "timelineMs"),
+    )
+    references: list[str] = Field(default_factory=list)
+
+
+class SpecIntakeValidationRequest(BaseModel):
+    workspace_path: str = Field(
+        ...,
+        min_length=1,
+        max_length=4096,
+        validation_alias=AliasChoices("workspace_path", "workspacePath"),
+    )
+    spec_target: SpecTargetRequest = Field(
+        ...,
+        validation_alias=AliasChoices("spec_target", "specTarget"),
+    )
+    intake_items: list[SpecIntakeMediaItemRequest] = Field(
+        default_factory=list,
+        validation_alias=AliasChoices("intake_items", "intakeItems"),
+    )
+    title_seed: str | None = Field(
+        default=None,
+        max_length=240,
+        validation_alias=AliasChoices("title_seed", "titleSeed"),
+    )
+    workbench_spec_target: SpecTargetRequest | None = Field(
+        default=None,
+        validation_alias=AliasChoices("workbench_spec_target", "workbenchSpecTarget"),
+    )
+    bridge_spec_target: SpecTargetRequest | None = Field(
+        default=None,
+        validation_alias=AliasChoices("bridge_spec_target", "bridgeSpecTarget"),
+    )
+
+
+class SpecIntakeValidationErrorResponse(BaseModel):
+    code: str
+    field: str
+    message: str
+
+
+class SpecIntakeValidationResponse(BaseModel):
+    kind: str = "codex.sddSpecIntakeValidation"
+    version: int = 1
+    ok: bool
+    status: Literal["valid", "blocked"]
+    workspace_path: str | None = None
+    mode: str | None = None
+    spec_id: str | None = None
+    artifact: str | None = None
+    spec_root: str | None = None
+    media_count: int = 0
+    errors: list[SpecIntakeValidationErrorResponse] = Field(default_factory=list)
+    next_actions: list[str] = Field(default_factory=list)
+
+
+class SddIntakeItemRequest(SpecIntakeMediaItemRequest):
+    pass
+
+
+class SddIntakeRequest(BaseModel):
+    workspace_path: str = Field(
+        ...,
+        min_length=1,
+        max_length=4096,
+        validation_alias=AliasChoices("workspace_path", "workspacePath"),
+    )
+    spec_target: SpecTargetRequest = Field(
+        ...,
+        validation_alias=AliasChoices("spec_target", "specTarget"),
+    )
+    items: list[SddIntakeItemRequest] = Field(default_factory=list)
+    title_seed: str | None = Field(
+        default=None,
+        max_length=240,
+        validation_alias=AliasChoices("title_seed", "titleSeed"),
+    )
+    job_id: str = Field(
+        default="dry-run",
+        max_length=120,
+        validation_alias=AliasChoices("job_id", "jobId"),
+    )
+
+
+class SddIntakePlannedArtifactResponse(BaseModel):
+    item_index: int
+    kind: str
+    target_path: str
+    staging_path: str
+    byte_size: int | None = None
+    sha256: str | None = None
+    retention: str
+
+
+class SddIntakeDryRunResponse(BaseModel):
+    kind: str = "codex.sddIntakeDryRun"
+    version: int = 1
+    status: Literal["dry-run", "blocked"]
+    workspace_path: str | None = None
+    spec_id: str | None = None
+    target_root: str | None = None
+    staging_root: str
+    retention_hours: int = 24
+    would_create: list[SddIntakePlannedArtifactResponse] = Field(default_factory=list)
+    existing: list[str] = Field(default_factory=list)
+    blocked: list[str] = Field(default_factory=list)
+    rejected_media: list[SpecIntakeValidationErrorResponse] = Field(
+        default_factory=list
+    )
+    next_actions: list[str] = Field(default_factory=list)
+
+
+class SddSpecDryRunRequest(SpecIntakeValidationRequest):
+    job_id: str = Field(
+        default="dry-run",
+        max_length=120,
+        validation_alias=AliasChoices("job_id", "jobId"),
+    )
+
+
+class SddSpecMetadataProposalResponse(BaseModel):
+    title: str
+    description: str
+    generated_title: bool
+    generated_description: bool
+    preserve_pinned_title: bool = False
+    preserve_pinned_description: bool = False
+
+
+class SddSpecCreationDryRunResponse(BaseModel):
+    kind: str = "codex.sddSpecCreationDryRun"
+    version: int = 1
+    status: Literal["dry-run", "blocked"]
+    workspace_path: str | None = None
+    spec_id: str | None = None
+    spec_root: str | None = None
+    target_files: list[str] = Field(default_factory=list)
+    metadata_proposal: SddSpecMetadataProposalResponse | None = None
+    metadata_refresh_plan: list[str] = Field(default_factory=list)
+    intended_artifact_updates: list[str] = Field(default_factory=list)
+    conflicts: list[str] = Field(default_factory=list)
+    blocked_reasons: list[str] = Field(default_factory=list)
+    rejected_media: list[SpecIntakeValidationErrorResponse] = Field(
+        default_factory=list
+    )
+    existing_artifacts: list[str] = Field(default_factory=list)
+    validation_errors: list[SpecIntakeValidationErrorResponse] = Field(
+        default_factory=list
+    )
+    intake_plan: SddIntakeDryRunResponse | None = None
+    next_actions: list[str] = Field(default_factory=list)
+
+
+class SddSpecApplyResponse(BaseModel):
+    kind: str = "codex.sddSpecApply"
+    version: int = 1
+    status: Literal["applied", "blocked"]
+    workspace_path: str | None = None
+    spec_id: str | None = None
+    spec_root: str | None = None
+    created: list[str] = Field(default_factory=list)
+    existing: list[str] = Field(default_factory=list)
+    blocked: list[str] = Field(default_factory=list)
+    conflicts: list[str] = Field(default_factory=list)
+    metadata_result: SddSpecMetadataProposalResponse | None = None
+    intake_references: list[str] = Field(default_factory=list)
+    post_apply_refresh: dict[str, Any] = Field(default_factory=dict)
+    dry_run: SddSpecCreationDryRunResponse
+    next_actions: list[str] = Field(default_factory=list)
+
+
+class SddSpecEditDryRunResponse(BaseModel):
+    kind: str = "codex.sddSpecEditDryRun"
+    version: int = 1
+    status: Literal["dry-run", "blocked"]
+    workspace_path: str | None = None
+    spec_id: str | None = None
+    spec_root: str | None = None
+    selected_artifact: str | None = None
+    intended_artifact_updates: list[str] = Field(default_factory=list)
+    metadata_proposal: SddSpecMetadataProposalResponse | None = None
+    metadata_refresh_plan: list[str] = Field(default_factory=list)
+    conflicts: list[str] = Field(default_factory=list)
+    blocked_reasons: list[str] = Field(default_factory=list)
+    rejected_media: list[SpecIntakeValidationErrorResponse] = Field(
+        default_factory=list
+    )
+    existing_artifacts: list[str] = Field(default_factory=list)
+    validation_errors: list[SpecIntakeValidationErrorResponse] = Field(
+        default_factory=list
+    )
+    next_actions: list[str] = Field(default_factory=list)
+
+
+class SddSpecEditApplyResponse(BaseModel):
+    kind: str = "codex.sddSpecEditApply"
+    version: int = 1
+    status: Literal["applied", "blocked", "queued"]
+    workspace_path: str | None = None
+    spec_id: str | None = None
+    spec_root: str | None = None
+    selected_artifact: str | None = None
+    created: list[str] = Field(default_factory=list)
+    updated: list[str] = Field(default_factory=list)
+    existing: list[str] = Field(default_factory=list)
+    blocked: list[str] = Field(default_factory=list)
+    conflicts: list[str] = Field(default_factory=list)
+    dry_run: SddSpecEditDryRunResponse
+    job: dict[str, Any] | None = None
+    next_actions: list[str] = Field(default_factory=list)
+
+
+class SddCodexJobResponse(BaseModel):
+    kind: str = "codex.sddCodexJob"
+    version: int = 1
+    job_id: str = Field(validation_alias=AliasChoices("job_id", "jobId"))
+    jobId: str | None = None
+    activity_state: str | None = None
+    activity: dict[str, Any] = Field(default_factory=dict)
+    status: Literal[
+        "queued",
+        "running",
+        "completed",
+        "failed",
+        "blocked",
+        "cancelled",
+        "timed_out",
+    ]
+    process_state: str
+    workspace_path: str
+    job_root: str
+    sandbox_root: str = ""
+    target_spec_id: str
+    target_artifact: str | None = None
+    context_pack_id: str
+    command_argv: list[str] = Field(default_factory=list)
+    redacted_argv: list[str] = Field(default_factory=list)
+    env_keys: list[str] = Field(default_factory=list)
+    intake_references: list[str] = Field(default_factory=list)
+    media_persistence: dict[str, Any] = Field(default_factory=dict)
+    required_files: list[str] = Field(default_factory=list)
+    blocked_reads: list[str] = Field(default_factory=list)
+    routing_decisions: list[str] = Field(default_factory=list)
+    logs: list[str] = Field(default_factory=list)
+    stdout: str = ""
+    stderr: str = ""
+    exit_code: int | None = None
+    timeout_seconds: int
+    created_at_epoch: int
+    started_at_epoch: int | None = None
+    completed_at_epoch: int | None = None
+    blocked_reasons: list[str] = Field(default_factory=list)
+    next_actions: list[str] = Field(default_factory=list)
+    retry_source_job_id: str | None = None
+
+
+class SddActivityResponse(BaseModel):
+    kind: str = "codex.sddActivity"
+    version: int = 1
+    state: str
+    job_id: str = Field(validation_alias=AliasChoices("job_id", "jobId"))
+    events: list[dict[str, Any]] = Field(default_factory=list)
+    next_actions: list[str] = Field(default_factory=list)
+
+
+class SddCodexJobRetryResponse(BaseModel):
+    kind: str = "codex.sddCodexJobRetry"
+    version: int = 1
+    status: Literal["queued", "blocked"]
+    activity_state: str | None = None
+    activity: dict[str, Any] = Field(default_factory=dict)
+    original_job_id: str
+    retry_job_id: str | None = None
+    retry_eligible: bool = False
+    copied_references: list[str] = Field(default_factory=list)
+    blocked_reasons: list[str] = Field(default_factory=list)
+    job: SddCodexJobResponse | None = None
+    next_actions: list[str] = Field(default_factory=list)
+
+
+class SddCodexGeneratedChangeResponse(BaseModel):
+    path: str
+    change_type: str
+    patch_path: str | None = None
+    staged_path: str | None = None
+    byte_size: int = 0
+    sha256: str | None = None
+    blocked_reason: str | None = None
+    protected_baseline: bool = False
+    conflict: str | None = None
+
+
+class SddCodexJobReviewResponse(BaseModel):
+    kind: str = "codex.sddCodexJobReview"
+    version: int = 1
+    job_id: str = Field(validation_alias=AliasChoices("job_id", "jobId"))
+    jobId: str | None = None
+    activity_state: str | None = None
+    activity: dict[str, Any] = Field(default_factory=dict)
+    status: Literal["ready", "blocked", "no_changes"]
+    workspace_path: str
+    job_root: str
+    sandbox_root: str
+    target_spec_id: str
+    target_artifact: str | None = None
+    changed_files: list[SddCodexGeneratedChangeResponse] = Field(default_factory=list)
+    patch_references: list[str] = Field(default_factory=list)
+    blocked_paths: list[str] = Field(default_factory=list)
+    protected_baseline_impacts: list[str] = Field(default_factory=list)
+    conflicts: list[str] = Field(default_factory=list)
+    validation_status: str
+    next_actions: list[str] = Field(default_factory=list)
+
+
+class SddCodexJobApplyResponse(BaseModel):
+    kind: str = "codex.sddCodexJobApply"
+    version: int = 1
+    job_id: str = Field(validation_alias=AliasChoices("job_id", "jobId"))
+    jobId: str | None = None
+    activity_state: str | None = None
+    activity: dict[str, Any] = Field(default_factory=dict)
+    status: Literal["applied", "blocked"]
+    workspace_path: str
+    target_spec_id: str
+    target_artifact: str | None = None
+    applied: list[str] = Field(default_factory=list)
+    blocked: list[str] = Field(default_factory=list)
+    conflicts: list[str] = Field(default_factory=list)
+    post_apply_refresh: dict[str, Any] = Field(default_factory=dict)
+    review: SddCodexJobReviewResponse
+    next_actions: list[str] = Field(default_factory=list)
+
+
+class SddMediaUploadResponse(BaseModel):
+    kind: str = "codex.sddMediaUpload"
+    version: int = 1
+    status: Literal["staged", "blocked"]
+    workspace_path: str
+    intake_item: dict[str, Any] | None = None
+    staged_path: str | None = None
+    metadata_path: str | None = None
+    blocked: list[str] = Field(default_factory=list)
+    cleanup: list[str] = Field(default_factory=list)
+    next_actions: list[str] = Field(default_factory=list)
+
+
+class SddMediaDeleteRequest(BaseModel):
+    workspace_path: str = Field(
+        validation_alias=AliasChoices("workspace_path", "workspacePath")
+    )
+    staged_path: str = Field(validation_alias=AliasChoices("staged_path", "stagedPath"))
+
+
+class SddMediaCleanupRequest(BaseModel):
+    workspace_path: str = Field(
+        validation_alias=AliasChoices("workspace_path", "workspacePath")
+    )
+    dry_run: bool = Field(
+        default=True,
+        validation_alias=AliasChoices("dry_run", "dryRun"),
+    )
+    older_than_hours: int = Field(
+        default=24,
+        ge=0,
+        validation_alias=AliasChoices("older_than_hours", "olderThanHours"),
+    )
+
+
+class SddMediaLifecycleResponse(BaseModel):
+    kind: str = "codex.sddMediaLifecycle"
+    version: int = 1
+    status: Literal["deleted", "dry-run", "applied", "blocked", "consumed"]
+    workspace_path: str
+    staged_path: str | None = None
+    lifecycle: str
+    deleted: list[str] = Field(default_factory=list)
+    would_delete: list[str] = Field(default_factory=list)
+    blocked: list[str] = Field(default_factory=list)
+    cleanup: list[str] = Field(default_factory=list)
+    next_actions: list[str] = Field(default_factory=list)
+
+
+class SddBridgeCaptureIntakeRequest(BaseModel):
+    workspace_path: str = Field(
+        ...,
+        min_length=1,
+        max_length=4096,
+        validation_alias=AliasChoices("workspace_path", "workspacePath"),
+    )
+    spec_target: SpecTargetRequest | None = Field(
+        default=None,
+        validation_alias=AliasChoices("spec_target", "specTarget"),
+    )
+    feedback_item_ids: list[str] = Field(
+        default_factory=list,
+        validation_alias=AliasChoices("feedback_item_ids", "feedbackItemIds"),
+    )
+    artifact: Literal["auto", "spec", "plan", "tasks", "diagram"] = "auto"
+    job_id: str = Field(
+        default="bridge-capture",
+        max_length=120,
+        validation_alias=AliasChoices("job_id", "jobId"),
+    )
+
+
+class SddBridgeCaptureIntakeResponse(BaseModel):
+    kind: str = "codex.sddBridgeCaptureIntake"
+    version: int = 1
+    status: str
+    workspace_path: str
+    target_mode: str
+    feedback_item_ids: list[str] = Field(default_factory=list)
+    intake_items: list[dict[str, Any]] = Field(default_factory=list)
+    staged_media: list[dict[str, Any]] = Field(default_factory=list)
+    dry_run: dict[str, Any] | None = None
+    apply_result: dict[str, Any] | None = None
+    blocked: list[str] = Field(default_factory=list)
+    next_actions: list[str] = Field(default_factory=list)
+
+
+class SddFileResponse(BaseModel):
+    path: str
+    title: str | None = None
+    size_bytes: int
+    content: str | None = None
+    error: str | None = None
+
+
+class SddDiagramResponse(SddFileResponse):
+    diagram_type: str
+    scope: str
+
+
+class SddTaskNodeResponse(BaseModel):
+    id: str
+    title: str
+    number: int
+    status: str = "planned"
+    description: str = ""
+    file: SddFileResponse | None = None
+    diagrams: list[SddDiagramResponse] = Field(default_factory=list)
+
+
+class SddPlanNodeResponse(BaseModel):
+    id: str
+    title: str
+    number: int
+    status: str = "planned"
+    description: str = ""
+    file: SddFileResponse | None = None
+    diagrams: list[SddDiagramResponse] = Field(default_factory=list)
+    tasks: list[SddTaskNodeResponse] = Field(default_factory=list)
+
+
+class SddSpecTreeResponse(BaseModel):
+    file: SddFileResponse | None = None
+    diagrams: list[SddDiagramResponse] = Field(default_factory=list)
+    plans: list[SddPlanNodeResponse] = Field(default_factory=list)
+    complete: bool = False
+    missing: list[str] = Field(default_factory=list)
+
+
+class SddSpecResponse(BaseModel):
+    id: str
+    title: str
+    description: str = ""
+    path: str
+    lifecycle_status: str = "draft"
+    traceability_status: str = "unknown"
+    created_at: str | None = None
+    updated_at: str | None = None
+    generated_title: bool = False
+    generated_description: bool = False
+    user_pinned_title: bool = False
+    user_pinned_description: bool = False
+    task_total: int = 0
+    task_completed: int = 0
+    task_pending: int = 0
+    last_run_state: str | None = None
+    metadata_status: str = "missing"
+    metadata_warnings: list[str] = Field(default_factory=list)
+    metadata_stale_paths: list[str] = Field(default_factory=list)
+    spec: SddFileResponse | None = None
+    plan: SddFileResponse | None = None
+    tasks: SddFileResponse | None = None
+    spec_files: list[SddFileResponse] = Field(default_factory=list)
+    plan_files: list[SddFileResponse] = Field(default_factory=list)
+    task_files: list[SddFileResponse] = Field(default_factory=list)
+    slice_docs: list[SddFileResponse] = Field(default_factory=list)
+    diagrams: list[SddDiagramResponse] = Field(default_factory=list)
+    tree: SddSpecTreeResponse | None = None
+    missing: list[str] = Field(default_factory=list)
+
+
+class SddProjectSummaryResponse(BaseModel):
+    workspace_name: str
+    workspace_path: str
+    has_manifest: bool
+    has_constitution: bool
+    spec_count: int
+    diagram_count: int
+    missing_required: list[str] = Field(default_factory=list)
+
+
+class SddProjectsResponse(BaseModel):
+    kind: str = "codex.sddProjects"
+    version: int = 1
+    default_workspace_path: str | None = None
+    projects: list[SddProjectSummaryResponse] = Field(default_factory=list)
+
+
+class SddProjectResponse(BaseModel):
+    kind: str = "codex.sddProject"
+    version: int = 1
+    workspace_name: str
+    workspace_path: str
+    required: bool
+    manifest: SddFileResponse | None = None
+    constitution: SddFileResponse | None = None
+    architecture_diagrams: list[SddDiagramResponse] = Field(default_factory=list)
+    specs: list[SddSpecResponse] = Field(default_factory=list)
+    missing_required: list[str] = Field(default_factory=list)
+
+
+class SddProjectLazySummaryResponse(SddProjectResponse):
+    kind: str = "codex.sddProjectSummary"
+    version: int = 1
+
+
+class SddProjectSpecResponse(BaseModel):
+    kind: str = "codex.sddProjectSpec"
+    version: int = 1
+    workspace_path: str
+    spec: SddSpecResponse
+
+
+class SddProjectDiagramsResponse(BaseModel):
+    kind: str = "codex.sddProjectDiagrams"
+    version: int = 1
+    workspace_path: str
+    diagrams: list[SddDiagramResponse] = Field(default_factory=list)
+
+
+class SddWorkbenchCheckResponse(BaseModel):
+    name: str
+    status: str
+    detail: str
+
+
+class SddWorkbenchHealthResponse(BaseModel):
+    status: str
+    spec_count: int
+    diagram_count: int
+    missing_required: list[str] = Field(default_factory=list)
+    checks: list[SddWorkbenchCheckResponse] = Field(default_factory=list)
+    next_actions: list[str] = Field(default_factory=list)
+
+
+class SddWorkbenchStandardsComplianceResponse(BaseModel):
+    status: str
+    standard_id: str | None = None
+    checks: list[SddWorkbenchCheckResponse] = Field(default_factory=list)
+
+
+class SddWorkbenchContextCandidateResponse(BaseModel):
+    path: str
+    reason: str
+    rank: int
+
+
+class SddWorkbenchContextPreviewResponse(BaseModel):
+    status: str
+    preset: str
+    mode: str
+    index_status: str
+    error: str | None = None
+    prompt: str
+    required_files: list[str] = Field(default_factory=list)
+    related_specs: list[SddWorkbenchContextCandidateResponse] = Field(
+        default_factory=list,
+    )
+    related_diagrams: list[SddWorkbenchContextCandidateResponse] = Field(
+        default_factory=list,
+    )
+    blocked_reads: list[str] = Field(default_factory=list)
+    routing_decisions: list[str] = Field(default_factory=list)
+    next_actions: list[str] = Field(default_factory=list)
+
+
+class SddWorkbenchFeatureSpecResponse(BaseModel):
+    id: str
+    title: str
+    description: str = ""
+    path: str
+    lifecycle_status: str
+    traceability_status: str
+    created_at: str | None = None
+    updated_at: str | None = None
+    generated_title: bool = False
+    generated_description: bool = False
+    user_pinned_title: bool = False
+    user_pinned_description: bool = False
+    task_total: int = 0
+    task_completed: int = 0
+    task_pending: int = 0
+    last_run_state: str | None = None
+    metadata_status: str = "missing"
+    metadata_warnings: list[str] = Field(default_factory=list)
+    metadata_stale_paths: list[str] = Field(default_factory=list)
+    available_files: list[str] = Field(default_factory=list)
+    missing: list[str] = Field(default_factory=list)
+    plan_count: int
+    task_file_count: int
+    diagram_count: int
+
+
+class SddWorkbenchBaselineResponse(BaseModel):
+    artifact_type: str
+    path: str
+    title: str
+    status: str
+    protected: bool
+    diagram_type: str | None = None
+
+
+class SddWorkbenchTraceabilityRowResponse(BaseModel):
+    spec_id: str
+    spec_path: str
+    status: str
+    requirement_count: int
+    task_count: int
+    diagram_count: int
+    missing_links: list[str] = Field(default_factory=list)
+
+
+class SddWorkbenchImpactQueueItemResponse(BaseModel):
+    scope: str
+    artifact_path: str
+    artifact_type: str
+    impact_type: str
+    status: str
+    requires_review: bool
+    reason: str
+
+
+class SddWorkbenchViewResponse(BaseModel):
+    kind: str = "codex.sddWorkbenchView"
+    version: int = 1
+    workspace_name: str
+    workspace_path: str
+    health: SddWorkbenchHealthResponse
+    standards_compliance: SddWorkbenchStandardsComplianceResponse
+    context_preview: SddWorkbenchContextPreviewResponse
+    feature_specs: list[SddWorkbenchFeatureSpecResponse] = Field(default_factory=list)
+    baselines: list[SddWorkbenchBaselineResponse] = Field(default_factory=list)
+    traceability_matrix: list[SddWorkbenchTraceabilityRowResponse] = Field(
+        default_factory=list,
+    )
+    impact_queue: list[SddWorkbenchImpactQueueItemResponse] = Field(
+        default_factory=list,
+    )
+
+
 class CodexMcpAppInstallResponse(BaseModel):
     app_id: str
     server_id: str
@@ -469,6 +1623,14 @@ class MessageRecoveryRequest(BaseModel):
 
 class ArchiveSessionRequest(BaseModel):
     archived: bool = False
+
+
+class RenameSessionRequest(BaseModel):
+    title: str = Field(..., min_length=1, max_length=120)
+
+
+class GenerateSessionTitleRequest(BaseModel):
+    instructions: str | None = Field(default=None, max_length=2000)
 
 
 class CreateSessionRequest(BaseModel):
@@ -595,7 +1757,9 @@ class AgentDefinitionPayload(BaseModel):
                 f"{expected_type.value} type."
             )
         if self.enabled and not self.prompt.strip():
-            raise ValueError(f"Enabled agent {self.agent_id.value} must have a non-empty prompt.")
+            raise ValueError(
+                f"Enabled agent {self.agent_id.value} must have a non-empty prompt."
+            )
         return self
 
 
@@ -643,7 +1807,9 @@ class AgentConfigurationRequest(BaseModel):
                 "Supervisor member ids must reference qa, ux, senior_engineer, or scraper."
             )
         if self.preset == AgentPreset.SUPERVISOR and AgentId.SUPERVISOR not in set(ids):
-            raise ValueError("Supervisor preset requires the supervisor agent definition.")
+            raise ValueError(
+                "Supervisor preset requires the supervisor agent definition."
+            )
         return self
 
     def to_domain(self) -> AgentConfiguration:
@@ -652,7 +1818,9 @@ class AgentConfigurationRequest(BaseModel):
                 "preset": self.preset.value,
                 "display_mode": self.display_mode.value,
                 "turn_budget_mode": self.turn_budget_mode.value,
-                "supervisor_member_ids": [agent_id.value for agent_id in self.supervisor_member_ids],
+                "supervisor_member_ids": [
+                    agent_id.value for agent_id in self.supervisor_member_ids
+                ],
                 "summary_strategy": (
                     self.summary_strategy.to_domain().to_dict()
                     if self.summary_strategy is not None
@@ -691,7 +1859,7 @@ class AgentDefinitionResponse(BaseModel):
 
 class SummaryStrategyPayload(BaseModel):
     mode: SummaryStrategyMode
-    deterministic_interval: int = Field(default=4, ge=1)
+    deterministic_interval: int = Field(default=3, ge=1)
     supervisor_window_start: int = Field(default=3, ge=1)
     supervisor_window_end: int = Field(default=6, ge=1)
 
@@ -728,13 +1896,17 @@ class AgentConfigurationResponse(BaseModel):
     supervisor_member_ids: list[AgentId] = Field(default_factory=list)
 
     @classmethod
-    def from_domain(cls, configuration: AgentConfiguration) -> "AgentConfigurationResponse":
+    def from_domain(
+        cls, configuration: AgentConfiguration
+    ) -> "AgentConfigurationResponse":
         normalized = configuration.normalized()
         return cls(
             preset=normalized.preset,
             display_mode=normalized.display_mode,
             turn_budget_mode=normalized.turn_budget_mode,
-            summary_strategy=SummaryStrategyPayload.from_domain(normalized.summary_strategy),
+            summary_strategy=SummaryStrategyPayload.from_domain(
+                normalized.summary_strategy
+            ),
             supervisor_member_ids=list(normalized.supervisor_member_ids),
             agents=[
                 AgentDefinitionResponse(
@@ -854,6 +2026,8 @@ class FeedbackBatchStatusResponse(BaseModel):
     run_id: str | None = None
     runId: str | None = None
     workspace_path: str | None = None
+    release_target: dict[str, Any] = Field(default_factory=dict)
+    releaseTarget: dict[str, Any] | None = None
     quick_ask_id: str | None = None
     quickAskId: str | None = None
     job_status: JobStatus | None = None
@@ -1054,7 +2228,9 @@ class TurnSummaryResponse(BaseModel):
     id: str
     content: str
     source_message_ids: list[str] = Field(default_factory=list)
-    source_messages: list[TurnSummarySourceMessageResponse] = Field(default_factory=list)
+    source_messages: list[TurnSummarySourceMessageResponse] = Field(
+        default_factory=list
+    )
     created_at: datetime
     updated_at: datetime
 
@@ -1115,6 +2291,90 @@ class ConversationProductResponse(BaseModel):
         )
 
 
+_TOPIC_DESCRIPTION_MAX_WORDS = 7
+_TOPIC_DESCRIPTION_MAX_CHARS = 64
+_TOPIC_DESCRIPTION_STOPWORDS = {
+    "a",
+    "about",
+    "add",
+    "an",
+    "and",
+    "can",
+    "could",
+    "de",
+    "del",
+    "do",
+    "el",
+    "en",
+    "for",
+    "hacer",
+    "i",
+    "implement",
+    "improve",
+    "la",
+    "las",
+    "lo",
+    "los",
+    "me",
+    "need",
+    "necesito",
+    "para",
+    "please",
+    "podemos",
+    "por",
+    "que",
+    "quiero",
+    "sobre",
+    "the",
+    "to",
+    "un",
+    "una",
+    "we",
+    "with",
+    "y",
+}
+
+
+def _topic_description_for_messages(messages: list[ChatMessage]) -> str | None:
+    latest_user_message = next(
+        (
+            message.content
+            for message in reversed(messages)
+            if message.role == ChatMessageRole.USER
+            and message.author_type == ChatMessageAuthorType.HUMAN
+            and message.content.strip()
+        ),
+        None,
+    )
+    if latest_user_message is None:
+        return None
+
+    normalized = " ".join(
+        sanitize_image_attachment_error_text(latest_user_message).split()
+    ).strip()
+    if not normalized:
+        return None
+
+    words = re.findall(r"[\w#+./-]+", normalized, flags=re.UNICODE)
+    selected: list[str] = []
+    for word in words:
+        cleaned = word.strip(".,:;!?()[]{}\"'")
+        if not cleaned:
+            continue
+        if cleaned.lower() in _TOPIC_DESCRIPTION_STOPWORDS:
+            continue
+        selected.append(cleaned)
+        if len(selected) >= _TOPIC_DESCRIPTION_MAX_WORDS:
+            break
+
+    if not selected:
+        selected = words[:_TOPIC_DESCRIPTION_MAX_WORDS]
+    topic = " ".join(selected).strip()
+    if len(topic) > _TOPIC_DESCRIPTION_MAX_CHARS:
+        topic = f"{topic[: _TOPIC_DESCRIPTION_MAX_CHARS - 3].rstrip()}..."
+    return topic or None
+
+
 class SessionSummaryResponse(BaseModel):
     id: str
     title: str
@@ -1137,8 +2397,10 @@ class SessionSummaryResponse(BaseModel):
     auto_turn_index: int = 0
     reviewer_state: ReviewerLifecycleState = ReviewerLifecycleState.OFF
     conversation_product: ConversationProductResponse
+    topic_description: str | None = None
     created_at: datetime
     updated_at: datetime
+    last_message_at: datetime | None = None
     last_message_preview: str | None = None
     has_pending_messages: bool = False
 
@@ -1151,9 +2413,14 @@ class SessionSummaryResponse(BaseModel):
         turn_summaries: list[ChatTurnSummary] | None = None,
         jobs_by_id: dict[str, Job] | None = None,
     ) -> "SessionSummaryResponse":
-        last_message = messages[-1] if messages else None
+        last_message = (
+            max(messages, key=lambda message: (message.created_at, message.id))
+            if messages
+            else None
+        )
         has_pending = any(
-            message.status in {
+            message.status
+            in {
                 ChatMessageStatus.RESERVED,
                 ChatMessageStatus.SUBMISSION_PENDING,
                 ChatMessageStatus.PENDING,
@@ -1206,8 +2473,10 @@ class SessionSummaryResponse(BaseModel):
                     recent_runs=recent_runs,
                 )
             ),
+            topic_description=_topic_description_for_messages(messages),
             created_at=session.created_at,
             updated_at=session.updated_at,
+            last_message_at=last_message.created_at if last_message else None,
             last_message_preview=last_message.content[:120] if last_message else None,
             has_pending_messages=has_pending,
         )
@@ -1234,6 +2503,7 @@ class SessionDetailResponse(BaseModel):
     auto_turn_index: int = 0
     reviewer_state: ReviewerLifecycleState = ReviewerLifecycleState.OFF
     conversation_product: ConversationProductResponse
+    topic_description: str | None = None
     current_run: "CurrentRunExecutionResponse | None" = None
     recent_runs: list["CurrentRunExecutionResponse"] = Field(default_factory=list)
     created_at: datetime
@@ -1283,7 +2553,9 @@ class SessionDetailResponse(BaseModel):
             reviewer_provider_session_id=session.reviewer_provider_session_id,
             active_agent_run_id=session.active_agent_run_id,
             active_agent_turn_index=session.active_agent_turn_index,
-            agent_configuration=AgentConfigurationResponse.from_domain(session.agent_configuration),
+            agent_configuration=AgentConfigurationResponse.from_domain(
+                session.agent_configuration
+            ),
             auto_mode_enabled=session.auto_mode_enabled,
             auto_max_turns=session.auto_max_turns,
             auto_reviewer_prompt=session.auto_reviewer_prompt,
@@ -1301,12 +2573,12 @@ class SessionDetailResponse(BaseModel):
                     recent_runs=recent_runs,
                 )
             ),
+            topic_description=_topic_description_for_messages(messages),
             current_run=CurrentRunExecutionResponse.from_domain(current_run)
             if current_run is not None
             else None,
             recent_runs=[
-                CurrentRunExecutionResponse.from_domain(run)
-                for run in recent_runs
+                CurrentRunExecutionResponse.from_domain(run) for run in recent_runs
             ],
             created_at=session.created_at,
             updated_at=session.updated_at,
@@ -1392,7 +2664,9 @@ class CurrentRunExecutionResponse(BaseModel):
             completed_at=run.completed_at,
             participant_agent_ids=list(run.participant_agent_ids),
             call_count=run.call_count,
-            stages=[RunStageExecutionResponse.from_domain(stage) for stage in run.stages],
+            stages=[
+                RunStageExecutionResponse.from_domain(stage) for stage in run.stages
+            ],
         )
 
 
@@ -1480,6 +2754,9 @@ class BackendDrainStatusResponse(BaseModel):
 class HealthResponse(BaseModel):
     status: str = "ok"
     server_name: str
+    backend_version: str | None = None
+    backend_commit: str | None = None
+    features: dict[str, bool] = Field(default_factory=dict)
     backend_mode: str
     projects_root: str
     persistence_available: bool
@@ -1501,6 +2778,8 @@ class HealthResponse(BaseModel):
     tailscale_magic_dns_name: str | None = None
     tailscale_ipv4: str | None = None
     tailscale_suggested_url: str | None = None
+    preferred_client_url: str | None = None
+    public_base_urls: list[str] = Field(default_factory=list)
 
 
 class PersistenceIntegrityIssueResponse(BaseModel):
@@ -1540,6 +2819,11 @@ class ServerCapabilitiesResponse(BaseModel):
     supports_job_retry: bool
     supports_push_job_stream: bool
     supports_feedback_batches: bool = True
+    supports_sdd: bool = True
+    supports_project_factory: bool = True
+    backend_version: str | None = None
+    backend_commit: str | None = None
+    features: dict[str, bool] = Field(default_factory=dict)
     speech_output_backend: str
     speech_output_voice: str | None = None
     speech_output_response_format: str | None = None
@@ -1548,6 +2832,8 @@ class ServerCapabilitiesResponse(BaseModel):
     document_max_upload_bytes: int
     document_text_char_limit: int
     feedback_source_workspace_aliases: dict[str, str] = Field(default_factory=dict)
+    preferred_client_url: str | None = None
+    public_base_urls: list[str] = Field(default_factory=list)
 
 
 class SpeechRequest(BaseModel):

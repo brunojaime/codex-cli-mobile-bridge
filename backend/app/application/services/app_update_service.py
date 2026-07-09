@@ -5,6 +5,9 @@ import fnmatch
 import hashlib
 import json
 import re
+import shutil
+import threading
+import time
 from pathlib import Path
 from collections.abc import Iterator
 from typing import Any, Protocol
@@ -22,6 +25,9 @@ class AppUpdateConfig:
     latest_asset_name: str | None
     required_minimum_build: int | None
     enabled: bool
+    release_channel: str = "stable"
+    expected_package_id: str | None = None
+    verified_package_ids: dict[str, str] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,6 +65,10 @@ class AppUpdateResult:
     sha256: str | None
     size_bytes: int | None
     release_notes: str | None
+    release_channel: str
+    release_prerelease: bool
+    private_install: bool
+    package_id: str | None
     required: bool
     available: bool
 
@@ -208,30 +218,17 @@ class AppUpdateRegistry:
     @classmethod
     def from_json_file(cls, path: str | Path) -> "AppUpdateRegistry":
         payload = json.loads(Path(path).read_text(encoding="utf-8"))
+        return cls.from_mapping(payload)
+
+    @classmethod
+    def from_mapping(cls, payload: Any) -> "AppUpdateRegistry":
         if not isinstance(payload, dict):
             raise ValueError("App update registry must be a JSON object.")
         configs: dict[str, AppUpdateConfig] = {}
         for source_app, raw_config in payload.items():
             if not isinstance(raw_config, dict):
                 raise ValueError(f"Invalid app update config for {source_app}.")
-            configs[source_app] = AppUpdateConfig(
-                source_app=source_app,
-                display_name=str(raw_config["displayName"]),
-                repo=str(raw_config["repo"]),
-                release_tag_pattern=str(raw_config["releaseTagPattern"]),
-                apk_asset_pattern=str(raw_config["apkAssetPattern"]),
-                latest_asset_name=(
-                    str(raw_config["latestAssetName"])
-                    if raw_config.get("latestAssetName") is not None
-                    else None
-                ),
-                required_minimum_build=(
-                    int(raw_config["requiredMinimumBuild"])
-                    if raw_config.get("requiredMinimumBuild") is not None
-                    else None
-                ),
-                enabled=bool(raw_config.get("enabled", True)),
-            )
+            configs[str(source_app)] = _config_from_raw(str(source_app), raw_config)
         return cls(configs)
 
     def list_configs(self) -> list[AppUpdateConfig]:
@@ -245,6 +242,12 @@ class AppUpdateRegistry:
             raise AppDisabledError(source_app)
         return config
 
+    def to_mapping(self) -> dict[str, Any]:
+        return {
+            config.source_app: _config_to_raw(config)
+            for config in self.list_configs()
+        }
+
 
 class AppUpdateService:
     def __init__(
@@ -252,12 +255,80 @@ class AppUpdateService:
         *,
         registry: AppUpdateRegistry,
         release_client: GitHubReleaseClient,
+        registry_path: str | Path | None = None,
     ) -> None:
         self._registry = registry
         self._release_client = release_client
+        self._registry_path = Path(registry_path) if registry_path is not None else None
+        self._registry_mtime_ns = self._current_registry_mtime_ns()
+        self._lock = threading.RLock()
 
     def list_apps(self) -> list[AppUpdateConfig]:
-        return self._registry.list_configs()
+        with self._lock:
+            self._reload_if_changed()
+            return self._registry.list_configs()
+
+    def register_app(
+        self,
+        *,
+        source_app: str,
+        display_name: str,
+        repo: str,
+        release_tag_pattern: str,
+        apk_asset_pattern: str,
+        latest_asset_name: str | None,
+        required_minimum_build: int | None,
+        enabled: bool,
+        release_channel: str = "stable",
+        expected_package_id: str | None = None,
+        verified_package_ids: dict[str, str] | None = None,
+    ) -> AppUpdateConfig:
+        if self._registry_path is None:
+            raise ValueError("App update registry path is not writable.")
+        normalized_source_app = _validate_source_app(source_app)
+        normalized_repo = _validate_repo(repo)
+        _validate_channel(release_channel)
+        if required_minimum_build is not None and required_minimum_build < 0:
+            raise ValueError("requiredMinimumBuild must be greater than or equal to 0.")
+        normalized_package_id = (
+            _validate_android_package_id(expected_package_id)
+            if expected_package_id
+            else None
+        )
+        normalized_verified_package_ids = {
+            _non_empty_string(str(key), "verifiedPackageIds key"): (
+                _validate_android_package_id(str(value))
+            )
+            for key, value in (verified_package_ids or {}).items()
+        }
+        entry = {
+            "displayName": _non_empty_string(display_name, "displayName"),
+            "repo": normalized_repo,
+            "releaseTagPattern": _non_empty_string(
+                _safe_pattern(release_tag_pattern, "releaseTagPattern"),
+                "releaseTagPattern",
+            ),
+            "apkAssetPattern": _non_empty_string(
+                _safe_pattern(apk_asset_pattern, "apkAssetPattern"),
+                "apkAssetPattern",
+            ),
+            "latestAssetName": (
+                _safe_asset_name(latest_asset_name) if latest_asset_name else None
+            ),
+            "requiredMinimumBuild": required_minimum_build,
+            "releaseChannel": release_channel,
+            "expectedPackageId": normalized_package_id,
+            "verifiedPackageIds": normalized_verified_package_ids,
+            "enabled": enabled,
+        }
+        config = _config_from_raw(normalized_source_app, entry)
+        with self._lock:
+            payload = self._read_registry_payload()
+            payload[normalized_source_app] = entry
+            self._write_registry_payload(payload)
+            self._registry = AppUpdateRegistry.from_mapping(payload)
+            self._registry_mtime_ns = self._current_registry_mtime_ns()
+        return config
 
     def check_update(
         self,
@@ -272,8 +343,11 @@ class AppUpdateService:
             raise ValueError("Only android app updates are currently supported.")
         _validate_channel(channel)
 
-        config = self._registry.get(source_app)
-        latest = self._latest_valid_release(config, channel=channel)
+        with self._lock:
+            self._reload_if_changed()
+            config = self._registry.get(source_app)
+        effective_channel = _effective_channel(config, requested_channel=channel)
+        latest = self._latest_valid_release(config, channel=effective_channel)
         if latest is None:
             return _empty_result(
                 config,
@@ -283,6 +357,7 @@ class AppUpdateService:
             )
 
         release, apk_asset, latest_version, latest_build = latest
+        package_id = _verified_package_id_for(config, release, apk_asset)
         available = (
             current_build is None
             or latest_build is None
@@ -308,6 +383,10 @@ class AppUpdateService:
             sha256=_sha256_for_asset(release.assets, apk_asset) if available else None,
             size_bytes=apk_asset.size if available else None,
             release_notes=release.body if available else None,
+            release_channel=effective_channel,
+            release_prerelease=release.prerelease,
+            private_install=effective_channel == "private-install",
+            package_id=package_id,
             required=required,
             available=available,
         )
@@ -328,18 +407,23 @@ class AppUpdateService:
             raise AppUpdateAssetNotFoundError(
                 f"{source_app}:{release_tag}:{asset_name}"
             )
-        config = self._registry.get(source_app)
+        with self._lock:
+            self._reload_if_changed()
+            config = self._registry.get(source_app)
+        effective_channel = _effective_channel(config, requested_channel=channel)
         for release in self._release_client.list_releases(config.repo):
             if release.tag_name != release_tag:
                 continue
             if (
                 release.draft
-                or not _release_allowed_for_channel(release, channel)
+                or not _release_allowed_for_channel(release, effective_channel)
                 or not fnmatch.fnmatch(release.tag_name, config.release_tag_pattern)
             ):
                 break
             asset = _find_downloadable_apk_asset(release.assets, config, asset_name)
             if asset is None:
+                break
+            if not _release_package_matches(config, release, asset):
                 break
             return config, asset
         raise AppUpdateAssetNotFoundError(f"{source_app}:{release_tag}:{asset_name}")
@@ -363,6 +447,59 @@ class AppUpdateService:
         stream = self._release_client.open_asset_stream(config.repo, asset)
         return asset, stream
 
+    def _read_registry_payload(self) -> dict[str, Any]:
+        if self._registry_path is None:
+            return {}
+        if not self._registry_path.exists():
+            return {}
+        try:
+            payload = json.loads(self._registry_path.read_text(encoding="utf-8"))
+            if not isinstance(payload, dict):
+                raise ValueError("App update registry must be a JSON object.")
+        except (json.JSONDecodeError, ValueError):
+            self._backup_registry_file(suffix="corrupt")
+            return self._registry.to_mapping()
+        return payload
+
+    def _write_registry_payload(self, payload: dict[str, Any]) -> None:
+        if self._registry_path is None:
+            raise ValueError("App update registry path is not writable.")
+        self._registry_path.parent.mkdir(parents=True, exist_ok=True)
+        if self._registry_path.exists():
+            self._backup_registry_file(suffix="bak")
+        tmp_path = self._registry_path.with_name(f".{self._registry_path.name}.tmp")
+        tmp_path.write_text(
+            json.dumps(payload, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        tmp_path.replace(self._registry_path)
+
+    def _reload_if_changed(self) -> None:
+        if self._registry_path is None:
+            return
+        mtime_ns = self._current_registry_mtime_ns()
+        if mtime_ns == self._registry_mtime_ns:
+            return
+        try:
+            self._registry = AppUpdateRegistry.from_json_file(self._registry_path)
+        except (json.JSONDecodeError, ValueError):
+            self._backup_registry_file(suffix="corrupt")
+        self._registry_mtime_ns = mtime_ns
+
+    def _current_registry_mtime_ns(self) -> int | None:
+        if self._registry_path is None or not self._registry_path.exists():
+            return None
+        return self._registry_path.stat().st_mtime_ns
+
+    def _backup_registry_file(self, *, suffix: str) -> None:
+        if self._registry_path is None or not self._registry_path.exists():
+            return
+        timestamp = int(time.time() * 1000)
+        backup_path = self._registry_path.with_name(
+            f"{self._registry_path.name}.{suffix}.{timestamp}",
+        )
+        shutil.copy2(self._registry_path, backup_path)
+
     def _latest_valid_release(
         self,
         config: AppUpdateConfig,
@@ -382,6 +519,8 @@ class AppUpdateService:
                 continue
             apk_asset = _select_apk_asset(release.assets, config)
             if apk_asset is None:
+                continue
+            if not _release_package_matches(config, release, apk_asset):
                 continue
             latest_version, latest_build = _derive_version_and_build(
                 release.tag_name,
@@ -420,9 +559,61 @@ def _empty_result(
         sha256=None,
         size_bytes=None,
         release_notes=None,
+        release_channel=config.release_channel,
+        release_prerelease=False,
+        private_install=config.release_channel == "private-install",
+        package_id=None,
         required=False,
         available=False,
     )
+
+
+def _config_from_raw(source_app: str, raw_config: dict[str, Any]) -> AppUpdateConfig:
+    return AppUpdateConfig(
+        source_app=_validate_source_app(source_app),
+        display_name=str(raw_config["displayName"]),
+        repo=str(raw_config["repo"]),
+        release_tag_pattern=str(raw_config["releaseTagPattern"]),
+        apk_asset_pattern=str(raw_config["apkAssetPattern"]),
+        latest_asset_name=(
+            str(raw_config["latestAssetName"])
+            if raw_config.get("latestAssetName") is not None
+            else None
+        ),
+        required_minimum_build=(
+            int(raw_config["requiredMinimumBuild"])
+            if raw_config.get("requiredMinimumBuild") is not None
+            else None
+        ),
+        enabled=bool(raw_config.get("enabled", True)),
+        release_channel=_validate_release_channel_value(
+            str(raw_config.get("releaseChannel", "stable"))
+        ),
+        expected_package_id=(
+            str(raw_config["expectedPackageId"])
+            if raw_config.get("expectedPackageId") is not None
+            else None
+        ),
+        verified_package_ids={
+            str(key): str(value)
+            for key, value in (raw_config.get("verifiedPackageIds") or {}).items()
+        },
+    )
+
+
+def _config_to_raw(config: AppUpdateConfig) -> dict[str, Any]:
+    return {
+        "displayName": config.display_name,
+        "repo": config.repo,
+        "releaseTagPattern": config.release_tag_pattern,
+        "apkAssetPattern": config.apk_asset_pattern,
+        "latestAssetName": config.latest_asset_name,
+        "requiredMinimumBuild": config.required_minimum_build,
+        "releaseChannel": config.release_channel,
+        "expectedPackageId": config.expected_package_id,
+        "verifiedPackageIds": config.verified_package_ids or {},
+        "enabled": config.enabled,
+    }
 
 
 def _release_from_json(payload: Any) -> GitHubRelease:
@@ -470,17 +661,79 @@ def _select_apk_asset(
 
 
 def _validate_channel(channel: str) -> None:
-    if channel not in {"stable", "prerelease", "all"}:
+    if channel not in {"stable", "prerelease", "private-install", "all"}:
         raise ValueError("Unsupported app update channel.")
+
+
+def _validate_source_app(source_app: str) -> str:
+    value = source_app.strip().lower()
+    if not re.fullmatch(r"[a-z0-9][a-z0-9_.-]{0,119}", value):
+        raise ValueError("sourceApp must be a safe lowercase app id.")
+    return value
+
+
+def _validate_repo(repo: str) -> str:
+    value = repo.strip()
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", value):
+        raise ValueError("repo must use the OWNER/REPO format.")
+    return value
+
+
+def _non_empty_string(value: str | None, field_name: str) -> str:
+    normalized = (value or "").strip()
+    if not normalized:
+        raise ValueError(f"{field_name} is required.")
+    return normalized
+
+
+def _safe_asset_name(value: str) -> str:
+    normalized = _non_empty_string(value, "latestAssetName")
+    if not _is_safe_asset_name(normalized):
+        raise ValueError("latestAssetName must be a safe file name.")
+    return normalized
+
+
+def _safe_pattern(value: str, field_name: str) -> str:
+    normalized = _non_empty_string(value, field_name)
+    if (
+        "/" in normalized
+        or "\\" in normalized
+        or "\x00" in normalized
+        or ".." in normalized
+    ):
+        raise ValueError(f"{field_name} must not contain path traversal.")
+    return normalized
+
+
+def _validate_android_package_id(value: str) -> str:
+    normalized = _non_empty_string(value, "packageId")
+    part = r"[A-Za-z][A-Za-z0-9_]*"
+    if not re.fullmatch(rf"{part}(\.{part})+", normalized):
+        raise ValueError("packageId must be a valid Android package id.")
+    return normalized
 
 
 def _release_allowed_for_channel(release: GitHubRelease, channel: str) -> bool:
     _validate_channel(channel)
     if channel == "stable":
         return not release.prerelease
-    if channel == "prerelease":
+    if channel in {"prerelease", "private-install"}:
         return release.prerelease
     return True
+
+
+def _validate_release_channel_value(channel: str) -> str:
+    _validate_channel(channel)
+    if channel == "all":
+        raise ValueError("App update releaseChannel cannot be 'all'.")
+    return channel
+
+
+def _effective_channel(config: AppUpdateConfig, *, requested_channel: str) -> str:
+    _validate_channel(requested_channel)
+    if requested_channel == "stable" and config.release_channel != "stable":
+        return config.release_channel
+    return requested_channel
 
 
 def _is_safe_asset_name(asset_name: str) -> bool:
@@ -506,6 +759,36 @@ def _find_downloadable_apk_asset(
         if fnmatch.fnmatch(asset.name, config.apk_asset_pattern):
             return asset
     return None
+
+
+def _verified_package_id_for(
+    config: AppUpdateConfig,
+    release: GitHubRelease,
+    apk_asset: GitHubAsset,
+) -> str | None:
+    verified = config.verified_package_ids or {}
+    exact = verified.get(release.tag_name) or verified.get(apk_asset.name)
+    if exact is not None:
+        return exact
+    for pattern, package_id in verified.items():
+        if fnmatch.fnmatch(release.tag_name, pattern) or fnmatch.fnmatch(
+            apk_asset.name,
+            pattern,
+        ):
+            return package_id
+    return None
+
+
+def _release_package_matches(
+    config: AppUpdateConfig,
+    release: GitHubRelease,
+    apk_asset: GitHubAsset,
+) -> bool:
+    expected = config.expected_package_id
+    if expected is None:
+        return True
+    package_id = _verified_package_id_for(config, release, apk_asset)
+    return package_id == expected
 
 
 def _derive_version_and_build(*values: str) -> tuple[str | None, int | None]:

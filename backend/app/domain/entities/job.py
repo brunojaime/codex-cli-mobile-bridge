@@ -4,7 +4,11 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import StrEnum
 
-from backend.app.domain.entities.agent_configuration import AgentId, AgentTriggerSource, AgentType
+from backend.app.domain.entities.agent_configuration import (
+    AgentId,
+    AgentTriggerSource,
+    AgentType,
+)
 
 
 def utc_now() -> datetime:

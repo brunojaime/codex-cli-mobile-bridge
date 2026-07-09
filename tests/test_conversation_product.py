@@ -92,7 +92,9 @@ def _derive(session: ChatSession, *messages: ChatMessage):
     )
 
 
-def test_supervisor_mode_hides_collapsed_specialist_messages_before_supervisor_reply() -> None:
+def test_supervisor_mode_hides_collapsed_specialist_messages_before_supervisor_reply() -> (
+    None
+):
     session = _build_session(
         preset=AgentPreset.SUPERVISOR,
         display_mode=AgentDisplayMode.COLLAPSE_SPECIALISTS,
@@ -124,7 +126,9 @@ def test_supervisor_mode_hides_collapsed_specialist_messages_before_supervisor_r
     assert product.description == "Ship the dashboard safely."
 
 
-def test_supervisor_mode_prefers_supervisor_update_over_hidden_specialist_output() -> None:
+def test_supervisor_mode_prefers_supervisor_update_over_hidden_specialist_output() -> (
+    None
+):
     session = _build_session(
         preset=AgentPreset.SUPERVISOR,
         display_mode=AgentDisplayMode.COLLAPSE_SPECIALISTS,
@@ -207,7 +211,9 @@ def test_review_mode_prefers_generator_output_over_reviewer_prompt() -> None:
     assert product.description == "Generator implemented the auth patch."
 
 
-def test_summary_only_mode_falls_back_to_latest_user_message_until_summary_exists() -> None:
+def test_summary_only_mode_falls_back_to_latest_user_message_until_summary_exists() -> (
+    None
+):
     session = _build_session(
         preset=AgentPreset.TRIAD,
         display_mode=AgentDisplayMode.SUMMARY_ONLY,

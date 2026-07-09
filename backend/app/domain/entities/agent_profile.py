@@ -223,7 +223,9 @@ def _standalone_specialist_configuration(
 ) -> AgentConfiguration:
     configuration = AgentConfiguration.default()
     configuration.agents[AgentId.GENERATOR].label = label
-    configuration.agents[AgentId.GENERATOR].prompt = configuration.agents[specialist_id].prompt
+    configuration.agents[AgentId.GENERATOR].prompt = configuration.agents[
+        specialist_id
+    ].prompt
     return configuration.normalized()
 
 
@@ -239,7 +241,9 @@ def builtin_agent_profiles() -> list[AgentProfile]:
     default_configuration = AgentConfiguration.default()
     agent_creator_configuration = AgentConfiguration.default()
     agent_creator_configuration.agents[AgentId.GENERATOR].label = "Agent Creator"
-    agent_creator_configuration.agents[AgentId.GENERATOR].prompt = DEFAULT_AGENT_CREATOR_PROMPT
+    agent_creator_configuration.agents[
+        AgentId.GENERATOR
+    ].prompt = DEFAULT_AGENT_CREATOR_PROMPT
     supervisor_configuration = _supervisor_configuration()
     provider_configuration = AgentConfiguration.default()
     provider_configuration.agents[AgentId.GENERATOR].label = "Provider"
@@ -366,7 +370,4 @@ def builtin_agent_profiles() -> list[AgentProfile]:
 
 
 def builtin_agent_profiles_by_id() -> dict[str, AgentProfile]:
-    return {
-        profile.id: profile
-        for profile in builtin_agent_profiles()
-    }
+    return {profile.id: profile for profile in builtin_agent_profiles()}

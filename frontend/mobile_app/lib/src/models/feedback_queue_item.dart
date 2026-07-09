@@ -27,6 +27,8 @@ class FeedbackQueueItem {
     required this.hasScreenshot,
     required this.selectionPoints,
     required this.selectionBounds,
+    this.feedbackKind,
+    this.contextMetadata = const <String, Object?>{},
     this.screenshotMimeType = 'image/png',
     this.screenshotPngBase64,
     this.audioMimeType,
@@ -43,6 +45,8 @@ class FeedbackQueueItem {
   final DateTime? createdAt;
   final String status;
   final bool hasScreenshot;
+  final String? feedbackKind;
+  final Map<String, Object?> contextMetadata;
   final String screenshotMimeType;
   final String? screenshotPngBase64;
   final List<Map<String, double>> selectionPoints;
@@ -72,6 +76,8 @@ class FeedbackQueueItem {
       createdAt: DateTime.tryParse(json['created_at'] as String? ?? ''),
       status: json['status'] as String? ?? 'pending',
       hasScreenshot: json['has_screenshot'] as bool? ?? false,
+      feedbackKind: json['feedback_kind'] as String?,
+      contextMetadata: _objectMapFromJson(json['context_metadata']),
       screenshotMimeType:
           json['screenshot_mime_type'] as String? ?? 'image/png',
       screenshotPngBase64: json['screenshot_png_base64'] as String?,
@@ -99,6 +105,15 @@ class FeedbackQueueItem {
       (key, raw) => MapEntry(
         key.toString(),
         raw is num ? raw.toDouble() : double.tryParse('$raw') ?? 0,
+      ),
+    );
+  }
+
+  static Map<String, Object?> _objectMapFromJson(Object? value) {
+    if (value is! Map) return const <String, Object?>{};
+    return Map<String, Object?>.fromEntries(
+      value.entries.map(
+        (entry) => MapEntry(entry.key.toString(), entry.value),
       ),
     );
   }

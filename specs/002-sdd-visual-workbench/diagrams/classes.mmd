@@ -1,0 +1,67 @@
+classDiagram
+    class SddProject {
+        +String workspacePath
+        +String projectId
+        +String projectName
+        +List~SddSpec~ specs
+        +List~SddDiagram~ architectureDiagrams
+    }
+
+    class SddSpec {
+        +String id
+        +String path
+        +SddFile spec
+        +SddFile plan
+        +SddFile tasks
+        +List~SddDiagram~ diagrams
+    }
+
+    class SddDiagram {
+        +String path
+        +String diagramType
+        +String mermaidSource
+        +String renderStatus
+    }
+
+    class DiagramSelection {
+        +String diagramPath
+        +String elementId
+        +String elementKind
+        +String region
+    }
+
+    class FeedbackItem {
+        +String id
+        +String workspacePath
+        +String specId
+        +String screen
+        +String component
+        +String diagramPath
+    }
+
+    class CodexActionRequest {
+        +String id
+        +String intent
+        +String workspacePath
+        +List~String~ sddPaths
+        +String status
+    }
+
+    class ProjectDashboard {
+        +String workspacePath
+        +String contractHealth
+        +Map diagramCoverage
+        +List feedback
+        +List actions
+    }
+
+    SddProject "1" o-- "*" SddSpec
+    SddProject "1" o-- "*" SddDiagram
+    SddSpec "1" o-- "*" SddDiagram
+    FeedbackItem "0..*" --> "0..1" SddSpec
+    FeedbackItem "0..*" --> "0..1" SddDiagram
+    FeedbackItem "0..*" --> "0..1" DiagramSelection
+    CodexActionRequest "0..*" --> "0..1" FeedbackItem
+    CodexActionRequest "0..*" --> "0..1" SddSpec
+    CodexActionRequest "0..*" --> "0..1" SddDiagram
+    ProjectDashboard "1" --> "1" SddProject

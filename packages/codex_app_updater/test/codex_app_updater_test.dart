@@ -84,6 +84,24 @@ void main() {
     expect(find.byKey(codexAppUpdaterLaterButtonKey), findsOneWidget);
   });
 
+  testWidgets('auto install requests update flow when enabled', (tester) async {
+    final controller = _AutoInstallProbeController();
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(
+      _Harness(
+        controller: controller,
+        config: _config(autoInstallAvailableUpdates: true),
+        checkOnStart: false,
+      ),
+    );
+    controller.emitAvailableUpdate();
+    await tester.pump();
+    await tester.pump();
+
+    expect(controller.updateNowCalls, 1);
+  });
+
   testWidgets('available update hides raw release notes and current version', (
     tester,
   ) async {
@@ -293,6 +311,67 @@ void main() {
     final prepared = await controller.downloadAndPrepare(_config());
 
     expect(prepared, isFalse);
+    expect(controller.status, CodexAppUpdateStatus.failed);
+    expect(
+      controller.failureReason,
+      CodexAppUpdateFailureReason.checksumMismatch,
+    );
+    expect(installer.launchCount, 0);
+  });
+
+  test(
+    'installExternalApk downloads verifies and launches installer',
+    () async {
+      final apkFile = await _writeTempApk('external-apk-ok', [1, 2, 3]);
+      final expectedSha = await _sha256(apkFile.path);
+      final downloader = _FakeDownloader(apkFile.path);
+      final installer = _FakeInstallerLauncher();
+      final controller = CodexAppUpdaterController(
+        downloader: downloader,
+        installerLauncher: installer,
+      );
+      addTearDown(controller.dispose);
+
+      final installed = await controller.installExternalApk(
+        apkUrl: Uri.parse('http://bridge.test/installable-apps/sat/apk'),
+        sourceApp: 'sat-showroom',
+        displayName: 'SAT Showroom',
+        apkAssetName: 'sat-showroom.apk',
+        sha256: expectedSha,
+        sizeBytes: 123,
+      );
+
+      expect(installed, isTrue);
+      expect(downloader.downloadCount, 1);
+      expect(
+        downloader.requestedUrl.toString(),
+        'http://bridge.test/installable-apps/sat/apk',
+      );
+      expect(installer.launchCount, 1);
+      expect(installer.launchedPath, apkFile.path);
+      expect(controller.updateInfo?.sourceApp, 'sat-showroom');
+      expect(controller.status, CodexAppUpdateStatus.dismissed);
+    },
+  );
+
+  test('installExternalApk reports checksum mismatch', () async {
+    final apkFile = await _writeTempApk('external-apk-bad', [1, 1, 1]);
+    final installer = _FakeInstallerLauncher();
+    final controller = CodexAppUpdaterController(
+      downloader: _FakeDownloader(apkFile.path),
+      installerLauncher: installer,
+    );
+    addTearDown(controller.dispose);
+
+    final installed = await controller.installExternalApk(
+      apkUrl: Uri.parse('http://bridge.test/installable-apps/sat/apk'),
+      sourceApp: 'sat-showroom',
+      apkAssetName: 'sat-showroom.apk',
+      sha256:
+          'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    );
+
+    expect(installed, isFalse);
     expect(controller.status, CodexAppUpdateStatus.failed);
     expect(
       controller.failureReason,
@@ -830,10 +909,15 @@ void main() {
 }
 
 class _Harness extends StatelessWidget {
-  const _Harness({required this.controller, this.config = _defaultConfig});
+  const _Harness({
+    required this.controller,
+    this.config = _defaultConfig,
+    this.checkOnStart = true,
+  });
 
   final CodexAppUpdaterController controller;
   final CodexAppUpdaterConfig config;
+  final bool checkOnStart;
 
   @override
   Widget build(BuildContext context) {
@@ -841,9 +925,36 @@ class _Harness extends StatelessWidget {
       home: CodexAppUpdater(
         config: config,
         controller: controller,
+        checkOnStart: checkOnStart,
         child: const Scaffold(body: Text('App')),
       ),
     );
+  }
+}
+
+class _AutoInstallProbeController extends CodexAppUpdaterController {
+  int updateNowCalls = 0;
+
+  void emitAvailableUpdate() {
+    updateInfo = const CodexAppUpdateInfo(
+      sourceApp: 'ambientando-calendar',
+      platform: 'android',
+      available: true,
+      required: false,
+      latestVersion: '1.0.0',
+      latestBuild: 40,
+      releaseTag: 'android-v1.0.0-build.40',
+      apkUrl: 'https://example.test/app.apk',
+      apkAssetName: 'ambientando-calendar.apk',
+    );
+    status = CodexAppUpdateStatus.updateAvailable;
+    notifyListeners();
+  }
+
+  @override
+  Future<bool> updateNow(CodexAppUpdaterConfig config) async {
+    updateNowCalls += 1;
+    return true;
   }
 }
 
@@ -919,11 +1030,15 @@ const _defaultConfig = CodexAppUpdaterConfig(
   currentBuild: 39,
 );
 
-CodexAppUpdaterConfig _config({int currentBuild = 39}) => CodexAppUpdaterConfig(
+CodexAppUpdaterConfig _config({
+  int currentBuild = 39,
+  bool autoInstallAvailableUpdates = false,
+}) => CodexAppUpdaterConfig(
   sourceApp: 'ambientando-calendar',
   bridgeUrl: 'https://bridge.example.test',
   currentVersion: '1.0.0',
   currentBuild: currentBuild,
+  autoInstallAvailableUpdates: autoInstallAvailableUpdates,
 );
 
 Map<String, Object?> _updateJson({

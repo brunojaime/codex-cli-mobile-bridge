@@ -31,7 +31,7 @@
         "localPath": "../xr18-mobile-control",
         "defaultBranch": "main",
         "pubspecPath": "pubspec.yaml",
-        "releaseTagPrefix": "internal-android-v",
+        "releaseTagPrefix": "android-v",
         "releaseWorkflow": "Android Release"
       },
       {
@@ -41,18 +41,18 @@
         "localPath": "../smart_nienfos",
         "defaultBranch": "main",
         "pubspecPath": "smart-nienfos-molding-domain/frontend/app/pubspec.yaml",
-        "releaseTagPrefix": "android-v",
-        "releaseWorkflow": "Android Release"
+        "releaseTagPrefix": "moldegon-android-v",
+        "releaseWorkflow": "Moldegon Android Release"
       },
       {
-        "sourceApp": "smart-nienfos-admin",
+        "sourceApp": "smart-nienfos",
         "displayName": "Smart Nienfos Admin",
         "repo": "brunojaime/smart-nienfos-flutter-app",
         "localPath": "../smart_nienfos/smart-nienfos-flutter-app",
         "defaultBranch": "main",
         "pubspecPath": "app/client/pubspec.yaml",
-        "releaseTagPrefix": "android-v",
-        "releaseWorkflow": "Android Release"
+        "releaseTagPrefix": "android-smart-nienfos-v",
+        "releaseWorkflow": "Smart Nienfos Android Release"
       }
     ]
   },
@@ -80,6 +80,36 @@
         "pubspecPath": "frontend/pubspec.yaml",
         "releaseTagPrefix": "android-v",
         "releaseWorkflow": "Android Release"
+      },
+      {
+        "sourceApp": "xr18-mobile-control",
+        "displayName": "XR18 Mobile Control",
+        "repo": "brunojaime/xr18-mobile-control",
+        "localPath": "../xr18-mobile-control",
+        "defaultBranch": "main",
+        "pubspecPath": "pubspec.yaml",
+        "releaseTagPrefix": "android-v",
+        "releaseWorkflow": "Android Release"
+      },
+      {
+        "sourceApp": "smart-nienfos-moldegon",
+        "displayName": "Moldegon",
+        "repo": "brunojaime/smart_nienfos",
+        "localPath": "../smart_nienfos",
+        "defaultBranch": "main",
+        "pubspecPath": "smart-nienfos-molding-domain/frontend/app/pubspec.yaml",
+        "releaseTagPrefix": "moldegon-android-v",
+        "releaseWorkflow": "Moldegon Android Release"
+      },
+      {
+        "sourceApp": "smart-nienfos",
+        "displayName": "Smart Nienfos Admin",
+        "repo": "brunojaime/smart-nienfos-flutter-app",
+        "localPath": "../smart_nienfos/smart-nienfos-flutter-app",
+        "defaultBranch": "main",
+        "pubspecPath": "app/client/pubspec.yaml",
+        "releaseTagPrefix": "android-smart-nienfos-v",
+        "releaseWorkflow": "Smart Nienfos Android Release"
       }
     ]
   }

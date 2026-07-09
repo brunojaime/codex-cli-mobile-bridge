@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import 'codex_app_updater_config.dart';
@@ -32,6 +34,8 @@ class _CodexAppUpdaterState extends State<CodexAppUpdater>
     with WidgetsBindingObserver {
   late final CodexAppUpdaterController _controller =
       widget.controller ?? CodexAppUpdaterController();
+  String? _autoInstallReleaseKey;
+  bool _autoInstallScheduled = false;
 
   bool get _ownsController => widget.controller == null;
 
@@ -39,6 +43,7 @@ class _CodexAppUpdaterState extends State<CodexAppUpdater>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _controller.addListener(_handleControllerChanged);
     if (widget.checkOnStart) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) _controller.checkForUpdate(widget.config);
@@ -49,6 +54,10 @@ class _CodexAppUpdaterState extends State<CodexAppUpdater>
   @override
   void didUpdateWidget(CodexAppUpdater oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.config.sourceApp != widget.config.sourceApp ||
+        oldWidget.config.currentBuild != widget.config.currentBuild) {
+      _autoInstallReleaseKey = null;
+    }
     if (oldWidget.config != widget.config && widget.checkOnStart) {
       _controller.checkForUpdate(widget.config);
     }
@@ -57,6 +66,7 @@ class _CodexAppUpdaterState extends State<CodexAppUpdater>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _controller.removeListener(_handleControllerChanged);
     if (_ownsController) _controller.dispose();
     super.dispose();
   }
@@ -106,6 +116,50 @@ class _CodexAppUpdaterState extends State<CodexAppUpdater>
       CodexAppUpdateStatus.failed => true,
       _ => false,
     };
+  }
+
+  void _handleControllerChanged() {
+    if (!widget.config.enabled ||
+        !widget.config.autoInstallAvailableUpdates ||
+        !mounted) {
+      return;
+    }
+    final status = _controller.status;
+    if (status != CodexAppUpdateStatus.updateAvailable &&
+        status != CodexAppUpdateStatus.updateRequired) {
+      return;
+    }
+    final info = _controller.updateInfo;
+    if (info == null || !info.hasInstallableAsset) {
+      return;
+    }
+    final releaseKey = [
+      info.sourceApp,
+      info.releaseTag,
+      info.latestVersion,
+      info.latestBuild?.toString(),
+      info.apkUrl,
+    ].whereType<String>().join('|');
+    if (releaseKey.isEmpty || _autoInstallReleaseKey == releaseKey) {
+      return;
+    }
+    _autoInstallReleaseKey = releaseKey;
+    if (_autoInstallScheduled) {
+      return;
+    }
+    _autoInstallScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _autoInstallScheduled = false;
+      if (!mounted || _autoInstallReleaseKey != releaseKey) {
+        return;
+      }
+      final latestStatus = _controller.status;
+      if (latestStatus != CodexAppUpdateStatus.updateAvailable &&
+          latestStatus != CodexAppUpdateStatus.updateRequired) {
+        return;
+      }
+      unawaited(_controller.updateNow(widget.config));
+    });
   }
 }
 

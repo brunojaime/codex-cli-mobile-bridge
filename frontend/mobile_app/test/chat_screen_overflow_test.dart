@@ -154,12 +154,20 @@ void main() {
     expect(generatorPayload.containsKey('model'), isFalse);
   });
 
-  testWidgets(
-      'sidebar session tile shows conversation product status and sanitized description',
+  testWidgets('sidebar session tile shows minimal timeline metadata',
       (WidgetTester tester) async {
     final session = _buildSession(
       title: 'Sanitized Chat',
-      messages: const <ChatMessage>[],
+      createdAt: DateTime(2026, 1, 1, 8),
+      updatedAt: DateTime(2026, 1, 2, 17, 43),
+      messages: <ChatMessage>[
+        _message(
+          id: 'latest-real-message',
+          text: 'The actual latest chat message',
+          createdAt: DateTime(2026, 1, 1, 19, 26),
+        ),
+      ],
+      topicDescription: 'Flaky snapshot tests',
       conversationProduct: const ConversationProduct(
         statusLine: 'Supervisor ready',
         description: 'Sanitized product update for the user.',
@@ -191,7 +199,14 @@ void main() {
         of: drawer,
         matching: find.text('Supervisor ready', skipOffstage: false),
       ),
-      findsOneWidget,
+      findsNothing,
+    );
+    expect(
+      find.descendant(
+        of: drawer,
+        matching: find.text('Flaky snapshot tests', skipOffstage: false),
+      ),
+      findsNothing,
     );
     expect(
       find.descendant(
@@ -201,7 +216,7 @@ void main() {
           skipOffstage: false,
         ),
       ),
-      findsOneWidget,
+      findsNothing,
     );
     expect(
       find.descendant(
@@ -209,6 +224,228 @@ void main() {
         matching: find.text(rawPreview, skipOffstage: false),
       ),
       findsNothing,
+    );
+    expect(
+      find.descendant(
+        of: drawer,
+        matching: find.text('Latest', skipOffstage: false),
+      ),
+      findsWidgets,
+    );
+    expect(
+      find.descendant(
+        of: drawer,
+        matching: find.textContaining('Jan 1', skipOffstage: false),
+      ),
+      findsWidgets,
+    );
+    expect(
+      find.descendant(
+        of: drawer,
+        matching: find.textContaining('Jan 2', skipOffstage: false),
+      ),
+      findsNothing,
+    );
+    expect(
+      find.descendant(
+        of: drawer,
+        matching: find.text('Started', skipOffstage: false),
+      ),
+      findsWidgets,
+    );
+  });
+
+  testWidgets('sidebar session tiles sort by last message and hide metadata',
+      (WidgetTester tester) async {
+    final sameLastMessageAt = DateTime.utc(2026, 1, 1, 12);
+    final sessions = <SessionDetail>[
+      _buildSession(
+        id: 'oldest',
+        title: 'Oldest',
+        messages: <ChatMessage>[
+          _message(
+            id: 'oldest-message',
+            text: 'Oldest latest message',
+            createdAt: DateTime.utc(2026, 1, 1, 9),
+          ),
+        ],
+        createdAt: DateTime.utc(2026, 1, 1, 8),
+        updatedAt: DateTime.utc(2026, 1, 1, 16),
+        topicDescription: 'Hidden oldest topic',
+        conversationProduct: const ConversationProduct(
+          statusLine: 'Hidden oldest status',
+          description: 'Hidden oldest description',
+        ),
+      ),
+      _buildSession(
+        id: 'a-id',
+        title: 'Id A',
+        messages: <ChatMessage>[
+          _message(
+            id: 'a-id-message',
+            text: 'A id latest message',
+            createdAt: sameLastMessageAt,
+          ),
+        ],
+        createdAt: DateTime.utc(2026, 1, 1, 10),
+        updatedAt: DateTime.utc(2026, 1, 1, 15),
+        topicDescription: 'Hidden id a topic',
+        conversationProduct: const ConversationProduct(
+          statusLine: 'Hidden id a status',
+          description: 'Hidden id a description',
+        ),
+      ),
+      _buildSession(
+        id: 'z-id',
+        title: 'Id Z',
+        messages: <ChatMessage>[
+          _message(
+            id: 'z-id-message',
+            text: 'Z id latest message',
+            createdAt: sameLastMessageAt,
+          ),
+        ],
+        createdAt: DateTime.utc(2026, 1, 1, 10),
+        updatedAt: DateTime.utc(2026, 1, 1, 14),
+        topicDescription: 'Hidden id z topic',
+        conversationProduct: const ConversationProduct(
+          statusLine: 'Hidden id z status',
+          description: 'Hidden id z description',
+        ),
+      ),
+      _buildSession(
+        id: 'created-newer',
+        title: 'Created newer',
+        messages: <ChatMessage>[
+          _message(
+            id: 'created-newer-message',
+            text: 'Created newer latest message',
+            createdAt: sameLastMessageAt,
+          ),
+        ],
+        createdAt: DateTime.utc(2026, 1, 1, 11),
+        updatedAt: DateTime.utc(2026, 1, 1, 13),
+        topicDescription: 'Hidden created topic',
+        conversationProduct: const ConversationProduct(
+          statusLine: 'Hidden created status',
+          description: 'Hidden created description',
+        ),
+      ),
+      _buildSession(
+        id: 'updated-newer',
+        title: 'Message latest',
+        messages: <ChatMessage>[
+          _message(
+            id: 'message-latest-message',
+            text: 'Actually newest message',
+            createdAt: DateTime.utc(2026, 1, 1, 13),
+          ),
+        ],
+        createdAt: DateTime.utc(2026, 1, 1, 7),
+        updatedAt: DateTime.utc(2026, 1, 1, 6),
+        topicDescription: 'Hidden updated topic',
+        conversationProduct: const ConversationProduct(
+          statusLine: 'Hidden updated status',
+          description: 'Hidden updated description',
+        ),
+      ),
+      _buildSession(
+        id: 'empty-metadata-newer',
+        title: 'Empty metadata newer',
+        messages: const <ChatMessage>[],
+        createdAt: DateTime.utc(2026, 1, 1, 10, 30),
+        updatedAt: DateTime.utc(2026, 1, 3, 8),
+        topicDescription: 'Hidden empty topic',
+        conversationProduct: const ConversationProduct(
+          statusLine: 'Hidden empty status',
+          description: 'Hidden empty description',
+        ),
+      ),
+    ];
+    const previews = <String, String?>{
+      'oldest': 'Hidden oldest preview',
+      'a-id': 'Hidden id a preview',
+      'z-id': 'Hidden id z preview',
+      'created-newer': 'Hidden created preview',
+      'updated-newer': 'Hidden updated preview',
+      'empty-metadata-newer': 'Hidden empty preview',
+    };
+
+    await _pumpChatScreen(
+      tester,
+      width: 430,
+      height: 760,
+      session: sessions.first,
+      apiClient: _ChatScreenOverflowApiClient(
+        sessions.first,
+        additionalSessions: sessions.skip(1).toList(),
+        lastMessagePreviewBySession: previews,
+      ),
+      sidebarWorkspaces: const <Workspace>[
+        Workspace(name: 'Workspace A', path: '/workspace/a'),
+      ],
+    );
+
+    tester.state<ScaffoldState>(find.byType(Scaffold)).openDrawer();
+    await tester.pumpAndSettle();
+
+    final drawer = find.byType(Drawer);
+    final expectedOrder = <String>[
+      'Message latest',
+      'Created newer',
+      'Id Z',
+      'Id A',
+      'Empty metadata newer',
+      'Oldest',
+    ];
+    var previousTop = -1.0;
+    for (final title in expectedOrder) {
+      final titleFinder = find.descendant(
+        of: drawer,
+        matching: find.text(title, skipOffstage: false),
+      );
+      expect(titleFinder, findsOneWidget);
+      final top = tester.getTopLeft(titleFinder).dy;
+      expect(top, greaterThan(previousTop));
+      previousTop = top;
+    }
+    for (final hiddenText in <String>[
+      'Hidden oldest status',
+      'Hidden id a topic',
+      'Hidden id z description',
+      'Hidden created preview',
+      'Hidden updated preview',
+      'Hidden empty status',
+      'Hidden empty preview',
+    ]) {
+      expect(
+        find.descendant(
+          of: drawer,
+          matching: find.text(hiddenText, skipOffstage: false),
+        ),
+        findsNothing,
+      );
+    }
+    expect(
+      find.descendant(
+        of: drawer,
+        matching: find.text('Latest', skipOffstage: false),
+      ),
+      findsNWidgets(expectedOrder.length),
+    );
+    expect(
+      find.descendant(
+        of: drawer,
+        matching: find.textContaining('Jan 3', skipOffstage: false),
+      ),
+      findsNothing,
+    );
+    expect(
+      find.descendant(
+        of: drawer,
+        matching: find.text('Started', skipOffstage: false),
+      ),
+      findsNWidgets(expectedOrder.length),
     );
   });
 
@@ -274,7 +511,7 @@ void main() {
       ),
     );
 
-    await tester.tap(find.byTooltip('Show summary tabs'));
+    await tester.tap(find.byTooltip('View summary').first);
     await tester.pumpAndSettle();
     await tester.scrollUntilVisible(
       find.text('The team enabled the summarizer and added provenance UI.'),
@@ -931,6 +1168,90 @@ void main() {
     );
   });
 
+  testWidgets(
+      'sidebar limits workspace chats and shows more by recent activity',
+      (WidgetTester tester) async {
+    final baseTime = DateTime.utc(2026, 1, 1, 12);
+    final sessions = List<SessionDetail>.generate(7, (index) {
+      final chatNumber = index + 1;
+      final timestamp = baseTime.subtract(Duration(minutes: index));
+      return _buildSession(
+        id: 'session-$chatNumber',
+        title: 'Chat $chatNumber',
+        messages: const <ChatMessage>[],
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      );
+    });
+
+    await _pumpChatScreen(
+      tester,
+      width: 430,
+      height: 760,
+      session: sessions.first,
+      apiClient: _ChatScreenOverflowApiClient(
+        sessions.first,
+        additionalSessions: sessions.skip(1).toList(),
+      ),
+      sidebarWorkspaces: const <Workspace>[
+        Workspace(name: 'Workspace A', path: '/workspace/a'),
+      ],
+    );
+
+    tester.state<ScaffoldState>(find.byType(Scaffold)).openDrawer();
+    await tester.pumpAndSettle();
+
+    final drawer = find.byType(Drawer);
+    for (var chatNumber = 1; chatNumber <= 5; chatNumber += 1) {
+      expect(
+        find.descendant(
+          of: drawer,
+          matching: find.text('Chat $chatNumber', skipOffstage: false),
+        ),
+        findsOneWidget,
+      );
+    }
+    expect(
+      find.descendant(
+        of: drawer,
+        matching: find.text('Chat 6', skipOffstage: false),
+      ),
+      findsNothing,
+    );
+    expect(
+      find.descendant(
+        of: drawer,
+        matching: find.text('Show 2 more', skipOffstage: false),
+      ),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.text('Show 2 more'));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.descendant(
+        of: drawer,
+        matching: find.text('Chat 6', skipOffstage: false),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: drawer,
+        matching: find.text('Chat 7', skipOffstage: false),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: drawer,
+        matching: find.text('Show 2 more', skipOffstage: false),
+      ),
+      findsNothing,
+    );
+  });
+
   testWidgets('sidebar project can be removed and stays removed after rebuild',
       (WidgetTester tester) async {
     SharedPreferences.setMockInitialValues(<String, Object>{});
@@ -1170,10 +1491,12 @@ class _ChatScreenOverflowApiClient extends ApiClient {
             agentProfileColor: session.agentProfileColor,
             agentConfiguration: session.agentConfiguration,
             conversationProduct: session.conversationProduct,
+            topicDescription: session.topicDescription,
             lastMessagePreview:
                 lastMessagePreviewBySession.containsKey(session.id)
                     ? lastMessagePreviewBySession[session.id]
                     : _defaultLastMessagePreview(session),
+            lastMessageAt: _defaultLastMessageAt(session),
             createdAt: session.createdAt,
             updatedAt: session.updatedAt,
             activeAgentRunId: session.activeAgentRunId,
@@ -1240,6 +1563,13 @@ class _ChatScreenOverflowApiClient extends ApiClient {
     }
     return null;
   }
+
+  DateTime? _defaultLastMessageAt(SessionDetail session) {
+    if (session.messages.isEmpty) {
+      return null;
+    }
+    return session.messages.last.createdAt;
+  }
 }
 
 SessionDetail _buildSession({
@@ -1248,9 +1578,12 @@ SessionDetail _buildSession({
   DateTime? archivedAt,
   String workspacePath = '/workspace/a',
   String workspaceName = 'Workspace A',
+  DateTime? createdAt,
+  DateTime? updatedAt,
   required List<ChatMessage> messages,
   AgentDisplayMode displayMode = AgentDisplayMode.showAll,
   ConversationProduct? conversationProduct,
+  String? topicDescription,
   bool turnSummariesEnabled = false,
   List<ChatTurnSummary> turnSummaries = const <ChatTurnSummary>[],
 }) {
@@ -1284,12 +1617,13 @@ SessionDetail _buildSession({
     agentProfileId: 'default',
     agentProfileName: 'Generator',
     agentProfileColor: '#55D6BE',
-    createdAt: now,
-    updatedAt: now,
+    createdAt: createdAt ?? now,
+    updatedAt: updatedAt ?? now,
     messages: messages,
     turnSummaries: turnSummaries,
     agentConfiguration: configuration,
     conversationProduct: conversationProduct,
+    topicDescription: topicDescription,
     autoModeEnabled: true,
     autoMaxTurns: 1,
     activeAgentRunId: 'run-12345678',

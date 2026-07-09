@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:codex_app_updater/codex_app_updater.dart';
+import 'package:codex_bridge_workbench/codex_bridge_workbench.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
 import 'src/screens/chat_screen.dart';
 import 'src/services/chat_notification_service.dart';
+import 'src/services/api_client.dart';
 
 const _configuredApiBaseUrl = String.fromEnvironment(
   'API_BASE_URL',
@@ -13,6 +15,18 @@ const _configuredApiBaseUrl = String.fromEnvironment(
 const _configuredAppUpdaterEnabled = bool.fromEnvironment(
   'APP_UPDATER_ENABLED',
   defaultValue: true,
+);
+const _configuredAppUpdaterAutoInstall = bool.fromEnvironment(
+  'CODEX_APP_UPDATER_AUTO_INSTALL',
+  defaultValue: false,
+);
+const _configuredCodexBridgeDevMode = bool.fromEnvironment(
+  'CODEX_BRIDGE_DEV_MODE',
+  defaultValue: false,
+);
+const _configuredCodexBridgeWorkspacePath = String.fromEnvironment(
+  'CODEX_BRIDGE_WORKSPACE_PATH',
+  defaultValue: 'codex-cli-mobile-bridge',
 );
 const _codexMobileSourceApp = 'codex-mobile';
 const _fallbackAppVersion = '1.0.0';
@@ -66,6 +80,13 @@ bool shouldEnableCodexAppUpdater({
   final isWeb = isWebOverride ?? kIsWeb;
   final platform = platformOverride ?? defaultTargetPlatform;
   return configuredEnabled && !isWeb && platform == TargetPlatform.android;
+}
+
+@visibleForTesting
+bool isCodexBridgeDevModeEnabled({
+  bool configuredEnabled = _configuredCodexBridgeDevMode,
+}) {
+  return configuredEnabled;
 }
 
 class CodexMobileApp extends StatefulWidget {
@@ -151,19 +172,64 @@ class _CodexMobileAppState extends State<CodexMobileApp> {
       ),
       builder: (context, child) {
         final home = child ?? const SizedBox.shrink();
-        return CodexAppUpdater(
-          config: CodexAppUpdaterConfig(
-            sourceApp: _codexMobileSourceApp,
-            bridgeUrl: _activeBridgeUrl,
-            currentVersion: widget.currentVersion,
-            currentBuild: widget.currentBuild,
-            enabled: widget.appUpdaterEnabled,
+        return CodexBridgeDevModeWrapper(
+          enabled: isCodexBridgeDevModeEnabled(),
+          bridgeUrl: _activeBridgeUrl,
+          workspacePath: _configuredCodexBridgeWorkspacePath,
+          sddFeedbackSubmitter: _submitBridgeSddFeedback,
+          sddActionSubmitter: _submitBridgeSddCodexAction,
+          child: CodexAppUpdater(
+            config: CodexAppUpdaterConfig(
+              sourceApp: _codexMobileSourceApp,
+              bridgeUrl: _activeBridgeUrl,
+              currentVersion: widget.currentVersion,
+              currentBuild: widget.currentBuild,
+              enabled: widget.appUpdaterEnabled,
+              autoInstallAvailableUpdates: _configuredAppUpdaterAutoInstall,
+            ),
+            controller: widget.appUpdaterController,
+            checkOnStart: widget.appUpdaterCheckOnStart,
+            child: home,
           ),
-          controller: widget.appUpdaterController,
-          checkOnStart: widget.appUpdaterCheckOnStart,
-          child: home,
         );
       },
     );
   }
+}
+
+Future<SddFeedbackSubmissionResult> _submitBridgeSddFeedback(
+  String bridgeUrl,
+  SddFeedbackDraft draft,
+) async {
+  final item = await ApiClient(baseUrl: bridgeUrl).createFeedbackQueueItem(
+    sourceApp: _codexMobileSourceApp,
+    sourceDisplayName: 'Codex Mobile',
+    comment: draft.comment,
+    feedbackKind: draft.target.feedbackKind,
+    contextMetadata: draft.target.toContextMetadata(),
+    selectionBounds: draft.target.isDiagram
+        ? const <String, double>{
+            'left': 0,
+            'top': 0,
+            'width': 1,
+            'height': 1,
+          }
+        : const <String, double>{},
+  );
+  return SddFeedbackSubmissionResult(id: item.id, status: item.status);
+}
+
+Future<SddCodexActionSubmissionResult> _submitBridgeSddCodexAction(
+  String bridgeUrl,
+  SddCodexActionDraft draft,
+) async {
+  final accepted = await ApiClient(baseUrl: bridgeUrl).sendMessage(
+    draft.prompt,
+    workspacePath: draft.executionWorkspacePath,
+  );
+  return SddCodexActionSubmissionResult(
+    jobId: accepted.jobId,
+    sessionId: accepted.sessionId,
+    status: accepted.status,
+  );
 }

@@ -10,10 +10,7 @@ import pytest
 
 
 _SKILL_SCRIPTS = (
-    Path(__file__).resolve().parents[1]
-    / "skills"
-    / "onenote-connect"
-    / "scripts"
+    Path(__file__).resolve().parents[1] / "skills" / "onenote-connect" / "scripts"
 )
 if str(_SKILL_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SKILL_SCRIPTS))
@@ -22,7 +19,9 @@ import auth  # noqa: E402
 
 
 class FakeCache:
-    def __init__(self, *, has_state_changed: bool = False, serialized: str = "serialized-cache") -> None:
+    def __init__(
+        self, *, has_state_changed: bool = False, serialized: str = "serialized-cache"
+    ) -> None:
         self.has_state_changed = has_state_changed
         self.serialized = serialized
         self.deserialize_calls: list[str] = []
@@ -82,7 +81,9 @@ class FakeApp:
 
 
 class FakeMSAL:
-    def __init__(self, *, app: FakeApp | None = None, cache: FakeCache | None = None) -> None:
+    def __init__(
+        self, *, app: FakeApp | None = None, cache: FakeCache | None = None
+    ) -> None:
         self.app = app or FakeApp()
         self.cache = cache or FakeCache()
         self.public_client_app_calls: list[dict[str, object]] = []
@@ -90,7 +91,9 @@ class FakeMSAL:
     def SerializableTokenCache(self):
         return self.cache
 
-    def PublicClientApplication(self, client_id: str, *, authority: str, token_cache: FakeCache):
+    def PublicClientApplication(
+        self, client_id: str, *, authority: str, token_cache: FakeCache
+    ):
         self.public_client_app_calls.append(
             {
                 "client_id": client_id,
@@ -113,7 +116,9 @@ def _make_authenticator(
     return auth.OneNoteAuthenticator(config, stdout=stdout)
 
 
-def test_auth_config_from_inputs_prefers_flags_over_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_auth_config_from_inputs_prefers_flags_over_env(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     monkeypatch.setenv("ONENOTE_CLIENT_ID", "env-client")
     monkeypatch.setenv("ONENOTE_TENANT_ID", "env-tenant")
     monkeypatch.setenv("ONENOTE_AUTHORITY_BASE", "https://env.example.com")
@@ -135,7 +140,9 @@ def test_auth_config_from_inputs_prefers_flags_over_env(monkeypatch: pytest.Monk
     assert config.cache_path == tmp_path / "flag-cache.json"
 
 
-def test_auth_config_from_inputs_uses_env_then_defaults(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_auth_config_from_inputs_uses_env_then_defaults(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     monkeypatch.setenv("ONENOTE_CLIENT_ID", "env-client")
     monkeypatch.setenv("ONENOTE_TENANT_ID", "env-tenant")
     monkeypatch.setenv("ONENOTE_AUTHORITY_BASE", "https://env.example.com")
@@ -210,7 +217,9 @@ def test_acquire_session_auto_falls_back_from_device_code_to_interactive(
     monkeypatch.setattr(auth, "_import_msal", lambda: fake_msal)
     monkeypatch.setattr(authenticator, "_persist_cache", persisted.append)
 
-    session = authenticator.acquire_session(auth_flow="auto", login_hint="alice@example.com")
+    session = authenticator.acquire_session(
+        auth_flow="auto", login_hint="alice@example.com"
+    )
 
     assert session.auth_flow == "interactive"
     assert session.access_token == "interactive-token"
@@ -244,7 +253,9 @@ def test_force_interactive_bypasses_silent_acquisition(
     monkeypatch.setattr(auth, "_import_msal", lambda: fake_msal)
     monkeypatch.setattr(authenticator, "_persist_cache", persisted.append)
 
-    session = authenticator.acquire_session(force_interactive=True, auth_flow="interactive")
+    session = authenticator.acquire_session(
+        force_interactive=True, auth_flow="interactive"
+    )
 
     assert session.auth_flow == "interactive"
     assert fake_app.get_accounts_calls == []
@@ -310,7 +321,9 @@ def test_import_msal_raises_dependency_error_when_unavailable(
     with pytest.raises(auth.AuthenticationDependencyError) as excinfo:
         auth._import_msal()
 
-    assert "MSAL for Python is required for OneNote authentication." in str(excinfo.value)
+    assert "MSAL for Python is required for OneNote authentication." in str(
+        excinfo.value
+    )
 
 
 def test_persist_cache_writes_only_when_state_changed(tmp_path: Path) -> None:

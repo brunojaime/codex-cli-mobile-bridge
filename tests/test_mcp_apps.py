@@ -13,7 +13,9 @@ from backend.app.infrastructure.mcp_apps import (
 
 
 def test_looks_like_missing_server_matches_current_codex_cli_error_text() -> None:
-    assert _looks_like_missing_server("Error: No MCP server named 'project-catalog' found.")
+    assert _looks_like_missing_server(
+        "Error: No MCP server named 'project-catalog' found."
+    )
 
 
 def test_inspect_repo_mcp_apps_reports_malformed_preview_spec() -> None:
@@ -357,7 +359,9 @@ def test_inspect_repo_mcp_apps_reports_drifted_installed_config(
         assert app.server_presence_known is True
         assert app.config_matches is False
         assert app.drift_summary is not None
-        assert "command stored as `uv` but repo app expects `uv`" not in app.drift_summary
+        assert (
+            "command stored as `uv` but repo app expects `uv`" not in app.drift_summary
+        )
         assert "args differ" in app.drift_summary
         assert "env differs" in app.drift_summary
 
@@ -596,8 +600,7 @@ def test_inspect_repo_mcp_apps_reports_protocol_timeout(
         repo_root = Path(temp_dir)
         script_path = repo_root / "hang_server.py"
         script_path.write_text(
-            "import time\n"
-            "time.sleep(30)\n",
+            "import time\ntime.sleep(30)\n",
             encoding="utf-8",
         )
         _write_app_spec(

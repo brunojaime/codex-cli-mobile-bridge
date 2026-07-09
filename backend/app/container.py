@@ -8,7 +8,25 @@ from backend.app.application.services.app_update_service import (
     AppUpdateService,
     HttpGitHubReleaseClient,
 )
+from backend.app.application.services.asset_depot_service import AssetDepotService
+from backend.app.application.services.cloudflare_preview_service import (
+    CloudflarePreviewDoctorService,
+)
 from backend.app.application.services.message_service import MessageService
+from backend.app.application.services.project_factory_service import (
+    ProjectFactoryService,
+)
+from backend.app.application.services.web_preview_deploy_service import (
+    WebPreviewDeployService,
+)
+from backend.app.application.services.web_preview_invite_service import (
+    WebPreviewInviteService,
+)
+from backend.app.application.services.sdd_codex_job_service import SddCodexJobService
+from backend.app.application.services.sdd_project_service import SddProjectService
+from backend.app.application.services.sdd_workbench_view_service import (
+    SddWorkbenchViewService,
+)
 from backend.app.application.services.feedback_queue_service import FeedbackQueueService
 from backend.app.domain.repositories.chat_repository import (
     ChatRepository,
@@ -18,8 +36,12 @@ from backend.app.infrastructure.config.settings import Settings
 from backend.app.infrastructure.execution.base import ExecutionProvider
 from backend.app.infrastructure.execution.lambda_provider import LambdaExecutionProvider
 from backend.app.infrastructure.execution.local_provider import LocalExecutionProvider
-from backend.app.infrastructure.persistence.in_memory_chat_repository import InMemoryChatRepository
-from backend.app.infrastructure.persistence.sqlite_chat_repository import SqliteChatRepository
+from backend.app.infrastructure.persistence.in_memory_chat_repository import (
+    InMemoryChatRepository,
+)
+from backend.app.infrastructure.persistence.sqlite_chat_repository import (
+    SqliteChatRepository,
+)
 from backend.app.infrastructure.persistence.unavailable_chat_repository import (
     UnavailableChatRepository,
 )
@@ -35,12 +57,18 @@ from backend.app.infrastructure.speech.openai_synthesizer import (
     OpenAISpeechSynthesizer,
 )
 from backend.app.infrastructure.transcription.base import AudioTranscriber
-from backend.app.infrastructure.transcription.command_transcriber import CommandAudioTranscriber
-from backend.app.infrastructure.transcription.disabled_transcriber import DisabledAudioTranscriber
+from backend.app.infrastructure.transcription.command_transcriber import (
+    CommandAudioTranscriber,
+)
+from backend.app.infrastructure.transcription.disabled_transcriber import (
+    DisabledAudioTranscriber,
+)
 from backend.app.infrastructure.transcription.faster_whisper_transcriber import (
     FasterWhisperAudioTranscriber,
 )
-from backend.app.infrastructure.transcription.openai_transcriber import OpenAIAudioTranscriber
+from backend.app.infrastructure.transcription.openai_transcriber import (
+    OpenAIAudioTranscriber,
+)
 
 
 @dataclass(slots=True)
@@ -48,7 +76,15 @@ class AppContainer:
     settings: Settings
     message_service: MessageService
     feedback_queue_service: FeedbackQueueService
+    asset_depot_service: AssetDepotService
     app_update_service: AppUpdateService
+    sdd_project_service: SddProjectService
+    sdd_workbench_view_service: SddWorkbenchViewService
+    sdd_codex_job_service: SddCodexJobService
+    project_factory_service: ProjectFactoryService
+    cloudflare_preview_doctor_service: CloudflarePreviewDoctorService
+    web_preview_deploy_service: WebPreviewDeployService
+    web_preview_invite_service: WebPreviewInviteService
     job_stream_hub: JobStreamHub
     audio_transcriber: AudioTranscriber
     speech_synthesizer: SpeechSynthesizer
@@ -87,6 +123,10 @@ def build_container(settings: Settings | None = None) -> AppContainer:
         image_dir=resolved_settings.feedback_image_dir,
         audio_dir=resolved_settings.feedback_audio_dir,
     )
+    asset_depot_service = AssetDepotService(
+        storage_root=resolved_settings.asset_depot_dir,
+        max_upload_bytes=resolved_settings.asset_depot_max_upload_bytes,
+    )
     app_update_service = AppUpdateService(
         registry=AppUpdateRegistry.from_json_file(
             resolved_settings.app_update_registry_path,
@@ -95,12 +135,67 @@ def build_container(settings: Settings | None = None) -> AppContainer:
             token=resolved_settings.app_update_github_token,
             timeout_seconds=resolved_settings.app_update_github_timeout_seconds,
         ),
+        registry_path=resolved_settings.app_update_registry_path,
+    )
+    sdd_project_service = SddProjectService(
+        projects_root=resolved_settings.projects_root,
+        workspace_aliases=resolved_settings.feedback_source_workspace_alias_map,
+        file_max_bytes=resolved_settings.sdd_file_max_bytes,
+    )
+    sdd_workbench_view_service = SddWorkbenchViewService()
+    sdd_codex_job_service = SddCodexJobService(
+        projects_root=resolved_settings.projects_root,
+        workspace_aliases=resolved_settings.feedback_source_workspace_alias_map,
+        codex_command=resolved_settings.codex_command,
+        timeout_seconds=resolved_settings.execution_timeout_seconds,
+    )
+    project_factory_service = ProjectFactoryService(
+        projects_root=resolved_settings.projects_root,
+        reference_asset_storage_root=(
+            resolved_settings.project_factory_reference_asset_dir
+        ),
+        asset_depot_service=asset_depot_service,
+        max_reference_asset_bytes=resolved_settings.image_max_upload_bytes,
+        state_root=resolved_settings.project_factory_state_dir,
+        codex_command=resolved_settings.codex_command,
+        timeout_seconds=resolved_settings.project_factory_step_timeout_seconds,
+        generator_runs_override=(
+            resolved_settings.project_factory_generator_runs_override
+        ),
+        reviewer_runs_override=(
+            resolved_settings.project_factory_reviewer_runs_override
+        ),
+        run_generated_validation=(
+            resolved_settings.project_factory_run_generated_validation
+        ),
+        publication_validation_mode=(
+            resolved_settings.project_factory_publication_validation_mode
+        ),
+        async_jobs=resolved_settings.project_factory_async_jobs,
+    )
+    cloudflare_preview_doctor_service = CloudflarePreviewDoctorService(
+        settings=resolved_settings,
+    )
+    web_preview_deploy_service = WebPreviewDeployService(
+        settings=resolved_settings,
+    )
+    web_preview_invite_service = WebPreviewInviteService(
+        settings=resolved_settings,
+        preview_service=web_preview_deploy_service,
     )
     return AppContainer(
         settings=resolved_settings,
         message_service=message_service,
         feedback_queue_service=feedback_queue_service,
+        asset_depot_service=asset_depot_service,
         app_update_service=app_update_service,
+        sdd_project_service=sdd_project_service,
+        sdd_workbench_view_service=sdd_workbench_view_service,
+        sdd_codex_job_service=sdd_codex_job_service,
+        project_factory_service=project_factory_service,
+        cloudflare_preview_doctor_service=cloudflare_preview_doctor_service,
+        web_preview_deploy_service=web_preview_deploy_service,
+        web_preview_invite_service=web_preview_invite_service,
         job_stream_hub=job_stream_hub,
         audio_transcriber=audio_transcriber,
         speech_synthesizer=speech_synthesizer,

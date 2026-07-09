@@ -1,0 +1,65 @@
+id: 002-sdd-visual-workbench
+slug: 002-sdd-visual-workbench
+title: SDD Visual Workbench
+description: Build the development-mode visual workbench for Codex Mobile Bridge. The
+status: draft
+last_run_state: metadata-refreshed
+generated:
+  title: true
+  description: true
+  user_pinned_title: false
+  user_pinned_description: false
+tasks:
+  total: 36
+  completed: 25
+  pending: 11
+diagrams:
+  total: 7
+  items:
+    diagrams-classes-mmd:
+      path: diagrams/classes.mmd
+      diagram_type: domain-impact
+      metadata_path: diagrams/classes.yaml
+    diagrams-components-mmd:
+      path: diagrams/components.mmd
+      diagram_type: component-impact
+      metadata_path: diagrams/components.yaml
+    diagrams-deployment-mmd:
+      path: diagrams/deployment.mmd
+      diagram_type: component-impact
+      metadata_path: diagrams/deployment.yaml
+    diagrams-entity-relationship-mmd:
+      path: diagrams/entity-relationship.mmd
+      diagram_type: data-impact
+      metadata_path: diagrams/entity-relationship.yaml
+    diagrams-security-suspicious-content-mmd:
+      path: diagrams/security-suspicious-content.mmd
+      diagram_type: component-impact
+      metadata_path: diagrams/security-suspicious-content.yaml
+    diagrams-sequence-diagram-feedback-mmd:
+      path: diagrams/sequence-diagram-feedback.mmd
+      diagram_type: sequence
+      metadata_path: diagrams/sequence-diagram-feedback.yaml
+    diagrams-use-cases-mmd:
+      path: diagrams/use-cases.mmd
+      diagram_type: component-impact
+      metadata_path: diagrams/use-cases.yaml
+source_digests:
+  diagrams/classes.mmd: 9e4a70f45f008f26880239774bc6cd337f2c5189b4a37b6c2c4bf7ac99d3c79c
+  diagrams/classes.yaml: a8e41e72c0c0f2be92f308557d146a6d746c564b1ce5c37c93bf7d65caa21bed
+  diagrams/components.mmd: df3ddca3ddc7800c4734927a18305e2230674e2b497ad36e75c20dc9ff8ff5eb
+  diagrams/components.yaml: 134bc5ff5dc95cb850bd11f8b20dd7e2bcf017d2b88c52e00eea92ba36a6634f
+  diagrams/deployment.mmd: ab1b72da2a6067584b3eab86402cb46b6c468da3b7c5d20206590a1db1de2f7d
+  diagrams/deployment.yaml: 9900b9bd82fd1b4063216bc481dfeaebb0a5995361e63a49d681ea31c9ecd30e
+  diagrams/entity-relationship.mmd: 0594049e517598d32577563b5f51069bcb41564f7e3e90e2ceadd1c49155ee96
+  diagrams/entity-relationship.yaml: 106e908e23b7a3c6c027cb2d8c843e56e8063e704affae50fffb496f4ebc613e
+  diagrams/security-suspicious-content.mmd: 3097ab4aad2b92e73ed8939c797278cd9b2d3b0f5927c2380242fe4113a9e80c
+  diagrams/security-suspicious-content.yaml: 17c6d82773ced359a7e3aac789e5e0f237851c417e59e2263cf8c2d7ac99d9f3
+  diagrams/sequence-diagram-feedback.mmd: 984e87e7341d2ff34d7a6d9de01a4c7a8e01b18840fb7892f8b4684da1b978eb
+  diagrams/sequence-diagram-feedback.yaml: 6d0fd05742693536073fd2a0907ad6702cc1724d4590e72b50c0a150afa176f1
+  diagrams/use-cases.mmd: 059325fe737f75da86cc2a60dcb2c8d4c3e4ced46dad5d81a9c151fc8a58e107
+  diagrams/use-cases.yaml: cbf0d485c396129989aa94cd0ed78e3960775a9f15e95f68febaea863c557a6b
+  plan.md: e9b4e69a55cf26ea0a9bfb5f64ca1c0e5343e3ef923486dfa937ab8311d87b8c
+  spec.md: d67e85862c50a6b3fdc359e44a1b73c31e8772294e2a8e62e7f647f15503602b
+  tasks.md: 5c70ebac40ee0b8797669e1844d74fc93f001262ccbb1661468bd469c1866581
+  traceability.yaml: 67b6b4bbb07b4e9afeb2fc29a1a784d766a6c826e54a10d4dcef08b2bc3c5430

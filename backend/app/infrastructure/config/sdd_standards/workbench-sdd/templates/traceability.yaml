@@ -1,0 +1,14 @@
+spec_id: feature-id
+title: Feature Title
+status: draft
+
+requirements:
+  FR-001:
+    acceptance_criteria: [AC-001]
+    tasks: [T001]
+
+acceptance_criteria:
+  AC-001:
+    tests: []
+
+diagrams: {}

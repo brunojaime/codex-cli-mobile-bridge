@@ -1,0 +1,23 @@
+id: 006-web-preview-delivery
+slug: 006-web-preview-delivery
+title: Web Preview Delivery Platform
+description: Publish generated projects as stable Cloudflare web previews with shared Worker/D1 runtime and admin email invitations.
+status: draft
+last_run_state: metadata-refreshed
+generated:
+  title: false
+  description: false
+  user_pinned_title: true
+  user_pinned_description: true
+tasks:
+  total: 68
+  completed: 15
+  pending: 53
+diagrams:
+  total: 0
+  items: {}
+source_digests:
+  plan.md: 80257a9ba415c0ad130433b2045fe1402f323b7a743ba6d41cadaee66556025f
+  spec.md: ea947b521c3008604476779ff29b9c6223ada6197d0b26a68df24dc91f271e92
+  tasks.md: 87c00987cf17e9bf7f7f5cb0f510ca1c68daff52a6739dd1159a8b5e4e0dee26
+  traceability.yaml: ed07ddea5344cacdce766336eb1f95209306e006ef11e4dc5ffc014345de04ba

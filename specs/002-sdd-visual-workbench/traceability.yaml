@@ -1,0 +1,9 @@
+spec_id: 002-sdd-visual-workbench
+requirements:
+  FR-001:
+    acceptance_criteria:
+      - AC-001
+    tasks:
+      - T001
+    diagrams:
+      - specs/002-sdd-visual-workbench/diagrams/classes.mmd

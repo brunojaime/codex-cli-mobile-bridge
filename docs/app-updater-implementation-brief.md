@@ -23,6 +23,7 @@ The existing design already supports:
 - app registry by `sourceApp`
 - Bridge-owned release discovery
 - Bridge APK proxy endpoints
+- protected dynamic installable-app registration through `POST /installable-apps`
 - reusable Flutter updater package
 - Android installer launcher
 - Ambientando Calendar registry entry
@@ -66,6 +67,11 @@ Silent install is not in scope.
 - Apps must not call GitHub directly.
 - Apps must not contain GitHub tokens.
 - Bridge must not leak GitHub token in responses, URLs, headers, or logs.
+- Dynamic installable-app registration must require
+  `INSTALLABLE_APPS_REGISTRATION_TOKEN`; without it, `POST /installable-apps`
+  stays disabled.
+- Registration payloads must not include direct external APK URLs. Codex Mobile
+  installs only through Bridge APK proxy URLs returned by `/installable-apps`.
 - Private GitHub repos may return 404 without authentication; use authenticated tools or Bridge server-side token before concluding a repo/release is missing.
 - Do not restart the real Bridge backend while user runs are active. Use tests, TestClient, or isolated processes.
 - Do not publish APK releases or tags until reviewer confirms.

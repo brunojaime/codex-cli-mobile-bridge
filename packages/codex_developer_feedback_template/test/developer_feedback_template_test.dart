@@ -1,13 +1,15 @@
 import 'dart:convert';
 import 'dart:async';
-import 'dart:typed_data';
 
+import 'package:codex_app_updater/codex_app_updater.dart';
 import 'package:codex_developer_feedback_template/developer_feedback_audio_recorder_contract.dart';
 import 'package:codex_developer_feedback_template/developer_feedback_template.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -39,6 +41,309 @@ void main() {
     expect(find.byKey(developerFeedbackToolbarKey), findsOneWidget);
     expect(find.byKey(developerFeedbackPendingKey), findsNothing);
     expect(find.byKey(developerFeedbackCopyKey), findsNothing);
+  });
+
+  test('feedback bridge URL falls back to updater bridge URL', () {
+    expect(
+      resolveDeveloperFeedbackBridgeUrl(
+        feedbackBridgeUrl: '',
+        appUpdaterBridgeUrl: ' http://bridge.local ',
+      ),
+      'http://bridge.local',
+    );
+    expect(
+      resolveDeveloperFeedbackBridgeUrl(
+        feedbackBridgeUrl: 'http://feedback.local',
+        appUpdaterBridgeUrl: 'http://updater.local',
+      ),
+      'http://feedback.local',
+    );
+  });
+
+  testWidgets('bridge-backed toolbar actions stay visible without bridge URL', (
+    tester,
+  ) async {
+    await tester.pumpWidget(const _Harness(enabled: true));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(developerFeedbackNotificationBellKey), findsOneWidget);
+    expect(find.byKey(developerFeedbackHistoryKey), findsOneWidget);
+    expect(find.byKey(developerFeedbackQuickAskHistoryKey), findsOneWidget);
+
+    await tester.tap(find.byKey(developerFeedbackHistoryKey));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(developerFeedbackBridgeUnavailableKey), findsOneWidget);
+    expect(find.text('Bridge no configurado'), findsOneWidget);
+    expect(find.textContaining('CODEX_FEEDBACK_BRIDGE_URL'), findsOneWidget);
+  });
+
+  testWidgets(
+    'quick ask action explains missing bridge instead of disappearing',
+    (tester) async {
+      await tester.pumpWidget(const _Harness(enabled: true));
+      await tester.tap(find.byKey(developerFeedbackSwitchKey));
+      await tester.pump();
+      await _drawFeedbackSelection(tester);
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(developerFeedbackQuickAskActionKey), findsOneWidget);
+
+      await tester.tap(find.byKey(developerFeedbackQuickAskActionKey));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(developerFeedbackBridgeUnavailableKey), findsOneWidget);
+    },
+  );
+
+  testWidgets('integrated updater uses updater bridge URL when available', (
+    tester,
+  ) async {
+    PackageInfo.setMockInitialValues(
+      appName: 'Template test',
+      packageName: 'com.codex.template.test',
+      version: '1.0.0',
+      buildNumber: '89',
+      buildSignature: '',
+    );
+    addTearDown(() {
+      PackageInfo.setMockInitialValues(
+        appName: '',
+        packageName: '',
+        version: '',
+        buildNumber: '',
+        buildSignature: '',
+      );
+    });
+    var requestedUpdate = false;
+    final controller = CodexAppUpdaterController(
+      httpClient: MockClient((request) async {
+        requestedUpdate = request.url.path == '/app-updates/test-app';
+        return http.Response(
+          jsonEncode(_appUpdateJson(currentBuild: 89, latestBuild: 90)),
+          200,
+        );
+      }),
+    );
+    addTearDown(controller.dispose);
+
+    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    try {
+      await tester.pumpWidget(
+        _Harness(
+          enabled: true,
+          sourceApp: 'test-app',
+          appUpdaterBridgeUrl: 'http://bridge.local',
+          appUpdaterController: controller,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(requestedUpdate, isTrue);
+      expect(find.byKey(codexAppUpdaterBannerKey), findsOneWidget);
+      expect(find.byKey(codexAppUpdaterUpdateButtonKey), findsOneWidget);
+    } finally {
+      debugDefaultTargetPlatformOverride = null;
+    }
+  });
+
+  testWidgets(
+    'integrated updater still runs when feedback overlay is disabled',
+    (tester) async {
+      PackageInfo.setMockInitialValues(
+        appName: 'Template test',
+        packageName: 'com.codex.template.test',
+        version: '1.0.0',
+        buildNumber: '89',
+        buildSignature: '',
+      );
+      addTearDown(() {
+        PackageInfo.setMockInitialValues(
+          appName: '',
+          packageName: '',
+          version: '',
+          buildNumber: '',
+          buildSignature: '',
+        );
+      });
+      final controller = CodexAppUpdaterController(
+        httpClient: MockClient(
+          (_) async => http.Response(
+            jsonEncode(_appUpdateJson(currentBuild: 89, latestBuild: 90)),
+            200,
+          ),
+        ),
+      );
+      addTearDown(controller.dispose);
+
+      debugDefaultTargetPlatformOverride = TargetPlatform.android;
+      try {
+        await tester.pumpWidget(
+          _Harness(
+            enabled: false,
+            sourceApp: 'test-app',
+            appUpdaterBridgeUrl: 'http://bridge.local',
+            appUpdaterController: controller,
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        expect(find.byKey(developerFeedbackToolbarKey), findsNothing);
+        expect(find.byKey(codexAppUpdaterBannerKey), findsOneWidget);
+        expect(controller.status, CodexAppUpdateStatus.updateAvailable);
+      } finally {
+        debugDefaultTargetPlatformOverride = null;
+      }
+    },
+  );
+
+  testWidgets('role gate follows env-configured login methods', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(home: CodexDeveloperRoleGate(child: const Text('App body'))),
+    );
+
+    expect(
+      find.byKey(developerFeedbackRoleLoginKey),
+      developerFeedbackRoleGateEnabled ? findsOneWidget : findsNothing,
+    );
+    expect(
+      find.byKey(developerFeedbackRoleDropdownKey),
+      developerFeedbackAdminRoleLoginEnabled ? findsOneWidget : findsNothing,
+    );
+    expect(
+      find.byKey(developerFeedbackUsernameKey),
+      developerFeedbackRoleAuthEnabled ? findsOneWidget : findsNothing,
+    );
+    if (!developerFeedbackRoleGateEnabled) {
+      expect(find.text('App body'), findsOneWidget);
+    }
+  });
+
+  testWidgets(
+    'role gate allows explicit admin role login without credentials',
+    (tester) async {
+      DeveloperFeedbackRoleSession? captured;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: CodexDeveloperRoleGate(
+            enabled: true,
+            allowRoleLogin: true,
+            allowCredentialLogin: false,
+            onSessionChanged: (session) => captured = session,
+            child: Builder(
+              builder: (context) {
+                final session = DeveloperFeedbackRoleScope.of(context);
+                return Text('${session.role.id}:${session.role.isAdmin}');
+              },
+            ),
+          ),
+        ),
+      );
+
+      expect(find.byKey(developerFeedbackRoleDropdownKey), findsOneWidget);
+      expect(find.byKey(developerFeedbackUsernameKey), findsNothing);
+
+      await tester.tap(find.byKey(developerFeedbackRoleButtonKey));
+      await tester.pumpAndSettle();
+
+      expect(captured?.role.id, developerFeedbackAdminRoleId);
+      expect(captured?.role.isAdmin, isTrue);
+      expect(find.text('$developerFeedbackAdminRoleId:true'), findsOneWidget);
+    },
+  );
+
+  testWidgets('role gate supports credential login and clear failures', (
+    tester,
+  ) async {
+    const expectedUsername = String.fromEnvironment(
+      'TEST_EXPECTED_FEEDBACK_ADMIN_USERNAME',
+      defaultValue: developerFeedbackAdminUsername,
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: CodexDeveloperRoleGate(
+          enabled: true,
+          allowRoleLogin: false,
+          allowCredentialLogin: true,
+          child: Builder(
+            builder: (context) {
+              final session = DeveloperFeedbackRoleScope.of(context);
+              return Text(session.username ?? session.role.id);
+            },
+          ),
+        ),
+      ),
+    );
+
+    await tester.enterText(
+      find.byKey(developerFeedbackUsernameKey),
+      developerFeedbackAdminUsername,
+    );
+    await tester.enterText(
+      find.byKey(developerFeedbackPasswordKey),
+      '${developerFeedbackAdminPassword}-bad',
+    );
+    await tester.tap(find.byKey(developerFeedbackCredentialLoginKey));
+    await tester.pump();
+
+    expect(find.byKey(developerFeedbackRoleLoginErrorKey), findsOneWidget);
+
+    await tester.enterText(
+      find.byKey(developerFeedbackPasswordKey),
+      developerFeedbackAdminPassword,
+    );
+    await tester.tap(find.byKey(developerFeedbackCredentialLoginKey));
+    await tester.pumpAndSettle();
+
+    expect(find.text(expectedUsername), findsOneWidget);
+    expect(find.byKey(developerFeedbackRoleLoginKey), findsNothing);
+  });
+
+  test('admin role and credential constants support dart-define overrides', () {
+    final expectedRoleAuthEnabled = const bool.fromEnvironment(
+      'TEST_EXPECTED_FEEDBACK_ROLE_AUTH',
+    );
+    final expectedAdminRoleLoginEnabled = const bool.fromEnvironment(
+      'TEST_EXPECTED_FEEDBACK_ADMIN_ROLE_LOGIN',
+    );
+
+    expect(developerFeedbackRoleAuthEnabled, expectedRoleAuthEnabled);
+    expect(
+      developerFeedbackAdminRoleLoginEnabled,
+      expectedAdminRoleLoginEnabled,
+    );
+    expect(
+      developerFeedbackRoleGateEnabled,
+      expectedRoleAuthEnabled || expectedAdminRoleLoginEnabled,
+    );
+    expect(
+      developerFeedbackAdminRoleId,
+      const String.fromEnvironment(
+        'TEST_EXPECTED_FEEDBACK_ADMIN_ROLE_ID',
+        defaultValue: 'admin',
+      ),
+    );
+    expect(
+      developerFeedbackAdminRoleLabel,
+      const String.fromEnvironment(
+        'TEST_EXPECTED_FEEDBACK_ADMIN_ROLE_LABEL',
+        defaultValue: 'Administrador',
+      ),
+    );
+    expect(
+      developerFeedbackAdminUsername,
+      const String.fromEnvironment(
+        'TEST_EXPECTED_FEEDBACK_ADMIN_USERNAME',
+        defaultValue: 'admin',
+      ),
+    );
+    expect(
+      developerFeedbackAdminPassword,
+      const String.fromEnvironment(
+        'TEST_EXPECTED_FEEDBACK_ADMIN_PASSWORD',
+        defaultValue: 'admin',
+      ),
+    );
   });
 
   testWidgets('toolbar does not require an overlay ancestor', (tester) async {
@@ -138,6 +443,29 @@ void main() {
     expect(find.byKey(developerFeedbackSwitchKey), findsOneWidget);
     expect(_feedbackSwitchValue(tester), isFalse);
     _expectToolbarInsideViewport(tester, viewport);
+    _expectNoFlutterExceptions(tester);
+  });
+
+  testWidgets('template toolbar can start collapsed', (tester) async {
+    _setViewport(tester, const Size(390, 844));
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(
+      const _Harness(enabled: true, initialToolbarExpanded: false),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(developerFeedbackToolbarExpandKey), findsOneWidget);
+    expect(find.byKey(developerFeedbackToolbarCollapseKey), findsNothing);
+    expect(find.byKey(developerFeedbackSwitchKey), findsNothing);
+
+    await tester.tap(find.byKey(developerFeedbackToolbarExpandKey));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(developerFeedbackToolbarExpandKey), findsNothing);
+    expect(find.byKey(developerFeedbackToolbarCollapseKey), findsOneWidget);
+    expect(find.byKey(developerFeedbackSwitchKey), findsOneWidget);
     _expectNoFlutterExceptions(tester);
   });
 
@@ -374,6 +702,101 @@ void main() {
     expect(find.text('Texto corregido y mas claro'), findsOneWidget);
   });
 
+  testWidgets('queued feedback region can be drawn edited and removed', (
+    tester,
+  ) async {
+    await tester.pumpWidget(const _Harness(enabled: true));
+    await _saveFeedback(tester, 'Marcar region');
+
+    await tester.tap(find.byKey(developerFeedbackPendingKey));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(developerFeedbackEditRegionKey));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(developerFeedbackRegionEditorKey), findsOneWidget);
+    final canvas = find.byKey(developerFeedbackRegionCanvasKey);
+    final topLeft = tester.getTopLeft(canvas);
+    final gesture = await tester.startGesture(topLeft + const Offset(20, 30));
+    await gesture.moveTo(topLeft + const Offset(120, 90));
+    await gesture.up();
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(developerFeedbackRegionApplyKey));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('100 x 60'), findsOneWidget);
+
+    await tester.tap(find.byKey(developerFeedbackEditRegionKey));
+    await tester.pumpAndSettle();
+    await _setRegionFields(
+      tester,
+      left: '25',
+      top: '35',
+      width: '90',
+      height: '70',
+    );
+    await tester.tap(find.byKey(developerFeedbackRegionApplyKey));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('90 x 70'), findsOneWidget);
+
+    await tester.tap(find.byKey(developerFeedbackEditRegionKey));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(developerFeedbackRegionRemoveKey));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('0 x 0'), findsOneWidget);
+  });
+
+  testWidgets('queued feedback region editor blocks invalid bounds', (
+    tester,
+  ) async {
+    await tester.pumpWidget(const _Harness(enabled: true));
+    await _saveFeedback(tester, 'Region invalida');
+
+    await tester.tap(find.byKey(developerFeedbackPendingKey));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(developerFeedbackEditRegionKey));
+    await tester.pumpAndSettle();
+    await _setRegionFields(
+      tester,
+      left: '20',
+      top: '20',
+      width: '0',
+      height: '60',
+    );
+    await tester.tap(find.byKey(developerFeedbackRegionApplyKey));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(developerFeedbackRegionEditorKey), findsOneWidget);
+    expect(find.byKey(developerFeedbackRegionErrorKey), findsOneWidget);
+    expect(find.textContaining('tamaño'), findsOneWidget);
+  });
+
+  testWidgets('ordinary feedback can be submitted after removing annotation', (
+    tester,
+  ) async {
+    DeveloperFeedbackBatch? submitted;
+    await tester.pumpWidget(
+      _Harness(
+        enabled: true,
+        bridgeSubmitBatch: (batch) async => submitted = batch,
+      ),
+    );
+    await _saveFeedback(tester, 'Sin region');
+
+    await tester.tap(find.byKey(developerFeedbackPendingKey));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(developerFeedbackEditRegionKey));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(developerFeedbackRegionRemoveKey));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(developerFeedbackSendBatchKey));
+    await tester.pumpAndSettle();
+
+    final item = submitted!.items.single;
+    expect(item.selectionBounds['width'], 0);
+    final imageCapture = item.toBridgeJson()['imageCapture'] as Map;
+    expect(imageCapture.containsKey('annotations'), isFalse);
+  });
+
   testWidgets('clears multiple queued items', (tester) async {
     await tester.pumpWidget(const _Harness(enabled: true));
     await _saveFeedback(tester, 'Primero');
@@ -576,6 +999,118 @@ void main() {
     expect(item['hasAudio'], isFalse);
   });
 
+  testWidgets(
+    'execution target switch sends batch to configured meta workspace',
+    (tester) async {
+      DeveloperFeedbackBatch? submitted;
+      await tester.pumpWidget(
+        _Harness(
+          enabled: true,
+          sourceApp: 'sat-catalogo-ropa',
+          sourceDisplayName: 'SAT Catalogo Ropa',
+          domainWorkspacePath: 'sat-catalogo-ropa',
+          domainWorkspaceLabel: 'SAT',
+          codexCliWorkspacePath: 'codex-cli-mobile-bridge',
+          codexCliWorkspaceLabel: 'Codex CLI',
+          bridgeSubmitBatch: (batch) async => submitted = batch,
+        ),
+      );
+
+      expect(
+        find.byKey(developerFeedbackExecutionTargetSwitchKey),
+        findsOneWidget,
+      );
+      expect(
+        tester
+            .widget<Switch>(
+              find.byKey(developerFeedbackExecutionTargetSwitchKey),
+            )
+            .value,
+        isFalse,
+      );
+
+      await tester.tap(find.byKey(developerFeedbackExecutionTargetSwitchKey));
+      await tester.pump();
+      await _saveFeedback(tester, 'Cambiar comportamiento compartido');
+      await tester.tap(find.byKey(developerFeedbackPendingKey));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(developerFeedbackSendBatchKey));
+      await tester.pumpAndSettle();
+
+      final bridgeJson = submitted!.toBridgeJson();
+      expect(bridgeJson['workspace_path'], 'codex-cli-mobile-bridge');
+      final releaseTarget = bridgeJson['releaseTarget'] as Map<String, Object?>;
+      expect(releaseTarget['sourceApp'], 'sat-catalogo-ropa');
+      expect(releaseTarget['workspaceLabel'], 'SAT');
+      expect(releaseTarget['workspacePath'], 'sat-catalogo-ropa');
+      final items = bridgeJson['items'] as List<Object?>;
+      final item = items.single as Map<String, Object?>;
+      final contextMetadata = item['contextMetadata'] as Map<String, Object?>;
+      final executionTarget =
+          contextMetadata['executionTarget'] as Map<String, Object?>;
+      expect(executionTarget['kind'], 'codexCli');
+      expect(executionTarget['workspacePath'], 'codex-cli-mobile-bridge');
+      final itemReleaseTarget =
+          contextMetadata['releaseTarget'] as Map<String, Object?>;
+      expect(itemReleaseTarget['sourceApp'], 'sat-catalogo-ropa');
+      expect(itemReleaseTarget['workspacePath'], 'sat-catalogo-ropa');
+    },
+  );
+
+  testWidgets('queue tabs group and send each execution target separately', (
+    tester,
+  ) async {
+    final submitted = <DeveloperFeedbackBatch>[];
+    await tester.pumpWidget(
+      _Harness(
+        enabled: true,
+        sourceApp: 'sat-catalogo-ropa',
+        sourceDisplayName: 'SAT Catalogo Ropa',
+        domainWorkspacePath: 'sat-catalogo-ropa',
+        domainWorkspaceLabel: 'SAT',
+        codexCliWorkspacePath: 'codex-cli-mobile-bridge',
+        codexCliWorkspaceLabel: 'Codex CLI',
+        bridgeSubmitBatch: (batch) async {
+          submitted.add(batch);
+        },
+      ),
+    );
+
+    await _saveFeedback(tester, 'Cambiar regla de negocio SAT');
+    await tester.tap(find.byKey(developerFeedbackExecutionTargetSwitchKey));
+    await tester.pump();
+    await _saveFeedback(tester, 'Cambiar wrapper compartido');
+
+    await tester.tap(find.byKey(developerFeedbackPendingKey));
+    await tester.pumpAndSettle();
+    expect(find.byKey(developerFeedbackQueueTabsKey), findsOneWidget);
+    expect(find.text('SAT (1)'), findsOneWidget);
+    expect(find.text('Codex CLI (1)'), findsOneWidget);
+    expect(find.textContaining('Cambiar regla de negocio SAT'), findsOneWidget);
+
+    await tester.tap(find.byKey(developerFeedbackQueueCodexCliTabKey));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Cambiar wrapper compartido'), findsOneWidget);
+
+    await tester.tap(find.byKey(developerFeedbackSendBatchKey));
+    await tester.pumpAndSettle();
+
+    expect(submitted, hasLength(2));
+    final submittedWorkspaces = submitted
+        .map((batch) => batch.toBridgeJson()['workspace_path'])
+        .toSet();
+    expect(submittedWorkspaces, contains('sat-catalogo-ropa'));
+    expect(submittedWorkspaces, contains('codex-cli-mobile-bridge'));
+    for (final batch in submitted) {
+      final batchJson = batch.toBridgeJson();
+      final releaseTarget = batchJson['releaseTarget'] as Map<String, Object?>;
+      expect(releaseTarget['sourceApp'], 'sat-catalogo-ropa');
+      expect(releaseTarget['workspacePath'], 'sat-catalogo-ropa');
+      final items = batchJson['items'] as List<Object?>;
+      expect(items, hasLength(1));
+    }
+  });
+
   testWidgets('bridge submission posts queued batch to configured bridge URL', (
     tester,
   ) async {
@@ -646,6 +1181,763 @@ void main() {
     expect(item['screenshotPngBase64'], isA<String>());
     expect(item['selectionBounds'], isA<Map<String, Object?>>());
     expect(item['hasAudio'], isFalse);
+  });
+
+  testWidgets('SDD target none preserves ordinary feedback batch submission', (
+    tester,
+  ) async {
+    final requestedPaths = <String>[];
+    final client = MockClient((request) async {
+      requestedPaths.add('${request.method} ${request.url.path}');
+      if (request.url.path == '/feedback-batches') {
+        return http.Response('[]', 200);
+      }
+      if (request.url.path == '/feedback-workflow-presets') {
+        return http.Response(
+          jsonEncode(<String, Object?>{
+            'default_preset_id': 'generator_only',
+            'presets': <Map<String, Object?>>[
+              <String, Object?>{
+                'id': 'generator_only',
+                'name': 'Generator only',
+              },
+            ],
+          }),
+          200,
+        );
+      }
+      expect(request.url.path, '/feedback-batches/start-session');
+      return http.Response('{}', 202);
+    });
+    await tester.pumpWidget(
+      _Harness(
+        enabled: true,
+        bridgeUrl: 'http://bridge.local',
+        domainWorkspacePath: '/repo/sat',
+        httpClient: client,
+      ),
+    );
+
+    await _saveFeedback(tester, 'Mantener como feedback');
+    await tester.tap(find.byKey(developerFeedbackPendingKey));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(developerFeedbackSddTargetDropdownKey), findsOneWidget);
+    expect(find.text('Sin spec'), findsOneWidget);
+
+    await tester.tap(find.byKey(developerFeedbackSendBatchKey));
+    await tester.pumpAndSettle();
+
+    expect(requestedPaths, contains('POST /feedback-batches/start-session'));
+    expect(
+      requestedPaths.any((path) => path.contains('/sdd/bridge-captures')),
+      isFalse,
+    );
+  });
+
+  testWidgets('SDD new spec target previews and applies capture intake', (
+    tester,
+  ) async {
+    final requestedPaths = <String>[];
+    final queuedBodies = <Map<String, Object?>>[];
+    final sddBodies = <Map<String, Object?>>[];
+    final client = MockClient((request) async {
+      requestedPaths.add('${request.method} ${request.url.path}');
+      if (request.url.path == '/feedback-batches') {
+        return http.Response('[]', 200);
+      }
+      if (request.url.path == '/feedback-workflow-presets') {
+        return http.Response(
+          jsonEncode(<String, Object?>{
+            'default_preset_id': 'generator_only',
+            'presets': <Map<String, Object?>>[
+              <String, Object?>{
+                'id': 'generator_only',
+                'name': 'Generator only',
+              },
+            ],
+          }),
+          200,
+        );
+      }
+      if (request.url.path == '/feedback-queue') {
+        final body = jsonDecode(request.body) as Map<String, Object?>;
+        queuedBodies.add(body);
+        return http.Response(
+          jsonEncode(<String, Object?>{
+            'id': body['id'],
+            'source_app': body['sourceApp'],
+            'comment': body['comment'],
+            'created_at': '2026-07-06T00:00:00Z',
+            'status': 'pending',
+            'has_screenshot': true,
+            'selection_points': const <Object?>[],
+            'selection_bounds': const <String, Object?>{},
+          }),
+          201,
+        );
+      }
+      if (request.url.path.startsWith('/sdd/bridge-captures/')) {
+        final body = jsonDecode(request.body) as Map<String, Object?>;
+        sddBodies.add(body);
+        final apply = request.url.path.endsWith('/apply');
+        return http.Response(
+          jsonEncode(<String, Object?>{
+            'status': apply ? 'applied' : 'dry-run',
+            'workspace_path': '/repo/sat',
+            'target_mode': 'new_spec',
+            'feedback_item_ids': body['feedbackItemIds'],
+            'intake_items': const <Object?>[],
+            'staged_media': const <Object?>[],
+            'blocked': const <Object?>[],
+            'next_actions': <String>[
+              apply ? 'Review generated spec artifacts.' : 'Review dry-run.',
+            ],
+            'dry_run': <String, Object?>{
+              'status': 'dry-run',
+              'spec_id': 'catalogo-filtros',
+              'target_files': <String>['specs/catalogo-filtros/spec.md'],
+              'next_actions': const <String>['Review dry-run.'],
+            },
+            if (apply)
+              'apply_result': <String, Object?>{
+                'status': 'applied',
+                'created': <String>['specs/catalogo-filtros/spec.md'],
+                'next_actions': const <String>[
+                  'Review generated spec artifacts.',
+                ],
+              },
+          }),
+          200,
+        );
+      }
+      return http.Response('{}', 404);
+    });
+    await tester.pumpWidget(
+      _Harness(
+        enabled: true,
+        bridgeUrl: 'http://bridge.local',
+        domainWorkspacePath: '/repo/sat',
+        httpClient: client,
+      ),
+    );
+
+    await _saveFeedback(tester, 'Crear filtros nuevos');
+    await tester.tap(find.byKey(developerFeedbackPendingKey));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(developerFeedbackEditRegionKey));
+    await tester.pumpAndSettle();
+    await _setRegionFields(
+      tester,
+      left: '10',
+      top: '20',
+      width: '120',
+      height: '80',
+    );
+    await tester.tap(find.byKey(developerFeedbackRegionApplyKey));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(developerFeedbackSddTargetDropdownKey));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Nuevo spec').last);
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(developerFeedbackSddSpecIdKey),
+      'catalogo-filtros',
+    );
+    await tester.ensureVisible(find.byKey(developerFeedbackSddDryRunKey));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(developerFeedbackSddDryRunKey));
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(find.byKey(developerFeedbackSddStatusKey));
+    await tester.pumpAndSettle();
+    expect(find.byKey(developerFeedbackSddStatusKey), findsOneWidget);
+    expect(find.textContaining('Status: dry-run'), findsOneWidget);
+    expect(
+      find.textContaining('specs/catalogo-filtros/spec.md'),
+      findsOneWidget,
+    );
+
+    await tester.ensureVisible(find.byKey(developerFeedbackSddApplyKey));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(developerFeedbackSddApplyKey));
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(find.byKey(developerFeedbackSddStatusKey));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Status: applied'), findsOneWidget);
+    expect(requestedPaths, contains('POST /feedback-queue'));
+    expect(requestedPaths, contains('POST /sdd/bridge-captures/dry-run'));
+    expect(requestedPaths, contains('POST /sdd/bridge-captures/apply'));
+    final queuedBounds =
+        queuedBodies.first['selectionBounds'] as Map<String, Object?>;
+    expect(queuedBounds['left'], 10);
+    expect(queuedBounds['width'], 120);
+    final imageCapture = queuedBodies.first['imageCapture'] as Map;
+    final annotations = imageCapture['annotations'] as List<Object?>;
+    final annotation = annotations.single as Map;
+    final annotationBounds = annotation['bounds'] as Map;
+    expect(annotationBounds['top'], 20);
+    expect(annotationBounds['height'], 80);
+    final target = sddBodies.last['specTarget'] as Map<String, Object?>;
+    expect(target['mode'], 'new_spec');
+    expect(target['specId'], 'catalogo-filtros');
+  });
+
+  testWidgets('SDD existing spec target uses project spec picker and queues job', (
+    tester,
+  ) async {
+    final queuedBodies = <Map<String, Object?>>[];
+    final sddBodies = <Map<String, Object?>>[];
+    final client = MockClient((request) async {
+      if (request.url.path == '/feedback-batches') {
+        return http.Response('[]', 200);
+      }
+      if (request.url.path == '/feedback-workflow-presets') {
+        return http.Response(
+          jsonEncode(<String, Object?>{
+            'default_preset_id': 'generator_only',
+            'presets': const <Map<String, Object?>>[
+              <String, Object?>{
+                'id': 'generator_only',
+                'name': 'Generator only',
+              },
+            ],
+          }),
+          200,
+        );
+      }
+      if (request.url.path == '/sdd/project') {
+        expect(request.url.queryParameters['workspace_path'], '/repo/sat');
+        return http.Response(
+          jsonEncode(<String, Object?>{
+            'workspace_name': 'SAT',
+            'workspace_path': '/repo/sat',
+            'required': true,
+            'architecture_diagrams': const <Object?>[],
+            'missing_required': const <Object?>[],
+            'specs': const <Map<String, Object?>>[
+              <String, Object?>{
+                'id': '001-catalogo',
+                'title': 'Catalogo base',
+                'path': 'specs/001-catalogo',
+                'diagrams': <Object?>[],
+                'slice_docs': <Object?>[],
+                'missing': <Object?>[],
+              },
+            ],
+          }),
+          200,
+        );
+      }
+      if (request.url.path == '/feedback-queue') {
+        final body = jsonDecode(request.body) as Map<String, Object?>;
+        queuedBodies.add(body);
+        return http.Response(
+          jsonEncode(<String, Object?>{
+            'id': body['id'],
+            'source_app': body['sourceApp'],
+            'comment': body['comment'],
+            'created_at': '2026-07-06T00:00:00Z',
+            'status': 'pending',
+            'has_screenshot': true,
+            'selection_points': const <Object?>[],
+            'selection_bounds': const <String, Object?>{},
+          }),
+          201,
+        );
+      }
+      if (request.url.path == '/sdd/bridge-captures/apply') {
+        final body = jsonDecode(request.body) as Map<String, Object?>;
+        sddBodies.add(body);
+        return http.Response(
+          jsonEncode(<String, Object?>{
+            'status': 'queued',
+            'workspace_path': '/repo/sat',
+            'target_mode': 'existing_spec',
+            'feedback_item_ids': body['feedbackItemIds'],
+            'intake_items': const <Object?>[],
+            'staged_media': const <Object?>[],
+            'blocked': const <Object?>[],
+            'next_actions': const <String>[
+              'Codex job queued; poll the job status before applying changes.',
+            ],
+            'dry_run': <String, Object?>{
+              'status': 'dry-run',
+              'intended_artifact_updates': <String>[
+                'specs/001-catalogo/tasks.md',
+              ],
+            },
+            'apply_result': <String, Object?>{
+              'status': 'queued',
+              'job': const <String, Object?>{
+                'status': 'queued',
+                'activity': <String, Object?>{
+                  'state': 'queued',
+                  'events': <Object?>[
+                    <String, Object?>{
+                      'state': 'queued',
+                      'status': 'active',
+                      'label': 'Job queued',
+                    },
+                  ],
+                },
+              },
+              'next_actions': const <String>[
+                'Codex job queued; poll the job status before applying changes.',
+              ],
+            },
+          }),
+          200,
+        );
+      }
+      return http.Response('{}', 404);
+    });
+    await tester.pumpWidget(
+      _Harness(
+        enabled: true,
+        bridgeUrl: 'http://bridge.local',
+        domainWorkspacePath: '/repo/sat',
+        httpClient: client,
+      ),
+    );
+
+    await _saveFeedback(tester, 'Actualizar tasks');
+    await tester.tap(find.byKey(developerFeedbackPendingKey));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(developerFeedbackEditRegionKey));
+    await tester.pumpAndSettle();
+    await _setRegionFields(
+      tester,
+      left: '30',
+      top: '40',
+      width: '90',
+      height: '70',
+    );
+    await tester.tap(find.byKey(developerFeedbackRegionApplyKey));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(developerFeedbackSddTargetDropdownKey));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Spec existente').last);
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(developerFeedbackSddSpecDropdownKey), findsOneWidget);
+    expect(find.textContaining('001-catalogo'), findsOneWidget);
+
+    await tester.ensureVisible(find.byKey(developerFeedbackSddApplyKey));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(developerFeedbackSddApplyKey));
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(find.byKey(developerFeedbackSddStatusKey));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Status: queued'), findsOneWidget);
+    expect(find.textContaining('Job: queued'), findsOneWidget);
+    expect(find.textContaining('Activity: queued'), findsOneWidget);
+    expect(find.textContaining('Events: Job queued'), findsOneWidget);
+    final queuedBounds =
+        queuedBodies.single['selectionBounds'] as Map<String, Object?>;
+    expect(queuedBounds['left'], 30);
+    expect(queuedBounds['width'], 90);
+    final imageCapture = queuedBodies.single['imageCapture'] as Map;
+    final annotations = imageCapture['annotations'] as List<Object?>;
+    final annotation = annotations.single as Map;
+    final annotationBounds = annotation['bounds'] as Map;
+    expect(annotationBounds['top'], 40);
+    expect(annotationBounds['height'], 70);
+    final target = sddBodies.single['specTarget'] as Map<String, Object?>;
+    expect(target['mode'], 'existing_spec');
+    expect(target['specId'], '001-catalogo');
+    expect(target['artifact'], 'tasks');
+  });
+
+  testWidgets('SDD target displays backend blocked state', (tester) async {
+    final client = MockClient((request) async {
+      if (request.url.path == '/feedback-batches') {
+        return http.Response('[]', 200);
+      }
+      if (request.url.path == '/feedback-workflow-presets') {
+        return http.Response(
+          jsonEncode(<String, Object?>{
+            'default_preset_id': 'generator_only',
+            'presets': const <Map<String, Object?>>[
+              <String, Object?>{
+                'id': 'generator_only',
+                'name': 'Generator only',
+              },
+            ],
+          }),
+          200,
+        );
+      }
+      if (request.url.path == '/feedback-queue') {
+        final body = jsonDecode(request.body) as Map<String, Object?>;
+        return http.Response(
+          jsonEncode(<String, Object?>{
+            'id': body['id'],
+            'source_app': body['sourceApp'],
+            'comment': body['comment'],
+            'created_at': '2026-07-06T00:00:00Z',
+            'status': 'pending',
+            'has_screenshot': true,
+            'selection_points': const <Object?>[],
+            'selection_bounds': const <String, Object?>{},
+          }),
+          201,
+        );
+      }
+      if (request.url.path == '/sdd/bridge-captures/dry-run') {
+        return http.Response(
+          jsonEncode(<String, Object?>{
+            'status': 'blocked',
+            'workspace_path': '/repo/sat',
+            'target_mode': 'new_spec',
+            'feedback_item_ids': const <String>['feedback-1'],
+            'intake_items': const <Object?>[],
+            'staged_media': const <Object?>[],
+            'blocked': const <String>['target_spec_invalid'],
+            'next_actions': const <String>['Choose another spec id.'],
+            'dry_run': const <String, Object?>{
+              'status': 'blocked',
+              'blocked_reasons': <String>['target_spec_invalid'],
+              'rejected_media': <Map<String, Object?>>[
+                <String, Object?>{
+                  'field': 'intake_items[0]',
+                  'message': 'unsupported media',
+                },
+              ],
+            },
+          }),
+          200,
+        );
+      }
+      return http.Response('{}', 404);
+    });
+    await tester.pumpWidget(
+      _Harness(
+        enabled: true,
+        bridgeUrl: 'http://bridge.local',
+        domainWorkspacePath: '/repo/sat',
+        httpClient: client,
+      ),
+    );
+
+    await _saveFeedback(tester, 'Falla esperada');
+    await tester.tap(find.byKey(developerFeedbackPendingKey));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(developerFeedbackSddTargetDropdownKey));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Nuevo spec').last);
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(developerFeedbackSddDryRunKey));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(developerFeedbackSddDryRunKey));
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(find.byKey(developerFeedbackSddStatusKey));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Status: blocked'), findsOneWidget);
+    expect(find.textContaining('target_spec_invalid'), findsOneWidget);
+    expect(find.textContaining('unsupported media'), findsOneWidget);
+  });
+
+  test('feedback item bridge JSON preserves optional embedded SDD target', () {
+    final legacyItem = DeveloperFeedbackItem(
+      id: 'feedback-legacy',
+      createdAt: DateTime.utc(2026, 7, 6),
+      comment: 'Legacy feedback',
+      screenshotPngBase64: base64Encode(<int>[1, 2, 3]),
+      selectionPoints: const <Offset>[],
+      audio: null,
+    );
+    expect(legacyItem.toBridgeJson().containsKey('specTarget'), isFalse);
+
+    final targetedItem = legacyItem.copyWith(
+      sddSpecTarget: const DeveloperFeedbackSddSpecTarget(
+        mode: 'existing_spec',
+        specId: '001-catalogo',
+        artifact: 'tasks',
+      ),
+    );
+    final target =
+        targetedItem.toBridgeJson()['specTarget'] as Map<String, Object?>;
+    expect(target['mode'], 'existing_spec');
+    expect(target['specId'], '001-catalogo');
+    expect(target['artifact'], 'tasks');
+  });
+
+  testWidgets(
+    'SDD embedded target initializes queue UI and travels to Bridge',
+    (tester) async {
+      final queuedBodies = <Map<String, Object?>>[];
+      final sddBodies = <Map<String, Object?>>[];
+      final client = MockClient((request) async {
+        if (request.url.path == '/feedback-batches') {
+          return http.Response('[]', 200);
+        }
+        if (request.url.path == '/feedback-workflow-presets') {
+          return http.Response(
+            jsonEncode(<String, Object?>{
+              'default_preset_id': 'generator_only',
+              'presets': const <Map<String, Object?>>[
+                <String, Object?>{
+                  'id': 'generator_only',
+                  'name': 'Generator only',
+                },
+              ],
+            }),
+            200,
+          );
+        }
+        if (request.url.path == '/feedback-queue') {
+          final body = jsonDecode(request.body) as Map<String, Object?>;
+          queuedBodies.add(body);
+          return http.Response(
+            jsonEncode(<String, Object?>{
+              'id': body['id'],
+              'source_app': body['sourceApp'],
+              'comment': body['comment'],
+              'created_at': '2026-07-06T00:00:00Z',
+              'status': 'pending',
+              'has_screenshot': true,
+              'selection_points': const <Object?>[],
+              'selection_bounds': const <String, Object?>{},
+              'spec_target': body['specTarget'],
+            }),
+            201,
+          );
+        }
+        if (request.url.path == '/sdd/bridge-captures/dry-run') {
+          final body = jsonDecode(request.body) as Map<String, Object?>;
+          sddBodies.add(body);
+          return http.Response(
+            jsonEncode(<String, Object?>{
+              'status': 'dry-run',
+              'workspace_path': '/repo/sat',
+              'target_mode': 'new_spec',
+              'feedback_item_ids': body['feedbackItemIds'],
+              'intake_items': const <Object?>[],
+              'staged_media': const <Object?>[],
+              'blocked': const <Object?>[],
+              'next_actions': const <String>['Review dry-run.'],
+              'dry_run': <String, Object?>{
+                'status': 'dry-run',
+                'spec_id': 'embedded-new',
+                'target_files': <String>['specs/embedded-new/spec.md'],
+              },
+            }),
+            200,
+          );
+        }
+        return http.Response('{}', 404);
+      });
+      await tester.pumpWidget(
+        _Harness(
+          enabled: true,
+          bridgeUrl: 'http://bridge.local',
+          domainWorkspacePath: '/repo/sat',
+          initialSddSpecTarget: const DeveloperFeedbackSddSpecTarget(
+            mode: 'new_spec',
+            specId: 'embedded-new',
+            artifact: 'auto',
+          ),
+          httpClient: client,
+        ),
+      );
+
+      await _saveFeedback(tester, 'Crear desde captura embebida');
+      await tester.tap(find.byKey(developerFeedbackPendingKey));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Nuevo spec'), findsOneWidget);
+      expect(find.text('embedded-new'), findsOneWidget);
+
+      await tester.ensureVisible(find.byKey(developerFeedbackSddDryRunKey));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(developerFeedbackSddDryRunKey));
+      await tester.pumpAndSettle();
+
+      final queuedTarget =
+          queuedBodies.single['specTarget'] as Map<String, Object?>;
+      expect(queuedTarget['mode'], 'new_spec');
+      expect(queuedTarget['specId'], 'embedded-new');
+      expect(queuedTarget['artifact'], 'auto');
+      final requestTarget =
+          sddBodies.single['specTarget'] as Map<String, Object?>;
+      expect(requestTarget['mode'], 'new_spec');
+      expect(requestTarget['specId'], 'embedded-new');
+      expect(requestTarget['artifact'], 'auto');
+    },
+  );
+
+  testWidgets('SDD embedded target conflict blocks before Bridge staging', (
+    tester,
+  ) async {
+    final requestedPaths = <String>[];
+    final client = MockClient((request) async {
+      requestedPaths.add('${request.method} ${request.url.path}');
+      if (request.url.path == '/feedback-batches') {
+        return http.Response('[]', 200);
+      }
+      if (request.url.path == '/feedback-workflow-presets') {
+        return http.Response(
+          jsonEncode(<String, Object?>{
+            'default_preset_id': 'generator_only',
+            'presets': const <Map<String, Object?>>[
+              <String, Object?>{
+                'id': 'generator_only',
+                'name': 'Generator only',
+              },
+            ],
+          }),
+          200,
+        );
+      }
+      return http.Response('{}', 500);
+    });
+    await tester.pumpWidget(
+      _Harness(
+        enabled: true,
+        bridgeUrl: 'http://bridge.local',
+        domainWorkspacePath: '/repo/sat',
+        initialSddSpecTarget: const DeveloperFeedbackSddSpecTarget(
+          mode: 'new_spec',
+          specId: 'embedded-new',
+          artifact: 'auto',
+        ),
+        httpClient: client,
+      ),
+    );
+
+    await _saveFeedback(tester, 'Crear desde captura embebida');
+    await tester.tap(find.byKey(developerFeedbackPendingKey));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(developerFeedbackSddSpecIdKey),
+      'ui-target',
+    );
+    await tester.ensureVisible(find.byKey(developerFeedbackSddDryRunKey));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(developerFeedbackSddDryRunKey));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('spec_target_conflict'), findsOneWidget);
+    expect(requestedPaths, contains('GET /feedback-batches'));
+    expect(requestedPaths, contains('GET /feedback-workflow-presets'));
+    expect(
+      requestedPaths.any((path) => path == 'POST /feedback-queue'),
+      isFalse,
+    );
+    expect(
+      requestedPaths.any((path) => path.contains('/sdd/bridge-captures')),
+      isFalse,
+    );
+  });
+
+  testWidgets('SDD queue renders job failure and review-ready states', (
+    tester,
+  ) async {
+    var applyCount = 0;
+    final client = MockClient((request) async {
+      if (request.url.path == '/feedback-batches') {
+        return http.Response('[]', 200);
+      }
+      if (request.url.path == '/feedback-workflow-presets') {
+        return http.Response(
+          jsonEncode(<String, Object?>{
+            'default_preset_id': 'generator_only',
+            'presets': const <Map<String, Object?>>[
+              <String, Object?>{
+                'id': 'generator_only',
+                'name': 'Generator only',
+              },
+            ],
+          }),
+          200,
+        );
+      }
+      if (request.url.path == '/feedback-queue') {
+        final body = jsonDecode(request.body) as Map<String, Object?>;
+        return http.Response(
+          jsonEncode(<String, Object?>{
+            'id': body['id'],
+            'source_app': body['sourceApp'],
+            'comment': body['comment'],
+            'created_at': '2026-07-06T00:00:00Z',
+            'status': 'pending',
+            'has_screenshot': true,
+            'selection_points': const <Object?>[],
+            'selection_bounds': const <String, Object?>{},
+          }),
+          201,
+        );
+      }
+      if (request.url.path == '/sdd/bridge-captures/apply') {
+        applyCount += 1;
+        final status = applyCount == 1 ? 'job_failed' : 'review_ready';
+        return http.Response(
+          jsonEncode(<String, Object?>{
+            'status': status,
+            'workspace_path': '/repo/sat',
+            'target_mode': 'existing_spec',
+            'feedback_item_ids': const <String>['feedback-1'],
+            'intake_items': const <Object?>[],
+            'staged_media': const <Object?>[],
+            'blocked': applyCount == 1
+                ? const <String>['codex_job_failed']
+                : const <String>[],
+            'next_actions': applyCount == 1
+                ? const <String>['Inspect job logs.']
+                : const <String>['Review generated changes.'],
+            'dry_run': const <String, Object?>{'status': 'dry-run'},
+            'apply_result': <String, Object?>{
+              'status': status,
+              'job': <String, Object?>{
+                'status': applyCount == 1 ? 'failed' : 'completed',
+              },
+              'next_actions': applyCount == 1
+                  ? const <String>['Inspect job logs.']
+                  : const <String>['Review generated changes.'],
+            },
+          }),
+          200,
+        );
+      }
+      return http.Response('{}', 404);
+    });
+    await tester.pumpWidget(
+      _Harness(
+        enabled: true,
+        bridgeUrl: 'http://bridge.local',
+        domainWorkspacePath: '/repo/sat',
+        initialSddSpecTarget: const DeveloperFeedbackSddSpecTarget(
+          mode: 'existing_spec',
+          specId: '001-catalogo',
+          artifact: 'tasks',
+        ),
+        httpClient: client,
+      ),
+    );
+
+    await _saveFeedback(tester, 'Actualizar spec');
+    await tester.tap(find.byKey(developerFeedbackPendingKey));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(developerFeedbackSddApplyKey));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(developerFeedbackSddApplyKey));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('Status: job_failed'), findsOneWidget);
+    expect(find.textContaining('Job: failed'), findsOneWidget);
+    expect(find.textContaining('Retry: available'), findsOneWidget);
+
+    await tester.ensureVisible(find.byKey(developerFeedbackSddApplyKey));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(developerFeedbackSddApplyKey));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('Status: review_ready'), findsOneWidget);
+    expect(find.textContaining('Job: completed'), findsOneWidget);
   });
 
   testWidgets(
@@ -1941,6 +3233,226 @@ void main() {
     expect(find.text('Audio adjunto'), findsOneWidget);
   });
 
+  testWidgets('audio attachment allows saving feedback without text', (
+    tester,
+  ) async {
+    final recorder = _TrackedRecorder();
+    DeveloperFeedbackBatch? submitted;
+    await tester.pumpWidget(
+      _Harness(
+        enabled: true,
+        recorderFactory: () => recorder,
+        bridgeSubmitBatch: (batch) async => submitted = batch,
+      ),
+    );
+
+    await _openFeedbackDialog(tester);
+    expect(
+      tester
+          .widget<FilledButton>(find.byKey(developerFeedbackSaveKey))
+          .onPressed,
+      isNull,
+    );
+
+    await tester.tap(find.byKey(const Key('developer-feedback-audio')));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('developer-feedback-audio')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Audio adjunto'), findsOneWidget);
+    expect(
+      tester
+          .widget<FilledButton>(find.byKey(developerFeedbackSaveKey))
+          .onPressed,
+      isNotNull,
+    );
+
+    await tester.tap(find.byKey(developerFeedbackSaveKey));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(developerFeedbackPendingKey));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(developerFeedbackSendBatchKey));
+    await tester.pumpAndSettle();
+
+    final item = submitted!.items.single;
+    expect(item.comment, '');
+    expect(item.audio?.bytes, <int>[9]);
+  });
+
+  testWidgets('guided trace records previews and sends without text', (
+    tester,
+  ) async {
+    final recorder = _TrackedRecorder();
+    DeveloperFeedbackBatch? submitted;
+    await tester.pumpWidget(
+      _Harness(
+        enabled: true,
+        recorderFactory: () => recorder,
+        bridgeSubmitBatch: (batch) async => submitted = batch,
+        guidedTraceFrameInterval: const Duration(milliseconds: 200),
+      ),
+    );
+
+    await tester.tap(find.byKey(developerFeedbackGuidedTraceStartKey));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+
+    expect(find.byKey(developerFeedbackGuidedTraceBannerKey), findsOneWidget);
+    expect(recorder.starts, 1);
+
+    await tester.tap(find.text('App body'));
+    await tester.pump(const Duration(milliseconds: 250));
+    await tester.tap(find.byKey(developerFeedbackGuidedTraceStopKey).last);
+    await tester.pump();
+    await tester.pumpAndSettle();
+
+    expect(find.text('Recorrido grabado'), findsOneWidget);
+    await tester.tap(find.byKey(developerFeedbackGuidedTraceAttachKey));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(developerFeedbackPendingKey));
+    await tester.pumpAndSettle();
+    expect(find.text('Recorrido guiado sin texto'), findsOneWidget);
+    await tester.tap(find.byKey(developerFeedbackSendBatchKey));
+    await tester.pumpAndSettle();
+
+    final item = submitted!.items.single;
+    expect(item.comment, '');
+    expect(item.audio?.bytes, <int>[9]);
+    expect(item.guidedTrace, isNotNull);
+    expect(item.guidedTrace!.frames, isNotEmpty);
+    expect(item.guidedTrace!.frames.first.screenshotPngBase64, isNotEmpty);
+    expect(
+      item.guidedTrace!.timeline.any((event) => event.type == 'gesture'),
+      isTrue,
+    );
+  });
+
+  testWidgets('guided trace can be discarded without queueing', (tester) async {
+    await tester.pumpWidget(
+      _Harness(enabled: true, recorderFactory: () => _TrackedRecorder()),
+    );
+
+    await tester.tap(find.byKey(developerFeedbackGuidedTraceStartKey));
+    await tester.pump();
+    expect(find.byKey(developerFeedbackGuidedTraceBannerKey), findsOneWidget);
+
+    await tester.tap(find.byKey(developerFeedbackGuidedTraceDiscardKey));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(developerFeedbackGuidedTraceBannerKey), findsNothing);
+    expect(find.byKey(developerFeedbackPendingKey), findsNothing);
+  });
+
+  testWidgets('guided trace recorder is cancelled on wrapper dispose', (
+    tester,
+  ) async {
+    final recorder = _TrackedRecorder();
+    await tester.pumpWidget(
+      _Harness(enabled: true, recorderFactory: () => recorder),
+    );
+
+    await tester.tap(find.byKey(developerFeedbackGuidedTraceStartKey));
+    await tester.pump();
+    expect(recorder.starts, 1);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+
+    expect(recorder.cancels, 1);
+  });
+
+  testWidgets('guided trace preview can discard and immediately rerecord', (
+    tester,
+  ) async {
+    final recorders = <_TrackedRecorder>[];
+    await tester.pumpWidget(
+      _Harness(
+        enabled: true,
+        recorderFactory: () {
+          final recorder = _TrackedRecorder();
+          recorders.add(recorder);
+          return recorder;
+        },
+      ),
+    );
+
+    await tester.tap(find.byKey(developerFeedbackGuidedTraceStartKey));
+    await tester.pump();
+    await tester.tap(find.byKey(developerFeedbackGuidedTraceStopKey).last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(developerFeedbackGuidedTraceRerecordKey));
+    await tester.pump();
+
+    expect(recorders, hasLength(2));
+    expect(recorders.first.stops, 1);
+    expect(recorders.last.starts, 1);
+    expect(find.byKey(developerFeedbackGuidedTraceBannerKey), findsOneWidget);
+  });
+
+  testWidgets('guided trace auto-stops at max duration', (tester) async {
+    await tester.pumpWidget(
+      _Harness(
+        enabled: true,
+        recorderFactory: () => _TrackedRecorder(),
+        guidedTraceMaxDuration: const Duration(milliseconds: 250),
+      ),
+    );
+
+    await tester.tap(find.byKey(developerFeedbackGuidedTraceStartKey));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Recorrido grabado'), findsOneWidget);
+  });
+
+  testWidgets('guided trace caps payload events and marks truncation', (
+    tester,
+  ) async {
+    DeveloperFeedbackBatch? submitted;
+    await tester.pumpWidget(
+      _Harness(
+        enabled: true,
+        recorderFactory: () => _TrackedRecorder(),
+        bridgeSubmitBatch: (batch) async => submitted = batch,
+        guidedTraceFrameInterval: const Duration(milliseconds: 100),
+        guidedTraceMaxFrames: 2,
+        guidedTraceMaxEvents: 8,
+      ),
+    );
+
+    await tester.tap(find.byKey(developerFeedbackGuidedTraceStartKey));
+    await tester.pump();
+    for (var i = 0; i < 10; i += 1) {
+      await tester.tap(find.text('App body'));
+      await tester.pump(const Duration(milliseconds: 80));
+    }
+    await tester.pump(const Duration(milliseconds: 800));
+    await tester.tap(find.byKey(developerFeedbackGuidedTraceStopKey).last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(developerFeedbackGuidedTraceAttachKey));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(developerFeedbackPendingKey));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(developerFeedbackSendBatchKey));
+    await tester.pumpAndSettle();
+
+    final trace = submitted!.items.single.guidedTrace!;
+    final recording = trace.toJson()['recording'] as Map<String, Object?>;
+    expect(trace.frames.length, lessThanOrEqualTo(2));
+    expect(trace.timeline.length, lessThanOrEqualTo(8));
+    expect(recording['truncated'], isTrue);
+  });
+
+  testWidgets('guided trace toolbar action can be disabled', (tester) async {
+    await tester.pumpWidget(
+      const _Harness(enabled: true, guidedTraceEnabled: false),
+    );
+
+    expect(find.byKey(developerFeedbackGuidedTraceStartKey), findsNothing);
+  });
+
   test('export JSON has stable fields and no raw object serialization', () {
     final item = DeveloperFeedbackItem(
       id: 'feedback-1',
@@ -1997,8 +3509,68 @@ void main() {
     expect(exported['audioDurationMs'], 250);
     expect(exported['audioByteLength'], 3);
     expect(exported['audioBase64'], base64Encode(<int>[4, 5, 6]));
+    expect(exported['feedbackKind'], developerFeedbackImageCaptureKind);
+    expect(exported['imageCapture'], isA<Map<String, Object?>>());
     expect(jsonText, isNot(contains('Offset(')));
     expect(jsonText, isNot(contains('Instance of')));
+  });
+
+  test('guided trace JSON is available as a structured feedback contract', () {
+    final item = DeveloperFeedbackItem(
+      id: 'feedback-trace',
+      createdAt: DateTime.utc(2026, 7, 1, 15),
+      sourceApp: 'fixture-app',
+      comment: 'Trace review',
+      screenshotPngBase64: 'png',
+      selectionPoints: const <Offset>[Offset(1, 2), Offset(5, 8)],
+      audio: null,
+      guidedTrace: DeveloperFeedbackGuidedTrace(
+        id: 'trace-1',
+        startedAt: DateTime.utc(2026, 7, 1, 15),
+        durationMs: 1200,
+        audio: const DeveloperFeedbackTraceAudio(
+          attachmentId: 'audio-1',
+          mimeType: 'audio/m4a',
+          durationMs: 1200,
+          transcriptAvailable: true,
+        ),
+        frames: const <DeveloperFeedbackTraceFrame>[
+          DeveloperFeedbackTraceFrame(
+            id: 'frame-1',
+            attachmentId: 'frame-1-png',
+            atMs: 0,
+            width: 1080,
+            height: 2400,
+          ),
+        ],
+        timeline: const <DeveloperFeedbackTraceEvent>[
+          DeveloperFeedbackTraceEvent(
+            id: 'event-1',
+            type: 'screen_frame',
+            atMs: 0,
+            frameId: 'frame-1',
+          ),
+        ],
+        contextSnapshots: const <Map<String, Object?>>[
+          <String, Object?>{
+            'id': 'ctx-1',
+            'observedAtMs': 0,
+            'roles': <String>['viewer'],
+          },
+        ],
+      ),
+    );
+
+    final decoded = item.toBridgeJson();
+    final trace = decoded['guidedTrace'] as Map<String, Object?>;
+    final recording = trace['recording'] as Map<String, Object?>;
+
+    expect(decoded['feedbackKind'], developerFeedbackGuidedTraceKind);
+    expect(trace['kind'], developerFeedbackGuidedTraceKind);
+    expect(recording['mode'], 'screen_trace_with_audio');
+    expect(trace['frames'], isA<List<Object?>>());
+    expect(trace['timeline'], isA<List<Object?>>());
+    expect(trace['contextSnapshots'], isA<List<Object?>>());
   });
 
   test('export omits audioBase64 when clip has no bytes', () {
@@ -2194,6 +3766,21 @@ Future<void> _openQuickAskDialog(WidgetTester tester, String question) async {
 bool _feedbackSwitchValue(WidgetTester tester) =>
     tester.widget<Switch>(find.byKey(developerFeedbackSwitchKey)).value;
 
+Future<void> _setRegionFields(
+  WidgetTester tester, {
+  required String left,
+  required String top,
+  required String width,
+  required String height,
+}) async {
+  await tester.enterText(find.byKey(developerFeedbackRegionLeftKey), left);
+  await tester.enterText(find.byKey(developerFeedbackRegionTopKey), top);
+  await tester.enterText(find.byKey(developerFeedbackRegionWidthKey), width);
+  await tester.enterText(find.byKey(developerFeedbackRegionHeightKey), height);
+  tester.testTextInput.hide();
+  await tester.pump();
+}
+
 Future<void> _drawFeedbackSelection(
   WidgetTester tester, {
   bool shortStroke = false,
@@ -2240,7 +3827,20 @@ class _Harness extends StatelessWidget {
     this.copyText,
     this.bridgeSubmitBatch,
     this.contextMetadataBuilder,
+    this.domainWorkspacePath = '',
+    this.domainWorkspaceLabel = 'Repo actual',
+    this.codexCliWorkspacePath = '',
+    this.codexCliWorkspaceLabel = 'Codex CLI',
     this.httpClient,
+    this.initialToolbarExpanded = true,
+    this.appUpdaterBridgeUrl = '',
+    this.appUpdaterController,
+    this.initialSddSpecTarget,
+    this.guidedTraceEnabled = true,
+    this.guidedTraceFrameInterval = const Duration(seconds: 5),
+    this.guidedTraceMaxFrames = 8,
+    this.guidedTraceMaxEvents = 160,
+    this.guidedTraceMaxDuration = const Duration(minutes: 2),
   });
 
   final bool enabled;
@@ -2252,7 +3852,20 @@ class _Harness extends StatelessWidget {
   final DeveloperFeedbackCopyText? copyText;
   final DeveloperFeedbackBridgeSubmitBatch? bridgeSubmitBatch;
   final DeveloperFeedbackContextMetadataBuilder? contextMetadataBuilder;
+  final String domainWorkspacePath;
+  final String domainWorkspaceLabel;
+  final String codexCliWorkspacePath;
+  final String codexCliWorkspaceLabel;
   final http.Client? httpClient;
+  final bool initialToolbarExpanded;
+  final String appUpdaterBridgeUrl;
+  final CodexAppUpdaterController? appUpdaterController;
+  final DeveloperFeedbackSddSpecTarget? initialSddSpecTarget;
+  final bool guidedTraceEnabled;
+  final Duration guidedTraceFrameInterval;
+  final int guidedTraceMaxFrames;
+  final int guidedTraceMaxEvents;
+  final Duration guidedTraceMaxDuration;
 
   @override
   Widget build(BuildContext context) {
@@ -2273,7 +3886,20 @@ class _Harness extends StatelessWidget {
         copyText: copyText,
         bridgeSubmitBatch: bridgeSubmitBatch,
         contextMetadataBuilder: contextMetadataBuilder,
+        domainWorkspacePath: domainWorkspacePath,
+        domainWorkspaceLabel: domainWorkspaceLabel,
+        codexCliWorkspacePath: codexCliWorkspacePath,
+        codexCliWorkspaceLabel: codexCliWorkspaceLabel,
         httpClient: httpClient,
+        initialToolbarExpanded: initialToolbarExpanded,
+        appUpdaterBridgeUrl: appUpdaterBridgeUrl,
+        appUpdaterController: appUpdaterController,
+        initialSddSpecTarget: initialSddSpecTarget,
+        guidedTraceEnabled: guidedTraceEnabled,
+        guidedTraceFrameInterval: guidedTraceFrameInterval,
+        guidedTraceMaxFrames: guidedTraceMaxFrames,
+        guidedTraceMaxEvents: guidedTraceMaxEvents,
+        guidedTraceMaxDuration: guidedTraceMaxDuration,
         child: Scaffold(body: Center(child: child ?? const Text('App body'))),
       ),
     );
@@ -2299,6 +3925,26 @@ class _UnsupportedRecorder implements DeveloperFeedbackAudioRecorder {
 
   @override
   Future<void> cancel() async {}
+}
+
+Map<String, Object?> _appUpdateJson({
+  required int currentBuild,
+  required int latestBuild,
+}) {
+  return <String, Object?>{
+    'kind': 'codex.appUpdate',
+    'version': 1,
+    'sourceApp': 'test-app',
+    'platform': 'android',
+    'available': latestBuild > currentBuild,
+    'required': false,
+    'currentVersion': '1.0.0',
+    'currentBuild': currentBuild,
+    'latestVersion': '1.0.0',
+    'latestBuild': latestBuild,
+    'apkUrl': 'https://example.test/test-app.apk',
+    'apkAssetName': 'test-app.apk',
+  };
 }
 
 class _SupportedRecorder implements DeveloperFeedbackAudioRecorder {

@@ -21,6 +21,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     _configure_middleware(app, container)
     _configure_exception_handlers(app)
     app.include_router(router)
+    app.include_router(router, prefix="/api/v1")
     return app
 
 

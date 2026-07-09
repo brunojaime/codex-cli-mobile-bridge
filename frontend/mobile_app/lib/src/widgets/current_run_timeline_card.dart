@@ -342,18 +342,51 @@ String _headerText(SessionDetail session, List<CurrentRunExecution> runs) {
 
 String? _stageTimestampLine(CurrentRunStageExecution stage) {
   final completedAt = stage.completedAt?.toLocal();
+  final durationText = _stageDurationText(stage);
   if (completedAt != null) {
-    return 'Finished ${_formatTimestamp(completedAt)}';
+    return _joinMetadataParts(<String>[
+      'Finished ${_formatTimestamp(completedAt)}',
+      if (durationText != null) 'Took $durationText',
+    ]);
   }
   final updatedAt = stage.updatedAt?.toLocal();
   if (updatedAt != null) {
-    return 'Updated ${_formatTimestamp(updatedAt)}';
+    return _joinMetadataParts(<String>[
+      'Updated ${_formatTimestamp(updatedAt)}',
+      if (durationText != null) 'Running $durationText',
+    ]);
   }
   final startedAt = stage.startedAt?.toLocal();
   if (startedAt != null) {
     return 'Started ${_formatTimestamp(startedAt)}';
   }
   return null;
+}
+
+String? _stageDurationText(CurrentRunStageExecution stage) {
+  final startedAt = stage.startedAt;
+  if (startedAt == null) {
+    return null;
+  }
+  final endAt = stage.completedAt ?? stage.updatedAt;
+  if (endAt == null || endAt.isBefore(startedAt)) {
+    return null;
+  }
+  return _formatDuration(endAt.difference(startedAt));
+}
+
+String _formatDuration(Duration duration) {
+  final seconds = duration.inSeconds;
+  if (seconds < 60) {
+    return '${seconds}s';
+  }
+  final minutes = seconds ~/ 60;
+  final remainingSeconds = seconds % 60;
+  return '${minutes}m ${remainingSeconds}s';
+}
+
+String _joinMetadataParts(List<String> parts) {
+  return parts.where((part) => part.trim().isNotEmpty).join(' • ');
 }
 
 String _runTimestampLine(CurrentRunExecution run) {

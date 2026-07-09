@@ -1,0 +1,103 @@
+kind: codex.sdd.index
+standard_id: workbench-sdd/v1
+standard_version: 1
+fingerprint: 3c377897e0fb765d9cf82788474cdaf779568e107151ba03c4b72a4981dff4f0
+generated_at_epoch: 1783527392
+read_policy: prefix_only_no_full_spec_body
+index_type: diagram
+diagrams:
+  architecture__classes_mmd:
+    path: architecture/classes.mmd
+    diagram_type: domain-model
+    scope: baseline
+    metadata_path: architecture/classes.yaml
+  architecture__components_mmd:
+    path: architecture/components.mmd
+    diagram_type: components
+    scope: baseline
+    metadata_path: architecture/components.yaml
+  architecture__deployment_mmd:
+    path: architecture/deployment.mmd
+    diagram_type: deployment
+    scope: baseline
+    metadata_path: architecture/deployment.yaml
+  architecture__entity-relationship_mmd:
+    path: architecture/entity-relationship.mmd
+    diagram_type: entity-relationship
+    scope: baseline
+    metadata_path: architecture/entity-relationship.yaml
+  architecture__sdd-sequence_mmd:
+    path: architecture/sdd-sequence.mmd
+    diagram_type: sequence
+    scope: baseline
+    metadata_path: architecture/sdd-sequence.yaml
+  architecture__use-cases_mmd:
+    path: architecture/use-cases.mmd
+    diagram_type: system-context
+    scope: baseline
+    metadata_path: architecture/use-cases.yaml
+  specs__001-codex-bridge-sdd-wrapper__diagrams__read-model_mmd:
+    path: specs/001-codex-bridge-sdd-wrapper/diagrams/read-model.mmd
+    diagram_type: component-impact
+    scope: feature
+    metadata_path: specs/001-codex-bridge-sdd-wrapper/diagrams/read-model.yaml
+  specs__002-sdd-visual-workbench__diagrams__classes_mmd:
+    path: specs/002-sdd-visual-workbench/diagrams/classes.mmd
+    diagram_type: domain-impact
+    scope: feature
+    metadata_path: specs/002-sdd-visual-workbench/diagrams/classes.yaml
+  specs__002-sdd-visual-workbench__diagrams__components_mmd:
+    path: specs/002-sdd-visual-workbench/diagrams/components.mmd
+    diagram_type: component-impact
+    scope: feature
+    metadata_path: specs/002-sdd-visual-workbench/diagrams/components.yaml
+  specs__002-sdd-visual-workbench__diagrams__deployment_mmd:
+    path: specs/002-sdd-visual-workbench/diagrams/deployment.mmd
+    diagram_type: component-impact
+    scope: feature
+    metadata_path: specs/002-sdd-visual-workbench/diagrams/deployment.yaml
+  specs__002-sdd-visual-workbench__diagrams__entity-relationship_mmd:
+    path: specs/002-sdd-visual-workbench/diagrams/entity-relationship.mmd
+    diagram_type: data-impact
+    scope: feature
+    metadata_path: specs/002-sdd-visual-workbench/diagrams/entity-relationship.yaml
+  specs__002-sdd-visual-workbench__diagrams__security-suspicious-content_mmd:
+    path: specs/002-sdd-visual-workbench/diagrams/security-suspicious-content.mmd
+    diagram_type: component-impact
+    scope: feature
+    metadata_path: specs/002-sdd-visual-workbench/diagrams/security-suspicious-content.yaml
+  specs__002-sdd-visual-workbench__diagrams__sequence-diagram-feedback_mmd:
+    path: specs/002-sdd-visual-workbench/diagrams/sequence-diagram-feedback.mmd
+    diagram_type: sequence
+    scope: feature
+    metadata_path: specs/002-sdd-visual-workbench/diagrams/sequence-diagram-feedback.yaml
+  specs__002-sdd-visual-workbench__diagrams__use-cases_mmd:
+    path: specs/002-sdd-visual-workbench/diagrams/use-cases.mmd
+    diagram_type: component-impact
+    scope: feature
+    metadata_path: specs/002-sdd-visual-workbench/diagrams/use-cases.yaml
+  specs__003-workbench-sdd-standard__diagrams__artifact-ownership_mmd:
+    path: specs/003-workbench-sdd-standard/diagrams/artifact-ownership.mmd
+    diagram_type: component-impact
+    scope: feature
+    metadata_path: specs/003-workbench-sdd-standard/diagrams/artifact-ownership.yaml
+  specs__003-workbench-sdd-standard__diagrams__context-pack-sequence_mmd:
+    path: specs/003-workbench-sdd-standard/diagrams/context-pack-sequence.mmd
+    diagram_type: sequence
+    scope: feature
+    metadata_path: specs/003-workbench-sdd-standard/diagrams/context-pack-sequence.yaml
+  specs__004-workbench-scm-spec-intake__diagrams__codex-cli-orchestration_mmd:
+    path: specs/004-workbench-scm-spec-intake/diagrams/codex-cli-orchestration.mmd
+    diagram_type: sequence
+    scope: feature
+    metadata_path: specs/004-workbench-scm-spec-intake/diagrams/codex-cli-orchestration.yaml
+  specs__004-workbench-scm-spec-intake__diagrams__spec-intake-flow_mmd:
+    path: specs/004-workbench-scm-spec-intake/diagrams/spec-intake-flow.mmd
+    diagram_type: component-impact
+    scope: feature
+    metadata_path: specs/004-workbench-scm-spec-intake/diagrams/spec-intake-flow.yaml
+  specs__007-initial-preview-release__diagrams__initial-preview-release-flow_mmd:
+    path: specs/007-initial-preview-release/diagrams/initial-preview-release-flow.mmd
+    diagram_type: sequence
+    scope: feature
+    metadata_path: specs/007-initial-preview-release/diagrams/initial-preview-release-flow.yaml

@@ -3,9 +3,15 @@ from __future__ import annotations
 from threading import RLock
 from pathlib import Path
 
-from backend.app.domain.entities.agent_configuration import AgentId, derive_legacy_auto_mode_fields
+from backend.app.domain.entities.agent_configuration import (
+    AgentId,
+    derive_legacy_auto_mode_fields,
+)
 from backend.app.domain.entities.agent_run import AgentRun
-from backend.app.domain.entities.agent_profile import AgentProfile, builtin_agent_profiles_by_id
+from backend.app.domain.entities.agent_profile import (
+    AgentProfile,
+    builtin_agent_profiles_by_id,
+)
 from backend.app.domain.entities.chat_message import ChatMessage
 from backend.app.domain.entities.chat_session import ChatSession
 from backend.app.domain.entities.chat_turn_summary import ChatTurnSummary
@@ -98,7 +104,11 @@ class InMemoryChatRepository(ChatRepository):
         with self._lock:
             return sorted(
                 self._sessions.values(),
-                key=lambda session: session.updated_at,
+                key=lambda session: (
+                    session.updated_at,
+                    session.created_at,
+                    session.id,
+                ),
                 reverse=True,
             )
 
@@ -138,8 +148,13 @@ class InMemoryChatRepository(ChatRepository):
             message.validate_recovery_metadata()
             if message.dedupe_key:
                 existing_message_id = self._message_dedupe_keys.get(message.dedupe_key)
-                if existing_message_id is not None and existing_message_id != message.id:
-                    raise ValueError(f"Duplicate message dedupe key: {message.dedupe_key}")
+                if (
+                    existing_message_id is not None
+                    and existing_message_id != message.id
+                ):
+                    raise ValueError(
+                        f"Duplicate message dedupe key: {message.dedupe_key}"
+                    )
             self._messages[message.id] = message
             if message.dedupe_key:
                 self._message_dedupe_keys[message.dedupe_key] = message.id

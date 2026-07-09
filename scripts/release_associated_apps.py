@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import json
 import re
 import subprocess
@@ -104,7 +105,9 @@ def main() -> int:
                     push=args.push,
                     allow_existing_branch=args.allow_existing_branch,
                 )
-        emit(plans, json_output=args.json_output, executed=args.execute, pushed=args.push)
+        emit(
+            plans, json_output=args.json_output, executed=args.execute, pushed=args.push
+        )
     except ReleasePlanError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
@@ -240,7 +243,8 @@ def validate_registry(app: AssociatedApp, registry: dict[str, Any]) -> None:
             f"registry uses {entry.get('repo')}."
         )
     pattern = str(entry.get("releaseTagPattern") or "")
-    if pattern and not app.release_tag_prefix.startswith(pattern.rstrip("*")):
+    prefix_pattern = pattern.rstrip("*")
+    if pattern and not fnmatch.fnmatchcase(app.release_tag_prefix, prefix_pattern):
         raise ReleasePlanError(
             f"{app.source_app!r} tag prefix {app.release_tag_prefix!r} does not "
             f"match registry pattern {pattern!r}."
@@ -494,10 +498,13 @@ def checkout_release_branch(
     *,
     allow_existing_branch: bool,
 ) -> None:
-    if allow_existing_branch and run(
-        ["git", "branch", "--list", branch],
-        cwd=repo,
-    ).stdout.strip():
+    if (
+        allow_existing_branch
+        and run(
+            ["git", "branch", "--list", branch],
+            cwd=repo,
+        ).stdout.strip()
+    ):
         run(["git", "checkout", branch], cwd=repo)
         return
     run(["git", "checkout", "-b", branch], cwd=repo)
@@ -566,7 +573,9 @@ def run(command: list[str], *, cwd: Path) -> subprocess.CompletedProcess[str]:
         )
     except subprocess.CalledProcessError as exc:
         detail = exc.stderr.strip() or exc.stdout.strip()
-        raise ReleasePlanError(f"{' '.join(command)} failed in {cwd}: {detail}") from exc
+        raise ReleasePlanError(
+            f"{' '.join(command)} failed in {cwd}: {detail}"
+        ) from exc
 
 
 def emit(

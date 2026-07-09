@@ -10,6 +10,8 @@ import '../models/agent_profile.dart';
 import '../models/chat_message.dart';
 import '../models/codex_tooling.dart';
 import '../models/feedback_queue_item.dart';
+import '../models/installable_app.dart';
+import '../models/project_factory.dart';
 import '../models/server_capabilities.dart';
 import '../models/session_detail.dart';
 import '../models/chat_session_summary.dart';
@@ -26,6 +28,15 @@ class SynthesizedSpeechClip {
   final List<int> audioBytes;
   final String contentType;
   final String responseFormat;
+}
+
+class ProjectFactoryUnavailableException implements Exception {
+  const ProjectFactoryUnavailableException(this.message);
+
+  final String message;
+
+  @override
+  String toString() => message;
 }
 
 class ApiClient {
@@ -101,6 +112,475 @@ class ApiClient {
     return ServerCapabilities.fromJson(
       jsonDecode(response.body) as Map<String, dynamic>,
     );
+  }
+
+  Future<List<InstallableApp>> listInstallableApps() async {
+    final response = await _client.get(Uri.parse('$baseUrl/installable-apps'));
+
+    if (response.statusCode != 200) {
+      throw Exception('Failed to list installable apps: ${response.body}');
+    }
+
+    final payload = jsonDecode(response.body) as Map<String, dynamic>;
+    return ((payload['apps'] as List<dynamic>?) ?? <dynamic>[])
+        .whereType<Map<String, dynamic>>()
+        .map(InstallableApp.fromJson)
+        .toList(growable: false);
+  }
+
+  Future<InstallableApp> getInstallableApp(String sourceApp) async {
+    final response =
+        await _client.get(Uri.parse('$baseUrl/installable-apps/$sourceApp'));
+
+    if (response.statusCode != 200) {
+      throw Exception('Failed to fetch installable app: ${response.body}');
+    }
+
+    return InstallableApp.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<ProjectFactoryOptions> getProjectFactoryOptions() async {
+    final response =
+        await _client.get(Uri.parse('$baseUrl/project-factory/options'));
+
+    if (response.statusCode == 404) {
+      throw const ProjectFactoryUnavailableException(
+        'This backend does not expose Project Factory yet. Restart or update the bridge backend, then try again.',
+      );
+    }
+
+    if (response.statusCode != 200) {
+      throw Exception(
+        'Failed to fetch project factory options: ${response.body}',
+      );
+    }
+
+    return ProjectFactoryOptions.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<ProjectFactoryDraft> createProjectFactoryDraft(
+    ProjectFactoryDraftRequest request,
+  ) async {
+    final response = await _client.post(
+      Uri.parse('$baseUrl/project-factory/drafts'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode(request.toJson()),
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception(
+        'Failed to create project factory draft: ${response.body}',
+      );
+    }
+
+    return ProjectFactoryDraft.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<List<ProjectFactoryDraftSummary>> listProjectFactoryDrafts({
+    int limit = 50,
+  }) async {
+    final uri = Uri.parse('$baseUrl/project-factory/drafts').replace(
+      queryParameters: <String, String>{'limit': '$limit'},
+    );
+    final response = await _client.get(uri);
+
+    if (response.statusCode != 200) {
+      throw Exception(
+          'Failed to list project factory drafts: ${response.body}');
+    }
+
+    final payload = jsonDecode(response.body) as Map<String, dynamic>;
+    return ((payload['drafts'] as List<dynamic>?) ?? <dynamic>[])
+        .whereType<Map<String, dynamic>>()
+        .map(ProjectFactoryDraftSummary.fromJson)
+        .toList(growable: false);
+  }
+
+  Future<ProjectFactoryDraft> getProjectFactoryDraft(String draftId) async {
+    final response = await _client
+        .get(Uri.parse('$baseUrl/project-factory/drafts/$draftId'));
+
+    if (response.statusCode != 200) {
+      throw Exception(
+          'Failed to fetch project factory draft: ${response.body}');
+    }
+
+    return ProjectFactoryDraft.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<ProjectFactoryJob> generateProjectFactoryDraft(String draftId) async {
+    final response = await _client.post(
+      Uri.parse('$baseUrl/project-factory/drafts/$draftId/generate'),
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception('Failed to generate project: ${response.body}');
+    }
+
+    return ProjectFactoryJob.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<List<ProjectFactoryJobSummary>> listProjectFactoryJobs({
+    String? status,
+    String? draftId,
+    int limit = 50,
+  }) async {
+    final query = <String, String>{'limit': '$limit'};
+    if (status != null && status.trim().isNotEmpty) {
+      query['status'] = status.trim();
+    }
+    if (draftId != null && draftId.trim().isNotEmpty) {
+      query['draft_id'] = draftId.trim();
+    }
+    final uri = Uri.parse('$baseUrl/project-factory/jobs').replace(
+      queryParameters: query,
+    );
+    final response = await _client.get(uri);
+
+    if (response.statusCode != 200) {
+      throw Exception('Failed to list project factory jobs: ${response.body}');
+    }
+
+    final payload = jsonDecode(response.body) as Map<String, dynamic>;
+    return ((payload['jobs'] as List<dynamic>?) ?? <dynamic>[])
+        .whereType<Map<String, dynamic>>()
+        .map(ProjectFactoryJobSummary.fromJson)
+        .toList(growable: false);
+  }
+
+  Future<ProjectFactoryJob> getProjectFactoryJob(String jobId) async {
+    final response =
+        await _client.get(Uri.parse('$baseUrl/project-factory/jobs/$jobId'));
+
+    if (response.statusCode != 200) {
+      throw Exception('Failed to fetch project factory job: ${response.body}');
+    }
+
+    return ProjectFactoryJob.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<List<WebPreview>> listWebPreviews({int limit = 50}) async {
+    final uri = Uri.parse('$baseUrl/web-previews').replace(
+      queryParameters: <String, String>{'limit': '$limit'},
+    );
+    final response = await _client.get(uri);
+
+    if (response.statusCode != 200) {
+      throw Exception('Failed to list web previews: ${response.body}');
+    }
+
+    final payload = jsonDecode(response.body) as Map<String, dynamic>;
+    return ((payload['previews'] as List<dynamic>?) ?? <dynamic>[])
+        .whereType<Map<String, dynamic>>()
+        .map(WebPreview.fromJson)
+        .toList(growable: false);
+  }
+
+  Future<WebPreview> getWebPreview(String previewId) async {
+    final response =
+        await _client.get(Uri.parse('$baseUrl/web-previews/$previewId'));
+
+    if (response.statusCode != 200) {
+      throw Exception('Failed to fetch web preview: ${response.body}');
+    }
+
+    return WebPreview.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<WebPreview> planWebPreview({
+    String? projectPath,
+    String? manifestPath,
+    String? sourceApp,
+  }) async {
+    final response = await _client.post(
+      Uri.parse('$baseUrl/web-previews/plan'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode(<String, dynamic>{
+        if (projectPath != null) 'projectPath': projectPath,
+        if (manifestPath != null) 'manifestPath': manifestPath,
+        if (sourceApp != null) 'sourceApp': sourceApp,
+      }),
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception('Failed to plan web preview: ${response.body}');
+    }
+
+    return WebPreview.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<WebPreview> deployWebPreview({
+    String? projectPath,
+    String? manifestPath,
+    String? sourceApp,
+    bool confirmApply = false,
+    String? expectedPlanHash,
+  }) async {
+    final response = await _client.post(
+      Uri.parse('$baseUrl/web-previews/deploy'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode(<String, dynamic>{
+        if (projectPath != null) 'projectPath': projectPath,
+        if (manifestPath != null) 'manifestPath': manifestPath,
+        if (sourceApp != null) 'sourceApp': sourceApp,
+        'confirmApply': confirmApply,
+        if (expectedPlanHash != null) 'expectedPlanHash': expectedPlanHash,
+      }),
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception('Failed to deploy web preview: ${response.body}');
+    }
+
+    return WebPreview.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<List<WebPreviewInvite>> listWebPreviewInvites(
+    String previewId,
+  ) async {
+    final response = await _client.get(
+      Uri.parse('$baseUrl/web-previews/$previewId/invites'),
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception('Failed to list web preview invites: ${response.body}');
+    }
+
+    final payload = jsonDecode(response.body) as Map<String, dynamic>;
+    return ((payload['invites'] as List<dynamic>?) ?? <dynamic>[])
+        .whereType<Map<String, dynamic>>()
+        .map(WebPreviewInvite.fromJson)
+        .toList(growable: false);
+  }
+
+  Future<WebPreviewInvite> createWebPreviewInvite(
+    String previewId, {
+    int? ttlSeconds,
+    bool singleUse = true,
+  }) async {
+    final response = await _client.post(
+      Uri.parse('$baseUrl/web-previews/$previewId/invites'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode(<String, dynamic>{
+        if (ttlSeconds != null) 'ttlSeconds': ttlSeconds,
+        'singleUse': singleUse,
+      }),
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception('Failed to create web preview invite: ${response.body}');
+    }
+
+    return WebPreviewInvite.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<WebPreviewInvite> revokeWebPreviewInvite({
+    required String previewId,
+    required String inviteId,
+  }) async {
+    final response = await _client.delete(
+      Uri.parse('$baseUrl/web-previews/$previewId/invites/$inviteId'),
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception('Failed to revoke web preview invite: ${response.body}');
+    }
+
+    return WebPreviewInvite.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<WebPreviewInvite> syncWebPreviewInvite({
+    required String previewId,
+    required String inviteId,
+  }) async {
+    final response = await _client.post(
+      Uri.parse('$baseUrl/web-previews/$previewId/invites/$inviteId/sync'),
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception('Failed to sync web preview invite: ${response.body}');
+    }
+
+    return WebPreviewInvite.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<List<ProjectFactoryReferenceAsset>> listProjectFactoryReferenceAssets(
+    String draftId,
+  ) async {
+    final response = await _client.get(
+      Uri.parse('$baseUrl/project-factory/drafts/$draftId/reference-assets'),
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception(
+        'Failed to list project reference assets: ${response.body}',
+      );
+    }
+
+    final payload = jsonDecode(response.body) as Map<String, dynamic>;
+    final assets = payload['assets'] as List<dynamic>? ?? <dynamic>[];
+    return assets
+        .map((item) =>
+            ProjectFactoryReferenceAsset.fromJson(item as Map<String, dynamic>))
+        .toList(growable: false);
+  }
+
+  Future<ProjectFactoryReferenceAsset> uploadProjectFactoryReferenceAsset(
+    String draftId,
+    XFile image,
+  ) async {
+    final request = http.MultipartRequest(
+      'POST',
+      Uri.parse('$baseUrl/project-factory/drafts/$draftId/reference-assets'),
+    );
+    request.files.add(
+      await _multipartFileFromXFile('asset', image),
+    );
+
+    final streamedResponse = await _client.send(request);
+    final response = await http.Response.fromStream(streamedResponse);
+    if (response.statusCode != 200) {
+      throw Exception('Failed to upload reference asset: ${response.body}');
+    }
+
+    return ProjectFactoryReferenceAsset.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<AssetDepotAsset> uploadAssetDepotAsset(
+    XFile file, {
+    String source = 'manual_upload',
+  }) async {
+    final request = http.MultipartRequest(
+      'POST',
+      Uri.parse('$baseUrl/assets'),
+    );
+    request.fields['source'] = source;
+    request.files.add(
+      await _multipartFileFromXFile('asset', file),
+    );
+
+    final streamedResponse = await _client.send(request);
+    final response = await http.Response.fromStream(streamedResponse);
+    if (response.statusCode != 200) {
+      throw Exception('Failed to upload asset: ${response.body}');
+    }
+
+    return AssetDepotAsset.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<AssetDepotAsset> createAssetFromJobAttachment({
+    required String jobId,
+    required int attachmentIndex,
+    String source = 'chat_upload',
+  }) async {
+    final response = await _client.post(
+      Uri.parse('$baseUrl/assets/from-job-attachment'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode(<String, dynamic>{
+        'job_id': jobId,
+        'attachment_index': attachmentIndex,
+        'source': source,
+      }),
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception(
+          'Failed to create asset from chat attachment: ${response.body}');
+    }
+
+    return AssetDepotAsset.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<ProjectFactoryDraftAsset> linkProjectFactoryDraftAsset({
+    required String draftId,
+    required String assetId,
+    required ProjectAssetRole role,
+    String notes = '',
+  }) async {
+    final response = await _client.post(
+      Uri.parse('$baseUrl/project-factory/drafts/$draftId/assets'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode(<String, dynamic>{
+        'asset_id': assetId,
+        'role': role.apiValue,
+        'notes': notes,
+      }),
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception('Failed to link project asset: ${response.body}');
+    }
+
+    return ProjectFactoryDraftAsset.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<List<ProjectFactoryDraftAsset>> listProjectFactoryDraftAssets(
+    String draftId,
+  ) async {
+    final response = await _client.get(
+      Uri.parse('$baseUrl/project-factory/drafts/$draftId/assets'),
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception('Failed to list project assets: ${response.body}');
+    }
+
+    final payload = jsonDecode(response.body) as Map<String, dynamic>;
+    final assets = payload['assets'] as List<dynamic>? ?? <dynamic>[];
+    return assets
+        .map(
+          (item) => ProjectFactoryDraftAsset.fromJson(
+            item as Map<String, dynamic>,
+          ),
+        )
+        .toList(growable: false);
+  }
+
+  Future<void> deleteProjectFactoryReferenceAsset({
+    required String draftId,
+    required String assetId,
+  }) async {
+    final response = await _client.delete(
+      Uri.parse(
+        '$baseUrl/project-factory/drafts/$draftId/reference-assets/$assetId',
+      ),
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception('Failed to delete reference asset: ${response.body}');
+    }
   }
 
   Future<CodexToolingSnapshot> getCodexTooling({
@@ -379,6 +859,83 @@ class ApiClient {
     );
   }
 
+  Future<SessionDetail> renameSession(
+    String sessionId, {
+    required String title,
+  }) async {
+    final response = await _client.put(
+      Uri.parse('$baseUrl/sessions/$sessionId/title'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode(<String, dynamic>{
+        'title': title,
+      }),
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception('Failed to rename chat: ${response.body}');
+    }
+
+    return SessionDetail.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<SessionDetail> generateSessionTitle(
+    String sessionId, {
+    String? instructions,
+  }) async {
+    final trimmedInstructions = instructions?.trim();
+    final response = await _client.post(
+      Uri.parse('$baseUrl/sessions/$sessionId/title/generate'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode(<String, dynamic>{
+        if (trimmedInstructions != null && trimmedInstructions.isNotEmpty)
+          'instructions': trimmedInstructions,
+      }),
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception('Failed to generate chat title: ${response.body}');
+    }
+
+    return SessionDetail.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<SessionDetail> generateSessionTitleFromAudio(
+    String sessionId,
+    XFile audioFile, {
+    String? instructions,
+    String? language,
+  }) async {
+    final request = http.MultipartRequest(
+      'POST',
+      Uri.parse('$baseUrl/sessions/$sessionId/title/generate/audio'),
+    );
+    final trimmedInstructions = instructions?.trim();
+    if (trimmedInstructions != null && trimmedInstructions.isNotEmpty) {
+      request.fields['instructions'] = trimmedInstructions;
+    }
+    if (language != null) {
+      request.fields['language'] = language;
+    }
+    request.files.add(
+      await _multipartFileFromXFile('audio', audioFile),
+    );
+
+    final streamedResponse = await _client.send(request);
+    final response = await http.Response.fromStream(streamedResponse);
+    if (response.statusCode != 200) {
+      throw Exception(
+          'Failed to generate chat title from audio: ${response.body}');
+    }
+
+    return SessionDetail.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
   Future<SessionDetail> applyAgentProfile(
     String sessionId, {
     required String profileId,
@@ -527,6 +1084,38 @@ class ApiClient {
     return payload
         .map((item) => FeedbackQueueItem.fromJson(item as Map<String, dynamic>))
         .toList();
+  }
+
+  Future<FeedbackQueueItem> createFeedbackQueueItem({
+    required String sourceApp,
+    required String comment,
+    String? sourceDisplayName,
+    String? feedbackKind,
+    Map<String, Object?> contextMetadata = const <String, Object?>{},
+    Map<String, double> selectionBounds = const <String, double>{},
+  }) async {
+    final response = await _client.post(
+      Uri.parse('$baseUrl/feedback-queue'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode(<String, Object?>{
+        'sourceApp': sourceApp,
+        if (sourceDisplayName != null && sourceDisplayName.trim().isNotEmpty)
+          'sourceDisplayName': sourceDisplayName.trim(),
+        'comment': comment.trim(),
+        if (feedbackKind != null && feedbackKind.trim().isNotEmpty)
+          'feedbackKind': feedbackKind.trim(),
+        if (contextMetadata.isNotEmpty) 'contextMetadata': contextMetadata,
+        if (selectionBounds.isNotEmpty) 'selectionBounds': selectionBounds,
+      }),
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception('Failed to create feedback item: ${response.body}');
+    }
+
+    return FeedbackQueueItem.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
   }
 
   Future<void> deleteFeedbackQueueItem(String id) async {
@@ -730,13 +1319,16 @@ class ApiClient {
   ) async {
     final mimeType = file.mimeType?.trim();
     final filename = _filenameFromXFile(file);
+    final resolvedMimeType = mimeType == null || mimeType.isEmpty
+        ? _mimeTypeFromFilename(filename)
+        : mimeType;
     return http.MultipartFile.fromBytes(
       field,
       await file.readAsBytes(),
       filename: filename,
-      contentType: mimeType == null || mimeType.isEmpty
+      contentType: resolvedMimeType == null || resolvedMimeType.isEmpty
           ? null
-          : MediaType.parse(mimeType),
+          : MediaType.parse(resolvedMimeType),
     );
   }
 
@@ -755,5 +1347,20 @@ class ApiClient {
         .where((segment) => segment.trim().isNotEmpty)
         .toList();
     return segments.isEmpty ? null : segments.last;
+  }
+
+  String? _mimeTypeFromFilename(String? filename) {
+    final suffix = filename?.trim().toLowerCase().split('.').last;
+    return switch (suffix) {
+      'png' => 'image/png',
+      'jpg' || 'jpeg' => 'image/jpeg',
+      'webp' => 'image/webp',
+      'gif' => 'image/gif',
+      'm4a' || 'mp4' => 'audio/mp4',
+      'mp3' => 'audio/mpeg',
+      'wav' => 'audio/wav',
+      'webm' => 'audio/webm',
+      _ => null,
+    };
   }
 }

@@ -14,12 +14,16 @@ class JobStreamHub:
     def __init__(self, *, poll_interval_seconds: int) -> None:
         self._poll_interval_seconds = poll_interval_seconds
 
-    async def stream_job(self, websocket: WebSocket, *, job_id: str, service: MessageService) -> None:
+    async def stream_job(
+        self, websocket: WebSocket, *, job_id: str, service: MessageService
+    ) -> None:
         await websocket.accept()
         unsubscribe: Callable[[], None] | None = None
 
         try:
-            initial_job = await self._send_job_snapshot(websocket, job_id=job_id, service=service)
+            initial_job = await self._send_job_snapshot(
+                websocket, job_id=job_id, service=service
+            )
             if initial_job is None or initial_job.status.is_terminal:
                 return
 
@@ -34,13 +38,17 @@ class JobStreamHub:
             if unsubscribe is None:
                 while True:
                     await asyncio.sleep(self._poll_interval_seconds)
-                    job = await self._send_job_snapshot(websocket, job_id=job_id, service=service)
+                    job = await self._send_job_snapshot(
+                        websocket, job_id=job_id, service=service
+                    )
                     if job is None or job.status.is_terminal:
                         return
             else:
                 while True:
                     await queue.get()
-                    job = await self._send_job_snapshot(websocket, job_id=job_id, service=service)
+                    job = await self._send_job_snapshot(
+                        websocket, job_id=job_id, service=service
+                    )
                     if job is None or job.status.is_terminal:
                         return
         except (_ClientDisconnected, WebSocketDisconnect):

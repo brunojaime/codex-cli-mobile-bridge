@@ -29,8 +29,7 @@ def test_build_plan_reports_complete_json_shape(tmp_path: Path) -> None:
     assert plan.current_dependency_ref == "codex-app-updater-v0.1.1"
     assert plan.next_dependency_ref == "codex-app-updater-v0.1.2"
     assert plan.release_branch == (
-        "release/ambientando-calendar/"
-        "android-local-demo-feedback-v1.0.0-build.57"
+        "release/ambientando-calendar/android-local-demo-feedback-v1.0.0-build.57"
     )
     assert plan.release_tag == "android-local-demo-feedback-v1.0.0-build.57"
 
@@ -103,9 +102,9 @@ def test_execute_plan_updates_only_target_dependency_ref_commits_branch_and_tags
     assert _git(["branch", "--show-current"], fixture.app_repos[0]).stdout.strip() == (
         plan.release_branch
     )
-    assert _git(["tag", "--points-at", "HEAD"], fixture.app_repos[0]).stdout.strip() == (
-        "android-local-demo-feedback-v1.0.0-build.57"
-    )
+    assert _git(
+        ["tag", "--points-at", "HEAD"], fixture.app_repos[0]
+    ).stdout.strip() == ("android-local-demo-feedback-v1.0.0-build.57")
 
 
 def test_preflight_aborts_dirty_staged_worktree_before_any_mutation(
@@ -149,7 +148,9 @@ def test_preflight_aborts_existing_tag_or_branch(tmp_path: Path) -> None:
     _git(["tag", "-d", plan.release_tag], fixture.app_repos[0])
     _git(["branch", plan.release_branch], fixture.app_repos[0])
 
-    with pytest.raises(releases.ReleasePlanError, match="Release branch already exists"):
+    with pytest.raises(
+        releases.ReleasePlanError, match="Release branch already exists"
+    ):
         releases.preflight([plan])
 
 
@@ -186,8 +187,9 @@ def test_registry_missing_or_disabled_app_fails(tmp_path: Path) -> None:
         _build_plan(component, fixture.registry)
 
 
-def test_default_associations_reference_enabled_registry_entries() -> None:
+def test_default_associations_reference_enabled_or_blocked_registry_entries() -> None:
     registry = releases.load_registry(releases.DEFAULT_REGISTRY)
+    blocked_until_apk_release_exists: set[str] = set()
 
     for component_name in (
         "codex_app_updater",
@@ -199,7 +201,58 @@ def test_default_associations_reference_enabled_registry_entries() -> None:
         )
 
         for app in component.apps:
-            releases.validate_registry(app, registry)
+            if app.source_app in blocked_until_apk_release_exists:
+                assert registry[app.source_app]["enabled"] is False
+                with pytest.raises(releases.ReleasePlanError, match="not enabled"):
+                    releases.validate_registry(app, registry)
+            else:
+                releases.validate_registry(app, registry)
+
+
+def test_xr18_default_release_association_uses_android_release_tags() -> None:
+    registry = releases.load_registry(releases.DEFAULT_REGISTRY)
+
+    for component_name in (
+        "codex_developer_feedback_template",
+        "codex_app_updater",
+    ):
+        component = releases.load_component(
+            releases.DEFAULT_ASSOCIATIONS,
+            component_name,
+        )
+        xr18 = next(
+            app for app in component.apps if app.source_app == "xr18-mobile-control"
+        )
+
+        assert xr18.release_tag_prefix == "android-v"
+        assert xr18.repo == "brunojaime/xr18-mobile-control"
+        assert str(xr18.local_path).endswith("/xr18-mobile-control")
+        assert xr18.pubspec_path == Path("pubspec.yaml")
+        releases.validate_registry(xr18, registry)
+
+    assert registry["xr18-mobile-control"]["releaseTagPattern"] == "android-v*"
+    assert (
+        registry["xr18-mobile-control"]["apkAssetPattern"]
+        == "xr18-mobile-control-*.apk"
+    )
+    assert registry["xr18-mobile-control"]["enabled"] is True
+
+
+def test_smart_house_is_not_release_associated_until_flutter_app_is_tracked() -> None:
+    registry = releases.load_registry(releases.DEFAULT_REGISTRY)
+
+    assert registry["smart-nienfos-smart-house"]["enabled"] is False
+    for component_name in (
+        "codex_developer_feedback_template",
+        "codex_app_updater",
+    ):
+        component = releases.load_component(
+            releases.DEFAULT_ASSOCIATIONS,
+            component_name,
+        )
+        assert all(
+            app.source_app != "smart-nienfos-smart-house" for app in component.apps
+        )
 
 
 class Fixture:
@@ -226,11 +279,15 @@ def _write_fixture(
     tmp_path.mkdir(parents=True, exist_ok=True)
     dependency_repo = tmp_path / "codex-cli-mobile-bridge"
     _init_dependency_repo(dependency_repo)
-    app_repos = [tmp_path / f"ambientando-calendar-{index}" for index in range(app_count)]
+    app_repos = [
+        tmp_path / f"ambientando-calendar-{index}" for index in range(app_count)
+    ]
     apps = []
     registry = {}
     for index, app_repo in enumerate(app_repos):
-        source_app = "ambientando-calendar" if index == 0 else f"ambientando-calendar-{index}"
+        source_app = (
+            "ambientando-calendar" if index == 0 else f"ambientando-calendar-{index}"
+        )
         display_name = "Ambientando Calendar" if index == 0 else f"Ambientando {index}"
         _write_app_pubspec(
             app_repo,

@@ -45,3 +45,9 @@ else
   echo "Para publicar en GitHub ejecuta:"
   echo "  git push origin $TAG"
 fi
+
+BRIDGE_URL="${CODEX_APP_UPDATER_BRIDGE_URL:-${API_BASE_URL:-http://batata-default-string.tail0302c4.ts.net}}"
+BRIDGE_URL="${BRIDGE_URL%/}"
+echo "Updater Bridge:"
+echo "  ${BRIDGE_URL}/app-updates/codex-mobile?platform=android&currentVersion=0.0.0&currentBuild=0&channel=stable"
+echo "Instalacion en telefono: abrir o reanudar Codex Mobile; el updater baja el APK desde el Bridge y abre el instalador de Android."

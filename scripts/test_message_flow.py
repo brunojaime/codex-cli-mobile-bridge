@@ -8,11 +8,19 @@ import httpx
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Send a message and poll for a Codex response.")
+    parser = argparse.ArgumentParser(
+        description="Send a message and poll for a Codex response."
+    )
     parser.add_argument("message", help="Message to send to the backend.")
-    parser.add_argument("--base-url", default="http://localhost:8000", help="Backend base URL.")
-    parser.add_argument("--poll-interval", type=float, default=2.0, help="Polling interval in seconds.")
-    parser.add_argument("--timeout", type=float, default=180.0, help="Overall timeout in seconds.")
+    parser.add_argument(
+        "--base-url", default="http://localhost:8000", help="Backend base URL."
+    )
+    parser.add_argument(
+        "--poll-interval", type=float, default=2.0, help="Polling interval in seconds."
+    )
+    parser.add_argument(
+        "--timeout", type=float, default=180.0, help="Overall timeout in seconds."
+    )
     args = parser.parse_args()
 
     with httpx.Client(base_url=args.base_url, timeout=30.0) as client:

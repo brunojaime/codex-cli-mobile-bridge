@@ -1,0 +1,58 @@
+erDiagram
+    PROJECT ||--o{ SDD_SPEC : contains
+    PROJECT ||--o{ ARCHITECTURE_DIAGRAM : documents
+    SDD_SPEC ||--o{ FEATURE_DIAGRAM : documents
+    PROJECT ||--o{ FEEDBACK_ITEM : receives
+    SDD_SPEC ||--o{ FEEDBACK_ITEM : may_link
+    ARCHITECTURE_DIAGRAM ||--o{ DIAGRAM_CHANGE_REQUEST : may_receive
+    FEATURE_DIAGRAM ||--o{ DIAGRAM_CHANGE_REQUEST : may_receive
+    FEEDBACK_ITEM ||--o{ CODEX_ACTION_REQUEST : can_create
+    DIAGRAM_CHANGE_REQUEST ||--o{ CODEX_ACTION_REQUEST : can_create
+
+    PROJECT {
+        string workspace_path
+        string project_id
+        string codex_bridge_yaml_path
+    }
+
+    SDD_SPEC {
+        string spec_id
+        string spec_md_path
+        string plan_md_path
+        string tasks_md_path
+    }
+
+    ARCHITECTURE_DIAGRAM {
+        string diagram_path
+        string diagram_type
+        string source_format
+    }
+
+    FEATURE_DIAGRAM {
+        string diagram_path
+        string spec_id
+        string diagram_type
+        string source_format
+    }
+
+    FEEDBACK_ITEM {
+        string feedback_id
+        string workspace_path
+        string spec_id
+        string component
+        string diagram_path
+    }
+
+    DIAGRAM_CHANGE_REQUEST {
+        string request_id
+        string diagram_path
+        string selection_kind
+        string requested_change
+    }
+
+    CODEX_ACTION_REQUEST {
+        string action_id
+        string intent
+        string workspace_path
+        string status
+    }

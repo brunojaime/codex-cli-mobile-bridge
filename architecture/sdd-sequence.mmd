@@ -1,0 +1,23 @@
+sequenceDiagram
+    actor Developer
+    participant App as Flutter app
+    participant Wrapper as Codex dev wrapper
+    participant Panel as SDD visual panel
+    participant API as Bridge backend
+    participant Files as Current project SDD files
+    participant Feedback as Feedback service
+    participant Codex as Codex action layer
+
+    Developer->>App: Open app with CODEX_BRIDGE_DEV_MODE=true
+    App->>Wrapper: Show dev wrapper
+    Wrapper->>Panel: Open current-project SDD dashboard
+    Panel->>API: GET /sdd/project?workspace_path=...
+    API->>Files: Read allowed SDD files
+    Files-->>API: Constitution, specs, tasks, diagrams
+    API-->>Wrapper: Read-only SDD snapshot
+    Wrapper-->>Panel: Render project-local architecture view
+    Developer->>Panel: Mark diagram or app feedback
+    Panel->>Feedback: Store feedback with SDD metadata
+    Developer->>Panel: Request Codex update
+    Panel->>Codex: Send workspace, SDD path, and selection context
+    Codex-->>Panel: Return action status

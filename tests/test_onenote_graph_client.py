@@ -7,10 +7,7 @@ import httpx
 
 
 _SKILL_SCRIPTS = (
-    Path(__file__).resolve().parents[1]
-    / "skills"
-    / "onenote-connect"
-    / "scripts"
+    Path(__file__).resolve().parents[1] / "skills" / "onenote-connect" / "scripts"
 )
 if str(_SKILL_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SKILL_SCRIPTS))
@@ -32,12 +29,18 @@ class RecordingClient:
                 "kwargs": kwargs,
             }
         )
-        request_url = path if str(path).startswith("http") else f"https://graph.microsoft.com{path}"
+        request_url = (
+            path
+            if str(path).startswith("http")
+            else f"https://graph.microsoft.com{path}"
+        )
         request = httpx.Request(method, request_url)
         if self.responses:
             response = self.responses.pop(0)
             return response
-        return httpx.Response(201, request=request, json={"id": "page-1", "title": "Example"})
+        return httpx.Response(
+            201, request=request, json={"id": "page-1", "title": "Example"}
+        )
 
     def close(self) -> None:
         return None
@@ -63,8 +66,12 @@ class RaisingClient:
         return None
 
 
-def _json_response(method: str, path: str, payload: dict, status_code: int = 200, headers=None) -> httpx.Response:
-    request_url = path if str(path).startswith("http") else f"https://graph.microsoft.com{path}"
+def _json_response(
+    method: str, path: str, payload: dict, status_code: int = 200, headers=None
+) -> httpx.Response:
+    request_url = (
+        path if str(path).startswith("http") else f"https://graph.microsoft.com{path}"
+    )
     request = httpx.Request(method, request_url)
     return httpx.Response(status_code, request=request, json=payload, headers=headers)
 
@@ -151,7 +158,10 @@ def test_list_notebooks_follows_odata_next_link() -> None:
 
     assert [notebook["id"] for notebook in notebooks] == ["nb-1", "nb-2"]
     assert client.calls[0]["path"] == "/me/onenote/notebooks"
-    assert client.calls[1]["path"] == "https://graph.microsoft.com/v1.0/me/onenote/notebooks?$skiptoken=abc"
+    assert (
+        client.calls[1]["path"]
+        == "https://graph.microsoft.com/v1.0/me/onenote/notebooks?$skiptoken=abc"
+    )
 
 
 def test_list_sections_follows_odata_next_link() -> None:
@@ -192,7 +202,9 @@ def test_list_pages_uses_section_endpoint_and_follows_odata_next_link() -> None:
                         {
                             "id": "page-1",
                             "title": "First",
-                            "links": {"oneNoteWebUrl": {"href": "https://example.com/page-1"}},
+                            "links": {
+                                "oneNoteWebUrl": {"href": "https://example.com/page-1"}
+                            },
                         }
                     ],
                     "@odata.nextLink": "https://graph.microsoft.com/v1.0/me/onenote/sections/section-1/pages?$skiptoken=ghi",
@@ -206,7 +218,9 @@ def test_list_pages_uses_section_endpoint_and_follows_odata_next_link() -> None:
                         {
                             "id": "page-2",
                             "title": "Second",
-                            "links": {"oneNoteWebUrl": {"href": "https://example.com/page-2"}},
+                            "links": {
+                                "oneNoteWebUrl": {"href": "https://example.com/page-2"}
+                            },
                         }
                     ],
                 },
@@ -219,11 +233,15 @@ def test_list_pages_uses_section_endpoint_and_follows_odata_next_link() -> None:
 
     assert [page["id"] for page in pages] == ["page-1", "page-2"]
     assert client.calls[0]["path"] == "/me/onenote/sections/section-1/pages"
-    assert client.calls[1]["path"] == "https://graph.microsoft.com/v1.0/me/onenote/sections/section-1/pages?$skiptoken=ghi"
+    assert (
+        client.calls[1]["path"]
+        == "https://graph.microsoft.com/v1.0/me/onenote/sections/section-1/pages?$skiptoken=ghi"
+    )
     assert client.calls[0]["kwargs"]["params"] == {
         "$select": "id,title,createdDateTime,lastModifiedDateTime,links",
         "$top": "100",
     }
+
 
 def test_request_retries_on_429_then_succeeds(monkeypatch) -> None:
     client = RecordingClient(
@@ -287,7 +305,9 @@ def test_get_page_content_includes_include_ids_query_by_default() -> None:
         responses=[
             httpx.Response(
                 200,
-                request=httpx.Request("GET", "https://graph.microsoft.com/me/onenote/pages/page-1/content"),
+                request=httpx.Request(
+                    "GET", "https://graph.microsoft.com/me/onenote/pages/page-1/content"
+                ),
                 text="<html><body>Page</body></html>",
             )
         ]
@@ -305,7 +325,9 @@ def test_get_page_content_omits_include_ids_query_when_disabled() -> None:
         responses=[
             httpx.Response(
                 200,
-                request=httpx.Request("GET", "https://graph.microsoft.com/me/onenote/pages/page-1/content"),
+                request=httpx.Request(
+                    "GET", "https://graph.microsoft.com/me/onenote/pages/page-1/content"
+                ),
                 text="<html><body>Page</body></html>",
             )
         ]
@@ -318,7 +340,9 @@ def test_get_page_content_omits_include_ids_query_when_disabled() -> None:
 
 
 def test_replace_page_content_uses_replace_action_for_html_fragment() -> None:
-    request = httpx.Request("PATCH", "https://graph.microsoft.com/me/onenote/pages/page-1/content")
+    request = httpx.Request(
+        "PATCH", "https://graph.microsoft.com/me/onenote/pages/page-1/content"
+    )
     client = RecordingClient(responses=[httpx.Response(204, request=request)])
 
     with OneNoteGraphClient(access_token="token", client=client) as graph:
@@ -339,7 +363,9 @@ def test_replace_page_content_uses_replace_action_for_html_fragment() -> None:
 
 
 def test_replace_page_content_escapes_plain_text_before_patch() -> None:
-    request = httpx.Request("PATCH", "https://graph.microsoft.com/me/onenote/pages/page-1/content")
+    request = httpx.Request(
+        "PATCH", "https://graph.microsoft.com/me/onenote/pages/page-1/content"
+    )
     client = RecordingClient(responses=[httpx.Response(204, request=request)])
 
     with OneNoteGraphClient(access_token="token", client=client) as graph:
@@ -356,10 +382,14 @@ def test_replace_page_content_escapes_plain_text_before_patch() -> None:
     )
 
 
-def test_replace_page_with_assets_uses_multipart_patch_with_replace_action(tmp_path: Path) -> None:
+def test_replace_page_with_assets_uses_multipart_patch_with_replace_action(
+    tmp_path: Path,
+) -> None:
     image_path = tmp_path / "image.png"
     image_path.write_bytes(b"binary-image")
-    request = httpx.Request("PATCH", "https://graph.microsoft.com/me/onenote/pages/page-1/content")
+    request = httpx.Request(
+        "PATCH", "https://graph.microsoft.com/me/onenote/pages/page-1/content"
+    )
     client = RecordingClient(responses=[httpx.Response(204, request=request)])
 
     with OneNoteGraphClient(access_token="token", client=client) as graph:
@@ -387,7 +417,9 @@ def test_replace_page_with_assets_uses_multipart_patch_with_replace_action(tmp_p
 def test_replace_page_with_assets_supports_asset_only_patch(tmp_path: Path) -> None:
     file_path = tmp_path / "attachment.pdf"
     file_path.write_bytes(b"binary-pdf")
-    request = httpx.Request("PATCH", "https://graph.microsoft.com/me/onenote/pages/page-1/content")
+    request = httpx.Request(
+        "PATCH", "https://graph.microsoft.com/me/onenote/pages/page-1/content"
+    )
     client = RecordingClient(responses=[httpx.Response(204, request=request)])
 
     with OneNoteGraphClient(access_token="token", client=client) as graph:

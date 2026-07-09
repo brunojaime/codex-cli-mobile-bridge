@@ -23,6 +23,10 @@ class FeedbackQueueItem:
     selection_points: list[dict[str, float]] = field(default_factory=list)
     selection_bounds: dict[str, float] = field(default_factory=dict)
     context_metadata: dict[str, Any] = field(default_factory=dict)
+    feedback_kind: str | None = None
+    image_capture: dict[str, Any] = field(default_factory=dict)
+    guided_trace: dict[str, Any] = field(default_factory=dict)
+    spec_target: dict[str, Any] = field(default_factory=dict)
     audio_mime_type: str | None = None
     audio_duration_ms: int | None = None
     audio_byte_length: int | None = None
@@ -53,6 +57,14 @@ class FeedbackQueueItem:
             selection_points=list(payload.get("selection_points") or []),
             selection_bounds=dict(payload.get("selection_bounds") or {}),
             context_metadata=dict(payload.get("context_metadata") or {}),
+            feedback_kind=(
+                str(payload["feedback_kind"])
+                if payload.get("feedback_kind") is not None
+                else None
+            ),
+            image_capture=dict(payload.get("image_capture") or {}),
+            guided_trace=dict(payload.get("guided_trace") or {}),
+            spec_target=dict(payload.get("spec_target") or {}),
             audio_mime_type=(
                 str(payload["audio_mime_type"])
                 if payload.get("audio_mime_type") is not None
@@ -93,6 +105,10 @@ class FeedbackQueueItem:
             "selection_points": self.selection_points,
             "selection_bounds": self.selection_bounds,
             "context_metadata": self.context_metadata,
+            "feedback_kind": self.feedback_kind,
+            "image_capture": self.image_capture,
+            "guided_trace": self.guided_trace,
+            "spec_target": self.spec_target,
             "audio_mime_type": self.audio_mime_type,
             "audio_duration_ms": self.audio_duration_ms,
             "audio_byte_length": self.audio_byte_length,
@@ -129,6 +145,7 @@ class FeedbackBatchRecord:
     job_id: str | None = None
     session_id: str | None = None
     workspace_path: str | None = None
+    release_target: dict[str, Any] = field(default_factory=dict)
     message: str | None = None
     quick_ask_id: str | None = None
     summary: str | None = None
@@ -154,9 +171,7 @@ class FeedbackBatchRecord:
             item_count=int(payload.get("item_count") or 0),
             item_ids=[str(item_id) for item_id in payload.get("item_ids") or []],
             job_id=(
-                str(payload["job_id"])
-                if payload.get("job_id") is not None
-                else None
+                str(payload["job_id"]) if payload.get("job_id") is not None else None
             ),
             session_id=(
                 str(payload["session_id"])
@@ -168,10 +183,9 @@ class FeedbackBatchRecord:
                 if payload.get("workspace_path") is not None
                 else None
             ),
+            release_target=dict(payload.get("release_target") or {}),
             message=(
-                str(payload["message"])
-                if payload.get("message") is not None
-                else None
+                str(payload["message"]) if payload.get("message") is not None else None
             ),
             quick_ask_id=(
                 str(payload["quick_ask_id"])
@@ -179,9 +193,7 @@ class FeedbackBatchRecord:
                 else None
             ),
             summary=(
-                str(payload["summary"])
-                if payload.get("summary") is not None
-                else None
+                str(payload["summary"]) if payload.get("summary") is not None else None
             ),
             summary_generated_at=(
                 str(payload["summary_generated_at"])
@@ -215,6 +227,7 @@ class FeedbackBatchRecord:
             "job_id": self.job_id,
             "session_id": self.session_id,
             "workspace_path": self.workspace_path,
+            "release_target": self.release_target,
             "message": self.message,
             "quick_ask_id": self.quick_ask_id,
             "summary": self.summary,
@@ -267,9 +280,7 @@ class FeedbackQuickAskRecord:
             selection_bounds=dict(payload.get("selection_bounds") or {}),
             context_metadata=dict(payload.get("context_metadata") or {}),
             job_id=(
-                str(payload["job_id"])
-                if payload.get("job_id") is not None
-                else None
+                str(payload["job_id"]) if payload.get("job_id") is not None else None
             ),
             session_id=(
                 str(payload["session_id"])
@@ -282,14 +293,10 @@ class FeedbackQuickAskRecord:
                 else None
             ),
             message=(
-                str(payload["message"])
-                if payload.get("message") is not None
-                else None
+                str(payload["message"]) if payload.get("message") is not None else None
             ),
             answer=(
-                str(payload["answer"])
-                if payload.get("answer") is not None
-                else None
+                str(payload["answer"]) if payload.get("answer") is not None else None
             ),
             answered_at=(
                 str(payload["answered_at"])
@@ -380,7 +387,9 @@ class FeedbackQueueService:
                 return record
         raise KeyError(quick_ask_id)
 
-    def get_item(self, item_id: str, *, include_image: bool = False) -> FeedbackQueueItem:
+    def get_item(
+        self, item_id: str, *, include_image: bool = False
+    ) -> FeedbackQueueItem:
         for item in self._load_items(include_images=include_image):
             if item.id == item_id:
                 return item
@@ -404,13 +413,10 @@ class FeedbackQueueService:
         item = FeedbackQueueItem(
             id=item_id,
             source_app=str(
-                payload.get("sourceApp")
-                or payload.get("source_app")
-                or "unknown"
+                payload.get("sourceApp") or payload.get("source_app") or "unknown"
             ),
             source_display_name=(
-                payload.get("sourceDisplayName")
-                or payload.get("source_display_name")
+                payload.get("sourceDisplayName") or payload.get("source_display_name")
             ),
             comment=str(payload.get("comment") or ""),
             created_at=created_at,
@@ -429,6 +435,16 @@ class FeedbackQueueService:
             ),
             context_metadata=dict(
                 payload.get("contextMetadata") or payload.get("context_metadata") or {}
+            ),
+            feedback_kind=payload.get("feedbackKind") or payload.get("feedback_kind"),
+            image_capture=dict(
+                payload.get("imageCapture") or payload.get("image_capture") or {}
+            ),
+            guided_trace=dict(
+                payload.get("guidedTrace") or payload.get("guided_trace") or {}
+            ),
+            spec_target=dict(
+                payload.get("specTarget") or payload.get("spec_target") or {}
             ),
             audio_mime_type=payload.get("audioMimeType")
             or payload.get("audio_mime_type"),
@@ -460,6 +476,7 @@ class FeedbackQueueService:
         job_id: str,
         session_id: str,
         workspace_path: str | None,
+        release_target: dict[str, Any] | None,
         message: str,
         quick_ask_id: str | None = None,
     ) -> FeedbackBatchRecord:
@@ -478,6 +495,7 @@ class FeedbackQueueService:
             job_id=job_id,
             session_id=session_id,
             workspace_path=workspace_path,
+            release_target=dict(release_target or {}),
             message=message,
             quick_ask_id=quick_ask_id,
             summary=None,
@@ -585,6 +603,7 @@ class FeedbackQueueService:
                     job_id=record.job_id,
                     session_id=record.session_id,
                     workspace_path=record.workspace_path,
+                    release_target=record.release_target,
                     message=record.message,
                     quick_ask_id=record.quick_ask_id,
                     summary=summary,
@@ -617,6 +636,7 @@ class FeedbackQueueService:
                     job_id=record.job_id,
                     session_id=record.session_id,
                     workspace_path=record.workspace_path,
+                    release_target=record.release_target,
                     message=record.message,
                     quick_ask_id=record.quick_ask_id,
                     summary=record.summary,
@@ -652,6 +672,7 @@ class FeedbackQueueService:
                     job_id=record.job_id,
                     session_id=record.session_id,
                     workspace_path=record.workspace_path,
+                    release_target=record.release_target,
                     message=record.message,
                     quick_ask_id=record.quick_ask_id,
                     summary=record.summary,
@@ -683,6 +704,9 @@ class FeedbackQueueService:
                     selection_points=item.selection_points,
                     selection_bounds=item.selection_bounds,
                     context_metadata=item.context_metadata,
+                    feedback_kind=item.feedback_kind,
+                    image_capture=item.image_capture,
+                    guided_trace=item.guided_trace,
                     audio_mime_type=item.audio_mime_type,
                     audio_duration_ms=item.audio_duration_ms,
                     audio_byte_length=item.audio_byte_length,
@@ -709,6 +733,9 @@ class FeedbackQueueService:
                     selection_points=item.selection_points,
                     selection_bounds=item.selection_bounds,
                     context_metadata=item.context_metadata,
+                    feedback_kind=item.feedback_kind,
+                    image_capture=item.image_capture,
+                    guided_trace=item.guided_trace,
                     audio_mime_type=item.audio_mime_type,
                     audio_duration_ms=item.audio_duration_ms,
                     audio_byte_length=item.audio_byte_length,

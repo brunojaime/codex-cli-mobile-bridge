@@ -16,8 +16,8 @@ import '../models/chat_turn_summary.dart';
 import '../models/agent_configuration.dart';
 import '../models/agent_profile.dart';
 import '../models/codex_tooling.dart';
+import '../models/project_factory.dart';
 import '../models/server_capabilities.dart';
-import '../models/feedback_queue_item.dart';
 import '../models/server_health.dart';
 import '../models/server_profile.dart';
 import '../models/session_detail.dart';
@@ -35,6 +35,7 @@ import '../utils/chat_message_visibility.dart';
 import '../widgets/agent_studio_status_button.dart';
 import '../widgets/chat_bubble.dart';
 import '../widgets/current_run_timeline_card.dart';
+import '../widgets/installable_apps_sheet.dart';
 import '../widgets/reviewer_status_banner.dart';
 
 const String _defaultAutoReviewerPrompt =
@@ -43,6 +44,174 @@ const String _defaultAutoReviewerPrompt =
     'improves the implementation with more code, tighter validation, missing '
     'tests, edge cases, cleanup, or follow-up work. Reply only with that next '
     'prompt.';
+const String _projectFactoryGeneratorPrompt =
+    'You are the New Project Factory Codex inside Codex Mobile Bridge. '
+    'Guide the user through creating a new app as a normal chat, infer missing '
+    'project details from the conversation, ask concise questions, use any '
+    'attached images as visual references, produce a preview before generation, '
+    'and only create files after explicit confirmation. When confirmed, use the '
+    'bridge Project Factory workflow and keep specs, plan, tasks, reference '
+    'assets, Flutter, FastAPI, auth, RBAC, admin, notifications, validation, '
+    'and workspace handoff consistent.';
+const String _projectFactoryReviewerPrompt =
+    'You are reviewing the New Project Factory generator. Check that the '
+    'project brief, defaults, visual references, roles, auth, admin, '
+    'notifications, generated files, tests, and validation are complete. '
+    'Return only the next concrete prompt that should improve or verify the '
+    'generator output.';
+const String kProjectFactoryReadyForBuildMarker =
+    'PROJECT_FACTORY_READY_FOR_BUILD';
+
+AgentConfiguration buildProjectFactoryIntakeConfiguration(
+  AgentConfiguration current, {
+  int generatorRuns = 1,
+}) {
+  return current.copyWith(
+    preset: AgentPreset.solo,
+    displayMode: AgentDisplayMode.showAll,
+    turnBudgetMode: TurnBudgetMode.eachAgent,
+    agents: current.agents.map((agent) {
+      switch (agent.agentId) {
+        case AgentId.generator:
+          return agent.copyWith(
+            enabled: true,
+            label: 'Project Factory',
+            prompt: _projectFactoryGeneratorPrompt,
+            visibility: AgentVisibilityMode.visible,
+            maxTurns: generatorRuns,
+          );
+        case AgentId.reviewer:
+          return agent.copyWith(
+            enabled: false,
+            label: 'Project Reviewer',
+            prompt: _projectFactoryReviewerPrompt,
+            visibility: AgentVisibilityMode.collapsed,
+            maxTurns: 0,
+          );
+        case AgentId.summary:
+          return agent.copyWith(enabled: false, maxTurns: 0);
+        case AgentId.user:
+        case AgentId.supervisor:
+        case AgentId.qa:
+        case AgentId.ux:
+        case AgentId.seniorEngineer:
+        case AgentId.scraper:
+          return agent.copyWith(enabled: false, maxTurns: 0);
+      }
+    }).toList(growable: false),
+  );
+}
+
+AgentConfiguration buildProjectFactoryBuildConfiguration(
+  AgentConfiguration current, {
+  int generatorRuns = 20,
+  int reviewerRuns = 20,
+}) {
+  return current.copyWith(
+    preset: AgentPreset.review,
+    displayMode: AgentDisplayMode.showAll,
+    turnBudgetMode: TurnBudgetMode.eachAgent,
+    agents: current.agents.map((agent) {
+      switch (agent.agentId) {
+        case AgentId.generator:
+          return agent.copyWith(
+            enabled: true,
+            label: 'Project Factory',
+            prompt: _projectFactoryGeneratorPrompt,
+            visibility: AgentVisibilityMode.visible,
+            maxTurns: generatorRuns,
+          );
+        case AgentId.reviewer:
+          return agent.copyWith(
+            enabled: true,
+            label: 'Project Reviewer',
+            prompt: _projectFactoryReviewerPrompt,
+            visibility: AgentVisibilityMode.collapsed,
+            maxTurns: reviewerRuns,
+          );
+        case AgentId.summary:
+          return agent.copyWith(enabled: false, maxTurns: 0);
+        case AgentId.user:
+        case AgentId.supervisor:
+        case AgentId.qa:
+        case AgentId.ux:
+        case AgentId.seniorEngineer:
+        case AgentId.scraper:
+          return agent.copyWith(enabled: false, maxTurns: 0);
+      }
+    }).toList(growable: false),
+  );
+}
+
+bool isProjectFactoryIntakeConfiguration(AgentConfiguration? configuration) {
+  if (configuration == null) {
+    return false;
+  }
+  final generator = configuration.byId(AgentId.generator);
+  final reviewer = configuration.byId(AgentId.reviewer);
+  return generator?.label == 'Project Factory' &&
+      generator?.enabled == true &&
+      reviewer?.label == 'Project Reviewer' &&
+      reviewer?.enabled == false;
+}
+
+bool projectFactoryHasBuildReadyMarker(Iterable<ChatMessage> messages) {
+  return messages.any(
+    (message) =>
+        !message.isUser &&
+        message.agentId == AgentId.generator &&
+        message.status == ChatMessageStatus.completed &&
+        message.text.contains(kProjectFactoryReadyForBuildMarker),
+  );
+}
+
+bool isProjectFactoryBuildConfirmation(String? rawText) {
+  final text = _normalizeProjectFactoryConfirmationText(rawText);
+  if (text.isEmpty) {
+    return false;
+  }
+  const blockers = <String>[
+    'no comencemos',
+    'no empecemos',
+    'no arranquemos',
+    'no arranques',
+    'no empieces',
+    'todavia no',
+    'todavía no',
+    'espera',
+    'esperá',
+  ];
+  if (blockers.any(text.contains)) {
+    return false;
+  }
+  const confirmations = <String>[
+    'ok dale para adelante',
+    'dale para adelante',
+    'ok comencemos',
+    'comencemos',
+    'empecemos',
+    'arranquemos',
+    'arranca',
+    'arrancá',
+    'empeza',
+    'empezá',
+    'dale arrancá',
+    'dale arranca',
+    'go ahead',
+    'start build',
+    'start building',
+  ];
+  return confirmations.any(text.contains);
+}
+
+String _normalizeProjectFactoryConfirmationText(String? rawText) {
+  return (rawText ?? '')
+      .toLowerCase()
+      .replaceAll(RegExp(r'[^\p{L}\p{N}]+', unicode: true), ' ')
+      .replaceAll(RegExp(r'\s+'), ' ')
+      .trim();
+}
+
 const List<double> _audioReplyPlaybackSpeeds = <double>[
   1.0,
   1.25,
@@ -54,19 +223,26 @@ const Key kChatScreenBodyScrollViewKey =
     ValueKey<String>('chat-screen-body-scroll-view');
 
 enum _AppBarOverflowAction {
+  apps,
   conversationContext,
   summaryView,
   codexTools,
   saveCurrentAgent,
   replyMode,
   servers,
+  newProject,
+  projectHistory,
   newChat,
 }
 
 enum _PinnedWorkspaceAction {
   newChat,
-  feedbackQueue,
   remove,
+}
+
+enum _RenameChatMode {
+  manual,
+  generated,
 }
 
 enum _ChatBodyView {
@@ -86,9 +262,6 @@ class ChatScreen extends StatefulWidget {
     this.initialSidebarWorkspaces = const <Workspace>[],
     this.initialCodexTooling,
     this.codexMcpAppInstallerOverride,
-    this.feedbackQueueCountLoaderOverride,
-    this.feedbackQueueListLoaderOverride,
-    this.feedbackSourceWorkspaceAliases = const <String, String>{},
     this.onActiveServerBaseUrlChanged,
     this.audioRecorderFactoryOverride,
   });
@@ -102,12 +275,6 @@ class ChatScreen extends StatefulWidget {
   final CodexToolingSnapshot? initialCodexTooling;
   final Future<CodexToolingSnapshot?> Function(CodexMcpApp app)?
       codexMcpAppInstallerOverride;
-  final Future<int> Function(String baseUrl)? feedbackQueueCountLoaderOverride;
-  final Future<List<FeedbackQueueItem>> Function(
-    String baseUrl, {
-    required bool includeImages,
-  })? feedbackQueueListLoaderOverride;
-  final Map<String, String> feedbackSourceWorkspaceAliases;
   final ValueChanged<String>? onActiveServerBaseUrlChanged;
   @visibleForTesting
   final AudioNoteRecorder Function()? audioRecorderFactoryOverride;
@@ -124,6 +291,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   List<ServerProfile> _serverProfiles = <ServerProfile>[];
   List<Workspace> _sidebarWorkspaces = <Workspace>[];
   Map<String, DateTime> _sessionReadMarkers = <String, DateTime>{};
+  final Map<String, int> _visibleSessionLimitsByGroup = <String, int>{};
   ServerProfile? _activeServer;
   ServerHealth? _activeServerHealth;
   ServerCapabilities? _activeServerCapabilities;
@@ -144,9 +312,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   bool _isUpdatingFilteredMessagesView = false;
   String? _filteredMessagesViewErrorText;
   _ChatBodyView _chatBodyView = _ChatBodyView.conversation;
-  List<FeedbackQueueItem> _feedbackQueuePreviewItems = <FeedbackQueueItem>[];
-  bool _isRefreshingFeedbackQueueCount = false;
   static const double _compactAppBarBreakpoint = 640;
+  static const int _sessionGroupPageSize = 5;
 
   @override
   void initState() {
@@ -172,9 +339,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         _initializeServerProfiles();
       });
     }
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      unawaited(_refreshFeedbackQueueCount());
-    });
   }
 
   @override
@@ -194,7 +358,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       _chatController.handleAppResumed();
-      unawaited(_refreshFeedbackQueueCount());
     }
   }
 
@@ -532,12 +695,12 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                                 ),
                                               ),
                                               Tooltip(
-                                                message: 'Show summaries',
+                                                message: 'View summary',
                                                 child: ChoiceChip(
                                                   label: Text(
                                                     summaryMessageCount == 1
-                                                        ? 'Agent summary'
-                                                        : 'Agent summaries ($summaryMessageCount)',
+                                                        ? 'Run summary'
+                                                        : 'Run summaries ($summaryMessageCount)',
                                                   ),
                                                   selected:
                                                       isShowingAgentSummaries,
@@ -574,8 +737,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                               ChoiceChip(
                                                 label: Text(
                                                   turnSummaryCount == 1
-                                                      ? 'Turn summary'
-                                                      : 'Turn summaries ($turnSummaryCount)',
+                                                      ? 'Chat summary'
+                                                      : 'Chat summaries ($turnSummaryCount)',
                                                 ),
                                                 selected:
                                                     isShowingTurnSummaries,
@@ -913,6 +1076,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                       _activeServerCapabilities?.supportsImageInput ?? true,
                   fileAttachmentsEnabled: _resolvedFileAttachmentsEnabled(),
                   voiceStatusText: _resolveVoiceStatusText(),
+                  isProjectFactoryIntake: isProjectFactoryIntakeConfiguration(
+                    _chatController.currentSession?.agentConfiguration,
+                  ),
                 ),
               ],
             ),
@@ -925,6 +1091,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   Future<bool> _handleSend() async {
     if (await _maybeHandleOpenMcpAppCommand(_textController.text)) {
       return true;
+    }
+    if (!await _maybeActivateProjectFactoryBuildMode(_textController.text)) {
+      return false;
     }
     final sessionIdBeforeSend = _chatController.selectedSessionId;
     final workspacePathBeforeSend =
@@ -950,13 +1119,23 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     List<_PendingAttachmentDraft> attachments, {
     String? prompt,
   }) async {
+    if (!await _maybeActivateProjectFactoryBuildMode(prompt)) {
+      return false;
+    }
     final sessionIdBeforeSend = _chatController.selectedSessionId;
     final workspacePathBeforeSend =
         _chatController.currentSession?.workspacePath;
     final codexRunOptions = _currentComposerDraft().codexRunOptions;
+    final enrichedPrompt = await _promptWithPromotedProjectAssets(
+      attachments,
+      prompt,
+    );
+    if (enrichedPrompt == null) {
+      return false;
+    }
     final didSend = await _chatController.sendAttachmentsMessage(
       attachments.map((attachment) => attachment.file).toList(),
-      message: prompt,
+      message: enrichedPrompt,
       sessionIdOverride: sessionIdBeforeSend,
       workspacePathOverride: workspacePathBeforeSend,
       codexRunOptions: codexRunOptions.isEmpty ? null : codexRunOptions,
@@ -970,10 +1149,66 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     return didSend;
   }
 
+  Future<String?> _promptWithPromotedProjectAssets(
+    List<_PendingAttachmentDraft> attachments,
+    String? prompt,
+  ) async {
+    if (!isProjectFactoryIntakeConfiguration(
+      _chatController.currentSession?.agentConfiguration,
+    )) {
+      return prompt;
+    }
+    final promoted = attachments
+        .where((attachment) => attachment.projectAssetRole != null)
+        .toList(growable: false);
+    if (promoted.isEmpty) {
+      return prompt;
+    }
+    final baseUrl = (_activeServer?.baseUrl ?? widget.initialApiBaseUrl)
+        .trim()
+        .replaceAll(RegExp(r'/$'), '');
+    final client = ApiClient(baseUrl: baseUrl);
+    final lines = <String>[];
+    try {
+      for (final attachment in promoted) {
+        final role = attachment.projectAssetRole!;
+        final asset = await client.uploadAssetDepotAsset(
+          attachment.file,
+          source: 'chat_upload',
+        );
+        lines.add(
+          '- asset_id: ${asset.assetId}; role: ${role.apiValue}; '
+          'filename: ${asset.originalFilename}; sha256: ${asset.sha256}',
+        );
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not promote attachment asset. $error')),
+        );
+      }
+      return null;
+    }
+    final trimmedPrompt = prompt?.trim() ?? '';
+    final assetBlock = '''
+Asset Depot uploads for this New Project:
+${lines.join('\n')}
+
+When you create the Project Factory draft, link each asset with POST /project-factory/drafts/{draft_id}/assets using the listed role. Preserve exact bytes for exact_asset, logo, and app_icon.
+''';
+    if (trimmedPrompt.isEmpty) {
+      return assetBlock.trim();
+    }
+    return '$trimmedPrompt\n\n${assetBlock.trim()}';
+  }
+
   Future<bool> _handleSendAudio(
     XFile audioFile, {
     String? message,
   }) async {
+    if (!await _maybeActivateProjectFactoryBuildMode(message)) {
+      return false;
+    }
     final sessionIdBeforeSend = _chatController.selectedSessionId;
     final workspacePathBeforeSend =
         _chatController.currentSession?.workspacePath;
@@ -1282,6 +1517,226 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     });
   }
 
+  Future<void> _openNewProjectFactory() async {
+    final activeBaseUrl = _activeServer?.baseUrl ?? widget.initialApiBaseUrl;
+    final client = ApiClient(baseUrl: activeBaseUrl);
+    final capabilities = _activeServerCapabilities;
+    if (capabilities != null && !capabilities.supportsProjectFactory) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'New project needs an updated bridge backend. Restart or update the backend, then try again.',
+          ),
+        ),
+      );
+      return;
+    }
+    ProjectFactoryOptions options;
+    try {
+      options = await client.getProjectFactoryOptions();
+    } on ProjectFactoryUnavailableException catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(error.message)),
+      );
+      return;
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not load new project options.\n$error')),
+      );
+      return;
+    }
+    if (!mounted) {
+      return;
+    }
+
+    await _startNewProjectFactoryChat(options);
+  }
+
+  Future<void> _startNewProjectFactoryChat(
+      ProjectFactoryOptions options) async {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Starting a New project chat...')),
+    );
+    await _chatController.createNewSession(title: 'New project');
+    if (!mounted) {
+      return;
+    }
+    final session = _chatController.currentSession;
+    if (session == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _chatController.errorText ?? 'Could not start New project chat.',
+          ),
+        ),
+      );
+      return;
+    }
+
+    final didConfigure = await _chatController.updateAgentConfiguration(
+      buildProjectFactoryIntakeConfiguration(session.agentConfiguration),
+    );
+    if (!mounted) {
+      return;
+    }
+    if (!didConfigure) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _chatController.errorText ??
+                'Could not configure New project agents.',
+          ),
+        ),
+      );
+      return;
+    }
+
+    final didSend = await _chatController.sendMessage(
+      _projectFactoryKickoffPrompt(options),
+    );
+    if (!mounted) {
+      return;
+    }
+    if (!didSend) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _chatController.errorText ??
+                'Could not send the New project kickoff message.',
+          ),
+        ),
+      );
+    }
+  }
+
+  Future<void> _openProjectFactoryHistory() async {
+    final activeBaseUrl = _activeServer?.baseUrl ?? widget.initialApiBaseUrl;
+    final client = ApiClient(baseUrl: activeBaseUrl);
+    await showDialog<void>(
+      context: context,
+      builder: (context) => ProjectFactoryHistoryDialog(
+        listJobs: () => client.listProjectFactoryJobs(),
+        getJob: client.getProjectFactoryJob,
+        onOpenProjectPath: (path) async {
+          await _openProjectFactoryTargetPath(path);
+        },
+        listWebPreviews: () => client.listWebPreviews(),
+        listWebPreviewInvites: client.listWebPreviewInvites,
+        createWebPreviewInvite: client.createWebPreviewInvite,
+        revokeWebPreviewInvite: client.revokeWebPreviewInvite,
+        syncWebPreviewInvite: client.syncWebPreviewInvite,
+      ),
+    );
+  }
+
+  Future<bool> _maybeActivateProjectFactoryBuildMode(String? message) async {
+    if (!isProjectFactoryBuildConfirmation(message)) {
+      return true;
+    }
+    final session = _chatController.currentSession;
+    if (!isProjectFactoryIntakeConfiguration(session?.agentConfiguration)) {
+      return true;
+    }
+    if (!projectFactoryHasBuildReadyMarker(session!.messages)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'New project is still collecting specs and diagram details.',
+          ),
+        ),
+      );
+      return true;
+    }
+
+    final didConfigure = await _chatController.updateAgentConfiguration(
+      buildProjectFactoryBuildConfiguration(session.agentConfiguration),
+    );
+    if (!mounted) {
+      return didConfigure;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          didConfigure
+              ? 'New project build mode enabled: reviewer will run after confirmation.'
+              : _chatController.errorText ??
+                  'Could not enable New project build mode.',
+        ),
+      ),
+    );
+    return didConfigure;
+  }
+
+  String _projectFactoryKickoffPrompt(ProjectFactoryOptions options) {
+    final workflow = options.creationWorkflow;
+    final generatorRuns = workflow['generator_runs'] ?? 20;
+    final reviewerRuns = workflow['reviewer_runs'] ?? 20;
+    final platforms = options.defaultPlatforms.join(', ');
+    final businessTypes = options.businessTypes.join(', ');
+    return '''
+Estamos en modo New Project Factory dentro de un chat normal.
+
+Primero respondeme al usuario, no generes archivos todavia. Tu primera respuesta debe explicar: "vamos a hacer un nuevo proyecto" y pedir lo minimo necesario para inferir o confirmar:
+- nombre del proyecto;
+- business type/rubro;
+- primary goal;
+- plataformas;
+- backend;
+- logo/icono;
+- colores, estilo visual y referencias de look and feel;
+- roles/permisos especiales si aplican;
+- entidades principales del dominio para DER/ERD;
+- actores y permisos principales para diagrama de clases/componentes;
+- integraciones externas esperadas para componentes/deployment;
+- si hay imagenes adjuntas en este chat, usalas como referencia visual nativa.
+
+Defaults si el usuario no modifica nada:
+- plataformas: $platforms;
+- backend: ${options.defaultBackend};
+- logo: generate;
+- roles base: owner, admin, manager, staff, customer, guest;
+- auth: login/registro + Google pending credentials;
+- admin/domain management: incluido;
+- notificaciones: incluido;
+- workflow al confirmar: $generatorRuns generator runs + $reviewerRuns reviewer runs.
+- business types sugeridos si necesita elegir: $businessTypes.
+
+Si el usuario no sabe el nombre, rubro o titulo, proponelo a partir de lo que cuente. Para colores y look and feel no inventes como definitivo: preguntale o propone 2-3 direcciones y espera confirmacion. Antes de crear nada, devolve un preview corto del proyecto que vas a armar y pedi confirmacion explicita tipo "ok, dale para adelante".
+
+Contrato semi-obligatorio antes del build:
+- Si falta informacion para armar spec, plan, tasks o diagramas baseline, hace preguntas concretas y simples.
+- Cada pregunta debe traer 2-4 respuestas sugeridas o una opcion "lo inferis vos".
+- Los diagramas baseline a validar son: componentes, clases, DER/ERD y deployment. Agrega otros si el dominio lo pide.
+- El preview previo al build debe incluir: brief normalizado, defaults asumidos, entidades del dominio, roles/permisos, modulos, spec/plan/tasks iniciales, lista de diagramas a generar, comandos de validacion, riesgos y pendientes.
+- No incluyas la linea $kProjectFactoryReadyForBuildMarker hasta que tengas informacion suficiente y el usuario haya validado el preview.
+- Cuando ya este validado y solo falte que el usuario confirme el arranque, termina tu respuesta con una linea exacta: $kProjectFactoryReadyForBuildMarker
+
+Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme despues de ese marker, recien ahi ejecuta la creacion real usando Project Factory del bridge y el repo actual: draft/manifest, reference assets desde imagenes adjuntas del chat cuando existan, specs/plan/tasks, diagramas baseline, backend FastAPI, Flutter, auth/RBAC/admin/notificaciones, validacion y apertura del workspace. Mantene la conversacion practica y anda trabajando con el reviewer durante el build.
+''';
+  }
+
+  // Kept for the Project Factory history/fallback dialog.
+  // ignore: unused_element
+  Future<Workspace> _openProjectFactoryTargetPath(String targetPath) async {
+    await _chatController.refreshWorkspaces();
+    final workspace = _chatController.workspaces.firstWhere(
+      (item) => item.path == targetPath,
+      orElse: () => Workspace(
+        name: _fallbackWorkspaceName(targetPath),
+        path: targetPath,
+      ),
+    );
+    await _pinWorkspaceToSidebar(workspace);
+    await _createNewChatForWorkspace(workspace);
+    return workspace;
+  }
+
   Future<void> _openWorkspacePicker() async {
     if (_isOpeningWorkspacePicker) {
       return;
@@ -1429,6 +1884,79 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         ),
       );
     }
+  }
+
+  Future<void> _openRenameChatSheet(ChatSessionSummary session) async {
+    final draft = await showModalBottomSheet<_RenameChatDraft>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      backgroundColor: const Color(0xFF101931),
+      constraints: BoxConstraints(
+        maxWidth: 640,
+        maxHeight: MediaQuery.sizeOf(context).height * 0.86,
+      ),
+      builder: (context) => _RenameChatSheet(
+        initialTitle: session.title,
+        voiceEnabled: _resolvedAudioInputEnabled(),
+        voiceStatusText: _resolveVoiceStatusText(),
+        audioRecorderFactory:
+            widget.audioRecorderFactoryOverride ?? AudioNoteRecorder.new,
+        onBeginRecording: _handleBeginRecording,
+      ),
+    );
+
+    if (!mounted || draft == null) {
+      return;
+    }
+
+    var didUpdate = false;
+    try {
+      switch (draft.kind) {
+        case _RenameChatDraftKind.manual:
+          didUpdate = await _chatController.renameSession(
+            session.id,
+            title: draft.title!,
+          );
+          break;
+        case _RenameChatDraftKind.generatedText:
+          didUpdate = await _chatController.generateSessionTitle(
+            session.id,
+            instructions: draft.instructions,
+          );
+          break;
+        case _RenameChatDraftKind.generatedAudio:
+          didUpdate = await _chatController.generateSessionTitleFromAudio(
+            session.id,
+            draft.audioFile!,
+            instructions: draft.instructions,
+          );
+          break;
+      }
+    } finally {
+      final audioFile = draft.audioFile;
+      if (audioFile != null) {
+        final recorder =
+            widget.audioRecorderFactoryOverride?.call() ?? AudioNoteRecorder();
+        await recorder.cleanup(audioFile);
+        await recorder.dispose();
+      }
+    }
+
+    if (!mounted) {
+      return;
+    }
+    final errorText = _chatController.errorText;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          didUpdate
+              ? 'Chat renamed.'
+              : 'Could not rename chat.${errorText == null ? '' : '\n$errorText'}',
+        ),
+        duration: const Duration(seconds: 3),
+      ),
+    );
   }
 
   Future<void> _openSaveCurrentAgentProfile() async {
@@ -1597,6 +2125,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       _activeServerCapabilities = null;
       _activeCodexTooling = null;
       _sidebarWorkspaces = sidebarWorkspaces;
+      _visibleSessionLimitsByGroup.clear();
       _sessionReadMarkers = sessionReadMarkers;
       _serverErrorText = null;
       _codexToolingErrorText = null;
@@ -1637,7 +2166,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         });
       }
       _replyPlaybackService.setCapabilities(capabilities);
-      unawaited(_refreshFeedbackQueueCount());
       didConnect = true;
     } catch (error) {
       _replyPlaybackService.setCapabilities(null);
@@ -1657,49 +2185,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         ..dispose();
     }
     return didConnect;
-  }
-
-  Future<void> _refreshFeedbackQueueCount() async {
-    if (_isRefreshingFeedbackQueueCount) return;
-    _isRefreshingFeedbackQueueCount = true;
-    final baseUrl = _activeServer?.baseUrl ?? widget.initialApiBaseUrl;
-    try {
-      final countLoader = widget.feedbackQueueCountLoaderOverride;
-      final listLoader = widget.feedbackQueueListLoaderOverride;
-      final previewItems = listLoader != null
-          ? await listLoader(baseUrl, includeImages: false)
-          : countLoader == null
-              ? await ApiClient(baseUrl: baseUrl).listFeedbackQueue()
-              : null;
-      if (previewItems == null) {
-        await countLoader!(baseUrl);
-      }
-      if (mounted) {
-        setState(() {
-          if (previewItems != null) {
-            _feedbackQueuePreviewItems = previewItems;
-          }
-        });
-      }
-    } catch (_) {
-      // Feedback should stay opportunistic; connection errors are surfaced
-      // when the user opens the queue.
-    } finally {
-      _isRefreshingFeedbackQueueCount = false;
-    }
-  }
-
-  Future<List<FeedbackQueueItem>> _listFeedbackQueue({
-    required bool includeImages,
-  }) {
-    final baseUrl = _activeServer?.baseUrl ?? widget.initialApiBaseUrl;
-    final override = widget.feedbackQueueListLoaderOverride;
-    if (override != null) {
-      return override(baseUrl, includeImages: includeImages);
-    }
-    return ApiClient(baseUrl: baseUrl).listFeedbackQueue(
-      includeImages: includeImages,
-    );
   }
 
   Future<void> _refreshCodexTooling({bool showLoading = false}) async {
@@ -1739,6 +2224,27 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         _isLoadingCodexTooling = false;
       });
     }
+  }
+
+  Future<void> _openInstallableAppsSheet() async {
+    final activeServer = _activeServer;
+    if (activeServer == null) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No active bridge server.')),
+      );
+      return;
+    }
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (context) => FractionallySizedBox(
+        heightFactor: 0.82,
+        child: InstallableAppsSheet(
+          apiClient: ApiClient(baseUrl: activeServer.baseUrl),
+        ),
+      ),
+    );
   }
 
   Future<CodexToolingSnapshot?> _installCodexMcpApp(
@@ -2170,7 +2676,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
               ? Icons.chat_bubble_outline_rounded
               : Icons.summarize_outlined,
         ),
-        tooltip: showingSummaryView ? 'Show full chat' : 'Show summary tabs',
+        tooltip: showingSummaryView ? 'Show full chat' : 'View summary',
       ),
     ];
     if (isCompactAppBar) {
@@ -2183,6 +2689,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           },
           itemBuilder: (context) => <PopupMenuEntry<_AppBarOverflowAction>>[
             _buildAppBarOverflowMenuItem(
+              action: _AppBarOverflowAction.apps,
+              icon: Icons.apps_rounded,
+              label: 'Apps',
+            ),
+            _buildAppBarOverflowMenuItem(
               action: _AppBarOverflowAction.conversationContext,
               icon: Icons.topic_outlined,
               label: 'What are we doing?',
@@ -2192,8 +2703,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
               icon: showingSummaryView
                   ? Icons.chat_bubble_outline_rounded
                   : Icons.summarize_outlined,
-              label:
-                  showingSummaryView ? 'Show full chat' : 'Show summary tabs',
+              label: showingSummaryView ? 'Show full chat' : 'View summary',
               enabled: showingSummaryView ||
                   (_chatController.currentSession != null && canShowAnySummary),
             ),
@@ -2222,6 +2732,16 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
               label: 'Servers',
             ),
             _buildAppBarOverflowMenuItem(
+              action: _AppBarOverflowAction.newProject,
+              icon: Icons.create_new_folder_outlined,
+              label: 'New project',
+            ),
+            _buildAppBarOverflowMenuItem(
+              action: _AppBarOverflowAction.projectHistory,
+              icon: Icons.history,
+              label: 'Project history',
+            ),
+            _buildAppBarOverflowMenuItem(
               action: _AppBarOverflowAction.newChat,
               icon: Icons.add,
               label: 'Choose project for new chat',
@@ -2233,6 +2753,13 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     }
     return <Widget>[
       ...primaryActions,
+      IconButton(
+        onPressed: () async {
+          await _openInstallableAppsSheet();
+        },
+        icon: const Icon(Icons.apps_rounded),
+        tooltip: 'Apps',
+      ),
       IconButton(
         onPressed: _chatController.currentSession == null
             ? null
@@ -2302,6 +2829,20 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       ),
       IconButton(
         onPressed: () async {
+          await _openNewProjectFactory();
+        },
+        icon: const Icon(Icons.create_new_folder_outlined),
+        tooltip: 'New project',
+      ),
+      IconButton(
+        onPressed: () async {
+          await _openProjectFactoryHistory();
+        },
+        icon: const Icon(Icons.history),
+        tooltip: 'Project history',
+      ),
+      IconButton(
+        onPressed: () async {
           await _openWorkspacePicker();
         },
         icon: const Icon(Icons.add),
@@ -2336,6 +2877,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
 
   Future<void> _handleAppBarOverflowAction(_AppBarOverflowAction action) async {
     switch (action) {
+      case _AppBarOverflowAction.apps:
+        await _openInstallableAppsSheet();
+        return;
       case _AppBarOverflowAction.conversationContext:
         await _openConversationContextSheet();
         return;
@@ -2369,358 +2913,16 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       case _AppBarOverflowAction.servers:
         await _openServerManager();
         return;
+      case _AppBarOverflowAction.newProject:
+        await _openNewProjectFactory();
+        return;
+      case _AppBarOverflowAction.projectHistory:
+        await _openProjectFactoryHistory();
+        return;
       case _AppBarOverflowAction.newChat:
         await _openWorkspacePicker();
         return;
     }
-  }
-
-  Future<void> _openFeedbackQueueSheet({required Workspace workspace}) async {
-    final client = ApiClient(
-      baseUrl: _activeServer?.baseUrl ?? widget.initialApiBaseUrl,
-    );
-    List<FeedbackQueueItem> items;
-    try {
-      final allItems = await _listFeedbackQueue(includeImages: true);
-      items = _feedbackItemsForWorkspace(allItems, workspace);
-      if (mounted) {
-        setState(() {
-          _feedbackQueuePreviewItems = allItems;
-        });
-      }
-    } catch (error) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Feedback queue unavailable.\n$error')),
-      );
-      return;
-    }
-    if (!mounted) return;
-
-    final selectedIds = <String>{};
-
-    await showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      builder: (context) {
-        return StatefulBuilder(
-          builder: (context, setSheetState) {
-            Future<void> reload() async {
-              final refreshedAll =
-                  await _listFeedbackQueue(includeImages: true);
-              final refreshed = _feedbackItemsForWorkspace(
-                refreshedAll,
-                workspace,
-              );
-              selectedIds.removeWhere(
-                (id) => !refreshed.any((item) => item.id == id),
-              );
-              if (mounted) {
-                setState(() {
-                  _feedbackQueuePreviewItems = refreshedAll;
-                });
-              }
-              if (context.mounted) {
-                setSheetState(() => items = refreshed);
-              }
-            }
-
-            return SafeArea(
-              child: ConstrainedBox(
-                constraints: BoxConstraints(
-                  maxHeight: MediaQuery.sizeOf(context).height * 0.86,
-                ),
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: <Widget>[
-                      Row(
-                        children: <Widget>[
-                          const Expanded(
-                            child: Text(
-                              'Feedback queue',
-                              style: TextStyle(
-                                fontSize: 20,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                          ),
-                          IconButton(
-                            tooltip: 'Refresh',
-                            onPressed: () => unawaited(reload()),
-                            icon: const Icon(Icons.refresh),
-                          ),
-                          IconButton(
-                            tooltip: 'Close',
-                            onPressed: () => Navigator.of(context).pop(),
-                            icon: const Icon(Icons.close),
-                          ),
-                        ],
-                      ),
-                      if (items.isEmpty)
-                        Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 28),
-                          child: Text(
-                            'No feedback is pending for ${workspace.name}.',
-                          ),
-                        )
-                      else ...<Widget>[
-                        Row(
-                          children: <Widget>[
-                            Expanded(
-                              child: Text(
-                                '${workspace.name} · ${selectedIds.length} selected',
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  color: Color(0xFF8B97B5),
-                                ),
-                              ),
-                            ),
-                            TextButton(
-                              onPressed: () {
-                                setSheetState(() {
-                                  if (selectedIds.length == items.length) {
-                                    selectedIds.clear();
-                                  } else {
-                                    selectedIds
-                                      ..clear()
-                                      ..addAll(items.map((item) => item.id));
-                                  }
-                                });
-                              },
-                              child: Text(
-                                selectedIds.length == items.length
-                                    ? 'Unselect all'
-                                    : 'Select all',
-                              ),
-                            ),
-                          ],
-                        ),
-                        Flexible(
-                          child: ListView.separated(
-                            shrinkWrap: true,
-                            itemCount: items.length,
-                            separatorBuilder: (_, __) =>
-                                const SizedBox(height: 12),
-                            itemBuilder: (context, index) {
-                              final item = items[index];
-                              final imageBytes = item.screenshotBytes;
-                              final selected = selectedIds.contains(item.id);
-                              return Card(
-                                margin: EdgeInsets.zero,
-                                child: Padding(
-                                  padding: const EdgeInsets.all(12),
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.stretch,
-                                    children: <Widget>[
-                                      CheckboxListTile(
-                                        contentPadding: EdgeInsets.zero,
-                                        value: selected,
-                                        onChanged: (value) {
-                                          setSheetState(() {
-                                            if (value ?? false) {
-                                              selectedIds.add(item.id);
-                                            } else {
-                                              selectedIds.remove(item.id);
-                                            }
-                                          });
-                                        },
-                                        title: Text(
-                                          item.comment,
-                                          style: const TextStyle(
-                                            fontWeight: FontWeight.w600,
-                                          ),
-                                        ),
-                                        subtitle: Text(
-                                          '${_feedbackItemSourceLabel(item)} · ${item.status}'
-                                          '${item.hasScreenshot ? ' · image' : ''}'
-                                          '${item.hasAudio ? ' · audio' : ''}',
-                                        ),
-                                      ),
-                                      if (imageBytes != null)
-                                        ClipRRect(
-                                          borderRadius:
-                                              BorderRadius.circular(8),
-                                          child: Image.memory(
-                                            imageBytes,
-                                            height: 180,
-                                            fit: BoxFit.cover,
-                                          ),
-                                        ),
-                                      const SizedBox(height: 10),
-                                      Align(
-                                        alignment: Alignment.centerRight,
-                                        child: IconButton(
-                                          tooltip: 'Delete',
-                                          onPressed: () async {
-                                            await client
-                                                .deleteFeedbackQueueItem(
-                                              item.id,
-                                            );
-                                            await reload();
-                                          },
-                                          icon: const Icon(
-                                            Icons.delete_outline,
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              );
-                            },
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        FilledButton.icon(
-                          onPressed: selectedIds.isEmpty
-                              ? null
-                              : () async {
-                                  final selectedItems = items
-                                      .where(
-                                        (item) => selectedIds.contains(item.id),
-                                      )
-                                      .toList(growable: false);
-                                  Navigator.of(context).pop();
-                                  await _stageFeedbackItemsForChat(
-                                    workspace,
-                                    selectedItems,
-                                  );
-                                },
-                          icon: const Icon(Icons.arrow_forward),
-                          label: const Text('Next'),
-                        ),
-                      ],
-                    ],
-                  ),
-                ),
-              ),
-            );
-          },
-        );
-      },
-    );
-  }
-
-  Future<void> _stageFeedbackItemsForChat(
-    Workspace workspace,
-    List<FeedbackQueueItem> items,
-  ) async {
-    if (items.isEmpty) return;
-
-    await _pinWorkspaceToSidebar(workspace);
-    if (_chatController.currentSession?.workspacePath != workspace.path) {
-      await _createNewChatForWorkspace(workspace);
-      if (!mounted) return;
-      if (_chatController.currentSession?.workspacePath != workspace.path) {
-        return;
-      }
-    }
-
-    final attachments = <_PendingAttachmentDraft>[];
-    for (var index = 0; index < items.length; index += 1) {
-      final item = items[index];
-      final bytes = item.screenshotBytes;
-      if (bytes == null) continue;
-      final name = 'feedback-${index + 1}-${item.id}.png';
-      attachments.add(
-        _PendingAttachmentDraft(
-          file: XFile.fromData(
-            bytes,
-            name: name,
-            mimeType: item.screenshotMimeType,
-            path: name,
-          ),
-          name: name,
-          kind: _AttachmentDraftKind.image,
-          sizeBytes: bytes.length,
-          previewBytes: bytes,
-        ),
-      );
-    }
-
-    final currentDraft = _currentComposerDraft();
-    final metadata = _buildFeedbackComposerMetadata(workspace, items);
-    final currentText = currentDraft.text.trim();
-    final nextText =
-        currentText.isEmpty ? metadata : '$currentText\n\n$metadata';
-    final nextAttachments = <_PendingAttachmentDraft>[
-      ...currentDraft.attachments,
-      ...attachments,
-    ];
-
-    _textController.value = TextEditingValue(
-      text: nextText,
-      selection: TextSelection.collapsed(offset: nextText.length),
-    );
-    _updateCurrentComposerDraft(
-      _ComposerDraft(
-        text: nextText,
-        attachments: nextAttachments,
-        codexRunOptions: currentDraft.codexRunOptions,
-      ),
-    );
-    _setChatBodyView(_ChatBodyView.conversation);
-    _updateStickToBottom(true);
-
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          items.length == 1
-              ? 'Feedback staged in ${workspace.name}.'
-              : '${items.length} feedback items staged in ${workspace.name}.',
-        ),
-      ),
-    );
-  }
-
-  String _buildFeedbackComposerMetadata(
-    Workspace workspace,
-    List<FeedbackQueueItem> items,
-  ) {
-    final buffer = StringBuffer()
-      ..writeln('Feedback queue for ${workspace.name}')
-      ..writeln('Project path: ${workspace.path}')
-      ..writeln()
-      ..writeln('Selected feedback:');
-    for (var index = 0; index < items.length; index += 1) {
-      final item = items[index];
-      buffer
-        ..writeln()
-        ..writeln('${index + 1}. ${item.comment}')
-        ..writeln('- id: ${item.id}')
-        ..writeln('- source: ${_feedbackItemSourceLabel(item)}')
-        ..writeln('- source app: ${item.sourceApp}')
-        ..writeln('- status: ${item.status}')
-        ..writeln(
-            '- created: ${item.createdAt?.toIso8601String() ?? 'unknown'}')
-        ..writeln('- selection bounds: ${item.selectionBounds}')
-        ..writeln('- selection points: ${item.selectionPoints.length}')
-        ..writeln('- image attachment: feedback-${index + 1}-${item.id}.png')
-        ..writeln(
-          '- instruction: The attached screenshot contains the user\'s drawn mark. Treat the marked area as the primary target of this feedback, and use the associated comment to understand the requested change.',
-        );
-      if (item.hasAudio ||
-          item.audioMimeType != null ||
-          item.audioDurationMs != null ||
-          item.audioByteLength != null) {
-        buffer.writeln(
-          '- audio: ${item.audioMimeType ?? 'unknown type'}, '
-          '${item.audioDurationMs ?? 0} ms, '
-          '${item.audioByteLength ?? 0} bytes',
-        );
-      }
-    }
-    buffer
-      ..writeln()
-      ..write(
-        'Use the attached screenshots and the metadata above to decide the next implementation changes.',
-      );
-    return buffer.toString();
   }
 
   int _codexSelectionCount(CodexRunOptions options) {
@@ -3029,7 +3231,17 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             (session) =>
                 archivedOnly ? session.isArchived : !session.isArchived,
           )
-          .toList(growable: false);
+          .toList(growable: false)
+        ..sort(_compareSessionSummariesByRecentActivity);
+      final displayedSessionCount = _visibleSessionCountForGroup(
+        workspace.path,
+        archivedOnly: archivedOnly,
+        sessions: visibleSessions,
+      );
+      final displayedSessions =
+          visibleSessions.take(displayedSessionCount).toList(growable: false);
+      final hiddenSessionCount =
+          math.max(0, visibleSessions.length - displayedSessions.length);
       if (archivedOnly && visibleSessions.isEmpty) {
         continue;
       }
@@ -3068,7 +3280,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       final unreadChatsCount = visibleSessions
           .where((session) => _unreadCountForSession(session) > 0)
           .length;
-      final feedbackCount = _feedbackCountForWorkspace(workspace);
       final projectCardColor =
           hasSelected ? const Color(0xFF16213C) : const Color(0xFF121A31);
       final projectBorderColor = activeJobCount > 0
@@ -3200,26 +3411,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                         ),
                       ),
                     ),
-                  if (feedbackCount > 0)
-                    Container(
-                      margin: const EdgeInsets.only(right: 8),
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 4,
-                      ),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFFF6B6B),
-                        borderRadius: BorderRadius.circular(999),
-                      ),
-                      child: Text(
-                        '$feedbackCount feedback',
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w700,
-                          fontSize: 11,
-                        ),
-                      ),
-                    ),
                   PopupMenuButton<_PinnedWorkspaceAction>(
                     tooltip: 'Project actions for ${workspace.name}',
                     icon: const Icon(Icons.more_horiz_rounded),
@@ -3228,10 +3419,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                         case _PinnedWorkspaceAction.newChat:
                           Navigator.of(context).pop();
                           await _createNewChatForWorkspace(workspace);
-                          return;
-                        case _PinnedWorkspaceAction.feedbackQueue:
-                          Navigator.of(context).pop();
-                          await _openFeedbackQueueSheet(workspace: workspace);
                           return;
                         case _PinnedWorkspaceAction.remove:
                           await _removeWorkspaceFromSidebar(workspace);
@@ -3244,11 +3431,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                         value: _PinnedWorkspaceAction.newChat,
                         child: Text('New chat in ${workspace.name}'),
                       ),
-                      if (feedbackCount > 0)
-                        PopupMenuItem<_PinnedWorkspaceAction>(
-                          value: _PinnedWorkspaceAction.feedbackQueue,
-                          child: Text('Feedback queue ($feedbackCount)'),
-                        ),
                       const PopupMenuItem<_PinnedWorkspaceAction>(
                         value: _PinnedWorkspaceAction.remove,
                         child: Text('Remove project'),
@@ -3259,14 +3441,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
               ),
               children: visibleSessions.isEmpty
                   ? <Widget>[
-                      if (feedbackCount > 0)
-                        _ProjectFeedbackQueueButton(
-                          count: feedbackCount,
-                          onPressed: () async {
-                            Navigator.of(context).pop();
-                            await _openFeedbackQueueSheet(workspace: workspace);
-                          },
-                        ),
                       Padding(
                         padding: EdgeInsets.fromLTRB(24, 0, 24, 16),
                         child: Align(
@@ -3281,15 +3455,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                       ),
                     ]
                   : <Widget>[
-                      if (feedbackCount > 0)
-                        _ProjectFeedbackQueueButton(
-                          count: feedbackCount,
-                          onPressed: () async {
-                            Navigator.of(context).pop();
-                            await _openFeedbackQueueSheet(workspace: workspace);
-                          },
-                        ),
-                      ...visibleSessions.map(
+                      ...displayedSessions.map(
                         (session) => Padding(
                           padding: const EdgeInsets.only(left: 10, right: 10),
                           child: _SessionTile(
@@ -3307,6 +3473,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                               Navigator.of(context).pop();
                               await _chatController.selectSession(session.id);
                             },
+                            onRename: () async {
+                              Navigator.of(context).pop();
+                              await _openRenameChatSheet(session);
+                            },
                             onArchiveToggle: () async {
                               await _chatController.setSessionArchived(
                                 session.id,
@@ -3316,6 +3486,22 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                           ),
                         ),
                       ),
+                      if (hiddenSessionCount > 0)
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(10, 8, 10, 0),
+                          child: OutlinedButton.icon(
+                            onPressed: () {
+                              _showMoreSessionsForGroup(
+                                workspace.path,
+                                archivedOnly: archivedOnly,
+                              );
+                            },
+                            icon: const Icon(Icons.expand_more_rounded),
+                            label: Text(
+                              'Show ${math.min(_sessionGroupPageSize, hiddenSessionCount)} more',
+                            ),
+                          ),
+                        ),
                     ],
             ),
           ),
@@ -3324,6 +3510,67 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     }
 
     return sessionGroups;
+  }
+
+  int _visibleSessionCountForGroup(
+    String workspacePath, {
+    required bool archivedOnly,
+    required List<ChatSessionSummary> sessions,
+  }) {
+    final groupKey = _sessionGroupKey(
+      workspacePath,
+      archivedOnly: archivedOnly,
+    );
+    var limit = _visibleSessionLimitsByGroup[groupKey] ?? _sessionGroupPageSize;
+    final selectedSessionId = _chatController.selectedSessionId;
+    if (selectedSessionId != null) {
+      final selectedIndex = sessions.indexWhere(
+        (session) => session.id == selectedSessionId,
+      );
+      if (selectedIndex >= limit) {
+        limit = selectedIndex + 1;
+      }
+    }
+    return math.min(limit, sessions.length);
+  }
+
+  void _showMoreSessionsForGroup(
+    String workspacePath, {
+    required bool archivedOnly,
+  }) {
+    final groupKey = _sessionGroupKey(
+      workspacePath,
+      archivedOnly: archivedOnly,
+    );
+    final currentLimit =
+        _visibleSessionLimitsByGroup[groupKey] ?? _sessionGroupPageSize;
+    setState(() {
+      _visibleSessionLimitsByGroup[groupKey] =
+          currentLimit + _sessionGroupPageSize;
+    });
+  }
+
+  String _sessionGroupKey(
+    String workspacePath, {
+    required bool archivedOnly,
+  }) {
+    return '${archivedOnly ? 'archived' : 'active'}::$workspacePath';
+  }
+
+  int _compareSessionSummariesByRecentActivity(
+    ChatSessionSummary left,
+    ChatSessionSummary right,
+  ) {
+    final latestComparison =
+        right.latestActivityAt.compareTo(left.latestActivityAt);
+    if (latestComparison != 0) {
+      return latestComparison;
+    }
+    final createdComparison = right.createdAt.compareTo(left.createdAt);
+    if (createdComparison != 0) {
+      return createdComparison;
+    }
+    return right.id.compareTo(left.id);
   }
 
   String _fallbackWorkspaceName(String workspacePath) {
@@ -3336,82 +3583,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       return trimmed;
     }
     return parts.last;
-  }
-
-  int _feedbackCountForWorkspace(Workspace workspace) {
-    return _feedbackQueuePreviewItems
-        .where((item) => _feedbackItemMatchesWorkspace(item, workspace))
-        .length;
-  }
-
-  List<FeedbackQueueItem> _feedbackItemsForWorkspace(
-    List<FeedbackQueueItem> items,
-    Workspace workspace,
-  ) {
-    return items
-        .where((item) => _feedbackItemMatchesWorkspace(item, workspace))
-        .toList(growable: false);
-  }
-
-  bool _feedbackItemMatchesWorkspace(
-    FeedbackQueueItem item,
-    Workspace workspace,
-  ) {
-    final source = _normalizeFeedbackSource(item.sourceApp);
-    if (source.isEmpty) return false;
-    final aliases = _feedbackSourceWorkspaceAliases();
-    final aliasWorkspace = aliases[source];
-    if (aliasWorkspace != null) {
-      return _workspaceMatchesFeedbackAlias(workspace, aliasWorkspace);
-    }
-    return _workspaceFeedbackKeys(workspace).contains(source);
-  }
-
-  Map<String, String> _feedbackSourceWorkspaceAliases() {
-    final aliases = <String, String>{};
-    void addAliases(Map<String, String> values) {
-      for (final entry in values.entries) {
-        final source = _normalizeFeedbackSource(entry.key);
-        final workspace = entry.value.trim();
-        if (source.isNotEmpty && workspace.isNotEmpty) {
-          aliases[source] = workspace;
-        }
-      }
-    }
-
-    addAliases(_activeServerCapabilities?.feedbackSourceWorkspaceAliases ??
-        const <String, String>{});
-    addAliases(widget.feedbackSourceWorkspaceAliases);
-    return aliases;
-  }
-
-  bool _workspaceMatchesFeedbackAlias(Workspace workspace, String alias) {
-    final trimmedAlias = alias.trim();
-    if (trimmedAlias == workspace.path) return true;
-    return _normalizeFeedbackSource(trimmedAlias) ==
-            _normalizeFeedbackSource(workspace.path) ||
-        _normalizeFeedbackSource(_fallbackWorkspaceName(trimmedAlias)) ==
-            _normalizeFeedbackSource(_fallbackWorkspaceName(workspace.path)) ||
-        _normalizeFeedbackSource(trimmedAlias) ==
-            _normalizeFeedbackSource(workspace.name);
-  }
-
-  String _feedbackItemSourceLabel(FeedbackQueueItem item) {
-    final displayName = item.sourceDisplayName?.trim();
-    if (displayName != null && displayName.isNotEmpty) return displayName;
-    return item.sourceApp;
-  }
-
-  Set<String> _workspaceFeedbackKeys(Workspace workspace) {
-    final keys = <String>{
-      _normalizeFeedbackSource(workspace.name),
-      _normalizeFeedbackSource(_fallbackWorkspaceName(workspace.path)),
-    }..remove('');
-    return keys;
-  }
-
-  String _normalizeFeedbackSource(String value) {
-    return value.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '');
   }
 
   void _handleChatControllerChanged() {
@@ -3583,6 +3754,7 @@ class _SessionTile extends StatelessWidget {
     required this.unreadCount,
     required this.selected,
     required this.onTap,
+    required this.onRename,
     required this.onArchiveToggle,
   });
 
@@ -3592,12 +3764,11 @@ class _SessionTile extends StatelessWidget {
   final int unreadCount;
   final bool selected;
   final VoidCallback onTap;
+  final VoidCallback onRename;
   final VoidCallback onArchiveToggle;
 
   @override
   Widget build(BuildContext context) {
-    final activeJobPresentation =
-        _buildSessionActiveJobPresentation(activeJobSummary);
     final isActive = activeJobSummary != null;
     final isUploading = outgoingUploadSummary != null;
     final tileBackgroundColor = selected
@@ -3621,16 +3792,10 @@ class _SessionTile extends StatelessWidget {
             : isUploading
                 ? const Color(0xFFEAF0FF)
                 : null;
-    final previewColor = isActive || isUploading
+    final timelineColor = isActive || isUploading
         ? const Color(0xFFA8C7C0)
         : const Color(0xFF8B97B5);
-    final conversationProduct = session.conversationProduct;
-    final subtitleText = conversationProduct != null &&
-            conversationProduct.description.trim().isNotEmpty
-        ? conversationProduct.description
-        : session.lastMessagePreview?.isNotEmpty == true
-            ? session.lastMessagePreview!
-            : 'No messages yet';
+    final displayTitle = _sessionDisplayTitle(session);
 
     return AnimatedContainer(
       duration: const Duration(milliseconds: 180),
@@ -3649,121 +3814,37 @@ class _SessionTile extends StatelessWidget {
             borderRadius: BorderRadius.circular(16),
           ),
           title: Text(
-            session.title,
+            displayTitle,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(
               color: session.isArchived ? const Color(0xFFB8C8EA) : titleColor,
-              fontWeight: isActive ? FontWeight.w600 : null,
+              fontSize: 15,
+              fontWeight: isActive ? FontWeight.w700 : FontWeight.w600,
             ),
           ),
           subtitle: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
             children: <Widget>[
-              if (conversationProduct?.statusLine.trim().isNotEmpty ==
-                  true) ...<Widget>[
-                Text(
-                  conversationProduct!.statusLine,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: session.isArchived
-                        ? const Color(0xFF9FB3D6)
-                        : const Color(0xFF55D6BE),
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                const SizedBox(height: 4),
-              ],
-              Text(
-                subtitleText,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: session.isArchived
-                      ? const Color(0xFF7F8EAF)
-                      : previewColor,
-                ),
+              const SizedBox(height: 6),
+              _SessionMomentLine(
+                icon: Icons.schedule_rounded,
+                label: 'Latest',
+                value: _formatSessionMoment(context, session.latestActivityAt),
+                color: session.isArchived
+                    ? const Color(0xFF7F8EAF)
+                    : timelineColor,
               ),
-              if (session.isArchived) ...<Widget>[
-                const SizedBox(height: 6),
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF1B2745),
-                    borderRadius: BorderRadius.circular(999),
-                  ),
-                  child: const Text(
-                    'Archived',
-                    style: TextStyle(
-                      color: Color(0xFF9FB3D6),
-                      fontSize: 11,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ),
-              ],
-              if (activeJobPresentation != null) ...<Widget>[
-                const SizedBox(height: 6),
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: activeJobPresentation.backgroundColor,
-                    borderRadius: BorderRadius.circular(999),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: <Widget>[
-                      Container(
-                        width: 8,
-                        height: 8,
-                        decoration: BoxDecoration(
-                          color: activeJobPresentation.foregroundColor,
-                          shape: BoxShape.circle,
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Flexible(
-                        child: Text(
-                          activeJobPresentation.label,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: activeJobPresentation.foregroundColor,
-                            fontSize: 11,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-              if (isUploading) ...<Widget>[
-                const SizedBox(height: 6),
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF15265A),
-                    borderRadius: BorderRadius.circular(999),
-                  ),
-                  child: Text(
-                    _formatOutgoingUploadLabel(outgoingUploadSummary!),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: Color(0xFFB8CCFF),
-                      fontSize: 11,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ),
-              ],
+              const SizedBox(height: 3),
+              _SessionMomentLine(
+                icon: Icons.flag_outlined,
+                label: 'Started',
+                value: _formatSessionMoment(context, session.createdAt),
+                color: session.isArchived
+                    ? const Color(0xFF7F8EAF)
+                    : const Color(0xFF8B97B5),
+              ),
             ],
           ),
           trailing: Row(
@@ -3787,13 +3868,27 @@ class _SessionTile extends StatelessWidget {
                 ),
               PopupMenuButton<String>(
                 padding: EdgeInsets.zero,
-                tooltip: session.isArchived ? 'Unarchive chat' : 'Archive chat',
+                tooltip: 'Chat actions',
                 onSelected: (value) {
+                  if (value == 'rename') {
+                    onRename();
+                    return;
+                  }
                   if (value == 'toggle-archive') {
                     onArchiveToggle();
                   }
                 },
                 itemBuilder: (context) => <PopupMenuEntry<String>>[
+                  const PopupMenuItem<String>(
+                    value: 'rename',
+                    child: Row(
+                      children: <Widget>[
+                        Icon(Icons.edit_outlined, size: 18),
+                        SizedBox(width: 12),
+                        Text('Rename chat'),
+                      ],
+                    ),
+                  ),
                   PopupMenuItem<String>(
                     value: 'toggle-archive',
                     child: Row(
@@ -3822,6 +3917,65 @@ class _SessionTile extends StatelessWidget {
   }
 }
 
+class _SessionMomentLine extends StatelessWidget {
+  const _SessionMomentLine({
+    required this.icon,
+    required this.label,
+    required this.value,
+    required this.color,
+  });
+
+  final IconData icon;
+  final String label;
+  final String value;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: <Widget>[
+        Icon(icon, size: 13, color: color),
+        const SizedBox(width: 6),
+        Text(
+          label,
+          style: TextStyle(
+            color: color,
+            fontSize: 11,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        const SizedBox(width: 6),
+        Expanded(
+          child: Text(
+            value,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: color,
+              fontSize: 12,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+String _sessionDisplayTitle(ChatSessionSummary session) {
+  final title = session.title.trim();
+  if (title.isEmpty || title.toLowerCase() == 'new chat') {
+    return 'Untitled chat';
+  }
+  return title;
+}
+
+String _formatSessionMoment(BuildContext context, DateTime timestamp) {
+  final localTimestamp = timestamp.toLocal();
+  final dayLabel = formatChatDaySeparatorLabel(context, localTimestamp);
+  final timeLabel = formatChatMessageTime(context, localTimestamp);
+  return '$dayLabel, $timeLabel';
+}
+
 String _formatProjectActivityLabel({
   required int activeJobCount,
   required int activeChatCount,
@@ -3845,32 +3999,6 @@ String _formatProjectActivityLabel({
   return segments.join(' • ');
 }
 
-String _formatOutgoingUploadLabel(SessionOutgoingUploadSummary summary) {
-  if (summary.totalCount == 1) {
-    if (summary.audioCount == 1) {
-      return 'Sending audio';
-    }
-    if (summary.imageCount == 1) {
-      return 'Uploading image';
-    }
-    if (summary.fileCount == 1) {
-      return 'Uploading file';
-    }
-    return 'Uploading attachments';
-  }
-
-  if (summary.audioCount == summary.totalCount) {
-    return 'Sending ${summary.totalCount} audios';
-  }
-  if (summary.imageCount == summary.totalCount) {
-    return 'Uploading ${summary.totalCount} images';
-  }
-  if (summary.fileCount == summary.totalCount) {
-    return 'Uploading ${summary.totalCount} files';
-  }
-  return 'Uploading ${summary.totalCount} items';
-}
-
 IconData _outgoingUploadIcon(SessionOutgoingUploadSummary summary) {
   if (summary.audioCount == summary.totalCount) {
     return Icons.graphic_eq_rounded;
@@ -3879,58 +4007,6 @@ IconData _outgoingUploadIcon(SessionOutgoingUploadSummary summary) {
     return Icons.image_rounded;
   }
   return Icons.cloud_upload_rounded;
-}
-
-class _SessionActiveJobPresentation {
-  const _SessionActiveJobPresentation({
-    required this.label,
-    required this.backgroundColor,
-    required this.foregroundColor,
-  });
-
-  final String label;
-  final Color backgroundColor;
-  final Color foregroundColor;
-}
-
-_SessionActiveJobPresentation? _buildSessionActiveJobPresentation(
-  SessionActiveJobSummary? summary,
-) {
-  if (summary == null) {
-    return null;
-  }
-
-  final elapsedLabel = _formatElapsed(summary.maxElapsedSeconds);
-  if (elapsedLabel == null) {
-    return null;
-  }
-
-  final accentColor = _agentAccentColor(
-    summary.primaryAgentId,
-    seed: summary.primaryAgentSeed,
-  );
-  final agentLabel = summary.primaryAgentLabel.trim();
-  final label = summary.activeJobCount == 1
-      ? '$agentLabel running • $elapsedLabel'
-      : '$agentLabel +${summary.activeJobCount - 1} running • $elapsedLabel';
-
-  return _SessionActiveJobPresentation(
-    label: label,
-    backgroundColor: accentColor.withValues(alpha: 0.18),
-    foregroundColor: accentColor,
-  );
-}
-
-String? _formatElapsed(int? seconds) {
-  if (seconds == null) {
-    return null;
-  }
-  if (seconds < 60) {
-    return '${seconds}s';
-  }
-  final minutes = seconds ~/ 60;
-  final remainingSeconds = seconds % 60;
-  return '${minutes}m ${remainingSeconds}s';
 }
 
 class _MenuStatusBadge extends StatelessWidget {
@@ -4019,31 +4095,6 @@ class _ProjectStatusPill extends StatelessWidget {
   }
 }
 
-class _ProjectFeedbackQueueButton extends StatelessWidget {
-  const _ProjectFeedbackQueueButton({
-    required this.count,
-    required this.onPressed,
-  });
-
-  final int count;
-  final VoidCallback onPressed;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
-      child: Align(
-        alignment: Alignment.centerLeft,
-        child: FilledButton.icon(
-          onPressed: onPressed,
-          icon: const Icon(Icons.feedback_outlined),
-          label: Text('Feedback queue ($count)'),
-        ),
-      ),
-    );
-  }
-}
-
 class _ServerManagerSheet extends StatefulWidget {
   const _ServerManagerSheet({
     required this.profiles,
@@ -4120,7 +4171,8 @@ class _ServerManagerSheetState extends State<_ServerManagerSheet> {
                       controller: _urlController,
                       decoration: const InputDecoration(
                         labelText: 'Base URL',
-                        hintText: 'http://batata-default-string.tail0302c4.ts.net',
+                        hintText:
+                            'http://batata-default-string.tail0302c4.ts.net',
                       ),
                     ),
                   ),
@@ -4414,8 +4466,8 @@ class _TurnSummaryBanner extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final label = summaryCount == 1
-        ? 'Showing 1 turn summary'
-        : 'Showing $summaryCount turn summaries';
+        ? 'Showing 1 chat summary'
+        : 'Showing $summaryCount chat summaries';
     final suffix = enabled
         ? 'New summaries are generated automatically for this chat.'
         : 'Automatic generation is off for this chat.';
@@ -4466,8 +4518,8 @@ class _TurnSummariesPlaceholder extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final message = enabled
-        ? 'The summarizer is enabled, but it has not created a turn summary yet.'
-        : 'The summarizer is disabled for this chat. Enable it from Agents to start collecting turn summaries.';
+        ? 'The chat summary is enabled, but the first summary has not been created yet.'
+        : 'The chat summary is disabled for this chat. Enable it from Agents to start collecting summaries.';
     return Center(
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 24),
@@ -4477,7 +4529,7 @@ class _TurnSummariesPlaceholder extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             children: <Widget>[
               const Text(
-                'No turn summaries yet',
+                'No chat summaries yet',
                 style: TextStyle(fontSize: 24, fontWeight: FontWeight.w600),
                 textAlign: TextAlign.center,
               ),
@@ -4657,6 +4709,7 @@ class _Composer extends StatefulWidget {
     required this.imageAttachmentsEnabled,
     required this.fileAttachmentsEnabled,
     required this.voiceStatusText,
+    required this.isProjectFactoryIntake,
   });
 
   final String? sessionId;
@@ -4676,6 +4729,7 @@ class _Composer extends StatefulWidget {
   final bool imageAttachmentsEnabled;
   final bool fileAttachmentsEnabled;
   final String voiceStatusText;
+  final bool isProjectFactoryIntake;
 
   @override
   State<_Composer> createState() => _ComposerState();
@@ -4691,6 +4745,7 @@ class _ComposerState extends State<_Composer> {
   bool _hasText = false;
   bool _isRecording = false;
   bool _isSubmittingAttachments = false;
+  bool _attachmentsExpanded = true;
   bool _didStartRecordingFromPrimaryDrag = false;
   double _primaryActionDragDy = 0;
   final List<_PendingAttachmentDraft> _pendingAttachments =
@@ -4950,8 +5005,12 @@ class _ComposerState extends State<_Composer> {
             child: _PendingAttachmentTray(
               attachments: _pendingAttachments,
               busy: widget.isBusy,
+              isProjectFactoryIntake: widget.isProjectFactoryIntake,
               onRemove: _removePendingAttachment,
+              onRoleChanged: _setPendingAttachmentRole,
               onClearAll: _clearPendingAttachments,
+              expanded: _attachmentsExpanded,
+              onToggleExpanded: _toggleAttachmentsExpanded,
             ),
           ),
         TextField(
@@ -5324,6 +5383,8 @@ class _ComposerState extends State<_Composer> {
       return;
     }
 
+    final stagedAttachments =
+        List<_PendingAttachmentDraft>.from(_pendingAttachments);
     final recorder = _audioRecorder;
     _audioRecorder = widget.audioRecorderFactory();
     _recordingTicker?.cancel();
@@ -5341,8 +5402,6 @@ class _ComposerState extends State<_Composer> {
     }
 
     final prompt = widget.controller.text.trim();
-    final message =
-        _pendingAttachments.isEmpty && prompt.isNotEmpty ? prompt : null;
     if (mounted) {
       setState(() {
         _isSubmittingAttachments = true;
@@ -5350,8 +5409,38 @@ class _ComposerState extends State<_Composer> {
     }
 
     var didSend = false;
+    var usedAttachmentsFlow = false;
     try {
-      didSend = await widget.onSendAudio(audioFile, message: message);
+      if (stagedAttachments.isNotEmpty) {
+        usedAttachmentsFlow = true;
+        var audioName = 'voice-note.m4a';
+        try {
+          final resolvedName = audioFile.name.trim();
+          if (resolvedName.isNotEmpty) {
+            audioName = resolvedName;
+          }
+        } catch (_) {
+          audioName = 'voice-note.m4a';
+        }
+        final audioAttachment = _PendingAttachmentDraft(
+          file: audioFile,
+          name: audioName,
+          kind: _AttachmentDraftKind.audio,
+        );
+        final attachments = <_PendingAttachmentDraft>[
+          ...stagedAttachments,
+          audioAttachment,
+        ];
+        didSend = await _sendPendingAttachments(
+          attachments,
+          prompt: prompt.isEmpty ? null : prompt,
+        );
+      } else {
+        didSend = await widget.onSendAudio(
+          audioFile,
+          message: prompt.isEmpty ? null : prompt,
+        );
+      }
     } catch (_) {
       didSend = false;
     } finally {
@@ -5365,10 +5454,15 @@ class _ComposerState extends State<_Composer> {
       _isSubmittingAttachments = false;
     });
     if (didSend) {
-      if (message != null) {
-        widget.controller.clear();
-        _emitDraftChanged();
-      }
+      setState(() {
+        _pendingAttachments.clear();
+        _attachmentsExpanded = true;
+      });
+      widget.controller.clear();
+      _emitDraftChanged();
+      return;
+    }
+    if (usedAttachmentsFlow) {
       return;
     }
     ScaffoldMessenger.of(context).showSnackBar(
@@ -5446,14 +5540,41 @@ class _ComposerState extends State<_Composer> {
     _emitDraftChanged();
   }
 
+  void _setPendingAttachmentRole(
+    _PendingAttachmentDraft attachment,
+    ProjectAssetRole? role,
+  ) {
+    final index = _pendingAttachments.indexWhere(
+      (item) => item.identityKey == attachment.identityKey,
+    );
+    if (index < 0) {
+      return;
+    }
+    setState(() {
+      _pendingAttachments[index] =
+          _pendingAttachments[index].copyWith(projectAssetRole: role);
+    });
+    _emitDraftChanged();
+  }
+
   void _clearPendingAttachments() {
     if (_pendingAttachments.isEmpty) {
       return;
     }
     setState(() {
       _pendingAttachments.clear();
+      _attachmentsExpanded = true;
     });
     _emitDraftChanged();
+  }
+
+  void _toggleAttachmentsExpanded() {
+    if (_pendingAttachments.isEmpty) {
+      return;
+    }
+    setState(() {
+      _attachmentsExpanded = !_attachmentsExpanded;
+    });
   }
 
   bool _appendPendingAttachments(List<_PendingAttachmentDraft> attachments) {
@@ -5478,6 +5599,7 @@ class _ComposerState extends State<_Composer> {
 
     setState(() {
       _pendingAttachments.addAll(uniqueAttachments);
+      _attachmentsExpanded = true;
     });
     _emitDraftChanged();
     return true;
@@ -5623,6 +5745,9 @@ class _ComposerState extends State<_Composer> {
         _pendingAttachments
           ..clear()
           ..addAll(nextAttachments);
+        if (_pendingAttachments.isEmpty) {
+          _attachmentsExpanded = true;
+        }
       });
     } else {
       _hasText = nextText.trim().isNotEmpty;
@@ -5799,6 +5924,7 @@ class _PendingAttachmentDraft {
     required this.kind,
     this.sizeBytes,
     this.previewBytes,
+    this.projectAssetRole,
   });
 
   final XFile file;
@@ -5806,6 +5932,7 @@ class _PendingAttachmentDraft {
   final _AttachmentDraftKind kind;
   final int? sizeBytes;
   final Uint8List? previewBytes;
+  final ProjectAssetRole? projectAssetRole;
 
   bool get isImage => kind == _AttachmentDraftKind.image;
 
@@ -5822,6 +5949,406 @@ class _PendingAttachmentDraft {
   }
 
   String get identityKey => '${kind.name}:$name:${sizeBytes ?? 0}';
+
+  _PendingAttachmentDraft copyWith({
+    ProjectAssetRole? projectAssetRole,
+  }) {
+    return _PendingAttachmentDraft(
+      file: file,
+      name: name,
+      kind: kind,
+      sizeBytes: sizeBytes,
+      previewBytes: previewBytes,
+      projectAssetRole: projectAssetRole,
+    );
+  }
+}
+
+enum _RenameChatDraftKind { manual, generatedText, generatedAudio }
+
+class _RenameChatDraft {
+  const _RenameChatDraft._({
+    required this.kind,
+    this.title,
+    this.instructions,
+    this.audioFile,
+  });
+
+  factory _RenameChatDraft.manual(String title) {
+    return _RenameChatDraft._(
+      kind: _RenameChatDraftKind.manual,
+      title: title,
+    );
+  }
+
+  factory _RenameChatDraft.generatedText(String? instructions) {
+    return _RenameChatDraft._(
+      kind: _RenameChatDraftKind.generatedText,
+      instructions: instructions,
+    );
+  }
+
+  factory _RenameChatDraft.generatedAudio({
+    required XFile audioFile,
+    String? instructions,
+  }) {
+    return _RenameChatDraft._(
+      kind: _RenameChatDraftKind.generatedAudio,
+      instructions: instructions,
+      audioFile: audioFile,
+    );
+  }
+
+  final _RenameChatDraftKind kind;
+  final String? title;
+  final String? instructions;
+  final XFile? audioFile;
+}
+
+class _RenameChatSheet extends StatefulWidget {
+  const _RenameChatSheet({
+    required this.initialTitle,
+    required this.voiceEnabled,
+    required this.voiceStatusText,
+    required this.audioRecorderFactory,
+    required this.onBeginRecording,
+  });
+
+  final String initialTitle;
+  final bool voiceEnabled;
+  final String voiceStatusText;
+  final AudioNoteRecorder Function() audioRecorderFactory;
+  final Future<void> Function() onBeginRecording;
+
+  @override
+  State<_RenameChatSheet> createState() => _RenameChatSheetState();
+}
+
+class _RenameChatSheetState extends State<_RenameChatSheet> {
+  late final TextEditingController _manualTitleController;
+  late final TextEditingController _instructionsController;
+  late AudioNoteRecorder _audioRecorder;
+  _RenameChatMode _mode = _RenameChatMode.manual;
+  XFile? _recordedAudio;
+  Stopwatch? _recordingStopwatch;
+  Timer? _recordingTicker;
+  bool _isRecording = false;
+  bool _isSubmitting = false;
+  bool _audioReturnedToCaller = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _manualTitleController = TextEditingController(text: widget.initialTitle);
+    _instructionsController = TextEditingController();
+    _audioRecorder = widget.audioRecorderFactory();
+  }
+
+  @override
+  void dispose() {
+    _recordingTicker?.cancel();
+    _manualTitleController.dispose();
+    _instructionsController.dispose();
+    if (_isRecording) {
+      unawaited(_audioRecorder.cancel());
+    }
+    final recordedAudio = _recordedAudio;
+    if (recordedAudio != null && !_audioReturnedToCaller) {
+      unawaited(_audioRecorder.cleanup(recordedAudio));
+    }
+    unawaited(_audioRecorder.dispose());
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bottomInset = MediaQuery.viewInsetsOf(context).bottom;
+    return SafeArea(
+      top: false,
+      child: SingleChildScrollView(
+        padding: EdgeInsets.fromLTRB(20, 8, 20, 20 + bottomInset),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: <Widget>[
+            Row(
+              children: <Widget>[
+                const Expanded(
+                  child: Text(
+                    'Rename chat',
+                    style: TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+                IconButton(
+                  onPressed:
+                      _isSubmitting ? null : () => Navigator.of(context).pop(),
+                  icon: const Icon(Icons.close_rounded),
+                  tooltip: 'Close',
+                ),
+              ],
+            ),
+            const SizedBox(height: 14),
+            SegmentedButton<_RenameChatMode>(
+              segments: const <ButtonSegment<_RenameChatMode>>[
+                ButtonSegment<_RenameChatMode>(
+                  value: _RenameChatMode.manual,
+                  icon: Icon(Icons.edit_outlined),
+                  label: Text('Manual'),
+                ),
+                ButtonSegment<_RenameChatMode>(
+                  value: _RenameChatMode.generated,
+                  icon: Icon(Icons.auto_awesome_outlined),
+                  label: Text('Suggest'),
+                ),
+              ],
+              selected: <_RenameChatMode>{_mode},
+              onSelectionChanged: _isSubmitting
+                  ? null
+                  : (selection) {
+                      setState(() {
+                        _mode = selection.first;
+                      });
+                    },
+            ),
+            const SizedBox(height: 18),
+            if (_mode == _RenameChatMode.manual)
+              TextField(
+                controller: _manualTitleController,
+                autofocus: true,
+                maxLength: 120,
+                minLines: 1,
+                maxLines: 2,
+                textInputAction: TextInputAction.done,
+                onSubmitted: (_) => _submit(),
+                decoration: const InputDecoration(
+                  labelText: 'Chat name',
+                  border: OutlineInputBorder(),
+                ),
+              )
+            else
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: <Widget>[
+                  TextField(
+                    controller: _instructionsController,
+                    maxLength: 2000,
+                    minLines: 3,
+                    maxLines: 6,
+                    decoration: const InputDecoration(
+                      labelText: 'Title instructions',
+                      hintText: 'Make it about the release plan',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  _buildVoiceTitleControls(),
+                ],
+              ),
+            const SizedBox(height: 18),
+            FilledButton.icon(
+              onPressed: _isSubmitting ? null : _submit,
+              icon: Icon(
+                _mode == _RenameChatMode.manual
+                    ? Icons.check_rounded
+                    : Icons.auto_awesome_rounded,
+              ),
+              label: Text(
+                _mode == _RenameChatMode.manual ? 'Save name' : 'Generate name',
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildVoiceTitleControls() {
+    final recordedAudio = _recordedAudio;
+    if (_isRecording) {
+      return Row(
+        children: <Widget>[
+          Expanded(
+            child: _VoiceStatusCard(
+              icon: Icons.mic_rounded,
+              title: 'Recording',
+              subtitle: 'Speak the title direction',
+              color: const Color(0xFF25D366),
+              trailing: _StatusPill(
+                label: _formatRenameRecordingDuration(),
+                backgroundColor: const Color(0xFF0B3D25),
+                foregroundColor: const Color(0xFFB7F5CF),
+              ),
+              titleMaxLines: 1,
+              subtitleMaxLines: 1,
+            ),
+          ),
+          const SizedBox(width: 10),
+          FilledButton(
+            onPressed: _stopRecording,
+            style: FilledButton.styleFrom(
+              minimumSize: const Size(52, 52),
+              padding: EdgeInsets.zero,
+            ),
+            child: const Icon(Icons.stop_rounded),
+          ),
+        ],
+      );
+    }
+
+    if (recordedAudio != null) {
+      return Row(
+        children: <Widget>[
+          const Expanded(
+            child: _VoiceStatusCard(
+              icon: Icons.graphic_eq_rounded,
+              title: 'Voice instruction ready',
+              subtitle: 'It will be transcribed before naming',
+              color: Color(0xFF55D6BE),
+              titleMaxLines: 1,
+              subtitleMaxLines: 1,
+            ),
+          ),
+          const SizedBox(width: 10),
+          IconButton.filledTonal(
+            onPressed: _discardRecordedAudio,
+            icon: const Icon(Icons.delete_outline_rounded),
+            tooltip: 'Discard voice instruction',
+          ),
+        ],
+      );
+    }
+
+    return OutlinedButton.icon(
+      onPressed: _isSubmitting ? null : _startRecording,
+      icon:
+          Icon(widget.voiceEnabled ? Icons.mic_rounded : Icons.mic_off_rounded),
+      label: Text(
+        widget.voiceEnabled
+            ? 'Record title instruction'
+            : widget.voiceStatusText,
+        overflow: TextOverflow.ellipsis,
+      ),
+    );
+  }
+
+  Future<void> _startRecording() async {
+    if (!widget.voiceEnabled) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(widget.voiceStatusText)),
+      );
+      return;
+    }
+    if (_isRecording || _isSubmitting) {
+      return;
+    }
+
+    try {
+      await _discardRecordedAudio();
+      await widget.onBeginRecording();
+      await _audioRecorder.start();
+      _recordingStopwatch = Stopwatch()..start();
+      _recordingTicker?.cancel();
+      _recordingTicker = Timer.periodic(const Duration(seconds: 1), (_) {
+        if (mounted) {
+          setState(() {});
+        }
+      });
+      setState(() {
+        _isRecording = true;
+      });
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('$error')),
+      );
+    }
+  }
+
+  Future<void> _stopRecording() async {
+    if (!_isRecording) {
+      return;
+    }
+
+    final audioFile = await _audioRecorder.stop();
+    _recordingTicker?.cancel();
+    _recordingStopwatch?.stop();
+    _recordingStopwatch = null;
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _isRecording = false;
+      _recordedAudio = audioFile;
+    });
+  }
+
+  Future<void> _discardRecordedAudio() async {
+    final audioFile = _recordedAudio;
+    if (audioFile == null) {
+      return;
+    }
+    _recordedAudio = null;
+    await _audioRecorder.cleanup(audioFile);
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
+  void _submit() {
+    if (_isRecording) {
+      return;
+    }
+
+    setState(() {
+      _isSubmitting = true;
+    });
+
+    if (_mode == _RenameChatMode.manual) {
+      final title = _manualTitleController.text.trim();
+      if (title.isEmpty) {
+        setState(() {
+          _isSubmitting = false;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Enter a chat name.')),
+        );
+        return;
+      }
+      Navigator.of(context).pop(_RenameChatDraft.manual(title));
+      return;
+    }
+
+    final instructions = _instructionsController.text.trim();
+    final audioFile = _recordedAudio;
+    if (audioFile != null) {
+      _audioReturnedToCaller = true;
+      Navigator.of(context).pop(
+        _RenameChatDraft.generatedAudio(
+          audioFile: audioFile,
+          instructions: instructions.isEmpty ? null : instructions,
+        ),
+      );
+      return;
+    }
+
+    Navigator.of(context).pop(
+      _RenameChatDraft.generatedText(
+        instructions.isEmpty ? null : instructions,
+      ),
+    );
+  }
+
+  String _formatRenameRecordingDuration() {
+    final elapsed = _recordingStopwatch?.elapsed ?? Duration.zero;
+    final minutes = elapsed.inMinutes.remainder(60).toString().padLeft(2, '0');
+    final seconds = elapsed.inSeconds.remainder(60).toString().padLeft(2, '0');
+    return '$minutes:$seconds';
+  }
 }
 
 Color _colorFromHex(String value) {
@@ -5834,41 +6361,6 @@ Color _colorFromHex(String value) {
     return const Color(0xFF55D6BE);
   }
   return Color(0xFF000000 | parsed);
-}
-
-Color _agentAccentColor(
-  AgentId agentId, {
-  required String seed,
-}) {
-  switch (agentId) {
-    case AgentId.generator:
-      return const Color(0xFF55D6BE);
-    case AgentId.reviewer:
-      return const Color(0xFFFFC857);
-    case AgentId.summary:
-      return const Color(0xFFAED3FF);
-    case AgentId.supervisor:
-      return const Color(0xFF8FEAFF);
-    case AgentId.qa:
-      return const Color(0xFF7EE081);
-    case AgentId.ux:
-      return const Color(0xFFFF9AC6);
-    case AgentId.seniorEngineer:
-      return const Color(0xFFFFA15C);
-    case AgentId.scraper:
-      return const Color(0xFF55C5B8);
-    case AgentId.user:
-      return _hashedAccentColor(seed);
-  }
-}
-
-Color _hashedAccentColor(String seed) {
-  var hash = 0;
-  for (final codeUnit in seed.codeUnits) {
-    hash = (hash * 31 + codeUnit) & 0x7fffffff;
-  }
-  final hue = (hash % 360).toDouble();
-  return HSLColor.fromAHSL(1, hue, 0.68, 0.66).toColor();
 }
 
 String _presetLabel(AgentPreset preset) {
@@ -5924,6 +6416,1284 @@ class _AgentProfilePill extends StatelessWidget {
         ],
       ),
     );
+  }
+}
+
+class NewProjectFactoryDraft {
+  const NewProjectFactoryDraft({
+    required this.name,
+    required this.businessType,
+    required this.primaryGoal,
+    required this.platforms,
+    required this.backend,
+    required this.logoMode,
+    required this.visualReferencePaths,
+    required this.referenceImages,
+  });
+
+  final String name;
+  final String businessType;
+  final String primaryGoal;
+  final List<String> platforms;
+  final String backend;
+  final String logoMode;
+  final List<String> visualReferencePaths;
+  final List<XFile> referenceImages;
+}
+
+class NewProjectFactoryDialog extends StatefulWidget {
+  const NewProjectFactoryDialog({
+    super.key,
+    required this.options,
+    this.onOpenHistory,
+  });
+
+  final ProjectFactoryOptions options;
+  final Future<void> Function()? onOpenHistory;
+
+  @override
+  State<NewProjectFactoryDialog> createState() =>
+      NewProjectFactoryDialogState();
+}
+
+class NewProjectFactoryDialogState extends State<NewProjectFactoryDialog> {
+  final TextEditingController _nameController = TextEditingController();
+  final TextEditingController _goalController = TextEditingController();
+  final TextEditingController _visualReferencesController =
+      TextEditingController();
+  final List<XFile> _referenceImages = <XFile>[];
+  late String _businessType;
+  late String _backend;
+  late String _logoMode;
+  late Set<String> _platforms;
+
+  @override
+  void initState() {
+    super.initState();
+    _businessType = widget.options.businessTypes.isNotEmpty
+        ? widget.options.businessTypes.first
+        : 'other';
+    _backend = widget.options.defaultBackend;
+    _logoMode = widget.options.logoModes.isNotEmpty
+        ? widget.options.logoModes.first
+        : 'generate';
+    _platforms = widget.options.defaultPlatforms.toSet();
+  }
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _goalController.dispose();
+    _visualReferencesController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final businessTypes = widget.options.businessTypes.isNotEmpty
+        ? widget.options.businessTypes
+        : <String>['other'];
+    final backends = widget.options.backends.isNotEmpty
+        ? widget.options.backends
+        : <String>['fastapi'];
+    final logoModes = widget.options.logoModes.isNotEmpty
+        ? widget.options.logoModes
+        : <String>['generate'];
+    final platforms = widget.options.platforms.isNotEmpty
+        ? widget.options.platforms
+        : <String>['ios', 'android', 'web'];
+    return Padding(
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          Row(
+            children: <Widget>[
+              const Icon(Icons.create_new_folder_outlined),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  'New project',
+                  style: theme.textTheme.titleLarge?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              if (widget.onOpenHistory != null)
+                IconButton(
+                  onPressed: widget.onOpenHistory,
+                  icon: const Icon(Icons.history),
+                  tooltip: 'Project history',
+                ),
+              IconButton(
+                onPressed: () => Navigator.of(context).pop(),
+                icon: const Icon(Icons.close),
+                tooltip: 'Close',
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          Expanded(
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: <Widget>[
+                  TextField(
+                    controller: _nameController,
+                    textInputAction: TextInputAction.next,
+                    decoration: const InputDecoration(
+                      labelText: 'Project name',
+                      prefixIcon: Icon(Icons.drive_file_rename_outline),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<String>(
+                    initialValue: _businessType,
+                    decoration: const InputDecoration(
+                      labelText: 'Business type',
+                      prefixIcon: Icon(Icons.business_center_outlined),
+                    ),
+                    items: businessTypes
+                        .map(
+                          (type) => DropdownMenuItem<String>(
+                            value: type,
+                            child: Text(type),
+                          ),
+                        )
+                        .toList(),
+                    onChanged: (value) {
+                      if (value == null) {
+                        return;
+                      }
+                      setState(() => _businessType = value);
+                    },
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _goalController,
+                    maxLines: 3,
+                    decoration: const InputDecoration(
+                      labelText: 'Primary goal',
+                      prefixIcon: Icon(Icons.flag_outlined),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: platforms.map((platform) {
+                      return FilterChip(
+                        label: Text(platform),
+                        selected: _platforms.contains(platform),
+                        onSelected: (selected) {
+                          setState(() {
+                            if (selected) {
+                              _platforms.add(platform);
+                            } else if (_platforms.length > 1) {
+                              _platforms.remove(platform);
+                            }
+                          });
+                        },
+                      );
+                    }).toList(),
+                  ),
+                  const SizedBox(height: 16),
+                  DropdownButtonFormField<String>(
+                    initialValue: _backend,
+                    decoration: const InputDecoration(
+                      labelText: 'Backend',
+                      prefixIcon: Icon(Icons.dns_outlined),
+                    ),
+                    items: backends
+                        .map(
+                          (backend) => DropdownMenuItem<String>(
+                            value: backend,
+                            child: Text(backend),
+                          ),
+                        )
+                        .toList(),
+                    onChanged: (value) {
+                      if (value == null) {
+                        return;
+                      }
+                      setState(() => _backend = value);
+                    },
+                  ),
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<String>(
+                    initialValue: _logoMode,
+                    decoration: const InputDecoration(
+                      labelText: 'Logo',
+                      prefixIcon: Icon(Icons.imagesearch_roller_outlined),
+                    ),
+                    items: logoModes
+                        .map(
+                          (mode) => DropdownMenuItem<String>(
+                            value: mode,
+                            child: Text(mode),
+                          ),
+                        )
+                        .toList(),
+                    onChanged: (value) {
+                      if (value == null) {
+                        return;
+                      }
+                      setState(() => _logoMode = value);
+                    },
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _visualReferencesController,
+                    maxLines: 2,
+                    decoration: const InputDecoration(
+                      labelText: 'Visual reference paths',
+                      prefixIcon: Icon(Icons.image_outlined),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  OutlinedButton.icon(
+                    onPressed: _pickReferenceImages,
+                    icon: const Icon(Icons.add_photo_alternate_outlined),
+                    label: const Text('Attach reference images'),
+                  ),
+                  if (_referenceImages.isNotEmpty) ...<Widget>[
+                    const SizedBox(height: 8),
+                    ..._referenceImages.map(
+                      (image) => ListTile(
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        leading: const Icon(Icons.image_outlined),
+                        title: Text(image.name),
+                        trailing: IconButton(
+                          onPressed: () {
+                            setState(() {
+                              _referenceImages.remove(image);
+                            });
+                          },
+                          icon: const Icon(Icons.close),
+                          tooltip: 'Remove image',
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+          FilledButton.icon(
+            onPressed: _submit,
+            icon: const Icon(Icons.play_arrow_rounded),
+            label: const Text('Create'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _pickReferenceImages() async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.image,
+      allowMultiple: true,
+      withData: kIsWeb,
+    );
+    if (result == null || result.files.isEmpty) {
+      return;
+    }
+    final picked = <XFile>[];
+    for (final file in result.files) {
+      final mimeType = _mimeTypeForReferenceImage(file.name);
+      if (file.path != null && file.path!.isNotEmpty) {
+        picked.add(XFile(file.path!, name: file.name, mimeType: mimeType));
+        continue;
+      }
+      final bytes = file.bytes;
+      if (bytes != null) {
+        picked.add(
+          XFile.fromData(bytes, name: file.name, mimeType: mimeType),
+        );
+      }
+    }
+    if (picked.isEmpty) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not read selected images.')),
+      );
+      return;
+    }
+    setState(() {
+      _referenceImages.addAll(picked);
+    });
+  }
+
+  void _submit() {
+    final name = _nameController.text.trim();
+    final goal = _goalController.text.trim();
+    if (name.isEmpty || goal.isEmpty || _platforms.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Name, goal, and platform are required.')),
+      );
+      return;
+    }
+    Navigator.of(context).pop(
+      NewProjectFactoryDraft(
+        name: name,
+        businessType: _businessType,
+        primaryGoal: goal,
+        platforms: _platforms.toList(growable: false),
+        backend: _backend,
+        logoMode: _logoMode,
+        visualReferencePaths: _visualReferencesController.text
+            .split(',')
+            .map((item) => item.trim())
+            .where((item) => item.isNotEmpty)
+            .toList(growable: false),
+        referenceImages: List<XFile>.unmodifiable(_referenceImages),
+      ),
+    );
+  }
+}
+
+String? _mimeTypeForReferenceImage(String filename) {
+  final suffix = filename.trim().toLowerCase().split('.').last;
+  return switch (suffix) {
+    'png' => 'image/png',
+    'jpg' || 'jpeg' => 'image/jpeg',
+    'webp' => 'image/webp',
+    _ => null,
+  };
+}
+
+typedef ProjectFactoryJobPoller = Future<ProjectFactoryJob> Function(
+    String jobId);
+typedef ProjectFactoryJobLister = Future<List<ProjectFactoryJobSummary>>
+    Function();
+typedef ProjectFactoryProjectPathOpener = Future<void> Function(
+    String projectPath);
+typedef WebPreviewLister = Future<List<WebPreview>> Function();
+typedef WebPreviewInviteLister = Future<List<WebPreviewInvite>> Function(
+    String previewId);
+typedef WebPreviewInviteCreator = Future<WebPreviewInvite> Function(
+  String previewId, {
+  int? ttlSeconds,
+  bool singleUse,
+});
+typedef WebPreviewInviteMutator = Future<WebPreviewInvite> Function({
+  required String previewId,
+  required String inviteId,
+});
+typedef WebPreviewUrlOpener = Future<void> Function(String url);
+
+class ProjectFactoryHistoryDialog extends StatefulWidget {
+  const ProjectFactoryHistoryDialog({
+    super.key,
+    required this.listJobs,
+    required this.getJob,
+    required this.onOpenProjectPath,
+    this.listWebPreviews,
+    this.listWebPreviewInvites,
+    this.createWebPreviewInvite,
+    this.revokeWebPreviewInvite,
+    this.syncWebPreviewInvite,
+    this.onOpenWebPreviewUrl,
+  });
+
+  final ProjectFactoryJobLister listJobs;
+  final ProjectFactoryJobPoller getJob;
+  final ProjectFactoryProjectPathOpener onOpenProjectPath;
+  final WebPreviewLister? listWebPreviews;
+  final WebPreviewInviteLister? listWebPreviewInvites;
+  final WebPreviewInviteCreator? createWebPreviewInvite;
+  final WebPreviewInviteMutator? revokeWebPreviewInvite;
+  final WebPreviewInviteMutator? syncWebPreviewInvite;
+  final WebPreviewUrlOpener? onOpenWebPreviewUrl;
+
+  @override
+  State<ProjectFactoryHistoryDialog> createState() =>
+      _ProjectFactoryHistoryDialogState();
+}
+
+class _ProjectFactoryHistoryDialogState
+    extends State<ProjectFactoryHistoryDialog> {
+  bool _loading = true;
+  String? _error;
+  List<ProjectFactoryJobSummary> _jobs = <ProjectFactoryJobSummary>[];
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_load());
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final jobs = await widget.listJobs();
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _jobs = jobs;
+        _loading = false;
+      });
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _error = error.toString();
+        _loading = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Row(
+        children: <Widget>[
+          const Icon(Icons.history),
+          const SizedBox(width: 12),
+          const Expanded(child: Text('Project history')),
+          if (widget.listWebPreviews != null)
+            IconButton(
+              onPressed: _openWebPreviews,
+              icon: const Icon(Icons.language),
+              tooltip: 'Web previews',
+            ),
+          IconButton(
+            onPressed: _load,
+            icon: const Icon(Icons.refresh),
+            tooltip: 'Refresh',
+          ),
+        ],
+      ),
+      content: SizedBox(
+        width: 620,
+        child: _buildContent(context),
+      ),
+      actions: <Widget>[
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Close'),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildContent(BuildContext context) {
+    if (_loading) {
+      return const SizedBox(
+        height: 160,
+        child: Center(child: CircularProgressIndicator()),
+      );
+    }
+    if (_error != null) {
+      return SizedBox(
+        height: 160,
+        child: Center(child: Text(_error!)),
+      );
+    }
+    if (_jobs.isEmpty) {
+      return const SizedBox(
+        height: 160,
+        child: Center(child: Text('No project factory history')),
+      );
+    }
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxHeight: 520),
+      child: ListView.separated(
+        shrinkWrap: true,
+        itemCount: _jobs.length,
+        separatorBuilder: (_, __) => const Divider(height: 1),
+        itemBuilder: (context, index) => _ProjectFactoryHistoryTile(
+          job: _jobs[index],
+          onWatch: () => _watchJob(_jobs[index]),
+          onOpen: _jobs[index].isReady && _jobs[index].projectPath != null
+              ? () => _openProject(_jobs[index].projectPath!)
+              : null,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _watchJob(ProjectFactoryJobSummary summary) async {
+    final detail = await widget.getJob(summary.jobId);
+    if (!mounted) {
+      return;
+    }
+    final result = await showDialog<ProjectFactoryJob>(
+      context: context,
+      barrierDismissible: detail.isTerminal,
+      builder: (context) => ProjectFactoryProgressDialog(
+        initialJob: detail,
+        pollJob: widget.getJob,
+      ),
+    );
+    final targetPath = result?.targetPath;
+    if (result != null && result.isReady && targetPath != null) {
+      await _openProject(targetPath);
+    }
+    await _load();
+  }
+
+  Future<void> _openProject(String projectPath) async {
+    await widget.onOpenProjectPath(projectPath);
+    if (!mounted) {
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Project workspace opened.')),
+    );
+  }
+
+  Future<void> _openWebPreviews() async {
+    final listWebPreviews = widget.listWebPreviews;
+    if (listWebPreviews == null) {
+      return;
+    }
+    await showDialog<void>(
+      context: context,
+      builder: (context) => WebPreviewPanelDialog(
+        listWebPreviews: listWebPreviews,
+        listInvites: widget.listWebPreviewInvites,
+        createInvite: widget.createWebPreviewInvite,
+        revokeInvite: widget.revokeWebPreviewInvite,
+        syncInvite: widget.syncWebPreviewInvite,
+        onOpenUrl: widget.onOpenWebPreviewUrl,
+      ),
+    );
+  }
+}
+
+class WebPreviewPanelDialog extends StatefulWidget {
+  const WebPreviewPanelDialog({
+    super.key,
+    required this.listWebPreviews,
+    this.listInvites,
+    this.createInvite,
+    this.revokeInvite,
+    this.syncInvite,
+    this.onOpenUrl,
+  });
+
+  final WebPreviewLister listWebPreviews;
+  final WebPreviewInviteLister? listInvites;
+  final WebPreviewInviteCreator? createInvite;
+  final WebPreviewInviteMutator? revokeInvite;
+  final WebPreviewInviteMutator? syncInvite;
+  final WebPreviewUrlOpener? onOpenUrl;
+
+  @override
+  State<WebPreviewPanelDialog> createState() => _WebPreviewPanelDialogState();
+}
+
+class _WebPreviewPanelDialogState extends State<WebPreviewPanelDialog> {
+  bool _loading = true;
+  String? _error;
+  List<WebPreview> _previews = <WebPreview>[];
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_load());
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final previews = await widget.listWebPreviews();
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _previews = previews;
+        _loading = false;
+      });
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _error = error.toString();
+        _loading = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Row(
+        children: <Widget>[
+          const Icon(Icons.language),
+          const SizedBox(width: 12),
+          const Expanded(child: Text('Web previews')),
+          IconButton(
+            onPressed: _load,
+            icon: const Icon(Icons.refresh),
+            tooltip: 'Refresh previews',
+          ),
+        ],
+      ),
+      content: SizedBox(
+        width: 680,
+        child: _buildContent(context),
+      ),
+      actions: <Widget>[
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Close'),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildContent(BuildContext context) {
+    if (_loading) {
+      return const SizedBox(
+        height: 180,
+        child: Center(child: CircularProgressIndicator()),
+      );
+    }
+    if (_error != null) {
+      return SizedBox(height: 180, child: Center(child: Text(_error!)));
+    }
+    if (_previews.isEmpty) {
+      return const SizedBox(
+        height: 180,
+        child: Center(child: Text('No web previews')),
+      );
+    }
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxHeight: 560),
+      child: ListView.separated(
+        shrinkWrap: true,
+        itemCount: _previews.length,
+        separatorBuilder: (_, __) => const SizedBox(height: 12),
+        itemBuilder: (context, index) => _WebPreviewCard(
+          preview: _previews[index],
+          onOpen: _previews[index].isActive
+              ? () => _openUrl(_previews[index].previewUrl)
+              : null,
+          onInvites: widget.listInvites == null
+              ? null
+              : () => _openInvites(_previews[index]),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openUrl(String url) async {
+    final callback = widget.onOpenUrl;
+    if (callback != null) {
+      await callback(url);
+      return;
+    }
+    final uri = Uri.tryParse(url);
+    if (uri == null) {
+      return;
+    }
+    await launchUrl(uri, mode: LaunchMode.externalApplication);
+  }
+
+  Future<void> _openInvites(WebPreview preview) async {
+    final listInvites = widget.listInvites;
+    if (listInvites == null) {
+      return;
+    }
+    await showDialog<void>(
+      context: context,
+      builder: (context) => WebPreviewInvitesDialog(
+        preview: preview,
+        listInvites: listInvites,
+        createInvite: widget.createInvite,
+        revokeInvite: widget.revokeInvite,
+        syncInvite: widget.syncInvite,
+      ),
+    );
+    await _load();
+  }
+}
+
+class _WebPreviewCard extends StatelessWidget {
+  const _WebPreviewCard({
+    required this.preview,
+    required this.onOpen,
+    required this.onInvites,
+  });
+
+  final WebPreview preview;
+  final VoidCallback? onOpen;
+  final VoidCallback? onInvites;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final resourceSummary = _resourceSummary(preview);
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Row(
+              children: <Widget>[
+                Icon(_iconForWebPreviewStatus(preview.status)),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    preview.sourceApp.isEmpty
+                        ? preview.previewId
+                        : preview.sourceApp,
+                    style: theme.textTheme.titleMedium,
+                  ),
+                ),
+                Text(preview.status),
+              ],
+            ),
+            const SizedBox(height: 8),
+            if (preview.previewUrl.isNotEmpty) Text(preview.previewUrl),
+            if (preview.healthUrl != null && preview.healthUrl!.isNotEmpty)
+              Text('Health: ${preview.healthUrl}'),
+            if (resourceSummary.isNotEmpty) Text(resourceSummary),
+            if (preview.inviteSyncSummary != null)
+              Text(_inviteSyncSummary(preview.inviteSyncSummary!)),
+            if (preview.status == 'apply_disabled')
+              const Text(
+                'Apply is disabled on the backend. Configure and enable web preview apply before publishing.',
+              ),
+            if (preview.error != null && preview.error!.isNotEmpty)
+              Text(
+                preview.error!,
+                style: TextStyle(color: theme.colorScheme.error),
+              ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              children: <Widget>[
+                if (onOpen != null)
+                  FilledButton.icon(
+                    onPressed: onOpen,
+                    icon: const Icon(Icons.open_in_browser),
+                    label: const Text('Open preview'),
+                  ),
+                if (onInvites != null)
+                  OutlinedButton.icon(
+                    onPressed: onInvites,
+                    icon: const Icon(Icons.mail_outline),
+                    label: const Text('Invites'),
+                  ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class WebPreviewInvitesDialog extends StatefulWidget {
+  const WebPreviewInvitesDialog({
+    super.key,
+    required this.preview,
+    required this.listInvites,
+    this.createInvite,
+    this.revokeInvite,
+    this.syncInvite,
+  });
+
+  final WebPreview preview;
+  final WebPreviewInviteLister listInvites;
+  final WebPreviewInviteCreator? createInvite;
+  final WebPreviewInviteMutator? revokeInvite;
+  final WebPreviewInviteMutator? syncInvite;
+
+  @override
+  State<WebPreviewInvitesDialog> createState() =>
+      _WebPreviewInvitesDialogState();
+}
+
+class _WebPreviewInvitesDialogState extends State<WebPreviewInvitesDialog> {
+  final TextEditingController _ttlController =
+      TextEditingController(text: '604800');
+  bool _singleUse = true;
+  bool _loading = true;
+  bool _busy = false;
+  String? _error;
+  WebPreviewInvite? _createdInvite;
+  List<WebPreviewInvite> _invites = <WebPreviewInvite>[];
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_load());
+  }
+
+  @override
+  void dispose() {
+    _ttlController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final invites = await widget.listInvites(widget.preview.previewId);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _invites = invites;
+        _loading = false;
+      });
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _error = error.toString();
+        _loading = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text('Invites - ${widget.preview.sourceApp}'),
+      content: SizedBox(width: 680, child: _buildContent(context)),
+      actions: <Widget>[
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Close'),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildContent(BuildContext context) {
+    if (_loading) {
+      return const SizedBox(
+        height: 180,
+        child: Center(child: CircularProgressIndicator()),
+      );
+    }
+    if (_error != null) {
+      return SizedBox(height: 180, child: Center(child: Text(_error!)));
+    }
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxHeight: 560),
+      child: SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: <Widget>[
+            _buildCreateInvite(context),
+            if (_createdInvite?.inviteUrl != null) ...<Widget>[
+              const SizedBox(height: 12),
+              _InviteLinkCard(invite: _createdInvite!),
+            ],
+            const SizedBox(height: 16),
+            if (_invites.isEmpty)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 32),
+                child: Center(child: Text('No preview invites')),
+              )
+            else
+              ..._invites.map(_buildInviteTile),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCreateInvite(BuildContext context) {
+    return Row(
+      children: <Widget>[
+        SizedBox(
+          width: 130,
+          child: TextField(
+            controller: _ttlController,
+            keyboardType: TextInputType.number,
+            decoration: const InputDecoration(labelText: 'TTL seconds'),
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('Single use'),
+            value: _singleUse,
+            onChanged: _busy
+                ? null
+                : (value) => setState(() {
+                      _singleUse = value;
+                    }),
+          ),
+        ),
+        const SizedBox(width: 12),
+        FilledButton.icon(
+          onPressed: _busy || widget.createInvite == null ? null : _create,
+          icon: const Icon(Icons.add_link),
+          label: const Text('Create invite'),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildInviteTile(WebPreviewInvite invite) {
+    return ListTile(
+      contentPadding: EdgeInsets.zero,
+      leading: Icon(invite.isRevoked ? Icons.block : Icons.link),
+      title: Text(invite.inviteId),
+      subtitle: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Text('Expires: ${invite.expiresAt}'),
+          Text('Sync: ${invite.syncStatus}'),
+          if (invite.syncedAt != null) Text('Synced: ${invite.syncedAt}'),
+          if (invite.revokedAt != null) Text('Revoked: ${invite.revokedAt}'),
+          if (invite.syncError != null && invite.syncError!.isNotEmpty)
+            Text(invite.syncError!),
+        ],
+      ),
+      trailing: Wrap(
+        spacing: 8,
+        children: <Widget>[
+          if (invite.canRetrySync && widget.syncInvite != null)
+            TextButton(
+              onPressed: _busy ? null : () => _sync(invite),
+              child: const Text('Retry sync'),
+            ),
+          if (!invite.isRevoked && widget.revokeInvite != null)
+            TextButton(
+              onPressed: _busy ? null : () => _revoke(invite),
+              child: const Text('Revoke'),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _create() async {
+    final createInvite = widget.createInvite;
+    if (createInvite == null) {
+      return;
+    }
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      final ttl = int.tryParse(_ttlController.text.trim());
+      final invite = await createInvite(
+        widget.preview.previewId,
+        ttlSeconds: ttl,
+        singleUse: _singleUse,
+      );
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _createdInvite = invite;
+        _busy = false;
+      });
+      await _load();
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _busy = false;
+        _error = error.toString();
+      });
+    }
+  }
+
+  Future<void> _revoke(WebPreviewInvite invite) async {
+    await _mutateInvite(invite, widget.revokeInvite);
+  }
+
+  Future<void> _sync(WebPreviewInvite invite) async {
+    await _mutateInvite(invite, widget.syncInvite);
+  }
+
+  Future<void> _mutateInvite(
+    WebPreviewInvite invite,
+    WebPreviewInviteMutator? mutator,
+  ) async {
+    if (mutator == null) {
+      return;
+    }
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      await mutator(
+        previewId: widget.preview.previewId,
+        inviteId: invite.inviteId,
+      );
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _busy = false;
+      });
+      await _load();
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _busy = false;
+        _error = error.toString();
+      });
+    }
+  }
+}
+
+class _InviteLinkCard extends StatelessWidget {
+  const _InviteLinkCard({required this.invite});
+
+  final WebPreviewInvite invite;
+
+  @override
+  Widget build(BuildContext context) {
+    final url = invite.inviteUrl ?? '';
+    return Card(
+      child: ListTile(
+        leading: const Icon(Icons.link),
+        title: const Text('Invite link created'),
+        subtitle: Text(url),
+        trailing: IconButton(
+          onPressed: url.isEmpty
+              ? null
+              : () async {
+                  await Clipboard.setData(ClipboardData(text: url));
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Invite link copied.')),
+                    );
+                  }
+                },
+          icon: const Icon(Icons.copy),
+          tooltip: 'Copy invite link',
+        ),
+      ),
+    );
+  }
+}
+
+class _ProjectFactoryHistoryTile extends StatelessWidget {
+  const _ProjectFactoryHistoryTile({
+    required this.job,
+    required this.onWatch,
+    required this.onOpen,
+  });
+
+  final ProjectFactoryJobSummary job;
+  final VoidCallback onWatch;
+  final VoidCallback? onOpen;
+
+  @override
+  Widget build(BuildContext context) {
+    final error = job.error;
+    return ListTile(
+      contentPadding: EdgeInsets.zero,
+      leading: Icon(_iconForProjectFactoryStatus(job.status)),
+      title: Text(job.name ?? job.slug ?? job.jobId),
+      subtitle: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Text('${job.status} - ${job.currentPhase} - ${job.progress}%'),
+          if (job.completedAt != null) Text('Completed: ${job.completedAt}'),
+          if (error != null && error.isNotEmpty)
+            Text(error,
+                style: TextStyle(color: Theme.of(context).colorScheme.error)),
+          if (job.manualNextStep != null && !job.isReady)
+            Text(job.manualNextStep!),
+        ],
+      ),
+      trailing: Wrap(
+        spacing: 8,
+        children: <Widget>[
+          if (!job.isReady)
+            TextButton(onPressed: onWatch, child: const Text('Details')),
+          if (job.isReady && onOpen != null)
+            FilledButton(onPressed: onOpen, child: const Text('Open')),
+        ],
+      ),
+      onTap: job.isReady && onOpen != null ? onOpen : onWatch,
+    );
+  }
+}
+
+IconData _iconForProjectFactoryStatus(String status) {
+  return switch (status) {
+    'ready' || 'completed' => Icons.check_circle_outline,
+    'failed' || 'interrupted' || 'blocked' => Icons.error_outline,
+    _ => Icons.pending_actions_outlined,
+  };
+}
+
+IconData _iconForWebPreviewStatus(String status) {
+  return switch (status) {
+    'active' => Icons.check_circle_outline,
+    'failed' => Icons.error_outline,
+    'applying' || 'planned' => Icons.pending_actions_outlined,
+    'apply_disabled' => Icons.lock_outline,
+    _ => Icons.language,
+  };
+}
+
+String _resourceSummary(WebPreview preview) {
+  final planned = preview.plannedResources.length;
+  final applied = preview.appliedResources.length;
+  if (planned == 0 && applied == 0) {
+    return '';
+  }
+  return 'Resources: $planned planned, $applied applied';
+}
+
+String _inviteSyncSummary(Map<String, dynamic> summary) {
+  final synced = summary['synced'] ?? 0;
+  final failed = summary['failed'] ?? 0;
+  final pending = summary['pending'] ?? 0;
+  final notDeployed = summary['not_deployed'] ?? 0;
+  return 'Invite sync: $synced synced, $failed failed, $pending pending, $notDeployed not deployed';
+}
+
+class ProjectFactoryProgressDialog extends StatefulWidget {
+  const ProjectFactoryProgressDialog({
+    super.key,
+    required this.initialJob,
+    required this.pollJob,
+    this.pollInterval = const Duration(seconds: 1),
+  });
+
+  final ProjectFactoryJob initialJob;
+  final ProjectFactoryJobPoller pollJob;
+  final Duration pollInterval;
+
+  @override
+  State<ProjectFactoryProgressDialog> createState() =>
+      ProjectFactoryProgressDialogState();
+}
+
+class ProjectFactoryProgressDialogState
+    extends State<ProjectFactoryProgressDialog> {
+  late ProjectFactoryJob _job;
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    _job = widget.initialJob;
+    if (!_isTerminal(_job)) {
+      _timer = Timer.periodic(widget.pollInterval, (_) => _poll());
+      unawaited(_poll());
+    }
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final failed = _job.status == 'failed' ||
+        _job.status == 'blocked' ||
+        _job.status == 'interrupted';
+    final ready = _job.isReady;
+    return AlertDialog(
+      title: const Text('New project'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          LinearProgressIndicator(
+            value: (_job.progress.clamp(0, 100)) / 100,
+          ),
+          const SizedBox(height: 16),
+          Text(_job.currentPhase),
+          const SizedBox(height: 8),
+          Text(_job.message),
+          if (failed && _job.error != null) ...<Widget>[
+            const SizedBox(height: 8),
+            Text(_job.error!),
+          ],
+        ],
+      ),
+      actions: <Widget>[
+        if (failed)
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(_job),
+            child: const Text('Close'),
+          ),
+        if (ready)
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(_job),
+            child: const Text('Open project'),
+          ),
+      ],
+    );
+  }
+
+  Future<void> _poll() async {
+    try {
+      final next = await widget.pollJob(_job.jobId);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _job = next;
+      });
+      if (_isTerminal(next)) {
+        _timer?.cancel();
+      }
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _job = ProjectFactoryJob(
+          jobId: _job.jobId,
+          draftId: _job.draftId,
+          status: 'failed',
+          currentStep: 'polling',
+          currentPhase: 'polling',
+          progress: _job.progress,
+          message: 'Could not refresh project job.',
+          manifestPlan: _job.manifestPlan,
+          stepLogs: _job.stepLogs,
+          error: error.toString(),
+          generationResult: _job.generationResult,
+        );
+      });
+      _timer?.cancel();
+    }
+  }
+
+  bool _isTerminal(ProjectFactoryJob job) {
+    return job.status == 'ready' ||
+        job.status == 'failed' ||
+        job.status == 'blocked' ||
+        job.status == 'interrupted';
   }
 }
 
@@ -6027,9 +7797,9 @@ class _NewChatSheetState extends State<_NewChatSheet> {
                 ),
                 SwitchListTile(
                   value: _turnSummariesEnabled,
-                  title: const Text('Enable summarizer'),
+                  title: const Text('Enable chat summary'),
                   subtitle: const Text(
-                    'Create turn summaries with provenance for this chat.',
+                    'Create short background summaries for this chat.',
                   ),
                   onChanged: (value) {
                     setState(() {
@@ -6318,9 +8088,9 @@ class _AgentStudioSheetState extends State<_AgentStudioSheet> {
               SwitchListTile(
                 contentPadding: EdgeInsets.zero,
                 value: _turnSummariesEnabled,
-                title: const Text('Chat summarizer'),
+                title: const Text('Chat summary'),
                 subtitle: const Text(
-                  'Generate hidden turn summaries with provenance for this session.',
+                  'Keep a short background summary for this session.',
                 ),
                 onChanged: (value) {
                   setState(() {
@@ -7510,6 +9280,7 @@ Widget buildComposerVoiceRecordingHarnessForTest({
   }) onSendAttachments,
   String stagedText = '',
   bool stageAttachment = false,
+  bool isProjectFactoryIntake = false,
 }) {
   return _Composer(
     sessionId: 'test-session',
@@ -7523,6 +9294,7 @@ Widget buildComposerVoiceRecordingHarnessForTest({
                   Uint8List.fromList(const <int>[1, 2, 3]),
                   name: 'staged-note.txt',
                   mimeType: 'text/plain',
+                  path: 'staged-note.txt',
                 ),
                 name: 'staged-note.txt',
                 kind: _AttachmentDraftKind.file,
@@ -7547,6 +9319,7 @@ Widget buildComposerVoiceRecordingHarnessForTest({
     imageAttachmentsEnabled: true,
     fileAttachmentsEnabled: true,
     voiceStatusText: 'Audio transcription ready.',
+    isProjectFactoryIntake: isProjectFactoryIntake,
   );
 }
 
@@ -7632,14 +9405,23 @@ class _PendingAttachmentTray extends StatelessWidget {
   const _PendingAttachmentTray({
     required this.attachments,
     required this.busy,
+    required this.isProjectFactoryIntake,
     required this.onRemove,
+    required this.onRoleChanged,
     required this.onClearAll,
+    required this.expanded,
+    required this.onToggleExpanded,
   });
 
   final List<_PendingAttachmentDraft> attachments;
   final bool busy;
+  final bool isProjectFactoryIntake;
   final ValueChanged<_PendingAttachmentDraft> onRemove;
+  final void Function(
+      _PendingAttachmentDraft attachment, ProjectAssetRole? role) onRoleChanged;
   final VoidCallback onClearAll;
+  final bool expanded;
+  final VoidCallback onToggleExpanded;
 
   @override
   Widget build(BuildContext context) {
@@ -7682,6 +9464,17 @@ class _PendingAttachmentTray extends StatelessWidget {
                         ),
                         const SizedBox(width: 8),
                         statusPill,
+                        IconButton(
+                          onPressed: onToggleExpanded,
+                          tooltip: expanded
+                              ? 'Collapse attachments'
+                              : 'Expand attachments',
+                          icon: Icon(
+                            expanded
+                                ? Icons.expand_less_rounded
+                                : Icons.expand_more_rounded,
+                          ),
+                        ),
                       ],
                     ),
                     Align(
@@ -7705,6 +9498,18 @@ class _PendingAttachmentTray extends StatelessWidget {
                   ),
                   statusPill,
                   const SizedBox(width: 8),
+                  IconButton(
+                    onPressed: onToggleExpanded,
+                    tooltip: expanded
+                        ? 'Collapse attachments'
+                        : 'Expand attachments',
+                    icon: Icon(
+                      expanded
+                          ? Icons.expand_less_rounded
+                          : Icons.expand_more_rounded,
+                    ),
+                  ),
+                  const SizedBox(width: 4),
                   TextButton(
                     onPressed: busy ? null : onClearAll,
                     child: const Text('Clear all'),
@@ -7729,23 +9534,27 @@ class _PendingAttachmentTray extends StatelessWidget {
               ),
             ),
           ),
-          const SizedBox(height: 10),
-          ConstrainedBox(
-            constraints: const BoxConstraints(maxHeight: 220),
-            child: ListView.separated(
-              shrinkWrap: true,
-              itemCount: attachments.length,
-              separatorBuilder: (context, index) => const SizedBox(height: 8),
-              itemBuilder: (context, index) {
-                final attachment = attachments[index];
-                return _PendingAttachmentRow(
-                  attachment: attachment,
-                  busy: busy,
-                  onRemove: () => onRemove(attachment),
-                );
-              },
+          if (expanded) ...<Widget>[
+            const SizedBox(height: 10),
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: 220),
+              child: ListView.separated(
+                shrinkWrap: true,
+                itemCount: attachments.length,
+                separatorBuilder: (context, index) => const SizedBox(height: 8),
+                itemBuilder: (context, index) {
+                  final attachment = attachments[index];
+                  return _PendingAttachmentRow(
+                    attachment: attachment,
+                    busy: busy,
+                    showProjectAssetRole: isProjectFactoryIntake,
+                    onRemove: () => onRemove(attachment),
+                    onRoleChanged: (role) => onRoleChanged(attachment, role),
+                  );
+                },
+              ),
             ),
-          ),
+          ],
         ],
       ),
     );
@@ -7756,12 +9565,16 @@ class _PendingAttachmentRow extends StatelessWidget {
   const _PendingAttachmentRow({
     required this.attachment,
     required this.busy,
+    required this.showProjectAssetRole,
     required this.onRemove,
+    required this.onRoleChanged,
   });
 
   final _PendingAttachmentDraft attachment;
   final bool busy;
+  final bool showProjectAssetRole;
   final VoidCallback onRemove;
+  final ValueChanged<ProjectAssetRole?> onRoleChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -7814,6 +9627,14 @@ class _PendingAttachmentRow extends StatelessWidget {
                   fontWeight: FontWeight.w700,
                 ),
               ),
+              if (showProjectAssetRole) ...<Widget>[
+                const SizedBox(height: 8),
+                _ProjectAssetRoleSelector(
+                  value: attachment.projectAssetRole,
+                  enabled: !busy,
+                  onChanged: onRoleChanged,
+                ),
+              ],
             ],
           ),
         ),
@@ -7823,6 +9644,42 @@ class _PendingAttachmentRow extends StatelessWidget {
           icon: const Icon(Icons.close_rounded),
         ),
       ],
+    );
+  }
+}
+
+class _ProjectAssetRoleSelector extends StatelessWidget {
+  const _ProjectAssetRoleSelector({
+    required this.value,
+    required this.enabled,
+    required this.onChanged,
+  });
+
+  final ProjectAssetRole? value;
+  final bool enabled;
+  final ValueChanged<ProjectAssetRole?> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return DropdownButtonFormField<ProjectAssetRole?>(
+      initialValue: value,
+      isDense: true,
+      decoration: const InputDecoration(
+        labelText: 'New Project asset',
+        contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      ),
+      items: <DropdownMenuItem<ProjectAssetRole?>>[
+        const DropdownMenuItem<ProjectAssetRole?>(
+          value: null,
+          child: Text('Chat context only'),
+        ),
+        for (final role in ProjectAssetRole.values)
+          DropdownMenuItem<ProjectAssetRole?>(
+            value: role,
+            child: Text(role.label),
+          ),
+      ],
+      onChanged: enabled ? onChanged : null,
     );
   }
 }

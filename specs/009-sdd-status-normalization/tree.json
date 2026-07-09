@@ -1,0 +1,95 @@
+{
+  "spec": {
+    "file": "spec.md"
+  },
+  "plans": [
+    {
+      "id": "plan-1",
+      "number": 1,
+      "title": "Contract",
+      "status": "done",
+      "description": "Define canonical Workbench status sources.",
+      "file": "plans/01-contract/plan.md",
+      "tasks": [
+        {
+          "id": "plan-1-task-1",
+          "number": 1,
+          "title": "T001 Document canonical status sources for Workbench clients",
+          "status": "done",
+          "description": "Document where the frontend reads spec, plan, and task status.",
+          "file": "tasks/plan-1-task-1/task.md"
+        }
+      ]
+    },
+    {
+      "id": "plan-2",
+      "number": 2,
+      "title": "Current Artifacts",
+      "status": "done",
+      "description": "Normalize completed existing artifacts.",
+      "file": "plans/02-current-artifacts/plan.md",
+      "tasks": [
+        {
+          "id": "plan-2-task-1",
+          "number": 1,
+          "title": "T002 Normalize completed lazy-loading SDD plan/task statuses",
+          "status": "done",
+          "description": "Mark completed lazy-loading plans and tasks as done in tree metadata.",
+          "file": "tasks/plan-2-task-1/task.md"
+        }
+      ]
+    },
+    {
+      "id": "plan-3",
+      "number": 3,
+      "title": "Generated Projects",
+      "status": "done",
+      "description": "Emit complete status-aware SDD trees in generated apps.",
+      "file": "plans/03-generated-projects/plan.md",
+      "tasks": [
+        {
+          "id": "plan-3-task-1",
+          "number": 1,
+          "title": "T003 Generate tree.json for New Project Factory foundation specs",
+          "status": "done",
+          "description": "Write a SAT-like tree file for generated foundation specs.",
+          "file": "tasks/plan-3-task-1/task.md"
+        },
+        {
+          "id": "plan-3-task-2",
+          "number": 2,
+          "title": "T004 Generate plan/task node files for New Project Factory foundation specs",
+          "status": "done",
+          "description": "Write concrete plan and task files referenced by the generated tree.",
+          "file": "tasks/plan-3-task-2/task.md"
+        },
+        {
+          "id": "plan-3-task-3",
+          "number": 3,
+          "title": "T005 Compute generated metadata task totals from the shared task source",
+          "status": "done",
+          "description": "Keep metadata counts aligned with the generated tree.",
+          "file": "tasks/plan-3-task-3/task.md"
+        }
+      ]
+    },
+    {
+      "id": "plan-4",
+      "number": 4,
+      "title": "Validation",
+      "status": "done",
+      "description": "Cover the normalization contract with regression tests.",
+      "file": "plans/04-validation/plan.md",
+      "tasks": [
+        {
+          "id": "plan-4-task-1",
+          "number": 1,
+          "title": "T006 Add regression tests for generated SDD status consistency",
+          "status": "done",
+          "description": "Assert generated metadata, tree statuses, and task files stay aligned.",
+          "file": "tasks/plan-4-task-1/task.md"
+        }
+      ]
+    }
+  ]
+}

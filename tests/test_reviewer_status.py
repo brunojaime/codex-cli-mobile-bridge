@@ -65,7 +65,9 @@ def build_message(
     return ChatMessage(
         id=message_id,
         session_id="session-1",
-        role=ChatMessageRole.USER if agent_id == AgentId.REVIEWER else ChatMessageRole.ASSISTANT,
+        role=ChatMessageRole.USER
+        if agent_id == AgentId.REVIEWER
+        else ChatMessageRole.ASSISTANT,
         author_type=(
             ChatMessageAuthorType.REVIEWER_CODEX
             if agent_id == AgentId.REVIEWER
@@ -191,7 +193,9 @@ def test_reviewer_state_uses_job_status_to_distinguish_queued_and_running() -> N
     assert running_state == ReviewerLifecycleState.RUNNING
 
 
-def test_reviewer_state_marks_missing_reviewer_after_generator_completion_as_skipped() -> None:
+def test_reviewer_state_marks_missing_reviewer_after_generator_completion_as_skipped() -> (
+    None
+):
     session = build_session(active_run_id="run-current")
 
     completed_state = derive_reviewer_lifecycle_state(
@@ -233,7 +237,9 @@ def test_reviewer_state_marks_missing_reviewer_after_generator_completion_as_ski
     assert cancelled_state == ReviewerLifecycleState.SKIPPED
 
 
-def test_reviewer_state_defaults_to_waiting_when_active_run_has_no_messages_yet() -> None:
+def test_reviewer_state_defaults_to_waiting_when_active_run_has_no_messages_yet() -> (
+    None
+):
     session = build_session(active_run_id="run-current")
 
     state = derive_reviewer_lifecycle_state(session, messages=[])

@@ -1,0 +1,19 @@
+flowchart TD
+  A[User input: text audio image crop batch sequence] --> B[Build intake payload]
+  B --> C[Validate media policy and workspace]
+  C -->|invalid| D[Blocked: no files written]
+  C -->|valid| E{Spec target}
+  E -->|none| F[Save as ordinary feedback]
+  E -->|new_spec| G[Dry-run new spec plan]
+  E -->|existing_spec| H[Validate spec id and artifact]
+  H -->|invalid| D
+  G -->|collision or unsafe| D
+  G -->|safe| I[Create intake package and spec skeleton]
+  H -->|safe| J[Create edit job]
+  I --> K[Prepare context pack]
+  J --> K
+  K --> L[Run Codex CLI in target repo]
+  L -->|failed cancelled timeout| M[Preserve intake and expose next actions]
+  L -->|success| N[Apply reviewed output]
+  N --> O[Refresh metadata traceability indexes]
+  O --> P[Workbench shows updated spec state]

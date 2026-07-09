@@ -53,7 +53,9 @@ def test_follow_up_status_helpers_cover_expected_states() -> None:
     assert is_follow_up_terminal_failure(ChatMessageStatus.SUBMISSION_UNKNOWN) is False
 
 
-def test_orphaned_follow_up_resolution_status_maps_only_recoverable_placeholders() -> None:
+def test_orphaned_follow_up_resolution_status_maps_only_recoverable_placeholders() -> (
+    None
+):
     assert (
         orphaned_follow_up_resolution_status(ChatMessageStatus.RESERVED)
         == ChatMessageStatus.CANCELLED
@@ -67,7 +69,10 @@ def test_orphaned_follow_up_resolution_status_maps_only_recoverable_placeholders
 
 
 def test_can_launch_reserved_follow_up_requires_reserved_status_without_job() -> None:
-    assert can_launch_reserved_follow_up(build_message(status=ChatMessageStatus.RESERVED)) is True
+    assert (
+        can_launch_reserved_follow_up(build_message(status=ChatMessageStatus.RESERVED))
+        is True
+    )
     assert (
         can_launch_reserved_follow_up(
             build_message(status=ChatMessageStatus.RESERVED, job_id="job-1")
@@ -137,5 +142,7 @@ def test_validate_manual_recovery_candidate_rejects_invalid_messages(
         validate_manual_recovery_candidate(message)
 
 
-def test_validate_manual_recovery_candidate_accepts_unresolved_unknown_agent_follow_up() -> None:
+def test_validate_manual_recovery_candidate_accepts_unresolved_unknown_agent_follow_up() -> (
+    None
+):
     validate_manual_recovery_candidate(build_message())

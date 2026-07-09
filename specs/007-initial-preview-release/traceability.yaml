@@ -1,0 +1,73 @@
+spec_id: 007-initial-preview-release
+requirements:
+  FR-001:
+    title: Default first release mode is preview
+    acceptance_criteria: [AC-001]
+    plans: [release-mode-contract, project-factory-contract-updates]
+    tasks: [T001, T002, T003, T004, T005, T006, T007, T008, T009, T010]
+  FR-002:
+    title: Cloudflare preview URL and API are required
+    acceptance_criteria: [AC-002, AC-003, AC-008]
+    plans: [cloudflare-preview-backend-readiness]
+    tasks: [T014, T015, T016, T017, T018, T019, T020, T021, T022, T023, T024]
+  FR-003:
+    title: Generated apps support preview runtime profile
+    acceptance_criteria: [AC-004]
+    plans: [generated-app-runtime-profile]
+    tasks: [T025, T026, T027, T028, T029, T030, T031, T032, T033]
+  FR-004:
+    title: Android preview release lane publishes preview APKs
+    acceptance_criteria: [AC-004, AC-005]
+    plans: [android-preview-release-workflow]
+    tasks: [T034, T035, T036, T037, T038, T039, T040, T041, T042, T043, T044]
+  FR-005:
+    title: Bridge registration is required before ready
+    acceptance_criteria: [AC-006, AC-007, AC-008]
+    plans: [bridge-installable-app-registration]
+    tasks: [T045, T046, T047, T048, T049, T050, T051, T052, T053, T054]
+  FR-006:
+    title: Factory runner orchestrates all preview phases
+    acceptance_criteria: [AC-008, AC-011]
+    plans: [factory-runner-orchestration]
+    tasks: [T055, T056, T057, T058, T059, T060, T061, T062, T063, T064]
+  FR-007:
+    title: Mobile and Workbench show preview release readiness
+    acceptance_criteria: [AC-007, AC-011]
+    plans: [mobile-and-workbench-ux]
+    tasks: [T065, T066, T067, T068, T069, T070, T071]
+  FR-008:
+    title: Production releases remain strict and separate
+    acceptance_criteria: [AC-009]
+    plans: [release-mode-contract, android-preview-release-workflow, validation-and-regression-coverage]
+    tasks: [T002, T003, T009, T043, T077]
+  FR-009:
+    title: Mock and demo releases remain explicit and visibly separate
+    acceptance_criteria: [AC-010]
+    plans: [release-mode-contract, project-factory-contract-updates, validation-and-regression-coverage]
+    tasks: [T002, T003, T009, T013, T078]
+  FR-010:
+    title: Validation prevents false readiness
+    acceptance_criteria: [AC-008, AC-009, AC-010, AC-011]
+    plans: [validation-and-regression-coverage]
+    tasks: [T072, T073, T074, T075, T076, T077, T078]
+  FR-011:
+    title: Operators can run, troubleshoot, disable, and promote preview releases
+    acceptance_criteria: [AC-012]
+    plans: [operations-documentation]
+    tasks: [T079, T080, T081, T082, T083, T084, T085]
+  FR-012:
+    title: Generated release docs expose preview, production, and mock channels
+    acceptance_criteria: [AC-011, AC-012]
+    plans: [project-factory-contract-updates, operations-documentation]
+    tasks: [T011, T012, T013, T079, T080, T081, T082, T083, T084, T085]
+artifacts:
+  spec: spec.md
+  plan: plan.md
+  tasks: tasks.md
+  tree: tree.json
+  diagrams:
+    - diagrams/initial-preview-release-flow.mmd
+notes:
+  - tasks.md is the normative task list.
+  - tree.json groups the normative tasks by implementation phase for Workbench navigation.
+  - specs/005-new-project-factory and specs/006-web-preview-delivery are required implementation context.

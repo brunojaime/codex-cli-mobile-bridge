@@ -62,12 +62,16 @@ from backend.app.domain.repositories.chat_repository import (
 )
 from backend.app.infrastructure.execution.base import ExecutionProvider
 from backend.app.infrastructure.execution.base import ExecutionSnapshot
-from backend.app.infrastructure.transcription.base import AudioTranscriber, AudioTranscriptionError
+from backend.app.infrastructure.transcription.base import (
+    AudioTranscriber,
+    AudioTranscriptionError,
+)
 
 
 DocumentKind = Literal["audio", "docx", "image", "text"]
-_TURN_SUMMARY_TRIGGER_MESSAGE_COUNT = 4
+_TURN_SUMMARY_TRIGGER_MESSAGE_COUNT = 3
 _TURN_SUMMARY_COMPLETION_TIMEOUT_SECONDS = 15.0
+_TITLE_REFRESH_USER_TURN_INTERVAL = 2
 _GITHUB_REPOSITORY_REFERENCE_PATTERN = re.compile(
     r"https?://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+"
     r"|(?<![\w./-])[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?![\w./-])",
@@ -301,7 +305,9 @@ class MessageService:
         self._audio_transcriber = audio_transcriber
         self._document_text_char_limit = document_text_char_limit
         self._title_generation_model = (title_generation_model or "").strip() or None
-        self._retry_asset_root = Path(tempfile.gettempdir()) / "codex-remote-retry-assets"
+        self._retry_asset_root = (
+            Path(tempfile.gettempdir()) / "codex-remote-retry-assets"
+        )
         self._retry_asset_root.mkdir(parents=True, exist_ok=True)
         self._job_monitor_lock = threading.RLock()
         self._job_monitor_unsubscribes: dict[str, Callable[[], None] | None] = {}
@@ -339,7 +345,7 @@ class MessageService:
         workspace = self._resolve_workspace(workspace_path)
         profile = self.get_agent_profile(agent_profile_id or "default")
         configuration = self._profile_configuration_for_session(profile)
-        resolved_title = title or profile.name
+        resolved_title = title or "New chat"
         session = ChatSession(
             id=str(uuid4()),
             title=resolved_title,
@@ -348,7 +354,9 @@ class MessageService:
             turn_summaries_enabled=turn_summaries_enabled,
             turn_summary_checkpoint_initialized=turn_summaries_enabled,
             title_is_placeholder=(
-                title_is_placeholder if title_is_placeholder is not None else title is None
+                title_is_placeholder
+                if title_is_placeholder is not None
+                else title is None
             ),
             agent_profile_id=profile.id,
             agent_profile_name=profile.name,
@@ -366,10 +374,7 @@ class MessageService:
 
     def list_agent_profiles(self) -> list[AgentProfile]:
         builtins = builtin_agent_profiles_by_id()
-        profiles = {
-            profile.id: profile
-            for profile in builtin_agent_profiles()
-        }
+        profiles = {profile.id: profile for profile in builtin_agent_profiles()}
         for profile in self._repository.list_agent_profiles():
             normalized = profile.normalized()
             if normalized.id in builtins:
@@ -377,7 +382,11 @@ class MessageService:
             profiles[normalized.id] = normalized
         return sorted(
             profiles.values(),
-            key=lambda profile: (0 if profile.is_builtin else 1, profile.name.lower(), profile.id),
+            key=lambda profile: (
+                0 if profile.is_builtin else 1,
+                profile.name.lower(),
+                profile.id,
+            ),
         )
 
     def get_agent_profile(self, profile_id: str) -> AgentProfile:
@@ -426,7 +435,9 @@ class MessageService:
         for profile in profiles:
             normalized = profile.normalized()
             if normalized.is_builtin or normalized.id in builtin_ids:
-                raise ValueError("Built-in agent profiles are immutable and cannot be imported.")
+                raise ValueError(
+                    "Built-in agent profiles are immutable and cannot be imported."
+                )
             self._repository.save_agent_profile(normalized)
             imported_profiles.append(normalized)
         return imported_profiles
@@ -585,6 +596,83 @@ class MessageService:
         self._repository.save_session(session)
         return session
 
+    def rename_session(
+        self,
+        *,
+        session_id: str,
+        title: str,
+    ) -> ChatSession:
+        session = self.get_session(session_id)
+        if session is None:
+            raise ValueError(f"Session {session_id} was not found.")
+
+        normalized_title = self._normalize_manual_session_title(title)
+        session.title = normalized_title
+        session.title_is_placeholder = False
+        session.touch()
+        self._repository.save_session(session)
+        return session
+
+    def generate_session_title(
+        self,
+        *,
+        session_id: str,
+        instructions: str | None = None,
+    ) -> ChatSession:
+        session = self.get_session(session_id)
+        if session is None:
+            raise ValueError(f"Session {session_id} was not found.")
+
+        messages = self._repository.list_messages(session_id)
+        generated_title = (
+            self._generate_title_with_codex(
+                session,
+                messages,
+                instructions=instructions,
+            )
+            or self._derive_title_from_instructions(instructions)
+            or self._derive_conversation_title(messages)
+        )
+        normalized_title = self._normalize_generated_title(generated_title)
+        if normalized_title is None:
+            normalized_title = self._normalize_manual_session_title(generated_title)
+
+        session.title = normalized_title
+        session.title_is_placeholder = False
+        session.touch()
+        self._repository.save_session(session)
+        return session
+
+    def generate_session_title_from_audio(
+        self,
+        audio_path: str,
+        *,
+        session_id: str,
+        filename: str | None = None,
+        content_type: str | None = None,
+        instructions: str | None = None,
+        language: str | None = None,
+    ) -> tuple[ChatSession, str]:
+        transcript = self._audio_transcriber.transcribe(
+            Path(audio_path),
+            filename=filename,
+            content_type=content_type,
+            language=language,
+        ).strip()
+        if not transcript:
+            raise AudioTranscriptionError("Transcription returned an empty prompt.")
+
+        combined_instructions = "\n\n".join(
+            part for part in ((instructions or "").strip(), transcript) if part
+        )
+        return (
+            self.generate_session_title(
+                session_id=session_id,
+                instructions=combined_instructions,
+            ),
+            transcript,
+        )
+
     def list_messages(self, session_id: str) -> list[ChatMessage]:
         return self._repository.list_messages(session_id)
 
@@ -740,7 +828,10 @@ class MessageService:
         current_configuration = session.agent_configuration.normalized()
         agent_run: AgentRun | None = None
         self._cancel_reserved_follow_ups_for_inactive_runs(session)
-        if conversation_kind == JobConversationKind.PRIMARY and author_type == ChatMessageAuthorType.HUMAN:
+        if (
+            conversation_kind == JobConversationKind.PRIMARY
+            and author_type == ChatMessageAuthorType.HUMAN
+        ):
             if session.active_agent_run_id:
                 self._cancel_reserved_follow_ups_for_run(
                     session,
@@ -845,7 +936,7 @@ class MessageService:
                 agent_run=agent_run,
             )
             self._register_background_job_watch(job.id)
-        self._maybe_finalize_session_title(session.id)
+        self._queue_session_title_refresh(session.id)
         return job
 
     def list_agent_runs(self, session_id: str) -> list[AgentRun]:
@@ -1020,7 +1111,9 @@ class MessageService:
             content_type=content_type,
         )
         if document_kind != "image":
-            raise UnsupportedDocumentError("The uploaded file is not a supported image.")
+            raise UnsupportedDocumentError(
+                "The uploaded file is not a supported image."
+            )
 
         attachment_summaries = [f"- image: {attached_image_name}"]
         display_message = self._build_attachment_batch_display_message(
@@ -1087,7 +1180,9 @@ class MessageService:
                     language=language,
                 ).strip()
                 if not transcript:
-                    raise AudioTranscriptionError("Transcription returned an empty prompt.")
+                    raise AudioTranscriptionError(
+                        "Transcription returned an empty prompt."
+                    )
                 attachment_details.append(
                     self._build_attachment_detail_section(
                         index=index,
@@ -1104,7 +1199,9 @@ class MessageService:
                 document_kind=document_kind,
             ).strip()
             if not extracted_text:
-                raise DocumentProcessingError("Document extraction returned empty text.")
+                raise DocumentProcessingError(
+                    "Document extraction returned empty text."
+                )
             attachment_details.append(
                 self._build_attachment_detail_section(
                     index=index,
@@ -1161,18 +1258,25 @@ class MessageService:
         if session is None:
             raise ValueError(f"Session {original_job.session_id} was not found.")
         if original_job.assistant_message_id is None:
-            raise RuntimeError("This job cannot be retried because its assistant turn is missing.")
+            raise RuntimeError(
+                "This job cannot be retried because its assistant turn is missing."
+            )
 
-        assistant_message = self._repository.get_message(original_job.assistant_message_id)
+        assistant_message = self._repository.get_message(
+            original_job.assistant_message_id
+        )
         if assistant_message is None:
-            raise RuntimeError("This job cannot be retried because its assistant turn was not found.")
+            raise RuntimeError(
+                "This job cannot be retried because its assistant turn was not found."
+            )
 
         with self._maintenance_lock:
             self._ensure_accepting_new_jobs_locked()
             retried_job = self._start_job(
                 session=session,
                 display_message=original_job.message,
-                execution_message=original_job.execution_message or original_job.message,
+                execution_message=original_job.execution_message
+                or original_job.message,
                 image_paths=original_job.image_paths,
                 cleanup_paths=None,
                 user_message_id=original_job.user_message_id,
@@ -1246,14 +1350,18 @@ class MessageService:
         self._ensure_accepting_new_jobs()
 
         if session.active_agent_run_id not in {None, message.run_id}:
-            raise RuntimeError("Finish the current active run before retrying this uncertain follow-up.")
+            raise RuntimeError(
+                "Finish the current active run before retrying this uncertain follow-up."
+            )
 
         context = self._build_follow_up_context(
             session=session,
             message=message,
         )
         if context is None:
-            raise RuntimeError("This uncertain follow-up cannot be retried because its source context is no longer available.")
+            raise RuntimeError(
+                "This uncertain follow-up cannot be retried because its source context is no longer available."
+            )
 
         retry_message = ChatMessage(
             id=str(uuid4()),
@@ -1471,7 +1579,7 @@ class MessageService:
             return session
 
         session = self.create_session(
-            title=self._derive_title(message),
+            title=None,
             workspace_path=workspace_path,
             title_is_placeholder=True,
         )
@@ -1482,14 +1590,20 @@ class MessageService:
         if session and job.provider_session_id:
             configuration = session.agent_configuration.normalized()
             definition = configuration.agents.get(job.agent_id)
-            if definition is not None and definition.provider_session_id != job.provider_session_id:
+            if (
+                definition is not None
+                and definition.provider_session_id != job.provider_session_id
+            ):
                 definition.provider_session_id = job.provider_session_id
                 session.agent_configuration = configuration
             if job.agent_id == AgentId.GENERATOR:
                 session.provider_session_id = job.provider_session_id
             elif job.agent_id == AgentId.REVIEWER:
                 session.reviewer_provider_session_id = job.provider_session_id
-            if definition is not None or job.agent_id in {AgentId.GENERATOR, AgentId.REVIEWER}:
+            if definition is not None or job.agent_id in {
+                AgentId.GENERATOR,
+                AgentId.REVIEWER,
+            }:
                 session.touch()
                 self._repository.save_session(session)
 
@@ -1505,7 +1619,9 @@ class MessageService:
             if job.agent_id == AgentId.SUPERVISOR:
                 decision = self._parse_supervisor_decision(completed_content)
                 if decision is not None:
-                    completed_content = self._format_supervisor_message_content(decision)
+                    completed_content = self._format_supervisor_message_content(
+                        decision
+                    )
             assistant_message.sync(
                 content=completed_content,
                 status=ChatMessageStatus.COMPLETED,
@@ -1731,7 +1847,9 @@ class MessageService:
                         session=session,
                         run_id=job.run_id,
                         reviewer_prompt=reviewer_prompt,
-                        reviewer_message_id=reviewer_message.id if reviewer_message else None,
+                        reviewer_message_id=reviewer_message.id
+                        if reviewer_message
+                        else None,
                         generator_turn_number=next_generator_turn_number,
                     )
                     session.active_agent_turn_index = reviewer_turns
@@ -1933,7 +2051,9 @@ class MessageService:
                     session=session,
                     run_id=run_id,
                     specialist_id=specialist_id,
-                    supervisor_message_id=supervisor_message.id if supervisor_message else None,
+                    supervisor_message_id=supervisor_message.id
+                    if supervisor_message
+                    else None,
                     supervisor_instruction=decision.instruction,
                     turn_number=specialist_turns + 1,
                 )
@@ -2177,7 +2297,10 @@ class MessageService:
         supervisor_instruction: str,
         turn_number: int,
     ) -> None:
-        if supervisor_message_id is None or specialist_id not in SUPERVISOR_MEMBER_AGENT_IDS:
+        if (
+            supervisor_message_id is None
+            or specialist_id not in SUPERVISOR_MEMBER_AGENT_IDS
+        ):
             return
 
         configuration = session.agent_configuration.normalized()
@@ -2352,7 +2475,9 @@ class MessageService:
         )
         if message is None:
             return ""
-        return (self._job_response_for_message(message) or message.content or "").strip()
+        return (
+            self._job_response_for_message(message) or message.content or ""
+        ).strip()
 
     def _summary_turn_range_for_message(
         self,
@@ -2430,7 +2555,8 @@ class MessageService:
         if summary_strategy.mode == SummaryStrategyMode.SUPERVISOR_WINDOW:
             within_window = (
                 completed_non_summary_turns >= summary_strategy.supervisor_window_start
-                and completed_non_summary_turns <= summary_strategy.supervisor_window_end
+                and completed_non_summary_turns
+                <= summary_strategy.supervisor_window_end
             )
             if not requested_by_supervisor or not within_window:
                 return None
@@ -2514,12 +2640,16 @@ class MessageService:
         ]
         if trigger_source is not None:
             matches = [
-                message for message in matches if message.trigger_source == trigger_source
+                message
+                for message in matches
+                if message.trigger_source == trigger_source
             ]
         if role is not None:
             matches = [message for message in matches if message.role == role]
         if dedupe_key is not None:
-            matches = [message for message in matches if message.dedupe_key == dedupe_key]
+            matches = [
+                message for message in matches if message.dedupe_key == dedupe_key
+            ]
         if not matches:
             return None
         matches.sort(key=lambda message: (message.created_at, message.id))
@@ -2616,7 +2746,9 @@ class MessageService:
         run_id: str,
     ) -> bool:
         with self._follow_up_recovery_guard:
-            if self._recover_submission_pending_follow_up_for_run(session, run_id=run_id):
+            if self._recover_submission_pending_follow_up_for_run(
+                session, run_id=run_id
+            ):
                 return True
             return self._recover_reserved_follow_up_for_run(session, run_id=run_id)
 
@@ -2679,10 +2811,7 @@ class MessageService:
     ) -> None:
         changed = False
         for message in self._repository.list_messages(session.id):
-            if (
-                message.run_id != run_id
-                or message.job_id is not None
-            ):
+            if message.run_id != run_id or message.job_id is not None:
                 continue
             resolved_status = orphaned_follow_up_resolution_status(message.status)
             if resolved_status is None:
@@ -2958,7 +3087,8 @@ class MessageService:
             if supervisor_message is None:
                 return None
             decision = self._parse_supervisor_decision(
-                self._job_response_for_message(supervisor_message) or supervisor_message.content
+                self._job_response_for_message(supervisor_message)
+                or supervisor_message.content
             )
             if decision is None or not decision.instruction.strip():
                 return None
@@ -3047,7 +3177,9 @@ class MessageService:
     ) -> None:
         if not can_launch_reserved_follow_up(message):
             return
-        submission_token = message.submission_token or message.dedupe_key or f"message:{message.id}"
+        submission_token = (
+            message.submission_token or message.dedupe_key or f"message:{message.id}"
+        )
         message.sync(
             status=ChatMessageStatus.SUBMISSION_PENDING,
             submission_token=submission_token,
@@ -3235,7 +3367,9 @@ class MessageService:
         user_prompt: str,
         trigger_source: AgentTriggerSource,
     ) -> str:
-        default_generator_prompt = AgentConfiguration.default().agents[AgentId.GENERATOR].prompt
+        default_generator_prompt = (
+            AgentConfiguration.default().agents[AgentId.GENERATOR].prompt
+        )
         if (
             trigger_source == AgentTriggerSource.USER
             and generator_prompt.strip() == default_generator_prompt
@@ -3267,7 +3401,9 @@ class MessageService:
                     f"{skills}."
                 )
             if normalized.mcp_server_ids:
-                servers = ", ".join(f"`{server_id}`" for server_id in normalized.mcp_server_ids)
+                servers = ", ".join(
+                    f"`{server_id}`" for server_id in normalized.mcp_server_ids
+                )
                 guidance.append(
                     "If external tools are needed, prefer these MCP servers when relevant: "
                     f"{servers}."
@@ -3291,7 +3427,9 @@ class MessageService:
             if trigger_source == AgentTriggerSource.USER
             else "Supervisor follow-up request"
         )
-        available_specialists = ", ".join(agent_id.value for agent_id in supervisor_member_ids)
+        available_specialists = ", ".join(
+            agent_id.value for agent_id in supervisor_member_ids
+        )
         return (
             f"{supervisor_prompt}\n\n"
             f"Available specialist ids: {available_specialists}\n"
@@ -3311,7 +3449,9 @@ class MessageService:
         specialist_report: str,
     ) -> str:
         transcript = self._build_run_transcript(session_id=session_id, run_id=run_id)
-        available_specialists = ", ".join(agent_id.value for agent_id in supervisor_member_ids)
+        available_specialists = ", ".join(
+            agent_id.value for agent_id in supervisor_member_ids
+        )
         return (
             f"{supervisor_prompt}\n\n"
             f"Available specialist ids: {available_specialists}\n"
@@ -3342,7 +3482,7 @@ class MessageService:
             f"Current completed agent turn: {completed_turns}. "
             "Set request_summary=true only when you want the summary agent to act now."
         )
-    
+
     def _build_specialist_execution_message(
         self,
         *,
@@ -3454,7 +3594,9 @@ class MessageService:
             if current_turn is None:
                 current_turn = next(
                     (
-                        completed_turn_numbers_by_message_id[run_messages[candidate_index].id]
+                        completed_turn_numbers_by_message_id[
+                            run_messages[candidate_index].id
+                        ]
                         for candidate_index in completed_message_indexes
                         if candidate_index >= index
                     ),
@@ -3463,7 +3605,9 @@ class MessageService:
 
             if current_turn < start_turn or current_turn > end_turn:
                 if message.id in completed_turn_numbers_by_message_id:
-                    latest_completed_turn = completed_turn_numbers_by_message_id[message.id]
+                    latest_completed_turn = completed_turn_numbers_by_message_id[
+                        message.id
+                    ]
                 continue
 
             agent_label = (
@@ -3502,11 +3646,7 @@ class MessageService:
 
         raw_plan = payload.get("plan")
         if isinstance(raw_plan, list):
-            plan = tuple(
-                str(item).strip()
-                for item in raw_plan
-                if str(item).strip()
-            )
+            plan = tuple(str(item).strip() for item in raw_plan if str(item).strip())
         else:
             plan = ()
 
@@ -3630,7 +3770,8 @@ class MessageService:
             message
             for message in self._repository.list_messages(session_id)
             if message.content.strip()
-            and message.status in {
+            and message.status
+            in {
                 ChatMessageStatus.COMPLETED,
                 ChatMessageStatus.FAILED,
                 ChatMessageStatus.CANCELLED,
@@ -3702,8 +3843,7 @@ class MessageService:
             "Summarize these recent chat updates for future context. "
             "Explain what happened, what changed, current state, open risks, and the next likely step. "
             "Use plain text and keep it concise but specific.\n\n"
-            "Updates:\n"
-            + "\n\n".join(transcript_lines)
+            "Updates:\n" + "\n\n".join(transcript_lines)
         )
 
     def _derive_title(self, message: str) -> str:
@@ -3714,17 +3854,26 @@ class MessageService:
 
     def _maybe_finalize_session_title(self, session_id: str) -> None:
         session = self._repository.get_session(session_id)
-        if session is None or session.archived_at is not None or not session.title_is_placeholder:
+        if (
+            session is None
+            or session.archived_at is not None
+            or not session.title_is_placeholder
+        ):
             return
 
         messages = self._repository.list_messages(session_id)
-        if self._count_titleable_turns(messages) < 4:
+        titleable_turns = self._count_titleable_turns(messages)
+        if titleable_turns < 1:
+            return
+        if (
+            titleable_turns > 1
+            and titleable_turns % _TITLE_REFRESH_USER_TURN_INTERVAL != 0
+        ):
             return
 
-        generated_title = (
-            self._generate_title_with_codex(session, messages)
-            or self._derive_conversation_title(messages)
-        )
+        generated_title = self._generate_title_with_codex(
+            session, messages
+        ) or self._derive_conversation_title(messages)
         normalized_title = self._normalize_generated_title(generated_title)
         if normalized_title is None:
             return
@@ -3736,9 +3885,18 @@ class MessageService:
             return
 
         latest_session.title = normalized_title
-        latest_session.title_is_placeholder = False
+        latest_session.title_is_placeholder = True
         latest_session.touch()
         self._repository.save_session(latest_session)
+
+    def _queue_session_title_refresh(self, session_id: str) -> None:
+        thread = threading.Thread(
+            target=self._maybe_finalize_session_title,
+            args=(session_id,),
+            name=f"session-title-refresh-{session_id[:8]}",
+            daemon=True,
+        )
+        thread.start()
 
     def _count_titleable_turns(self, messages: list[ChatMessage]) -> int:
         return sum(
@@ -3753,8 +3911,13 @@ class MessageService:
         self,
         session: ChatSession,
         messages: list[ChatMessage],
+        *,
+        instructions: str | None = None,
     ) -> str | None:
-        prompt = self._build_title_generation_prompt(messages)
+        prompt = self._build_title_generation_prompt(
+            messages,
+            instructions=instructions,
+        )
         if not prompt:
             return None
 
@@ -3781,25 +3944,50 @@ class MessageService:
     def _build_title_generation_prompt(
         self,
         messages: list[ChatMessage],
+        *,
+        instructions: str | None = None,
     ) -> str:
         conversation_lines: list[str] = []
-        for message in messages:
+        recent_messages = [message for message in messages if message.content.strip()][
+            -8:
+        ]
+        for message in recent_messages:
             content = " ".join(message.content.split()).strip()
             if not content:
                 continue
             role_label = "User" if message.role == ChatMessageRole.USER else "Assistant"
             conversation_lines.append(f"{role_label}: {content}")
-            if len(conversation_lines) >= 8:
-                break
 
-        if not conversation_lines:
+        normalized_instructions = " ".join((instructions or "").split()).strip()
+
+        if not conversation_lines and not normalized_instructions:
             return ""
 
-        return (
-            "Create a concise chat title from this conversation. "
+        prompt = (
+            "Create a concise, specific chat title from this conversation. "
+            "Prefer the latest user request when the topic changed. "
             "Return only the title, 3 to 6 words, no quotes, maximum 60 characters.\n\n"
-            + "\n".join(conversation_lines)
         )
+        if normalized_instructions:
+            prompt += f"User title instructions:\n{normalized_instructions}\n\n"
+        if conversation_lines:
+            prompt += "Conversation:\n" + "\n".join(conversation_lines)
+        return prompt
+
+    def _derive_title_from_instructions(self, instructions: str | None) -> str | None:
+        normalized = " ".join((instructions or "").split()).strip()
+        if not normalized:
+            return None
+
+        trimmed = re.sub(
+            r"^(quiero|necesito|haz|hace|crear|crea|t[íi]tulo|sobre|que)\s+",
+            "",
+            normalized,
+            flags=re.IGNORECASE,
+        )
+        if len(trimmed) <= 60:
+            return trimmed or None
+        return f"{trimmed[:57].rstrip()}..."
 
     def _derive_conversation_title(self, messages: list[ChatMessage]) -> str:
         for message in messages:
@@ -3833,6 +4021,14 @@ class MessageService:
             return None
         return normalized
 
+    def _normalize_manual_session_title(self, raw_title: str) -> str:
+        normalized = " ".join(raw_title.split()).strip()
+        if not normalized:
+            raise ValueError("Session title cannot be empty.")
+        if len(normalized) > 120:
+            normalized = f"{normalized[:117].rstrip()}..."
+        return normalized
+
     def _classify_document(
         self,
         *,
@@ -3840,7 +4036,9 @@ class MessageService:
         content_type: str | None,
     ) -> DocumentKind:
         suffix = Path(filename).suffix.lower()
-        normalized_content_type = (content_type or "").split(";", maxsplit=1)[0].strip().lower()
+        normalized_content_type = (
+            (content_type or "").split(";", maxsplit=1)[0].strip().lower()
+        )
 
         if normalized_content_type.startswith("image/") or suffix in _IMAGE_SUFFIXES:
             return "image"
@@ -3850,7 +4048,9 @@ class MessageService:
             "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         }:
             return "docx"
-        if self._looks_like_text_document(suffix=suffix, content_type=normalized_content_type):
+        if self._looks_like_text_document(
+            suffix=suffix, content_type=normalized_content_type
+        ):
             return "text"
 
         raise UnsupportedDocumentError(
@@ -3948,7 +4148,9 @@ class MessageService:
         attachment_details: list[str],
         image_count: int,
     ) -> str:
-        instructions = (message or "").strip() or self._default_attachment_batch_instruction(
+        instructions = (
+            message or ""
+        ).strip() or self._default_attachment_batch_instruction(
             attachment_summaries=attachment_summaries,
             image_count=image_count,
         )
@@ -3958,7 +4160,9 @@ class MessageService:
         ]
         if image_count > 0:
             image_label = "image is" if image_count == 1 else "images are"
-            sections.append(f"The attached {image_label} provided separately to this prompt.")
+            sections.append(
+                f"The attached {image_label} provided separately to this prompt."
+            )
         if attachment_details:
             sections.append("\n\n".join(attachment_details))
         return "\n\n".join(section for section in sections if section.strip())
@@ -4014,20 +4218,28 @@ class MessageService:
             with zipfile.ZipFile(document_path) as archive:
                 xml_payload = archive.read("word/document.xml")
         except FileNotFoundError as exc:
-            raise DocumentProcessingError("The uploaded .docx file could not be read.") from exc
+            raise DocumentProcessingError(
+                "The uploaded .docx file could not be read."
+            ) from exc
         except KeyError as exc:
             raise DocumentProcessingError(
                 "The uploaded .docx file is missing word/document.xml."
             ) from exc
         except zipfile.BadZipFile as exc:
-            raise DocumentProcessingError("The uploaded .docx file is not a valid ZIP archive.") from exc
+            raise DocumentProcessingError(
+                "The uploaded .docx file is not a valid ZIP archive."
+            ) from exc
 
         try:
             root = ET.fromstring(xml_payload)
         except ET.ParseError as exc:
-            raise DocumentProcessingError("The uploaded .docx file could not be parsed.") from exc
+            raise DocumentProcessingError(
+                "The uploaded .docx file could not be parsed."
+            ) from exc
 
-        namespace = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+        namespace = {
+            "w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+        }
         paragraphs: list[str] = []
         for paragraph in root.findall(".//w:p", namespace):
             runs = [

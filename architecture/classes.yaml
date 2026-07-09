@@ -1,0 +1,7 @@
+diagram_id: classes
+diagram_type: domain-model
+scope: baseline
+status: draft
+owner: project
+source: architecture/classes.mmd
+change_policy: baseline_impact_required

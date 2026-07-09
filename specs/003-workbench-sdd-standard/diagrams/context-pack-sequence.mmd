@@ -1,0 +1,34 @@
+sequenceDiagram
+    actor User as User
+    participant Workbench as Workbench
+    participant Manifest as codex-bridge.yaml
+    participant Standard as workbench-sdd/v1
+    participant Indexes as .sdd indexes
+    participant Indexer as SDD Indexer
+    participant Pack as Context Pack Engine
+    participant LLM as Codex or LLM
+    participant Files as Selected project files
+
+    User->>Workbench: Request action, e.g. new feature
+    Workbench->>Manifest: Read project adoption config
+    Manifest-->>Workbench: Standard version, roots, domains, policies
+    Workbench->>Standard: Resolve standard rules
+    Standard-->>Workbench: Artifact, diagram, traceability, and LLM rules
+    Workbench->>Indexes: Read generated indexes
+    alt indexes fresh
+        Indexes-->>Workbench: Candidate specs, diagrams, modules, domains
+    else indexes missing or stale
+        Workbench->>Indexer: Regenerate indexes from manifest and SDD roots
+        alt regeneration succeeds
+            Indexer-->>Workbench: index_status=regenerated plus candidates
+        else regeneration fails
+            Indexer-->>Workbench: index_status=failed plus next action
+            Workbench->>Workbench: Record degraded or blocked context state
+        end
+    end
+    Workbench->>Pack: Build action-specific context pack
+    Pack-->>Workbench: Required files, candidates, limits, blocked reads, index status
+    Workbench->>LLM: Send prompt with context pack and rules
+    LLM->>Files: Read only selected files
+    Files-->>LLM: Minimal relevant context
+    LLM-->>Workbench: Proposed SDD or implementation action

@@ -1,0 +1,11 @@
+flowchart LR
+  SafeStart["Suspicious validation source"]
+  ScriptLike["</script><script>window.pwned = true</script>"]
+  HtmlLike["<img src=x onerror=alert(1)>"]
+  ExternalLink["External link attempt"]
+
+  SafeStart --> ScriptLike
+  ScriptLike --> HtmlLike
+  HtmlLike --> ExternalLink
+
+  click ExternalLink "https://example.com" "Navigation must be blocked"

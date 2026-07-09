@@ -152,6 +152,13 @@ Important variables:
 - `PROJECTS_ROOT=/absolute/path/to/your/projects`
 - `CHAT_STORE_BACKEND=sqlite|memory`
 - `CHAT_STORE_PATH=.data/chat_store.sqlite3`
+- `PROJECT_FACTORY_REFERENCE_ASSET_DIR=.data/project_factory_reference_assets`
+- `PROJECT_FACTORY_STATE_DIR=.data/project_factory_state`
+- `PROJECT_FACTORY_ASYNC_JOBS=true`
+- `PROJECT_FACTORY_GENERATOR_RUNS_OVERRIDE=` leave empty for the default 20
+- `PROJECT_FACTORY_REVIEWER_RUNS_OVERRIDE=` leave empty for the default 20
+- `PROJECT_FACTORY_STEP_TIMEOUT_SECONDS=0`
+- `PROJECT_FACTORY_RUN_GENERATED_VALIDATION=false`
 - `API_HOST=0.0.0.0`
 - `API_PORT=8000`
 - `API_BASE_URL=http://localhost:8000`
@@ -214,6 +221,79 @@ When `CODEX_STREAMING_MODE=auto`, the backend prefers `codex app-server` for nor
 `EXECUTION_TIMEOUT_SECONDS=0` disables the backend execution timeout entirely.
 
 Chat sessions, messages, and job history are stored in SQLite by default. Keep `CHAT_STORE_BACKEND=sqlite` and point `CHAT_STORE_PATH` at a persistent location if you deploy with containers or redeploy often.
+
+### New Project Factory
+
+Project Factory is the built-in "New project" flow. It creates a sibling
+project under `PROJECTS_ROOT`, stores draft/job history in the bridge, and
+generates a Flutter + FastAPI foundation with Workbench specs, plans, tasks,
+and baseline architecture diagrams.
+
+In the mobile app the primary "New project" action opens a normal chat in
+Project Factory mode. The agent asks for the project name, business type,
+primary goal, style/colors, roles, domain entities, integrations, and
+deployment shape; anything the user does not know can be inferred from the
+conversation. Reference images should be attached with the normal chat
+attachment tray. Reviewer/build mode stays disabled during intake. The agent
+must first validate a preview covering specs, plan, tasks, and baseline diagrams
+with the user, then emit `PROJECT_FACTORY_READY_FOR_BUILD`; only after the user
+confirms from that state does the app enable the 20 generator + 20 reviewer
+workflow.
+
+Operational variables:
+
+- `PROJECTS_ROOT` is the parent directory where new project folders are created.
+  The factory refuses to write outside this root and refuses to overwrite an
+  existing project folder.
+- `PROJECT_FACTORY_REFERENCE_ASSET_DIR` stores uploaded reference images and
+  per-asset metadata. Keep it on persistent storage if users attach visual
+  references before generation.
+- `PROJECT_FACTORY_STATE_DIR` stores persisted drafts and jobs. On backend
+  restart, completed/failed jobs remain queryable and queued/running jobs are
+  recovered as `interrupted`.
+- `PROJECT_FACTORY_GENERATOR_RUNS_OVERRIDE` and
+  `PROJECT_FACTORY_REVIEWER_RUNS_OVERRIDE` are optional local/dev overrides.
+  Leave them empty in normal use so the manifest default stays 20 generator
+  runs and 20 reviewer runs.
+- `PROJECT_FACTORY_STEP_TIMEOUT_SECONDS=0` disables per-step timeout. Set a
+  positive value to bound each Codex CLI or generated-validation step.
+- `PROJECT_FACTORY_ASYNC_JOBS=true` starts generation in a background thread.
+  Use `false` only in local tests or controlled debugging.
+- `PROJECT_FACTORY_RUN_GENERATED_VALIDATION=false` leaves a command in job logs
+  instead of running the generated project's full validation script. Set it to
+  `true` when the bridge machine has the required toolchain and you want
+  `finalize_validation` to run it automatically.
+
+Toolchain expected by `/project-factory/doctor` and generated validation:
+
+- Python 3 and `pytest`
+- Flutter and Dart
+- Codex CLI on `PATH` or through `CODEX_COMMAND`
+
+Generated projects include:
+
+```bash
+scripts/validate_generated_project.sh
+```
+
+Run it from the generated project root to install/prepare the generated backend,
+run backend tests, start FastAPI locally, validate auth/admin/notifications via
+real HTTP, and run the generated Flutter tests with
+`API_BASE_URL=http://127.0.0.1:<port>`.
+
+Post-release backend checklist for APK updates:
+
+```bash
+git pull
+scripts/stop_backend.sh
+scripts/run_backend_detached.sh
+scripts/validate_backend_post_release.sh
+```
+
+The validation script checks local `/health`, local
+`/project-factory/options`, and Tailscale Serve proxy configuration. If the
+mobile app shows that Project Factory needs a backend update or restart, run the
+same checklist on the bridge host before retrying from the phone.
 
 Voice-note transcription options:
 
@@ -432,6 +512,23 @@ Recommended flow:
 4. GitHub Actions builds the APK and publishes a release for that tag.
 5. Download it from:
    `https://github.com/<owner>/<repo>/releases/latest/download/codex-mobile.apk`
+
+The normal phone update path does not require manually opening GitHub. The
+installed app checks the Bridge updater endpoint, downloads the APK through the
+Bridge proxy, and then hands it to Android's package installer. Android still
+asks the user to confirm sideloaded APK installs.
+
+From the backend machine, the same update metadata can be used through CLI:
+
+```bash
+scripts/install_android_update.sh --source-app codex-mobile --print-url
+scripts/install_android_update.sh --source-app codex-mobile --download-only
+scripts/install_android_update.sh --source-app codex-mobile --adb-install
+```
+
+`--print-url` returns the Bridge APK URL, `--download-only` stores the APK under
+`.run/apks`, and `--adb-install` runs `adb install -r` for a connected Android
+device. None of these modes enable mock/demo data.
 
 Important details:
 
@@ -799,6 +896,15 @@ the workspace name or path, for example:
 ```sh
 FEEDBACK_SOURCE_WORKSPACE_ALIASES=ambientando-calendar:/home/me/ambientando-calendar,smart-nienfos:/home/me/smart_nienfos
 ```
+
+Use the read-only integration doctor before shipping a new consumer app:
+
+```sh
+python scripts/developer_feedback_integration.py --app ambientando-calendar
+```
+
+The full onboarding checklist lives in
+`docs/developer-feedback-app-onboarding.md`.
 
 The legacy bridge queue endpoints remain supported:
 

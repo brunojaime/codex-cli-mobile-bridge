@@ -1,0 +1,279 @@
+spec_id: 004-workbench-scm-spec-intake
+title: Workbench SCM Spec Intake
+status: draft
+
+requirements:
+  FR-001:
+    acceptance_criteria: [AC-001, AC-002, AC-003, AC-004]
+    tasks: [T009, T010, T011, T012, T013, T014, T015, T016, T017, T018, T036, T037, T038, T039, T040, T041, T043, T055, T056, T057, T068, T071, T072, T073, T074, T079]
+    phase: 3
+  FR-002:
+    acceptance_criteria: [AC-003, AC-006, AC-008, AC-009]
+    tasks: [T019, T020, T021, T022, T042, T043, T058, T059, T068, T071]
+    phase: 5
+  FR-003:
+    acceptance_criteria: [AC-005]
+    tasks: [T001, T002, T003, T004, T044, T045, T046, T047, T048, T075, T076, T077, T078]
+    phase: 1
+  FR-004:
+    acceptance_criteria: [AC-002, AC-003, AC-004, AC-013]
+    tasks: [T009, T010, T011, T012, T013, T068, T072, T073, T074]
+    phase: 3
+  FR-005:
+    acceptance_criteria: [AC-012, AC-013]
+    tasks: [T023, T024, T025, T026, T027, T028, T068, T069, T070]
+    phase: 6
+  FR-006:
+    acceptance_criteria: [AC-008, AC-009, AC-012, AC-013]
+    tasks: [T020, T025, T028, T059, T069, T070]
+    phase: 6
+  FR-007:
+    acceptance_criteria: [AC-010]
+    tasks: [T005, T006, T007, T008, T029]
+    phase: 2
+  FR-008:
+    acceptance_criteria: [AC-011, AC-012]
+    tasks: [T030, T031, T032, T033, T034, T035]
+    phase: 7
+  FR-009:
+    acceptance_criteria: [AC-006, AC-012]
+    tasks: [T005, T006, T007, T008, T036, T037, T038, T039, T040, T041, T042, T043, T071, T072, T073, T074, T079]
+    phase: 8
+  FR-010:
+    acceptance_criteria: [AC-013, AC-014]
+    tasks: [T049, T050, T051, T052, T053, T070, T071]
+    phase: 10
+  FR-011:
+    acceptance_criteria: [AC-007, AC-015]
+    tasks: [T034, T054, T059, T070]
+    phase: 11
+  FR-012:
+    acceptance_criteria: [AC-005]
+    tasks: [T001, T044, T045, T048, T075, T076, T077, T078]
+    phase: 9
+  FR-013:
+    acceptance_criteria: [AC-015]
+    tasks: [T054, T059]
+    phase: 11
+  FR-014:
+    acceptance_criteria: [AC-016]
+    tasks: [T060, T061, T062, T063, T064, T065, T066, T067]
+    phase: 12
+
+diagrams:
+  spec-intake-flow:
+    path: diagrams/spec-intake-flow.mmd
+    requirements: [FR-001, FR-002, FR-003, FR-004, FR-005]
+  codex-cli-orchestration:
+    path: diagrams/codex-cli-orchestration.mmd
+    requirements: [FR-005, FR-006, FR-008, FR-010, FR-011]
+
+review:
+  required_before_implementation: true
+  tasks: [T064, T065, T066, T067]
+
+implementation:
+  status: complete
+  iterations:
+    reviewer-revision-pass-001:
+      completed_tasks: [T064, T065, T066, T067]
+      evidence:
+        - reviewer checklist was applied to spec_target semantics, media policy, Codex CLI safety, metadata refresh, measurable acceptance criteria, concrete task slices, tests, diagrams, and traceability
+        - self-review confirmed the revised plan remains documentation-only, keeps validation and dry-run work before writes, and blocks implementation until the first implementation iteration is explicitly requested
+    implementation-pass-001:
+      completed_tasks: [T001, T002, T003, T004]
+      evidence:
+        - added side-effect-free spec target schemas, artifact enum support, pure validation service, and focused target/media/path validation tests
+        - no spec creation, file writes, Codex CLI execution, media persistence, or UI work was added in this pass
+    implementation-pass-002:
+      completed_tasks: [T005, T006, T007, T008, T009, T010, T012]
+      evidence:
+        - added read-only spec metadata parsing and Workbench feature spec metadata output with fallback, stale, malformed, task summary, and targetable artifact coverage
+        - added intake dry-run schemas and service planning staging/target paths, retention metadata, would_create, existing, blocked, rejected_media, and next_actions without persisting media
+        - T011 and T013 remain pending for stricter sha256/timeline/fixture coverage before any apply/write flow
+    implementation-pass-003:
+      completed_tasks: [T011, T013, T014, T015, T019, T020]
+      evidence:
+        - hardened intake validation for sha256, timeline order, missing media references, duplicate items, unsupported item combinations, duplicate planned paths, and deterministic rejected-media output
+        - added formal sdd_intake fixtures plus focused intake dry-run tests covering supported media shapes and invalid media cases without persisting files
+        - added side-effect-free new-spec and existing-spec edit dry-run planning for target files, metadata proposals, metadata refresh plans, intended artifact updates, conflicts, and next_actions
+        - T016, T017, T018, T021, and T022 remain pending; no apply/write endpoints, file writes, spec edits, media persistence, or Codex CLI execution were added
+    implementation-pass-004:
+      completed_tasks: [T016, T018, T021, T022]
+      evidence:
+        - added side-effect-free API dry-run boundaries for new spec creation and existing spec edit planning wired to SddSpecCreationService and SddSpecEditService
+        - API responses expose status, planned files, metadata proposals, conflicts, blocked reasons, rejected media, existing artifacts, validation errors, intake plan, and next_actions
+        - added reviewer-friendly API and service tests for happy paths, invalid targets, slug collisions, unsafe paths, invalid media, artifact mismatch, pinned metadata preservation, deterministic output, and no file writes
+        - T017 remains the first write/apply task; no apply behavior, media persistence, file writes, spec edits, or Codex CLI execution were added
+    implementation-pass-005:
+      completed_tasks: [T017]
+      evidence:
+        - added new-spec apply/write flow that consumes SddSpecCreationService dry-run output as the source of truth and writes deterministic text-only scaffold artifacts inside the planned spec root
+        - added API apply boundary with created, existing, blocked, conflicts, metadata_result, intake_references, dry_run, and next_actions output
+        - media-backed apply is explicitly blocked until media persistence is implemented; no existing-spec edit apply, media binary persistence, or Codex CLI execution was added
+    implementation-pass-006:
+      completed_tasks: [T034]
+      evidence:
+        - new-spec apply now runs post-apply refresh through SddIndexService/SddStandardService and returns machine-testable metadata_status, traceability_status, index_status, generated_indexes, and detail fields
+        - successful text-only create regenerates `.sdd` indexes from the canonical service boundary; blocked apply returns post_apply_refresh as not_run
+        - existing-spec edit apply now exposes an API/service boundary that consumes the dry-run plan and remains blocked when content synthesis requires Codex CLI, preserving no-write behavior
+    implementation-pass-007:
+      completed_tasks: [T029, T030, T031, T032, T033, T035]
+      evidence:
+        - added SddMetadataRefreshService with read-only preview and apply paths for deterministic title/description proposals, source digests, stale paths, task summaries, diagram summaries, changed/skipped/pinned fields, and next actions
+        - post-apply new spec creation now runs metadata refresh before index regeneration and exposes the detailed metadata_refresh payload without enabling media persistence or Codex CLI execution
+        - added focused metadata refresh tests for preview no-write behavior, write/idempotency, pinned title/description preservation, stale digest detection, task checkbox summary, diagram summary, and fresh project metadata after apply
+    implementation-pass-008:
+      completed_tasks: [T023, T024, T025, T026, T027, T028]
+      evidence:
+        - added SddCodexJobService with stable job ids, job root handoff files, target workspace/spec/artifact metadata, context pack id, queued/running/completed/failed/blocked/cancelled/timed_out states, logs, stdout/stderr, exit code, timestamps, redacted argv, and next actions
+        - Codex execution uses argv-only subprocess boundaries with validated cwd, allowlisted env keys, timeout handling, no shell interpolation, and structured request/context/prompt files under .codex-bridge/sdd-jobs/
+        - existing-spec edit apply now queues a Codex job when dry-run is valid and keeps new-spec text-only apply deterministic; job read/run/cancel API boundaries expose machine-testable output
+        - tests cover mocked process success, invalid target/cwd blocking, command injection staying out of argv, env filtering, timeout, cancellation, non-zero exit, concurrency limit, context-pack use, log capture, and no spec-file writes before safe completion
+    implementation-pass-009:
+      completed_tasks: [T068]
+      evidence:
+        - added SddIntakeService media persistence that consumes the validated dry-run plan, writes deterministic intake artifacts under the target spec intake root, verifies sha256/size, blocks unsafe payload refs and overwrites, writes retention metadata, and cleans up partial writes on failure
+        - new-spec apply now persists text/media intake artifacts through the shared service and exposes intake_references plus media next_actions without running transcription or vision extraction
+        - existing-spec Codex job handoff now persists deterministic intake references before queueing and includes media_persistence details in job output/request files without executing real Codex in tests
+        - tests cover text/audio/image persistence, crop/region metadata, screenshot batches, image+audio sequence ordering, sha mismatch, oversized/unsupported/duplicate media, collisions, cleanup, workspace escape blocking, apply references, and job handoff references
+    implementation-pass-010:
+      completed_tasks: [T069, T070]
+      evidence:
+        - changed SddCodexJobService so Codex jobs execute with cwd set to the per-job sandbox under .codex-bridge/sdd-jobs/<job-id>/sandbox instead of the destination repo root
+        - added sandbox preparation with copied context/spec/intake artifacts plus job handoff files, while preserving target repo business files until explicit review/apply
+        - added review output for changed files, patch references, blocked paths, protected baseline impacts, conflicts, validation_status, and next_actions
+        - added reviewed apply that only writes the selected target artifact, rejects unsafe/out-of-scope/protected/conflicting changes, refreshes metadata and .sdd indexes after success, and restores originals on apply failure
+        - tests cover sandbox isolation, repo unchanged after job completion, generated change review, unsafe/out-of-scope changes, protected baseline changes, conflicts, successful apply, metadata/index refresh, and no partial writes on failure
+    implementation-pass-011:
+      completed_tasks: [T038, T042, T071]
+      evidence:
+        - added a collapsed text-first Spec intake composer to the Workbench Specs tab with workspace entry, new/existing target mode, optional new-spec id, existing spec picker, artifact selector, request text, dry-run preview, apply/queue, job run, review, and explicit reviewed apply controls
+        - added SddExplorerClient methods and response models for new-spec dry-run/apply, existing-spec dry-run/apply, Codex job status/run, generated-output review, and reviewed apply endpoints
+        - media buttons are visible but disabled until audio/image upload is implemented end-to-end, so the UI does not claim binary media support prematurely
+        - widget tests cover new-spec text preview/apply, existing-spec target selection and queued sandbox job flow, review/apply controls, and blocked dry-run rendering without real Codex execution
+    implementation-pass-012:
+      completed_tasks: [T072]
+      evidence:
+        - added SddMediaUploadService and `/sdd/specs/intake/media` image upload/staging endpoint with sha256 verification, image size/type validation, safe deterministic staging under `.codex-bridge/sdd-media/`, no-overwrite behavior, metadata sidecar, cleanup reporting, and validated intake_item output
+        - added Workbench client multipart upload and optional host-provided image picker wiring; staged images are shown in the spec intake composer, can be removed from the local draft, and are handed to dry-run/apply through the existing intakeItems contract
+        - backend tests cover accepted image staging, unsupported/oversized/sha-mismatch rejection, duplicate no-overwrite behavior, new-spec apply consuming staged image payloads, and API upload output
+        - Flutter tests cover multipart client upload, image picker staging, draft handoff to preview, local attachment removal, and media upload error display without adding audio, crop, marked-region, batch, or sequence support
+    implementation-pass-013:
+      completed_tasks: [T073]
+      evidence:
+        - added staged media lifecycle metadata with staged, consumed, deleted, and cleanup-eligible states plus timestamps and 24-hour retention metadata
+        - added `/sdd/specs/intake/media/delete` and `/sdd/specs/intake/media/cleanup` boundaries with path-safe delete, sidecar delete, consumed-media delete blocking, cleanup dry-run/apply, and machine-testable lifecycle output
+        - `SddIntakeService.persist_storage` now marks staged payload refs as consumed after successful spec/job intake persistence, preventing accidental deletion of media already associated with a spec or job handoff
+        - extended the same safe upload pipeline to audio with duration, size, type, extension, and sha256 validation; Workbench enables audio only through an optional host-provided picker and keeps native capture pending
+        - tests cover physical deletion, sidecar deletion, unsafe delete path rejection, consumed media delete blocking, abandoned staged cleanup dry-run/apply, audio accept/reject, client delete, Workbench remove success/failure, and audio draft handoff
+    implementation-pass-014:
+      completed_tasks: [T074]
+      evidence:
+        - added dry-run validation that structured crop, marked-region, screenshot-batch, and image-sequence refs resolve inside the workspace, are not deleted staged media, have required parent refs, preserve deterministic counts/order, and reject duplicate references before persistence
+        - added structured metadata to intake persistence payloads and retention manifests, including source_ref, region, references, timeline_ms, frame_count, audio_track_count, and image_count without OCR, vision extraction, transcription, or Codex execution
+        - existing-spec Codex job handoff now carries structured sequence media references and metadata through media_persistence while preserving sandboxed execution behavior
+        - Workbench accepts host-injected structured attachments through an explicit picker boundary and includes them in intakeItems; native crop/drawing UI and Bridge capture integration remain pending
+        - tests cover valid/invalid crop metadata, region bounds, missing/deleted parent media, duplicate refs, batch/sequence ordering, staged structured persistence into spec intake, job handoff references, and Workbench host-injected structured attachments
+    implementation-pass-015:
+      completed_tasks: [T047, T075, T076]
+      evidence:
+        - added SddBridgeCaptureService to convert queued Bridge feedback comments, screenshots, optional audio, selection bounds, and multi-capture batches into validated SDD intake items without OCR, vision extraction, transcription, direct Codex execution, or auto-apply of generated output
+        - added `/sdd/bridge-captures/dry-run` and `/sdd/bridge-captures/apply` boundaries that load existing feedback queue items, validate `none`, `new_spec`, and `existing_spec` targets through the shared target model, reuse SddSpecCreationService/SddSpecEditService, and enqueue existing-spec Codex jobs through the sandboxed job service
+        - `spec_target.mode none` preserves ordinary Bridge feedback behavior and does not stage media or write spec artifacts
+        - tests cover adapter conversion, no-target behavior, invalid target blocking, deterministic multi-capture ordering, screenshot+audio sequence references, bounds propagation, new-spec dry-run/apply, existing-spec job enqueue, API dry-run from the feedback queue, and no real Codex execution
+        - Bridge selector UI, spec picker UI, embedded-target compatibility, and Flutter tests were completed in later Phase 9 passes; native crop/drawing UX remains pending
+    implementation-pass-016:
+      completed_tasks: [T045, T046, T077]
+      evidence:
+        - added SDD target controls to the existing Bridge feedback queue dialog with `none` as the default, plus explicit `new_spec` and `existing_spec` modes, workspace field, existing-spec picker loaded from `/sdd/project`, artifact picker, preview, apply, and machine-readable status display
+        - `none` keeps the existing `/feedback-batches/start-session` path and does not call `/sdd/bridge-captures`; selecting an SDD target disables the ordinary send button and routes through `/feedback-queue` plus `/sdd/bridge-captures/dry-run` or `/apply`
+        - new-spec apply surfaces planned files and applied status; existing-spec apply surfaces queued job status while preserving Codex review/apply safety and never executing real Codex from tests
+        - Flutter tests cover selector states, no-spec preservation, new-spec dry-run/apply, existing-spec picker/job enqueue, blocked-state rendering, and no SDD endpoint calls for ordinary feedback
+        - native crop/drawing UX remains pending; existing selection bounds continue to propagate through the feedback item payload
+    implementation-pass-017:
+      completed_tasks: [T044, T048]
+      evidence:
+        - feedback queue request/response models now preserve optional embedded `specTarget`/`spec_target` payloads while old feedback payloads without SDD fields continue to serialize with an empty spec_target map
+        - Bridge capture dry-run/apply endpoints resolve targets deterministically from embedded feedback payloads when the request omits a target, keep explicit matching targets valid, and return blocked `spec_target_conflict` output before staging media, writing specs, or queueing jobs when embedded and UI/request targets disagree
+        - `new_spec` submissions normalize UI-sent artifact to `auto`; `existing_spec` submissions keep the selected artifact such as `tasks`
+        - Flutter capture items can embed an initial SDD target at capture time, queue UI initializes from that embedded target, and generic status rendering covers blocked, applied, queued, failed-job, and review-ready states without auto-applying generated Codex output
+        - backend and Flutter tests cover old payload compatibility, embedded new-spec apply, embedded existing-spec job enqueue, target conflict blocking, no-spec ordinary feedback preservation, submitter state rendering, and no real Codex execution
+        - native marked-region editing is completed in implementation-pass-018; pixel crop generation remains pending while existing screenshot bounds and structured metadata continue to flow through the tested intake path
+    implementation-pass-018:
+      completed_tasks: [T078]
+      evidence:
+        - added a native Bridge feedback queue marked-region editor with screenshot preview, drag-to-draw rectangle support, numeric x/y/width/height editing, validation for zero-size and out-of-bounds rectangles, and explicit remove-region action
+        - edited regions reuse the existing DeveloperFeedbackItem `selectionPoints`, `selectionBounds`, and `imageCapture.annotations` payload contract, so backend Bridge capture continues converting them into the already implemented structured `marked_region` intake model
+        - SDD `new_spec` preview/apply and `existing_spec` job enqueue tests now edit the region before submit and verify the `/feedback-queue` payload contains the expected bounds and annotation metadata
+        - ordinary non-SDD feedback remains compatible after removing annotations, and no OCR, vision extraction, transcription, real Codex execution, or generated-output auto-apply was added
+        - pixel crop generation remains pending; this pass does not produce a separate cropped image artifact
+    implementation-pass-019:
+      completed_tasks: [T036, T037]
+      evidence:
+        - extended `/sdd/project` spec responses with SCM metadata already computed by the backend: description, lifecycle status, traceability status, timestamps, generated/pinned flags, task totals, last run state, metadata status, warnings, and stale paths
+        - extended Workbench `SddSpec` models to parse those fields while preserving legacy fallback from frontmatter and `tasks.md` checkbox parsing when metadata is absent
+        - added a professional spec overview panel in the Specs tab with compact selectable rows showing title, description, lifecycle, task progress, traceability, updated date, last run state, and stale metadata
+        - focused tests cover backend metadata serialization, Flutter model parsing, and Workbench rendering of spec description, status, task progress, updated date, last run state, and stale metadata
+        - broader Phase 8 media/sequence UX and full T043 coverage remain pending
+    implementation-pass-020:
+      completed_tasks: [T039, T040, T041]
+      evidence:
+        - Workbench staged-media client now keeps local image preview bytes after a successful upload so native region selection can operate without changing backend persistence contracts
+        - added native Workbench rectangular marked-region selection for image attachments with drag-to-draw preview, empty-region validation, blocked state when preview/source data is unavailable, and attachment lifecycle display for staged, blocked, next-action, and removed states
+        - marked regions are submitted as structured `marked_region` intake items that reference the parent image `payload_ref`; no parallel payload format, direct file write, OCR, vision extraction, transcription, or Codex execution was introduced
+        - Workbench carries audio attachments and host-injected `image_sequence` structured attachments through the existing dry-run/apply draft contract, preserving deterministic ordering metadata when supplied by the host
+        - focused Flutter tests cover image/audio attachment display, native region attach, invalid/missing source handling, removal/delete behavior, dry-run draft handoff, host-injected sequence handoff, upload errors, and text-only flow preservation
+        - true pixel crop artifact generation was completed in implementation-pass-021; this pass stored rectangle metadata only and did not produce a separate cropped image file end-to-end
+    implementation-pass-021:
+      completed_tasks: [T079]
+      evidence:
+        - Workbench crop action now generates a real PNG crop artifact from the selected rectangle with the default Flutter cropper, while tests can inject a deterministic cropper through the same Workbench dependency boundary
+        - the cropped artifact is uploaded through the existing `/sdd/specs/intake/media` multipart endpoint with `kind=crop`, `source_ref`, and serialized `region` metadata, preserving the existing metadata-only `marked_region` action as a separate user choice
+        - `SddMediaUploadService` validates crop source refs, staged parent existence, parent media kind, region shape, image MIME/extension/size/sha256, path safety, no-overwrite behavior, metadata sidecars, and lifecycle deletion/consumption through the same staged-media path
+        - backend apply persists the cropped bytes into `specs/<id>/intake/media/crop-###.png`, records crop `source_ref` and `region` in the retention manifest, and marks the staged crop as consumed so deletion is blocked after apply
+        - focused tests cover successful crop staging, API crop upload, invalid/missing/deleted parent and invalid region blocking, new-spec apply carrying the cropped artifact, Workbench crop upload metadata, and the old marked-region-only flow
+    implementation-pass-022:
+      completed_tasks: [T049, T050, T051]
+      evidence:
+        - added stable `codex.sddActivity` payloads to Codex job, review, and reviewed-apply responses with machine-testable activity state, ordered events, next actions, and explicit wording that generated output remains unapplied until reviewed apply
+        - added `/sdd/codex-jobs/{job_id}/activity` polling endpoint and client parsing for activity snapshots/events without changing existing job status endpoints
+        - Workbench spec intake now shows a compact Material timeline with refresh and cancel actions for queued/running jobs; Bridge capture status renders embedded job activity state/events while preserving ordinary non-SDD feedback submission
+        - focused backend and Flutter tests cover activity endpoint output, queued/running/cancelled timeline rendering, reviewed apply activity, and Bridge capture activity display without real Codex execution or auto-apply
+        - T052/T053 were intentionally left for the next pass at this point; cancellation state was visible through the completed activity path
+    implementation-pass-023:
+      completed_tasks: [T052, T053]
+      evidence:
+        - documented safe retry semantics in the plan: retry creates a new sandboxed job from the original validated handoff and never mutates or reuses failed/timed-out/cancelled sandboxes
+        - added `SddCodexJobRetryResult` plus `/sdd/codex-jobs/{job_id}/retry` with original_job_id, retry_job_id, retry_eligible, copied_references, blocked_reasons, activity, job, and next_actions output
+        - retry is allowed only for failed, timed_out, or cancelled jobs and is blocked for queued, running, completed, missing, stale-target, and concurrency-conflicting jobs
+        - Workbench shows Retry only for eligible terminal failures and replaces the visible job/timeline with the newly queued retry job; Bridge keeps compatible compact activity/status rendering from the shared job payload
+        - focused tests cover retry success from failed output, endpoint output, non-retryable status blocking, concurrency conflict, stale target conflict, activity event emission, Workbench retry visibility, cancellation, timeout, and no real Codex execution or auto-apply
+    implementation-pass-024:
+      completed_tasks: [T043, T055, T057, T058, T059]
+      evidence:
+        - audit confirmed existing Workbench widget coverage for spec list metadata, new spec dry-run/apply, edit target selection, task progress, image/audio/crop/sequence media inputs, blocked states, failed states, activity, cancellation, and retry, so T043 was updated from stale pending to complete
+        - audit confirmed existing API/service coverage for text-only new spec creation through `tests/test_sdd_spec_apply.py`, so T055 was updated from stale pending to complete
+        - audit confirmed existing image/crop/marked-region/image-sequence fixture coverage in `tests/test_sdd_intake_persistence.py`, `tests/test_sdd_media_upload_service.py`, and Workbench widget tests, so T057 was updated from stale pending to complete
+        - added `tests/test_sdd_spec_intake_e2e.py` covering existing-spec API apply -> sandbox job -> mocked Codex run -> review -> explicit reviewed apply -> metadata/index refresh -> strict doctor pass, while proving the target repo is unchanged before reviewed apply and context-pack blocked reads are present
+        - extended `tests/test_sdd_spec_edit_service.py` with a matrix for existing-spec `spec`, `plan`, `tasks`, and `diagram` artifact targets, validating deterministic selected artifacts and metadata refresh participation without executing Codex
+        - remaining Phase 11 gaps are T054 doctor/readiness warnings for intake/job policy and T056 audio transcript/failed-transcription fixtures; SAT pilot tasks T060-T063 remain pending
+    implementation-pass-025:
+      completed_tasks: [T054, T056]
+      evidence:
+        - extended SDD doctor JSON v2 with a stable `spec_intake_readiness` check covering missing/malformed/stale spec metadata, intake retention manifests, missing or unsafe intake artifacts, staged media lifecycle/retention policy warnings, consumed/deleted media consistency, and failed/blocked job status files
+        - added doctor contract tests for stale metadata warnings, missing intake artifact hard failures, cleanup-eligible staged media warnings, and failed job-state warnings without masking existing readiness output
+        - tightened audio intake next-actions so already-transcribed audio no longer requests transcription, while audio without transcript still writes a deterministic placeholder and surfaces `Run transcription` as the next action
+        - added E2E new-spec apply fixtures for audio with transcript and failed/missing transcription, proving no invented transcript text is written into the spec and no real transcription dependency is introduced
+        - non-SAT Phase 11 hardening is complete; remaining uncompleted tasks are SAT pilot tasks T060-T063
+    implementation-pass-026:
+      completed_tasks: [T060, T061, T062, T063]
+      evidence:
+        - ran SAT adoption dry-run first on `/home/batata/Projects/sat-catalogo-ropa`; existing adoption artifacts were preserved and only missing/generated metadata remained to apply
+        - applied SAT adoption/backfill safely, creating `specs/001-sat-sdd-onboarding/metadata.yaml` and refreshing SAT `.sdd` indexes before pilot flows
+        - piloted generic new-spec creation on SAT as `specs/999-sat-pilot-capture-intake` with text, staged image, staged crop, staged audio, transcript, retained intake artifacts, generated metadata, traceability, and a feature sequence diagram
+        - piloted generic existing-spec edit on SAT through a mocked `SddCodexJobService` runner: dry-run, queued sandbox job, run, review-ready output, and explicit reviewed apply to `specs/001-sat-sdd-onboarding/tasks.md`; no real Codex CLI was executed
+        - pilot exposed and fixed an existing-spec intake collision: repeated edits now persist intake under `specs/<id>/intake/jobs/<job_id>/...` instead of reusing `specs/<id>/intake/original-request.md`
+        - verified Bridge capture target selection against SAT with generic `SddBridgeCaptureService`: `none` returned `feedback-only`, `new_spec` returned dry-run planned files, and `existing_spec` returned dry-run targeting `tasks` without SAT-specific code
+        - SAT strict doctor passed after pilot with 25 passing checks, fresh indexes, 2 specs, 5 diagrams, linked traceability rows, and spec-intake readiness over retained intake manifests
+        - Workbench strict doctor was rerun after backfill and the relevant SDD/backend tests passed; `specs/004-workbench-scm-spec-intake` is complete

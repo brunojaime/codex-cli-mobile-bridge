@@ -147,12 +147,16 @@ def validate_recovery_metadata_fields(
             raise ValueError("Cancelled recovery messages cannot carry lineage links.")
         return
     if not recovered_from_message_id and not superseded_by_message_id:
-        raise ValueError("Retry recovery messages must link to either the old or new attempt.")
+        raise ValueError(
+            "Retry recovery messages must link to either the old or new attempt."
+        )
 
 
 def validate_manual_recovery_candidate(message: "ChatMessage") -> None:
     if message.status != ChatMessageStatus.SUBMISSION_UNKNOWN:
-        raise RuntimeError("Only submission_unknown follow-ups can be recovered manually.")
+        raise RuntimeError(
+            "Only submission_unknown follow-ups can be recovered manually."
+        )
     if message.job_id is not None:
         raise RuntimeError("This follow-up already has a job attached.")
     if not is_agent_follow_up(message.agent_id):

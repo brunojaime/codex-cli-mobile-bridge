@@ -1,0 +1,501 @@
+{
+  "spec": {
+    "file": "spec.md"
+  },
+  "plans": [
+    {
+      "id": "plan-1",
+      "number": 1,
+      "title": "Manifest Contract",
+      "status": "done",
+      "description": "Define and test the project manifest model before any file-writing generator is added.",
+      "file": "plans/01-manifest-contract/plan.md",
+      "tasks": [
+        {
+          "id": "plan-1-task-1",
+          "number": 1,
+          "title": "T001 Add project manifest dataclasses and validation service",
+          "status": "done",
+          "description": "T001 Add project manifest dataclasses and validation service",
+          "file": "tasks/plan-1-task-1/task.md"
+        },
+        {
+          "id": "plan-1-task-2",
+          "number": 2,
+          "title": "T002 Add default auth, RBAC, admin, notification, Codex, SDD, and release manifest sections",
+          "status": "done",
+          "description": "T002 Add default auth, RBAC, admin, notification, Codex, SDD, and release manifest sections",
+          "file": "tasks/plan-1-task-2/task.md"
+        },
+        {
+          "id": "plan-1-task-3",
+          "number": 3,
+          "title": "T003 Add slug/path validation under PROJECTS_ROOT with no writes",
+          "status": "done",
+          "description": "T003 Add slug/path validation under PROJECTS_ROOT with no writes",
+          "file": "tasks/plan-1-task-3/task.md"
+        },
+        {
+          "id": "plan-1-task-4",
+          "number": 4,
+          "title": "T004 Add tests for valid defaults, invalid names/slugs, existing folders, owner permissions, seed-admin env-only behavior, and SDD artifacts",
+          "status": "done",
+          "description": "T004 Add tests for valid defaults, invalid names/slugs, existing folders, owner permissions, seed-admin env-only behavior, and SDD artifacts",
+          "file": "tasks/plan-1-task-4/task.md"
+        }
+      ]
+    },
+    {
+      "id": "plan-2",
+      "number": 2,
+      "title": "Backend Draft And Job API",
+      "status": "done",
+      "description": "- Add project-factory request/response schemas.",
+      "file": "plans/02-backend-draft-and-job-api/plan.md",
+      "tasks": [
+        {
+          "id": "plan-2-task-1",
+          "number": 1,
+          "title": "T005 Add API schemas for wizard options, draft request, dry-run response, generate response, and job status",
+          "status": "done",
+          "description": "T005 Add API schemas for wizard options, draft request, dry-run response, generate response, and job status",
+          "file": "tasks/plan-2-task-1/task.md"
+        },
+        {
+          "id": "plan-2-task-2",
+          "number": 2,
+          "title": "T006 Add project-factory routes",
+          "status": "done",
+          "description": "T006 Add project-factory routes",
+          "file": "tasks/plan-2-task-2/task.md"
+        },
+        {
+          "id": "plan-2-task-3",
+          "number": 3,
+          "title": "T007 Add persisted draft/job state model and deterministic status payloads",
+          "status": "done",
+          "description": "T007 Add persisted draft/job state model and deterministic status payloads",
+          "file": "tasks/plan-2-task-3/task.md"
+        },
+        {
+          "id": "plan-2-task-4",
+          "number": 4,
+          "title": "T008 Add route tests for draft, dry-run, validation errors, status, history, duplicate generation, and recovery",
+          "status": "done",
+          "description": "T008 Add route tests for draft, dry-run, validation errors, status, history, duplicate generation, and recovery",
+          "file": "tasks/plan-2-task-4/task.md"
+        }
+      ]
+    },
+    {
+      "id": "plan-3",
+      "number": 3,
+      "title": "Mobile Chat Flow",
+      "status": "done",
+      "description": "- Add the New project action to the current app.",
+      "file": "plans/03-mobile-chat-flow/plan.md",
+      "tasks": [
+        {
+          "id": "plan-3-task-1",
+          "number": 1,
+          "title": "T009 Add New project entry point to the existing Flutter app",
+          "status": "done",
+          "description": "T009 Add New project entry point to the existing Flutter app",
+          "file": "tasks/plan-3-task-1/task.md"
+        },
+        {
+          "id": "plan-3-task-2",
+          "number": 2,
+          "title": "T010 Add chat-first New Project mode that asks for name, business type, goal, platforms, visual references, logo/icon, backend, style, preview, and confirmation through the normal conversation",
+          "status": "done",
+          "description": "T010 Add chat-first New Project mode that asks for name, business type, goal, platforms, visual references, logo/icon, backend, style, preview, and confirmation through the normal conversation",
+          "file": "tasks/plan-3-task-2/task.md"
+        },
+        {
+          "id": "plan-3-task-3",
+          "number": 3,
+          "title": "T010a Gate reviewer/build mode until the agent has validated spec, plan, tasks, domain entities, and baseline diagram readiness with the user",
+          "status": "done",
+          "description": "T010a Gate reviewer/build mode until the agent has validated spec, plan, tasks, domain entities, and baseline diagram readiness with the user",
+          "file": "tasks/plan-3-task-3/task.md"
+        },
+        {
+          "id": "plan-3-task-4",
+          "number": 4,
+          "title": "T011 Add API client calls, progress display, and Project Factory History",
+          "status": "done",
+          "description": "T011 Add API client calls, progress display, and Project Factory History",
+          "file": "tasks/plan-3-task-4/task.md"
+        },
+        {
+          "id": "plan-3-task-5",
+          "number": 5,
+          "title": "T012 Add Flutter widget tests for the wizard, progress, and history",
+          "status": "done",
+          "description": "T012 Add Flutter widget tests for the wizard, progress, and history",
+          "file": "tasks/plan-3-task-5/task.md"
+        }
+      ]
+    },
+    {
+      "id": "plan-4",
+      "number": 4,
+      "title": "Research And Visual Direction",
+      "status": "done",
+      "description": "- Generate placeholder business research documents that Codex CLI batches fill.",
+      "file": "plans/04-research-and-visual-direction/plan.md",
+      "tasks": [
+        {
+          "id": "plan-4-task-1",
+          "number": 1,
+          "title": "T013 Add business-type research prompt/output contracts",
+          "status": "done",
+          "description": "T013 Add business-type research prompt/output contracts",
+          "file": "tasks/plan-4-task-1/task.md"
+        },
+        {
+          "id": "plan-4-task-2",
+          "number": 2,
+          "title": "T014 Add typical-app UX pattern prompt generation",
+          "status": "done",
+          "description": "T014 Add typical-app UX pattern prompt generation",
+          "file": "tasks/plan-4-task-2/task.md"
+        },
+        {
+          "id": "plan-4-task-3",
+          "number": 3,
+          "title": "T015 Add uploaded-image handoff, project copy, and visual reference docs",
+          "status": "done",
+          "description": "T015 Add uploaded-image handoff, project copy, and visual reference docs",
+          "file": "tasks/plan-4-task-3/task.md"
+        },
+        {
+          "id": "plan-4-task-4",
+          "number": 4,
+          "title": "T016 Add design token/style guide placeholders and generator tests",
+          "status": "done",
+          "description": "T016 Add design token/style guide placeholders and generator tests",
+          "file": "tasks/plan-4-task-4/task.md"
+        }
+      ]
+    },
+    {
+      "id": "plan-5",
+      "number": 5,
+      "title": "Local Generator",
+      "status": "done",
+      "description": "- Create the sibling project directory under `PROJECTS_ROOT`.",
+      "file": "plans/05-local-generator/plan.md",
+      "tasks": [
+        {
+          "id": "plan-5-task-1",
+          "number": 1,
+          "title": "T017 Write local project directory and .codex/project.yaml",
+          "status": "done",
+          "description": "T017 Write local project directory and .codex/project.yaml",
+          "file": "tasks/plan-5-task-1/task.md"
+        },
+        {
+          "id": "plan-5-task-2",
+          "number": 2,
+          "title": "T018 Generate README, AGENTS, research/design/release/infra folders",
+          "status": "done",
+          "description": "T018 Generate README, AGENTS, research/design/release/infra folders",
+          "file": "tasks/plan-5-task-2/task.md"
+        },
+        {
+          "id": "plan-5-task-3",
+          "number": 3,
+          "title": "T019 Generate initial specs/001-product-foundation package",
+          "status": "done",
+          "description": "T019 Generate initial specs/001-product-foundation package",
+          "file": "tasks/plan-5-task-3/task.md"
+        },
+        {
+          "id": "plan-5-task-4",
+          "number": 4,
+          "title": "T020 Initialize git safely and prove no secrets are committed",
+          "status": "done",
+          "description": "T020 Initialize git safely and prove no secrets are committed",
+          "file": "tasks/plan-5-task-4/task.md"
+        }
+      ]
+    },
+    {
+      "id": "plan-6",
+      "number": 6,
+      "title": "Flutter And Backend Templates",
+      "status": "done",
+      "description": "- Generate the Flutter iOS/Android/Web app with auth, admin domain management, RBAC-gated admin navigation, notifications, API config, and generated tests.",
+      "file": "plans/06-flutter-and-backend-templates/plan.md",
+      "tasks": [
+        {
+          "id": "plan-6-task-1",
+          "number": 1,
+          "title": "T021 Generate Flutter app with responsive web/mobile shell",
+          "status": "done",
+          "description": "T021 Generate Flutter app with responsive web/mobile shell",
+          "file": "tasks/plan-6-task-1/task.md"
+        },
+        {
+          "id": "plan-6-task-2",
+          "number": 2,
+          "title": "T022 Add auth, Google placeholder config, admin shell, RBAC guards, domain CRUD shell, and notifications shell. Feedback Bridge and updater remain generated follow-up tasks",
+          "status": "done",
+          "description": "T022 Add auth, Google placeholder config, admin shell, RBAC guards, domain CRUD shell, and notifications shell. Feedback Bridge and updater remain generated follow-up tasks",
+          "file": "tasks/plan-6-task-2/task.md"
+        },
+        {
+          "id": "plan-6-task-3",
+          "number": 3,
+          "title": "T023 Generate FastAPI backend with health, auth, RBAC, seed admin, notifications, domain resources, and tests",
+          "status": "done",
+          "description": "T023 Generate FastAPI backend with health, auth, RBAC, seed admin, notifications, domain resources, and tests",
+          "file": "tasks/plan-6-task-3/task.md"
+        },
+        {
+          "id": "plan-6-task-4",
+          "number": 4,
+          "title": "T024 Run generated Flutter/backend validation through generated E2E script",
+          "status": "done",
+          "description": "T024 Run generated Flutter/backend validation through generated E2E script",
+          "file": "tasks/plan-6-task-4/task.md"
+        }
+      ]
+    },
+    {
+      "id": "plan-7",
+      "number": 7,
+      "title": "GitHub And Release Readiness",
+      "status": "done",
+      "description": "- Create an initial local git commit for every generated project.",
+      "file": "plans/07-github-and-release-readiness/plan.md",
+      "tasks": [
+        {
+          "id": "plan-7-task-1",
+          "number": 1,
+          "title": "T025 Add mandatory initial git commit and generated GitHub publish script",
+          "status": "done",
+          "description": "T025 Add mandatory initial git commit and generated GitHub publish script",
+          "file": "tasks/plan-7-task-1/task.md"
+        },
+        {
+          "id": "plan-7-task-2",
+          "number": 2,
+          "title": "T026 Generate AWS, App Store, and Play Store readiness docs",
+          "status": "done",
+          "description": "T026 Generate AWS, App Store, and Play Store readiness docs",
+          "file": "tasks/plan-7-task-2/task.md"
+        },
+        {
+          "id": "plan-7-task-3",
+          "number": 3,
+          "title": "T027 Mark Google/AWS/store credentials as pending without failing local project creation",
+          "status": "done",
+          "description": "T027 Mark Google/AWS/store credentials as pending without failing local project creation",
+          "file": "tasks/plan-7-task-3/task.md"
+        },
+        {
+          "id": "plan-7-task-4",
+          "number": 4,
+          "title": "T027a Execute GitHub publish, Android release, installable-app registration, and remote publication verification from the Factory runner when remote publication mode is active",
+          "status": "done",
+          "description": "T027a Execute GitHub publish, Android release, installable-app registration, and remote publication verification from the Factory runner when remote publication mode is active",
+          "file": "tasks/plan-7-task-4/task.md"
+        },
+        {
+          "id": "plan-7-task-5",
+          "number": 5,
+          "title": "T027b Mark publication gaps as blocked with concrete command/log output instead of ready when GitHub origin, release APK, or Bridge registration is missing",
+          "status": "done",
+          "description": "T027b Mark publication gaps as blocked with concrete command/log output instead of ready when GitHub origin, release APK, or Bridge registration is missing",
+          "file": "tasks/plan-7-task-5/task.md"
+        }
+      ]
+    },
+    {
+      "id": "plan-8",
+      "number": 8,
+      "title": "End-To-End Validation",
+      "status": "done",
+      "description": "- Add a doctor endpoint with Projects root and toolchain checks.",
+      "file": "plans/08-end-to-end-validation/plan.md",
+      "tasks": [
+        {
+          "id": "plan-8-task-1",
+          "number": 1,
+          "title": "T028 Add project-factory doctor",
+          "status": "done",
+          "description": "T028 Add project-factory doctor",
+          "file": "tasks/plan-8-task-1/task.md"
+        },
+        {
+          "id": "plan-8-task-2",
+          "number": 2,
+          "title": "T029 Add generated-project E2E validation flow",
+          "status": "done",
+          "description": "T029 Add generated-project E2E validation flow",
+          "file": "tasks/plan-8-task-2/task.md"
+        },
+        {
+          "id": "plan-8-task-3",
+          "number": 3,
+          "title": "T030 Validate Workbench discovery, auth/RBAC, admin, domain CRUD, notifications, Flutter, backend, and no secrets",
+          "status": "done",
+          "description": "T030 Validate Workbench discovery, auth/RBAC, admin, domain CRUD, notifications, Flutter, backend, and no secrets",
+          "file": "tasks/plan-8-task-3/task.md"
+        }
+      ]
+    },
+    {
+      "id": "plan-9",
+      "number": 9,
+      "title": "Acceptance Hardening",
+      "status": "done",
+      "description": "- Persist drafts/jobs and recover interrupted jobs after restart.",
+      "file": "plans/09-acceptance-hardening/plan.md",
+      "tasks": [
+        {
+          "id": "plan-9-task-1",
+          "number": 1,
+          "title": "T031 Persist drafts/jobs and recover queued/running as interrupted",
+          "status": "done",
+          "description": "T031 Persist drafts/jobs and recover queued/running as interrupted",
+          "file": "tasks/plan-9-task-1/task.md"
+        },
+        {
+          "id": "plan-9-task-2",
+          "number": 2,
+          "title": "T032 Add draft/job history APIs and mobile history panel",
+          "status": "done",
+          "description": "T032 Add draft/job history APIs and mobile history panel",
+          "file": "tasks/plan-9-task-2/task.md"
+        },
+        {
+          "id": "plan-9-task-3",
+          "number": 3,
+          "title": "T033 Document operational config, toolchain, and generated validation",
+          "status": "done",
+          "description": "T033 Document operational config, toolchain, and generated validation",
+          "file": "tasks/plan-9-task-3/task.md"
+        },
+        {
+          "id": "plan-9-task-4",
+          "number": 4,
+          "title": "T034 Run acceptance validation",
+          "status": "done",
+          "description": "T034 Run acceptance validation",
+          "file": "tasks/plan-9-task-4/task.md"
+        }
+      ]
+    },
+    {
+      "id": "plan-10",
+      "number": 10,
+      "title": "Post-Release Chat-Mode Hardening",
+      "status": "done",
+      "description": "Tasks promoted from `Phase 10: Post-Release Chat-Mode Hardening`.",
+      "file": "plans/10-post-release-chat-mode-hardening/plan.md",
+      "tasks": [
+        {
+          "id": "plan-10-task-1",
+          "number": 1,
+          "title": "T035 Add backend version/capability metadata for Project Factory",
+          "status": "done",
+          "description": "T035 Add backend version/capability metadata for Project Factory",
+          "file": "tasks/plan-10-task-1/task.md"
+        },
+        {
+          "id": "plan-10-task-2",
+          "number": 2,
+          "title": "T036 Harden backend PID handling and post-restart validation",
+          "status": "done",
+          "description": "T036 Harden backend PID handling and post-restart validation",
+          "file": "tasks/plan-10-task-2/task.md"
+        },
+        {
+          "id": "plan-10-task-3",
+          "number": 3,
+          "title": "T037 Move primary New project UX from modal form to chat-mode kickoff",
+          "status": "done",
+          "description": "T037 Move primary New project UX from modal form to chat-mode kickoff",
+          "file": "tasks/plan-10-task-3/task.md"
+        },
+        {
+          "id": "plan-10-task-4",
+          "number": 4,
+          "title": "T038 Update creation defaults to 20 generator and 20 reviewer runs",
+          "status": "done",
+          "description": "T038 Update creation defaults to 20 generator and 20 reviewer runs",
+          "file": "tasks/plan-10-task-4/task.md"
+        },
+        {
+          "id": "plan-10-task-5",
+          "number": 5,
+          "title": "T039 Generate mandatory baseline Workbench diagrams and SDD indexes for new projects",
+          "status": "done",
+          "description": "T039 Generate mandatory baseline Workbench diagrams and SDD indexes for new projects",
+          "file": "tasks/plan-10-task-5/task.md"
+        }
+      ]
+    },
+    {
+      "id": "plan-11",
+      "number": 11,
+      "title": "Publication Contract Hardening",
+      "status": "done",
+      "description": "Tasks promoted from `Phase 11: Publication Contract Hardening`.",
+      "file": "plans/11-publication-contract-hardening/plan.md",
+      "tasks": [
+        {
+          "id": "plan-11-task-1",
+          "number": 1,
+          "title": "T040 Document the SAT Showroom gap where a local foundation finished without GitHub repo, Android release, or Bridge app registration",
+          "status": "done",
+          "description": "T040 Document the SAT Showroom gap where a local foundation finished without GitHub repo, Android release, or Bridge app registration",
+          "file": "tasks/plan-11-task-1/task.md"
+        },
+        {
+          "id": "plan-11-task-2",
+          "number": 2,
+          "title": "T041 Add runner-owned github_publish, android_release, and installable_app_registration phases for remote Project Factory jobs",
+          "status": "done",
+          "description": "T041 Add runner-owned github_publish, android_release, and installable_app_registration phases for remote Project Factory jobs",
+          "file": "tasks/plan-11-task-2/task.md"
+        },
+        {
+          "id": "plan-11-task-3",
+          "number": 3,
+          "title": "T042 Generate scripts/publish_android_release.sh and a stable <sourceApp>.apk GitHub release asset",
+          "status": "done",
+          "description": "T042 Generate scripts/publish_android_release.sh and a stable <sourceApp>.apk GitHub release asset",
+          "file": "tasks/plan-11-task-3/task.md"
+        },
+        {
+          "id": "plan-11-task-4",
+          "number": 4,
+          "title": "T043 Pass required GitHub/release/Bridge environment variables to generated publication scripts without printing secrets",
+          "status": "done",
+          "description": "T043 Pass required GitHub/release/Bridge environment variables to generated publication scripts without printing secrets",
+          "file": "tasks/plan-11-task-4/task.md"
+        },
+        {
+          "id": "plan-11-task-5",
+          "number": 5,
+          "title": "T044 Treat missing external publication configuration as blocked, not ready",
+          "status": "done",
+          "description": "T044 Treat missing external publication configuration as blocked, not ready",
+          "file": "tasks/plan-11-task-5/task.md"
+        },
+        {
+          "id": "plan-11-task-6",
+          "number": 6,
+          "title": "T045 Add regression tests for remote publication phase execution and blocked publication outcomes",
+          "status": "done",
+          "description": "T045 Add regression tests for remote publication phase execution and blocked publication outcomes",
+          "file": "tasks/plan-11-task-6/task.md"
+        }
+      ]
+    }
+  ]
+}

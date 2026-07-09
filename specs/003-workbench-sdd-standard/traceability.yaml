@@ -1,0 +1,185 @@
+spec_id: 003-workbench-sdd-standard
+title: Workbench SDD Standard And Context Routing
+status: draft
+
+requirements:
+  FR-001:
+    acceptance_criteria: [AC-001, AC-002, AC-012]
+    tasks: [T001, T002, T003, T004, T005, T006, T007, T008]
+    phase: 1
+  FR-002:
+    acceptance_criteria: [AC-001, AC-014]
+    tasks: [T009, T010, T011, T012, T013, T014, T015, T016]
+    phase: 2
+  FR-003:
+    acceptance_criteria: [AC-002, AC-011, AC-014]
+    tasks: [T005, T011, T012, T013, T085]
+    phase: 2
+  FR-004:
+    acceptance_criteria: [AC-003, AC-013]
+    tasks: [T017, T018, T019, T020, T021, T022, T023, T024, T025]
+    phase: 3
+  FR-005:
+    acceptance_criteria: [AC-004, AC-011, AC-013]
+    tasks: [T026, T027, T028, T029, T030, T031, T032]
+    phase: 4
+  FR-006:
+    acceptance_criteria: [AC-005, AC-015]
+    tasks: [T033, T034, T035, T036, T037, T038, T088]
+    phase: 5
+  FR-007:
+    acceptance_criteria: [AC-006]
+    tasks: [T039, T040, T041, T042, T043, T044, T045, T046, T047]
+    phase: 6
+  FR-008:
+    acceptance_criteria: [AC-007]
+    tasks: [T048, T049, T050, T051, T052, T053, T054, T055, T056, T057]
+    phase: 7
+  FR-009:
+    acceptance_criteria: [AC-007, AC-012]
+    tasks: [T058, T059, T060, T061, T062, T087, T089]
+    phase: 8
+  FR-010:
+    acceptance_criteria: [AC-008]
+    tasks: [T063, T064, T065, T066, T067, T068, T069, T070]
+    phase: 9
+  FR-011:
+    acceptance_criteria: [AC-009, AC-015]
+    tasks: [T071, T072, T073, T074, T075, T076, T077, T078]
+    phase: 10
+  FR-012:
+    acceptance_criteria: [AC-010]
+    tasks: [T079, T080, T081, T082, T083]
+    phase: 11
+  FR-013:
+    acceptance_criteria: [AC-011]
+    tasks: [T084, T085, T086, T087, T088, T089, T090]
+    phase: 12
+  FR-014:
+    acceptance_criteria: [AC-012]
+    tasks: [T001, T002, T003, T004, T006, T007, T008, T089]
+    phase: 1
+  FR-015:
+    acceptance_criteria: [AC-013]
+    tasks: [T016, T017, T018, T019, T020, T021, T025]
+    phase: 3
+  FR-016:
+    acceptance_criteria: [AC-014]
+    tasks: [T011, T012, T013, T015, T041, T049, T057, T061, T080]
+    phase: 2
+  FR-017:
+    acceptance_criteria: [AC-016]
+    tasks: [T091, T092, T093, T094, T095]
+    phase: review
+
+diagrams:
+  artifact-ownership:
+    path: diagrams/artifact-ownership.mmd
+    requirements: [FR-003, FR-016]
+  context-pack-sequence:
+    path: diagrams/context-pack-sequence.mmd
+    requirements: [FR-007, FR-008, FR-009, FR-014, FR-016]
+
+review:
+  required_before_implementation: true
+  tasks: [T091, T092, T093, T094, T095]
+
+implementation:
+  iterations:
+    validator-first-pass-002:
+      completed_tasks: [T006, T008, T019, T020]
+      evidence:
+        - workbench-sdd/v1.x aliases resolve to the canonical v1 artifact
+        - unsupported standard families and major versions produce hard errors
+        - LLM resolution instructions are generated through SddStandardService
+        - scaffold dry-run blocks unsafe paths, duplicates, template failures, and incompatible existing artifacts before any write flow exists
+    manifest-validation-coverage-pass-001:
+      completed_tasks: [T014, T015]
+      evidence:
+        - tests/test_sdd_standard_validation.py covers legacy manifests, valid v1 manifests, invalid standards, invalid context_rules, and protected baseline override failures
+        - manifest parsing preserves compatibility warnings while validating context-rule precedence and rejecting unsafe project overrides
+    scaffold-bootstrap-pass-001:
+      completed_tasks: [T021, T022, T023, T024, T025]
+      evidence:
+        - bootstrap_scaffold uses scaffold_dry_run as its write contract
+        - missing standard artifacts are created only when absent
+        - existing incompatible artifacts block writes instead of overwriting
+        - bootstrap result reports created, existing, skipped, blocked, would_overwrite, and next_actions
+        - focused tests cover successful creation, idempotency, unsafe paths, template failures, validator failures, and no-write failure behavior
+    documentation-template-pass-001:
+      completed_tasks: [T026, T027, T028, T029, T030, T031, T032]
+      evidence:
+        - workbench-sdd/v1 declares a templates.catalog with required metadata and standard-owned source files
+        - bootstrap_scaffold consumes template source content instead of hardcoded placeholder bodies
+        - service-level template listing exposes machine-readable template metadata
+        - focused tests verify generated scaffold headings, metadata, absence of unresolved template variables, missing metadata, and malformed catalog failures
+    diagram-governance-pass-001:
+      completed_tasks: [T033, T034, T035, T036, T037, T038]
+      evidence:
+        - workbench-sdd/v1 declares diagram taxonomy, Mermaid notation directives, ownership boundaries, and diagram governance policies
+        - validator emits taxonomy_governance, artifact_governance, diagram_metadata, and mermaid_validation checks
+        - protected baseline paths and feature-local diagram scopes are validated through metadata and manifest rules
+        - Mermaid source validation checks presence and supported top-level directives; full render validation is documented as skipped until a backend renderer is configured
+    sdd-indexer-pass-001:
+      completed_tasks: [T039, T040, T041, T042, T043, T044, T045, T046, T047]
+      evidence:
+        - SddIndexService generates spec, diagram, module, and context indexes under .sdd
+        - indexes include standard version, manifest digest, source freshness markers, shared fingerprint, and prefix-only read policy
+        - service reports fresh, missing, stale, regenerated, and failed states with hard_failure or degraded modes
+        - validator and doctor expose index_status without regenerating by default
+        - focused tests cover fresh indexes, missing regeneration, stale detection/regeneration, hard failure, degraded failure, and no full-spec-body fallback
+    context-pack-pass-001:
+      completed_tasks: [T048, T049, T050, T051, T052, T053, T054, T055, T056, T057]
+      evidence:
+        - SddContextPackService implements all required presets with machine-testable required_files, blocked_reads, routing_decisions, related_specs, related_diagrams, and index_status
+        - context packs consume .sdd indexes and never fall back to scanning every full spec body
+        - context rule limits resolve with Workbench default -> project profile -> project overrides precedence, with overrides only able to tighten limits
+        - missing indexes auto-regenerate when allowed; stale indexes hard-fail when regeneration is disabled; failed regeneration can return degraded output
+        - focused tests cover happy path, override limits, deterministic ranking, missing regeneration, stale hard failure, degraded mode, all presets, and no full-spec fallback
+    llm-operating-instructions-pass-001:
+      completed_tasks: [T058, T059, T060, T061, T062]
+      evidence:
+        - SddLlmInstructionService builds Workbench Codex action prompts from SddStandardService and SddContextPackService instead of duplicating standard, index, or routing logic
+        - generated prompts expose index_status, blocked_reads, routing_decisions, required_files, related_specs, related_diagrams, and next_actions
+        - prompt language forbids broad all-spec reads, protects baseline architecture, domain, and data artifacts, and preserves project-owned context rules
+        - focused tests cover happy path, unknown standard, invalid preset, stale index hard failure, degraded index mode, protected baseline, invalid context_rules, and no full-spec fallback
+    workbench-ui-projection-pass-001:
+      completed_tasks: [T063, T064, T068]
+      evidence:
+        - SddWorkbenchViewService composes Project SDD Health, Standards Compliance, and Context Pack Preview view models from existing project, validation, and LLM/context-pack services
+        - GET /sdd/workbench/view exposes machine-testable health, standards_compliance, and context_preview sections for Workbench UI
+        - context preview exposes status, mode, index_status, required_files, related_specs, related_diagrams, blocked_reads, routing_decisions, next_actions, and generated prompt without duplicating routing logic
+        - focused API tests cover happy path, unknown standard, invalid preset, stale index hard failure, degraded context, invalid context_rules, protected baseline prompt content, project-owned override precedence, and no full-spec fallback
+    workbench-ui-remaining-pass-001:
+      completed_tasks: [T065, T066, T067, T069, T070]
+      evidence:
+        - SddWorkbenchViewService now exposes feature_specs, baselines, traceability_matrix, and impact_queue sections in the Workbench view response
+        - feature_specs include lifecycle and traceability status; baselines separate architecture, domain, and data artifacts; impact_queue surfaces protected baseline and feature-local impact review items
+        - the Flutter Workbench adds a Governance tab with baseline, traceability matrix, and impact queue views, and the Specs tab shows lifecycle and traceability chips
+        - focused API tests cover linked and incomplete traceability, baseline protection, impact queue output, and blocked context states
+        - focused Flutter widget tests cover lifecycle/traceability chips and Governance baseline, traceability, and impact views
+    doctor-validation-pass-001:
+      completed_tasks: [T071, T072, T073, T074, T075, T076, T077, T078]
+      evidence:
+        - codex_bridge_sdd_doctor.py emits a stable JSON v2 contract with status, summary, warnings, errors, skipped, degraded, index_status, next_actions, and per-check data
+        - doctor validation now aggregates manifest adoption, required artifacts, specs, diagrams, traceability, standard resolution, context_rules, templates, scaffold dry-run safety, taxonomy, governance, Mermaid policy, index freshness, context-pack routing, LLM instructions, and Workbench view readiness
+        - non-strict mode exits successfully for pass-with-warnings; strict mode exits non-zero on warnings; hard failures remain non-zero in both modes
+        - legacy projects without sdd.standard skip context-pack, LLM, and Workbench readiness instead of failing read-only inspection
+        - focused doctor tests cover JSON contract shape, strict behavior, hard failures, degraded context, skipped legacy readiness, and warning aggregation without masking errors
+    sat-pilot-adoption-pass-001:
+      completed_tasks: [T079, T080, T081, T082, T083]
+      evidence:
+        - scripts/codex_bridge_sdd_sat_adopt.py provides a SAT pilot adoption boundary with dry-run by default and explicit --apply remediation
+        - SAT codex-bridge.yaml now declares workbench-sdd/v1, flutter_app project type, SAT-owned context_rules, roots, and protected baseline diagrams
+        - SAT now has standard-aligned architecture overview, domain glossary, data persistence model, diagram metadata sidecars, traceability, and generated .sdd indexes
+        - the SAT adoption tool preserves pre-existing project-owned files and blocks unsafe target paths without mutating outside the workspace
+        - SAT passes codex_bridge_sdd_doctor.py --json --strict using generic Workbench services with no SAT-specific platform code
+        - focused tests cover dry-run preview, apply, no-overwrite behavior, unsafe path blocking, read-only doctor non-mutation, and strict doctor readiness after remediation
+    adoption-documentation-pass-001:
+      completed_tasks: [T084, T085, T086, T087, T088, T089, T090, T095]
+      evidence:
+        - docs/workbench-sdd-adoption.md documents new-repo adoption, artifact ownership boundaries, feature workflow, context-pack behavior, diagram governance, version resolution, and SAT as a non-normative pilot
+        - scripts/codex_bridge_sdd_backfill.py provides explicit dry-run and --apply remediation for missing diagram sidecars, feature traceability, and .sdd indexes while preserving read-only doctor behavior
+        - Workbench repo strict doctor readiness is achieved after explicit backfill instead of implicit doctor writes
+        - Phase implementation is split into traceability iterations with evidence for each completed task group
+        - tests/test_sdd_phase12_readiness.py covers backfill dry-run, strict readiness after backfill, documentation content, and task/traceability consistency

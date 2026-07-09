@@ -111,9 +111,7 @@ class KokoroSpeechSynthesizer(SpeechSynthesizer):
                 audio_segments, resolved_format, self._sample_rate
             )
         except Exception as exc:
-            raise SpeechSynthesisError(
-                f"Kokoro audio encoding failed: {exc}"
-            ) from exc
+            raise SpeechSynthesisError(f"Kokoro audio encoding failed: {exc}") from exc
 
         return SynthesizedSpeech(
             audio_bytes=audio_bytes,

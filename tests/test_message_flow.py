@@ -15,8 +15,13 @@ from fastapi.testclient import TestClient
 import pytest
 
 from backend.app.application.services.message_service import MessageService
-from backend.app.api.routes import _jobs_by_id_for_messages, get_container
-from backend.app.api.schemas import SessionSummaryResponse
+from backend.app.application.services.feedback_queue_service import FeedbackQueueItem
+from backend.app.api.routes import (
+    _feedback_live_feedback_note,
+    _jobs_by_id_for_messages,
+    get_container,
+)
+from backend.app.api.schemas import SessionDetailResponse, SessionSummaryResponse
 from backend.app.domain.entities.agent_configuration import (
     AgentConfiguration,
     AgentDisplayMode,
@@ -42,11 +47,21 @@ from backend.app.domain.entities.chat_session import ChatSession
 from backend.app.domain.entities.codex_options import CodexRunOptions
 from backend.app.domain.entities.job import JobConversationKind, JobStatus
 from backend.app.infrastructure import mcp_apps as mcp_apps_infra
-from backend.app.infrastructure.execution.base import ExecutionProvider, ExecutionSnapshot
+from backend.app.infrastructure.execution.base import (
+    ExecutionProvider,
+    ExecutionSnapshot,
+)
 from backend.app.infrastructure.execution.local_provider import LocalExecutionProvider
-from backend.app.infrastructure.codex_tooling import discover_codex_skills, sync_repo_skills
-from backend.app.infrastructure.persistence.in_memory_chat_repository import InMemoryChatRepository
-from backend.app.infrastructure.persistence.sqlite_chat_repository import SqliteChatRepository
+from backend.app.infrastructure.codex_tooling import (
+    discover_codex_skills,
+    sync_repo_skills,
+)
+from backend.app.infrastructure.persistence.in_memory_chat_repository import (
+    InMemoryChatRepository,
+)
+from backend.app.infrastructure.persistence.sqlite_chat_repository import (
+    SqliteChatRepository,
+)
 from backend.app.infrastructure.speech import kokoro_synthesizer
 from backend.app.infrastructure.speech.base import (
     SpeechSynthesizer,
@@ -55,7 +70,9 @@ from backend.app.infrastructure.speech.base import (
     SpeechSynthesisUnavailableError,
     SynthesizedSpeech,
 )
-from backend.app.infrastructure.transcription.disabled_transcriber import DisabledAudioTranscriber
+from backend.app.infrastructure.transcription.disabled_transcriber import (
+    DisabledAudioTranscriber,
+)
 from backend.app.main import create_app
 from backend.app.infrastructure.config.settings import Settings
 from backend.app.domain.repositories.chat_repository import PersistenceDataError
@@ -107,10 +124,17 @@ def build_json_only_client() -> TestClient:
 
 
 def build_app_server_streaming_client() -> TestClient:
-    state_file = Path(tempfile.gettempdir()) / "fake_codex_app_server_threads.json"
+    state_file = (
+        Path(tempfile.gettempdir())
+        / f"fake_codex_app_server_threads_{os.getpid()}_{time.monotonic_ns()}.json"
+    )
     state_file.unlink(missing_ok=True)
     settings = Settings(
-        codex_command="python3 tests/fixtures/fake_codex_app_server.py",
+        codex_command=(
+            "env "
+            f"FAKE_CODEX_APP_SERVER_STATE_FILE={state_file} "
+            "python3 tests/fixtures/fake_codex_app_server.py"
+        ),
         codex_use_exec=True,
         codex_streaming_mode="app_server",
         codex_exec_args="--skip-git-repo-check --color never --dangerously-bypass-approvals-and-sandbox",
@@ -283,14 +307,16 @@ class _ControlledExecutionProvider(ExecutionProvider):
                 response=response,
                 error=error,
                 provider_session_id=current.provider_session_id,
-                phase=phase or (
+                phase=phase
+                or (
                     "Completed"
                     if status == JobStatus.COMPLETED
                     else "Cancelled"
                     if status == JobStatus.CANCELLED
                     else "Failed"
                 ),
-                latest_activity=latest_activity or (
+                latest_activity=latest_activity
+                or (
                     "Controlled provider completed the job."
                     if status == JobStatus.COMPLETED
                     else "Controlled provider cancelled the job."
@@ -354,6 +380,23 @@ class _ControlledExecutionProvider(ExecutionProvider):
     def get_latest_activity(self, job_id: str) -> str | None:
         with self._lock:
             return self._snapshots[job_id].latest_activity
+
+
+def _provider_request(
+    provider: _ControlledExecutionProvider,
+    job_id: str,
+) -> dict[str, object]:
+    return next(request for request in provider.requests if request["job_id"] == job_id)
+
+
+def _conversation_provider_requests(
+    provider: _ControlledExecutionProvider,
+) -> list[dict[str, object]]:
+    return [
+        request
+        for request in provider.requests
+        if not str(request.get("serial_key") or "").endswith(":title")
+    ]
 
 
 class _WatchedControlledExecutionProvider(_ControlledExecutionProvider):
@@ -530,7 +573,9 @@ def _build_controlled_message_service(
     *,
     barrier_agent_id: AgentId,
     follow_up_reconcile_interval_seconds: float | None = None,
-) -> tuple[_BarrierLaunchMessageService, _ControlledExecutionProvider, InMemoryChatRepository]:
+) -> tuple[
+    _BarrierLaunchMessageService, _ControlledExecutionProvider, InMemoryChatRepository
+]:
     repository = InMemoryChatRepository(projects_root=projects_root)
     provider = _ControlledExecutionProvider()
     service = _BarrierLaunchMessageService(
@@ -549,7 +594,11 @@ def _build_watched_controlled_message_service(
     *,
     barrier_agent_id: AgentId,
     follow_up_reconcile_interval_seconds: float | None = None,
-) -> tuple[_BarrierLaunchMessageService, _WatchedControlledExecutionProvider, InMemoryChatRepository]:
+) -> tuple[
+    _BarrierLaunchMessageService,
+    _WatchedControlledExecutionProvider,
+    InMemoryChatRepository,
+]:
     repository = InMemoryChatRepository(projects_root=projects_root)
     provider = _WatchedControlledExecutionProvider()
     service = _BarrierLaunchMessageService(
@@ -706,7 +755,9 @@ def test_backend_drain_waits_through_reviewer_handoff_until_run_complete() -> No
         configuration.agents[AgentId.REVIEWER].enabled = True
         configuration.agents[AgentId.REVIEWER].max_turns = 1
         configuration.agents[AgentId.SUMMARY].enabled = False
-        service.update_agent_configuration(session_id=session.id, configuration=configuration)
+        service.update_agent_configuration(
+            session_id=session.id, configuration=configuration
+        )
 
         initial_job = service.submit_message(
             "Build the implementation.",
@@ -721,7 +772,7 @@ def test_backend_drain_waits_through_reviewer_handoff_until_run_complete() -> No
 
         reviewer_job = next(
             job
-            for job in provider.requests
+            for job in _conversation_provider_requests(provider)
             if job["job_id"] != initial_job.id
         )
         provider.complete_job(str(reviewer_job["job_id"]), response="Review complete.")
@@ -753,7 +804,9 @@ def test_backend_drain_rejects_retries() -> None:
 
 def test_backend_drain_reconciles_stale_in_flight_jobs() -> None:
     repository = InMemoryChatRepository(projects_root="..")
-    first_client, _first_container, _provider = build_drain_client(repository=repository)
+    first_client, _first_container, _provider = build_drain_client(
+        repository=repository
+    )
     accepted = first_client.post("/message", json={"message": "Stale job"})
     assert accepted.status_code == 202
     job_id = accepted.json()["job_id"]
@@ -909,7 +962,9 @@ def build_multi_attachment_client() -> TestClient:
     return TestClient(app)
 
 
-def wait_for_job(client: TestClient, job_id: str, *, timeout_seconds: float = 5.0) -> dict:
+def wait_for_job(
+    client: TestClient, job_id: str, *, timeout_seconds: float = 5.0
+) -> dict:
     deadline = time.monotonic() + timeout_seconds
     payload: dict | None = None
 
@@ -942,7 +997,9 @@ def wait_for_session(
             return payload
         time.sleep(0.05)
 
-    raise AssertionError(f"Session {session_id} did not reach expected state: {payload}")
+    raise AssertionError(
+        f"Session {session_id} did not reach expected state: {payload}"
+    )
 
 
 def wait_for_repository_session(
@@ -981,7 +1038,9 @@ def run_stage_by_id(run_payload: dict, stage_id: str) -> dict:
     return next(stage for stage in run_payload["stages"] if stage["stage"] == stage_id)
 
 
-def run_concurrent_get_job(service: MessageService, job_id: str, *, workers: int = 2) -> None:
+def run_concurrent_get_job(
+    service: MessageService, job_id: str, *, workers: int = 2
+) -> None:
     errors: list[Exception] = []
     start_barrier = threading.Barrier(workers)
 
@@ -994,10 +1053,7 @@ def run_concurrent_get_job(service: MessageService, job_id: str, *, workers: int
         except Exception as exc:  # pragma: no cover - surfaced via assertion
             errors.append(exc)
 
-    threads = [
-        threading.Thread(target=worker, daemon=True)
-        for _ in range(workers)
-    ]
+    threads = [threading.Thread(target=worker, daemon=True) for _ in range(workers)]
     for thread in threads:
         thread.start()
     for thread in threads:
@@ -1080,7 +1136,7 @@ def build_agent_configuration_payload(
     summary_window_end: int = 6,
     reviewer_visibility: str = "collapsed",
 ) -> dict:
-    normalized_interval = max(1, summary_trigger_interval or 4)
+    normalized_interval = max(1, summary_trigger_interval or 3)
     return {
         "preset": preset,
         "display_mode": display_mode,
@@ -1137,7 +1193,12 @@ def build_supervisor_configuration_payload(
     summary_window_start: int = 3,
     summary_window_end: int = 6,
 ) -> dict:
-    selected_members = supervisor_member_ids or ["qa", "ux", "senior_engineer", "scraper"]
+    selected_members = supervisor_member_ids or [
+        "qa",
+        "ux",
+        "senior_engineer",
+        "scraper",
+    ]
 
     def specialist_enabled(agent_id: str) -> bool:
         return agent_id in selected_members
@@ -1148,7 +1209,7 @@ def build_supervisor_configuration_payload(
         "turn_budget_mode": turn_budget_mode,
         "summary_strategy": {
             "mode": SummaryStrategyMode.SUPERVISOR_WINDOW.value,
-            "deterministic_interval": max(1, summary_trigger_interval or 4),
+            "deterministic_interval": max(1, summary_trigger_interval or 3),
             "supervisor_window_start": summary_window_start,
             "supervisor_window_end": summary_window_end,
         },
@@ -1262,10 +1323,7 @@ def build_agent_configuration_domain(
             "preset": payload["preset"],
             "display_mode": payload["display_mode"],
             "summary_strategy": payload["summary_strategy"],
-            "agents": {
-                agent["agent_id"]: agent
-                for agent in payload["agents"]
-            },
+            "agents": {agent["agent_id"]: agent for agent in payload["agents"]},
         }
     )
 
@@ -1328,7 +1386,10 @@ def test_session_message_flow_reuses_provider_session() -> None:
     payload = updated_session.json()
     assert payload["provider_session_id"] == provider_session_id
     assert len(payload["messages"]) == 4
-    assert payload["messages"][3]["content"] == f"resume:{provider_session_id}:second prompt"
+    assert (
+        payload["messages"][3]["content"]
+        == f"resume:{provider_session_id}:second prompt"
+    )
 
     sessions_response = client.get("/sessions")
     assert sessions_response.status_code == 200
@@ -1360,8 +1421,14 @@ def test_session_message_flow_serializes_overlapping_turns() -> None:
     payload = updated_session.json()
     assert payload["provider_session_id"] == first_job["provider_session_id"]
     assert len(payload["messages"]) == 4
-    assert payload["messages"][1]["content"] == f"new:{first_job['provider_session_id']}:first prompt"
-    assert payload["messages"][3]["content"] == f"resume:{first_job['provider_session_id']}:second prompt"
+    assert (
+        payload["messages"][1]["content"]
+        == f"new:{first_job['provider_session_id']}:first prompt"
+    )
+    assert (
+        payload["messages"][3]["content"]
+        == f"resume:{first_job['provider_session_id']}:second prompt"
+    )
 
 
 def test_session_message_flow_serializes_three_overlapping_turns() -> None:
@@ -1391,9 +1458,18 @@ def test_session_message_flow_serializes_three_overlapping_turns() -> None:
 
     payload = client.get(f"/sessions/{session_id}").json()
     assert len(payload["messages"]) == 6
-    assert payload["messages"][1]["content"] == f"new:{first_job['provider_session_id']}:first prompt"
-    assert payload["messages"][3]["content"] == f"resume:{first_job['provider_session_id']}:second prompt"
-    assert payload["messages"][5]["content"] == f"resume:{first_job['provider_session_id']}:third prompt"
+    assert (
+        payload["messages"][1]["content"]
+        == f"new:{first_job['provider_session_id']}:first prompt"
+    )
+    assert (
+        payload["messages"][3]["content"]
+        == f"resume:{first_job['provider_session_id']}:second prompt"
+    )
+    assert (
+        payload["messages"][5]["content"]
+        == f"resume:{first_job['provider_session_id']}:third prompt"
+    )
 
 
 def test_supervisor_preset_routes_work_through_selected_specialists() -> None:
@@ -1423,7 +1499,9 @@ def test_supervisor_preset_routes_work_through_selected_specialists() -> None:
         session_id,
         predicate=lambda session_payload: (
             session_payload["active_agent_run_id"] is None
-            and any(message["agent_id"] == "qa" for message in session_payload["messages"])
+            and any(
+                message["agent_id"] == "qa" for message in session_payload["messages"]
+            )
             and any(
                 message["agent_id"] == "senior_engineer"
                 for message in session_payload["messages"]
@@ -1443,7 +1521,9 @@ def test_supervisor_preset_routes_work_through_selected_specialists() -> None:
     assert all(message["agent_id"] != "ux" for message in messages[2:])
 
 
-def test_supervisor_only_turn_budget_preserves_specialist_budgets_for_later_restore() -> None:
+def test_supervisor_only_turn_budget_preserves_specialist_budgets_for_later_restore() -> (
+    None
+):
     configuration = AgentConfiguration.from_dict(
         {
             "preset": "supervisor",
@@ -1500,7 +1580,9 @@ def test_recent_runs_keep_review_snapshot_after_session_changes_to_solo() -> Non
         predicate=lambda payload: (
             payload["active_agent_run_id"] is None
             and len(payload["recent_runs"]) == 1
-            and any(message["agent_id"] == "reviewer" for message in payload["messages"])
+            and any(
+                message["agent_id"] == "reviewer" for message in payload["messages"]
+            )
         ),
     )
     run_id = completed_payload["recent_runs"][0]["run_id"]
@@ -1530,7 +1612,9 @@ def test_recent_runs_keep_review_snapshot_after_session_changes_to_solo() -> Non
     assert summary_stage["has_turn_budget"] is False
 
 
-def test_recent_runs_keep_supervisor_each_agent_snapshot_after_switch_to_supervisor_only() -> None:
+def test_recent_runs_keep_supervisor_each_agent_snapshot_after_switch_to_supervisor_only() -> (
+    None
+):
     client = build_session_client()
 
     session_response = client.post("/sessions", json={"title": "Supervisor snapshot"})
@@ -1581,10 +1665,12 @@ def test_recent_runs_keep_supervisor_each_agent_snapshot_after_switch_to_supervi
     qa_stage = run_stage_by_id(historical_run, "qa")
     senior_engineer_stage = run_stage_by_id(historical_run, "senior_engineer")
 
-    assert supervisor_only_response.json()["agent_configuration"]["turn_budget_mode"] == (
-        "supervisor_only"
-    )
-    assert supervisor_only_response.json()["agent_configuration"]["supervisor_member_ids"] == ["qa"]
+    assert supervisor_only_response.json()["agent_configuration"][
+        "turn_budget_mode"
+    ] == ("supervisor_only")
+    assert supervisor_only_response.json()["agent_configuration"][
+        "supervisor_member_ids"
+    ] == ["qa"]
     assert historical_run["preset"] == "supervisor"
     assert historical_run["turn_budget_mode"] == "each_agent"
     assert set(historical_run["participant_agent_ids"]) == {
@@ -1601,7 +1687,9 @@ def test_recent_runs_keep_supervisor_each_agent_snapshot_after_switch_to_supervi
     assert senior_engineer_stage["has_turn_budget"] is True
 
 
-def test_recent_runs_keep_supervisor_snapshot_after_switch_to_non_supervisor_mode() -> None:
+def test_recent_runs_keep_supervisor_snapshot_after_switch_to_non_supervisor_mode() -> (
+    None
+):
     client = build_session_client()
 
     session_response = client.post("/sessions", json={"title": "Supervisor to solo"})
@@ -1649,7 +1737,9 @@ def test_recent_runs_keep_supervisor_snapshot_after_switch_to_non_supervisor_mod
     assert solo_response.status_code == 200
 
     historical_run = recent_run_by_id(solo_response.json(), run_id)
-    stage_ids = {stage["stage"] for stage in historical_run["stages"] if stage["configured"]}
+    stage_ids = {
+        stage["stage"] for stage in historical_run["stages"] if stage["configured"]
+    }
 
     assert solo_response.json()["agent_configuration"]["preset"] == "solo"
     assert historical_run["preset"] == "supervisor"
@@ -1835,7 +1925,9 @@ def test_agent_configuration_route_accepts_legacy_scrapper_alias() -> None:
     normalized_payload = response.json()["agent_configuration"]
     assert normalized_payload["supervisor_member_ids"] == ["qa", "scraper"]
     scraper_agent = next(
-        agent for agent in normalized_payload["agents"] if agent["agent_id"] == "scraper"
+        agent
+        for agent in normalized_payload["agents"]
+        if agent["agent_id"] == "scraper"
     )
     assert scraper_agent["agent_type"] == "scraper"
 
@@ -1934,7 +2026,9 @@ def test_agent_chain_persists_agent_configuration_and_message_metadata() -> None
         json=build_agent_configuration_payload(display_mode="summary_only"),
     )
     assert config_response.status_code == 200
-    assert config_response.json()["agent_configuration"]["display_mode"] == "summary_only"
+    assert (
+        config_response.json()["agent_configuration"]["display_mode"] == "summary_only"
+    )
 
     message_response = client.post(
         f"/sessions/{session_id}/messages",
@@ -1964,7 +2058,11 @@ def test_agent_chain_persists_agent_configuration_and_message_metadata() -> None
     assert messages[2]["visibility"] == "collapsed"
     assert messages[-1]["agent_id"] == "summary"
     assert messages[-1]["agent_type"] == "summary"
-    assert all(message["run_id"] == run_id for message in messages if message["run_id"] is not None)
+    assert all(
+        message["run_id"] == run_id
+        for message in messages
+        if message["run_id"] is not None
+    )
 
 
 def test_duplicate_session_reads_do_not_duplicate_agent_follow_ups() -> None:
@@ -2049,7 +2147,8 @@ def test_stale_run_id_does_not_schedule_follow_ups_after_new_user_turn() -> None
         client,
         session_id,
         predicate=lambda payload: any(
-            message["run_id"] == second_job["run_id"] and message["agent_id"] == "reviewer"
+            message["run_id"] == second_job["run_id"]
+            and message["agent_id"] == "reviewer"
             for message in payload["messages"]
         ),
     )
@@ -2091,13 +2190,17 @@ def test_summary_runs_directly_when_reviewer_is_disabled() -> None:
         session_id,
         predicate=lambda payload: (
             any(message["agent_id"] == "summary" for message in payload["messages"])
-            and not any(message["agent_id"] == "reviewer" for message in payload["messages"])
+            and not any(
+                message["agent_id"] == "reviewer" for message in payload["messages"]
+            )
         ),
     )
 
     assert session_payload["agent_configuration"]["preset"] == "triad"
     assert session_payload["messages"][-1]["agent_id"] == "summary"
-    assert all(message["agent_id"] != "reviewer" for message in session_payload["messages"])
+    assert all(
+        message["agent_id"] != "reviewer" for message in session_payload["messages"]
+    )
 
 
 def test_summary_interval_can_run_before_reviewer_continues() -> None:
@@ -2146,7 +2249,9 @@ def test_summary_interval_can_run_before_reviewer_continues() -> None:
         predicate=lambda payload: (
             payload["active_agent_run_id"] is None
             and any(message["agent_id"] == "summary" for message in payload["messages"])
-            and any(message["agent_id"] == "reviewer" for message in payload["messages"])
+            and any(
+                message["agent_id"] == "reviewer" for message in payload["messages"]
+            )
         ),
     )
 
@@ -2156,7 +2261,9 @@ def test_summary_interval_can_run_before_reviewer_continues() -> None:
         if message["agent_id"] != "user"
     ]
     summary_message = next(
-        message for message in session_payload["messages"] if message["agent_id"] == "summary"
+        message
+        for message in session_payload["messages"]
+        if message["agent_id"] == "summary"
     )
     assert agent_order.index("summary") < agent_order.index("reviewer")
     assert summary_message["summary_turn_start"] == 1
@@ -2165,7 +2272,9 @@ def test_summary_interval_can_run_before_reviewer_continues() -> None:
 
 def test_supervisor_summary_interval_can_publish_mid_run() -> None:
     client = build_session_client()
-    session_response = client.post("/sessions", json={"title": "Supervisor summary cadence"})
+    session_response = client.post(
+        "/sessions", json={"title": "Supervisor summary cadence"}
+    )
     assert session_response.status_code == 201
     session_id = session_response.json()["id"]
 
@@ -2209,8 +2318,14 @@ def test_supervisor_summary_interval_can_publish_mid_run() -> None:
         predicate=lambda payload: (
             payload["active_agent_run_id"] is None
             and any(message["agent_id"] == "summary" for message in payload["messages"])
-            and sum(1 for message in payload["messages"] if message["agent_id"] == "supervisor") >= 2
+            and sum(
+                1
+                for message in payload["messages"]
+                if message["agent_id"] == "supervisor"
+            )
+            >= 2
         ),
+        timeout_seconds=10.0,
     )
 
     agent_order = [
@@ -2219,7 +2334,9 @@ def test_supervisor_summary_interval_can_publish_mid_run() -> None:
         if message["agent_id"] != "user"
     ]
     summary_message = next(
-        message for message in session_payload["messages"] if message["agent_id"] == "summary"
+        message
+        for message in session_payload["messages"]
+        if message["agent_id"] == "summary"
     )
     assert agent_order.index("summary") < len(agent_order) - 1
     assert "qa" in agent_order
@@ -2227,7 +2344,9 @@ def test_supervisor_summary_interval_can_publish_mid_run() -> None:
     assert summary_message["summary_turn_end"] == 3
 
 
-def test_agent_endpoint_round_trip_drives_full_triad_chain_and_persists_final_state() -> None:
+def test_agent_endpoint_round_trip_drives_full_triad_chain_and_persists_final_state() -> (
+    None
+):
     client = build_session_client()
     session_response = client.post("/sessions", json={"title": "Full triad"})
     assert session_response.status_code == 201
@@ -2242,7 +2361,9 @@ def test_agent_endpoint_round_trip_drives_full_triad_chain_and_persists_final_st
         ),
     )
     assert config_response.status_code == 200
-    assert config_response.json()["agent_configuration"]["display_mode"] == "summary_only"
+    assert (
+        config_response.json()["agent_configuration"]["display_mode"] == "summary_only"
+    )
 
     message_response = client.post(
         f"/sessions/{session_id}/messages",
@@ -2304,7 +2425,113 @@ def test_sessions_endpoints_include_conversation_product_fields() -> None:
 
     detail_response = client.get(f"/sessions/{session_id}")
     assert detail_response.status_code == 200
-    assert detail_response.json()["conversation_product"] == summary_entry["conversation_product"]
+    assert (
+        detail_response.json()["conversation_product"]
+        == summary_entry["conversation_product"]
+    )
+
+
+def test_session_responses_include_short_sanitized_topic_description() -> None:
+    timestamp = datetime.now(timezone.utc)
+    session = ChatSession(
+        id="session-topic",
+        title="Topic Chat",
+        workspace_path="/workspace/topic",
+        workspace_name="topic",
+        created_at=timestamp,
+        updated_at=timestamp,
+    )
+    old_user_message = ChatMessage(
+        id="message-old",
+        session_id=session.id,
+        role=ChatMessageRole.USER,
+        author_type=ChatMessageAuthorType.HUMAN,
+        content="Old sidebar topic should not be used",
+        status=ChatMessageStatus.COMPLETED,
+        created_at=timestamp,
+    )
+    assistant_message = ChatMessage(
+        id="message-assistant",
+        session_id=session.id,
+        role=ChatMessageRole.ASSISTANT,
+        author_type=ChatMessageAuthorType.ASSISTANT,
+        agent_id=AgentId.GENERATOR,
+        agent_type=AgentType.GENERATOR,
+        content="I checked the older topic.",
+        status=ChatMessageStatus.COMPLETED,
+        created_at=timestamp,
+    )
+    stale_image_error = (
+        "Codex could not read the local image at "
+        "/tmp/codex-remote-retry-assets/example.jpg: "
+        "failed to read image at /tmp/codex-remote-retry-assets/example.jpg: "
+        "No such file or directory (os error 2)"
+    )
+    latest_user_message = ChatMessage(
+        id="message-latest",
+        session_id=session.id,
+        role=ChatMessageRole.USER,
+        author_type=ChatMessageAuthorType.HUMAN,
+        content=stale_image_error,
+        status=ChatMessageStatus.COMPLETED,
+        created_at=timestamp,
+    )
+    messages = [old_user_message, assistant_message, latest_user_message]
+
+    summary = SessionSummaryResponse.from_domain(session, messages=messages)
+    detail = SessionDetailResponse.from_domain(session, messages=messages)
+
+    assert summary.last_message_at == latest_user_message.created_at
+    assert summary.topic_description == (
+        "original image attachment is no longer available"
+    )
+    assert detail.topic_description == summary.topic_description
+    assert "codex-remote-retry-assets" not in summary.topic_description
+    assert len(summary.topic_description.split()) == 7
+
+
+def test_session_summary_last_message_at_uses_real_messages() -> None:
+    session = ChatSession(
+        id="session-last-message-at",
+        title="Last message timestamp",
+        workspace_path="/workspace/project",
+        workspace_name="project",
+        created_at=datetime(2026, 1, 1, 8, 0, tzinfo=timezone.utc),
+        updated_at=datetime(2026, 1, 2, 17, 43, tzinfo=timezone.utc),
+    )
+
+    empty_summary = SessionSummaryResponse.from_domain(session, messages=[])
+
+    assert empty_summary.last_message_at is None
+
+    old_message = ChatMessage(
+        id="message-old",
+        session_id=session.id,
+        role=ChatMessageRole.USER,
+        author_type=ChatMessageAuthorType.HUMAN,
+        content="Older message",
+        status=ChatMessageStatus.COMPLETED,
+        created_at=datetime(2026, 1, 1, 9, 0, tzinfo=timezone.utc),
+    )
+    latest_message = ChatMessage(
+        id="message-latest",
+        session_id=session.id,
+        role=ChatMessageRole.ASSISTANT,
+        author_type=ChatMessageAuthorType.ASSISTANT,
+        agent_id=AgentId.GENERATOR,
+        agent_type=AgentType.GENERATOR,
+        content="Newest message",
+        status=ChatMessageStatus.COMPLETED,
+        created_at=datetime(2026, 1, 1, 19, 26, tzinfo=timezone.utc),
+    )
+
+    summary = SessionSummaryResponse.from_domain(
+        session,
+        messages=[latest_message, old_message],
+    )
+
+    assert summary.last_message_at == latest_message.created_at
+    assert summary.last_message_preview == "Newest message"
 
 
 def test_session_summary_uses_messages_refreshed_by_terminal_job_sync() -> None:
@@ -2317,10 +2544,14 @@ def test_session_summary_uses_messages_refreshed_by_terminal_job_sync() -> None:
         )
         session = service.create_session(workspace_path=str(workspace))
 
-        job = service.submit_message("Build the stale pending regression case.", session_id=session.id)
+        job = service.submit_message(
+            "Build the stale pending regression case.", session_id=session.id
+        )
         stale_messages = repository.list_messages(session.id)
         assistant_message = next(
-            message for message in stale_messages if message.role == ChatMessageRole.ASSISTANT
+            message
+            for message in stale_messages
+            if message.role == ChatMessageRole.ASSISTANT
         )
         assert assistant_message.status == ChatMessageStatus.PENDING
 
@@ -2334,10 +2565,15 @@ def test_session_summary_uses_messages_refreshed_by_terminal_job_sync() -> None:
         )
 
         refreshed_assistant_message = next(
-            message for message in stale_messages if message.role == ChatMessageRole.ASSISTANT
+            message
+            for message in stale_messages
+            if message.role == ChatMessageRole.ASSISTANT
         )
         assert refreshed_assistant_message.status == ChatMessageStatus.COMPLETED
-        assert refreshed_assistant_message.content == "Finished after the first message read."
+        assert (
+            refreshed_assistant_message.content
+            == "Finished after the first message read."
+        )
         assert summary.has_pending_messages is False
 
 
@@ -2351,7 +2587,9 @@ def test_session_summary_can_use_stored_jobs_without_resyncing_history() -> None
         )
         session = service.create_session(workspace_path=str(workspace))
 
-        job = service.submit_message("Build the stored history snapshot.", session_id=session.id)
+        job = service.submit_message(
+            "Build the stored history snapshot.", session_id=session.id
+        )
         stale_messages = repository.list_messages(session.id)
         provider.complete_job(job.id, response="Finished but not reconciled.")
 
@@ -2363,8 +2601,7 @@ def test_session_summary_can_use_stored_jobs_without_resyncing_history() -> None
 
         assert jobs_by_id[job.id].status == JobStatus.PENDING
         assert any(
-            message.status == ChatMessageStatus.PENDING
-            and message.job_id == job.id
+            message.status == ChatMessageStatus.PENDING and message.job_id == job.id
             for message in stale_messages
         )
 
@@ -2379,7 +2616,9 @@ def test_terminal_job_read_repairs_stale_pending_assistant_message() -> None:
         )
         session = service.create_session(workspace_path=str(workspace))
 
-        job = service.submit_message("Repair a stale terminal job side effect.", session_id=session.id)
+        job = service.submit_message(
+            "Repair a stale terminal job side effect.", session_id=session.id
+        )
         persisted_job = repository.get_job(job.id)
         assert persisted_job is not None
         persisted_job.sync(
@@ -2407,10 +2646,15 @@ def test_terminal_job_read_repairs_stale_pending_assistant_message() -> None:
             if message.role == ChatMessageRole.ASSISTANT
         )
         assert repaired_assistant_message.status == ChatMessageStatus.COMPLETED
-        assert repaired_assistant_message.content == "Terminal result that was not copied to the message."
+        assert (
+            repaired_assistant_message.content
+            == "Terminal result that was not copied to the message."
+        )
 
 
-def test_session_detail_sanitizes_conversation_product_when_hidden_specialist_replies_exist() -> None:
+def test_session_detail_sanitizes_conversation_product_when_hidden_specialist_replies_exist() -> (
+    None
+):
     client, container = build_session_client_with_container()
     repository = container.message_service._repository
 
@@ -2487,8 +2731,12 @@ def test_agent_model_override_round_trips_through_agents_endpoint() -> None:
         display_mode="show_all",
         summary_enabled=False,
     )
-    generator = next(agent for agent in payload["agents"] if agent["agent_id"] == "generator")
-    reviewer = next(agent for agent in payload["agents"] if agent["agent_id"] == "reviewer")
+    generator = next(
+        agent for agent in payload["agents"] if agent["agent_id"] == "generator"
+    )
+    reviewer = next(
+        agent for agent in payload["agents"] if agent["agent_id"] == "reviewer"
+    )
     generator["model"] = "gpt-5.4"
     reviewer["model"] = "gpt-5.4-mini"
 
@@ -2599,7 +2847,9 @@ def test_concurrent_terminal_processing_does_not_duplicate_reviewer_follow_up() 
         configuration.agents[AgentId.REVIEWER].enabled = True
         configuration.agents[AgentId.REVIEWER].max_turns = 1
         configuration.agents[AgentId.SUMMARY].enabled = False
-        service.update_agent_configuration(session_id=session.id, configuration=configuration)
+        service.update_agent_configuration(
+            session_id=session.id, configuration=configuration
+        )
 
         initial_job = service.submit_message(
             "Build the initial implementation.",
@@ -2613,7 +2863,8 @@ def test_concurrent_terminal_processing_does_not_duplicate_reviewer_follow_up() 
         reviewer_messages = [
             message
             for message in messages
-            if message.run_id == initial_job.run_id and message.agent_id == AgentId.REVIEWER
+            if message.run_id == initial_job.run_id
+            and message.agent_id == AgentId.REVIEWER
         ]
 
         assert len(reviewer_messages) == 1
@@ -2621,7 +2872,9 @@ def test_concurrent_terminal_processing_does_not_duplicate_reviewer_follow_up() 
         assert len(repository._jobs) == 2
 
 
-def test_concurrent_terminal_processing_does_not_duplicate_generator_follow_up() -> None:
+def test_concurrent_terminal_processing_does_not_duplicate_generator_follow_up() -> (
+    None
+):
     with TemporaryDirectory() as temp_dir:
         workspace = Path(temp_dir) / "repo"
         workspace.mkdir()
@@ -2637,7 +2890,9 @@ def test_concurrent_terminal_processing_does_not_duplicate_generator_follow_up()
         configuration.agents[AgentId.REVIEWER].enabled = True
         configuration.agents[AgentId.REVIEWER].max_turns = 1
         configuration.agents[AgentId.SUMMARY].enabled = False
-        service.update_agent_configuration(session_id=session.id, configuration=configuration)
+        service.update_agent_configuration(
+            session_id=session.id, configuration=configuration
+        )
 
         initial_job = service.submit_message(
             "Build the initial implementation.",
@@ -2649,7 +2904,8 @@ def test_concurrent_terminal_processing_does_not_duplicate_generator_follow_up()
         reviewer_message = next(
             message
             for message in repository.list_messages(session.id)
-            if message.run_id == initial_job.run_id and message.agent_id == AgentId.REVIEWER
+            if message.run_id == initial_job.run_id
+            and message.agent_id == AgentId.REVIEWER
         )
         assert reviewer_message.job_id is not None
 
@@ -2690,7 +2946,9 @@ def test_concurrent_terminal_processing_does_not_duplicate_summary_follow_up() -
         configuration.agents[AgentId.REVIEWER].max_turns = 0
         configuration.agents[AgentId.SUMMARY].enabled = True
         configuration.agents[AgentId.SUMMARY].max_turns = 1
-        service.update_agent_configuration(session_id=session.id, configuration=configuration)
+        service.update_agent_configuration(
+            session_id=session.id, configuration=configuration
+        )
 
         initial_job = service.submit_message(
             "Generate the first pass and summarize it.",
@@ -2704,7 +2962,8 @@ def test_concurrent_terminal_processing_does_not_duplicate_summary_follow_up() -
         summary_messages = [
             message
             for message in messages
-            if message.run_id == initial_job.run_id and message.agent_id == AgentId.SUMMARY
+            if message.run_id == initial_job.run_id
+            and message.agent_id == AgentId.SUMMARY
         ]
 
         assert len(summary_messages) == 1
@@ -2824,7 +3083,9 @@ def _seed_summary_transcript_run(
     )
 
 
-def test_summary_execution_message_scopes_first_turn_and_excludes_prior_summaries() -> None:
+def test_summary_execution_message_scopes_first_turn_and_excludes_prior_summaries() -> (
+    None
+):
     with TemporaryDirectory() as temp_dir:
         workspace = Path(temp_dir) / "repo"
         workspace.mkdir()
@@ -2839,7 +3100,9 @@ def test_summary_execution_message_scopes_first_turn_and_excludes_prior_summarie
             reviewer_enabled=True,
             summary_enabled=True,
         )
-        service.update_agent_configuration(session_id=session.id, configuration=configuration)
+        service.update_agent_configuration(
+            session_id=session.id, configuration=configuration
+        )
         session = repository.get_session(session.id)
         assert session is not None
 
@@ -2865,14 +3128,22 @@ def test_summary_execution_message_scopes_first_turn_and_excludes_prior_summarie
             "Turn 1 - User [user/user]: Build the feature with regression coverage."
             in execution_message
         )
-        assert "Turn 1 - Generator [generator/assistant]: Generator draft one." in execution_message
+        assert (
+            "Turn 1 - Generator [generator/assistant]: Generator draft one."
+            in execution_message
+        )
         assert "Please verify the edge cases too." not in execution_message
         assert "Ask the generator to add integration coverage." not in execution_message
         assert "Generator draft two with more tests." not in execution_message
-        assert "Old summary that should stay out of the next transcript." not in execution_message
+        assert (
+            "Old summary that should stay out of the next transcript."
+            not in execution_message
+        )
 
 
-def test_summary_execution_message_assigns_between_turn_context_to_next_completed_turn() -> None:
+def test_summary_execution_message_assigns_between_turn_context_to_next_completed_turn() -> (
+    None
+):
     with TemporaryDirectory() as temp_dir:
         workspace = Path(temp_dir) / "repo"
         workspace.mkdir()
@@ -2887,7 +3158,9 @@ def test_summary_execution_message_assigns_between_turn_context_to_next_complete
             reviewer_enabled=True,
             summary_enabled=True,
         )
-        service.update_agent_configuration(session_id=session.id, configuration=configuration)
+        service.update_agent_configuration(
+            session_id=session.id, configuration=configuration
+        )
         session = repository.get_session(session.id)
         assert session is not None
 
@@ -2909,8 +3182,14 @@ def test_summary_execution_message_assigns_between_turn_context_to_next_complete
         )
 
         assert "Summarize completed agent turns 2 through 2." in execution_message
-        assert "Turn 1 - Generator [generator/assistant]: Generator draft one." not in execution_message
-        assert "Turn 3 - Generator [generator/assistant]: Generator draft two with more tests." not in execution_message
+        assert (
+            "Turn 1 - Generator [generator/assistant]: Generator draft one."
+            not in execution_message
+        )
+        assert (
+            "Turn 3 - Generator [generator/assistant]: Generator draft two with more tests."
+            not in execution_message
+        )
         assert (
             "Turn 2 - User [user/user]: Please verify the edge cases too."
             in execution_message
@@ -2919,7 +3198,10 @@ def test_summary_execution_message_assigns_between_turn_context_to_next_complete
             "Turn 2 - Reviewer [reviewer/user]: Ask the generator to add integration coverage."
             in execution_message
         )
-        assert "Old summary that should stay out of the next transcript." not in execution_message
+        assert (
+            "Old summary that should stay out of the next transcript."
+            not in execution_message
+        )
 
 
 def test_mid_run_summary_launch_uses_scoped_transcript_window() -> None:
@@ -2940,7 +3222,9 @@ def test_mid_run_summary_launch_uses_scoped_transcript_window() -> None:
         configuration.agents[AgentId.SUMMARY].enabled = True
         configuration.agents[AgentId.SUMMARY].max_turns = 2
         configuration.summary_strategy.deterministic_interval = 2
-        service.update_agent_configuration(session_id=session.id, configuration=configuration)
+        service.update_agent_configuration(
+            session_id=session.id, configuration=configuration
+        )
 
         initial_job = service.submit_message(
             "Build the feature with regression coverage.",
@@ -2955,8 +3239,12 @@ def test_mid_run_summary_launch_uses_scoped_transcript_window() -> None:
             for message in repository.list_messages(session.id)
             if message.run_id == run_id and message.agent_id == AgentId.GENERATOR
         )
-        between_turn_created_at = generator_message.created_at + timedelta(microseconds=1)
-        old_summary_created_at = generator_message.created_at + timedelta(microseconds=2)
+        between_turn_created_at = generator_message.created_at + timedelta(
+            microseconds=1
+        )
+        old_summary_created_at = generator_message.created_at + timedelta(
+            microseconds=2
+        )
         repository.save_message(
             ChatMessage(
                 id="human-between-turns",
@@ -3059,7 +3347,9 @@ def test_terminal_job_lock_bookkeeping_is_cleaned_up_after_processing() -> None:
         configuration.agents[AgentId.REVIEWER].enabled = True
         configuration.agents[AgentId.REVIEWER].max_turns = 1
         configuration.agents[AgentId.SUMMARY].enabled = False
-        service.update_agent_configuration(session_id=session.id, configuration=configuration)
+        service.update_agent_configuration(
+            session_id=session.id, configuration=configuration
+        )
 
         initial_job = service.submit_message(
             "Build the initial implementation.",
@@ -3072,7 +3362,8 @@ def test_terminal_job_lock_bookkeeping_is_cleaned_up_after_processing() -> None:
         reviewer_message = next(
             message
             for message in repository.list_messages(session.id)
-            if message.run_id == initial_job.run_id and message.agent_id == AgentId.REVIEWER
+            if message.run_id == initial_job.run_id
+            and message.agent_id == AgentId.REVIEWER
         )
         assert reviewer_message.job_id is not None
 
@@ -3100,7 +3391,9 @@ def test_watcher_callback_and_get_job_race_do_not_duplicate_follow_up() -> None:
         configuration.agents[AgentId.REVIEWER].enabled = True
         configuration.agents[AgentId.REVIEWER].max_turns = 1
         configuration.agents[AgentId.SUMMARY].enabled = False
-        service.update_agent_configuration(session_id=session.id, configuration=configuration)
+        service.update_agent_configuration(
+            session_id=session.id, configuration=configuration
+        )
 
         initial_job = service.submit_message(
             "Build the initial implementation.",
@@ -3140,7 +3433,8 @@ def test_watcher_callback_and_get_job_race_do_not_duplicate_follow_up() -> None:
         reviewer_messages = [
             message
             for message in messages
-            if message.run_id == initial_job.run_id and message.agent_id == AgentId.REVIEWER
+            if message.run_id == initial_job.run_id
+            and message.agent_id == AgentId.REVIEWER
         ]
 
         assert len(reviewer_messages) == 1
@@ -3155,7 +3449,9 @@ def test_sqlite_triad_chain_completes_without_client_polling() -> None:
         client, container = build_sqlite_session_client_with_container(database_path)
 
         try:
-            session_response = client.post("/sessions", json={"title": "SQLite background triad"})
+            session_response = client.post(
+                "/sessions", json={"title": "SQLite background triad"}
+            )
             assert session_response.status_code == 201
             session_id = session_response.json()["id"]
 
@@ -3171,7 +3467,9 @@ def test_sqlite_triad_chain_completes_without_client_polling() -> None:
 
             message_response = client.post(
                 f"/sessions/{session_id}/messages",
-                json={"message": "Keep the SQLite-backed chain moving in the background."},
+                json={
+                    "message": "Keep the SQLite-backed chain moving in the background."
+                },
             )
             assert message_response.status_code == 202
             first_job_id = message_response.json()["job_id"]
@@ -3228,7 +3526,9 @@ def test_failed_job_converges_in_background_without_polling_or_follow_ups() -> N
     client, container = build_session_client_with_container()
 
     try:
-        session_response = client.post("/sessions", json={"title": "Background failure"})
+        session_response = client.post(
+            "/sessions", json={"title": "Background failure"}
+        )
         assert session_response.status_code == 201
         session_id = session_response.json()["id"]
 
@@ -3282,7 +3582,9 @@ def test_cancelled_job_converges_in_background_without_polling_or_follow_ups() -
     client, container = build_session_client_with_container()
 
     try:
-        session_response = client.post("/sessions", json={"title": "Background cancellation"})
+        session_response = client.post(
+            "/sessions", json={"title": "Background cancellation"}
+        )
         assert session_response.status_code == 201
         session_id = session_response.json()["id"]
 
@@ -3342,7 +3644,9 @@ def test_cancelled_job_converges_in_background_without_polling_or_follow_ups() -
         client.close()
 
 
-def test_failed_reviewer_follow_up_converges_in_background_without_downstream_handoffs() -> None:
+def test_failed_reviewer_follow_up_converges_in_background_without_downstream_handoffs() -> (
+    None
+):
     with TemporaryDirectory() as temp_dir:
         workspace = Path(temp_dir) / "repo"
         workspace.mkdir()
@@ -3359,7 +3663,9 @@ def test_failed_reviewer_follow_up_converges_in_background_without_downstream_ha
         configuration.agents[AgentId.REVIEWER].max_turns = 1
         configuration.agents[AgentId.SUMMARY].enabled = True
         configuration.agents[AgentId.SUMMARY].max_turns = 1
-        service.update_agent_configuration(session_id=session.id, configuration=configuration)
+        service.update_agent_configuration(
+            session_id=session.id, configuration=configuration
+        )
 
         initial_job = service.submit_message(
             "Build the initial implementation.",
@@ -3385,7 +3691,8 @@ def test_failed_reviewer_follow_up_converges_in_background_without_downstream_ha
         reviewer_message = next(
             message
             for message in messages
-            if message.run_id == initial_job.run_id and message.agent_id == AgentId.REVIEWER
+            if message.run_id == initial_job.run_id
+            and message.agent_id == AgentId.REVIEWER
         )
         assert reviewer_message.job_id is not None
 
@@ -3420,7 +3727,9 @@ def test_failed_reviewer_follow_up_converges_in_background_without_downstream_ha
         assert service._terminal_job_locks == {}
 
 
-def test_cancelled_reviewer_follow_up_converges_in_background_without_downstream_handoffs() -> None:
+def test_cancelled_reviewer_follow_up_converges_in_background_without_downstream_handoffs() -> (
+    None
+):
     with TemporaryDirectory() as temp_dir:
         workspace = Path(temp_dir) / "repo"
         workspace.mkdir()
@@ -3437,7 +3746,9 @@ def test_cancelled_reviewer_follow_up_converges_in_background_without_downstream
         configuration.agents[AgentId.REVIEWER].max_turns = 1
         configuration.agents[AgentId.SUMMARY].enabled = True
         configuration.agents[AgentId.SUMMARY].max_turns = 1
-        service.update_agent_configuration(session_id=session.id, configuration=configuration)
+        service.update_agent_configuration(
+            session_id=session.id, configuration=configuration
+        )
 
         initial_job = service.submit_message(
             "Build the initial implementation.",
@@ -3463,7 +3774,8 @@ def test_cancelled_reviewer_follow_up_converges_in_background_without_downstream
         reviewer_message = next(
             message
             for message in messages
-            if message.run_id == initial_job.run_id and message.agent_id == AgentId.REVIEWER
+            if message.run_id == initial_job.run_id
+            and message.agent_id == AgentId.REVIEWER
         )
         assert reviewer_message.job_id is not None
 
@@ -3498,7 +3810,9 @@ def test_cancelled_reviewer_follow_up_converges_in_background_without_downstream
         assert service._terminal_job_locks == {}
 
 
-def test_reviewer_prompt_triggers_generator_follow_up_in_background_without_polling() -> None:
+def test_reviewer_prompt_triggers_generator_follow_up_in_background_without_polling() -> (
+    None
+):
     with TemporaryDirectory() as temp_dir:
         workspace = Path(temp_dir) / "repo"
         workspace.mkdir()
@@ -3514,7 +3828,9 @@ def test_reviewer_prompt_triggers_generator_follow_up_in_background_without_poll
         configuration.agents[AgentId.REVIEWER].enabled = True
         configuration.agents[AgentId.REVIEWER].max_turns = 1
         configuration.agents[AgentId.SUMMARY].enabled = False
-        service.update_agent_configuration(session_id=session.id, configuration=configuration)
+        service.update_agent_configuration(
+            session_id=session.id, configuration=configuration
+        )
 
         initial_job = service.submit_message(
             "Build the initial implementation.",
@@ -3540,7 +3856,8 @@ def test_reviewer_prompt_triggers_generator_follow_up_in_background_without_poll
         reviewer_message = next(
             message
             for message in messages
-            if message.run_id == initial_job.run_id and message.agent_id == AgentId.REVIEWER
+            if message.run_id == initial_job.run_id
+            and message.agent_id == AgentId.REVIEWER
         )
         assert reviewer_message.job_id is not None
 
@@ -3601,11 +3918,15 @@ def test_reviewer_prompt_triggers_generator_follow_up_in_background_without_poll
         assert service._terminal_job_locks == {}
 
 
-def test_local_provider_completes_reviewer_generator_chain_without_frontend_polling() -> None:
+def test_local_provider_completes_reviewer_generator_chain_without_frontend_polling() -> (
+    None
+):
     client, container = build_session_client_with_container()
 
     try:
-        session_response = client.post("/sessions", json={"title": "Local background chain"})
+        session_response = client.post(
+            "/sessions", json={"title": "Local background chain"}
+        )
         assert session_response.status_code == 201
         session_id = session_response.json()["id"]
 
@@ -3654,8 +3975,16 @@ def test_local_provider_completes_reviewer_generator_chain_without_frontend_poll
             if message.agent_id != AgentId.USER
         ] == [
             (AgentId.GENERATOR, AgentTriggerSource.USER, ChatMessageStatus.COMPLETED),
-            (AgentId.REVIEWER, AgentTriggerSource.GENERATOR, ChatMessageStatus.COMPLETED),
-            (AgentId.GENERATOR, AgentTriggerSource.REVIEWER, ChatMessageStatus.COMPLETED),
+            (
+                AgentId.REVIEWER,
+                AgentTriggerSource.GENERATOR,
+                ChatMessageStatus.COMPLETED,
+            ),
+            (
+                AgentId.GENERATOR,
+                AgentTriggerSource.REVIEWER,
+                ChatMessageStatus.COMPLETED,
+            ),
         ]
 
         final_response = client.get(f"/sessions/{session_id}")
@@ -3689,7 +4018,9 @@ def test_failed_supervisor_specialist_follow_up_converges_in_background() -> Non
         configuration.agents[AgentId.UX].max_turns = 0
         configuration.agents[AgentId.SENIOR_ENGINEER].enabled = False
         configuration.agents[AgentId.SENIOR_ENGINEER].max_turns = 0
-        service.update_agent_configuration(session_id=session.id, configuration=configuration)
+        service.update_agent_configuration(
+            session_id=session.id, configuration=configuration
+        )
 
         initial_job = service.submit_message(
             "Plan the release work.",
@@ -3745,7 +4076,8 @@ def test_failed_supervisor_specialist_follow_up_converges_in_background() -> Non
         supervisor_messages = [
             message
             for message in messages
-            if message.run_id == initial_job.run_id and message.agent_id == AgentId.SUPERVISOR
+            if message.run_id == initial_job.run_id
+            and message.agent_id == AgentId.SUPERVISOR
         ]
 
         assert session.active_agent_run_id is None
@@ -3784,7 +4116,9 @@ def test_supervisor_only_budget_allows_reusing_the_same_specialist() -> None:
         configuration.agents[AgentId.UX].max_turns = 0
         configuration.agents[AgentId.SENIOR_ENGINEER].enabled = False
         configuration.agents[AgentId.SENIOR_ENGINEER].max_turns = 0
-        service.update_agent_configuration(session_id=session.id, configuration=configuration)
+        service.update_agent_configuration(
+            session_id=session.id, configuration=configuration
+        )
 
         initial_job = service.submit_message(
             "Plan the rollout and keep QA involved.",
@@ -3843,7 +4177,8 @@ def test_supervisor_only_budget_allows_reusing_the_same_specialist() -> None:
         second_supervisor = [
             message
             for message in messages
-            if message.run_id == initial_job.run_id and message.agent_id == AgentId.SUPERVISOR
+            if message.run_id == initial_job.run_id
+            and message.agent_id == AgentId.SUPERVISOR
         ][-1]
         assert second_supervisor.job_id is not None
 
@@ -3884,7 +4219,9 @@ def test_supervisor_only_budget_allows_reusing_the_same_specialist() -> None:
         assert len(qa_messages) == 2
         assert qa_messages[-1].job_id is not None
 
-        provider.complete_job(qa_messages[-1].job_id, response="Second QA pass is complete.")
+        provider.complete_job(
+            qa_messages[-1].job_id, response="Second QA pass is complete."
+        )
         session, messages, qa_job = wait_for_background_terminal_convergence(
             service,
             repository,
@@ -3895,13 +4232,17 @@ def test_supervisor_only_budget_allows_reusing_the_same_specialist() -> None:
 
         assert session.active_agent_run_id is None
         assert qa_job.status == JobStatus.COMPLETED
-        assert len(
-            [
-                message
-                for message in messages
-                if message.run_id == initial_job.run_id and message.agent_id == AgentId.QA
-            ]
-        ) == 2
+        assert (
+            len(
+                [
+                    message
+                    for message in messages
+                    if message.run_id == initial_job.run_id
+                    and message.agent_id == AgentId.QA
+                ]
+            )
+            == 2
+        )
 
 
 def test_sqlite_legacy_auto_mode_rows_migrate_into_agent_configuration() -> None:
@@ -3981,7 +4322,9 @@ def test_sqlite_agent_model_override_persists_across_reload() -> None:
 
         first_client = TestClient(create_app(settings))
         try:
-            session_response = first_client.post("/sessions", json={"title": "Persisted model"})
+            session_response = first_client.post(
+                "/sessions", json={"title": "Persisted model"}
+            )
             assert session_response.status_code == 201
             session_id = session_response.json()["id"]
 
@@ -4170,12 +4513,13 @@ def test_sqlite_repository_migrates_legacy_schema_and_rows() -> None:
         saved_message = repository.get_message("migrated-new-reason")
         assert saved_message is not None
         assert (
-            saved_message.reason_code
-            == ChatMessageReasonCode.MANUAL_CANCEL_REQUESTED
+            saved_message.reason_code == ChatMessageReasonCode.MANUAL_CANCEL_REQUESTED
         )
 
 
-def test_sqlite_repository_partial_upgrade_migrates_duplicate_dedupe_keys_safely() -> None:
+def test_sqlite_repository_partial_upgrade_migrates_duplicate_dedupe_keys_safely() -> (
+    None
+):
     import sqlite3
 
     with TemporaryDirectory() as temp_dir:
@@ -4323,7 +4667,9 @@ def test_sqlite_repository_partial_upgrade_migrates_duplicate_dedupe_keys_safely
         assert user_version >= 1
 
 
-def test_sqlite_repository_reports_malformed_historical_rows_with_structured_errors() -> None:
+def test_sqlite_repository_reports_malformed_historical_rows_with_structured_errors() -> (
+    None
+):
     import sqlite3
 
     with TemporaryDirectory() as temp_dir:
@@ -4792,7 +5138,9 @@ def test_app_starts_in_degraded_mode_when_sqlite_store_fails_to_open(
         assert health.status_code == 200
         assert health.json()["persistence_available"] is False
         assert health.json()["persistence_error_code"] == "sqlite_database_error"
-        assert "unable to open database file" in health.json()["persistence_error_detail"]
+        assert (
+            "unable to open database file" in health.json()["persistence_error_detail"]
+        )
 
         integrity = client.get("/debug/persistence/integrity")
         assert integrity.status_code == 200
@@ -4874,7 +5222,9 @@ def test_sqlite_invalid_agent_configuration_rows_fall_back_to_safe_defaults() ->
 
         first_client = TestClient(create_app(settings))
         try:
-            session_response = first_client.post("/sessions", json={"title": "Broken config"})
+            session_response = first_client.post(
+                "/sessions", json={"title": "Broken config"}
+            )
             assert session_response.status_code == 201
             session_id = session_response.json()["id"]
         finally:
@@ -5012,7 +5362,9 @@ def test_session_reads_do_not_recover_reserved_reviewer_follow_up() -> None:
         configuration.agents[AgentId.GENERATOR].max_turns = 1
         configuration.agents[AgentId.REVIEWER].enabled = False
         configuration.agents[AgentId.SUMMARY].enabled = False
-        service.update_agent_configuration(session_id=session.id, configuration=configuration)
+        service.update_agent_configuration(
+            session_id=session.id, configuration=configuration
+        )
 
         initial_job = service.submit_message(
             "Ship the recovery path.",
@@ -5065,7 +5417,9 @@ def test_session_reads_do_not_recover_reserved_reviewer_follow_up() -> None:
         assert len(provider.requests) == baseline_request_count
 
 
-def test_background_reconciler_cancels_orphaned_reserved_follow_up_with_reason_code() -> None:
+def test_background_reconciler_cancels_orphaned_reserved_follow_up_with_reason_code() -> (
+    None
+):
     with TemporaryDirectory() as temp_dir:
         workspace = Path(temp_dir) / "repo"
         workspace.mkdir()
@@ -5117,7 +5471,9 @@ def test_background_reconciler_cancels_orphaned_reserved_follow_up_with_reason_c
         )
 
 
-def test_background_reconciler_dispatches_reserved_reviewer_follow_up_idempotently() -> None:
+def test_background_reconciler_dispatches_reserved_reviewer_follow_up_idempotently() -> (
+    None
+):
     with TemporaryDirectory() as temp_dir:
         workspace = Path(temp_dir) / "repo"
         workspace.mkdir()
@@ -5133,7 +5489,9 @@ def test_background_reconciler_dispatches_reserved_reviewer_follow_up_idempotent
         configuration.agents[AgentId.GENERATOR].max_turns = 1
         configuration.agents[AgentId.REVIEWER].enabled = False
         configuration.agents[AgentId.SUMMARY].enabled = False
-        service.update_agent_configuration(session_id=session.id, configuration=configuration)
+        service.update_agent_configuration(
+            session_id=session.id, configuration=configuration
+        )
 
         initial_job = service.submit_message(
             "Ship the recovery path.",
@@ -5189,10 +5547,12 @@ def test_background_reconciler_dispatches_reserved_reviewer_follow_up_idempotent
         assert len(dispatched_messages) == 1
         assert dispatched_messages[0].status == ChatMessageStatus.PENDING
         assert dispatched_messages[0].job_id is not None
-        assert len(provider.requests) == 2
+        assert len(_conversation_provider_requests(provider)) == 2
 
 
-def test_background_reconciler_attaches_submission_pending_follow_up_without_resubmitting() -> None:
+def test_background_reconciler_attaches_submission_pending_follow_up_without_resubmitting() -> (
+    None
+):
     with TemporaryDirectory() as temp_dir:
         workspace = Path(temp_dir) / "repo"
         workspace.mkdir()
@@ -5208,7 +5568,9 @@ def test_background_reconciler_attaches_submission_pending_follow_up_without_res
         configuration.agents[AgentId.GENERATOR].max_turns = 1
         configuration.agents[AgentId.REVIEWER].enabled = False
         configuration.agents[AgentId.SUMMARY].enabled = False
-        service.update_agent_configuration(session_id=session.id, configuration=configuration)
+        service.update_agent_configuration(
+            session_id=session.id, configuration=configuration
+        )
 
         initial_job = service.submit_message(
             "Ship the attach path.",
@@ -5259,7 +5621,9 @@ def test_background_reconciler_attaches_submission_pending_follow_up_without_res
         )
 
         def fail_if_resubmitted(*args, **kwargs):
-            raise AssertionError("recovery should not resubmit an already-submitted follow-up")
+            raise AssertionError(
+                "recovery should not resubmit an already-submitted follow-up"
+            )
 
         service._execution_provider.execute = fail_if_resubmitted
 
@@ -5278,14 +5642,20 @@ def test_background_reconciler_attaches_submission_pending_follow_up_without_res
         recovered_message = next(
             message for message in messages if message.id == "submitted-reviewer"
         )
-        assert recovered_message.submission_token == reviewer_placeholder.submission_token
+        assert (
+            recovered_message.submission_token == reviewer_placeholder.submission_token
+        )
         assert recovered_message.job_id == orphan_job_id
 
 
-def test_submission_pending_without_provider_lookup_becomes_submission_unknown() -> None:
+def test_submission_pending_without_provider_lookup_becomes_submission_unknown() -> (
+    None
+):
     client, container = build_session_client_with_container()
     try:
-        session_response = client.post("/sessions", json={"title": "Unknown submission"})
+        session_response = client.post(
+            "/sessions", json={"title": "Unknown submission"}
+        )
         assert session_response.status_code == 201
         session_id = session_response.json()["id"]
 
@@ -5326,12 +5696,14 @@ def test_submission_pending_without_provider_lookup_becomes_submission_unknown()
         session_payload = wait_for_session(
             client,
             session_id,
-            predicate=lambda payload: any(
-                message["id"] == "unknown-reviewer"
-                and message["status"] == "submission_unknown"
-                for message in payload["messages"]
-            )
-            and payload["active_agent_run_id"] is None,
+            predicate=lambda payload: (
+                any(
+                    message["id"] == "unknown-reviewer"
+                    and message["status"] == "submission_unknown"
+                    for message in payload["messages"]
+                )
+                and payload["active_agent_run_id"] is None
+            ),
         )
 
         unknown_message = next(
@@ -5441,7 +5813,11 @@ def test_submission_unknown_retry_creates_a_new_follow_up_attempt() -> None:
         assert old_message["recovered_from_message_id"] is None
         assert old_message["superseded_by_message_id"] == new_message["id"]
         assert new_message["id"] != old_message["id"]
-        assert new_message["dedupe_key"] != old_message["dedupe_key"] if "dedupe_key" in new_message else True
+        assert (
+            new_message["dedupe_key"] != old_message["dedupe_key"]
+            if "dedupe_key" in new_message
+            else True
+        )
         assert new_message["recovered_from_message_id"] == unknown_message.id
         assert (
             new_message["reason_code"]
@@ -5515,7 +5891,9 @@ def test_submission_unknown_retry_survives_sqlite_restart() -> None:
             database_path
         )
         try:
-            session_response = first_client.post("/sessions", json={"title": "Restart retry"})
+            session_response = first_client.post(
+                "/sessions", json={"title": "Restart retry"}
+            )
             assert session_response.status_code == 201
             session_id = session_response.json()["id"]
 
@@ -5601,8 +5979,7 @@ def test_submission_unknown_retry_survives_sqlite_restart() -> None:
                 == ChatMessageReasonCode.MANUAL_RETRY_REQUESTED.value
             )
             assert (
-                new_message["recovered_from_message_id"]
-                == "restart-unknown-reviewer"
+                new_message["recovered_from_message_id"] == "restart-unknown-reviewer"
             )
         finally:
             restarted_client.close()
@@ -5734,7 +6111,8 @@ def test_new_user_turn_cancels_reserved_follow_up_from_superseded_run() -> None:
             for message in payload["messages"]
         )
         assert any(
-            message["run_id"] == new_job["run_id"] and message["agent_id"] == "generator"
+            message["run_id"] == new_job["run_id"]
+            and message["agent_id"] == "generator"
             for message in payload["messages"]
         )
 
@@ -5756,7 +6134,9 @@ def test_new_user_turn_cancels_reserved_follow_up_from_superseded_run() -> None:
 def test_terminal_follow_up_reason_code_marks_run_completion_path() -> None:
     client, container = build_session_client_with_container()
     try:
-        session_response = client.post("/sessions", json={"title": "Terminal follow-up"})
+        session_response = client.post(
+            "/sessions", json={"title": "Terminal follow-up"}
+        )
         assert session_response.status_code == 201
         session_id = session_response.json()["id"]
 
@@ -5799,17 +6179,17 @@ def test_terminal_follow_up_reason_code_marks_run_completion_path() -> None:
         payload = wait_for_session(
             client,
             session_id,
-            predicate=lambda response_payload: any(
-                message["id"] == "disabled-reviewer"
-                and message["status"] == "cancelled"
-                for message in response_payload["messages"]
-            )
-            and response_payload["active_agent_run_id"] is None,
+            predicate=lambda response_payload: (
+                any(
+                    message["id"] == "disabled-reviewer"
+                    and message["status"] == "cancelled"
+                    for message in response_payload["messages"]
+                )
+                and response_payload["active_agent_run_id"] is None
+            ),
         )
         terminal_message = next(
-            item
-            for item in payload["messages"]
-            if item["id"] == "disabled-reviewer"
+            item for item in payload["messages"] if item["id"] == "disabled-reviewer"
         )
         assert (
             terminal_message["reason_code"]
@@ -5833,7 +6213,9 @@ def test_workspaces_endpoint_and_session_workspace_binding() -> None:
         assert any(workspace["name"] == "cli-codex-project" for workspace in workspaces)
 
         target_workspace = next(
-            workspace for workspace in workspaces if workspace["name"] == "cli-codex-project"
+            workspace
+            for workspace in workspaces
+            if workspace["name"] == "cli-codex-project"
         )
         create_response = client.post(
             "/sessions",
@@ -5865,10 +6247,14 @@ def test_job_response_exposes_phase_metadata() -> None:
     assert assistant_message["job_elapsed_seconds"] >= 0
 
 
-def test_exec_mode_falls_back_to_streamed_agent_message_when_output_file_is_empty() -> None:
+def test_exec_mode_falls_back_to_streamed_agent_message_when_output_file_is_empty() -> (
+    None
+):
     client = build_json_only_client()
 
-    create_response = client.post("/message", json={"message": "hello from streamed json"})
+    create_response = client.post(
+        "/message", json={"message": "hello from streamed json"}
+    )
     assert create_response.status_code == 202
 
     payload = wait_for_job(client, create_response.json()["job_id"])
@@ -5994,6 +6380,35 @@ def test_app_server_event_descriptions_do_not_expose_raw_tool_item_names() -> No
     assert latest_activity == "Calling MCP tool."
 
 
+def test_exec_command_reads_prompt_from_stdin_instead_of_argv() -> None:
+    provider = LocalExecutionProvider(command="codex")
+    message = "fix this" * 50_000
+
+    command_parts, output_path, stdin_prompt = provider._build_command(message)
+
+    try:
+        assert stdin_prompt == message
+        assert message not in command_parts
+        assert "-" in command_parts
+    finally:
+        provider._cleanup_output_file(output_path)
+
+
+def test_exec_resume_command_reads_prompt_from_stdin_instead_of_argv() -> None:
+    provider = LocalExecutionProvider(command="codex")
+
+    command_parts, output_path, stdin_prompt = provider._build_command(
+        "continue this",
+        provider_session_id="thread-1",
+    )
+
+    try:
+        assert stdin_prompt == "continue this"
+        assert command_parts[-2:] == ["thread-1", "-"]
+    finally:
+        provider._cleanup_output_file(output_path)
+
+
 def test_app_server_sandbox_payload_preserves_danger_full_access() -> None:
     provider = LocalExecutionProvider(command="codex")
     args = "--skip-git-repo-check --dangerously-bypass-approvals-and-sandbox"
@@ -6057,7 +6472,9 @@ def test_sqlite_chat_store_persists_sessions_across_app_restarts() -> None:
 
         first_client = TestClient(create_app(settings))
         try:
-            create_response = first_client.post("/message", json={"message": "persist me"})
+            create_response = first_client.post(
+                "/message", json={"message": "persist me"}
+            )
             assert create_response.status_code == 202
             initial_job = wait_for_job(first_client, create_response.json()["job_id"])
             session_id = initial_job["session_id"]
@@ -6091,12 +6508,53 @@ def test_health_endpoint_exposes_audio_transcription_status() -> None:
 
     assert response.status_code == 200
     payload = response.json()
+    assert payload["backend_version"] == "bridge-local"
+    assert payload["backend_commit"]
+    assert payload["features"]["project_factory"] is True
     assert payload["audio_transcription_backend"] == "auto"
     assert payload["audio_transcription_resolved_backend"] == "faster_whisper"
     assert payload["audio_transcription_ready"] is True
     assert payload["audio_transcription_detail"] == "Local faster-whisper model: small"
     assert payload["speech_synthesis_backend"] == "disabled"
     assert payload["speech_synthesis_ready"] is False
+
+
+def test_health_and_capabilities_expose_preferred_client_urls(monkeypatch) -> None:
+    from backend.app.infrastructure.network.tailscale import TailscaleInfo
+
+    def fake_detect_tailscale_info(socket_path, *, api_port=8000):
+        return TailscaleInfo(
+            installed=True,
+            online=True,
+            magic_dns_name="personal.example.ts.net",
+            ipv4="100.64.0.10",
+            serve_base_urls=("http://personal.example.ts.net",),
+            api_port=api_port,
+        )
+
+    monkeypatch.setattr(
+        "backend.app.api.routes.detect_tailscale_info",
+        fake_detect_tailscale_info,
+    )
+    client = build_test_client()
+
+    health_response = client.get("/health")
+    capabilities_response = client.get("/capabilities")
+
+    assert health_response.status_code == 200
+    assert capabilities_response.status_code == 200
+    assert health_response.json()["preferred_client_url"] == (
+        "http://personal.example.ts.net"
+    )
+    assert health_response.json()["public_base_urls"] == [
+        "http://personal.example.ts.net"
+    ]
+    assert capabilities_response.json()["preferred_client_url"] == (
+        "http://personal.example.ts.net"
+    )
+    assert capabilities_response.json()["public_base_urls"] == [
+        "http://personal.example.ts.net"
+    ]
 
 
 def test_capabilities_endpoint_exposes_speech_output_status() -> None:
@@ -6109,13 +6567,19 @@ def test_capabilities_endpoint_exposes_speech_output_status() -> None:
     assert response.status_code == 200
     payload = response.json()
     assert payload["supports_image_input"] is True
+    assert payload["supports_project_factory"] is True
+    assert payload["features"]["project_factory"] is True
+    assert payload["backend_version"] == "bridge-local"
+    assert payload["backend_commit"]
     assert payload["supports_speech_output"] is True
     assert payload["speech_output_backend"] == "openai"
     assert payload["speech_output_voice"] == "cedar"
     assert payload["speech_output_response_format"] == "wav"
 
 
-def test_health_and_capabilities_report_openai_speech_not_ready_without_api_key() -> None:
+def test_health_and_capabilities_report_openai_speech_not_ready_without_api_key() -> (
+    None
+):
     settings = Settings(
         codex_command="python3 tests/fixtures/fake_codex.py",
         codex_use_exec=False,
@@ -6248,9 +6712,7 @@ def test_audio_speech_endpoint_returns_422_when_kokoro_encoding_fails(
     response = client.post("/audio/speech", json={"text": "Hola."})
 
     assert response.status_code == 422
-    assert response.json() == {
-        "detail": "Kokoro audio encoding failed: bad audio data"
-    }
+    assert response.json() == {"detail": "Kokoro audio encoding failed: bad audio data"}
 
 
 def test_audio_speech_endpoint_returns_provider_audio() -> None:
@@ -6301,7 +6763,9 @@ def test_audio_message_flow_transcribes_then_submits_prompt() -> None:
     )
 
     assert create_response.status_code == 202
-    assert create_response.json()["transcript"] == "Transcribed audio from voice-note.m4a"
+    assert (
+        create_response.json()["transcript"] == "Transcribed audio from voice-note.m4a"
+    )
 
     job_id = create_response.json()["job_id"]
     payload = wait_for_job(client, job_id)
@@ -6310,7 +6774,9 @@ def test_audio_message_flow_transcribes_then_submits_prompt() -> None:
     assert payload["message"] == (
         "[Sent via audio]\n\nTranscribed audio from voice-note.m4a"
     )
-    assert payload["response"] == "Codex response: Transcribed audio from voice-note.m4a"
+    assert (
+        payload["response"] == "Codex response: Transcribed audio from voice-note.m4a"
+    )
 
 
 def test_audio_message_flow_combines_typed_message_with_transcript() -> None:
@@ -6323,20 +6789,19 @@ def test_audio_message_flow_combines_typed_message_with_transcript() -> None:
     )
 
     assert create_response.status_code == 202
-    assert create_response.json()["transcript"] == "Transcribed audio from voice-note.m4a"
+    assert (
+        create_response.json()["transcript"] == "Transcribed audio from voice-note.m4a"
+    )
 
     job_id = create_response.json()["job_id"]
     payload = wait_for_job(client, job_id)
 
     assert payload["status"] == "completed"
     assert payload["message"] == (
-        "Use this context\n\n"
-        "[Sent via audio]\n\n"
-        "Transcribed audio from voice-note.m4a"
+        "Use this context\n\n[Sent via audio]\n\nTranscribed audio from voice-note.m4a"
     )
     assert payload["response"] == (
-        "Codex response: Use this context\n"
-        "Transcribed audio from voice-note.m4a"
+        "Codex response: Use this context\nTranscribed audio from voice-note.m4a"
     )
 
 
@@ -6345,11 +6810,16 @@ def test_audio_message_flow_accepts_whatsapp_style_audio_uploads() -> None:
 
     create_response = client.post(
         "/message/audio",
-        files={"audio": ("PTT-20260322-WA0001.ogg", b"fake whatsapp audio", "audio/ogg")},
+        files={
+            "audio": ("PTT-20260322-WA0001.ogg", b"fake whatsapp audio", "audio/ogg")
+        },
     )
 
     assert create_response.status_code == 202
-    assert create_response.json()["transcript"] == "Transcribed audio from PTT-20260322-WA0001.ogg"
+    assert (
+        create_response.json()["transcript"]
+        == "Transcribed audio from PTT-20260322-WA0001.ogg"
+    )
 
     job_id = create_response.json()["job_id"]
     payload = wait_for_job(client, job_id)
@@ -6358,7 +6828,10 @@ def test_audio_message_flow_accepts_whatsapp_style_audio_uploads() -> None:
     assert payload["message"] == (
         "[Sent via audio]\n\nTranscribed audio from PTT-20260322-WA0001.ogg"
     )
-    assert payload["response"] == "Codex response: Transcribed audio from PTT-20260322-WA0001.ogg"
+    assert (
+        payload["response"]
+        == "Codex response: Transcribed audio from PTT-20260322-WA0001.ogg"
+    )
 
 
 def test_audio_transcription_does_not_block_other_requests() -> None:
@@ -6455,7 +6928,9 @@ def test_audio_messages_from_different_sessions_stay_isolated_under_overlap() ->
     assert abs(finished_at["first"] - finished_at["second"]) < 0.35
 
     first_job = wait_for_job(first_client, accepted_responses["first"].json()["job_id"])
-    second_job = wait_for_job(second_client, accepted_responses["second"].json()["job_id"])
+    second_job = wait_for_job(
+        second_client, accepted_responses["second"].json()["job_id"]
+    )
     assert first_job["session_id"] == first_session_id
     assert second_job["session_id"] == second_session_id
     assert first_job["message"] == (
@@ -6483,7 +6958,9 @@ def test_document_message_flow_transcribes_audio_documents() -> None:
     create_response = client.post(
         "/message/document",
         data={"message": "Summarize this audio"},
-        files={"document": ("PTT-20260322-WA0001.ogg", b"fake whatsapp audio", "audio/ogg")},
+        files={
+            "document": ("PTT-20260322-WA0001.ogg", b"fake whatsapp audio", "audio/ogg")
+        },
     )
 
     assert create_response.status_code == 202
@@ -6499,7 +6976,9 @@ def test_document_message_flow_transcribes_audio_documents() -> None:
         "Summarize this audio\n\n[Attached audio document: PTT-20260322-WA0001.ogg]"
     )
     assert "Document kind: audio" in job["response"]
-    assert "Transcript:\nTranscribed audio from PTT-20260322-WA0001.ogg" in job["response"]
+    assert (
+        "Transcript:\nTranscribed audio from PTT-20260322-WA0001.ogg" in job["response"]
+    )
 
 
 def test_document_message_flow_reads_text_documents() -> None:
@@ -6508,7 +6987,9 @@ def test_document_message_flow_reads_text_documents() -> None:
     create_response = client.post(
         "/message/document",
         data={"message": "Extract action items"},
-        files={"document": ("notes.txt", b"Line one\nLine two\nLine three", "text/plain")},
+        files={
+            "document": ("notes.txt", b"Line one\nLine two\nLine three", "text/plain")
+        },
     )
 
     assert create_response.status_code == 202
@@ -6520,7 +7001,9 @@ def test_document_message_flow_reads_text_documents() -> None:
     job = wait_for_job(client, payload["job_id"])
 
     assert job["status"] == "completed"
-    assert job["message"] == "Extract action items\n\n[Attached text document: notes.txt]"
+    assert (
+        job["message"] == "Extract action items\n\n[Attached text document: notes.txt]"
+    )
     assert "Document name: notes.txt" in job["response"]
     assert "Extracted document text:\nLine one\nLine two\nLine three" in job["response"]
 
@@ -6560,7 +7043,9 @@ def test_document_message_flow_rejects_unsupported_documents() -> None:
 
     create_response = client.post(
         "/message/document",
-        files={"document": ("payload.bin", b"\x00\x01\x02", "application/octet-stream")},
+        files={
+            "document": ("payload.bin", b"\x00\x01\x02", "application/octet-stream")
+        },
     )
 
     assert create_response.status_code == 415
@@ -6583,7 +7068,10 @@ def test_image_message_flow_accepts_image_uploads() -> None:
     job = wait_for_job(client, payload["job_id"])
 
     assert job["status"] == "completed"
-    assert job["message"] == "What does this show?\n\n[Attached files]\n- image: diagram.png"
+    assert (
+        job["message"]
+        == "What does this show?\n\n[Attached files]\n- image: diagram.png"
+    )
     assert "What does this show?" in job["response"]
     assert "[images: " in job["response"]
     assert "diagram.png" in job["response"]
@@ -6622,9 +7110,7 @@ def test_feedback_queue_stores_and_deletes_items(tmp_path: Path) -> None:
     assert created["audio_mime_type"] == "audio/webm"
     assert created["audio_duration_ms"] == 1200
     assert created["audio_byte_length"] == 3
-    assert created["audio_base64"] == base64.b64encode(b"\x01\x02\x03").decode(
-        "ascii"
-    )
+    assert created["audio_base64"] == base64.b64encode(b"\x01\x02\x03").decode("ascii")
 
     list_response = client.get("/feedback-queue?include_images=true")
     assert list_response.status_code == 200
@@ -6632,9 +7118,7 @@ def test_feedback_queue_stores_and_deletes_items(tmp_path: Path) -> None:
     assert len(items) == 1
     assert items[0]["comment"] == "Make this button bigger"
     assert items[0]["source_display_name"] == "Ambientando Calendar"
-    assert items[0]["audio_base64"] == base64.b64encode(b"\x01\x02\x03").decode(
-        "ascii"
-    )
+    assert items[0]["audio_base64"] == base64.b64encode(b"\x01\x02\x03").decode("ascii")
 
     delete_response = client.delete("/feedback-queue/feedback-1")
     assert delete_response.status_code == 204
@@ -6667,6 +7151,218 @@ def test_feedback_queue_accepts_generic_source_app_payload(tmp_path: Path) -> No
     assert created["source_display_name"] == "Smart Nienfos"
     assert created["comment"] == "Align the summary panel"
     assert created["has_screenshot"] is True
+
+
+def test_feedback_queue_accepts_audio_only_payload_without_comment(
+    tmp_path: Path,
+) -> None:
+    client = build_feedback_queue_client(tmp_path)
+
+    create_response = client.post(
+        "/feedback-queue",
+        json={
+            "id": "feedback-audio-only",
+            "kind": "codex.developerFeedback",
+            "version": 3,
+            "sourceApp": "smart-nienfos",
+            "comment": "",
+            "feedbackKind": "codex.liveFeedback.imageCapture",
+            "imageCapture": {
+                "kind": "codex.liveFeedback.imageCapture",
+                "version": 1,
+                "type": "single_image",
+                "screenshot": {
+                    "attachmentId": "feedback-audio-only-screenshot",
+                    "mimeType": "image/png",
+                },
+            },
+            "audioMimeType": "audio/webm",
+            "audioDurationMs": 1200,
+            "audioByteLength": 3,
+            "audioBase64": base64.b64encode(b"\x01\x02\x03").decode("ascii"),
+        },
+    )
+
+    assert create_response.status_code == 201
+    created = create_response.json()
+    assert created["comment"] == ""
+    assert created["has_screenshot"] is False
+    assert created["has_audio"] is True
+    assert created["feedback_kind"] == "codex.liveFeedback.imageCapture"
+    assert created["image_capture"]["type"] == "single_image"
+
+
+def test_feedback_queue_accepts_screenshot_only_payload_without_comment(
+    tmp_path: Path,
+) -> None:
+    client = build_feedback_queue_client(tmp_path)
+
+    create_response = client.post(
+        "/feedback-queue",
+        json={
+            "id": "feedback-screenshot-only",
+            "sourceApp": "smart-nienfos",
+            "comment": "",
+            "screenshotPngBase64": base64.b64encode(b"fake png").decode("ascii"),
+        },
+    )
+
+    assert create_response.status_code == 201
+    created = create_response.json()
+    assert created["comment"] == ""
+    assert created["has_screenshot"] is True
+
+
+def test_feedback_queue_accepts_image_capture_only_payload_without_comment(
+    tmp_path: Path,
+) -> None:
+    client = build_feedback_queue_client(tmp_path)
+
+    create_response = client.post(
+        "/feedback-queue",
+        json={
+            "id": "feedback-image-capture-only",
+            "sourceApp": "smart-nienfos",
+            "comment": "",
+            "feedbackKind": "codex.liveFeedback.imageCapture",
+            "imageCapture": {
+                "kind": "codex.liveFeedback.imageCapture",
+                "version": 1,
+                "type": "single_image",
+                "screenshot": {
+                    "attachmentId": "capture-only-screenshot",
+                    "mimeType": "image/png",
+                },
+            },
+        },
+    )
+
+    assert create_response.status_code == 201
+    created = create_response.json()
+    assert created["comment"] == ""
+    assert created["has_screenshot"] is False
+    assert created["image_capture"]["screenshot"]["attachmentId"] == (
+        "capture-only-screenshot"
+    )
+
+
+def test_feedback_queue_accepts_guided_trace_payload_without_comment(
+    tmp_path: Path,
+) -> None:
+    client = build_feedback_queue_client(tmp_path)
+
+    create_response = client.post(
+        "/feedback-queue",
+        json={
+            "id": "feedback-guided-trace",
+            "kind": "codex.developerFeedback",
+            "version": 3,
+            "sourceApp": "smart-nienfos",
+            "comment": "",
+            "feedbackKind": "codex.liveFeedback.guidedTrace",
+            "guidedTrace": {
+                "kind": "codex.liveFeedback.guidedTrace",
+                "version": 1,
+                "id": "trace-1",
+                "startedAt": "2026-07-01T15:00:00Z",
+                "recording": {
+                    "mode": "screen_trace_with_audio",
+                    "durationMs": 1000,
+                    "frameStrategy": "route_change_interaction_and_interval",
+                },
+                "timeline": [{"id": "event-1", "type": "screen_frame", "atMs": 0}],
+                "frames": [
+                    {
+                        "id": "frame-1",
+                        "attachmentId": "frame-1-png",
+                        "atMs": 0,
+                        "screenshotMimeType": "image/png",
+                        "screenshotPngBase64": base64.b64encode(b"frame png").decode(
+                            "ascii"
+                        ),
+                    }
+                ],
+            },
+        },
+    )
+
+    assert create_response.status_code == 201
+    created = create_response.json()
+    assert created["comment"] == ""
+    assert created["feedback_kind"] == "codex.liveFeedback.guidedTrace"
+    assert created["guided_trace"]["frames"][0]["id"] == "frame-1"
+
+
+def test_feedback_live_feedback_note_omits_binary_trace_payloads() -> None:
+    image_base64 = base64.b64encode(b"frame png" * 2048).decode("ascii")
+    item = FeedbackQueueItem(
+        id="feedback-guided-trace",
+        source_app="smart-nienfos",
+        source_display_name=None,
+        comment="",
+        created_at="2026-07-01T15:00:00Z",
+        feedback_kind="codex.liveFeedback.guidedTrace",
+        guided_trace={
+            "kind": "codex.liveFeedback.guidedTrace",
+            "frames": [
+                {
+                    "id": "frame-1",
+                    "screenshotPngBase64": image_base64,
+                    "screenshotMimeType": "image/png",
+                }
+            ],
+            "timeline": [
+                {"id": f"event-{index}", "type": "pointer", "atMs": index}
+                for index in range(55)
+            ],
+        },
+    )
+
+    note = _feedback_live_feedback_note(item)
+
+    assert image_base64 not in note
+    assert "<omitted binary payload" in note
+    assert '"omittedItems": 5' in note
+    assert "frame-1" in note
+
+
+def test_feedback_queue_item_legacy_dict_defaults_live_feedback_fields() -> None:
+    item = FeedbackQueueItem.from_dict(
+        {
+            "id": "legacy-feedback",
+            "source_app": "legacy-app",
+            "source_display_name": None,
+            "comment": "Legacy comment",
+            "created_at": "2026-07-01T15:00:00+00:00",
+            "status": "pending",
+            "screenshot_mime_type": "image/png",
+            "selection_points": [],
+            "selection_bounds": {},
+            "context_metadata": {},
+        }
+    )
+
+    assert item.feedback_kind is None
+    assert item.image_capture == {}
+    assert item.guided_trace == {}
+
+
+def test_feedback_queue_rejects_empty_payload_without_comment_audio_or_trace(
+    tmp_path: Path,
+) -> None:
+    client = build_feedback_queue_client(tmp_path)
+
+    create_response = client.post(
+        "/feedback-queue",
+        json={
+            "id": "feedback-empty",
+            "sourceApp": "smart-nienfos",
+            "comment": "",
+        },
+    )
+
+    assert create_response.status_code == 422
+    assert "Feedback item has no comment" in str(create_response.json()["detail"])
 
 
 def test_feedback_queue_legacy_ambientando_payload_defaults_source(
@@ -6705,10 +7401,34 @@ def test_capabilities_exposes_feedback_source_workspace_aliases(
 
     assert response.status_code == 200
     aliases = response.json()["feedback_source_workspace_aliases"]
-    assert aliases == {
-        "smart-nienfos": "/workspace/smart_nienfos",
-        "ambientando-calendar": "/workspace/ambientando-calendar",
-    }
+    assert aliases["smart-nienfos"] == "/workspace/smart_nienfos"
+    assert aliases["ambientando-calendar"] == "/workspace/ambientando-calendar"
+
+
+def test_capabilities_defaults_smart_nienfos_admin_to_project_root(
+    tmp_path: Path,
+) -> None:
+    projects_root = tmp_path / "projects"
+    client = build_feedback_queue_client(tmp_path, projects_root=projects_root)
+
+    response = client.get("/capabilities")
+
+    assert response.status_code == 200
+    aliases = response.json()["feedback_source_workspace_aliases"]
+    assert aliases["smart-nienfos-admin"] == str(projects_root / "smart_nienfos")
+
+
+def test_capabilities_defaults_sat_catalog_to_project_root(
+    tmp_path: Path,
+) -> None:
+    projects_root = tmp_path / "projects"
+    client = build_feedback_queue_client(tmp_path, projects_root=projects_root)
+
+    response = client.get("/capabilities")
+
+    assert response.status_code == 200
+    aliases = response.json()["feedback_source_workspace_aliases"]
+    assert aliases["sat-catalogo-ropa"] == str(projects_root / "sat-catalogo-ropa")
 
 
 def test_feedback_workflow_presets_expose_agent_profiles(tmp_path: Path) -> None:
@@ -6740,7 +7460,9 @@ def test_feedback_queue_item_can_start_codex_image_session(tmp_path: Path) -> No
         },
     )
 
-    start_response = client.post("/feedback-queue/feedback-start/start-session", json={})
+    start_response = client.post(
+        "/feedback-queue/feedback-start/start-session", json={}
+    )
 
     assert start_response.status_code == 202
     payload = start_response.json()
@@ -6822,17 +7544,104 @@ def test_feedback_batch_start_session_accepts_multiple_items_and_release(
     assert "Batch size: 2 feedback items." in job["message"]
     assert "Fix the first card" in job["message"]
     assert "Fix the second card" in job["message"]
-    assert "Screen/context metadata: {'screenName': 'order-detail'" in job[
-        "message"
-    ]
+    assert "Screen/context metadata: {'screenName': 'order-detail'" in job["message"]
     assert "Audio attached: audio/webm, 800 ms, 2 bytes." in job["message"]
-    assert "Release instruction: after implementation and validation complete" in job[
-        "message"
-    ]
+    assert (
+        "Release instruction: after implementation and validation complete"
+        in job["message"]
+    )
     assert "01-feedback-batch-1.png" in job["response"]
     assert "02-feedback-batch-2.png" in job["response"]
     queued = client.get("/feedback-queue").json()
     assert [item["status"] for item in queued] == ["submitted", "submitted"]
+
+
+def test_feedback_batch_start_session_accepts_audio_only_item_without_comment(
+    tmp_path: Path,
+) -> None:
+    client = build_feedback_queue_client(
+        tmp_path,
+        audio_transcription_backend="disabled",
+    )
+
+    start_response = client.post(
+        "/feedback-batches/start-session",
+        json={
+            "sourceApp": "ambientando-calendar",
+            "sourceDisplayName": "Ambientando Calendar",
+            "workflowPresetId": "default",
+            "items": [
+                {
+                    "id": "feedback-audio-only",
+                    "comment": "",
+                    "audioMimeType": "audio/webm",
+                    "audioDurationMs": 1200,
+                    "audioByteLength": 2,
+                    "audioBase64": base64.b64encode(b"\x01\x02").decode("ascii"),
+                }
+            ],
+        },
+    )
+
+    assert start_response.status_code == 202
+    job = wait_for_job(client, start_response.json()["job_id"])
+    assert job["status"] == "completed"
+    assert "Audio attached: audio/webm, 1200 ms, 2 bytes." in job["message"]
+    assert "01-feedback-audio-only.png" in job["response"]
+    queued = client.get("/feedback-queue").json()
+    assert queued[0]["status"] == "submitted"
+    assert queued[0]["has_screenshot"] is True
+    assert queued[0]["has_audio"] is True
+
+
+def test_feedback_batch_start_session_accepts_guided_trace_without_screenshot(
+    tmp_path: Path,
+) -> None:
+    client = build_feedback_queue_client(tmp_path)
+
+    start_response = client.post(
+        "/feedback-batches/start-session",
+        json={
+            "sourceApp": "ambientando-calendar",
+            "sourceDisplayName": "Ambientando Calendar",
+            "workflowPresetId": "default",
+            "items": [
+                {
+                    "id": "feedback-trace-only",
+                    "comment": "",
+                    "feedbackKind": "codex.liveFeedback.guidedTrace",
+                    "guidedTrace": {
+                        "kind": "codex.liveFeedback.guidedTrace",
+                        "version": 1,
+                        "id": "trace-1",
+                        "startedAt": "2026-07-01T13:50:00Z",
+                        "recording": {
+                            "mode": "screen_trace_with_audio",
+                            "durationMs": 100,
+                        },
+                        "timeline": [
+                            {
+                                "id": "event-1",
+                                "type": "pointerDown",
+                                "atMs": 12,
+                            }
+                        ],
+                        "frames": [],
+                    },
+                }
+            ],
+        },
+    )
+
+    assert start_response.status_code == 202
+    job = wait_for_job(client, start_response.json()["job_id"])
+    assert job["status"] == "completed"
+    assert "Feedback contract: codex.liveFeedback.guidedTrace" in job["message"]
+    assert "Guided trace schema:" in job["message"]
+    assert "pointerDown" in job["message"]
+    queued = client.get("/feedback-queue").json()
+    assert queued[0]["status"] == "submitted"
+    assert queued[0]["guided_trace"]["id"] == "trace-1"
 
 
 def test_feedback_batch_status_response_tracks_completed_job(
@@ -6895,9 +7704,9 @@ def test_feedback_batch_status_response_tracks_completed_job(
 
     persisted_status = client.get(f"/feedback-batches/{batch_id}").json()
     assert persisted_status["summary"] == status["summary"]
-    assert persisted_status["notification_created_at"] == status[
-        "notification_created_at"
-    ]
+    assert (
+        persisted_status["notification_created_at"] == status["notification_created_at"]
+    )
 
 
 def test_feedback_batch_status_handles_missing_linked_job(
@@ -7148,9 +7957,7 @@ def test_feedback_batch_start_session_keeps_audio_metadata_when_transcriber_disa
                     "audioMimeType": "audio/webm",
                     "audioDurationMs": 1100,
                     "audioByteLength": 3,
-                    "audioBase64": base64.b64encode(b"\x01\x02\x03").decode(
-                        "ascii"
-                    ),
+                    "audioBase64": base64.b64encode(b"\x01\x02\x03").decode("ascii"),
                 }
             ],
         },
@@ -7160,9 +7967,7 @@ def test_feedback_batch_start_session_keeps_audio_metadata_when_transcriber_disa
     job = wait_for_job(client, start_response.json()["job_id"])
     assert job["status"] == "completed"
     assert "Audio attached: audio/webm, 1100 ms, 3 bytes." in job["message"]
-    assert "Audio transcript unavailable; using audio metadata only." in job[
-        "message"
-    ]
+    assert "Audio transcript unavailable; using audio metadata only." in job["message"]
     queued = client.get("/feedback-queue").json()
     assert queued[0]["audio_transcript"] is None
 
@@ -7195,6 +8000,91 @@ def test_feedback_batch_start_session_rejects_invalid_audio_base64(
     assert client.get("/feedback-queue").json() == []
 
 
+def test_feedback_batch_start_session_uses_explicit_workspace_path(
+    tmp_path: Path,
+) -> None:
+    projects_root = tmp_path / "projects"
+    sat_workspace = projects_root / "sat-catalogo-ropa"
+    bridge_workspace = projects_root / "codex-cli-mobile-bridge"
+    sat_workspace.mkdir(parents=True)
+    bridge_workspace.mkdir()
+    client = build_feedback_queue_client(tmp_path, projects_root=projects_root)
+
+    start_response = client.post(
+        "/feedback-batches/start-session",
+        json={
+            "sourceApp": "sat-catalogo-ropa",
+            "sourceDisplayName": "SAT Catalogo Ropa",
+            "workspace_path": "codex-cli-mobile-bridge",
+            "workflowPresetId": "default",
+            "items": [
+                {
+                    "id": "feedback-explicit-bridge-workspace",
+                    "comment": "Apply this to the shared Codex Bridge wrapper.",
+                    "screenshotPngBase64": base64.b64encode(b"fake png").decode(
+                        "ascii"
+                    ),
+                }
+            ],
+        },
+    )
+
+    assert start_response.status_code == 202
+    session_response = client.get(f"/sessions/{start_response.json()['session_id']}")
+    assert session_response.status_code == 200
+    session = session_response.json()
+    assert session["workspace_name"] == "codex-cli-mobile-bridge"
+    assert session["workspace_path"] == str(bridge_workspace)
+    status_response = client.get(
+        f"/feedback-batches/{start_response.json()['feedback_batch_id']}"
+    )
+    assert status_response.status_code == 200
+    status = status_response.json()
+    assert status["workspace_path"] == str(bridge_workspace)
+    assert status["release_target"]["sourceApp"] == "sat-catalogo-ropa"
+    assert status["release_target"]["workspacePath"] == str(sat_workspace)
+    assert status["releaseTarget"]["workspacePath"] == str(sat_workspace)
+
+
+@pytest.mark.parametrize(
+    "workspace_path",
+    [
+        "../outside",
+        "/tmp/outside-codex-workspace",
+    ],
+)
+def test_feedback_batch_start_session_rejects_unsafe_explicit_workspace_path(
+    tmp_path: Path,
+    workspace_path: str,
+) -> None:
+    projects_root = tmp_path / "projects"
+    sat_workspace = projects_root / "sat-catalogo-ropa"
+    sat_workspace.mkdir(parents=True)
+    client = build_feedback_queue_client(tmp_path, projects_root=projects_root)
+
+    start_response = client.post(
+        "/feedback-batches/start-session",
+        json={
+            "sourceApp": "sat-catalogo-ropa",
+            "sourceDisplayName": "SAT Catalogo Ropa",
+            "workspace_path": workspace_path,
+            "workflowPresetId": "default",
+            "items": [
+                {
+                    "id": "feedback-unsafe-explicit-workspace",
+                    "comment": "Do not run outside the configured projects root.",
+                    "screenshotPngBase64": base64.b64encode(b"fake png").decode(
+                        "ascii"
+                    ),
+                }
+            ],
+        },
+    )
+
+    assert start_response.status_code == 404
+    assert "Workspace" in start_response.json()["detail"]
+
+
 def test_feedback_batch_start_session_resolves_workspace_from_source_app(
     tmp_path: Path,
 ) -> None:
@@ -7224,9 +8114,7 @@ def test_feedback_batch_start_session_resolves_workspace_from_source_app(
     )
 
     assert start_response.status_code == 202
-    session_response = client.get(
-        f"/sessions/{start_response.json()['session_id']}"
-    )
+    session_response = client.get(f"/sessions/{start_response.json()['session_id']}")
     assert session_response.status_code == 200
     session = session_response.json()
     assert session["workspace_name"] == "ambientando-calendar"
@@ -7242,9 +8130,7 @@ def test_feedback_batch_start_session_resolves_workspace_from_source_alias(
     client = build_feedback_queue_client(
         tmp_path,
         projects_root=projects_root,
-        feedback_source_workspace_aliases=(
-            f"smart-nienfos:{smart_workspace}"
-        ),
+        feedback_source_workspace_aliases=(f"smart-nienfos:{smart_workspace}"),
     )
 
     start_response = client.post(
@@ -7266,13 +8152,117 @@ def test_feedback_batch_start_session_resolves_workspace_from_source_alias(
     )
 
     assert start_response.status_code == 202
-    session_response = client.get(
-        f"/sessions/{start_response.json()['session_id']}"
-    )
+    session_response = client.get(f"/sessions/{start_response.json()['session_id']}")
     assert session_response.status_code == 200
     session = session_response.json()
     assert session["workspace_name"] == "smart_nienfos"
     assert session["workspace_path"] == str(smart_workspace)
+
+
+def test_feedback_batch_start_session_defaults_admin_to_smart_nienfos_root(
+    tmp_path: Path,
+) -> None:
+    projects_root = tmp_path / "projects"
+    smart_workspace = projects_root / "smart_nienfos"
+    smart_workspace.mkdir(parents=True)
+    client = build_feedback_queue_client(tmp_path, projects_root=projects_root)
+
+    start_response = client.post(
+        "/feedback-batches/start-session",
+        json={
+            "sourceApp": "smart-nienfos-admin",
+            "sourceDisplayName": "Smart Nienfos Admin",
+            "workflowPresetId": "default",
+            "items": [
+                {
+                    "id": "feedback-smart-admin-default",
+                    "comment": "Apply this to Smart Nienfos admin.",
+                    "screenshotPngBase64": base64.b64encode(b"fake png").decode(
+                        "ascii"
+                    ),
+                }
+            ],
+        },
+    )
+
+    assert start_response.status_code == 202
+    session_response = client.get(f"/sessions/{start_response.json()['session_id']}")
+    assert session_response.status_code == 200
+    session = session_response.json()
+    assert session["workspace_name"] == "smart_nienfos"
+    assert session["workspace_path"] == str(smart_workspace)
+
+
+def test_feedback_batch_start_session_defaults_sat_catalog_to_sibling_repo(
+    tmp_path: Path,
+) -> None:
+    projects_root = tmp_path / "projects"
+    bridge_workspace = projects_root / "codex-cli-mobile-bridge"
+    sat_workspace = projects_root / "sat-catalogo-ropa"
+    bridge_workspace.mkdir(parents=True)
+    sat_workspace.mkdir()
+    client = build_feedback_queue_client(tmp_path, projects_root=projects_root)
+
+    start_response = client.post(
+        "/feedback-batches/start-session",
+        json={
+            "sourceApp": "sat-catalogo-ropa",
+            "sourceDisplayName": "SAT Catalogo Ropa",
+            "workflowPresetId": "default",
+            "items": [
+                {
+                    "id": "feedback-sat-catalog-default",
+                    "comment": "Apply this to SAT catalog.",
+                    "screenshotPngBase64": base64.b64encode(b"fake png").decode(
+                        "ascii"
+                    ),
+                }
+            ],
+        },
+    )
+
+    assert start_response.status_code == 202
+    session_response = client.get(f"/sessions/{start_response.json()['session_id']}")
+    assert session_response.status_code == 200
+    session = session_response.json()
+    assert session["workspace_name"] == "sat-catalogo-ropa"
+    assert session["workspace_path"] == str(sat_workspace)
+
+
+def test_feedback_batch_start_session_keeps_unknown_source_app_fallback(
+    tmp_path: Path,
+) -> None:
+    projects_root = tmp_path / "projects"
+    fallback_workspace = projects_root / "aaa-default-workspace"
+    sat_workspace = projects_root / "sat-catalogo-ropa"
+    fallback_workspace.mkdir(parents=True)
+    sat_workspace.mkdir()
+    client = build_feedback_queue_client(tmp_path, projects_root=projects_root)
+
+    start_response = client.post(
+        "/feedback-batches/start-session",
+        json={
+            "sourceApp": "unknown-catalog-app",
+            "sourceDisplayName": "Unknown Catalog App",
+            "workflowPresetId": "default",
+            "items": [
+                {
+                    "id": "feedback-unknown-source-default",
+                    "comment": "Apply this to the default workspace.",
+                    "screenshotPngBase64": base64.b64encode(b"fake png").decode(
+                        "ascii"
+                    ),
+                }
+            ],
+        },
+    )
+
+    assert start_response.status_code == 202
+    session_response = client.get(f"/sessions/{start_response.json()['session_id']}")
+    assert session_response.status_code == 200
+    session = session_response.json()
+    assert session["workspace_name"] == "aaa-default-workspace"
+    assert session["workspace_path"] == str(fallback_workspace)
 
 
 @pytest.mark.parametrize(
@@ -7331,9 +8321,7 @@ def test_feedback_quick_ask_uses_answer_only_prompt_and_persists(
             "sourceApp": "fixture-app",
             "sourceDisplayName": "Fixture App",
             "question": "Why is this button disabled?",
-            "screenshotPngBase64": base64.b64encode(b"quick png").decode(
-                "ascii"
-            ),
+            "screenshotPngBase64": base64.b64encode(b"quick png").decode("ascii"),
             "selectionBounds": {
                 "left": 10,
                 "top": 20,
@@ -7361,13 +8349,9 @@ def test_feedback_quick_ask_uses_answer_only_prompt_and_persists(
     assert "Do not implement changes." in job["message"]
     assert "Why is this button disabled?" in job["message"]
     assert "Selection bounds: {'left': 10.0, 'top': 20.0" in job["message"]
-    assert "Screen/context metadata: {'screenName': 'order-detail'" in job[
-        "message"
-    ]
+    assert "Screen/context metadata: {'screenName': 'order-detail'" in job["message"]
 
-    status_response = client.get(
-        f"/feedback-quick-asks/{accepted['quick_ask_id']}"
-    )
+    status_response = client.get(f"/feedback-quick-asks/{accepted['quick_ask_id']}")
 
     assert status_response.status_code == 200
     status = status_response.json()
@@ -7456,9 +8440,7 @@ def test_feedback_quick_ask_history_filters_source_and_exposes_screenshot(
 
     assert history_response.status_code == 200
     history = history_response.json()
-    assert [record["quick_ask_id"] for record in history] == [
-        first["quick_ask_id"]
-    ]
+    assert [record["quick_ask_id"] for record in history] == [first["quick_ask_id"]]
     assert history[0]["source_app"] == "fixture-app"
     assert history[0]["screenshot_png_base64"] is None
 
@@ -7487,9 +8469,7 @@ def test_feedback_batch_can_act_from_quick_ask_reference(tmp_path: Path) -> None
             "sourceApp": "fixture-app",
             "sourceDisplayName": "Fixture App",
             "question": "Why is this title clipped?",
-            "screenshotPngBase64": base64.b64encode(b"quick ask png").decode(
-                "ascii"
-            ),
+            "screenshotPngBase64": base64.b64encode(b"quick ask png").decode("ascii"),
             "selectionBounds": {
                 "left": 8,
                 "top": 9,
@@ -7521,21 +8501,23 @@ def test_feedback_batch_can_act_from_quick_ask_reference(tmp_path: Path) -> None
     assert f"- Quick ask id: {accepted['quick_ask_id']}" in job["message"]
     assert "- Original question: Why is this title clipped?" in job["message"]
     assert "- Prior answer: " in job["message"]
-    assert "- Original screen/context metadata: {'screenName': 'order-detail'}" in job[
-        "message"
-    ]
+    assert (
+        "- Original screen/context metadata: {'screenName': 'order-detail'}"
+        in job["message"]
+    )
     assert "Quick ask about a selected Fixture App screen area." in job["message"]
     assert "Act from quick ask" in job["message"]
-    assert "Release instruction: after implementation and validation complete" in job[
-        "message"
-    ]
+    assert (
+        "Release instruction: after implementation and validation complete"
+        in job["message"]
+    )
 
     status = client.get(f"/feedback-batches/{batch['feedback_batch_id']}").json()
     assert status["quick_ask_id"] == accepted["quick_ask_id"]
     assert status["item_count"] == 1
 
 
-def test_feedback_batch_start_session_is_atomic_when_later_item_has_no_screenshot(
+def test_feedback_batch_start_session_is_atomic_when_later_item_has_invalid_image(
     tmp_path: Path,
 ) -> None:
     client = build_feedback_queue_client(tmp_path)
@@ -7554,15 +8536,16 @@ def test_feedback_batch_start_session_is_atomic_when_later_item_has_no_screensho
                     ),
                 },
                 {
-                    "id": "feedback-invalid-no-screenshot",
-                    "comment": "Missing screenshot",
+                    "id": "feedback-invalid-image",
+                    "comment": "Invalid screenshot",
+                    "screenshotPngBase64": "not-base64!",
                 },
             ],
         },
     )
 
     assert start_response.status_code == 422
-    assert "has no screenshot" in start_response.json()["detail"]
+    assert "invalid screenshotPngBase64" in start_response.json()["detail"]
     assert client.get("/feedback-queue").json() == []
     assert not any((tmp_path / "feedback_images").glob("*"))
     assert not any((tmp_path / "feedback_audio").glob("*"))
@@ -7649,8 +8632,7 @@ def test_feedback_queue_start_session_accepts_camel_case_target_mode(
     assert "Run target: Generator + Reviewer." in job["message"]
     assert "Target mode smoke" in job["message"]
     expected_bounds = (
-        "Selection bounds: {'left': 1.0, 'top': 2.0, "
-        "'width': 3.0, 'height': 4.0}"
+        "Selection bounds: {'left': 1.0, 'top': 2.0, 'width': 3.0, 'height': 4.0}"
     )
     assert expected_bounds in job["message"]
 
@@ -7773,7 +8755,9 @@ def test_agent_creator_profile_can_seed_a_new_chat_for_agent_design() -> None:
 
     assert session_payload["agent_profile_name"] == "Agent Creator"
     assert session_payload["agent_profile_color"] == agent_creator["color_hex"]
-    assert session_payload["agent_configuration"]["agents"][0]["label"] == "Agent Creator"
+    assert (
+        session_payload["agent_configuration"]["agents"][0]["label"] == "Agent Creator"
+    )
     assert (
         session_payload["agent_configuration"]["agents"][0]["prompt"]
         == agent_creator["prompt"]
@@ -7848,7 +8832,9 @@ def test_provider_and_admin_profiles_can_seed_new_chats() -> None:
 
         assert session_payload["agent_profile_id"] == profile_id
         assert session_payload["agent_profile_name"] == expected_name
-        assert session_payload["agent_profile_color"] == profiles[profile_id]["color_hex"]
+        assert (
+            session_payload["agent_profile_color"] == profiles[profile_id]["color_hex"]
+        )
         assert (
             session_payload["agent_configuration"]["agents"][0]["label"]
             == expected_name
@@ -7859,7 +8845,9 @@ def test_provider_and_admin_profiles_can_seed_new_chats() -> None:
         )
 
 
-def test_corrupt_reserved_builtin_profile_id_is_hidden_from_listing_and_export() -> None:
+def test_corrupt_reserved_builtin_profile_id_is_hidden_from_listing_and_export() -> (
+    None
+):
     with TemporaryDirectory() as temp_dir:
         database_path = str(Path(temp_dir) / "reserved-builtin-profile.sqlite3")
         client, container = build_sqlite_session_client_with_container(database_path)
@@ -7876,9 +8864,13 @@ def test_corrupt_reserved_builtin_profile_id_is_hidden_from_listing_and_export()
             repository.save_agent_profile(corrupt_profile)
 
             listed_profiles = list_agent_profiles(client)
-            listed_default = next(profile for profile in listed_profiles if profile["id"] == "default")
+            listed_default = next(
+                profile for profile in listed_profiles if profile["id"] == "default"
+            )
             assert listed_default["name"] == "Generator"
-            assert all(profile["name"] != "Corrupt Default" for profile in listed_profiles)
+            assert all(
+                profile["name"] != "Corrupt Default" for profile in listed_profiles
+            )
 
             export_response = client.get("/agent-profiles/export")
             assert export_response.status_code == 200
@@ -7963,7 +8955,9 @@ def test_supervisor_profile_preserves_selected_specialists_when_applied() -> Non
     assert agents_by_id["senior_engineer"]["label"] == "Principal Engineer"
 
 
-def test_sqlite_supervisor_profile_survives_restart_with_supervisor_members_intact() -> None:
+def test_sqlite_supervisor_profile_survives_restart_with_supervisor_members_intact() -> (
+    None
+):
     with TemporaryDirectory() as temp_dir:
         database_path = str(Path(temp_dir) / "supervisor-profile.sqlite3")
         create_client, _ = build_sqlite_session_client_with_container(database_path)
@@ -7985,11 +8979,15 @@ def test_sqlite_supervisor_profile_survives_restart_with_supervisor_members_inta
         finally:
             create_client.close()
 
-        restart_client, restart_container = build_sqlite_session_client_with_container(database_path)
+        restart_client, restart_container = build_sqlite_session_client_with_container(
+            database_path
+        )
         try:
             listed_profiles = list_agent_profiles(restart_client)
             restarted_profile = next(
-                profile for profile in listed_profiles if profile["id"] == created_profile["id"]
+                profile
+                for profile in listed_profiles
+                if profile["id"] == created_profile["id"]
             )
             assert restarted_profile["configuration"]["preset"] == "supervisor"
             assert restarted_profile["configuration"]["supervisor_member_ids"] == [
@@ -8070,10 +9068,16 @@ def test_custom_agent_profile_can_be_created_and_used_for_a_new_chat() -> None:
     assert session_payload["agent_profile_id"] == created_profile["id"]
     assert session_payload["agent_profile_name"] == "API Guardian"
     assert session_payload["agent_profile_color"] == "#C96BFF"
-    assert session_payload["agent_configuration"]["agents"][0]["label"] == "API Guardian"
+    assert (
+        session_payload["agent_configuration"]["agents"][0]["label"] == "API Guardian"
+    )
     assert session_payload["agent_configuration"]["preset"] == "review"
-    assert session_payload["agent_configuration"]["display_mode"] == "collapse_specialists"
-    assert session_payload["agent_configuration"]["agents"][1]["label"] == "Risk Reviewer"
+    assert (
+        session_payload["agent_configuration"]["display_mode"] == "collapse_specialists"
+    )
+    assert (
+        session_payload["agent_configuration"]["agents"][1]["label"] == "Risk Reviewer"
+    )
     assert session_payload["agent_configuration"]["agents"][2]["enabled"] is False
 
     create_message_response = client.post(
@@ -8141,10 +9145,18 @@ def test_agent_profile_can_be_applied_to_an_existing_session() -> None:
     assert session_payload["agent_profile_color"] == "#FF8A5B"
     assert session_payload["agent_configuration"]["preset"] == "triad"
     assert session_payload["agent_configuration"]["display_mode"] == "summary_only"
-    assert session_payload["agent_configuration"]["agents"][0]["prompt"] == profile["prompt"]
-    assert session_payload["agent_configuration"]["agents"][1]["label"] == "Docs Reviewer"
+    assert (
+        session_payload["agent_configuration"]["agents"][0]["prompt"]
+        == profile["prompt"]
+    )
+    assert (
+        session_payload["agent_configuration"]["agents"][1]["label"] == "Docs Reviewer"
+    )
     assert session_payload["agent_configuration"]["agents"][1]["max_turns"] == 2
-    assert session_payload["agent_configuration"]["agents"][2]["label"] == "Release Summary"
+    assert (
+        session_payload["agent_configuration"]["agents"][2]["label"]
+        == "Release Summary"
+    )
     assert session_payload["agent_configuration"]["agents"][2]["max_turns"] == 2
 
 
@@ -8297,9 +9309,11 @@ def test_profile_and_configuration_updates_succeed_after_run_completes() -> None
     wait_for_session(
         client,
         session_id,
-        predicate=lambda payload: payload["active_agent_run_id"] is None
-        and len(payload["messages"]) >= 2
-        and payload["messages"][1]["status"] == "completed",
+        predicate=lambda payload: (
+            payload["active_agent_run_id"] is None
+            and len(payload["messages"]) >= 2
+            and payload["messages"][1]["status"] == "completed"
+        ),
     )
 
     apply_response = client.put(
@@ -8357,25 +9371,27 @@ def test_reviewer_runs_again_when_multiple_review_turns_are_configured() -> None
     payload = wait_for_session(
         client,
         session_id,
-        predicate=lambda session_payload: session_payload["active_agent_run_id"] is None
-        and len(
-            [
-                message
-                for message in session_payload["messages"]
-                if message["agent_id"] == "reviewer"
-                and message["status"] == "completed"
-            ]
-        )
-        == 2
-        and len(
-            [
-                message
-                for message in session_payload["messages"]
-                if message["agent_id"] == "generator"
-                and message["status"] == "completed"
-            ]
-        )
-        == 3,
+        predicate=lambda session_payload: (
+            session_payload["active_agent_run_id"] is None
+            and len(
+                [
+                    message
+                    for message in session_payload["messages"]
+                    if message["agent_id"] == "reviewer"
+                    and message["status"] == "completed"
+                ]
+            )
+            == 2
+            and len(
+                [
+                    message
+                    for message in session_payload["messages"]
+                    if message["agent_id"] == "generator"
+                    and message["status"] == "completed"
+                ]
+            )
+            == 3
+        ),
     )
 
     completed_reviewers = [
@@ -8536,7 +9552,9 @@ def test_legacy_prompt_only_agent_profile_hydrates_default_configuration() -> No
     legacy_profile.name = "Legacy Analyst"
     legacy_profile.description = "Prompt-only profile from an older server."
     legacy_profile.color_hex = "#224466"
-    legacy_profile.prompt = "You are Legacy Analyst Codex. Analyze older systems carefully."
+    legacy_profile.prompt = (
+        "You are Legacy Analyst Codex. Analyze older systems carefully."
+    )
     legacy_profile.configuration = None
     repository.save_agent_profile(legacy_profile)
 
@@ -8558,7 +9576,9 @@ def test_legacy_prompt_only_agent_profile_hydrates_default_configuration() -> No
     assert payload["agent_configuration"]["agents"][2]["enabled"] is False
 
 
-def test_applying_profile_clears_provider_session_ids_from_reused_configuration() -> None:
+def test_applying_profile_clears_provider_session_ids_from_reused_configuration() -> (
+    None
+):
     client, container = build_session_client_with_container()
     configuration = AgentConfiguration.default()
     configuration.preset = AgentPreset.TRIAD
@@ -8638,7 +9658,10 @@ def test_agent_profiles_can_be_exported_and_imported_as_json_packs() -> None:
     assert import_response.status_code == 200
     imported_profiles = import_response.json()
     assert imported_profiles[0]["name"] == "Portable Pack"
-    assert imported_profiles[0]["configuration"]["agents"][1]["label"] == "Portable Reviewer"
+    assert (
+        imported_profiles[0]["configuration"]["agents"][1]["label"]
+        == "Portable Reviewer"
+    )
 
 
 def test_import_rejects_builtin_agent_profile_ids() -> None:
@@ -8678,7 +9701,7 @@ def test_submit_message_applies_codex_guidance_and_passes_codex_options() -> Non
             barrier_agent_id=AgentId.REVIEWER,
         )
 
-        service.submit_message(
+        job = service.submit_message(
             "Create a reusable skill for release automation.",
             workspace_path=str(project_dir),
             codex_options=CodexRunOptions(
@@ -8690,7 +9713,7 @@ def test_submit_message_applies_codex_guidance_and_passes_codex_options() -> Non
             ),
         )
 
-        request = provider.requests[-1]
+        request = _provider_request(provider, job.id)
         assert request["codex_options"] == CodexRunOptions(
             profile="safe",
             search_enabled=True,
@@ -8703,7 +9726,9 @@ def test_submit_message_applies_codex_guidance_and_passes_codex_options() -> Non
         assert "`github`" in request["message"]
 
 
-def test_submit_message_adds_authenticated_github_guidance_for_repo_references() -> None:
+def test_submit_message_adds_authenticated_github_guidance_for_repo_references() -> (
+    None
+):
     with TemporaryDirectory() as temp_dir:
         project_dir = Path(temp_dir) / "project"
         project_dir.mkdir()
@@ -8712,12 +9737,12 @@ def test_submit_message_adds_authenticated_github_guidance_for_repo_references()
             barrier_agent_id=AgentId.GENERATOR,
         )
 
-        service.submit_message(
+        job = service.submit_message(
             "Inspect brunojaime/software-project-builder and incorporate it here.",
             workspace_path=str(project_dir),
         )
 
-        request = provider.requests[-1]
+        request = _provider_request(provider, job.id)
         assert "Private GitHub repositories may return 404" in request["message"]
         assert "`gh repo view OWNER/REPO`" in request["message"]
         assert "brunojaime/software-project-builder" in request["message"]
@@ -8786,7 +9811,9 @@ def test_codex_tooling_marks_mcp_inventory_incomplete_when_list_partially_fails(
         assert payload["mcp_server_inventory_complete"] is False
         assert payload["mcp_error"] == "Partial MCP list failed."
         github_server = next(
-            server for server in payload["mcp_servers"] if server["server_id"] == "github"
+            server
+            for server in payload["mcp_servers"]
+            if server["server_id"] == "github"
         )
         assert github_server["selectable"] is False
         assert github_server["selectable_reason"] == (
@@ -8927,7 +9954,9 @@ def test_codex_tooling_reports_disabled_external_mcp_server(
         assert response.status_code == 200
         payload = response.json()
         github_server = next(
-            server for server in payload["mcp_servers"] if server["server_id"] == "github"
+            server
+            for server in payload["mcp_servers"]
+            if server["server_id"] == "github"
         )
         assert github_server["source"] == "external"
         assert github_server["status"] == "disabled"
@@ -8951,7 +9980,9 @@ def test_codex_tooling_reports_unreadable_external_mcp_server(
         assert response.status_code == 200
         payload = response.json()
         github_server = next(
-            server for server in payload["mcp_servers"] if server["server_id"] == "github"
+            server
+            for server in payload["mcp_servers"]
+            if server["server_id"] == "github"
         )
         assert github_server["source"] == "external"
         assert github_server["status"] == "unreadable"
@@ -8978,7 +10009,9 @@ def test_codex_tooling_reports_unreadable_external_mcp_server_when_get_times_out
         assert response.status_code == 200
         payload = response.json()
         github_server = next(
-            server for server in payload["mcp_servers"] if server["server_id"] == "github"
+            server
+            for server in payload["mcp_servers"]
+            if server["server_id"] == "github"
         )
         assert github_server["status"] == "unreadable"
         assert github_server["selectable"] is False
@@ -9479,11 +10512,18 @@ def test_codex_tooling_endpoint_reports_status_skills_profiles_and_mcp(
         assert project_catalog["install_state"] == "missing"
         assert project_catalog["server_present"] is False
         assert "cwd" not in project_catalog
-        project_catalog_server = next(
-            server
-            for server in payload["mcp_servers"]
-            if server["server_id"] == "project-catalog"
-        ) if any(server["server_id"] == "project-catalog" for server in payload["mcp_servers"]) else None
+        project_catalog_server = (
+            next(
+                server
+                for server in payload["mcp_servers"]
+                if server["server_id"] == "project-catalog"
+            )
+            if any(
+                server["server_id"] == "project-catalog"
+                for server in payload["mcp_servers"]
+            )
+            else None
+        )
         assert project_catalog_server is None
         assert [tool["name"] for tool in project_catalog["tools"]] == [
             "list_projects",
@@ -9983,13 +11023,13 @@ def test_codex_mcp_app_install_endpoint_refuses_disabled_non_stdio_without_mutat
                 "Cannot automatically reconcile MCP app `project-catalog` because "
                 "the stored transport `sse` cannot be restored by this backend if "
                 "the update fails. Stored server is disabled: "
-                "{\"Authorization\":\"[redacted]\"}. "
+                '{"Authorization":"[redacted]"}. '
                 "The existing stored Codex server config was left unchanged."
             )
         }
         assert _read_fake_mcp_state(home_dir) == previous_state
         assert "Bearer secret" not in response.json()["detail"]
-        assert "Authorization\":\"Bearer secret" not in response.json()["detail"]
+        assert 'Authorization":"Bearer secret' not in response.json()["detail"]
 
 
 def test_codex_mcp_app_install_endpoint_restores_previous_server_when_reconcile_add_fails(
@@ -10173,7 +11213,10 @@ def test_codex_mcp_app_install_endpoint_returns_422_when_add_exec_fails(
             process_args = args[0] if args else kwargs.get("args", [])
             if "mcp" in process_args:
                 mcp_index = process_args.index("mcp")
-                if mcp_index + 1 < len(process_args) and process_args[mcp_index + 1] == "add":
+                if (
+                    mcp_index + 1 < len(process_args)
+                    and process_args[mcp_index + 1] == "add"
+                ):
                     raise FileNotFoundError("missing codex")
             return real_run(*args, **kwargs)
 

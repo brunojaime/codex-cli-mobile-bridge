@@ -1,0 +1,901 @@
+{
+  "spec": {
+    "file": "spec.md",
+    "diagrams": [
+      "diagrams/artifact-ownership.mmd",
+      "diagrams/context-pack-sequence.mmd"
+    ]
+  },
+  "plans": [
+    {
+      "id": "plan-1",
+      "number": 1,
+      "title": "Workbench SDD Standard",
+      "status": "done",
+      "description": "Define `workbench-sdd/v1` as the platform-owned contract. The standard must describe artifact families, lifecycle states, metadata, diagram taxonomy, traceability links, context pack names, generated index schemas, and L",
+      "file": "plans/01-workbench-sdd-standard/plan.md",
+      "tasks": [
+        {
+          "id": "plan-1-task-1",
+          "number": 1,
+          "title": "T001 Add the source-of-truth standard artifact at backend/app/infrastructure/config/sdd_standards/workbench-sdd/v1.yaml",
+          "status": "done",
+          "description": "T001 Add the source-of-truth standard artifact at backend/app/infrastructure/config/sdd_standards/workbench-sdd/v1.yaml",
+          "file": "tasks/plan-1-task-1/task.md"
+        },
+        {
+          "id": "plan-1-task-2",
+          "number": 2,
+          "title": "T002 Add backend/app/application/services/sdd_standard_service.py with a read-only loader for workbench-sdd/v1",
+          "status": "done",
+          "description": "T002 Add backend/app/application/services/sdd_standard_service.py with a read-only loader for workbench-sdd/v1",
+          "file": "tasks/plan-1-task-2/task.md"
+        },
+        {
+          "id": "plan-1-task-3",
+          "number": 3,
+          "title": "T003 Add standard loader fixtures under tests/fixtures/sdd_standards/",
+          "status": "done",
+          "description": "T003 Add standard loader fixtures under tests/fixtures/sdd_standards/",
+          "file": "tasks/plan-1-task-3/task.md"
+        },
+        {
+          "id": "plan-1-task-4",
+          "number": 4,
+          "title": "T004 Add tests covering successful workbench-sdd/v1 resolution, missing artifact errors, and unknown-version errors",
+          "status": "done",
+          "description": "T004 Add tests covering successful workbench-sdd/v1 resolution, missing artifact errors, and unknown-version errors",
+          "file": "tasks/plan-1-task-4/task.md"
+        },
+        {
+          "id": "plan-1-task-5",
+          "number": 5,
+          "title": "T005 Define in the standard artifact: artifact taxonomy, spec lifecycle, required metadata, diagram taxonomy, traceability schema, context pack names, index schemas, and LLM rules",
+          "status": "done",
+          "description": "T005 Define in the standard artifact: artifact taxonomy, spec lifecycle, required metadata, diagram taxonomy, traceability schema, context pack names, index schemas, and LLM rules",
+          "file": "tasks/plan-1-task-5/task.md"
+        },
+        {
+          "id": "plan-1-task-6",
+          "number": 6,
+          "title": "T006 Add compatibility rules to the loader: v1 is supported, v1.x is backward-compatible, unknown major versions are hard errors for write, context, indexing, and Codex action flows",
+          "status": "done",
+          "description": "T006 Add compatibility rules to the loader: v1 is supported, v1.x is backward-compatible, unknown major versions are hard errors for write, context, indexing, and Codex action flows",
+          "file": "tasks/plan-1-task-6/task.md"
+        },
+        {
+          "id": "plan-1-task-7",
+          "number": 7,
+          "title": "T007 Add a documented serialized standard payload shape that Workbench prompts and future package exports can use without rereading arbitrary files",
+          "status": "done",
+          "description": "T007 Add a documented serialized standard payload shape that Workbench prompts and future package exports can use without rereading arbitrary files",
+          "file": "tasks/plan-1-task-7/task.md"
+        },
+        {
+          "id": "plan-1-task-8",
+          "number": 8,
+          "title": "T008 Add LLM-facing standard resolution instructions to the prompt/source template used by Workbench Codex actions",
+          "status": "done",
+          "description": "T008 Add LLM-facing standard resolution instructions to the prompt/source template used by Workbench Codex actions",
+          "file": "tasks/plan-1-task-8/task.md"
+        }
+      ]
+    },
+    {
+      "id": "plan-2",
+      "number": 2,
+      "title": "Project Manifest Adoption",
+      "status": "done",
+      "description": "Extend `codex-bridge.yaml` so projects declare how they adopt the standard: roots, project type, domains, protected baseline artifacts, generated index location, context rules, and allowed project overrides. This phase i",
+      "file": "plans/02-project-manifest-adoption/plan.md",
+      "tasks": [
+        {
+          "id": "plan-2-task-1",
+          "number": 1,
+          "title": "T009 Extend the backend manifest parser to accept sdd.standard, sdd.project_type, sdd.domain_root, sdd.data_root, sdd.generated_index_root, sdd.protected_baseline, and sdd.context_rules",
+          "status": "done",
+          "description": "T009 Extend the backend manifest parser to accept sdd.standard, sdd.project_type, sdd.domain_root, sdd.data_root, sdd.generated_index_root, sdd.protected_baseline, and sdd.context_rules",
+          "file": "tasks/plan-2-task-1/task.md"
+        },
+        {
+          "id": "plan-2-task-2",
+          "number": 2,
+          "title": "T010 Preserve backward compatibility with existing manifest fields: constitution, specs, architecture, requiredDiagramCategories, and diagramChangeRequests",
+          "status": "done",
+          "description": "T010 Preserve backward compatibility with existing manifest fields: constitution, specs, architecture, requiredDiagramCategories, and diagramChangeRequests",
+          "file": "tasks/plan-2-task-2/task.md"
+        },
+        {
+          "id": "plan-2-task-3",
+          "number": 3,
+          "title": "T011 Define the sdd.context_rules schema for domain-to-module mappings, preferred context files, excluded paths, stricter candidate limits, and protected baseline overrides",
+          "status": "done",
+          "description": "T011 Define the sdd.context_rules schema for domain-to-module mappings, preferred context files, excluded paths, stricter candidate limits, and protected baseline overrides",
+          "file": "tasks/plan-2-task-3/task.md"
+        },
+        {
+          "id": "plan-2-task-4",
+          "number": 4,
+          "title": "T012 Implement context rule merge precedence in the manifest layer: Workbench default -> project profile -> project overrides",
+          "status": "done",
+          "description": "T012 Implement context rule merge precedence in the manifest layer: Workbench default -> project profile -> project overrides",
+          "file": "tasks/plan-2-task-4/task.md"
+        },
+        {
+          "id": "plan-2-task-5",
+          "number": 5,
+          "title": "T013 Validate that project overrides cannot disable mandatory Workbench safety rules: manifest-first resolution, baseline impact gates, no-broad-read behavior, and unknown-version hard failures",
+          "status": "done",
+          "description": "T013 Validate that project overrides cannot disable mandatory Workbench safety rules: manifest-first resolution, baseline impact gates, no-broad-read behavior, and unknown-version hard failures",
+          "file": "tasks/plan-2-task-5/task.md"
+        },
+        {
+          "id": "plan-2-task-6",
+          "number": 6,
+          "title": "T014 Add manifest fixtures for legacy, valid v1, invalid standard, invalid context rules, and protected baseline override cases",
+          "status": "done",
+          "description": "T014 Add manifest fixtures for legacy, valid v1, invalid standard, invalid context rules, and protected baseline override cases",
+          "file": "tasks/plan-2-task-6/task.md"
+        },
+        {
+          "id": "plan-2-task-7",
+          "number": 7,
+          "title": "T015 Add tests for manifest parsing, compatibility warnings, context-rule merge output, and invalid override errors",
+          "status": "done",
+          "description": "T015 Add tests for manifest parsing, compatibility warnings, context-rule merge output, and invalid override errors",
+          "file": "tasks/plan-2-task-7/task.md"
+        },
+        {
+          "id": "plan-2-task-8",
+          "number": 8,
+          "title": "T016 Add CLI/doctor output for manifest adoption validation before any scaffold write command is available",
+          "status": "done",
+          "description": "T016 Add CLI/doctor output for manifest adoption validation before any scaffold write command is available",
+          "file": "tasks/plan-2-task-8/task.md"
+        }
+      ]
+    },
+    {
+      "id": "plan-3",
+      "number": 3,
+      "title": "Preflight Validation And Scaffolding",
+      "status": "done",
+      "description": "Add standard, manifest, template, and scaffold dry-run validators first. Only after preflight passes, add a bootstrap write flow that creates missing SDD artifacts for a repo that wants to use Workbench. The write flow m",
+      "file": "plans/03-preflight-validation-and-scaffolding/plan.md",
+      "tasks": [
+        {
+          "id": "plan-3-task-1",
+          "number": 1,
+          "title": "T017 Add a preflight validator service for standard resolution, manifest adoption, required roots, template availability, and scaffold eligibility",
+          "status": "done",
+          "description": "T017 Add a preflight validator service for standard resolution, manifest adoption, required roots, template availability, and scaffold eligibility",
+          "file": "tasks/plan-3-task-1/task.md"
+        },
+        {
+          "id": "plan-3-task-2",
+          "number": 2,
+          "title": "T018 Add a scaffold planner that produces a dry-run plan only: created, existing, skipped, blocked, and would-overwrite artifacts",
+          "status": "done",
+          "description": "T018 Add a scaffold planner that produces a dry-run plan only: created, existing, skipped, blocked, and would-overwrite artifacts",
+          "file": "tasks/plan-3-task-2/task.md"
+        },
+        {
+          "id": "plan-3-task-3",
+          "number": 3,
+          "title": "T019 Add dry-run fixtures for empty repo, partial SDD repo, existing custom files, legacy manifest, and invalid standard version",
+          "status": "done",
+          "description": "T019 Add dry-run fixtures for empty repo, partial SDD repo, existing custom files, legacy manifest, and invalid standard version",
+          "file": "tasks/plan-3-task-3/task.md"
+        },
+        {
+          "id": "plan-3-task-4",
+          "number": 4,
+          "title": "T020 Add tests that prove dry-run validation blocks writes when standard, manifest, template, or path-safety validation fails",
+          "status": "done",
+          "description": "T020 Add tests that prove dry-run validation blocks writes when standard, manifest, template, or path-safety validation fails",
+          "file": "tasks/plan-3-task-4/task.md"
+        },
+        {
+          "id": "plan-3-task-5",
+          "number": 5,
+          "title": "T021 Add a bootstrap write flow only after T017-T020 pass, using the dry run plan as the write contract",
+          "status": "done",
+          "description": "T021 Add a bootstrap write flow only after T017-T020 pass, using the dry run plan as the write contract",
+          "file": "tasks/plan-3-task-5/task.md"
+        },
+        {
+          "id": "plan-3-task-6",
+          "number": 6,
+          "title": "T022 Create missing .specify/memory/constitution.md, architecture/overview.md, domain/glossary.md, data/persistence-model.md, specs/, and .sdd/ only when absent",
+          "status": "done",
+          "description": "T022 Create missing .specify/memory/constitution.md, architecture/overview.md, domain/glossary.md, data/persistence-model.md, specs/, and .sdd/ only when absent",
+          "file": "tasks/plan-3-task-6/task.md"
+        },
+        {
+          "id": "plan-3-task-7",
+          "number": 7,
+          "title": "T023 Detect existing artifacts and avoid overwriting user content",
+          "status": "done",
+          "description": "T023 Detect existing artifacts and avoid overwriting user content",
+          "file": "tasks/plan-3-task-7/task.md"
+        },
+        {
+          "id": "plan-3-task-8",
+          "number": 8,
+          "title": "T024 Return a bootstrap summary with created, existing, skipped, blocked, and next-action sections",
+          "status": "done",
+          "description": "T024 Return a bootstrap summary with created, existing, skipped, blocked, and next-action sections",
+          "file": "tasks/plan-3-task-8/task.md"
+        },
+        {
+          "id": "plan-3-task-9",
+          "number": 9,
+          "title": "T025 Add tests for bootstrap idempotency, non-destructive behavior, path-safety, and blocked writes",
+          "status": "done",
+          "description": "T025 Add tests for bootstrap idempotency, non-destructive behavior, path-safety, and blocked writes",
+          "file": "tasks/plan-3-task-9/task.md"
+        }
+      ]
+    },
+    {
+      "id": "plan-4",
+      "number": 4,
+      "title": "Documentation Templates",
+      "status": "done",
+      "description": "Create templates for the required documents and metadata. Templates must stay domain-neutral and explain what is Workbench-owned versus project-owned.",
+      "file": "plans/04-documentation-templates/plan.md",
+      "tasks": [
+        {
+          "id": "plan-4-task-1",
+          "number": 1,
+          "title": "T026 Add template for project constitution",
+          "status": "done",
+          "description": "T026 Add template for project constitution",
+          "file": "tasks/plan-4-task-1/task.md"
+        },
+        {
+          "id": "plan-4-task-2",
+          "number": 2,
+          "title": "T027 Add templates for architecture overview and ADRs",
+          "status": "done",
+          "description": "T027 Add templates for architecture overview and ADRs",
+          "file": "tasks/plan-4-task-2/task.md"
+        },
+        {
+          "id": "plan-4-task-3",
+          "number": 3,
+          "title": "T028 Add templates for domain glossary and domain model notes",
+          "status": "done",
+          "description": "T028 Add templates for domain glossary and domain model notes",
+          "file": "tasks/plan-4-task-3/task.md"
+        },
+        {
+          "id": "plan-4-task-4",
+          "number": 4,
+          "title": "T029 Add templates for data model, entity relationship notes, and persistence notes",
+          "status": "done",
+          "description": "T029 Add templates for data model, entity relationship notes, and persistence notes",
+          "file": "tasks/plan-4-task-4/task.md"
+        },
+        {
+          "id": "plan-4-task-5",
+          "number": 5,
+          "title": "T030 Add templates for spec.md, plan.md, tasks.md, and traceability.yaml",
+          "status": "done",
+          "description": "T030 Add templates for spec.md, plan.md, tasks.md, and traceability.yaml",
+          "file": "tasks/plan-4-task-5/task.md"
+        },
+        {
+          "id": "plan-4-task-6",
+          "number": 6,
+          "title": "T031 Add diagram metadata templates for baseline and feature-local diagrams",
+          "status": "done",
+          "description": "T031 Add diagram metadata templates for baseline and feature-local diagrams",
+          "file": "tasks/plan-4-task-6/task.md"
+        },
+        {
+          "id": "plan-4-task-7",
+          "number": 7,
+          "title": "T032 Add template usage tests or snapshot fixtures",
+          "status": "done",
+          "description": "T032 Add template usage tests or snapshot fixtures",
+          "file": "tasks/plan-4-task-7/task.md"
+        }
+      ]
+    },
+    {
+      "id": "plan-5",
+      "number": 5,
+      "title": "Diagram Taxonomy And Governance",
+      "status": "done",
+      "description": "Define built-in diagram types and Mermaid notation rules. Separate baseline architecture, domain, and data diagrams from feature-local impact diagrams.",
+      "file": "plans/05-diagram-taxonomy-and-governance/plan.md",
+      "tasks": [
+        {
+          "id": "plan-5-task-1",
+          "number": 1,
+          "title": "T033 Define diagram taxonomy: system-context, components, deployment, sequence, state, domain-model, entity-relationship, component-impact, domain-impact, and data-impact",
+          "status": "done",
+          "description": "T033 Define diagram taxonomy: system-context, components, deployment, sequence, state, domain-model, entity-relationship, component-impact, domain-impact, and data-impact",
+          "file": "tasks/plan-5-task-1/task.md"
+        },
+        {
+          "id": "plan-5-task-2",
+          "number": 2,
+          "title": "T034 Define Mermaid notation requirements for each diagram type",
+          "status": "done",
+          "description": "T034 Define Mermaid notation requirements for each diagram type",
+          "file": "tasks/plan-5-task-2/task.md"
+        },
+        {
+          "id": "plan-5-task-3",
+          "number": 3,
+          "title": "T035 Add baseline diagram protection policies",
+          "status": "done",
+          "description": "T035 Add baseline diagram protection policies",
+          "file": "tasks/plan-5-task-3/task.md"
+        },
+        {
+          "id": "plan-5-task-4",
+          "number": 4,
+          "title": "T036 Add feature-local impact diagram rules",
+          "status": "done",
+          "description": "T036 Add feature-local impact diagram rules",
+          "file": "tasks/plan-5-task-4/task.md"
+        },
+        {
+          "id": "plan-5-task-5",
+          "number": 5,
+          "title": "T037 Add validation for diagram metadata and unsupported diagram types",
+          "status": "done",
+          "description": "T037 Add validation for diagram metadata and unsupported diagram types",
+          "file": "tasks/plan-5-task-5/task.md"
+        },
+        {
+          "id": "plan-5-task-6",
+          "number": 6,
+          "title": "T038 Add Mermaid syntax/render validation where the configured renderer is available; report failures as validation output without crashing",
+          "status": "done",
+          "description": "T038 Add Mermaid syntax/render validation where the configured renderer is available; report failures as validation output without crashing",
+          "file": "tasks/plan-5-task-6/task.md"
+        }
+      ]
+    },
+    {
+      "id": "plan-6",
+      "number": 6,
+      "title": "SDD Indexer",
+      "status": "done",
+      "description": "Generate `.sdd/` indexes from project artifacts. Indexes must let the Workbench and LLMs identify relevant specs, diagrams, modules, domains, statuses, and traceability without scanning every spec. Missing or stale index",
+      "file": "plans/06-sdd-indexer/plan.md",
+      "tasks": [
+        {
+          "id": "plan-6-task-1",
+          "number": 1,
+          "title": "T039 Generate .sdd/spec-index.yaml from feature spec metadata and summaries",
+          "status": "done",
+          "description": "T039 Generate .sdd/spec-index.yaml from feature spec metadata and summaries",
+          "file": "tasks/plan-6-task-1/task.md"
+        },
+        {
+          "id": "plan-6-task-2",
+          "number": 2,
+          "title": "T040 Generate .sdd/diagram-index.yaml from baseline and feature diagram metadata",
+          "status": "done",
+          "description": "T040 Generate .sdd/diagram-index.yaml from baseline and feature diagram metadata",
+          "file": "tasks/plan-6-task-2/task.md"
+        },
+        {
+          "id": "plan-6-task-3",
+          "number": 3,
+          "title": "T041 Generate .sdd/module-index.yaml from manifest roots, context_rules, and spec-declared affected modules",
+          "status": "done",
+          "description": "T041 Generate .sdd/module-index.yaml from manifest roots, context_rules, and spec-declared affected modules",
+          "file": "tasks/plan-6-task-3/task.md"
+        },
+        {
+          "id": "plan-6-task-4",
+          "number": 4,
+          "title": "T042 Generate .sdd/context-index.yaml for context pack routing",
+          "status": "done",
+          "description": "T042 Generate .sdd/context-index.yaml for context pack routing",
+          "file": "tasks/plan-6-task-4/task.md"
+        },
+        {
+          "id": "plan-6-task-5",
+          "number": 5,
+          "title": "T043 Add freshness markers using source paths, mtimes or hashes, standard version, and manifest digest",
+          "status": "done",
+          "description": "T043 Add freshness markers using source paths, mtimes or hashes, standard version, and manifest digest",
+          "file": "tasks/plan-6-task-5/task.md"
+        },
+        {
+          "id": "plan-6-task-6",
+          "number": 6,
+          "title": "T044 Add missing/stale index detection with observable states: fresh, missing, stale, regenerated, and failed",
+          "status": "done",
+          "description": "T044 Add missing/stale index detection with observable states: fresh, missing, stale, regenerated, and failed",
+          "file": "tasks/plan-6-task-6/task.md"
+        },
+        {
+          "id": "plan-6-task-7",
+          "number": 7,
+          "title": "T045 Add deterministic index regeneration before context pack selection",
+          "status": "done",
+          "description": "T045 Add deterministic index regeneration before context pack selection",
+          "file": "tasks/plan-6-task-7/task.md"
+        },
+        {
+          "id": "plan-6-task-8",
+          "number": 8,
+          "title": "T046 Add tests for large spec sets proving fresh-index routing does not read every spec body",
+          "status": "done",
+          "description": "T046 Add tests for large spec sets proving fresh-index routing does not read every spec body",
+          "file": "tasks/plan-6-task-8/task.md"
+        },
+        {
+          "id": "plan-6-task-9",
+          "number": 9,
+          "title": "T047 Add tests for missing, stale, regenerated, and failed index outputs",
+          "status": "done",
+          "description": "T047 Add tests for missing, stale, regenerated, and failed index outputs",
+          "file": "tasks/plan-6-task-9/task.md"
+        }
+      ]
+    },
+    {
+      "id": "plan-7",
+      "number": 7,
+      "title": "Context Pack Engine",
+      "status": "done",
+      "description": "Implement context pack presets that map user intent to required files, candidate indexes, retrieval limits, forbidden broad reads, and escalation rules.",
+      "file": "plans/07-context-pack-engine/plan.md",
+      "tasks": [
+        {
+          "id": "plan-7-task-1",
+          "number": 1,
+          "title": "T048 Define context pack preset schema",
+          "status": "done",
+          "description": "T048 Define context pack preset schema",
+          "file": "tasks/plan-7-task-1/task.md"
+        },
+        {
+          "id": "plan-7-task-2",
+          "number": 2,
+          "title": "T049 Implement new-feature context pack with required files: manifest, standard payload, constitution, context index, and architecture overview when present",
+          "status": "done",
+          "description": "T049 Implement new-feature context pack with required files: manifest, standard payload, constitution, context index, and architecture overview when present",
+          "file": "tasks/plan-7-task-2/task.md"
+        },
+        {
+          "id": "plan-7-task-3",
+          "number": 3,
+          "title": "T050 Implement modify-existing-feature context pack with selected spec, plan, tasks, traceability, and max 5 related specs",
+          "status": "done",
+          "description": "T050 Implement modify-existing-feature context pack with selected spec, plan, tasks, traceability, and max 5 related specs",
+          "file": "tasks/plan-7-task-3/task.md"
+        },
+        {
+          "id": "plan-7-task-4",
+          "number": 4,
+          "title": "T051 Implement bugfix context pack with selected modules, relevant specs, test paths, and blocked broad spec reads",
+          "status": "done",
+          "description": "T051 Implement bugfix context pack with selected modules, relevant specs, test paths, and blocked broad spec reads",
+          "file": "tasks/plan-7-task-4/task.md"
+        },
+        {
+          "id": "plan-7-task-5",
+          "number": 5,
+          "title": "T052 Implement architecture-change context pack with protected baseline files, ADR requirement, and max 3 related diagrams",
+          "status": "done",
+          "description": "T052 Implement architecture-change context pack with protected baseline files, ADR requirement, and max 3 related diagrams",
+          "file": "tasks/plan-7-task-5/task.md"
+        },
+        {
+          "id": "plan-7-task-6",
+          "number": 6,
+          "title": "T053 Implement data-model-change and domain-model-change context packs with data/domain baselines and feature-local impact diagram rules",
+          "status": "done",
+          "description": "T053 Implement data-model-change and domain-model-change context packs with data/domain baselines and feature-local impact diagram rules",
+          "file": "tasks/plan-7-task-6/task.md"
+        },
+        {
+          "id": "plan-7-task-7",
+          "number": 7,
+          "title": "T054 Implement implementation-from-spec, diagram-update, and sdd-audit context packs",
+          "status": "done",
+          "description": "T054 Implement implementation-from-spec, diagram-update, and sdd-audit context packs",
+          "file": "tasks/plan-7-task-7/task.md"
+        },
+        {
+          "id": "plan-7-task-8",
+          "number": 8,
+          "title": "T055 Add degraded mode for failed index regeneration: selected artifact only, required baseline files only, no all-spec fallback, and explicit next action",
+          "status": "done",
+          "description": "T055 Add degraded mode for failed index regeneration: selected artifact only, required baseline files only, no all-spec fallback, and explicit next action",
+          "file": "tasks/plan-7-task-8/task.md"
+        },
+        {
+          "id": "plan-7-task-9",
+          "number": 9,
+          "title": "T056 Add hard-failure behavior for actions that cannot safely run without indexes or selected artifacts",
+          "status": "done",
+          "description": "T056 Add hard-failure behavior for actions that cannot safely run without indexes or selected artifacts",
+          "file": "tasks/plan-7-task-9/task.md"
+        },
+        {
+          "id": "plan-7-task-10",
+          "number": 10,
+          "title": "T057 Add tests for required files, max candidate counts, blocked-read scopes, degraded mode, and hard failures",
+          "status": "done",
+          "description": "T057 Add tests for required files, max candidate counts, blocked-read scopes, degraded mode, and hard failures",
+          "file": "tasks/plan-7-task-10/task.md"
+        }
+      ]
+    },
+    {
+      "id": "plan-8",
+      "number": 8,
+      "title": "LLM Operating Instructions",
+      "status": "done",
+      "description": "Update Workbench-launched Codex actions so every LLM starts from manifest, standard, constitution, indexes, and a context pack. Prompts must prohibit unbounded spec reads unless the selected pack requires them.",
+      "file": "plans/08-llm-operating-instructions/plan.md",
+      "tasks": [
+        {
+          "id": "plan-8-task-1",
+          "number": 1,
+          "title": "T058 Update Workbench Codex action prompt builder to require manifest, standard payload, constitution, indexes, and context pack flow",
+          "status": "done",
+          "description": "T058 Update Workbench Codex action prompt builder to require manifest, standard payload, constitution, indexes, and context pack flow",
+          "file": "tasks/plan-8-task-1/task.md"
+        },
+        {
+          "id": "plan-8-task-2",
+          "number": 2,
+          "title": "T059 Add prompt language that prevents reading all specs unless the context pack explicitly permits it",
+          "status": "done",
+          "description": "T059 Add prompt language that prevents reading all specs unless the context pack explicitly permits it",
+          "file": "tasks/plan-8-task-2/task.md"
+        },
+        {
+          "id": "plan-8-task-3",
+          "number": 3,
+          "title": "T060 Add prompt language that protects baseline architecture, domain, and data artifacts",
+          "status": "done",
+          "description": "T060 Add prompt language that protects baseline architecture, domain, and data artifacts",
+          "file": "tasks/plan-8-task-3/task.md"
+        },
+        {
+          "id": "plan-8-task-4",
+          "number": 4,
+          "title": "T061 Add prompt language that preserves project-owned domain rules and context overrides",
+          "status": "done",
+          "description": "T061 Add prompt language that preserves project-owned domain rules and context overrides",
+          "file": "tasks/plan-8-task-4/task.md"
+        },
+        {
+          "id": "plan-8-task-5",
+          "number": 5,
+          "title": "T062 Add tests for generated prompts, including unknown-standard, stale-index, degraded-context, and protected-baseline scenarios",
+          "status": "done",
+          "description": "T062 Add tests for generated prompts, including unknown-standard, stale-index, degraded-context, and protected-baseline scenarios",
+          "file": "tasks/plan-8-task-5/task.md"
+        }
+      ]
+    },
+    {
+      "id": "plan-9",
+      "number": 9,
+      "title": "Workbench UI",
+      "status": "done",
+      "description": "Expose project SDD health, standards compliance, feature specs, baselines, traceability matrix, context pack preview, and architecture/domain/data impact queues.",
+      "file": "plans/09-workbench-ui/plan.md",
+      "tasks": [
+        {
+          "id": "plan-9-task-1",
+          "number": 1,
+          "title": "T063 Add Project SDD Health view",
+          "status": "done",
+          "description": "T063 Add Project SDD Health view",
+          "file": "tasks/plan-9-task-1/task.md"
+        },
+        {
+          "id": "plan-9-task-2",
+          "number": 2,
+          "title": "T064 Add Standards Compliance view",
+          "status": "done",
+          "description": "T064 Add Standards Compliance view",
+          "file": "tasks/plan-9-task-2/task.md"
+        },
+        {
+          "id": "plan-9-task-3",
+          "number": 3,
+          "title": "T065 Add Feature Specs view with lifecycle and traceability status",
+          "status": "done",
+          "description": "T065 Add Feature Specs view with lifecycle and traceability status",
+          "file": "tasks/plan-9-task-3/task.md"
+        },
+        {
+          "id": "plan-9-task-4",
+          "number": 4,
+          "title": "T066 Add Architecture, Domain, and Data Baseline views",
+          "status": "done",
+          "description": "T066 Add Architecture, Domain, and Data Baseline views",
+          "file": "tasks/plan-9-task-4/task.md"
+        },
+        {
+          "id": "plan-9-task-5",
+          "number": 5,
+          "title": "T067 Add Traceability Matrix view",
+          "status": "done",
+          "description": "T067 Add Traceability Matrix view",
+          "file": "tasks/plan-9-task-5/task.md"
+        },
+        {
+          "id": "plan-9-task-6",
+          "number": 6,
+          "title": "T068 Add Context Pack Preview view showing required files, candidates, blocked reads, index status, and degraded mode",
+          "status": "done",
+          "description": "T068 Add Context Pack Preview view showing required files, candidates, blocked reads, index status, and degraded mode",
+          "file": "tasks/plan-9-task-6/task.md"
+        },
+        {
+          "id": "plan-9-task-7",
+          "number": 7,
+          "title": "T069 Add Architecture/Domain/Data Impact Queue view",
+          "status": "done",
+          "description": "T069 Add Architecture/Domain/Data Impact Queue view",
+          "file": "tasks/plan-9-task-7/task.md"
+        },
+        {
+          "id": "plan-9-task-8",
+          "number": 8,
+          "title": "T070 Add focused widget tests for the new views",
+          "status": "done",
+          "description": "T070 Add focused widget tests for the new views",
+          "file": "tasks/plan-9-task-8/task.md"
+        }
+      ]
+    },
+    {
+      "id": "plan-10",
+      "number": 10,
+      "title": "Validators And Doctor Checks",
+      "status": "done",
+      "description": "Add validation for manifest schema, artifact presence, metadata, diagram types, traceability links, stale indexes, and unsafe baseline edits.",
+      "file": "plans/10-validators-and-doctor-checks/plan.md",
+      "tasks": [
+        {
+          "id": "plan-10-task-1",
+          "number": 1,
+          "title": "T071 Expand doctor checks for manifest adoption fields",
+          "status": "done",
+          "description": "T071 Expand doctor checks for manifest adoption fields",
+          "file": "tasks/plan-10-task-1/task.md"
+        },
+        {
+          "id": "plan-10-task-2",
+          "number": 2,
+          "title": "T072 Validate required artifact presence",
+          "status": "done",
+          "description": "T072 Validate required artifact presence",
+          "file": "tasks/plan-10-task-2/task.md"
+        },
+        {
+          "id": "plan-10-task-3",
+          "number": 3,
+          "title": "T073 Validate spec and diagram metadata",
+          "status": "done",
+          "description": "T073 Validate spec and diagram metadata",
+          "file": "tasks/plan-10-task-3/task.md"
+        },
+        {
+          "id": "plan-10-task-4",
+          "number": 4,
+          "title": "T074 Validate requirements-to-tasks traceability",
+          "status": "done",
+          "description": "T074 Validate requirements-to-tasks traceability",
+          "file": "tasks/plan-10-task-4/task.md"
+        },
+        {
+          "id": "plan-10-task-5",
+          "number": 5,
+          "title": "T075 Validate diagram taxonomy, Mermaid renderability where available, and baseline impact policies",
+          "status": "done",
+          "description": "T075 Validate diagram taxonomy, Mermaid renderability where available, and baseline impact policies",
+          "file": "tasks/plan-10-task-5/task.md"
+        },
+        {
+          "id": "plan-10-task-6",
+          "number": 6,
+          "title": "T076 Validate generated index freshness and regeneration output",
+          "status": "done",
+          "description": "T076 Validate generated index freshness and regeneration output",
+          "file": "tasks/plan-10-task-6/task.md"
+        },
+        {
+          "id": "plan-10-task-7",
+          "number": 7,
+          "title": "T077 Add doctor output for errors, warnings, degraded context, blocked actions, and next actions",
+          "status": "done",
+          "description": "T077 Add doctor output for errors, warnings, degraded context, blocked actions, and next actions",
+          "file": "tasks/plan-10-task-7/task.md"
+        },
+        {
+          "id": "plan-10-task-8",
+          "number": 8,
+          "title": "T078 Add backend and script tests for validation output",
+          "status": "done",
+          "description": "T078 Add backend and script tests for validation output",
+          "file": "tasks/plan-10-task-8/task.md"
+        }
+      ]
+    },
+    {
+      "id": "plan-11",
+      "number": 11,
+      "title": "SAT Pilot Adoption",
+      "status": "done",
+      "description": "Apply the standard to SAT as the first real project. SAT must declare its domains and project-specific rules without adding SAT-specific assumptions to the platform standard.",
+      "file": "plans/11-sat-pilot-adoption/plan.md",
+      "tasks": [
+        {
+          "id": "plan-11-task-1",
+          "number": 1,
+          "title": "T079 Update SAT manifest to declare workbench-sdd/v1 adoption",
+          "status": "done",
+          "description": "T079 Update SAT manifest to declare workbench-sdd/v1 adoption",
+          "file": "tasks/plan-11-task-1/task.md"
+        },
+        {
+          "id": "plan-11-task-2",
+          "number": 2,
+          "title": "T080 Add SAT-owned domains, roots, context rules, and protected baselines",
+          "status": "done",
+          "description": "T080 Add SAT-owned domains, roots, context rules, and protected baselines",
+          "file": "tasks/plan-11-task-2/task.md"
+        },
+        {
+          "id": "plan-11-task-3",
+          "number": 3,
+          "title": "T081 Add or align SAT architecture, domain, data, specs, and indexes with the standard",
+          "status": "done",
+          "description": "T081 Add or align SAT architecture, domain, data, specs, and indexes with the standard",
+          "file": "tasks/plan-11-task-3/task.md"
+        },
+        {
+          "id": "plan-11-task-4",
+          "number": 4,
+          "title": "T082 Verify SAT uses Workbench generic behavior without SAT-specific platform code",
+          "status": "done",
+          "description": "T082 Verify SAT uses Workbench generic behavior without SAT-specific platform code",
+          "file": "tasks/plan-11-task-4/task.md"
+        },
+        {
+          "id": "plan-11-task-5",
+          "number": 5,
+          "title": "T083 Run SAT-focused Workbench tests",
+          "status": "done",
+          "description": "T083 Run SAT-focused Workbench tests",
+          "file": "tasks/plan-11-task-5/task.md"
+        }
+      ]
+    },
+    {
+      "id": "plan-12",
+      "number": 12,
+      "title": "Adoption Documentation",
+      "status": "done",
+      "description": "Document how any new project adopts the standard, creates a feature, generates context packs, protects baseline artifacts, and applies Workbench rules to its own domain.",
+      "file": "plans/12-adoption-documentation/plan.md",
+      "tasks": [
+        {
+          "id": "plan-12-task-1",
+          "number": 1,
+          "title": "T084 Document Workbench SDD adoption for new repos",
+          "status": "done",
+          "description": "T084 Document Workbench SDD adoption for new repos",
+          "file": "tasks/plan-12-task-1/task.md"
+        },
+        {
+          "id": "plan-12-task-2",
+          "number": 2,
+          "title": "T085 Document artifact ownership boundaries",
+          "status": "done",
+          "description": "T085 Document artifact ownership boundaries",
+          "file": "tasks/plan-12-task-2/task.md"
+        },
+        {
+          "id": "plan-12-task-3",
+          "number": 3,
+          "title": "T086 Document feature creation workflow",
+          "status": "done",
+          "description": "T086 Document feature creation workflow",
+          "file": "tasks/plan-12-task-3/task.md"
+        },
+        {
+          "id": "plan-12-task-4",
+          "number": 4,
+          "title": "T087 Document context pack behavior for LLMs, including stale/missing index behavior and blocked reads",
+          "status": "done",
+          "description": "T087 Document context pack behavior for LLMs, including stale/missing index behavior and blocked reads",
+          "file": "tasks/plan-12-task-4/task.md"
+        },
+        {
+          "id": "plan-12-task-5",
+          "number": 5,
+          "title": "T088 Document baseline diagram governance",
+          "status": "done",
+          "description": "T088 Document baseline diagram governance",
+          "file": "tasks/plan-12-task-5/task.md"
+        },
+        {
+          "id": "plan-12-task-6",
+          "number": 6,
+          "title": "T089 Document standard version resolution, compatibility, and upgrade behavior",
+          "status": "done",
+          "description": "T089 Document standard version resolution, compatibility, and upgrade behavior",
+          "file": "tasks/plan-12-task-6/task.md"
+        },
+        {
+          "id": "plan-12-task-7",
+          "number": 7,
+          "title": "T090 Document SAT as a pilot example without making it normative",
+          "status": "done",
+          "description": "T090 Document SAT as a pilot example without making it normative",
+          "file": "tasks/plan-12-task-7/task.md"
+        }
+      ]
+    },
+    {
+      "id": "plan-13",
+      "number": 13,
+      "title": "Review And Iteration",
+      "status": "done",
+      "description": "Tasks promoted from `Review And Iteration`.",
+      "file": "plans/13-review-and-iteration/plan.md",
+      "tasks": [
+        {
+          "id": "plan-13-task-1",
+          "number": 1,
+          "title": "T091 Request reviewer pass on this spec, plan, tasks, traceability, and diagrams before implementation begins",
+          "status": "done",
+          "description": "T091 Request reviewer pass on this spec, plan, tasks, traceability, and diagrams before implementation begins",
+          "file": "tasks/plan-13-task-1/task.md"
+        },
+        {
+          "id": "plan-13-task-2",
+          "number": 2,
+          "title": "T092 Address reviewer findings in the SDD documents",
+          "status": "done",
+          "description": "T092 Address reviewer findings in the SDD documents",
+          "file": "tasks/plan-13-task-2/task.md"
+        },
+        {
+          "id": "plan-13-task-3",
+          "number": 3,
+          "title": "T093 Perform one additional self-review pass after reviewer feedback",
+          "status": "done",
+          "description": "T093 Perform one additional self-review pass after reviewer feedback",
+          "file": "tasks/plan-13-task-3/task.md"
+        },
+        {
+          "id": "plan-13-task-4",
+          "number": 4,
+          "title": "T094 Record that implementation remains blocked until the first implementation iteration is explicitly started",
+          "status": "done",
+          "description": "T094 Record that implementation remains blocked until the first implementation iteration is explicitly started",
+          "file": "tasks/plan-13-task-4/task.md"
+        },
+        {
+          "id": "plan-13-task-5",
+          "number": 5,
+          "title": "T095 Split implementation into reviewer-friendly iterations",
+          "status": "done",
+          "description": "T095 Split implementation into reviewer-friendly iterations",
+          "file": "tasks/plan-13-task-5/task.md"
+        }
+      ]
+    }
+  ]
+}

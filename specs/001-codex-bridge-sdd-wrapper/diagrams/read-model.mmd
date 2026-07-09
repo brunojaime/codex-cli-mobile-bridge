@@ -1,0 +1,11 @@
+flowchart TD
+    Request[GET /sdd/project]
+    Validate[Resolve workspace under PROJECTS_ROOT or alias]
+    Discover[Discover SDD contract files]
+    Limit[Apply extension and size limits]
+    Response[Return read-only SDD snapshot]
+
+    Request --> Validate
+    Validate --> Discover
+    Discover --> Limit
+    Limit --> Response

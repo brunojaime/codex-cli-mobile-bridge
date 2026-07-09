@@ -8,11 +8,7 @@ from types import SimpleNamespace
 import pytest
 
 
-_SKILL_ROOT = (
-    Path(__file__).resolve().parents[1]
-    / "skills"
-    / "onenote-connect"
-)
+_SKILL_ROOT = Path(__file__).resolve().parents[1] / "skills" / "onenote-connect"
 if str(_SKILL_ROOT) not in sys.path:
     sys.path.insert(0, str(_SKILL_ROOT))
 
@@ -39,16 +35,18 @@ def test_onenote_launcher_passes_arguments_through(monkeypatch) -> None:
     assert calls == [["list-pages", "--json"]]
 
 
-def test_launcher_bootstrap_works_from_copied_install_directory(tmp_path: Path, monkeypatch) -> None:
+def test_launcher_bootstrap_works_from_copied_install_directory(
+    tmp_path: Path, monkeypatch
+) -> None:
     copied_skill = tmp_path / "onenote-connect"
     copied_scripts = copied_skill / "scripts"
     copied_scripts.mkdir(parents=True)
-    (copied_skill / "_launcher.py").write_text((_SKILL_ROOT / "_launcher.py").read_text())
+    (copied_skill / "_launcher.py").write_text(
+        (_SKILL_ROOT / "_launcher.py").read_text()
+    )
     (copied_skill / "onenote.py").write_text((_SKILL_ROOT / "onenote.py").read_text())
     (copied_scripts / "onenote_cli.py").write_text(
-        "def main(argv=None):\n"
-        "    assert argv == ['whoami']\n"
-        "    return 41\n"
+        "def main(argv=None):\n    assert argv == ['whoami']\n    return 41\n"
     )
 
     monkeypatch.syspath_prepend(str(copied_skill))
@@ -61,7 +59,9 @@ def test_launcher_bootstrap_works_from_copied_install_directory(tmp_path: Path, 
     assert str(copied_scripts.resolve()) in sys.path
 
 
-def test_bootstrap_scripts_path_fails_clearly_when_scripts_directory_is_missing(tmp_path: Path) -> None:
+def test_bootstrap_scripts_path_fails_clearly_when_scripts_directory_is_missing(
+    tmp_path: Path,
+) -> None:
     missing_launcher = tmp_path / "copied-skill" / "onenote.py"
     missing_launcher.parent.mkdir(parents=True)
     missing_launcher.write_text("# launcher placeholder\n")

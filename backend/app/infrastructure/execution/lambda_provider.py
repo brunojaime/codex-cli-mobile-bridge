@@ -11,7 +11,10 @@ import httpx
 
 from backend.app.domain.entities.codex_options import CodexRunOptions
 from backend.app.domain.entities.job import JobStatus
-from backend.app.infrastructure.execution.base import ExecutionProvider, ExecutionSnapshot
+from backend.app.infrastructure.execution.base import (
+    ExecutionProvider,
+    ExecutionSnapshot,
+)
 
 
 @dataclass(slots=True)
@@ -46,9 +49,7 @@ class LambdaExecutionProvider(ExecutionProvider):
     ) -> None:
         self._endpoint = endpoint.rstrip("/")
         self._timeout_seconds = (
-            None
-            if timeout_seconds is None or timeout_seconds <= 0
-            else timeout_seconds
+            None if timeout_seconds is None or timeout_seconds <= 0 else timeout_seconds
         )
         self._states: dict[str, _LambdaState] = {}
         self._subscribers: dict[str, list[Callable[[ExecutionSnapshot], None]]] = {}
@@ -101,7 +102,10 @@ class LambdaExecutionProvider(ExecutionProvider):
                     if predecessor_job_id is not None
                     else None
                 )
-                if predecessor_state is not None and not predecessor_state.status.is_terminal:
+                if (
+                    predecessor_state is not None
+                    and not predecessor_state.status.is_terminal
+                ):
                     should_queue = True
                     self._serial_successors[predecessor_job_id] = job_id
                     self._serial_predecessors[job_id] = predecessor_job_id
@@ -306,12 +310,18 @@ class LambdaExecutionProvider(ExecutionProvider):
             current = self._states.get(job_id)
             self._states[job_id] = _LambdaState(
                 status=status,
-                response=response if response is not None else (current.response if current else None),
-                error=error if error is not None else (current.error if current else None),
+                response=response
+                if response is not None
+                else (current.response if current else None),
+                error=error
+                if error is not None
+                else (current.error if current else None),
                 provider_session_id=provider_session_id
                 if provider_session_id is not None
                 else (current.provider_session_id if current else None),
-                phase=phase if phase is not None else (current.phase if current else None),
+                phase=phase
+                if phase is not None
+                else (current.phase if current else None),
                 latest_activity=latest_activity
                 if latest_activity is not None
                 else (current.latest_activity if current else None),
@@ -417,7 +427,10 @@ class LambdaExecutionProvider(ExecutionProvider):
             successor_job_id = self._serial_successors.pop(completed_job_id, None)
             serial_key = self._job_serial_keys.get(completed_job_id)
             if successor_job_id is None:
-                if serial_key is not None and self._serial_tails.get(serial_key) == completed_job_id:
+                if (
+                    serial_key is not None
+                    and self._serial_tails.get(serial_key) == completed_job_id
+                ):
                     self._serial_tails.pop(serial_key, None)
                 self._job_serial_keys.pop(completed_job_id, None)
                 self._serial_predecessors.pop(completed_job_id, None)

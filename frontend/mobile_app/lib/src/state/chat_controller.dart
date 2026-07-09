@@ -238,12 +238,29 @@ class ChatController extends ChangeNotifier {
 
   Future<void> refreshSessions() async {
     final sessions = await _apiClient.listSessions();
+    sessions.sort(_compareSessionsByRecentActivity);
     _sessions
       ..clear()
       ..addAll(sessions);
     _errorText = null;
     _flushDeferredRunNotifications();
     notifyListeners();
+  }
+
+  static int _compareSessionsByRecentActivity(
+    ChatSessionSummary left,
+    ChatSessionSummary right,
+  ) {
+    final latestComparison =
+        right.latestActivityAt.compareTo(left.latestActivityAt);
+    if (latestComparison != 0) {
+      return latestComparison;
+    }
+    final createdComparison = right.createdAt.compareTo(left.createdAt);
+    if (createdComparison != 0) {
+      return createdComparison;
+    }
+    return right.id.compareTo(left.id);
   }
 
   Future<void> refreshWorkspaces() async {
@@ -270,18 +287,21 @@ class ChatController extends ChangeNotifier {
     );
   }
 
-  Future<void> createNewSession({String? workspacePath}) async {
-    await createNewSessionWithProfile(workspacePath: workspacePath);
+  Future<void> createNewSession({String? workspacePath, String? title}) async {
+    await createNewSessionWithProfile(
+        workspacePath: workspacePath, title: title);
   }
 
   Future<void> createNewSessionWithProfile({
     String? workspacePath,
     String? agentProfileId,
+    String? title,
     bool turnSummariesEnabled = false,
   }) async {
     _setLoading(true);
     try {
       final session = await _apiClient.createSession(
+        title: title,
         workspacePath: workspacePath,
         agentProfileId: agentProfileId,
         turnSummariesEnabled: turnSummariesEnabled,
@@ -410,6 +430,65 @@ class ChatController extends ChangeNotifier {
       return true;
     } catch (error) {
       _errorText = 'Failed to update archive state.\n$error';
+      notifyListeners();
+      return false;
+    }
+  }
+
+  Future<bool> renameSession(
+    String sessionId, {
+    required String title,
+  }) async {
+    try {
+      _errorText = null;
+      final session = await _apiClient.renameSession(
+        sessionId,
+        title: title,
+      );
+      await _applyUpdatedSession(sessionId, session);
+      return true;
+    } catch (error) {
+      _errorText = 'Failed to rename chat.\n$error';
+      notifyListeners();
+      return false;
+    }
+  }
+
+  Future<bool> generateSessionTitle(
+    String sessionId, {
+    String? instructions,
+  }) async {
+    try {
+      _errorText = null;
+      final session = await _apiClient.generateSessionTitle(
+        sessionId,
+        instructions: instructions,
+      );
+      await _applyUpdatedSession(sessionId, session);
+      return true;
+    } catch (error) {
+      _errorText = 'Failed to generate chat title.\n$error';
+      notifyListeners();
+      return false;
+    }
+  }
+
+  Future<bool> generateSessionTitleFromAudio(
+    String sessionId,
+    XFile audioFile, {
+    String? instructions,
+  }) async {
+    try {
+      _errorText = null;
+      final session = await _apiClient.generateSessionTitleFromAudio(
+        sessionId,
+        audioFile,
+        instructions: instructions,
+      );
+      await _applyUpdatedSession(sessionId, session);
+      return true;
+    } catch (error) {
+      _errorText = 'Failed to generate chat title from audio.\n$error';
       notifyListeners();
       return false;
     }
@@ -1360,6 +1439,19 @@ class ChatController extends ChangeNotifier {
     return null;
   }
 
+  Future<void> _applyUpdatedSession(
+    String sessionId,
+    SessionDetail session,
+  ) async {
+    await refreshSessions();
+    if (_selectedSessionId == sessionId) {
+      _currentSession = _overlaySessionWithJobSnapshots(session);
+      _reconcilePendingJobsForSession(_currentSession);
+      _trackPendingJobsFromSession(_currentSession);
+    }
+    notifyListeners();
+  }
+
   ChatSessionSummary? _sessionSummaryForId(String sessionId) {
     for (final summary in _sessions) {
       if (summary.id == sessionId) {
@@ -1615,6 +1707,8 @@ class ChatController extends ChangeNotifier {
       autoReviewerPrompt: session.autoReviewerPrompt,
       autoTurnIndex: session.autoTurnIndex,
       reviewerState: session.reviewerState,
+      conversationProduct: session.conversationProduct,
+      topicDescription: session.topicDescription,
       createdAt: session.createdAt,
       updatedAt: session.updatedAt,
       messages: const <ChatMessage>[],

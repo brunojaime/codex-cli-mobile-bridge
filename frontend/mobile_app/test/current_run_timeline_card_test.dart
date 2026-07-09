@@ -138,6 +138,54 @@ void main() {
     );
   });
 
+  testWidgets('stage timestamp lines include reviewer execution duration',
+      (WidgetTester tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SingleChildScrollView(
+            padding: const EdgeInsets.all(16),
+            child: CurrentRunTimelineCard(
+              session: _buildSession(
+                activeAgentRunId: null,
+                currentRun: null,
+                recentRuns: <CurrentRunExecution>[
+                  CurrentRunExecution(
+                    runId: 'run-reviewer-duration',
+                    state: CurrentRunStageState.completed,
+                    isActive: false,
+                    stages: <CurrentRunStageExecution>[
+                      CurrentRunStageExecution(
+                        stage: CurrentRunStageId.generator,
+                        state: CurrentRunStageState.completed,
+                        configured: true,
+                        startedAt: DateTime.utc(2026, 1, 1, 12),
+                        updatedAt: DateTime.utc(2026, 1, 1, 12, 20),
+                        completedAt: DateTime.utc(2026, 1, 1, 12, 20),
+                      ),
+                      CurrentRunStageExecution(
+                        stage: CurrentRunStageId.reviewer,
+                        state: CurrentRunStageState.completed,
+                        configured: true,
+                        startedAt: DateTime.utc(2026, 1, 1, 12, 20),
+                        updatedAt: DateTime.utc(2026, 1, 1, 12, 23, 5),
+                        completedAt: DateTime.utc(2026, 1, 1, 12, 23, 5),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(find.textContaining('Finished'), findsAtLeastNWidgets(2));
+    expect(find.textContaining('Took 20m 0s'), findsOneWidget);
+    expect(find.textContaining('Took 3m 5s'), findsOneWidget);
+  });
+
   testWidgets('stacks run status content on narrow widths without overflow',
       (WidgetTester tester) async {
     await tester.pumpWidget(

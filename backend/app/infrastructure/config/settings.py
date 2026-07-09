@@ -8,9 +8,16 @@ from pydantic import Field, computed_field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+_DEFAULT_FEEDBACK_SOURCE_WORKSPACE_ALIASES = {
+    "sat-catalogo-ropa": Path("sat-catalogo-ropa"),
+    "smart-nienfos": Path("smart_nienfos"),
+    "smart-nienfos-admin": Path("smart_nienfos"),
+}
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=(".env", "secrets/cloudflare.env"),
         env_file_encoding="utf-8",
         extra="ignore",
     )
@@ -37,6 +44,18 @@ class Settings(BaseSettings):
     feedback_queue_path: str = str(Path.cwd() / ".data" / "feedback_queue.json")
     feedback_image_dir: str = str(Path.cwd() / ".data" / "feedback_images")
     feedback_audio_dir: str = str(Path.cwd() / ".data" / "feedback_audio")
+    asset_depot_dir: str = str(Path.cwd() / ".data" / "asset_depot")
+    asset_depot_max_upload_bytes: int = 25_000_000
+    project_factory_reference_asset_dir: str = str(
+        Path.cwd() / ".data" / "project_factory_reference_assets"
+    )
+    project_factory_state_dir: str = str(Path.cwd() / ".data" / "project_factory_state")
+    project_factory_async_jobs: bool = True
+    project_factory_generator_runs_override: int | None = None
+    project_factory_reviewer_runs_override: int | None = None
+    project_factory_step_timeout_seconds: int = 0
+    project_factory_run_generated_validation: bool = False
+    project_factory_publication_validation_mode: Literal["remote", "local"] = "remote"
     feedback_source_workspace_aliases: str = ""
     tailscale_socket: str | None = None
     execution_timeout_seconds: int = 0
@@ -76,12 +95,37 @@ class Settings(BaseSettings):
     app_update_registry_path: str = str(Path(__file__).with_name("app_updates.json"))
     app_update_github_token: str | None = None
     app_update_github_timeout_seconds: float = 10.0
+    installable_apps_registration_token: str | None = None
+    cloudflare_api_token: str | None = None
+    cloudflare_dns_api_token: str | None = None
+    cloudflare_account_id: str | None = None
+    cloudflare_zone_id: str | None = None
+    cloudflare_zone_name: str = "nienfos.com"
+    cloudflare_api_base_url: str = "https://api.cloudflare.com/client/v4"
+    cloudflare_timeout_seconds: float = 10.0
+    preview_base_domain: str = "preview.nienfos.com"
+    preview_worker_name: str = "nienfos-preview-runtime"
+    preview_d1_database_name: str = "nienfos-preview"
+    preview_pages_project_name: str = "nienfos-preview-web"
+    preview_r2_bucket_name: str | None = None
+    web_preview_state_dir: str = str(Path.cwd() / ".data" / "web_preview_state")
+    web_preview_apply_enabled: bool = False
+    web_preview_invite_secret: str | None = None
+    web_preview_invite_default_ttl_seconds: int = 7 * 24 * 60 * 60
+    web_preview_invite_max_ttl_seconds: int = 7 * 24 * 60 * 60
+    sdd_file_max_bytes: int = 256_000
     openai_api_key: str | None = None
     openai_base_url: str = "https://api.openai.com/v1"
 
     @property
     def feedback_source_workspace_alias_map(self) -> dict[str, str]:
-        aliases: dict[str, str] = {}
+        projects_root = Path(self.projects_root).expanduser()
+        aliases: dict[str, str] = {
+            source_app: str(projects_root / relative_path)
+            for source_app, relative_path in (
+                _DEFAULT_FEEDBACK_SOURCE_WORKSPACE_ALIASES.items()
+            )
+        }
         for raw_entry in self.feedback_source_workspace_aliases.split(","):
             entry = raw_entry.strip()
             if not entry or ":" not in entry:
