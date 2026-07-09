@@ -8,7 +8,6 @@ added.
   path under `PROJECTS_ROOT`.
 - Include mandatory auth, RBAC, admin, notifications, Codex, SDD, and release
   defaults.
-- Include Codex CLI creation workflow defaults of 20 generator runs and 20
-  reviewer runs.
+- Include Codex CLI creation workflow defaults of 20 generator/reviewer pairs.
 - Keep seed admin values as environment variable names only.
 - Prove validation is deterministic and write-free.

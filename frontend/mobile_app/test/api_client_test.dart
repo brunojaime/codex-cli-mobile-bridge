@@ -166,7 +166,7 @@ void main() {
               "business_types": ["medical_appointments"],
               "creation_workflow": {
                 "runner": "codex_cli",
-                "mode": "generator_reviewer_batches",
+                "mode": "generator_reviewer_pairs",
                 "generator_runs": 20,
                 "reviewer_runs": 20
               }

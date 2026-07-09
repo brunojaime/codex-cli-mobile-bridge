@@ -170,6 +170,10 @@ class ProjectFactoryJobRunner:
         *,
         event_sink: ProjectFactoryEventSink,
     ) -> ProjectFactoryRunnerResult:
+        if context.generator_runs != context.reviewer_runs:
+            raise ProjectFactoryJobRunnerError(
+                "Paired generator/reviewer workflow requires matching run counts."
+            )
         remote_publication = context.publication_validation_mode == "remote"
         supports_android_installable = _supports_android_installable(
             context.manifest_plan,
@@ -237,20 +241,18 @@ class ProjectFactoryJobRunner:
                 context=context,
                 project_path=project_path,
                 prompt_path=prompt_root / f"generator-{index + 1:02d}.md",
-                phase="generator_batch",
-                label=f"Generator run {index + 1} of {context.generator_runs}",
+                phase="generator_pass",
+                label=f"Generator pass {index + 1} of {context.generator_runs}",
                 completed_steps=completed_steps,
                 total_steps=total_steps,
                 event_sink=event_sink,
             )
-
-        for index in range(context.reviewer_runs):
             completed_steps = self._run_cli_step(
                 context=context,
                 project_path=project_path,
                 prompt_path=prompt_root / f"reviewer-{index + 1:02d}.md",
-                phase="reviewer_batch",
-                label=f"Reviewer run {index + 1} of {context.reviewer_runs}",
+                phase="reviewer_pass",
+                label=f"Reviewer pass {index + 1} of {context.reviewer_runs}",
                 completed_steps=completed_steps,
                 total_steps=total_steps,
                 event_sink=event_sink,
@@ -739,13 +741,15 @@ Promoted project assets:
         for index in range(context.generator_runs):
             (prompt_root / f"generator-{index + 1:02d}.md").write_text(
                 base
-                + f"\nGenerator run {index + 1}: implement the next safe slice with tests.\n",
+                + f"\nGenerator pass {index + 1}: implement the next safe slice with tests. "
+                "A reviewer pass runs immediately after this pass.\n",
                 encoding="utf-8",
             )
         for index in range(context.reviewer_runs):
             (prompt_root / f"reviewer-{index + 1:02d}.md").write_text(
                 base
-                + f"\nReviewer run {index + 1}: review generated work and request concrete fixes.\n",
+                + f"\nReviewer pass {index + 1}: review only the generator pass with the "
+                "same number, verify concrete fixes, and leave actionable follow-up.\n",
                 encoding="utf-8",
             )
 

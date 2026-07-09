@@ -9898,9 +9898,9 @@ strategy is explicitly implemented.
 
 New-project creation uses Codex CLI by default with:
 
-- generator runs: {workflow["generator_runs"]}
-- reviewer runs: {workflow["reviewer_runs"]}
 - mode: `{workflow["mode"]}`
+- generator/reviewer pairs: {workflow["generator_runs"]}
+- order: generator-01 -> reviewer-01 before generator-02 starts
 
 ## Required Foundation
 
@@ -9941,9 +9941,9 @@ Bridge, app updater, and Workbench-driven feature growth.
 
 New-project creation uses Codex CLI by default with:
 
-- generator runs: {workflow["generator_runs"]}
-- reviewer runs: {workflow["reviewer_runs"]}
 - mode: `{workflow["mode"]}`
+- generator/reviewer pairs: {workflow["generator_runs"]}
+- order: generator-01 -> reviewer-01 before generator-02 starts
 
 ## Required Foundation
 

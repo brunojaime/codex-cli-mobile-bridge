@@ -71,7 +71,7 @@ This file is the legacy task index. Task numbering is local to each plan in `tre
 - [x] T035 Add backend version/capability metadata for Project Factory. ([Task 1](./tasks/plan-10-task-1/task.md))
 - [x] T036 Harden backend PID handling and post-restart validation. ([Task 2](./tasks/plan-10-task-2/task.md))
 - [x] T037 Move primary New project UX from modal form to chat-mode kickoff. ([Task 3](./tasks/plan-10-task-3/task.md))
-- [x] T038 Update creation defaults to 20 generator and 20 reviewer runs. ([Task 4](./tasks/plan-10-task-4/task.md))
+- [x] T038 Update creation defaults to 20 generator/reviewer pairs. ([Task 4](./tasks/plan-10-task-4/task.md))
 - [x] T039 Generate mandatory baseline Workbench diagrams and SDD indexes for new projects. ([Task 5](./tasks/plan-10-task-5/task.md))
 
 ## Plan 11: Publication Contract Hardening
@@ -82,3 +82,9 @@ This file is the legacy task index. Task numbering is local to each plan in `tre
 - [x] T043 Pass required GitHub/release/Bridge environment variables to generated publication scripts without printing secrets. ([Task 4](./tasks/plan-11-task-4/task.md))
 - [x] T044 Treat missing external publication configuration as blocked, not ready. ([Task 5](./tasks/plan-11-task-5/task.md))
 - [x] T045 Add regression tests for remote publication phase execution and blocked publication outcomes. ([Task 6](./tasks/plan-11-task-6/task.md))
+
+## Plan 12: Paired Generator Reviewer Loop
+
+- [x] T046 Document that the old generator-all-then-reviewer-all workflow delays reviewer feedback. ([Task 1](./tasks/plan-12-task-1/task.md))
+- [x] T047 Run Project Factory creation as generator/reviewer pairs instead of batches. ([Task 2](./tasks/plan-12-task-2/task.md))
+- [x] T048 Add regression tests for paired generator/reviewer execution order. ([Task 3](./tasks/plan-12-task-3/task.md))

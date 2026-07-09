@@ -67,3 +67,9 @@ This file is the legacy index for tools that expect a root `plan.md`. The canoni
 - File: [`plans/11-publication-contract-hardening/plan.md`](plans/11-publication-contract-hardening/plan.md)
 - Status: `done`
 - Tasks: `6`
+
+## Plan 12: Paired Generator Reviewer Loop
+
+- File: [`plans/12-paired-generator-reviewer-loop/plan.md`](plans/12-paired-generator-reviewer-loop/plan.md)
+- Status: `done`
+- Tasks: `3`

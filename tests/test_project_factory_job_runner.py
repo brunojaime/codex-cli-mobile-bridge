@@ -25,7 +25,7 @@ from backend.app.application.services.project_factory_reference_asset_service im
 )
 
 
-def test_project_factory_runner_success_writes_prompts_and_runs_batches(
+def test_project_factory_runner_success_writes_prompts_and_runs_pairs(
     tmp_path: Path,
 ) -> None:
     process_runner = _FakeProcessRunner()
@@ -33,7 +33,7 @@ def test_project_factory_runner_success_writes_prompts_and_runs_batches(
     events: list[dict[str, object]] = []
 
     result = runner.run(
-        _context(tmp_path, generator_runs=1, reviewer_runs=2),
+        _context(tmp_path, generator_runs=2, reviewer_runs=2),
         event_sink=events.append,
     )
 
@@ -44,13 +44,18 @@ def test_project_factory_runner_success_writes_prompts_and_runs_batches(
     assert (project / ".codex/factory/prompts/reviewer-02.md").is_file()
     assert (project / ".codex/factory/prompts/finalize-validation.md").is_file()
     assert (project / ".codex/factory/prompts/publish-finalize.md").is_file()
-    assert len(process_runner.calls) == 7
+    assert len(process_runner.calls) == 8
+    assert "Generator pass 1:" in process_runner.calls[1][-1]
+    assert "Reviewer pass 1:" in process_runner.calls[2][-1]
+    assert "Generator pass 2:" in process_runner.calls[3][-1]
+    assert "Reviewer pass 2:" in process_runner.calls[4][-1]
     assert [event["phase"] for event in events if event["status"] == "completed"] == [
         "scaffold",
         "research_planning",
-        "generator_batch",
-        "reviewer_batch",
-        "reviewer_batch",
+        "generator_pass",
+        "reviewer_pass",
+        "generator_pass",
+        "reviewer_pass",
         "finalize_validation",
         "publish_finalize",
         "local_git_commit",
@@ -431,15 +436,28 @@ def test_project_factory_runner_failure_keeps_project_and_reports_error(
 
     with pytest.raises(ProjectFactoryJobRunnerError):
         runner.run(
-            _context(tmp_path, generator_runs=1, reviewer_runs=0),
+            _context(tmp_path, generator_runs=1, reviewer_runs=1),
             event_sink=events.append,
         )
 
     assert (tmp_path / "clinica-norte").is_dir()
     failed = [event for event in events if event["status"] == "failed"]
     assert failed
-    assert failed[0]["phase"] == "generator_batch"
+    assert failed[0]["phase"] == "generator_pass"
     assert failed[0]["exit_code"] == 7
+
+
+def test_project_factory_runner_rejects_unpaired_run_counts(tmp_path: Path) -> None:
+    process_runner = _FakeProcessRunner()
+    runner = _runner(tmp_path, process_runner)
+
+    with pytest.raises(ProjectFactoryJobRunnerError, match="matching run counts"):
+        runner.run(
+            _context(tmp_path, generator_runs=2, reviewer_runs=1),
+            event_sink=lambda _event: None,
+        )
+
+    assert process_runner.calls == []
 
 
 def test_project_factory_runner_blocks_when_remote_publication_fails(

@@ -570,7 +570,7 @@ def _build_manifest(
             "auto_update": True,
             "creation_workflow": {
                 "runner": "codex_cli",
-                "mode": "generator_reviewer_batches",
+                "mode": "generator_reviewer_pairs",
                 "generator_runs": DEFAULT_CREATION_GENERATOR_RUNS,
                 "reviewer_runs": DEFAULT_CREATION_REVIEWER_RUNS,
                 "first_release_mode": first_release_mode,

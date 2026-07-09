@@ -309,13 +309,23 @@ class ProjectFactoryService:
             ],
             "creation_workflow": {
                 "runner": "codex_cli",
-                "mode": "generator_reviewer_batches",
+                "mode": "generator_reviewer_pairs",
                 "generator_runs": DEFAULT_CREATION_GENERATOR_RUNS,
                 "reviewer_runs": DEFAULT_CREATION_REVIEWER_RUNS,
             },
         }
 
     def doctor(self) -> dict[str, object]:
+        effective_generator_runs = (
+            self._generator_runs_override
+            if self._generator_runs_override is not None
+            else DEFAULT_CREATION_GENERATOR_RUNS
+        )
+        effective_reviewer_runs = (
+            self._reviewer_runs_override
+            if self._reviewer_runs_override is not None
+            else DEFAULT_CREATION_REVIEWER_RUNS
+        )
         checks = [
             _doctor_check(
                 "projects_root_exists",
@@ -333,7 +343,17 @@ class ProjectFactoryService:
                 "default_creation_workflow",
                 DEFAULT_CREATION_GENERATOR_RUNS == 20
                 and DEFAULT_CREATION_REVIEWER_RUNS == 20,
-                "Default creation workflow must stay 20 generator and 20 reviewer runs.",
+                "Default creation workflow must stay 20 generator/reviewer pairs.",
+            ),
+            _doctor_check(
+                "effective_creation_workflow",
+                effective_generator_runs == effective_reviewer_runs,
+                (
+                    "Effective creation workflow must use matching "
+                    "generator/reviewer pair counts. "
+                    f"generator={effective_generator_runs} "
+                    f"reviewer={effective_reviewer_runs}."
+                ),
             ),
             _doctor_check(
                 "local_generator_available",
@@ -636,17 +656,6 @@ class ProjectFactoryService:
                 self._jobs[job.id] = job
                 self._persist_job(job)
                 return job
-            if draft.guided_intake.enabled and draft.guided_intake.status == "confirmed":
-                draft = replace(
-                    draft,
-                    guided_intake=replace(
-                        draft.guided_intake,
-                        status="build_started",
-                        updated_at=_now_iso(),
-                    ),
-                )
-                self._drafts[draft_id] = draft
-                self._persist_draft(draft)
             existing = self._job_for_draft(draft_id)
             if existing is not None:
                 if (
@@ -691,6 +700,44 @@ class ProjectFactoryService:
                 self._jobs[job.id] = job
                 self._persist_job(job)
             return job
+
+        workflow_error = _creation_workflow_error(
+            generator_runs=_effective_generator_runs(self, manifest_plan),
+            reviewer_runs=_effective_reviewer_runs(self, manifest_plan),
+        )
+        if workflow_error is not None:
+            job = ProjectFactoryJob(
+                id=_new_id("pf-job"),
+                draft_id=draft.id,
+                created_at=now,
+                updated_at=now,
+                status="failed",
+                current_step="creation_workflow",
+                message=workflow_error,
+                manifest_plan=manifest_plan,
+                current_phase="creation_workflow",
+                progress=0,
+                completed_at=now,
+                error=workflow_error,
+                step_logs=[],
+            )
+            with self._lock:
+                self._jobs[job.id] = job
+                self._persist_job(job)
+            return job
+
+        if draft.guided_intake.enabled and draft.guided_intake.status == "confirmed":
+            draft = replace(
+                draft,
+                guided_intake=replace(
+                    draft.guided_intake,
+                    status="build_started",
+                    updated_at=_now_iso(),
+                ),
+            )
+            with self._lock:
+                self._drafts[draft_id] = draft
+                self._persist_draft(draft)
 
         job = ProjectFactoryJob(
             id=_new_id("pf-job"),
@@ -886,6 +933,22 @@ class ProjectFactoryService:
             if self._reviewer_runs_override is not None
             else int(workflow.get("reviewer_runs", DEFAULT_CREATION_REVIEWER_RUNS))
         )
+        workflow_error = _creation_workflow_error(
+            generator_runs=generator_runs,
+            reviewer_runs=reviewer_runs,
+        )
+        if workflow_error is not None:
+            self._update_job(
+                job_id,
+                status="failed",
+                current_phase="creation_workflow",
+                current_step="creation_workflow",
+                progress=0,
+                message=workflow_error,
+                error=workflow_error,
+                completed_at=_now_iso(),
+            )
+            return
         context = ProjectFactoryRunnerContext(
             draft_id=draft.id,
             manifest_plan=manifest_plan,
@@ -1147,6 +1210,43 @@ def _doctor_check(code: str, ok: bool, detail: str) -> dict[str, object]:
         "ok": ok,
         "detail": detail,
     }
+
+
+def _effective_generator_runs(
+    service: ProjectFactoryService,
+    manifest_plan: ProjectFactoryManifestPlan,
+) -> int:
+    workflow = manifest_plan.manifest.get("codex", {}).get("creation_workflow", {})
+    return (
+        service._generator_runs_override
+        if service._generator_runs_override is not None
+        else int(workflow.get("generator_runs", DEFAULT_CREATION_GENERATOR_RUNS))
+    )
+
+
+def _effective_reviewer_runs(
+    service: ProjectFactoryService,
+    manifest_plan: ProjectFactoryManifestPlan,
+) -> int:
+    workflow = manifest_plan.manifest.get("codex", {}).get("creation_workflow", {})
+    return (
+        service._reviewer_runs_override
+        if service._reviewer_runs_override is not None
+        else int(workflow.get("reviewer_runs", DEFAULT_CREATION_REVIEWER_RUNS))
+    )
+
+
+def _creation_workflow_error(
+    *,
+    generator_runs: int,
+    reviewer_runs: int,
+) -> str | None:
+    if generator_runs == reviewer_runs:
+        return None
+    return (
+        "Paired generator/reviewer workflow requires matching run counts: "
+        f"generator={generator_runs}, reviewer={reviewer_runs}."
+    )
 
 
 def _draft_summary(draft: ProjectFactoryDraft) -> dict[str, object]:

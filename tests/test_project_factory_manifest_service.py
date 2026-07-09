@@ -95,7 +95,7 @@ def test_creation_workflow_defaults_to_twenty_generator_and_twenty_reviewer_runs
 
     workflow = result.manifest["codex"]["creation_workflow"]
     assert workflow["runner"] == "codex_cli"
-    assert workflow["mode"] == "generator_reviewer_batches"
+    assert workflow["mode"] == "generator_reviewer_pairs"
     assert workflow["generator_runs"] == DEFAULT_CREATION_GENERATOR_RUNS == 20
     assert workflow["reviewer_runs"] == DEFAULT_CREATION_REVIEWER_RUNS == 20
 

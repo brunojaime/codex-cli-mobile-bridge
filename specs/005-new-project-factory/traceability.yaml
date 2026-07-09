@@ -58,6 +58,11 @@ requirements:
     acceptance_criteria: [AC-001]
     tasks: [T040, T041, T042, T043, T044, T045]
     phase: 11
+  FR-012:
+    name: Paired generator reviewer loop
+    acceptance_criteria: [AC-001]
+    tasks: [T046, T047, T048]
+    phase: 12
 
 implementation:
   status: complete
@@ -113,7 +118,7 @@ implementation:
       completed_tasks: [T035, T036, T037, T038, T039]
       evidence:
         - Backend metadata exposes Project Factory capability/version support; frontend falls back with update guidance when Project Factory endpoints are unavailable.
-        - Chat-first New Project mode is the primary UX, defaults to 20 generator and 20 reviewer runs after explicit confirmation, and generated projects include baseline Workbench diagrams and indexes.
+        - Chat-first New Project mode is the primary UX, defaults to 20 generator/reviewer pairs after explicit confirmation, and generated projects include baseline Workbench diagrams and indexes.
         - Focused frontend and backend tests cover capability metadata, chat kickoff/build marker gating, default run counts, and generated SDD diagram/index artifacts.
     publication-contract-hardening-pass-001:
       completed_tasks: [T040, T041, T042, T043, T044, T045]
@@ -121,3 +126,9 @@ implementation:
         - The SAT Showroom local-only readiness gap is documented in spec.md, and runner-owned github_publish, android_release, installable_app_registration, and verification phases are part of remote publication mode.
         - Generated scripts include publish_android_release.sh, register_installable_app.sh, validate_publication_ready.sh, release profile validators, and secret-redacted environment handling.
         - Regression tests prove missing external publication configuration is blocked with concrete phase/command output instead of reporting ready.
+    paired-generator-reviewer-loop-pass-001:
+      completed_tasks: [T046, T047, T048]
+      evidence:
+        - spec.md and plans/12-paired-generator-reviewer-loop/plan.md document that the old generator-all-then-reviewer-all workflow delayed reviewer feedback until many unreviewed changes had accumulated.
+        - ProjectFactoryJobRunner now executes generator pass N immediately followed by reviewer pass N before starting generator pass N+1.
+        - Project Factory manifest/API metadata reports generator_reviewer_pairs, generated Product Foundation specs describe generator/reviewer pairs, and regression tests cover paired execution order, generated spec wording, doctor mismatch reporting, and rejected mismatched run counts.

@@ -2433,7 +2433,7 @@ flowchart LR
     expect(prompt, contains('manual-link fallback'));
   });
 
-  test('project factory build configuration enables reviewer batches', () {
+  test('project factory build configuration enables reviewer pairs', () {
     final intake = buildProjectFactoryIntakeConfiguration(
       kDefaultAgentConfiguration,
     );

@@ -1,4 +1,4 @@
-# T038 Update creation defaults to 20 generator and 20 reviewer runs
+# T038 Update creation defaults to 20 generator/reviewer pairs
 
 Spec: `005-new-project-factory`
 
@@ -6,4 +6,4 @@ Plan: `Post-Release Chat-Mode Hardening`
 
 ## Checklist
 
-- [x] T038 Update creation defaults to 20 generator and 20 reviewer runs.
+- [x] T038 Update creation defaults to 20 generator/reviewer pairs.

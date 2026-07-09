@@ -424,9 +424,9 @@
         {
           "id": "plan-10-task-4",
           "number": 4,
-          "title": "T038 Update creation defaults to 20 generator and 20 reviewer runs",
+          "title": "T038 Update creation defaults to 20 generator/reviewer pairs",
           "status": "done",
-          "description": "T038 Update creation defaults to 20 generator and 20 reviewer runs",
+          "description": "T038 Update creation defaults to 20 generator/reviewer pairs",
           "file": "tasks/plan-10-task-4/task.md"
         },
         {
@@ -494,6 +494,40 @@
           "status": "done",
           "description": "T045 Add regression tests for remote publication phase execution and blocked publication outcomes",
           "file": "tasks/plan-11-task-6/task.md"
+        }
+      ]
+    },
+    {
+      "id": "plan-12",
+      "number": 12,
+      "title": "Paired Generator Reviewer Loop",
+      "status": "done",
+      "description": "Run each Project Factory generator pass followed immediately by its reviewer pass so feedback is applied one iteration at a time.",
+      "file": "plans/12-paired-generator-reviewer-loop/plan.md",
+      "tasks": [
+        {
+          "id": "plan-12-task-1",
+          "number": 1,
+          "title": "T046 Document that the old generator-all-then-reviewer-all workflow delays reviewer feedback",
+          "status": "done",
+          "description": "T046 Document that the old generator-all-then-reviewer-all workflow delays reviewer feedback",
+          "file": "tasks/plan-12-task-1/task.md"
+        },
+        {
+          "id": "plan-12-task-2",
+          "number": 2,
+          "title": "T047 Run Project Factory creation as generator/reviewer pairs instead of batches",
+          "status": "done",
+          "description": "T047 Run Project Factory creation as generator/reviewer pairs instead of batches",
+          "file": "tasks/plan-12-task-2/task.md"
+        },
+        {
+          "id": "plan-12-task-3",
+          "number": 3,
+          "title": "T048 Add regression tests for paired generator/reviewer execution order",
+          "status": "done",
+          "description": "T048 Add regression tests for paired generator/reviewer execution order",
+          "file": "tasks/plan-12-task-3/task.md"
         }
       ]
     }

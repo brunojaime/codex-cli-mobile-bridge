@@ -87,8 +87,9 @@ suggested answers. Reviewer/build mode must remain disabled during this intake.
 Only after the user validates a preview that covers specs, plan, tasks, domain
 entities, roles/permissions, modules, component/class/entity-relationship/
 deployment diagrams, risks, and validation commands may the agent emit
-`PROJECT_FACTORY_READY_FOR_BUILD`. The mobile app only enables the 20 generator
-+ 20 reviewer workflow after that marker exists and the user confirms.
+`PROJECT_FACTORY_READY_FOR_BUILD`. The mobile app only enables the 20
+generator/reviewer pair workflow after that marker exists and the user
+confirms.
 
 The older form-style dialog remains an implementation component/fallback, but
 the user-facing path is chat-first so the user can describe an app naturally,
@@ -134,8 +135,17 @@ new-project/
 
 - Flutter targets: iOS, Android, Web.
 - Backend: FastAPI unless the user selects another option.
-- Creation runner: Codex CLI with generator/reviewer batches.
-- Creation batch default: 20 generator runs and 20 reviewer runs.
+- Creation runner: Codex CLI with paired generator/reviewer passes.
+- Creation default: 20 generator/reviewer pairs. Each generator pass must be
+  followed immediately by the reviewer pass with the same number before the next
+  generator pass starts.
+- Generator and reviewer run counts must match for a paired Factory build; a
+  mismatch is invalid because it would leave at least one pass without its
+  immediate counterpart.
+- The Factory must not run all generator passes first and all reviewer passes
+  afterwards. That batched behavior delays feedback until the foundation has
+  already accumulated multiple unreviewed changes, which is the workflow gap
+  this spec now closes.
 - Auth: registration, email/password login, password reset path, session
   persistence, and Google login placeholders.
 - Access control: RBAC with `owner`, `admin`, `manager`, `staff`, `customer`,

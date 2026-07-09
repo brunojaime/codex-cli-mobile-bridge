@@ -25,7 +25,7 @@ def test_project_factory_options_exposes_twenty_by_twenty_creation_workflow(
     assert payload["default_backend"] == "fastapi"
     assert payload["creation_workflow"] == {
         "runner": "codex_cli",
-        "mode": "generator_reviewer_batches",
+        "mode": "generator_reviewer_pairs",
         "generator_runs": 20,
         "reviewer_runs": 20,
     }
@@ -48,6 +48,7 @@ def test_project_factory_doctor_is_non_mutating_and_checks_defaults(
     assert checks["projects_root_exists"]["ok"] is True
     assert checks["projects_root_writable"]["ok"] is True
     assert checks["default_creation_workflow"]["ok"] is True
+    assert checks["effective_creation_workflow"]["ok"] is True
     assert checks["local_generator_available"]["ok"] is True
     toolchain = payload["toolchain"]
     assert toolchain["python"]["available"] is True
@@ -63,6 +64,32 @@ def test_project_factory_doctor_is_non_mutating_and_checks_defaults(
     assert web_preview["planner"]["dry_run"] is True
     after = sorted(path.relative_to(tmp_path) for path in tmp_path.rglob("*"))
     assert after == before
+
+
+def test_project_factory_doctor_blocks_mismatched_effective_creation_workflow(
+    tmp_path: Path,
+) -> None:
+    client = _client(
+        tmp_path,
+        generator_runs_override=2,
+        reviewer_runs_override=1,
+    )
+
+    response = client.get("/project-factory/doctor")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is False
+    assert payload["status"] == "blocked"
+    checks = {item["code"]: item for item in payload["checks"]}
+    assert checks["default_creation_workflow"]["ok"] is True
+    assert checks["effective_creation_workflow"]["ok"] is False
+    assert "matching generator/reviewer pair counts" in checks[
+        "effective_creation_workflow"
+    ]["detail"]
+    assert "generator=2 reviewer=1" in checks["effective_creation_workflow"][
+        "detail"
+    ]
 
 
 def test_project_factory_draft_and_dry_run_are_write_free(tmp_path: Path) -> None:
@@ -269,6 +296,52 @@ def test_project_factory_guided_intake_blocks_until_confirmed(
     generated = client.post(f"/project-factory/drafts/{draft_id}/generate")
     assert generated.status_code == 200
     assert generated.json()["status"] == "ready"
+    started = client.get(f"/project-factory/drafts/{draft_id}")
+    assert started.status_code == 200
+    assert started.json()["guidedIntake"]["status"] == "build_started"
+
+
+def test_project_factory_guided_intake_stays_confirmed_when_workflow_invalid(
+    tmp_path: Path,
+) -> None:
+    client = _client(
+        tmp_path,
+        generator_runs_override=2,
+        reviewer_runs_override=1,
+    )
+    response = client.post(
+        "/project-factory/drafts",
+        json={
+            "name": "Pares Guiados",
+            "businessType": "medical",
+            "primaryGoal": "Reservar turnos",
+            "guidedIntakeEnabled": True,
+        },
+    )
+    draft_id = response.json()["draft_id"]
+    answer = client.post(
+        f"/project-factory/drafts/{draft_id}/intake/answers",
+        json={
+            "questionId": "initial_admin_emails",
+            "value": ["owner@example.com"],
+        },
+    )
+    assert answer.status_code == 200
+    confirm = client.post(f"/project-factory/drafts/{draft_id}/intake/confirm")
+    assert confirm.status_code == 200
+    assert confirm.json()["status"] == "confirmed"
+
+    generated = client.post(f"/project-factory/drafts/{draft_id}/generate")
+
+    assert generated.status_code == 200
+    payload = generated.json()
+    assert payload["status"] == "failed"
+    assert payload["current_phase"] == "creation_workflow"
+    assert "matching run counts" in payload["error"]
+    loaded = client.get(f"/project-factory/drafts/{draft_id}")
+    assert loaded.status_code == 200
+    assert loaded.json()["guidedIntake"]["status"] == "confirmed"
+    assert not (tmp_path / "pares-guiados").exists()
 
 
 def test_project_factory_persists_draft_and_finished_job_across_clients(
@@ -360,8 +433,8 @@ def test_project_factory_recovers_running_job_as_interrupted(
                     "created_at": "2026-01-01T00:00:00Z",
                     "updated_at": "2026-01-01T00:00:01Z",
                     "status": "running",
-                    "current_step": "generator_batch",
-                    "current_phase": "generator_batch",
+                    "current_step": "generator_pass",
+                    "current_phase": "generator_pass",
                     "progress": 50,
                     "started_at": "2026-01-01T00:00:01Z",
                     "completed_at": None,
@@ -597,10 +670,14 @@ def test_project_factory_generate_creates_local_project_foundation(tmp_path: Pat
     spec_text = (project / "specs/001-product-foundation/spec.md").read_text(
         encoding="utf-8",
     )
+    assert "mode: generator_reviewer_pairs" in manifest_text
     assert "generator_runs: 20" in manifest_text
     assert "reviewer_runs: 20" in manifest_text
-    assert "generator runs: 20" in spec_text
-    assert "reviewer runs: 20" in spec_text
+    assert "- mode: `generator_reviewer_pairs`" in spec_text
+    assert "- generator/reviewer pairs: 20" in spec_text
+    assert "- order: generator-01 -> reviewer-01 before generator-02 starts" in spec_text
+    assert "- generator runs:" not in spec_text
+    assert "- reviewer runs:" not in spec_text
     diagram_index = (project / ".sdd/diagram-index.yaml").read_text(
         encoding="utf-8",
     )
@@ -741,6 +818,30 @@ def test_project_factory_existing_project_folder_blocks_without_overwrite(
     assert not (project / ".codex").exists()
 
 
+def test_project_factory_generate_rejects_mismatched_effective_run_counts(
+    tmp_path: Path,
+) -> None:
+    client = _client(
+        tmp_path,
+        generator_runs_override=2,
+        reviewer_runs_override=1,
+    )
+    draft_id = _create_draft(client, "Pares Norte")
+
+    response = client.post(f"/project-factory/drafts/{draft_id}/generate")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "failed"
+    assert payload["current_phase"] == "creation_workflow"
+    assert payload["current_step"] == "creation_workflow"
+    assert payload["progress"] == 0
+    assert "matching run counts" in payload["error"]
+    assert "generator=2, reviewer=1" in payload["error"]
+    assert payload["step_logs"] == []
+    assert not (tmp_path / "pares-norte").exists()
+
+
 def test_project_factory_unknown_draft_and_job_return_404(tmp_path: Path) -> None:
     client = _client(tmp_path)
 
@@ -780,7 +881,13 @@ def test_generated_project_is_discoverable_by_sdd_workbench(tmp_path: Path) -> N
     assert project_payload["specs"][0]["id"] == "001-product-foundation"
 
 
-def _client(projects_root: Path, *, publication_validation_mode: str = "local") -> TestClient:
+def _client(
+    projects_root: Path,
+    *,
+    publication_validation_mode: str = "local",
+    generator_runs_override: int | None = 0,
+    reviewer_runs_override: int | None = 0,
+) -> TestClient:
     fake_codex = _fake_codex(projects_root)
     settings = Settings(
         projects_root=str(projects_root),
@@ -791,8 +898,8 @@ def _client(projects_root: Path, *, publication_validation_mode: str = "local") 
         project_factory_state_dir=str(_state_dir(projects_root)),
         codex_command=str(fake_codex),
         project_factory_async_jobs=False,
-        project_factory_generator_runs_override=0,
-        project_factory_reviewer_runs_override=0,
+        project_factory_generator_runs_override=generator_runs_override,
+        project_factory_reviewer_runs_override=reviewer_runs_override,
         project_factory_publication_validation_mode=publication_validation_mode,
         cloudflare_api_token=None,
         cloudflare_dns_api_token=None,

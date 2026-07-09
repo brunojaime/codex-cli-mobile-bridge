@@ -33,6 +33,7 @@ if label == "health":
 elif label == "project-factory/options":
     assert payload.get("kind") == "codex.projectFactoryOptions", payload
     workflow = payload.get("creation_workflow") or {}
+    assert workflow.get("mode") == "generator_reviewer_pairs", payload
     assert workflow.get("generator_runs") == 20, payload
     assert workflow.get("reviewer_runs") == 20, payload
 print(f"{label} ok")

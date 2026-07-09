@@ -2092,7 +2092,7 @@ When you create the Project Factory draft, link each asset with POST /project-fa
       SnackBar(
         content: Text(
           didConfigure
-              ? 'New project build mode enabled: reviewer will run after confirmation.'
+              ? 'New project build mode enabled: reviewer will run after each generator pass.'
               : _chatController.errorText ??
                   'Could not enable New project build mode.',
         ),
@@ -2139,7 +2139,7 @@ Defaults si el usuario no modifica nada:
 - auth: login/registro + Google pending credentials;
 - admin/domain management: incluido;
 - notificaciones: incluido;
-- workflow al confirmar: $generatorRuns generator runs + $reviewerRuns reviewer runs.
+- workflow al confirmar: $generatorRuns generator/reviewer pairs; cada generator pass va seguido inmediatamente por su reviewer pass antes del siguiente generator.
 - business types sugeridos si necesita elegir: $businessTypes.
 - first release default: Initial Preview Release, no produccion.
 - admin emails iniciales: requeridos antes del marker build-ready; si faltan, preguntalos y no avances.
