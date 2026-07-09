@@ -6,4 +6,4 @@ Plan: `Current Project Dashboard`
 
 ## Checklist
 
-- [ ] Surface diagram coverage by required diagram family.
+- [x] Surface diagram coverage by required diagram family.

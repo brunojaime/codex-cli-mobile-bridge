@@ -6,5 +6,5 @@ Plan: `Current Project Dashboard`
 
 ## Checklist
 
-- [ ] Surface real Android release, updater, backend, and feedback
+- [x] Surface real Android release, updater, backend, and feedback
       configuration references for the selected/current project when available.

@@ -80,9 +80,10 @@ def test_project_factory_runner_remote_publication_runs_required_phases(
     assert process_runner.calls.index(
         ("bash", "scripts/validate_generated_project.sh")
     ) < process_runner.calls.index(("bash", "scripts/publish_project.sh"))
-    assert process_runner.calls[-6:] == [
+    assert process_runner.calls[-7:] == [
         ("bash", "scripts/publish_project.sh"),
         ("bash", "scripts/apply_cloudflare_preview.sh"),
+        ("bash", "scripts/smoke_web_preview.sh"),
         ("bash", "scripts/smoke_preview_api.sh"),
         (
             "bash",
@@ -96,14 +97,54 @@ def test_project_factory_runner_remote_publication_runs_required_phases(
     completed_phases = [
         event["phase"] for event in events if event["status"] == "completed"
     ]
-    assert completed_phases[-6:] == [
+    assert completed_phases[-7:] == [
         "github_publish",
         "cloudflare_preview_apply",
+        "web_preview_smoke",
         "preview_api_smoke",
         "android_preview_release",
         "installable_app_registration",
         "publish_verification",
     ]
+
+
+def test_project_factory_runner_remote_publication_blocks_on_preflight(
+    tmp_path: Path,
+) -> None:
+    process_runner = _FakeProcessRunner()
+    runner = _runner(
+        tmp_path,
+        process_runner,
+        remote_preflight=lambda: {
+            "ok": False,
+            "status": "blocked",
+            "checks": [
+                {
+                    "code": "workers_routes_edit_access",
+                    "ok": False,
+                    "detail": "Workers Routes: Edit permission is required.",
+                }
+            ],
+        },
+    )
+    events: list[dict[str, object]] = []
+
+    with pytest.raises(ProjectFactoryJobRunnerBlockedError):
+        runner.run(
+            _context(
+                tmp_path,
+                generator_runs=0,
+                reviewer_runs=0,
+                publication_validation_mode="remote",
+            ),
+            event_sink=events.append,
+        )
+
+    assert not (tmp_path / "clinica-norte").exists()
+    assert process_runner.calls == []
+    blocked = [event for event in events if event["status"] == "blocked"]
+    assert blocked[-1]["phase"] == "cloudflare_preview_preflight"
+    assert "workers_routes_edit_access" in blocked[-1]["stderr"]
 
 
 def test_project_factory_runner_remote_publication_can_rerun_satisfied_phases(
@@ -129,6 +170,7 @@ def test_project_factory_runner_remote_publication_can_rerun_satisfied_phases(
     remote_sequence = [
         ("bash", "scripts/publish_project.sh"),
         ("bash", "scripts/apply_cloudflare_preview.sh"),
+        ("bash", "scripts/smoke_web_preview.sh"),
         ("bash", "scripts/smoke_preview_api.sh"),
         (
             "bash",
@@ -258,6 +300,29 @@ def test_project_factory_runner_blocks_when_preview_api_smoke_is_missing(
 
     blocked = [event for event in events if event["status"] == "blocked"]
     assert blocked[-1]["phase"] == "preview_api_smoke"
+    assert "missing script" in blocked[-1]["stderr"]
+
+
+def test_project_factory_runner_blocks_when_web_preview_smoke_is_missing(
+    tmp_path: Path,
+) -> None:
+    process_runner = _MissingScriptProcessRunner("scripts/smoke_web_preview.sh")
+    runner = _runner(tmp_path, process_runner)
+    events: list[dict[str, object]] = []
+
+    with pytest.raises(ProjectFactoryJobRunnerBlockedError):
+        runner.run(
+            _context(
+                tmp_path,
+                generator_runs=0,
+                reviewer_runs=0,
+                publication_validation_mode="remote",
+            ),
+            event_sink=events.append,
+        )
+
+    blocked = [event for event in events if event["status"] == "blocked"]
+    assert blocked[-1]["phase"] == "web_preview_smoke"
     assert "missing script" in blocked[-1]["stderr"]
 
 
@@ -478,7 +543,11 @@ class _ReusableProjectGenerator:
         )
 
 
-def _runner(tmp_path: Path, process_runner: _FakeProcessRunner) -> ProjectFactoryJobRunner:
+def _runner(
+    tmp_path: Path,
+    process_runner: _FakeProcessRunner,
+    remote_preflight=None,
+) -> ProjectFactoryJobRunner:
     reference_service = ProjectFactoryReferenceAssetService(
         storage_root=tmp_path / ".assets",
     )
@@ -488,6 +557,7 @@ def _runner(tmp_path: Path, process_runner: _FakeProcessRunner) -> ProjectFactor
     return ProjectFactoryJobRunner(
         generator_service=generator,
         process_runner=process_runner,
+        remote_preflight=remote_preflight,
     )
 
 

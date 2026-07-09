@@ -6,4 +6,4 @@ Plan: `Admin Invite And Email Delivery`
 
 ## Checklist
 
-- [ ] T034 Extend New Project chat intake prompt to ask for initial admin emails.
+- [x] T034 Extend New Project chat intake prompt to ask for initial admin emails.

@@ -6,4 +6,4 @@ Plan: `Operations And Documentation`
 
 ## Checklist
 
-- [ ] T066 Update Project Factory operational docs and generated-project readiness docs.
+- [x] T066 Update Project Factory operational docs and generated-project readiness docs.

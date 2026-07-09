@@ -6,4 +6,4 @@ Plan: `Mobile And Workbench UX`
 
 ## Checklist
 
-- [ ] T049 Update build-ready preview text to include admin emails, URL, expiration, and delivery assumptions.
+- [x] T049 Update build-ready preview text to include admin emails, URL, expiration, and delivery assumptions.

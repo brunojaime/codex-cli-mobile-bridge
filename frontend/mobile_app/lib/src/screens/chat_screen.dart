@@ -21,6 +21,7 @@ import '../models/server_capabilities.dart';
 import '../models/server_health.dart';
 import '../models/server_profile.dart';
 import '../models/session_detail.dart';
+import '../models/slash_command.dart';
 import '../models/workspace.dart';
 import '../services/api_client.dart';
 import '../services/audio_note_recorder.dart';
@@ -54,7 +55,9 @@ const String _projectFactoryGeneratorPrompt =
     'Preview Release: real Cloudflare Preview API, persistent D1 data, '
     'https://preview.nienfos.com/<slug> and /api, android-preview-v* APK, '
     'Codex Mobile Apps Bridge registration, production not ready, and no '
-    'mock/demo data unless the user explicitly asks for a mock/demo APK. Keep '
+    'mock/demo data unless the user explicitly asks for a mock/demo APK. Ask '
+    'for initial admin emails before build-ready confirmation, include invite '
+    'delivery assumptions, default expiration, and manual-link fallback. Keep '
     'specs, plan, tasks, reference assets, Flutter, FastAPI, auth, RBAC, admin, '
     'notifications, validation, and workspace handoff consistent.';
 const String _projectFactoryReviewerPrompt =
@@ -246,40 +249,6 @@ enum _RenameChatMode { manual, generated }
 
 enum _ChatBodyView { conversation, agentSummaries, turnSummaries }
 
-enum _SlashCommandActionKind { insertText, sendMessage, callback, disabled }
-
-class _SlashCommand {
-  const _SlashCommand({
-    required this.id,
-    required this.slash,
-    required this.title,
-    required this.description,
-    required this.scope,
-    required this.actionKind,
-    this.payload = '',
-    this.disabledReason,
-  });
-
-  final String id;
-  final String slash;
-  final String title;
-  final String description;
-  final String scope;
-  final _SlashCommandActionKind actionKind;
-  final String payload;
-  final String? disabledReason;
-
-  bool get isEnabled =>
-      disabledReason == null && actionKind != _SlashCommandActionKind.disabled;
-
-  bool matches(String query) {
-    final normalized = query.toLowerCase();
-    return slash.toLowerCase().contains(normalized) ||
-        title.toLowerCase().contains(normalized) ||
-        description.toLowerCase().contains(normalized);
-  }
-}
-
 class ChatScreen extends StatefulWidget {
   const ChatScreen({
     super.key,
@@ -293,6 +262,7 @@ class ChatScreen extends StatefulWidget {
     this.codexMcpAppInstallerOverride,
     this.onActiveServerBaseUrlChanged,
     this.audioRecorderFactoryOverride,
+    this.projectFactoryClientOverride,
   });
 
   final String initialApiBaseUrl;
@@ -307,6 +277,8 @@ class ChatScreen extends StatefulWidget {
   final ValueChanged<String>? onActiveServerBaseUrlChanged;
   @visibleForTesting
   final AudioNoteRecorder Function()? audioRecorderFactoryOverride;
+  @visibleForTesting
+  final ApiClient? projectFactoryClientOverride;
   @override
   State<ChatScreen> createState() => _ChatScreenState();
 }
@@ -336,6 +308,13 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   bool _isOpeningWorkspacePicker = false;
   String? _lastObservedSessionId;
   final Map<String, _ComposerDraft> _sessionDrafts = <String, _ComposerDraft>{};
+  final Map<String, String> _projectFactoryDraftIdBySession =
+      <String, String>{};
+  final Map<String, ProjectFactoryGuidedIntake>
+      _projectFactoryGuidedIntakeBySession =
+      <String, ProjectFactoryGuidedIntake>{};
+  final Set<String> _loadingProjectFactoryIntakeSessions = <String>{};
+  String? _projectFactoryGuidedIntakeErrorText;
   final Map<String, Set<String>> _collapsedMessageIdsBySession =
       <String, Set<String>>{};
   bool _isUpdatingFilteredMessagesView = false;
@@ -689,22 +668,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                           0,
                                         ),
                                         sliver: SliverToBoxAdapter(
-                                          child: _GuidedProjectIntakeCard(
-                                            readyForBuild:
-                                                projectFactoryHasBuildReadyMarker(
-                                              currentSession.messages,
-                                            ),
-                                            onShowContract: () {
-                                              _textController.text =
-                                                  'Show the current New Project contract preview with decisions, assumptions, assets, release plan, Workbench/SDD, web preview, Android plan, blockers, risks, and validation.';
-                                              _textController.selection =
-                                                  TextSelection.collapsed(
-                                                offset:
-                                                    _textController.text.length,
-                                              );
-                                            },
-                                            onConfirmBuild:
-                                                _stageProjectBuildConfirmation,
+                                          child: _buildProjectFactoryIntakeCard(
+                                            currentSession,
                                           ),
                                         ),
                                       ),
@@ -1154,6 +1119,17 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                   onSendAttachments: _handleSendAttachments,
                   onBeginRecording: _handleBeginRecording,
                   onSlashCommand: _handleSlashCommand,
+                  slashCommandContext: SlashCommandContext(
+                    isProjectFactoryIntake: isProjectFactoryIntakeConfiguration(
+                      _chatController.currentSession?.agentConfiguration,
+                    ),
+                    hasActiveBackend: _activeServer != null,
+                    workbenchAvailable: _activeServer != null,
+                    appsAvailable: _activeServer != null,
+                  ),
+                  isProjectFactoryIntake: isProjectFactoryIntakeConfiguration(
+                    _chatController.currentSession?.agentConfiguration,
+                  ),
                   audioRecorderFactory: widget.audioRecorderFactoryOverride ??
                       AudioNoteRecorder.new,
                   isBusy: _chatController.isLoading &&
@@ -1163,9 +1139,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                       _activeServerCapabilities?.supportsImageInput ?? true,
                   fileAttachmentsEnabled: _resolvedFileAttachmentsEnabled(),
                   voiceStatusText: _resolveVoiceStatusText(),
-                  isProjectFactoryIntake: isProjectFactoryIntakeConfiguration(
-                    _chatController.currentSession?.agentConfiguration,
-                  ),
                 ),
               ],
             ),
@@ -1222,6 +1195,12 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           offset: _textController.text.length,
         );
         return true;
+      case 'apps':
+        await _openInstallableAppsSheet();
+        return true;
+      case 'workbench':
+        await _openCodexToolsSheet();
+        return true;
       default:
         return false;
     }
@@ -1231,6 +1210,61 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     _textController.text = 'Confirm the project contract and start the build.';
     _textController.selection = TextSelection.collapsed(
       offset: _textController.text.length,
+    );
+  }
+
+  Widget _buildProjectFactoryIntakeCard(SessionDetail currentSession) {
+    final draftId = _projectFactoryDraftIdBySession[currentSession.id];
+    final intake = _projectFactoryGuidedIntakeBySession[currentSession.id];
+    final isLoading =
+        _loadingProjectFactoryIntakeSessions.contains(currentSession.id);
+    if (intake != null && draftId != null) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          ProjectFactoryGuidedIntakeCard(
+            intake: intake,
+            onAnswer: (questionId, value) => _answerProjectFactoryGuidedIntake(
+              currentSession.id,
+              questionId,
+              value,
+            ),
+            onPreview: () => _previewProjectFactoryGuidedIntake(
+              currentSession.id,
+            ),
+            onConfirm: () => _confirmProjectFactoryGuidedIntake(
+              currentSession.id,
+            ),
+          ),
+          if (isLoading) ...<Widget>[
+            const SizedBox(height: 8),
+            const LinearProgressIndicator(minHeight: 2),
+          ],
+          if (_projectFactoryGuidedIntakeErrorText != null) ...<Widget>[
+            const SizedBox(height: 8),
+            Text(
+              _projectFactoryGuidedIntakeErrorText!,
+              style: const TextStyle(color: Color(0xFFFFB4B4)),
+            ),
+          ],
+        ],
+      );
+    }
+    return _GuidedProjectIntakeCard(
+      readyForBuild: projectFactoryHasBuildReadyMarker(
+            currentSession.messages,
+          ) ||
+          _projectFactoryGuidedIntakeAllowsBuild(currentSession.id),
+      isLoading: isLoading,
+      errorText: _projectFactoryGuidedIntakeErrorText,
+      onShowContract: () {
+        _textController.text =
+            'Show the current New Project contract preview with decisions, assumptions, assets, release plan, Workbench/SDD, web preview, Android plan, blockers, risks, and validation.';
+        _textController.selection = TextSelection.collapsed(
+          offset: _textController.text.length,
+        );
+      },
+      onConfirmBuild: _stageProjectBuildConfirmation,
     );
   }
 
@@ -1623,8 +1657,7 @@ When you create the Project Factory draft, link each asset with POST /project-fa
   }
 
   Future<void> _openNewProjectFactory() async {
-    final activeBaseUrl = _activeServer?.baseUrl ?? widget.initialApiBaseUrl;
-    final client = ApiClient(baseUrl: activeBaseUrl);
+    final client = _projectFactoryClient();
     final capabilities = _activeServerCapabilities;
     if (capabilities != null && !capabilities.supportsProjectFactory) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -1660,12 +1693,47 @@ When you create the Project Factory draft, link each asset with POST /project-fa
       return;
     }
 
-    await _startNewProjectFactoryChat(options);
+    final currentSession = _chatController.currentSession;
+    if (currentSession != null &&
+        isProjectFactoryIntakeConfiguration(
+            currentSession.agentConfiguration)) {
+      final existingDraftId =
+          _projectFactoryDraftIdBySession[currentSession.id];
+      if (existingDraftId != null) {
+        await _loadProjectFactoryGuidedIntake(
+          currentSession.id,
+          existingDraftId,
+          showResumeMessage: true,
+        );
+        return;
+      }
+      final reusableDraft = await _findReusableProjectFactoryGuidedDraft(
+        client,
+      );
+      if (reusableDraft != null) {
+        await _attachProjectFactoryGuidedDraft(
+          currentSession.id,
+          reusableDraft,
+          showResumeMessage: true,
+        );
+        return;
+      }
+    }
+
+    final draft = await _findOrCreateProjectFactoryGuidedDraft(
+      client,
+      options,
+    );
+    if (draft == null || !mounted) {
+      return;
+    }
+    await _startNewProjectFactoryChat(options, draft: draft);
   }
 
   Future<void> _startNewProjectFactoryChat(
-    ProjectFactoryOptions options,
-  ) async {
+    ProjectFactoryOptions options, {
+    required ProjectFactoryDraft draft,
+  }) async {
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('Starting a New project chat...')),
     );
@@ -1703,6 +1771,12 @@ When you create the Project Factory draft, link each asset with POST /project-fa
       return;
     }
 
+    _projectFactoryDraftIdBySession[session.id] = draft.draftId;
+    _projectFactoryGuidedIntakeBySession[session.id] = draft.guidedIntake;
+    setState(() {
+      _projectFactoryGuidedIntakeErrorText = null;
+    });
+
     final didSend = await _chatController.sendMessage(
       _projectFactoryKickoffPrompt(options),
     );
@@ -1721,6 +1795,241 @@ When you create the Project Factory draft, link each asset with POST /project-fa
     }
   }
 
+  ApiClient _projectFactoryClient() {
+    return widget.projectFactoryClientOverride ??
+        ApiClient(baseUrl: _activeServer?.baseUrl ?? widget.initialApiBaseUrl);
+  }
+
+  Future<ProjectFactoryDraft?> _findOrCreateProjectFactoryGuidedDraft(
+    ApiClient client,
+    ProjectFactoryOptions options,
+  ) async {
+    final reusable = await _findReusableProjectFactoryGuidedDraft(client);
+    if (reusable != null) {
+      return reusable;
+    }
+    try {
+      return await client.createProjectFactoryDraft(
+        ProjectFactoryDraftRequest(
+          name: 'Untitled project',
+          businessType: options.businessTypes.isNotEmpty
+              ? options.businessTypes.first
+              : 'general',
+          primaryGoal: 'Build a new application',
+          platforms: options.defaultPlatforms.isNotEmpty
+              ? options.defaultPlatforms
+              : const <String>['ios', 'android', 'web'],
+          backend: options.defaultBackend,
+          frontendStrategy: options.defaultFrontendStrategy,
+          guidedIntakeEnabled: true,
+        ),
+      );
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+              content: Text('Could not create guided intake draft.\n$error')),
+        );
+      }
+      return null;
+    }
+  }
+
+  Future<ProjectFactoryDraft?> _findReusableProjectFactoryGuidedDraft(
+    ApiClient client,
+  ) async {
+    try {
+      final drafts = await client.listProjectFactoryDrafts(limit: 25);
+      for (final draft in drafts) {
+        final intake = draft.guidedIntake;
+        if (!intake.enabled || intake.status == 'build_started') {
+          continue;
+        }
+        return await client.getProjectFactoryDraft(draft.draftId);
+      }
+    } catch (_) {
+      // Reuse is best-effort; creation still gives the user a working intake.
+    }
+    return null;
+  }
+
+  Future<void> _attachProjectFactoryGuidedDraft(
+    String sessionId,
+    ProjectFactoryDraft draft, {
+    bool showResumeMessage = false,
+  }) async {
+    _projectFactoryDraftIdBySession[sessionId] = draft.draftId;
+    _projectFactoryGuidedIntakeBySession[sessionId] = draft.guidedIntake;
+    if (mounted) {
+      setState(() {
+        _projectFactoryGuidedIntakeErrorText = null;
+      });
+    }
+    await _loadProjectFactoryGuidedIntake(
+      sessionId,
+      draft.draftId,
+      showResumeMessage: showResumeMessage,
+    );
+  }
+
+  Future<void> _loadProjectFactoryGuidedIntake(
+    String sessionId,
+    String draftId, {
+    bool showResumeMessage = false,
+  }) async {
+    setState(() {
+      _loadingProjectFactoryIntakeSessions.add(sessionId);
+      _projectFactoryGuidedIntakeErrorText = null;
+    });
+    try {
+      final intake =
+          await _projectFactoryClient().getProjectFactoryGuidedIntake(
+        draftId,
+      );
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _projectFactoryDraftIdBySession[sessionId] = draftId;
+        _projectFactoryGuidedIntakeBySession[sessionId] = intake;
+        _loadingProjectFactoryIntakeSessions.remove(sessionId);
+      });
+      if (showResumeMessage) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Resumed guided New Project intake.')),
+        );
+      }
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _loadingProjectFactoryIntakeSessions.remove(sessionId);
+        _projectFactoryGuidedIntakeErrorText =
+            'Could not load guided intake. $error';
+      });
+    }
+  }
+
+  Future<void> _answerProjectFactoryGuidedIntake(
+    String sessionId,
+    String questionId,
+    Object? value,
+  ) async {
+    final draftId = _projectFactoryDraftIdBySession[sessionId];
+    if (draftId == null) {
+      return;
+    }
+    setState(() {
+      _loadingProjectFactoryIntakeSessions.add(sessionId);
+      _projectFactoryGuidedIntakeErrorText = null;
+    });
+    try {
+      var intake =
+          await _projectFactoryClient().answerProjectFactoryGuidedIntake(
+        draftId: draftId,
+        questionId: questionId,
+        value: value,
+      );
+      if (intake.readyForConfirmation) {
+        intake =
+            await _projectFactoryClient().previewProjectFactoryGuidedIntake(
+          draftId,
+        );
+      }
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _projectFactoryGuidedIntakeBySession[sessionId] = intake;
+        _loadingProjectFactoryIntakeSessions.remove(sessionId);
+      });
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _loadingProjectFactoryIntakeSessions.remove(sessionId);
+        _projectFactoryGuidedIntakeErrorText =
+            'Could not save guided intake answer. $error';
+      });
+    }
+  }
+
+  Future<void> _previewProjectFactoryGuidedIntake(String sessionId) async {
+    final draftId = _projectFactoryDraftIdBySession[sessionId];
+    if (draftId == null) {
+      return;
+    }
+    setState(() {
+      _loadingProjectFactoryIntakeSessions.add(sessionId);
+      _projectFactoryGuidedIntakeErrorText = null;
+    });
+    try {
+      final intake =
+          await _projectFactoryClient().previewProjectFactoryGuidedIntake(
+        draftId,
+      );
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _projectFactoryGuidedIntakeBySession[sessionId] = intake;
+        _loadingProjectFactoryIntakeSessions.remove(sessionId);
+      });
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _loadingProjectFactoryIntakeSessions.remove(sessionId);
+        _projectFactoryGuidedIntakeErrorText =
+            'Could not preview guided intake contract. $error';
+      });
+    }
+  }
+
+  Future<void> _confirmProjectFactoryGuidedIntake(String sessionId) async {
+    final draftId = _projectFactoryDraftIdBySession[sessionId];
+    if (draftId == null) {
+      return;
+    }
+    setState(() {
+      _loadingProjectFactoryIntakeSessions.add(sessionId);
+      _projectFactoryGuidedIntakeErrorText = null;
+    });
+    try {
+      final intake =
+          await _projectFactoryClient().confirmProjectFactoryGuidedIntake(
+        draftId,
+      );
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _projectFactoryGuidedIntakeBySession[sessionId] = intake;
+        _loadingProjectFactoryIntakeSessions.remove(sessionId);
+      });
+      if (intake.buildAllowed) {
+        _stageProjectBuildConfirmation();
+      }
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _loadingProjectFactoryIntakeSessions.remove(sessionId);
+        _projectFactoryGuidedIntakeErrorText =
+            'Could not confirm guided intake contract. $error';
+      });
+    }
+  }
+
+  bool _projectFactoryGuidedIntakeAllowsBuild(String sessionId) {
+    return _projectFactoryGuidedIntakeBySession[sessionId]?.buildAllowed ==
+        true;
+  }
+
   Future<void> _openProjectFactoryHistory() async {
     final activeBaseUrl = _activeServer?.baseUrl ?? widget.initialApiBaseUrl;
     final client = ApiClient(baseUrl: activeBaseUrl);
@@ -1735,8 +2044,20 @@ When you create the Project Factory draft, link each asset with POST /project-fa
         listWebPreviews: () => client.listWebPreviews(),
         listWebPreviewInvites: client.listWebPreviewInvites,
         createWebPreviewInvite: client.createWebPreviewInvite,
+        resendWebPreviewInvite: client.resendWebPreviewInvite,
+        expireWebPreviewInvite: client.expireWebPreviewInvite,
         revokeWebPreviewInvite: client.revokeWebPreviewInvite,
         syncWebPreviewInvite: client.syncWebPreviewInvite,
+        disableWebPreview: ({required previewId, ttlSeconds, reason}) =>
+            client.disableWebPreview(previewId: previewId, reason: reason),
+        expireWebPreview: ({required previewId, ttlSeconds, reason}) =>
+            client.expireWebPreview(previewId: previewId, reason: reason),
+        extendWebPreview: ({required previewId, ttlSeconds, reason}) =>
+            client.extendWebPreview(
+          previewId: previewId,
+          ttlSeconds: ttlSeconds,
+          reason: reason,
+        ),
       ),
     );
   }
@@ -1749,7 +2070,8 @@ When you create the Project Factory draft, link each asset with POST /project-fa
     if (!isProjectFactoryIntakeConfiguration(session?.agentConfiguration)) {
       return true;
     }
-    if (!projectFactoryHasBuildReadyMarker(session!.messages)) {
+    if (!projectFactoryHasBuildReadyMarker(session!.messages) &&
+        !_projectFactoryGuidedIntakeAllowsBuild(session.id)) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text(
@@ -1785,6 +2107,10 @@ When you create the Project Factory draft, link each asset with POST /project-fa
     final reviewerRuns = workflow['reviewer_runs'] ?? 20;
     final platforms = options.defaultPlatforms.join(', ');
     final businessTypes = options.businessTypes.join(', ');
+    final frontendStrategies = options.frontendStrategies
+        .map((strategy) => strategy['id'] as String? ?? '')
+        .where((id) => id.isNotEmpty)
+        .join(', ');
     return '''
 Estamos en modo New Project Factory dentro de un chat normal.
 
@@ -1797,6 +2123,7 @@ Primero respondeme al usuario, no generes archivos todavia. Tu primera respuesta
 - logo/icono;
 - colores, estilo visual y referencias de look and feel;
 - roles/permisos especiales si aplican;
+- emails iniciales de administradores para enviar invites de Web Preview;
 - entidades principales del dominio para DER/ERD;
 - actores y permisos principales para diagrama de clases/componentes;
 - integraciones externas esperadas para componentes/deployment;
@@ -1805,6 +2132,8 @@ Primero respondeme al usuario, no generes archivos todavia. Tu primera respuesta
 Defaults si el usuario no modifica nada:
 - plataformas: $platforms;
 - backend: ${options.defaultBackend};
+- frontendStrategy: ${options.defaultFrontendStrategy};
+- frontend strategies soportadas: ${frontendStrategies.isEmpty ? 'flutter, svelte' : frontendStrategies};
 - logo: generate;
 - roles base: owner, admin, manager, staff, customer, guest;
 - auth: login/registro + Google pending credentials;
@@ -1813,6 +2142,9 @@ Defaults si el usuario no modifica nada:
 - workflow al confirmar: $generatorRuns generator runs + $reviewerRuns reviewer runs.
 - business types sugeridos si necesita elegir: $businessTypes.
 - first release default: Initial Preview Release, no produccion.
+- admin emails iniciales: requeridos antes del marker build-ready; si faltan, preguntalos y no avances.
+- flutter soporta APK preview, Workbench en APK y registro Bridge.
+- svelte es web-first sobre Cloudflare Worker/D1; no prometas APK ni Bridge installable si no hay wrapper explicito.
 
 Si el usuario no sabe el nombre, rubro o titulo, proponelo a partir de lo que cuente. Para colores y look and feel no inventes como definitivo: preguntale o propone 2-3 direcciones y espera confirmacion. Antes de crear nada, devolve un preview corto del proyecto que vas a armar y pedi confirmacion explicita tipo "ok, dale para adelante".
 
@@ -1822,8 +2154,8 @@ Contrato semi-obligatorio antes del build:
 - Cada pregunta debe traer 2-4 respuestas sugeridas, marcar recomendada cuando aplique y permitir una opcion tipo "lo inferis vos".
 - Para cada respuesta, deja claro si es user, inferred, default, asset, prior_context o system y si la confianza es low, medium o high.
 - Los diagramas baseline a validar son: componentes, clases, DER/ERD y deployment. Agrega otros si el dominio lo pide.
-- El preview previo al build debe incluir: brief normalizado, slug, business type, objetivo, plataformas, backend, entidades del dominio, roles/permisos, assets/logo/icono, Workbench/SDD, defaults asumidos, blockers externos, riesgos, validacion y que hara generator/reviewer.
-- En release/runtime profile, describi el Initial Preview Release por defecto: URL `https://preview.nienfos.com/<slug>`, API real `https://preview.nienfos.com/<slug>/api`, runtime profile `preview`, API runtime `cloudflare_preview`, persistencia Cloudflare D1, APK `android-preview-v*`, Bridge registration en Codex Mobile Apps, checks de health/smoke/APK/Bridge, produccion pendiente/no solicitada y mock/demo solamente si el usuario lo pide explicitamente.
+- El preview previo al build debe incluir: brief normalizado, slug, business type, objetivo, plataformas, backend, entidades del dominio, roles/permisos, admin emails iniciales, assets/logo/icono, Workbench/SDD, defaults asumidos, blockers externos, riesgos, validacion y que hara generator/reviewer.
+- En release/runtime profile, describi el Initial Preview Release por defecto: URL `https://preview.nienfos.com/<slug>`, API real `https://preview.nienfos.com/<slug>/api`, runtime profile `preview`, API runtime `cloudflare_preview`, persistencia Cloudflare D1, invite emails/admin links, expiracion/default TTL, delivery provider o manual-link fallback, APK `android-preview-v*`, Bridge registration en Codex Mobile Apps, checks de health/smoke/APK/Bridge, produccion pendiente/no solicitada y mock/demo solamente si el usuario lo pide explicitamente.
 - Persisti el contrato en la conversacion: cuando cambie algo, muestra una version resumida del contrato y los pendientes.
 - No incluyas la linea $kProjectFactoryReadyForBuildMarker hasta que el contrato este ready_for_review y el usuario haya validado explicitamente ese preview.
 - Si el usuario pide construir antes de readiness, responde solo con las preguntas o blockers minimos que faltan.
@@ -4546,11 +4878,15 @@ class _GuidedProjectIntakeCard extends StatelessWidget {
     required this.readyForBuild,
     required this.onShowContract,
     required this.onConfirmBuild,
+    this.isLoading = false,
+    this.errorText,
   });
 
   final bool readyForBuild;
   final VoidCallback onShowContract;
   final VoidCallback onConfirmBuild;
+  final bool isLoading;
+  final String? errorText;
 
   @override
   Widget build(BuildContext context) {
@@ -4594,6 +4930,17 @@ class _GuidedProjectIntakeCard extends StatelessWidget {
               'Name, goal, platforms, backend, roles, entities, assets, release, Workbench/SDD, web preview, Android plan, blockers, risks.',
               style: TextStyle(color: Color(0xFFB8C8EA), height: 1.35),
             ),
+            if (isLoading) ...<Widget>[
+              const SizedBox(height: 10),
+              const LinearProgressIndicator(minHeight: 2),
+            ],
+            if (errorText != null) ...<Widget>[
+              const SizedBox(height: 10),
+              Text(
+                errorText!,
+                style: const TextStyle(color: Color(0xFFFFB4B4), height: 1.35),
+              ),
+            ],
             const SizedBox(height: 12),
             Wrap(
               spacing: 8,
@@ -4928,10 +5275,10 @@ class _SlashCommandPalette extends StatelessWidget {
     required this.onHighlightChanged,
   });
 
-  final List<_SlashCommand> commands;
+  final List<SlashCommand> commands;
   final int selectedIndex;
   final String? errorText;
-  final ValueChanged<_SlashCommand> onSelected;
+  final ValueChanged<SlashCommand> onSelected;
   final ValueChanged<int> onHighlightChanged;
 
   @override
@@ -5054,6 +5401,7 @@ class _Composer extends StatefulWidget {
     required this.onSendAttachments,
     required this.onBeginRecording,
     required this.onSlashCommand,
+    required this.slashCommandContext,
     required this.audioRecorderFactory,
     required this.isBusy,
     required this.voiceEnabled,
@@ -5075,6 +5423,7 @@ class _Composer extends StatefulWidget {
   }) onSendAttachments;
   final Future<void> Function() onBeginRecording;
   final Future<bool> Function(String commandId, String payload) onSlashCommand;
+  final SlashCommandContext slashCommandContext;
   final AudioNoteRecorder Function() audioRecorderFactory;
   final bool isBusy;
   final bool voiceEnabled;
@@ -5532,155 +5881,15 @@ class _ComposerState extends State<_Composer> {
     if (text.contains(RegExp(r'\s'))) {
       return null;
     }
-    return text.substring(1).trim();
+    return slashQueryForComposerText(text, selectionValid: true);
   }
 
-  List<_SlashCommand> get _slashCommands {
-    final commands = <_SlashCommand>[
-      const _SlashCommand(
-        id: 'new-project',
-        slash: '/new-project',
-        title: 'New Project',
-        description: 'Open or resume guided New Project intake.',
-        scope: 'global',
-        actionKind: _SlashCommandActionKind.callback,
-      ),
-      const _SlashCommand(
-        id: 'status',
-        slash: '/status',
-        title: 'Status',
-        description: 'Ask for session, backend, workspace, and run status.',
-        scope: 'global',
-        actionKind: _SlashCommandActionKind.sendMessage,
-        payload: 'Show current session, backend, workspace, and run status.',
-      ),
-      const _SlashCommand(
-        id: 'review',
-        slash: '/review',
-        title: 'Review',
-        description: 'Request a focused review of the current workspace.',
-        scope: 'workspace',
-        actionKind: _SlashCommandActionKind.sendMessage,
-        payload:
-            'Review the current workspace changes and call out bugs, risks, and missing tests.',
-      ),
-      const _SlashCommand(
-        id: 'feedback',
-        slash: '/feedback',
-        title: 'Feedback',
-        description: 'Stage a feedback note in the composer.',
-        scope: 'global',
-        actionKind: _SlashCommandActionKind.insertText,
-        payload: 'Feedback: ',
-      ),
-      const _SlashCommand(
-        id: 'compact',
-        slash: '/compact',
-        title: 'Compact',
-        description: 'Ask for a compact conversation summary.',
-        scope: 'session',
-        actionKind: _SlashCommandActionKind.sendMessage,
-        payload:
-            'Compact this conversation into a concise summary with current decisions and next steps.',
-      ),
-      const _SlashCommand(
-        id: 'diff',
-        slash: '/diff',
-        title: 'Diff',
-        description: 'Ask for current workspace changes.',
-        scope: 'workspace',
-        actionKind: _SlashCommandActionKind.sendMessage,
-        payload:
-            'Show the current workspace diff and summarize the changed files.',
-      ),
-      const _SlashCommand(
-        id: 'plan',
-        slash: '/plan',
-        title: 'Plan',
-        description: 'Planning mode is not exposed in this mobile build.',
-        scope: 'global',
-        actionKind: _SlashCommandActionKind.disabled,
-        disabledReason: 'Planning mode is unavailable in this build.',
-      ),
-      const _SlashCommand(
-        id: 'goal',
-        slash: '/goal',
-        title: 'Goal',
-        description: 'Persistent goals are not exposed in this mobile build.',
-        scope: 'global',
-        actionKind: _SlashCommandActionKind.disabled,
-        disabledReason: 'Goal management is unavailable in this build.',
-      ),
-      const _SlashCommand(
-        id: 'workbench',
-        slash: '/workbench',
-        title: 'Workbench',
-        description: 'Open SDD Workbench when supported by the workspace.',
-        scope: 'workbench',
-        actionKind: _SlashCommandActionKind.disabled,
-        disabledReason: 'Workbench command routing is not available here.',
-      ),
-      const _SlashCommand(
-        id: 'apps',
-        slash: '/apps',
-        title: 'Apps',
-        description: 'Open installable apps when available.',
-        scope: 'global',
-        actionKind: _SlashCommandActionKind.disabled,
-        disabledReason: 'Apps catalog routing is not available here.',
-      ),
-      const _SlashCommand(
-        id: 'model',
-        slash: '/model',
-        title: 'Model',
-        description: 'Model selection is not exposed in this composer.',
-        scope: 'global',
-        actionKind: _SlashCommandActionKind.disabled,
-        disabledReason: 'Model selection is unavailable in this composer.',
-      ),
-      const _SlashCommand(
-        id: 'permissions',
-        slash: '/permissions',
-        title: 'Permissions',
-        description: 'Permission state is not exposed by this backend.',
-        scope: 'global',
-        actionKind: _SlashCommandActionKind.disabled,
-        disabledReason: 'Permission metadata is unavailable from this backend.',
-      ),
-    ];
-    if (!widget.isProjectFactoryIntake) {
-      return commands;
-    }
-    return <_SlashCommand>[
-      ...commands,
-      const _SlashCommand(
-        id: 'project-contract',
-        slash: '/project-contract',
-        title: 'Project Contract',
-        description: 'Ask for the current New Project contract preview.',
-        scope: 'new_project',
-        actionKind: _SlashCommandActionKind.sendMessage,
-        payload:
-            'Show the current New Project contract preview with assumptions, blockers, assets, release plan, Workbench/SDD, web preview, and Android plan.',
-      ),
-      const _SlashCommand(
-        id: 'project-build',
-        slash: '/project-build',
-        title: 'Project Build',
-        description: 'Confirm build only after the contract is ready.',
-        scope: 'new_project',
-        actionKind: _SlashCommandActionKind.insertText,
-        payload: 'Confirm the project contract and start the build.',
-      ),
-    ];
+  List<SlashCommand> get _slashCommands {
+    return buildSlashCommands(widget.slashCommandContext);
   }
 
-  List<_SlashCommand> _filteredSlashCommands(String query) {
-    final normalized = query.trim();
-    final commands = _slashCommands
-        .where((command) => normalized.isEmpty || command.matches(normalized))
-        .toList(growable: false);
-    return commands;
+  List<SlashCommand> _filteredSlashCommands(String query) {
+    return filterSlashCommands(_slashCommands, query);
   }
 
   Future<void> _selectHighlightedSlashCommand() async {
@@ -5699,7 +5908,7 @@ class _ComposerState extends State<_Composer> {
     await _selectSlashCommand(commands[index]);
   }
 
-  Future<void> _selectSlashCommand(_SlashCommand command) async {
+  Future<void> _selectSlashCommand(SlashCommand command) async {
     if (!command.isEnabled) {
       setState(() {
         _slashCommandErrorText = command.disabledReason ??
@@ -5712,19 +5921,22 @@ class _ComposerState extends State<_Composer> {
       _selectedSlashCommandIndex = 0;
     });
     switch (command.actionKind) {
-      case _SlashCommandActionKind.insertText:
+      case SlashCommandActionKind.insertText:
         widget.controller.text = command.payload;
         widget.controller.selection = TextSelection.collapsed(
           offset: widget.controller.text.length,
         );
         _composerFocusNode.requestFocus();
         break;
-      case _SlashCommandActionKind.sendMessage:
-      case _SlashCommandActionKind.callback:
+      case SlashCommandActionKind.sendMessage:
+      case SlashCommandActionKind.openPanel:
+      case SlashCommandActionKind.route:
+      case SlashCommandActionKind.backend:
+      case SlashCommandActionKind.callback:
         widget.controller.clear();
         await widget.onSlashCommand(command.id, command.payload);
         break;
-      case _SlashCommandActionKind.disabled:
+      case SlashCommandActionKind.disabled:
         break;
     }
   }
@@ -7003,6 +7215,7 @@ class NewProjectFactoryDraft {
     required this.primaryGoal,
     required this.platforms,
     required this.backend,
+    required this.frontendStrategy,
     required this.logoMode,
     required this.visualReferencePaths,
     required this.referenceImages,
@@ -7013,9 +7226,214 @@ class NewProjectFactoryDraft {
   final String primaryGoal;
   final List<String> platforms;
   final String backend;
+  final String frontendStrategy;
   final String logoMode;
   final List<String> visualReferencePaths;
   final List<XFile> referenceImages;
+}
+
+class ProjectFactoryGuidedIntakeCard extends StatefulWidget {
+  const ProjectFactoryGuidedIntakeCard({
+    super.key,
+    required this.intake,
+    required this.onAnswer,
+    required this.onPreview,
+    required this.onConfirm,
+  });
+
+  final ProjectFactoryGuidedIntake intake;
+  final Future<void> Function(String questionId, Object? value) onAnswer;
+  final Future<void> Function() onPreview;
+  final Future<void> Function() onConfirm;
+
+  @override
+  State<ProjectFactoryGuidedIntakeCard> createState() =>
+      _ProjectFactoryGuidedIntakeCardState();
+}
+
+class _ProjectFactoryGuidedIntakeCardState
+    extends State<ProjectFactoryGuidedIntakeCard> {
+  final Map<String, TextEditingController> _controllers =
+      <String, TextEditingController>{};
+
+  @override
+  void dispose() {
+    for (final controller in _controllers.values) {
+      controller.dispose();
+    }
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            Row(
+              children: <Widget>[
+                const Icon(Icons.route_outlined),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    'Guided intake',
+                    style: theme.textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+                _StatusPill(
+                  label: widget.intake.status.replaceAll('_', ' '),
+                  backgroundColor: widget.intake.isBlocked
+                      ? const Color(0xFF3A2714)
+                      : const Color(0xFF143A32),
+                  foregroundColor: widget.intake.isBlocked
+                      ? const Color(0xFFFFD9A3)
+                      : const Color(0xFF8FF5DE),
+                ),
+              ],
+            ),
+            if (widget.intake.missingFields.isNotEmpty) ...<Widget>[
+              const SizedBox(height: 10),
+              ...widget.intake.missingFields.map(
+                (field) => Text(
+                  field['message']?.toString() ?? field['field'].toString(),
+                  style: const TextStyle(color: Color(0xFFFFD27D)),
+                ),
+              ),
+            ],
+            const SizedBox(height: 12),
+            ...widget.intake.questions.map(_buildQuestion),
+            if (widget.intake.contractPreview != null) ...<Widget>[
+              const SizedBox(height: 12),
+              _buildPreview(widget.intake.contractPreview!),
+            ],
+            if (widget.intake.blockers.isNotEmpty) ...<Widget>[
+              const SizedBox(height: 12),
+              Text('Blockers', style: theme.textTheme.titleSmall),
+              const SizedBox(height: 6),
+              ...widget.intake.blockers.map(
+                (blocker) => Text(
+                  '${blocker['scope']}: ${blocker['message']}',
+                  style: TextStyle(
+                    color: blocker['external'] == true
+                        ? const Color(0xFFFFD27D)
+                        : theme.colorScheme.error,
+                  ),
+                ),
+              ),
+            ],
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: <Widget>[
+                OutlinedButton.icon(
+                  onPressed: widget.onPreview,
+                  icon: const Icon(Icons.fact_check_outlined),
+                  label: const Text('Preview contract'),
+                ),
+                FilledButton.icon(
+                  onPressed: widget.intake.readyForConfirmation
+                      ? widget.onConfirm
+                      : null,
+                  icon: const Icon(Icons.check_circle_outline),
+                  label: const Text('Confirm build'),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildQuestion(Map<String, dynamic> question) {
+    final id = question['id']?.toString() ?? '';
+    final options = _projectFactoryMapList(question['options']);
+    final controller =
+        _controllers.putIfAbsent(id, () => TextEditingController());
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          Text(
+            question['title']?.toString() ?? id,
+            style: const TextStyle(fontWeight: FontWeight.w700),
+          ),
+          const SizedBox(height: 4),
+          Text(question['prompt']?.toString() ?? ''),
+          if (options.isNotEmpty) ...<Widget>[
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: options.map((option) {
+                return ActionChip(
+                  label: Text(
+                    option['recommended'] == true
+                        ? '${option['label']} (recommended)'
+                        : option['label']?.toString() ?? '',
+                  ),
+                  onPressed: () => widget.onAnswer(id, option['value']),
+                );
+              }).toList(),
+            ),
+          ],
+          const SizedBox(height: 8),
+          TextField(
+            controller: controller,
+            decoration: const InputDecoration(
+              labelText: 'Answer',
+              prefixIcon: Icon(Icons.edit_outlined),
+            ),
+            onSubmitted: (value) => widget.onAnswer(id, value),
+          ),
+          Align(
+            alignment: Alignment.centerRight,
+            child: TextButton(
+              onPressed: () => widget.onAnswer(id, controller.text),
+              child: const Text('Save answer'),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPreview(Map<String, dynamic> preview) {
+    final decisions = _projectFactoryMap(preview['decisions']);
+    final defaults = _projectFactoryMap(preview['defaults']);
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: const Color(0xFF101931),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFF263454)),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: <Widget>[
+            const Text(
+              'Contract preview',
+              style: TextStyle(fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 8),
+            Text('Name: ${decisions['name'] ?? ''}'),
+            Text(
+                'Platforms: ${(decisions['platforms'] as List?)?.join(', ') ?? ''}'),
+            Text('Preview: ${defaults['previewUrl'] ?? ''}'),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 class NewProjectFactoryDialog extends StatefulWidget {
@@ -7041,6 +7459,7 @@ class NewProjectFactoryDialogState extends State<NewProjectFactoryDialog> {
   final List<XFile> _referenceImages = <XFile>[];
   late String _businessType;
   late String _backend;
+  late String _frontendStrategy;
   late String _logoMode;
   late Set<String> _platforms;
 
@@ -7051,6 +7470,7 @@ class NewProjectFactoryDialogState extends State<NewProjectFactoryDialog> {
         ? widget.options.businessTypes.first
         : 'other';
     _backend = widget.options.defaultBackend;
+    _frontendStrategy = widget.options.defaultFrontendStrategy;
     _logoMode = widget.options.logoModes.isNotEmpty
         ? widget.options.logoModes.first
         : 'generate';
@@ -7080,6 +7500,29 @@ class NewProjectFactoryDialogState extends State<NewProjectFactoryDialog> {
     final platforms = widget.options.platforms.isNotEmpty
         ? widget.options.platforms
         : <String>['ios', 'android', 'web'];
+    final frontendStrategies = widget.options.frontendStrategies.isNotEmpty
+        ? widget.options.frontendStrategies
+        : const <Map<String, dynamic>>[
+            <String, dynamic>{
+              'id': 'flutter',
+              'display_name': 'Flutter',
+              'project_kind': 'mobile_web',
+            },
+            <String, dynamic>{
+              'id': 'svelte',
+              'display_name': 'Svelte',
+              'project_kind': 'web',
+            },
+          ];
+    final strategyIds = frontendStrategies
+        .map((strategy) => strategy['id'] as String? ?? '')
+        .where((id) => id.isNotEmpty)
+        .toList(growable: false);
+    if (!strategyIds.contains(_frontendStrategy) && strategyIds.isNotEmpty) {
+      _frontendStrategy = strategyIds.first;
+    }
+    final strategyBlocker = _frontendStrategy == 'svelte' &&
+        (_platforms.contains('android') || _platforms.contains('ios'));
     return Padding(
       padding: const EdgeInsets.all(20),
       child: Column(
@@ -7155,6 +7598,41 @@ class NewProjectFactoryDialogState extends State<NewProjectFactoryDialog> {
                       prefixIcon: Icon(Icons.flag_outlined),
                     ),
                   ),
+                  const SizedBox(height: 16),
+                  DropdownButtonFormField<String>(
+                    initialValue: _frontendStrategy,
+                    decoration: const InputDecoration(
+                      labelText: 'Frontend',
+                      prefixIcon: Icon(Icons.dashboard_customize_outlined),
+                    ),
+                    items: frontendStrategies
+                        .map(
+                          (strategy) => DropdownMenuItem<String>(
+                            value: strategy['id'] as String? ?? 'flutter',
+                            child: Text(
+                              strategy['display_name'] as String? ??
+                                  strategy['id'] as String? ??
+                                  'flutter',
+                            ),
+                          ),
+                        )
+                        .toList(),
+                    onChanged: (value) {
+                      if (value == null) {
+                        return;
+                      }
+                      setState(() => _frontendStrategy = value);
+                    },
+                  ),
+                  if (strategyBlocker) ...<Widget>[
+                    const SizedBox(height: 8),
+                    Text(
+                      'Svelte is web-only for now. Remove Android/iOS or choose Flutter for APK and installable preview.',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: theme.colorScheme.error,
+                      ),
+                    ),
+                  ],
                   const SizedBox(height: 16),
                   Wrap(
                     spacing: 8,
@@ -7260,7 +7738,7 @@ class NewProjectFactoryDialogState extends State<NewProjectFactoryDialog> {
           ),
           const SizedBox(height: 16),
           FilledButton.icon(
-            onPressed: _submit,
+            onPressed: strategyBlocker ? null : _submit,
             icon: const Icon(Icons.play_arrow_rounded),
             label: const Text('Create'),
           ),
@@ -7313,6 +7791,17 @@ class NewProjectFactoryDialogState extends State<NewProjectFactoryDialog> {
       );
       return;
     }
+    if (_frontendStrategy == 'svelte' &&
+        (_platforms.contains('android') || _platforms.contains('ios'))) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Svelte is web-only for now. Remove Android/iOS or choose Flutter.',
+          ),
+        ),
+      );
+      return;
+    }
     Navigator.of(context).pop(
       NewProjectFactoryDraft(
         name: name,
@@ -7320,6 +7809,7 @@ class NewProjectFactoryDialogState extends State<NewProjectFactoryDialog> {
         primaryGoal: goal,
         platforms: _platforms.toList(growable: false),
         backend: _backend,
+        frontendStrategy: _frontendStrategy,
         logoMode: _logoMode,
         visualReferencePaths: _visualReferencesController.text
             .split(',')
@@ -7342,6 +7832,26 @@ String? _mimeTypeForReferenceImage(String filename) {
   };
 }
 
+List<Map<String, dynamic>> _projectFactoryMapList(Object? value) {
+  if (value is! List) {
+    return const <Map<String, dynamic>>[];
+  }
+  return value
+      .whereType<Map>()
+      .map((item) => item.map((key, value) => MapEntry(key.toString(), value)))
+      .toList(growable: false);
+}
+
+Map<String, dynamic> _projectFactoryMap(Object? value) {
+  if (value is Map<String, dynamic>) {
+    return value;
+  }
+  if (value is Map) {
+    return value.map((key, item) => MapEntry(key.toString(), item));
+  }
+  return const <String, dynamic>{};
+}
+
 typedef ProjectFactoryJobPoller = Future<ProjectFactoryJob> Function(
     String jobId);
 typedef ProjectFactoryJobLister = Future<List<ProjectFactoryJobSummary>>
@@ -7355,10 +7865,17 @@ typedef WebPreviewInviteCreator = Future<WebPreviewInvite> Function(
   String previewId, {
   int? ttlSeconds,
   bool singleUse,
+  String? email,
+  String role,
 });
 typedef WebPreviewInviteMutator = Future<WebPreviewInvite> Function({
   required String previewId,
   required String inviteId,
+});
+typedef WebPreviewMutator = Future<WebPreview> Function({
+  required String previewId,
+  int? ttlSeconds,
+  String? reason,
 });
 typedef WebPreviewUrlOpener = Future<void> Function(String url);
 
@@ -7371,8 +7888,13 @@ class ProjectFactoryHistoryDialog extends StatefulWidget {
     this.listWebPreviews,
     this.listWebPreviewInvites,
     this.createWebPreviewInvite,
+    this.resendWebPreviewInvite,
+    this.expireWebPreviewInvite,
     this.revokeWebPreviewInvite,
     this.syncWebPreviewInvite,
+    this.disableWebPreview,
+    this.expireWebPreview,
+    this.extendWebPreview,
     this.onOpenWebPreviewUrl,
   });
 
@@ -7382,8 +7904,13 @@ class ProjectFactoryHistoryDialog extends StatefulWidget {
   final WebPreviewLister? listWebPreviews;
   final WebPreviewInviteLister? listWebPreviewInvites;
   final WebPreviewInviteCreator? createWebPreviewInvite;
+  final WebPreviewInviteMutator? resendWebPreviewInvite;
+  final WebPreviewInviteMutator? expireWebPreviewInvite;
   final WebPreviewInviteMutator? revokeWebPreviewInvite;
   final WebPreviewInviteMutator? syncWebPreviewInvite;
+  final WebPreviewMutator? disableWebPreview;
+  final WebPreviewMutator? expireWebPreview;
+  final WebPreviewMutator? extendWebPreview;
   final WebPreviewUrlOpener? onOpenWebPreviewUrl;
 
   @override
@@ -7549,8 +8076,13 @@ class _ProjectFactoryHistoryDialogState
         listWebPreviews: listWebPreviews,
         listInvites: widget.listWebPreviewInvites,
         createInvite: widget.createWebPreviewInvite,
+        resendInvite: widget.resendWebPreviewInvite,
+        expireInvite: widget.expireWebPreviewInvite,
         revokeInvite: widget.revokeWebPreviewInvite,
         syncInvite: widget.syncWebPreviewInvite,
+        disablePreview: widget.disableWebPreview,
+        expirePreview: widget.expireWebPreview,
+        extendPreview: widget.extendWebPreview,
         onOpenUrl: widget.onOpenWebPreviewUrl,
       ),
     );
@@ -7563,16 +8095,26 @@ class WebPreviewPanelDialog extends StatefulWidget {
     required this.listWebPreviews,
     this.listInvites,
     this.createInvite,
+    this.resendInvite,
+    this.expireInvite,
     this.revokeInvite,
     this.syncInvite,
+    this.disablePreview,
+    this.expirePreview,
+    this.extendPreview,
     this.onOpenUrl,
   });
 
   final WebPreviewLister listWebPreviews;
   final WebPreviewInviteLister? listInvites;
   final WebPreviewInviteCreator? createInvite;
+  final WebPreviewInviteMutator? resendInvite;
+  final WebPreviewInviteMutator? expireInvite;
   final WebPreviewInviteMutator? revokeInvite;
   final WebPreviewInviteMutator? syncInvite;
+  final WebPreviewMutator? disablePreview;
+  final WebPreviewMutator? expirePreview;
+  final WebPreviewMutator? extendPreview;
   final WebPreviewUrlOpener? onOpenUrl;
 
   @override
@@ -7667,9 +8209,36 @@ class _WebPreviewPanelDialogState extends State<WebPreviewPanelDialog> {
           onOpen: _previews[index].isActive
               ? () => _openUrl(_previews[index].previewUrl)
               : null,
+          onCopy: _previews[index].previewUrl.isEmpty
+              ? null
+              : () => unawaited(
+                    _copyPreviewText(context, _previews[index].previewUrl),
+                  ),
           onInvites: widget.listInvites == null
               ? null
               : () => _openInvites(_previews[index]),
+          onExtend: widget.extendPreview == null
+              ? null
+              : () => _mutatePreview(
+                    _previews[index],
+                    widget.extendPreview,
+                    ttlSeconds: 7 * 24 * 60 * 60,
+                    reason: 'extended from mobile workbench',
+                  ),
+          onExpire: widget.expirePreview == null
+              ? null
+              : () => _mutatePreview(
+                    _previews[index],
+                    widget.expirePreview,
+                    reason: 'expired from mobile workbench',
+                  ),
+          onDisable: widget.disablePreview == null
+              ? null
+              : () => _mutatePreview(
+                    _previews[index],
+                    widget.disablePreview,
+                    reason: 'disabled from mobile workbench',
+                  ),
         ),
       ),
     );
@@ -7699,11 +8268,39 @@ class _WebPreviewPanelDialogState extends State<WebPreviewPanelDialog> {
         preview: preview,
         listInvites: listInvites,
         createInvite: widget.createInvite,
+        resendInvite: widget.resendInvite,
+        expireInvite: widget.expireInvite,
         revokeInvite: widget.revokeInvite,
         syncInvite: widget.syncInvite,
       ),
     );
     await _load();
+  }
+
+  Future<void> _mutatePreview(
+    WebPreview preview,
+    WebPreviewMutator? mutator, {
+    int? ttlSeconds,
+    String? reason,
+  }) async {
+    if (mutator == null) {
+      return;
+    }
+    try {
+      await mutator(
+        previewId: preview.previewId,
+        ttlSeconds: ttlSeconds,
+        reason: reason,
+      );
+      await _load();
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _error = error.toString();
+      });
+    }
   }
 }
 
@@ -7711,12 +8308,20 @@ class _WebPreviewCard extends StatelessWidget {
   const _WebPreviewCard({
     required this.preview,
     required this.onOpen,
+    required this.onCopy,
     required this.onInvites,
+    required this.onExtend,
+    required this.onExpire,
+    required this.onDisable,
   });
 
   final WebPreview preview;
   final VoidCallback? onOpen;
+  final VoidCallback? onCopy;
   final VoidCallback? onInvites;
+  final VoidCallback? onExtend;
+  final VoidCallback? onExpire;
+  final VoidCallback? onDisable;
 
   @override
   Widget build(BuildContext context) {
@@ -7747,6 +8352,15 @@ class _WebPreviewCard extends StatelessWidget {
             if (preview.previewUrl.isNotEmpty) Text(preview.previewUrl),
             if (preview.healthUrl != null && preview.healthUrl!.isNotEmpty)
               Text('Health: ${preview.healthUrl}'),
+            if (preview.expiresAt != null && preview.expiresAt!.isNotEmpty)
+              Text('Expires: ${preview.expiresAt}'),
+            if (preview.disabledAt != null && preview.disabledAt!.isNotEmpty)
+              Text('Disabled: ${preview.disabledAt}'),
+            if (preview.disabledReason != null &&
+                preview.disabledReason!.isNotEmpty)
+              Text('Reason: ${preview.disabledReason}'),
+            if (preview.auditEvents.isNotEmpty)
+              Text('Audit events: ${preview.auditEvents.length}'),
             if (resourceSummary.isNotEmpty) Text(resourceSummary),
             if (preview.inviteSyncSummary != null)
               Text(_inviteSyncSummary(preview.inviteSyncSummary!)),
@@ -7769,11 +8383,35 @@ class _WebPreviewCard extends StatelessWidget {
                     icon: const Icon(Icons.open_in_browser),
                     label: const Text('Open preview'),
                   ),
+                if (onCopy != null)
+                  OutlinedButton.icon(
+                    onPressed: onCopy,
+                    icon: const Icon(Icons.copy),
+                    label: const Text('Copy URL'),
+                  ),
                 if (onInvites != null)
                   OutlinedButton.icon(
                     onPressed: onInvites,
                     icon: const Icon(Icons.mail_outline),
                     label: const Text('Invites'),
+                  ),
+                if (onExtend != null)
+                  OutlinedButton.icon(
+                    onPressed: onExtend,
+                    icon: const Icon(Icons.update),
+                    label: const Text('Extend 7d'),
+                  ),
+                if (onExpire != null)
+                  OutlinedButton.icon(
+                    onPressed: onExpire,
+                    icon: const Icon(Icons.timer_off_outlined),
+                    label: const Text('Expire'),
+                  ),
+                if (onDisable != null)
+                  OutlinedButton.icon(
+                    onPressed: onDisable,
+                    icon: const Icon(Icons.block),
+                    label: const Text('Disable'),
                   ),
               ],
             ),
@@ -7790,6 +8428,8 @@ class WebPreviewInvitesDialog extends StatefulWidget {
     required this.preview,
     required this.listInvites,
     this.createInvite,
+    this.resendInvite,
+    this.expireInvite,
     this.revokeInvite,
     this.syncInvite,
   });
@@ -7797,6 +8437,8 @@ class WebPreviewInvitesDialog extends StatefulWidget {
   final WebPreview preview;
   final WebPreviewInviteLister listInvites;
   final WebPreviewInviteCreator? createInvite;
+  final WebPreviewInviteMutator? resendInvite;
+  final WebPreviewInviteMutator? expireInvite;
   final WebPreviewInviteMutator? revokeInvite;
   final WebPreviewInviteMutator? syncInvite;
 
@@ -7809,6 +8451,8 @@ class _WebPreviewInvitesDialogState extends State<WebPreviewInvitesDialog> {
   final TextEditingController _ttlController = TextEditingController(
     text: '604800',
   );
+  final TextEditingController _emailController = TextEditingController();
+  String _role = 'admin';
   bool _singleUse = true;
   bool _loading = true;
   bool _busy = false;
@@ -7825,6 +8469,7 @@ class _WebPreviewInvitesDialogState extends State<WebPreviewInvitesDialog> {
   @override
   void dispose() {
     _ttlController.dispose();
+    _emailController.dispose();
     super.dispose();
   }
 
@@ -7903,34 +8548,63 @@ class _WebPreviewInvitesDialogState extends State<WebPreviewInvitesDialog> {
   }
 
   Widget _buildCreateInvite(BuildContext context) {
-    return Row(
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: <Widget>[
-        SizedBox(
-          width: 130,
-          child: TextField(
-            controller: _ttlController,
-            keyboardType: TextInputType.number,
-            decoration: const InputDecoration(labelText: 'TTL seconds'),
-          ),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: SwitchListTile(
-            contentPadding: EdgeInsets.zero,
-            title: const Text('Single use'),
-            value: _singleUse,
-            onChanged: _busy
-                ? null
-                : (value) => setState(() {
-                      _singleUse = value;
-                    }),
-          ),
-        ),
-        const SizedBox(width: 12),
-        FilledButton.icon(
-          onPressed: _busy || widget.createInvite == null ? null : _create,
-          icon: const Icon(Icons.add_link),
-          label: const Text('Create invite'),
+        Wrap(
+          spacing: 12,
+          runSpacing: 8,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: <Widget>[
+            SizedBox(
+              width: 220,
+              child: TextField(
+                controller: _emailController,
+                keyboardType: TextInputType.emailAddress,
+                decoration: const InputDecoration(labelText: 'Admin email'),
+              ),
+            ),
+            SizedBox(
+              width: 130,
+              child: TextField(
+                controller: _ttlController,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(labelText: 'TTL seconds'),
+              ),
+            ),
+            DropdownButton<String>(
+              value: _role,
+              items: const <DropdownMenuItem<String>>[
+                DropdownMenuItem(value: 'admin', child: Text('admin')),
+                DropdownMenuItem(value: 'owner', child: Text('owner')),
+                DropdownMenuItem(value: 'manager', child: Text('manager')),
+                DropdownMenuItem(value: 'staff', child: Text('staff')),
+              ],
+              onChanged: _busy
+                  ? null
+                  : (value) => setState(() {
+                        _role = value ?? 'admin';
+                      }),
+            ),
+            SizedBox(
+              width: 190,
+              child: SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Single use'),
+                value: _singleUse,
+                onChanged: _busy
+                    ? null
+                    : (value) => setState(() {
+                          _singleUse = value;
+                        }),
+              ),
+            ),
+            FilledButton.icon(
+              onPressed: _busy || widget.createInvite == null ? null : _create,
+              icon: const Icon(Icons.add_link),
+              label: const Text('Create invite'),
+            ),
+          ],
         ),
       ],
     );
@@ -7945,9 +8619,17 @@ class _WebPreviewInvitesDialogState extends State<WebPreviewInvitesDialog> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
           Text('Expires: ${invite.expiresAt}'),
+          if (invite.email != null && invite.email!.isNotEmpty)
+            Text('Email: ${invite.email}'),
+          Text('Role: ${invite.role}'),
+          Text('Delivery: ${invite.emailDeliveryStatus}'),
+          if (invite.manualDeliveryRequired)
+            const Text('Manual link delivery required'),
+          if (invite.resendCount > 0) Text('Resends: ${invite.resendCount}'),
           Text('Sync: ${invite.syncStatus}'),
           if (invite.syncedAt != null) Text('Synced: ${invite.syncedAt}'),
           if (invite.revokedAt != null) Text('Revoked: ${invite.revokedAt}'),
+          if (invite.expiredAt != null) Text('Expired: ${invite.expiredAt}'),
           if (invite.syncError != null && invite.syncError!.isNotEmpty)
             Text(invite.syncError!),
         ],
@@ -7959,6 +8641,16 @@ class _WebPreviewInvitesDialogState extends State<WebPreviewInvitesDialog> {
             TextButton(
               onPressed: _busy ? null : () => _sync(invite),
               child: const Text('Retry sync'),
+            ),
+          if (!invite.isRevoked && widget.resendInvite != null)
+            TextButton(
+              onPressed: _busy ? null : () => _resend(invite),
+              child: const Text('Resend'),
+            ),
+          if (!invite.isRevoked && widget.expireInvite != null)
+            TextButton(
+              onPressed: _busy ? null : () => _expire(invite),
+              child: const Text('Expire'),
             ),
           if (!invite.isRevoked && widget.revokeInvite != null)
             TextButton(
@@ -7985,6 +8677,8 @@ class _WebPreviewInvitesDialogState extends State<WebPreviewInvitesDialog> {
         widget.preview.previewId,
         ttlSeconds: ttl,
         singleUse: _singleUse,
+        email: _emailController.text.trim(),
+        role: _role,
       );
       if (!mounted) {
         return;
@@ -8011,6 +8705,14 @@ class _WebPreviewInvitesDialogState extends State<WebPreviewInvitesDialog> {
 
   Future<void> _sync(WebPreviewInvite invite) async {
     await _mutateInvite(invite, widget.syncInvite);
+  }
+
+  Future<void> _resend(WebPreviewInvite invite) async {
+    await _mutateInvite(invite, widget.resendInvite);
+  }
+
+  Future<void> _expire(WebPreviewInvite invite) async {
+    await _mutateInvite(invite, widget.expireInvite);
   }
 
   Future<void> _mutateInvite(
@@ -10022,9 +10724,11 @@ Widget buildComposerVoiceRecordingHarnessForTest({
       onSendAudio,
   required Future<bool> Function(List<XFile> attachments, {String? prompt})
       onSendAttachments,
+  Future<bool> Function()? onSend,
   String stagedText = '',
   bool stageAttachment = false,
   bool isProjectFactoryIntake = false,
+  SlashCommandContext slashCommandContext = const SlashCommandContext(),
   Future<bool> Function(String commandId, String payload)? onSlashCommand,
 }) {
   return _Composer(
@@ -10049,7 +10753,7 @@ Widget buildComposerVoiceRecordingHarnessForTest({
           : const <_PendingAttachmentDraft>[],
     ),
     onDraftChanged: (_) {},
-    onSend: () async => false,
+    onSend: onSend ?? () async => false,
     onSendAudio: onSendAudio,
     onSendAttachments: (attachments, {prompt}) {
       return onSendAttachments(
@@ -10059,6 +10763,7 @@ Widget buildComposerVoiceRecordingHarnessForTest({
     },
     onBeginRecording: () async {},
     onSlashCommand: onSlashCommand ?? (_, __) async => false,
+    slashCommandContext: slashCommandContext,
     audioRecorderFactory: audioRecorderFactory,
     isBusy: false,
     voiceEnabled: true,

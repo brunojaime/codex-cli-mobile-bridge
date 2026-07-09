@@ -6,4 +6,4 @@ Plan: `Project Factory Backend Integration`
 
 ## Checklist
 
-- [ ] T047 Add interrupted preview job recovery behavior.
+- [x] T047 Add interrupted preview job recovery behavior.

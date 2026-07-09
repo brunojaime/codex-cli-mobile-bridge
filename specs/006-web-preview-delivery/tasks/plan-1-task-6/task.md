@@ -6,4 +6,4 @@ Plan: `Preview Contract And SDD Alignment`
 
 ## Checklist
 
-- [ ] T006 Define security and cost guardrail language for preview delivery.
+- [x] T006 Define security and cost guardrail language for preview delivery.

@@ -1,0 +1,47 @@
+spec_id: 008-sdd-workbench-lazy-loading
+title: SDD Workbench Lazy Loading
+status: complete
+
+requirements:
+  FR-001:
+    name: Summary/detail API contract
+    acceptance_criteria: [AC-001, AC-002]
+    tasks: [T001, T002, T003]
+  FR-002:
+    name: Lazy backend service and endpoints
+    acceptance_criteria: [AC-003, AC-004, AC-005]
+    tasks: [T004, T005, T006, T007, T008, T009]
+  FR-003:
+    name: Workbench lazy hydration and fallback
+    acceptance_criteria: [AC-006, AC-007]
+    tasks: [T010, T011, T012]
+  FR-004:
+    name: Validation and release
+    acceptance_criteria: [AC-008]
+    tasks: [T013, T014]
+
+implementation:
+  status: complete
+  completed_tasks:
+    - T001
+    - T002
+    - T003
+    - T004
+    - T005
+    - T006
+    - T007
+    - T008
+    - T009
+    - T010
+    - T011
+    - T012
+    - T013
+    - T014
+  pending_tasks: []
+  evidence:
+    - backend/app/application/services/sdd_project_service.py exposes get_project_summary and get_spec so the Workbench can load a lightweight project snapshot first and hydrate a single spec on demand.
+    - backend/app/api/routes.py exposes /sdd/project/summary and /sdd/project/spec while preserving the legacy /sdd/project endpoint.
+    - tests/test_sdd_project.py covers summary payloads without full file contents, detail payloads with hydrated file contents, unsafe spec_id rejection, and diagram access.
+    - packages/codex_bridge_workbench/lib/src/services/sdd_explorer_client.dart calls summary/detail endpoints and falls back to the legacy full project endpoint for older Bridge backends.
+    - packages/codex_bridge_workbench/test/codex_bridge_workbench_test.dart covers lazy summary/detail calls, legacy fallback, selected-spec hydration, and cached spec detail reuse.
+    - Spec 008 tasks.md and tree.json are already fully checked/done; this closeout aligns metadata and adds missing traceability evidence.

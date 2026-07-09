@@ -22,6 +22,7 @@ from backend.app.application.services.web_preview_deploy_service import (
     WebPreviewDeployInput,
     WebPreviewDeployService,
     WebPreviewError,
+    WebPreviewLifecycleInput,
     WebPreviewPlanInput,
 )
 from backend.app.application.services.web_preview_invite_service import (
@@ -62,6 +63,68 @@ def test_web_preview_plan_is_stable_and_persisted(tmp_path: Path) -> None:
     } in first["planned_resources"]
     assert "secret-token" not in str(first)
     assert (tmp_path / "state/previews/wp-clinica-norte.json").is_file()
+    assert first["expires_at"]
+    assert first["disabled_at"] is None
+    assert first["audit_events"][0]["event_type"] == "preview_plan_created"
+    assert first["audit_events"][0]["source_app"] == "clinica-norte"
+
+
+def test_web_preview_lifecycle_extend_disable_and_expire_are_persisted(
+    tmp_path: Path,
+) -> None:
+    project = _generated_project(tmp_path)
+    service = _service(tmp_path)
+    plan = service.plan(WebPreviewPlanInput(project_path=str(project)))
+
+    extended = service.extend_preview(
+        WebPreviewLifecycleInput(
+            preview_id=plan["preview_id"],
+            ttl_seconds=3600,
+            reason="operator extend",
+        )
+    )
+    disabled = service.disable_preview(
+        WebPreviewLifecycleInput(
+            preview_id=plan["preview_id"],
+            reason="operator pause",
+        )
+    )
+    expired = service.expire_preview(
+        WebPreviewLifecycleInput(preview_id=plan["preview_id"])
+    )
+
+    assert extended["expires_at"] != plan["expires_at"]
+    assert disabled["status"] == "disabled"
+    assert disabled["disabled_reason"] == "operator pause"
+    assert expired["status"] == "expired"
+    assert {event["event_type"] for event in expired["audit_events"]} >= {
+        "preview_plan_created",
+        "preview_extended",
+        "preview_disabled",
+        "preview_expired",
+    }
+    assert all(
+        event["source_app"] == "clinica-norte" for event in expired["audit_events"]
+    )
+
+
+def test_web_preview_get_marks_active_preview_expired_when_expires_at_elapsed(
+    tmp_path: Path,
+) -> None:
+    project = _generated_project(tmp_path)
+    service = _service(tmp_path)
+    plan = service.plan(WebPreviewPlanInput(project_path=str(project)))
+    state_path = tmp_path / "state/previews/wp-clinica-norte.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["status"] = "active"
+    state["expires_at"] = "2026-01-01T00:00:00Z"
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+
+    refreshed = service.get_preview(plan["preview_id"])
+
+    assert refreshed is not None
+    assert refreshed["status"] == "expired"
+    assert refreshed["audit_events"][-1]["event_type"] == "preview_expired"
 
 
 def test_web_preview_deploy_is_blocked_when_apply_is_disabled(tmp_path: Path) -> None:
@@ -211,6 +274,95 @@ def test_web_preview_deploy_is_idempotent_when_resources_exist(
     assert "execute_d1_sql:acct-1:d1-1" in fake.calls
 
 
+def test_web_preview_deploy_recovers_existing_active_without_duplicate_apply(
+    tmp_path: Path,
+) -> None:
+    project = _generated_project(tmp_path)
+    _write_web_build_output(project)
+    fake = _FakeCloudflareClient()
+    service = _service(tmp_path, apply_enabled=True, fake=fake)
+    plan = service.plan(WebPreviewPlanInput(project_path=str(project)))
+    first = service.deploy(
+        WebPreviewDeployInput(
+            project_path=str(project),
+            confirm_apply=True,
+            expected_plan_hash=plan["plan_hash"],
+        )
+    )
+    fake.calls.clear()
+
+    recovered = service.deploy(
+        WebPreviewDeployInput(
+            project_path=str(project),
+            confirm_apply=True,
+            expected_plan_hash=plan["plan_hash"],
+        )
+    )
+
+    assert first["status"] == "active"
+    assert recovered["status"] == "active"
+    assert recovered["recovery_status"] == "existing_active_verified"
+    assert not fake.calls
+    assert recovered["audit_events"][-1]["event_type"] == "preview_recovery_verified"
+
+
+def test_web_preview_deploy_recovers_interrupted_applying_state_with_existing_resources(
+    tmp_path: Path,
+) -> None:
+    project = _generated_project(tmp_path)
+    _write_web_build_output(project)
+    fake = _FakeCloudflareClient(resources_exist=True)
+    service = _service(tmp_path, apply_enabled=True, fake=fake)
+    plan = service.plan(WebPreviewPlanInput(project_path=str(project)))
+    state_path = tmp_path / "state/previews/wp-clinica-norte.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["status"] = "applying"
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+
+    recovered = service.deploy(
+        WebPreviewDeployInput(
+            project_path=str(project),
+            confirm_apply=True,
+            expected_plan_hash=plan["plan_hash"],
+        )
+    )
+
+    assert recovered["status"] == "active"
+    assert recovered["recovery_status"] == "recovering_from_applying"
+    assert all(
+        item["status"] in {"existing", "planned_external", "skipped", "applied"}
+        for item in recovered["applied_resources"]
+    )
+    assert "preview_recovery_started" in {
+        event["event_type"] for event in recovered["audit_events"]
+    }
+
+
+def test_web_preview_deploy_accepts_svelte_strategy_assets(
+    tmp_path: Path,
+) -> None:
+    project = _generated_svelte_project(tmp_path)
+    _write_svelte_web_build_output(project)
+    fake = _FakeCloudflareClient()
+    service = _service(tmp_path, apply_enabled=True, fake=fake)
+    plan = service.plan(WebPreviewPlanInput(project_path=str(project)))
+
+    payload = service.deploy(
+        WebPreviewDeployInput(
+            project_path=str(project),
+            confirm_apply=True,
+            expected_plan_hash=plan["plan_hash"],
+        )
+    )
+
+    assert payload["status"] == "active"
+    assert payload["source_app"] == "portal-clientes"
+    assert (
+        "create_worker_route:zone-1:preview.nienfos.com/portal-clientes/*"
+        in fake.calls
+    )
+
+
 def test_web_preview_deploy_failure_persists_failed_state_without_secrets(
     tmp_path: Path,
 ) -> None:
@@ -301,6 +453,34 @@ def test_web_preview_deploy_api_success_with_fake_cloudflare(tmp_path: Path) -> 
 
     assert response.status_code == 200
     assert response.json()["status"] == "active"
+
+
+def test_web_preview_lifecycle_api_mutations(tmp_path: Path) -> None:
+    project = _generated_project(tmp_path)
+    app = create_app(_settings(tmp_path, apply_enabled=False))
+    client = TestClient(app)
+    plan = client.post(
+        "/web-previews/plan",
+        json={"projectPath": str(project), "sourceApp": "clinica-norte"},
+    ).json()
+
+    extended = client.post(
+        f"/web-previews/{plan['preview_id']}/extend",
+        json={"ttlSeconds": 3600, "reason": "more review"},
+    )
+    disabled = client.post(
+        f"/web-previews/{plan['preview_id']}/disable",
+        json={"reason": "pause sharing"},
+    )
+    expired = client.post(f"/web-previews/{plan['preview_id']}/expire", json={})
+
+    assert extended.status_code == 200
+    assert disabled.status_code == 200
+    assert disabled.json()["status"] == "disabled"
+    assert disabled.json()["disabled_reason"] == "pause sharing"
+    assert expired.status_code == 200
+    assert expired.json()["status"] == "expired"
+    assert expired.json()["audit_events"][-1]["event_type"] == "preview_expired"
 
 
 def test_web_preview_invite_created_after_deploy_syncs_immediately(
@@ -421,6 +601,24 @@ def _generated_project(tmp_path: Path) -> Path:
     return projects_root / "clinica-norte"
 
 
+def _generated_svelte_project(tmp_path: Path) -> Path:
+    projects_root = tmp_path / "projects"
+    projects_root.mkdir(parents=True, exist_ok=True)
+    manifest_plan = ProjectFactoryManifestService(
+        projects_root=projects_root,
+    ).plan_manifest(
+        ProjectFactoryManifestInput(
+            name="Portal Clientes",
+            business_type="services",
+            primary_goal="Clientes consultan estados",
+            platforms=("web",),
+            frontend_strategy="svelte",
+        )
+    )
+    ProjectFactoryGeneratorService().generate(manifest_plan)
+    return projects_root / "portal-clientes"
+
+
 def _write_web_build_output(project: Path) -> None:
     build_dir = project / "build/web-preview/clinica-norte"
     assets_dir = build_dir / "assets"
@@ -429,6 +627,17 @@ def _write_web_build_output(project: Path) -> None:
     (build_dir / "manifest.json").write_text("{}\n")
     (build_dir / "flutter_bootstrap.js").write_text("void 0;\n")
     (assets_dir / "AssetManifest.bin").write_bytes(b"assets")
+
+
+def _write_svelte_web_build_output(project: Path) -> None:
+    build_dir = project / "build/web-preview/portal-clientes"
+    assets_dir = build_dir / "assets"
+    assets_dir.mkdir(parents=True, exist_ok=True)
+    (build_dir / "index.html").write_text(
+        '<!doctype html><script type="module" src="/assets/index.js"></script>\n',
+        encoding="utf-8",
+    )
+    (assets_dir / "index.js").write_text("console.log('preview');\n")
 
 
 def _read_invite(tmp_path: Path, invite_id: str) -> dict[str, Any]:

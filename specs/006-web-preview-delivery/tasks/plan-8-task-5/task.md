@@ -6,4 +6,4 @@ Plan: `Mobile And Workbench UX`
 
 ## Checklist
 
-- [ ] T052 Add Workbench release/readiness view fields for web preview status and blockers.
+- [x] T052 Add Workbench release/readiness view fields for web preview status and blockers.

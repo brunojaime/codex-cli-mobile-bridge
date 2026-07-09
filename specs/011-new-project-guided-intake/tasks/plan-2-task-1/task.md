@@ -1,5 +1,5 @@
 # T004 Extend draft persistence for intake state without breaking existing drafts
 
-Status: planned
+Status: done
 
 Add durable intake fields with migration/backward-compatible defaults.

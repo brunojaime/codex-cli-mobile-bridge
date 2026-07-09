@@ -6,4 +6,4 @@ Plan: `Preview Contract And SDD Alignment`
 
 ## Checklist
 
-- [ ] T005 Define preview lifecycle states: draft, provisioning, active, updating, expired, disabled, blocked, and failed.
+- [x] T005 Define preview lifecycle states: draft, provisioning, active, updating, expired, disabled, blocked, and failed.

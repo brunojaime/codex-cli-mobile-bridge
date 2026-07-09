@@ -603,6 +603,27 @@ def test_sdd_doctor_reports_contract_json(tmp_path: Path) -> None:
     }
 
 
+def test_sdd_doctor_endpoint_reports_summary(tmp_path: Path) -> None:
+    projects_root = tmp_path / "projects"
+    project = projects_root / "demo"
+    _write_sdd_project(project)
+    client = _client(projects_root)
+
+    response = client.get("/sdd/doctor", params={"workspace_path": str(project)})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["kind"] == "codex.sddDoctorReport"
+    assert payload["workspace"] == str(project.resolve())
+    assert payload["ok"] is True
+    assert {check["name"] for check in payload["checks"]} >= {
+        "manifest",
+        "constitution",
+        "specs",
+        "diagrams",
+    }
+
+
 def _client(projects_root: Path, **overrides: object) -> TestClient:
     overrides.setdefault("feedback_source_workspace_aliases", "")
     settings = Settings(

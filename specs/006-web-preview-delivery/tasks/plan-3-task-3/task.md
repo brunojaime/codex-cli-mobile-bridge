@@ -6,4 +6,4 @@ Plan: `Preview Runtime Data Model`
 
 ## Checklist
 
-- [ ] T015 Add app/tenant scoping constraints and indexes.
+- [x] T015 Add app/tenant scoping constraints and indexes.

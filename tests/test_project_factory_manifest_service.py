@@ -124,6 +124,30 @@ def test_seed_admin_manifest_uses_env_names_and_never_plain_password(
     assert "Nienfoadmin1994" not in str(result.to_payload())
 
 
+def test_manifest_includes_deduped_initial_admin_invites(tmp_path: Path) -> None:
+    service = ProjectFactoryManifestService(projects_root=tmp_path)
+
+    result = service.plan_manifest(
+        ProjectFactoryManifestInput(
+            name="Clinica Norte",
+            business_type="medical",
+            primary_goal="Reservar turnos",
+            initial_admin_emails=(
+                "ADMIN@Example.COM",
+                "admin@example.com",
+                "owner@example.com",
+            ),
+        )
+    )
+
+    assert result.ok is True
+    initial_invites = result.manifest["admin"]["initial_invites"]
+    assert initial_invites["required_for_web_preview"] is True
+    assert initial_invites["emails"] == ["admin@example.com", "owner@example.com"]
+    assert initial_invites["default_role"] == "owner"
+    assert initial_invites["dedupe"] is True
+
+
 def test_invalid_values_are_blocked_without_manifest(tmp_path: Path) -> None:
     service = ProjectFactoryManifestService(projects_root=tmp_path)
 
@@ -189,3 +213,81 @@ def test_allow_existing_supports_future_regeneration_validation(
 
     assert result.ok is True
     assert result.target_path == str(tmp_path / "clinica-norte")
+
+
+def test_svelte_frontend_strategy_is_web_first(tmp_path: Path) -> None:
+    service = ProjectFactoryManifestService(projects_root=tmp_path)
+
+    result = service.plan_manifest(
+        ProjectFactoryManifestInput(
+            name="Portal Clientes",
+            business_type="services",
+            primary_goal="Clientes consultan estados",
+            platforms=("web",),
+            frontend_strategy="svelte",
+        )
+    )
+
+    assert result.ok is True
+    manifest = result.manifest
+    assert manifest["frontend_strategy"] == "svelte"
+    assert manifest["frontend"]["framework"] == "svelte"
+    assert manifest["frontend"]["source_root"] == "apps/web"
+    assert manifest["frontend"]["strategy_capabilities"][
+        "supports_android_preview_apk"
+    ] is False
+    assert manifest["frontend"]["strategy_capabilities"][
+        "supports_bridge_installable_app"
+    ] is False
+    assert manifest["runtime_profiles"]["env"] == "VITE_APP_RUNTIME_PROFILE"
+    assert manifest["runtime_profiles"]["api_runtime_env"] == "VITE_API_RUNTIME"
+    assert manifest["runtime_profiles"]["preview_api_env"] == "VITE_API_BASE_URL"
+    assert manifest["runtime_profiles"]["preview"]["release_tag_patterns"] == []
+    assert manifest["runtime_profiles"]["mock"]["release_tag_patterns"] == []
+    assert manifest["runtime_profiles"]["real"]["release_tag_patterns"] == []
+    assert all(
+        "android-" not in contract
+        for contract in manifest["release"]["ci_contracts"]
+    )
+    assert result.to_payload()["frontend_strategy"] == "svelte"
+
+
+def test_svelte_frontend_strategy_blocks_mobile_platforms(tmp_path: Path) -> None:
+    service = ProjectFactoryManifestService(projects_root=tmp_path)
+
+    result = service.plan_manifest(
+        ProjectFactoryManifestInput(
+            name="Portal Clientes",
+            business_type="services",
+            primary_goal="Clientes consultan estados",
+            platforms=("web", "android"),
+            frontend_strategy="svelte",
+        )
+    )
+
+    assert result.ok is False
+    assert [error.code for error in result.errors] == [
+        "unsupported_frontend_strategy_platforms"
+    ]
+
+
+def test_unknown_frontend_strategy_blocks_with_supported_list(
+    tmp_path: Path,
+) -> None:
+    service = ProjectFactoryManifestService(projects_root=tmp_path)
+
+    result = service.plan_manifest(
+        ProjectFactoryManifestInput(
+            name="Portal Clientes",
+            business_type="services",
+            primary_goal="Clientes consultan estados",
+            platforms=("web",),
+            frontend_strategy="react",
+        )
+    )
+
+    assert result.ok is False
+    assert [error.code for error in result.errors] == [
+        "unsupported_frontend_strategy"
+    ]
+    assert "flutter, svelte" in result.errors[0].message

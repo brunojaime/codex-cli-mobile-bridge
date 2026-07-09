@@ -34,3 +34,12 @@
 - [x] T032 Add backend tests for passive observer inputs, Curator dedupe, and history persistence.
 - [x] T033 Add Flutter tests for Kanban board, latest update, history, and responsive states.
 - [x] T034 Add New Project continuity regression tests and verify Generator/Reviewer behavior remains unchanged.
+- [x] T035 Normalize Workbench `done` status as authoritative Kanban completion.
+- [x] T036 Add regression coverage for Done-state Kanban consistency.
+- [x] T037 Isolate spec-scoped Kanban boards from workspace observer cards.
+- [x] T038 Add Workbench Kanban scope selector for All specs and individual specs.
+- [x] T039 Add Kanban scope index API for workspace, spec, Project Factory, and generated workspace scopes.
+- [x] T040 Expose Project Factory draft/job and generated workspace scopes for live project creation.
+- [x] T041 Load Kanban scopes before board data and route selected scope parameters through the UI.
+- [x] T042 Add regression coverage for scope index, spec filtering, job filtering, refresh, and polling.
+- [x] T043 Align default Kanban scope selection across backend, selector, fallback, and board requests.

@@ -1,0 +1,39 @@
+spec_id: 009-sdd-status-normalization
+title: SDD Status Normalization
+status: complete
+
+requirements:
+  FR-001:
+    name: Canonical status contract
+    acceptance_criteria: [AC-001]
+    tasks: [T001]
+  FR-002:
+    name: Current artifact normalization
+    acceptance_criteria: [AC-002]
+    tasks: [T002]
+  FR-003:
+    name: Generated project status artifacts
+    acceptance_criteria: [AC-003, AC-004]
+    tasks: [T003, T004, T005]
+  FR-004:
+    name: Status consistency regression coverage
+    acceptance_criteria: [AC-005]
+    tasks: [T006]
+
+implementation:
+  status: complete
+  completed_tasks:
+    - T001
+    - T002
+    - T003
+    - T004
+    - T005
+    - T006
+  pending_tasks: []
+  evidence:
+    - specs/009-sdd-status-normalization/spec.md documents metadata.yaml as the spec lifecycle/count source and tree.json as the plan/task visual status source.
+    - specs/008-sdd-workbench-lazy-loading/tree.json has completed plans and tasks marked done, and its metadata/tasks/tree consistency now validates as complete.
+    - backend/app/application/services/project_factory_generator_service.py generates specs/001-product-foundation/tree.json, plan files, task node files, tasks.md, and metadata task totals from the shared initial task definitions.
+    - packages/codex_bridge_workbench/lib/src/widgets/sdd_explorer_panel.dart renders plan/task completion from tree status values and normalizes compatible status labels for display.
+    - tests/test_project_factory_generator_service.py verifies generated foundation tree/status counts, metadata task totals, and generated task file references.
+    - packages/codex_bridge_workbench/test/codex_bridge_workbench_test.dart verifies Workbench plan/task status rendering from tree-backed spec payloads.

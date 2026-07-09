@@ -6,4 +6,4 @@ Plan: `Cloudflare Worker Preview Runtime`
 
 ## Checklist
 
-- [ ] T022 Implement auth login, logout, session refresh, and `auth/me`.
+- [x] T022 Implement auth login, logout, session refresh, and `auth/me`.

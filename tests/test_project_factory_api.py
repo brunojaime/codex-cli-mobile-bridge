@@ -154,6 +154,123 @@ def test_project_factory_first_release_mode_is_explicit_and_validated(
     )
 
 
+def test_project_factory_draft_accepts_initial_admin_emails(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+
+    response = client.post(
+        "/project-factory/drafts",
+        json={
+            "name": "Clinica Norte",
+            "businessType": "medical",
+            "primaryGoal": "Reservar turnos",
+            "initialAdminEmails": ["ADMIN@example.com", "admin@example.com"],
+        },
+    )
+
+    assert response.status_code == 200
+    initial_invites = response.json()["manifest_plan"]["manifest"]["admin"][
+        "initial_invites"
+    ]
+    assert initial_invites["emails"] == ["admin@example.com"]
+    assert initial_invites["required_for_web_preview"] is True
+
+
+def test_project_factory_guided_intake_state_transitions_and_persistence(
+    tmp_path: Path,
+) -> None:
+    client = _client(tmp_path)
+    response = client.post(
+        "/project-factory/drafts",
+        json={
+            "name": "Clinica Norte",
+            "businessType": "medical",
+            "primaryGoal": "Reservar turnos",
+            "guidedIntakeEnabled": True,
+        },
+    )
+
+    assert response.status_code == 200
+    draft = response.json()
+    draft_id = draft["draft_id"]
+    assert draft["guidedIntake"]["enabled"] is True
+    assert draft["guidedIntake"]["status"] == "collecting"
+    assert draft["guidedIntake"]["questions"][0]["id"] == "initial_admin_emails"
+    assert draft["guidedIntake"]["missingFields"][0]["field"] == (
+        "initial_admin_emails"
+    )
+
+    answer = client.post(
+        f"/project-factory/drafts/{draft_id}/intake/answers",
+        json={
+            "questionId": "initial_admin_emails",
+            "value": ["owner@example.com"],
+            "source": "user",
+            "confidence": 1,
+        },
+    )
+
+    assert answer.status_code == 200
+    answered = answer.json()
+    assert answered["status"] == "ready_for_review"
+    assert answered["missingFields"] == []
+    assert answered["answers"][0]["questionId"] == "initial_admin_emails"
+
+    preview = client.post(f"/project-factory/drafts/{draft_id}/intake/preview")
+    assert preview.status_code == 200
+    preview_payload = preview.json()
+    assert preview_payload["contractPreview"]["decisions"]["initialAdminEmails"] == [
+        "owner@example.com"
+    ]
+    assert {
+        blocker["scope"] for blocker in preview_payload["contractPreview"]["blockers"]
+    } >= {"release", "installable_app"}
+
+    restarted_client = _client(tmp_path)
+    loaded = restarted_client.get(f"/project-factory/drafts/{draft_id}/intake")
+    assert loaded.status_code == 200
+    assert loaded.json()["status"] == "ready_for_review"
+    assert loaded.json()["contractPreview"]["decisions"]["initialAdminEmails"] == [
+        "owner@example.com"
+    ]
+
+
+def test_project_factory_guided_intake_blocks_until_confirmed(
+    tmp_path: Path,
+) -> None:
+    client = _client(tmp_path)
+    response = client.post(
+        "/project-factory/drafts",
+        json={
+            "name": "Clinica Norte",
+            "businessType": "medical",
+            "primaryGoal": "Reservar turnos",
+            "guidedIntakeEnabled": True,
+        },
+    )
+    draft_id = response.json()["draft_id"]
+
+    premature = client.post(f"/project-factory/drafts/{draft_id}/generate")
+    assert premature.status_code == 200
+    assert premature.json()["status"] == "blocked"
+    assert premature.json()["current_phase"] == "guided_intake_confirmation"
+
+    client.post(
+        f"/project-factory/drafts/{draft_id}/intake/answers",
+        json={
+            "questionId": "initial_admin_emails",
+            "value": ["owner@example.com"],
+        },
+    )
+    confirm = client.post(f"/project-factory/drafts/{draft_id}/intake/confirm")
+    assert confirm.status_code == 200
+    assert confirm.json()["status"] == "confirmed"
+    assert confirm.json()["buildAllowed"] is True
+
+    generated = client.post(f"/project-factory/drafts/{draft_id}/generate")
+    assert generated.status_code == 200
+    assert generated.json()["status"] == "ready"
+
+
 def test_project_factory_persists_draft_and_finished_job_across_clients(
     tmp_path: Path,
 ) -> None:
@@ -543,7 +660,7 @@ def test_ready_job_without_remote_publication_is_audited_to_blocked(
         "bash",
         "scripts/validate_initial_preview_release.sh",
     ]
-    assert "origin remote is not configured" in audited["step_logs"][-1]["stderr"]
+    assert "web preview health failed" in audited["step_logs"][-1]["stderr"]
 
     list_response = remote_client.get("/project-factory/jobs")
     assert list_response.status_code == 200

@@ -6,4 +6,4 @@ Plan: `Preview Contract And SDD Alignment`
 
 ## Checklist
 
-- [ ] T004 Define stable URL rules for `https://preview.nienfos.com/<app-slug>`.
+- [x] T004 Define stable URL rules for `https://preview.nienfos.com/<app-slug>`.

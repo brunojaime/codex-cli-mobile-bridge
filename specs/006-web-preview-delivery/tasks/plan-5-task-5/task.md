@@ -6,4 +6,4 @@ Plan: `Flutter Web Preview Adapter`
 
 ## Checklist
 
-- [ ] T032 Add admin/user management screens to consume Preview API v1.
+- [x] T032 Add admin/user management screens to consume Preview API v1.

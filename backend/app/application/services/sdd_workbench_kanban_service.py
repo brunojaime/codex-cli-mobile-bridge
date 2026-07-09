@@ -13,13 +13,9 @@ from backend.app.application.services.project_factory_service import (
 )
 from backend.app.application.services.sdd_project_service import (
     SddProject,
+    SddProjectService,
     SddSpec,
 )
-from backend.app.application.services.sdd_standard_service import (
-    SddStandardError,
-    parse_simple_yaml,
-)
-
 
 KANBAN_COLUMN_ORDER = (
     "backlog",
@@ -45,6 +41,7 @@ _TASK_LINE_RE = re.compile(
 _TASK_ID_RE = re.compile(r"\b(T\d{3,4})\b")
 _HISTORY_LIMIT = 80
 _POLL_INTERVAL_SECONDS = 30
+_DEBOUNCE_SECONDS = 1.5
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,6 +61,62 @@ class SddWorkbenchKanbanService:
     ) -> None:
         self._projects_root = Path(projects_root).expanduser().resolve()
         self._project_factory_service = project_factory_service
+
+    def build_scopes(
+        self,
+        *,
+        workspace: Path | None = None,
+        project: SddProject | None = None,
+    ) -> dict[str, Any]:
+        scopes: list[dict[str, Any]] = []
+        default_scope_id: str | None = None
+        if project is not None and workspace is not None:
+            default_scope_id = f"workspace:{project.workspace_path}"
+            scopes.append(
+                {
+                    "id": default_scope_id,
+                    "type": "workspace",
+                    "group": "workspace",
+                    "title": "All specs",
+                    "workspacePath": project.workspace_path,
+                    "status": "overview",
+                    "detail": project.workspace_name,
+                    "priority": 300,
+                }
+            )
+            for index, spec in enumerate(project.specs, start=1):
+                scopes.append(
+                    {
+                        "id": f"workspace:{project.workspace_path}:spec:{spec.id}",
+                        "type": "workspace_spec",
+                        "group": "specs",
+                        "title": spec.title or spec.id,
+                        "workspacePath": project.workspace_path,
+                        "specId": spec.id,
+                        "status": _spec_scope_status(spec),
+                        "detail": spec.path,
+                        "priority": 400 + index,
+                    }
+                )
+        scopes.extend(self._project_factory_scope_options(workspace=workspace))
+        scopes = sorted(
+            scopes,
+            key=lambda item: (
+                int(item.get("priority", 9999)),
+                str(item.get("title") or ""),
+            ),
+        )
+        return {
+            "kind": "codex.sddWorkbenchKanbanScopes",
+            "version": 1,
+            "workspacePath": str(workspace) if workspace is not None else None,
+            "scopes": scopes,
+            "defaultScopeId": default_scope_id
+            if default_scope_id is not None
+            else scopes[0]["id"]
+            if scopes
+            else None,
+        }
 
     def build_board(
         self,
@@ -85,11 +138,23 @@ class SddWorkbenchKanbanService:
         )
         storage_root = self._storage_root(workspace=workspace, scope=scope)
         storage_root.mkdir(parents=True, exist_ok=True)
-        previous = _read_json(storage_root / "board-cache.json")
-
         cards: list[dict[str, Any]] = []
         evidence: list[dict[str, Any]] = []
         continuity: list[dict[str, Any]] = []
+        continuity.extend(
+            self._merge_continuity_history(
+                storage_root=storage_root,
+                workspace=workspace,
+                scope_id=str(scope["id"]),
+            )
+        )
+        previous = _read_json(storage_root / "board-cache.json")
+        source_signature = self._source_signature(
+            workspace=workspace,
+            spec_id=spec_id,
+            draft_id=draft_id,
+            job_id=job_id,
+        )
         if project is not None and workspace is not None:
             sdd_cards, sdd_evidence = _project_cards(
                 workspace=workspace,
@@ -98,20 +163,22 @@ class SddWorkbenchKanbanService:
             )
             cards.extend(sdd_cards)
             evidence.extend(sdd_evidence)
-            observer_cards, observer_evidence = _workspace_observer_cards(
+            if spec_id is None:
+                observer_cards, observer_evidence = _workspace_observer_cards(
+                    workspace=workspace,
+                    scope_id=str(scope["id"]),
+                )
+                cards.extend(observer_cards)
+                evidence.extend(observer_evidence)
+        if spec_id is None or draft_id is not None or job_id is not None:
+            pf_cards, pf_evidence, pf_continuity = self._project_factory_cards(
+                draft_id=draft_id,
+                job_id=job_id,
                 workspace=workspace,
-                scope_id=str(scope["id"]),
             )
-            cards.extend(observer_cards)
-            evidence.extend(observer_evidence)
-        pf_cards, pf_evidence, pf_continuity = self._project_factory_cards(
-            draft_id=draft_id,
-            job_id=job_id,
-            workspace=workspace,
-        )
-        cards.extend(pf_cards)
-        evidence.extend(pf_evidence)
-        continuity.extend(pf_continuity)
+            cards.extend(pf_cards)
+            evidence.extend(pf_evidence)
+            continuity.extend(pf_continuity)
 
         cards = _stable_unique_cards(cards)
         columns = _columns(cards)
@@ -141,9 +208,12 @@ class SddWorkbenchKanbanService:
             "delta": delta,
             "refresh": {
                 "mode": "change-triggered",
+                "scheduler": "active-scope-polling",
+                "activeScope": True,
                 "forceRefresh": force_refresh,
                 "debounceMs": 1500,
                 "pollingFallbackSeconds": _POLL_INTERVAL_SECONDS,
+                "sourceSignature": source_signature,
                 "lastRefreshedAt": now,
                 "nextSuggestedRefreshAt": _iso_after(seconds=_POLL_INTERVAL_SECONDS),
                 "watchedSources": [
@@ -192,7 +262,222 @@ class SddWorkbenchKanbanService:
             "continuity": continuity,
         }
         _write_json(storage_root / "board-cache.json", payload)
+        self._record_active_scope(
+            scope=scope,
+            workspace=workspace,
+            spec_id=spec_id,
+            draft_id=draft_id,
+            job_id=job_id,
+            source_signature=source_signature,
+            now=now,
+        )
         return SddWorkbenchKanbanResult(payload=payload, storage_root=storage_root)
+
+    def _project_factory_scope_options(
+        self,
+        *,
+        workspace: Path | None,
+    ) -> list[dict[str, Any]]:
+        if self._project_factory_service is None:
+            return []
+        scopes: list[dict[str, Any]] = []
+        try:
+            drafts = self._project_factory_service.list_drafts(limit=50)
+            jobs = self._project_factory_service.list_jobs(limit=50)
+        except Exception:  # pragma: no cover - defensive integration boundary
+            return []
+        for index, draft in enumerate(drafts, start=1):
+            draft_id = str(draft.get("draft_id") or "").strip()
+            if not draft_id:
+                continue
+            scopes.append(
+                {
+                    "id": f"project-factory:draft:{draft_id}",
+                    "type": "project_factory_draft",
+                    "group": "creating",
+                    "title": f"Draft: {draft.get('name') or draft_id}",
+                    "draftId": draft_id,
+                    "status": str(draft.get("status") or "draft"),
+                    "detail": str(draft.get("primary_goal") or ""),
+                    "priority": 100 + index,
+                }
+            )
+        for index, job in enumerate(jobs, start=1):
+            job_id = str(job.get("job_id") or "").strip()
+            if not job_id:
+                continue
+            draft_id = str(job.get("draft_id") or "").strip() or None
+            target_path = str(
+                job.get("target_path") or job.get("project_path") or ""
+            ).strip()
+            scopes.append(
+                {
+                    "id": f"project-factory:job:{job_id}",
+                    "type": "project_factory_job",
+                    "group": "creating",
+                    "title": f"Job: {job.get('name') or job_id}",
+                    "draftId": draft_id,
+                    "jobId": job_id,
+                    "workspacePath": target_path or None,
+                    "status": str(job.get("status") or "queued"),
+                    "detail": str(job.get("message") or job.get("error") or ""),
+                    "priority": index,
+                }
+            )
+            if target_path:
+                try:
+                    resolved = Path(target_path).expanduser().resolve()
+                except OSError:
+                    continue
+                if resolved.is_dir() and (workspace is None or resolved != workspace):
+                    scopes.append(
+                        {
+                            "id": f"workspace:{resolved}",
+                            "type": "generated_workspace",
+                            "group": "generated",
+                            "title": (
+                                f"Generated workspace: "
+                                f"{job.get('name') or resolved.name}"
+                            ),
+                            "workspacePath": str(resolved),
+                            "jobId": job_id,
+                            "status": "available",
+                            "detail": str(resolved),
+                            "priority": 200 + index,
+                        }
+                    )
+        return scopes
+
+    def run_scheduled_refreshes(
+        self,
+        *,
+        force: bool = False,
+        max_scopes: int = 20,
+        debounce_seconds: float = _DEBOUNCE_SECONDS,
+    ) -> dict[str, Any]:
+        """Refresh active scopes when watched inputs changed or polling is due."""
+
+        registry_path = self._active_scopes_path()
+        registry = _read_json(registry_path)
+        scopes = registry.get("scopes") if isinstance(registry, dict) else None
+        if not isinstance(scopes, dict):
+            scopes = {}
+        now = datetime.now(UTC)
+        project_service = SddProjectService(projects_root=self._projects_root)
+        refreshed: list[dict[str, Any]] = []
+        skipped: list[dict[str, Any]] = []
+        blocked: list[dict[str, Any]] = []
+        updated_scopes = dict(scopes)
+
+        for scope_id, raw_entry in list(scopes.items())[:max_scopes]:
+            if not isinstance(raw_entry, dict):
+                continue
+            if raw_entry.get("active") is False:
+                skipped.append({"scopeId": scope_id, "reason": "inactive"})
+                continue
+
+            workspace = _optional_path(raw_entry.get("workspacePath"))
+            spec_id = _optional_text(raw_entry.get("specId"))
+            draft_id = _optional_text(raw_entry.get("draftId"))
+            job_id = _optional_text(raw_entry.get("jobId"))
+            signature = self._source_signature(
+                workspace=workspace,
+                spec_id=spec_id,
+                draft_id=draft_id,
+                job_id=job_id,
+            )
+            previous_signature = _optional_text(raw_entry.get("sourceSignature"))
+            next_refresh = _parse_iso(_optional_text(raw_entry.get("nextRefreshAfter")))
+            interval_due = next_refresh is None or now >= next_refresh
+            changed = previous_signature is not None and signature != previous_signature
+            if force:
+                reason = "forced"
+            elif interval_due:
+                reason = "polling_interval"
+            elif changed:
+                reason = "source_changed"
+            else:
+                reason = "debounced"
+
+            if changed and not force and not interval_due and debounce_seconds > 0:
+                detected_at = _parse_iso(
+                    _optional_text(raw_entry.get("changeDetectedAt"))
+                )
+                pending_signature = _optional_text(
+                    raw_entry.get("pendingSourceSignature")
+                )
+                if pending_signature != signature or detected_at is None:
+                    entry = dict(raw_entry)
+                    entry["pendingSourceSignature"] = signature
+                    entry["changeDetectedAt"] = _iso_from(now)
+                    entry["nextRefreshAfter"] = _iso_from(
+                        now + timedelta(seconds=debounce_seconds)
+                    )
+                    updated_scopes[scope_id] = entry
+                    skipped.append({"scopeId": scope_id, "reason": "debounced"})
+                    continue
+                if now < detected_at + timedelta(seconds=debounce_seconds):
+                    skipped.append({"scopeId": scope_id, "reason": "debounced"})
+                    continue
+                reason = "source_changed"
+
+            if not force and not interval_due and not changed:
+                skipped.append({"scopeId": scope_id, "reason": "not_due"})
+                continue
+
+            project: SddProject | None = None
+            if workspace is not None:
+                try:
+                    project = project_service.get_project(str(workspace))
+                except Exception as exc:  # pragma: no cover - defensive path
+                    blocked.append(
+                        {
+                            "scopeId": scope_id,
+                            "reason": "workspace_unavailable",
+                            "detail": str(exc),
+                        }
+                    )
+                    continue
+            result = self.build_board(
+                workspace=workspace,
+                project=project,
+                spec_id=spec_id,
+                draft_id=draft_id,
+                job_id=job_id,
+                force_refresh=force,
+            )
+            refreshed.append(
+                {
+                    "scopeId": scope_id,
+                    "reason": reason,
+                    "snapshotId": result.payload["board"]["snapshotId"],
+                }
+            )
+            current = _read_json(registry_path)
+            current_scopes = current.get("scopes") if isinstance(current, dict) else {}
+            if isinstance(current_scopes, dict):
+                updated_scopes.update(current_scopes)
+
+        _write_json(
+            registry_path,
+            {
+                "version": 1,
+                "updatedAt": _now_iso(),
+                "scopes": updated_scopes,
+            },
+        )
+        return {
+            "kind": "codex.sddWorkbenchKanbanSchedulerRun",
+            "version": 1,
+            "refreshed": refreshed,
+            "skipped": skipped,
+            "blocked": blocked,
+            "counts": {
+                "refreshed": len(refreshed),
+                "skipped": len(skipped),
+                "blocked": len(blocked),
+            },
+        }
 
     def history(
         self,
@@ -205,7 +490,11 @@ class SddWorkbenchKanbanService:
             workspace=workspace,
             scope_id=scope_id,
         )
-        items = _read_history(storage_root)[: max(1, min(limit, _HISTORY_LIMIT))]
+        items = self._read_history_with_continuity(
+            storage_root=storage_root,
+            workspace=workspace,
+            scope_id=scope_id,
+        )[: max(1, min(limit, _HISTORY_LIMIT))]
         return {
             "kind": "codex.sddWorkbenchKanbanHistory",
             "version": 1,
@@ -225,7 +514,11 @@ class SddWorkbenchKanbanService:
             workspace=workspace,
             scope_id=scope_id,
         )
-        for item in _read_history(storage_root):
+        for item in self._read_history_with_continuity(
+            storage_root=storage_root,
+            workspace=workspace,
+            scope_id=scope_id,
+        ):
             if item.get("id") == update_id:
                 return {
                     "kind": "codex.sddWorkbenchKanbanHistoryItem",
@@ -276,7 +569,9 @@ class SddWorkbenchKanbanService:
                 "title": spec_title,
             }
         return {
-            "id": f"workspace:{workspace}" if workspace is not None else "workspace:none",
+            "id": f"workspace:{workspace}"
+            if workspace is not None
+            else "workspace:none",
             "type": "workspace",
             "workspacePath": str(workspace) if workspace is not None else None,
             "title": project.workspace_name if project is not None else "Workbench",
@@ -284,8 +579,11 @@ class SddWorkbenchKanbanService:
 
     def _storage_root(self, *, workspace: Path | None, scope: dict[str, Any]) -> Path:
         if workspace is not None:
-            return workspace / ".codex" / "workbench-kanban" / _safe_scope_filename(
-                str(scope["id"])
+            return (
+                workspace
+                / ".codex"
+                / "workbench-kanban"
+                / _safe_scope_filename(str(scope["id"]))
             )
         return (
             self._projects_root
@@ -315,6 +613,155 @@ class SddWorkbenchKanbanService:
             / _safe_scope_filename(resolved_scope)
         )
 
+    def _active_scopes_path(self) -> Path:
+        return (
+            self._projects_root / ".codex" / "workbench-kanban" / "active-scopes.json"
+        )
+
+    def _record_active_scope(
+        self,
+        *,
+        scope: dict[str, Any],
+        workspace: Path | None,
+        spec_id: str | None,
+        draft_id: str | None,
+        job_id: str | None,
+        source_signature: str,
+        now: str,
+    ) -> None:
+        path = self._active_scopes_path()
+        payload = _read_json(path)
+        scopes = payload.get("scopes") if isinstance(payload, dict) else None
+        if not isinstance(scopes, dict):
+            scopes = {}
+        scopes[str(scope["id"])] = {
+            "scopeId": str(scope["id"]),
+            "scopeType": scope.get("type"),
+            "workspacePath": str(workspace) if workspace is not None else None,
+            "specId": (spec_id or "").strip() or None,
+            "draftId": (draft_id or "").strip() or None,
+            "jobId": (job_id or "").strip() or None,
+            "active": True,
+            "lastSeenAt": now,
+            "sourceSignature": source_signature,
+            "nextRefreshAfter": _iso_after(seconds=_POLL_INTERVAL_SECONDS),
+        }
+        _write_json(
+            path,
+            {
+                "version": 1,
+                "updatedAt": now,
+                "scopes": scopes,
+            },
+        )
+
+    def _source_signature(
+        self,
+        *,
+        workspace: Path | None,
+        spec_id: str | None,
+        draft_id: str | None,
+        job_id: str | None,
+    ) -> str:
+        watched: dict[str, Any] = {}
+        if workspace is not None:
+            for relative in ("metadata.yaml", "tasks.md", "tree.json", "plan.md"):
+                roots = (
+                    [workspace / "specs" / spec_id]
+                    if spec_id
+                    else sorted((workspace / "specs").glob("*"))
+                )
+                for root in roots:
+                    path = root / relative
+                    if path.is_file():
+                        watched[_rel(path, workspace)] = _file_fingerprint(path)
+            for pattern in (
+                ".codex/**/*.jsonl",
+                ".codex-bridge/**/*status*.json",
+                "release/preview-runtime.json",
+                "**/review*.md",
+                "**/review*.json",
+            ):
+                for path in sorted(workspace.glob(pattern))[:40]:
+                    if path.is_file() and ".git" not in path.parts:
+                        watched[_rel(path, workspace)] = _file_fingerprint(path)
+        if self._project_factory_service is not None:
+            requested_draft = (draft_id or "").strip() or None
+            requested_job = (job_id or "").strip() or None
+            drafts = self._project_factory_service.list_drafts(limit=50)
+            jobs = self._project_factory_service.list_jobs(limit=50)
+            if requested_draft:
+                drafts = tuple(
+                    item for item in drafts if item.get("draft_id") == requested_draft
+                )
+            if requested_job:
+                jobs = tuple(
+                    item for item in jobs if item.get("job_id") == requested_job
+                )
+            watched["project_factory_drafts"] = drafts
+            watched["project_factory_jobs"] = jobs
+        return _hash_payload(watched)
+
+    def _legacy_storage_roots(
+        self,
+        *,
+        workspace: Path | None,
+        scope_id: str | None,
+    ) -> list[Path]:
+        if workspace is None or not scope_id:
+            return []
+        if not scope_id.startswith("project-factory:"):
+            return []
+        legacy = (
+            self._projects_root
+            / ".codex"
+            / "workbench-kanban"
+            / _safe_scope_filename(scope_id)
+        )
+        return [legacy]
+
+    def _merge_continuity_history(
+        self,
+        *,
+        storage_root: Path,
+        workspace: Path | None,
+        scope_id: str,
+    ) -> list[dict[str, Any]]:
+        legacy_roots = [
+            root
+            for root in self._legacy_storage_roots(
+                workspace=workspace, scope_id=scope_id
+            )
+            if root != storage_root and root.exists()
+        ]
+        if not legacy_roots:
+            return []
+        merged = _merged_history(storage_root, legacy_roots)
+        if merged:
+            _write_json(storage_root / "history.json", merged[:_HISTORY_LIMIT])
+            latest = merged[0]
+            _write_json(storage_root / "latest-update.json", latest)
+        return [
+            {
+                "fromScope": scope_id,
+                "toScope": f"workspace:{workspace}",
+                "status": "history_migrated",
+                "marker": "project_factory_history_continuity",
+            }
+        ]
+
+    def _read_history_with_continuity(
+        self,
+        *,
+        storage_root: Path,
+        workspace: Path | None,
+        scope_id: str | None,
+    ) -> list[dict[str, Any]]:
+        legacy_roots = self._legacy_storage_roots(
+            workspace=workspace, scope_id=scope_id
+        )
+        return _merged_history(storage_root, legacy_roots)
+
     def _project_factory_cards(
         self,
         *,
@@ -332,7 +779,9 @@ class SddWorkbenchKanbanService:
         drafts = self._project_factory_service.list_drafts(limit=50)
         jobs = self._project_factory_service.list_jobs(limit=50)
         if requested_draft:
-            drafts = tuple(item for item in drafts if item.get("draft_id") == requested_draft)
+            drafts = tuple(
+                item for item in drafts if item.get("draft_id") == requested_draft
+            )
         if requested_job:
             jobs = tuple(item for item in jobs if item.get("job_id") == requested_job)
         for draft in drafts:
@@ -346,7 +795,9 @@ class SddWorkbenchKanbanService:
             target_path = str(job.get("target_path") or job.get("project_path") or "")
             if target_path and workspace is not None:
                 try:
-                    same_workspace = Path(target_path).expanduser().resolve() == workspace
+                    same_workspace = (
+                        Path(target_path).expanduser().resolve() == workspace
+                    )
                 except OSError:
                     same_workspace = False
                 if same_workspace:
@@ -360,7 +811,9 @@ class SddWorkbenchKanbanService:
                     )
             for phase_card in _project_factory_phase_cards(job):
                 cards.append(phase_card)
-                evidence.append(_card_evidence(phase_card, "project_factory_phase", "step_logs"))
+                evidence.append(
+                    _card_evidence(phase_card, "project_factory_phase", "step_logs")
+                )
         return cards, evidence, continuity
 
     def _curator_update(
@@ -419,7 +872,11 @@ def _project_cards(
         for record in tree_tasks:
             existing = merged.get(record["taskKey"])
             if existing is not None:
-                record = {**record, "checked": existing.get("checked", record.get("checked")), "line": existing.get("line")}
+                record = {
+                    **record,
+                    "checked": record.get("checked") or existing.get("checked"),
+                    "line": existing.get("line"),
+                }
             merged[record["taskKey"]] = record
         task_records = sorted(
             merged.values(),
@@ -452,6 +909,20 @@ def _project_cards(
     return cards, evidence
 
 
+def _spec_scope_status(spec: SddSpec) -> str:
+    task_total = int(getattr(spec.metadata.tasks, "total", 0) or 0)
+    task_completed = int(getattr(spec.metadata.tasks, "completed", 0) or 0)
+    task_pending = int(getattr(spec.metadata.tasks, "pending", 0) or 0)
+    lifecycle = str(getattr(spec.metadata, "lifecycle_status", "") or "").lower()
+    if task_total and task_completed >= task_total and task_pending == 0:
+        return "done"
+    if lifecycle in {"blocked", "failed"}:
+        return "blocked"
+    if task_completed > 0:
+        return "in_progress"
+    return lifecycle or "planned"
+
+
 def _tree_task_records(spec: SddSpec) -> list[dict[str, Any]]:
     if spec.tree is None:
         return []
@@ -459,18 +930,21 @@ def _tree_task_records(spec: SddSpec) -> list[dict[str, Any]]:
     for plan in spec.tree.plans:
         for task in plan.tasks:
             task_key = _task_key(task.title) or task.id
+            status = _normalize_sdd_status(task.status)
             records.append(
                 {
                     "taskKey": task_key,
                     "title": _clean_task_title(task.title, task_key),
-                    "status": task.status or "planned",
-                    "checked": task.status == "completed",
+                    "status": status,
+                    "checked": _is_done_status(status),
                     "phaseId": plan.id,
                     "phaseTitle": plan.title,
                     "phaseNumber": plan.number,
                     "taskNumber": task.number,
                     "description": task.description,
-                    "sourcePath": task.file.path if task.file else f"{spec.path}/tree.json",
+                    "sourcePath": task.file.path
+                    if task.file
+                    else f"{spec.path}/tree.json",
                 }
             )
     return records
@@ -501,11 +975,18 @@ def _parse_tasks_markdown(path: Path) -> list[dict[str, Any]]:
         checked = match.group("mark").lower() == "x"
         lowered = title.lower()
         status = "completed" if checked else "planned"
-        if not checked and any(word in lowered for word in ("blocked", "bloqueado", "failed")):
+        if not checked and any(
+            word in lowered for word in ("blocked", "bloqueado", "failed")
+        ):
             status = "blocked"
-        elif not checked and any(word in lowered for word in ("review", "validation", "validacion", "validación")):
+        elif not checked and any(
+            word in lowered
+            for word in ("review", "validation", "validacion", "validación")
+        ):
             status = "review"
-        elif not checked and any(word in lowered for word in ("in progress", "en progreso", "running")):
+        elif not checked and any(
+            word in lowered for word in ("in progress", "en progreso", "running")
+        ):
             status = "in_progress"
         records.append(
             {
@@ -532,7 +1013,12 @@ def _spec_task_card(
     status = str(record.get("status") or "planned")
     phase_number = int(record.get("phaseNumber") or 999)
     task_number = int(record.get("taskNumber") or 999)
-    column = _task_column(status=status, checked=bool(record.get("checked")), phase_number=phase_number, ready_phase=ready_phase)
+    column = _task_column(
+        status=status,
+        checked=bool(record.get("checked")),
+        phase_number=phase_number,
+        ready_phase=ready_phase,
+    )
     source_path = str(record.get("sourcePath") or f"{spec.path}/tasks.md")
     evidence = [
         {
@@ -561,7 +1047,9 @@ def _spec_task_card(
     )
 
 
-def _plan_phase_cards(spec: SddSpec, task_records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _plan_phase_cards(
+    spec: SddSpec, task_records: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
     by_phase: dict[int, list[dict[str, Any]]] = {}
     for record in task_records:
         by_phase.setdefault(int(record.get("phaseNumber") or 999), []).append(record)
@@ -569,8 +1057,14 @@ def _plan_phase_cards(spec: SddSpec, task_records: list[dict[str, Any]]) -> list
     for phase_number, records in sorted(by_phase.items()):
         total = len(records)
         done = sum(1 for record in records if record.get("checked"))
-        blocked = any(str(record.get("status")) == "blocked" for record in records)
-        active = any(str(record.get("status")) in {"in_progress", "review"} for record in records)
+        blocked = any(
+            _normalize_sdd_status(record.get("status")) == "blocked"
+            for record in records
+        )
+        active = any(
+            _normalize_sdd_status(record.get("status")) in {"in_progress", "review"}
+            for record in records
+        )
         if done == total and total:
             column = "done"
             status = "completed"
@@ -581,7 +1075,11 @@ def _plan_phase_cards(spec: SddSpec, task_records: list[dict[str, Any]]) -> list
             column = "in_progress"
             status = "in_progress"
         else:
-            column = "ready" if phase_number == _first_incomplete_phase(task_records) else "backlog"
+            column = (
+                "ready"
+                if phase_number == _first_incomplete_phase(task_records)
+                else "backlog"
+            )
             status = "planned"
         phase_title = str(records[0].get("phaseTitle") or f"Phase {phase_number}")
         cards.append(
@@ -622,7 +1120,9 @@ def _workspace_observer_cards(
     cards.extend(_known_run_artifact_cards(workspace=workspace, scope_id=scope_id))
     cards.extend(_review_finding_cards(workspace=workspace, scope_id=scope_id))
     for card in cards:
-        evidence.append(_card_evidence(card, str(card["type"]), str(card["sourcePath"])))
+        evidence.append(
+            _card_evidence(card, str(card["type"]), str(card["sourcePath"]))
+        )
     return cards, evidence
 
 
@@ -669,7 +1169,9 @@ def _bounded_jsonl_cards(*, workspace: Path, scope_id: str) -> list[dict[str, An
     return cards
 
 
-def _known_run_artifact_cards(*, workspace: Path, scope_id: str) -> list[dict[str, Any]]:
+def _known_run_artifact_cards(
+    *, workspace: Path, scope_id: str
+) -> list[dict[str, Any]]:
     cards: list[dict[str, Any]] = []
     for path in sorted((workspace / ".codex-bridge").glob("**/*status*.json"))[:20]:
         payload = _read_json(path)
@@ -677,7 +1179,13 @@ def _known_run_artifact_cards(*, workspace: Path, scope_id: str) -> list[dict[st
             continue
         status = str(payload.get("status") or payload.get("state") or "observed")
         lowered = status.lower()
-        column = "blocked" if lowered in {"failed", "blocked", "error"} else "done" if lowered in {"passed", "ready", "completed"} else "in_progress"
+        column = (
+            "blocked"
+            if lowered in {"failed", "blocked", "error"}
+            else "done"
+            if lowered in {"passed", "ready", "completed"}
+            else "in_progress"
+        )
         rel = _rel(path, workspace)
         cards.append(
             _card(
@@ -706,7 +1214,9 @@ def _known_run_artifact_cards(*, workspace: Path, scope_id: str) -> list[dict[st
     preview_runtime = workspace / "release" / "preview-runtime.json"
     if preview_runtime.is_file():
         payload = _read_json(preview_runtime)
-        blocked = payload.get("productionReady") is True or payload.get("mockOrDemo") is True
+        blocked = (
+            payload.get("productionReady") is True or payload.get("mockOrDemo") is True
+        )
         cards.append(
             _card(
                 card_id="run-step:release:preview-runtime",
@@ -736,9 +1246,10 @@ def _known_run_artifact_cards(*, workspace: Path, scope_id: str) -> list[dict[st
 
 def _review_finding_cards(*, workspace: Path, scope_id: str) -> list[dict[str, Any]]:
     cards: list[dict[str, Any]] = []
-    candidates = sorted(workspace.glob("**/review*.md"))[:20] + sorted(
-        workspace.glob("**/review*.json")
-    )[:20]
+    candidates = (
+        sorted(workspace.glob("**/review*.md"))[:20]
+        + sorted(workspace.glob("**/review*.json"))[:20]
+    )
     for path in candidates:
         if ".git" in path.parts:
             continue
@@ -747,10 +1258,23 @@ def _review_finding_cards(*, workspace: Path, scope_id: str) -> list[dict[str, A
         except OSError:
             continue
         lowered = text.lower()
-        if not any(marker in lowered for marker in ("finding", "issue", "blocked", "requested changes", "unresolved")):
+        if not any(
+            marker in lowered
+            for marker in (
+                "finding",
+                "issue",
+                "blocked",
+                "requested changes",
+                "unresolved",
+            )
+        ):
             continue
         rel = _rel(path, workspace)
-        unresolved = "unresolved" in lowered or "requested changes" in lowered or "- [ ]" in lowered
+        unresolved = (
+            "unresolved" in lowered
+            or "requested changes" in lowered
+            or "- [ ]" in lowered
+        )
         cards.append(
             _card(
                 card_id=f"review-finding:{_safe_scope_filename(rel)}",
@@ -852,7 +1376,15 @@ def _project_factory_phase_cards(job: dict[str, Any]) -> list[dict[str, Any]]:
         if not isinstance(raw_status, dict):
             continue
         status = str(raw_status.get("status") or "pending")
-        column = "done" if status == "completed" else "blocked" if status in {"blocked", "failed"} else "in_progress" if status in {"running", "active"} else "ready"
+        column = (
+            "done"
+            if status == "completed"
+            else "blocked"
+            if status in {"blocked", "failed"}
+            else "in_progress"
+            if status in {"running", "active"}
+            else "ready"
+        )
         cards.append(
             _card(
                 card_id=f"project-factory:job:{job.get('job_id')}:phase:{phase}",
@@ -875,7 +1407,9 @@ def _project_factory_phase_cards(job: dict[str, Any]) -> list[dict[str, Any]]:
                     }
                 ],
                 detail=str(raw_status.get("message") or ""),
-                manual_commands=raw_status.get("command") if isinstance(raw_status.get("command"), list) else [],
+                manual_commands=raw_status.get("command")
+                if isinstance(raw_status.get("command"), list)
+                else [],
             )
         )
     return cards
@@ -941,7 +1475,11 @@ def _card(
         "order": order,
         "confirmed": confirmed,
         "inferred": inferred,
-        "confidence": "confirmed" if confirmed else "inferred" if inferred else "observed",
+        "confidence": "confirmed"
+        if confirmed
+        else "inferred"
+        if inferred
+        else "observed",
         "badges": badges,
         "detail": detail,
         "evidence": evidence,
@@ -966,8 +1504,8 @@ def _task_column(
     phase_number: int,
     ready_phase: int | None,
 ) -> str:
-    normalized = status.lower().replace("-", "_")
-    if checked or normalized in {"complete", "completed", "done"}:
+    normalized = _normalize_sdd_status(status)
+    if checked or _is_done_status(normalized):
         return "done"
     if normalized in {"blocked", "failed", "error"}:
         return "blocked"
@@ -980,9 +1518,30 @@ def _task_column(
     return "backlog"
 
 
+def _normalize_sdd_status(status: object) -> str:
+    normalized = str(status or "planned").strip().lower().replace("-", "_")
+    if normalized in {"complete", "completed", "done"}:
+        return "completed"
+    if normalized in {"active", "running", "in_progress"}:
+        return "in_progress"
+    if normalized in {"review", "in_review", "validation", "review_required"}:
+        return "review"
+    if normalized in {"blocked", "failed", "error"}:
+        return "blocked"
+    return normalized or "planned"
+
+
+def _is_done_status(status: object) -> bool:
+    return _normalize_sdd_status(status) == "completed"
+
+
 def _first_incomplete_phase(records: list[dict[str, Any]]) -> int | None:
     for phase in sorted({int(record.get("phaseNumber") or 999) for record in records}):
-        phase_records = [record for record in records if int(record.get("phaseNumber") or 999) == phase]
+        phase_records = [
+            record
+            for record in records
+            if int(record.get("phaseNumber") or 999) == phase
+        ]
         if any(not record.get("checked") for record in phase_records):
             return phase
     return None
@@ -1016,12 +1575,18 @@ def _delta(
     evidence_hash: str,
 ) -> dict[str, Any]:
     previous_board = previous.get("board") if isinstance(previous, dict) else None
-    previous_cards = previous_board.get("cards") if isinstance(previous_board, dict) else None
-    previous_by_id = {
-        str(card.get("id")): card
-        for card in previous_cards
-        if isinstance(card, dict) and card.get("id")
-    } if isinstance(previous_cards, list) else {}
+    previous_cards = (
+        previous_board.get("cards") if isinstance(previous_board, dict) else None
+    )
+    previous_by_id = (
+        {
+            str(card.get("id")): card
+            for card in previous_cards
+            if isinstance(card, dict) and card.get("id")
+        }
+        if isinstance(previous_cards, list)
+        else {}
+    )
     current_by_id = {str(card["id"]): card for card in cards}
     added = sorted(set(current_by_id) - set(previous_by_id))
     removed = sorted(set(previous_by_id) - set(current_by_id))
@@ -1042,9 +1607,7 @@ def _delta(
         elif previous_card.get("evidenceHash") != card.get("evidenceHash"):
             changed.append(card_id)
     previous_hash = (
-        previous_board.get("evidenceHash")
-        if isinstance(previous_board, dict)
-        else None
+        previous_board.get("evidenceHash") if isinstance(previous_board, dict) else None
     )
     return {
         "changed": previous_hash != evidence_hash,
@@ -1088,7 +1651,11 @@ def _generate_curator_update(
     )
     changed_cards = [
         *delta.get("addedCardIds", []),
-        *[item.get("cardId") for item in delta.get("movedCards", []) if isinstance(item, dict)],
+        *[
+            item.get("cardId")
+            for item in delta.get("movedCards", [])
+            if isinstance(item, dict)
+        ],
         *delta.get("changedCardIds", []),
     ]
     return {
@@ -1103,9 +1670,7 @@ def _generate_curator_update(
         "changedCounts": delta.get("summary", {}),
         "importantEvidence": evidence[:10],
         "blockers": [
-            card["title"]
-            for card in board["cards"]
-            if card.get("column") == "blocked"
+            card["title"] for card in board["cards"] if card.get("column") == "blocked"
         ][:8],
         "risks": [
             "Inferred cards are observational only and do not confirm task completion."
@@ -1146,11 +1711,30 @@ def _read_history(storage_root: Path) -> list[dict[str, Any]]:
     return []
 
 
+def _merged_history(
+    primary_root: Path, legacy_roots: list[Path]
+) -> list[dict[str, Any]]:
+    by_id: dict[str, dict[str, Any]] = {}
+    for root in [primary_root, *legacy_roots]:
+        for item in _read_history(root):
+            update_id = str(item.get("id") or "")
+            if update_id and update_id not in by_id:
+                by_id[update_id] = item
+    return sorted(
+        by_id.values(),
+        key=lambda item: str(item.get("timestamp") or ""),
+        reverse=True,
+    )[:_HISTORY_LIMIT]
+
+
 def _stable_unique_cards(cards: list[dict[str, Any]]) -> list[dict[str, Any]]:
     by_id: dict[str, dict[str, Any]] = {}
     for card in cards:
         by_id[str(card["id"])] = card
-    return sorted(by_id.values(), key=lambda item: (str(item["column"]), int(item["order"]), str(item["id"])))
+    return sorted(
+        by_id.values(),
+        key=lambda item: (str(item["column"]), int(item["order"]), str(item["id"])),
+    )
 
 
 def _card_evidence(card: dict[str, Any], source_type: str, path: str) -> dict[str, Any]:
@@ -1225,9 +1809,46 @@ def _now_iso() -> str:
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
+def _iso_from(value: datetime) -> str:
+    return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
+
+
 def _iso_after(*, seconds: int) -> str:
-    return (datetime.now(UTC) + timedelta(seconds=seconds)).isoformat().replace(
-        "+00:00",
-        "Z",
+    return (
+        (datetime.now(UTC) + timedelta(seconds=seconds))
+        .isoformat()
+        .replace(
+            "+00:00",
+            "Z",
+        )
     )
 
+
+def _parse_iso(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(UTC)
+    except ValueError:
+        return None
+
+
+def _optional_text(value: Any) -> str | None:
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
+
+
+def _optional_path(value: Any) -> Path | None:
+    text = _optional_text(value)
+    if not text:
+        return None
+    return Path(text).expanduser().resolve()
+
+
+def _file_fingerprint(path: Path) -> dict[str, int]:
+    try:
+        stat = path.stat()
+    except OSError:
+        return {"missing": 1}
+    return {"mtimeNs": stat.st_mtime_ns, "size": stat.st_size}

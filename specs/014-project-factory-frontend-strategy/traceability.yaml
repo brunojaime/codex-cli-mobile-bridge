@@ -1,0 +1,110 @@
+spec_id: 014-project-factory-frontend-strategy
+status: complete
+requirements:
+  R-001-strategy-domain-contract:
+    acceptance_criteria:
+      - Frontend strategy registry and capability schema cover Flutter and Svelte.
+      - Strategy source-of-truth rules are explicit.
+    tasks:
+      - T001
+      - T002
+      - T003
+      - T004
+    implementation:
+      - backend/app/application/services/project_factory_manifest_service.py
+      - backend/app/application/services/project_factory_generator_service.py
+  R-002-intake-manifest:
+    acceptance_criteria:
+      - Project Factory options, schemas, UI, draft state, and manifest include frontendStrategy.
+      - Unsupported platform and installability combinations are blocked.
+    tasks:
+      - T005
+      - T006
+      - T007
+      - T008
+      - T009
+      - T010
+    implementation:
+      - backend/app/api/schemas.py
+      - backend/app/api/routes.py
+      - backend/app/application/services/project_factory_service.py
+      - frontend/mobile_app/lib/src/models/project_factory.dart
+      - frontend/mobile_app/lib/src/screens/chat_screen.dart
+  R-003-flutter-strategy:
+    acceptance_criteria:
+      - Flutter remains the default complete mobile/web strategy.
+      - Android preview APK, Workbench, Bridge registration, and Cloudflare preview behavior do not regress.
+    tasks:
+      - T011
+      - T012
+      - T013
+      - T014
+      - T015
+    implementation:
+      - backend/app/application/services/project_factory_generator_service.py
+      - tests/test_project_factory_generator_service.py
+  R-004-svelte-strategy:
+    acceptance_criteria:
+      - Svelte generates an independent web-first project under apps/web.
+      - Svelte preview uses Cloudflare API/D1 and does not claim Android installability by default.
+    tasks:
+      - T016
+      - T017
+      - T018
+      - T019
+      - T020
+      - T021
+      - T022
+    implementation:
+      - backend/app/application/services/project_factory_generator_service.py
+      - tests/test_project_factory_generator_service.py
+  R-005-shared-cloudflare-runtime:
+    acceptance_criteria:
+      - Flutter and Svelte use the same Cloudflare Worker/D1 preview backend contract.
+      - Cloudflare readiness depends on strategy-specific asset validation.
+    tasks:
+      - T023
+      - T024
+      - T025
+    implementation:
+      - backend/app/application/services/project_factory_generator_service.py
+      - backend/app/application/services/web_preview_deploy_service.py
+      - tests/test_web_preview_deploy_service.py
+  R-006-release-orchestration:
+    acceptance_criteria:
+      - Release phases and Bridge registration are driven by strategy capabilities.
+      - Web-only Svelte cannot overpromise APK or installable app readiness.
+    tasks:
+      - T026
+      - T027
+      - T028
+      - T029
+      - T030
+    implementation:
+      - backend/app/application/services/project_factory_job_runner.py
+      - backend/app/application/services/project_factory_service.py
+      - backend/app/application/services/project_factory_generator_service.py
+  R-007-validation-rollout:
+    acceptance_criteria:
+      - Contract, backend, generator, Cloudflare, release output, UI, and SDD tests cover both strategies.
+      - Documentation and runbooks explain Flutter and Svelte release paths.
+    tasks:
+      - T031
+      - T032
+      - T033
+      - T034
+      - T035
+      - T036
+      - T037
+      - T038
+      - T039
+      - T040
+      - T041
+      - T042
+    implementation:
+      - tests/test_project_factory_manifest_service.py
+      - tests/test_project_factory_generator_service.py
+      - tests/test_web_preview_deploy_service.py
+      - frontend/mobile_app/test/api_client_test.dart
+      - frontend/mobile_app/test/new_project_factory_dialog_test.dart
+      - backend/app/application/services/sdd_workbench_view_service.py

@@ -6,4 +6,4 @@ Plan: `Architecture UX`
 
 ## Checklist
 
-- [ ] Add search across specs, tasks, actors, components, entities, and diagrams.
+- [x] Add search across specs, tasks, actors, components, entities, and diagrams.

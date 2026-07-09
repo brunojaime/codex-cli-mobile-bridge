@@ -55,7 +55,56 @@ void main() {
     expect(result!.name, 'Clinica Norte');
     expect(result!.businessType, 'medical_appointments');
     expect(result!.backend, 'fastapi');
+    expect(result!.frontendStrategy, 'flutter');
     expect(result!.referenceImages, isEmpty);
+  });
+
+  testWidgets('new project factory dialog blocks svelte with android selected',
+      (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Dialog(
+            child: NewProjectFactoryDialog(
+              options: const ProjectFactoryOptions(
+                defaultPlatforms: <String>['ios', 'android', 'web'],
+                platforms: <String>['ios', 'android', 'web'],
+                defaultBackend: 'fastapi',
+                backends: <String>['fastapi'],
+                defaultFrontendStrategy: 'flutter',
+                frontendStrategies: <Map<String, dynamic>>[
+                  <String, dynamic>{
+                    'id': 'flutter',
+                    'display_name': 'Flutter',
+                  },
+                  <String, dynamic>{
+                    'id': 'svelte',
+                    'display_name': 'Svelte',
+                  },
+                ],
+                logoModes: <String>['generate'],
+                businessTypes: <String>['medical_appointments'],
+                creationWorkflow: <String, dynamic>{},
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('Flutter'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Svelte').last);
+    await tester.pumpAndSettle();
+
+    expect(
+      find.textContaining('Svelte is web-only for now'),
+      findsOneWidget,
+    );
+    final create = tester.widget<FilledButton>(
+      find.widgetWithText(FilledButton, 'Create'),
+    );
+    expect(create.onPressed, isNull);
   });
 
   testWidgets('project factory progress dialog polls until ready',
@@ -467,11 +516,57 @@ void main() {
     expect(find.text('D1 unavailable'), findsOneWidget);
   });
 
+  testWidgets('web preview panel supports preview lifecycle actions',
+      (tester) async {
+    var disabled = false;
+    var expired = false;
+    var extended = false;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: WebPreviewPanelDialog(
+            listWebPreviews: () async => <WebPreview>[
+              _webPreview(status: 'active'),
+            ],
+            disablePreview: ({required previewId, ttlSeconds, reason}) async {
+              disabled = true;
+              return _webPreview(status: 'disabled');
+            },
+            expirePreview: ({required previewId, ttlSeconds, reason}) async {
+              expired = true;
+              return _webPreview(status: 'expired');
+            },
+            extendPreview: ({required previewId, ttlSeconds, reason}) async {
+              extended = ttlSeconds == 604800;
+              return _webPreview(status: 'active');
+            },
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+    expect(find.text('Copy URL'), findsOneWidget);
+
+    await tester.tap(find.text('Extend 7d'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Expire'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Disable'));
+    await tester.pumpAndSettle();
+
+    expect(extended, isTrue);
+    expect(expired, isTrue);
+    expect(disabled, isTrue);
+  });
+
   testWidgets('web preview invites create revoke and retry sync',
       (tester) async {
     final invites = <WebPreviewInvite>[];
     var revoked = false;
     var retried = false;
+    var resent = false;
+    var expired = false;
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
@@ -482,6 +577,8 @@ void main() {
               previewId, {
               int? ttlSeconds,
               bool singleUse = true,
+              String? email,
+              String role = 'admin',
             }) async {
               final invite = _webPreviewInvite(
                 inviteUrl:
@@ -504,6 +601,20 @@ void main() {
                 ..add(_webPreviewInvite(syncStatus: 'synced'));
               return invites.single;
             },
+            resendInvite: ({required previewId, required inviteId}) async {
+              resent = true;
+              invites
+                ..clear()
+                ..add(_webPreviewInvite(resendCount: 1));
+              return invites.single;
+            },
+            expireInvite: ({required previewId, required inviteId}) async {
+              expired = true;
+              invites
+                ..clear()
+                ..add(_webPreviewInvite(expiredAt: '2026-07-07T00:06:00Z'));
+              return invites.single;
+            },
           ),
         ),
       ),
@@ -517,11 +628,25 @@ void main() {
     expect(find.text('Invite link created'), findsOneWidget);
     expect(find.text('wpi-1'), findsOneWidget);
 
+    await tester.ensureVisible(find.text('Retry sync'));
     await tester.tap(find.text('Retry sync'));
     await tester.pumpAndSettle();
     expect(retried, isTrue);
     expect(find.text('Sync: synced'), findsOneWidget);
 
+    await tester.ensureVisible(find.text('Resend'));
+    await tester.tap(find.text('Resend'));
+    await tester.pumpAndSettle();
+    expect(resent, isTrue);
+    expect(find.text('Resends: 1'), findsOneWidget);
+
+    await tester.ensureVisible(find.text('Expire'));
+    await tester.tap(find.text('Expire'));
+    await tester.pumpAndSettle();
+    expect(expired, isTrue);
+    expect(find.textContaining('Expired:'), findsOneWidget);
+
+    await tester.ensureVisible(find.text('Revoke'));
     await tester.tap(find.text('Revoke'));
     await tester.pumpAndSettle();
     expect(revoked, isTrue);
@@ -646,7 +771,9 @@ WebPreview _webPreview({
 WebPreviewInvite _webPreviewInvite({
   String syncStatus = 'failed',
   String? revokedAt,
+  String? expiredAt,
   String? inviteUrl,
+  int resendCount = 0,
 }) {
   return WebPreviewInvite(
     inviteId: 'wpi-1',
@@ -659,6 +786,8 @@ WebPreviewInvite _webPreviewInvite({
     syncStatus: syncStatus,
     tokenSha256: 'abc123',
     revokedAt: revokedAt,
+    expiredAt: expiredAt,
+    resendCount: resendCount,
     syncedAt: syncStatus == 'synced' ? '2026-07-07T00:01:00Z' : null,
     syncError: syncStatus == 'failed' ? 'D1 unavailable' : null,
     inviteUrl: inviteUrl,

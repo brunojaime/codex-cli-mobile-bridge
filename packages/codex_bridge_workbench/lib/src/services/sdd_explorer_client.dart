@@ -93,6 +93,19 @@ class SddExplorerClient {
         .toList(growable: false);
   }
 
+  Future<SddDoctorReport> runDoctor(String workspacePath) async {
+    final uri = Uri.parse('$baseUrl/sdd/doctor').replace(
+      queryParameters: <String, String>{'workspace_path': workspacePath},
+    );
+    final response = await _client.get(uri);
+    if (response.statusCode != 200) {
+      throw Exception('Failed to run SDD doctor: ${response.body}');
+    }
+    return SddDoctorReport.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
   Future<SddWorkbenchKanban> getKanban({
     String? workspacePath,
     String? specId,
@@ -112,6 +125,23 @@ class SddExplorerClient {
       throw Exception('Failed to load Workbench Kanban: ${response.body}');
     }
     return SddWorkbenchKanban.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<SddKanbanScopeIndex> getKanbanScopes({String? workspacePath}) async {
+    final query = <String, String>{};
+    _putIfPresent(query, 'workspace_path', workspacePath);
+    final uri = Uri.parse(
+      '$baseUrl/sdd/workbench/kanban/scopes',
+    ).replace(queryParameters: query);
+    final response = await _client.get(uri);
+    if (response.statusCode != 200) {
+      throw Exception(
+        'Failed to load Workbench Kanban scopes: ${response.body}',
+      );
+    }
+    return SddKanbanScopeIndex.fromJson(
       jsonDecode(response.body) as Map<String, dynamic>,
     );
   }

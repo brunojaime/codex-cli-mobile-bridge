@@ -219,6 +219,89 @@ class ApiClient {
     );
   }
 
+  Future<ProjectFactoryGuidedIntake> getProjectFactoryGuidedIntake(
+    String draftId,
+  ) async {
+    final response = await _client.get(
+      Uri.parse('$baseUrl/project-factory/drafts/$draftId/intake'),
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception(
+        'Failed to fetch project intake: ${response.body}',
+      );
+    }
+
+    return ProjectFactoryGuidedIntake.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<ProjectFactoryGuidedIntake> answerProjectFactoryGuidedIntake({
+    required String draftId,
+    required String questionId,
+    required Object? value,
+    String source = 'user',
+    double confidence = 1,
+  }) async {
+    final response = await _client.post(
+      Uri.parse('$baseUrl/project-factory/drafts/$draftId/intake/answers'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode(<String, Object?>{
+        'questionId': questionId,
+        'value': value,
+        'source': source,
+        'confidence': confidence,
+      }),
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception(
+        'Failed to answer project intake: ${response.body}',
+      );
+    }
+
+    return ProjectFactoryGuidedIntake.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<ProjectFactoryGuidedIntake> previewProjectFactoryGuidedIntake(
+    String draftId,
+  ) async {
+    final response = await _client.post(
+      Uri.parse('$baseUrl/project-factory/drafts/$draftId/intake/preview'),
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception(
+        'Failed to preview project intake: ${response.body}',
+      );
+    }
+
+    return ProjectFactoryGuidedIntake.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<ProjectFactoryGuidedIntake> confirmProjectFactoryGuidedIntake(
+    String draftId,
+  ) async {
+    final response = await _client.post(
+      Uri.parse('$baseUrl/project-factory/drafts/$draftId/intake/confirm'),
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception(
+        'Failed to confirm project intake: ${response.body}',
+      );
+    }
+
+    return ProjectFactoryGuidedIntake.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
   Future<ProjectFactoryJob> generateProjectFactoryDraft(String draftId) async {
     final response = await _client.post(
       Uri.parse('$baseUrl/project-factory/drafts/$draftId/generate'),
@@ -358,6 +441,65 @@ class ApiClient {
     );
   }
 
+  Future<WebPreview> disableWebPreview({
+    required String previewId,
+    String? reason,
+  }) {
+    return _mutateWebPreviewLifecycle(
+      previewId: previewId,
+      action: 'disable',
+      reason: reason,
+    );
+  }
+
+  Future<WebPreview> expireWebPreview({
+    required String previewId,
+    String? reason,
+  }) {
+    return _mutateWebPreviewLifecycle(
+      previewId: previewId,
+      action: 'expire',
+      reason: reason,
+    );
+  }
+
+  Future<WebPreview> extendWebPreview({
+    required String previewId,
+    int? ttlSeconds,
+    String? reason,
+  }) {
+    return _mutateWebPreviewLifecycle(
+      previewId: previewId,
+      action: 'extend',
+      ttlSeconds: ttlSeconds,
+      reason: reason,
+    );
+  }
+
+  Future<WebPreview> _mutateWebPreviewLifecycle({
+    required String previewId,
+    required String action,
+    int? ttlSeconds,
+    String? reason,
+  }) async {
+    final response = await _client.post(
+      Uri.parse('$baseUrl/web-previews/$previewId/$action'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode(<String, dynamic>{
+        if (ttlSeconds != null) 'ttlSeconds': ttlSeconds,
+        if (reason != null && reason.trim().isNotEmpty) 'reason': reason.trim(),
+      }),
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception('Failed to $action web preview: ${response.body}');
+    }
+
+    return WebPreview.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
   Future<List<WebPreviewInvite>> listWebPreviewInvites(String previewId) async {
     final response = await _client.get(
       Uri.parse('$baseUrl/web-previews/$previewId/invites'),
@@ -378,6 +520,8 @@ class ApiClient {
     String previewId, {
     int? ttlSeconds,
     bool singleUse = true,
+    String? email,
+    String role = 'admin',
   }) async {
     final response = await _client.post(
       Uri.parse('$baseUrl/web-previews/$previewId/invites'),
@@ -385,11 +529,52 @@ class ApiClient {
       body: jsonEncode(<String, dynamic>{
         if (ttlSeconds != null) 'ttlSeconds': ttlSeconds,
         'singleUse': singleUse,
+        if (email != null && email.trim().isNotEmpty) 'email': email.trim(),
+        'role': role,
       }),
     );
 
     if (response.statusCode != 200) {
       throw Exception('Failed to create web preview invite: ${response.body}');
+    }
+
+    return WebPreviewInvite.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<WebPreviewInvite> resendWebPreviewInvite({
+    required String previewId,
+    required String inviteId,
+    int? ttlSeconds,
+  }) async {
+    final response = await _client.post(
+      Uri.parse('$baseUrl/web-previews/$previewId/invites/$inviteId/resend'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode(<String, dynamic>{
+        if (ttlSeconds != null) 'ttlSeconds': ttlSeconds,
+      }),
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception('Failed to resend web preview invite: ${response.body}');
+    }
+
+    return WebPreviewInvite.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<WebPreviewInvite> expireWebPreviewInvite({
+    required String previewId,
+    required String inviteId,
+  }) async {
+    final response = await _client.post(
+      Uri.parse('$baseUrl/web-previews/$previewId/invites/$inviteId/expire'),
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception('Failed to expire web preview invite: ${response.body}');
     }
 
     return WebPreviewInvite.fromJson(

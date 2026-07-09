@@ -2,8 +2,8 @@ id: 009-sdd-status-normalization
 slug: 009-sdd-status-normalization
 title: SDD Status Normalization
 description: Normalize Workbench SDD status sources so current and generated projects render correct plan/task states.
-status: active
-last_run_state: validated
+status: complete
+last_run_state: implemented
 generated:
   title: false
   description: false
@@ -21,3 +21,4 @@ available_files:
   - plan.md
   - tasks.md
   - tree.json
+  - traceability.yaml

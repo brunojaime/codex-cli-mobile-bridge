@@ -1,7 +1,123 @@
 spec_id: 005-new-project-factory
+title: New Project Factory
+status: complete
+
 requirements:
   FR-001:
-    acceptance_criteria:
-      - AC-001
-    tasks:
-      - T001
+    name: Manifest contract
+    acceptance_criteria: [AC-001]
+    tasks: [T001, T002, T003, T004]
+    phase: 1
+  FR-002:
+    name: Backend draft and job API
+    acceptance_criteria: [AC-001]
+    tasks: [T005, T006, T007, T008]
+    phase: 2
+  FR-003:
+    name: Mobile chat flow
+    acceptance_criteria: [AC-001]
+    tasks: [T009, T010, T010a, T011, T012]
+    phase: 3
+  FR-004:
+    name: Research and visual direction
+    acceptance_criteria: [AC-001]
+    tasks: [T013, T014, T015, T016]
+    phase: 4
+  FR-005:
+    name: Local generator
+    acceptance_criteria: [AC-001]
+    tasks: [T017, T018, T019, T020]
+    phase: 5
+  FR-006:
+    name: Flutter and backend templates
+    acceptance_criteria: [AC-001]
+    tasks: [T021, T022, T023, T024]
+    phase: 6
+  FR-007:
+    name: GitHub and release readiness
+    acceptance_criteria: [AC-001]
+    tasks: [T025, T026, T027, T027a, T027b]
+    phase: 7
+  FR-008:
+    name: End-to-end validation
+    acceptance_criteria: [AC-001]
+    tasks: [T028, T029, T030]
+    phase: 8
+  FR-009:
+    name: Acceptance hardening
+    acceptance_criteria: [AC-001]
+    tasks: [T031, T032, T033, T034]
+    phase: 9
+  FR-010:
+    name: Post-release chat-mode hardening
+    acceptance_criteria: [AC-001]
+    tasks: [T035, T036, T037, T038, T039]
+    phase: 10
+  FR-011:
+    name: Publication contract hardening
+    acceptance_criteria: [AC-001]
+    tasks: [T040, T041, T042, T043, T044, T045]
+    phase: 11
+
+implementation:
+  status: complete
+  iterations:
+    manifest-contract-pass-001:
+      completed_tasks: [T001, T002, T003, T004]
+      evidence:
+        - ProjectFactoryManifestService validates project name, slug, target path under PROJECTS_ROOT, first release mode, owner permissions, and default manifest sections without writing files.
+        - tests/test_project_factory_manifest_service.py covers valid defaults, invalid names and slugs, existing folders, owner permission errors, seed-admin env-only behavior, first-release modes, SDD artifacts, and publication metadata separation.
+    backend-api-pass-001:
+      completed_tasks: [T005, T006, T007, T008]
+      evidence:
+        - backend/app/api/routes.py exposes project-factory options, doctor, drafts, dry-run, reference assets, generate, job history, and job detail routes.
+        - ProjectFactoryService persists drafts and jobs under PROJECT_FACTORY_STATE_DIR and returns deterministic draft, dry-run, job, history, blocked, interrupted, and recovery payloads.
+        - tests/test_project_factory_api.py covers draft creation, dry-run, validation errors, generation, status, history, duplicate generation, reference assets, and recovery behavior.
+    mobile-chat-flow-pass-001:
+      completed_tasks: [T009, T010, T010a, T011, T012]
+      evidence:
+        - frontend/mobile_app exposes New Project chat-mode configuration, project-factory API client models, progress state, history UI, attachment role handling, and explicit build confirmation gating.
+        - frontend tests cover Project Factory intake configuration, reviewer gating until preview/build confirmation, API create/generate parsing, progress/history surfaces, and attachment context preservation.
+    research-visual-direction-pass-001:
+      completed_tasks: [T013, T014, T015, T016]
+      evidence:
+        - ProjectFactoryGeneratorService emits research prompts, UX pattern documentation, visual reference handoff files, design tokens, style guides, and visual validation/report artifacts.
+        - tests/test_project_factory_generator_service.py and tests/test_asset_depot_project_factory.py cover generated research/design assets, promoted reference assets, preserved bytes, and visual-reference output contracts.
+    local-generator-pass-001:
+      completed_tasks: [T017, T018, T019, T020]
+      evidence:
+        - ProjectFactoryGeneratorService writes the generated project, .codex/project.yaml, README, AGENTS, research/design/release/infra folders, specs/001-product-foundation, SDD indexes, and safe git initialization.
+        - Generator tests cover no-secret output, generated project shape, initial commit behavior, no overwrite behavior, and generated SDD artifacts.
+    templates-validation-pass-001:
+      completed_tasks: [T021, T022, T023, T024]
+      evidence:
+        - Generated Flutter and FastAPI templates include responsive app shell, auth, RBAC, admin/domain/notification foundations, runtime profile wiring, updater/release metadata, backend health/auth/admin endpoints, and generated tests.
+        - scripts/validate_generated_project.sh is generated and runner-gated; tests validate generated backend/frontend files and script syntax/contract behavior.
+    release-readiness-pass-001:
+      completed_tasks: [T025, T026, T027, T027a, T027b]
+      evidence:
+        - Generated projects include initial local commit/finalization, GitHub publish scripts, release readiness docs, credential-pending metadata, Android release helpers, Bridge registration helpers, and blocked publication reporting.
+        - ProjectFactoryJobRunner owns remote publication phases and blocks readiness when GitHub origin, APK release, or Bridge registration verification is missing.
+        - tests/test_project_factory_job_runner.py covers remote publication phase execution, blocked publication outcomes, generated validation gates, release helper execution, and no false ready state.
+    e2e-validation-pass-001:
+      completed_tasks: [T028, T029, T030]
+      evidence:
+        - Project Factory doctor and generated validation scripts check manifest, generated file shape, git state, Workbench discovery, auth/RBAC, admin/domain/notifications, Flutter/backend validation, no secrets, and release/profile blockers.
+        - Project Factory API/generator/job-runner tests exercise generated-project validation and doctor/status output.
+    acceptance-hardening-pass-001:
+      completed_tasks: [T031, T032, T033, T034]
+      evidence:
+        - Draft/job persistence survives backend restarts; queued/running jobs recover as interrupted with clear status and Project Factory history exposes terminal/interrupted states.
+        - Operational configuration, toolchain requirements, generated validation, and acceptance behavior are documented and regression-tested.
+    chat-mode-hardening-pass-001:
+      completed_tasks: [T035, T036, T037, T038, T039]
+      evidence:
+        - Backend metadata exposes Project Factory capability/version support; frontend falls back with update guidance when Project Factory endpoints are unavailable.
+        - Chat-first New Project mode is the primary UX, defaults to 20 generator and 20 reviewer runs after explicit confirmation, and generated projects include baseline Workbench diagrams and indexes.
+        - Focused frontend and backend tests cover capability metadata, chat kickoff/build marker gating, default run counts, and generated SDD diagram/index artifacts.
+    publication-contract-hardening-pass-001:
+      completed_tasks: [T040, T041, T042, T043, T044, T045]
+      evidence:
+        - The SAT Showroom local-only readiness gap is documented in spec.md, and runner-owned github_publish, android_release, installable_app_registration, and verification phases are part of remote publication mode.
+        - Generated scripts include publish_android_release.sh, register_installable_app.sh, validate_publication_ready.sh, release profile validators, and secret-redacted environment handling.
+        - Regression tests prove missing external publication configuration is blocked with concrete phase/command output instead of reporting ready.

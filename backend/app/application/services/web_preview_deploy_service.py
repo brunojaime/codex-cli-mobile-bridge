@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 import hashlib
 import json
 import os
@@ -67,6 +67,13 @@ class WebPreviewDeployInput(WebPreviewPlanInput):
     expected_plan_hash: str | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class WebPreviewLifecycleInput:
+    preview_id: str
+    ttl_seconds: int | None = None
+    reason: str | None = None
+
+
 class WebPreviewDeployService:
     def __init__(
         self,
@@ -106,6 +113,10 @@ class WebPreviewDeployService:
         plan_hash = _plan_hash(manifest, cloudflare_plan)
         health_path = str(cloudflare_plan.get("health_path") or "/api/health")
         preview_url = str(manifest.get("stable_url") or "")
+        now = datetime.now(UTC).replace(microsecond=0)
+        expires_at = now + timedelta(
+            seconds=max(1, self._settings.web_preview_default_ttl_seconds),
+        )
         payload = {
             "kind": "codex.webPreview",
             "version": 1,
@@ -126,13 +137,30 @@ class WebPreviewDeployService:
                     "message": "Preview deploy plan created in dry-run mode.",
                 },
             ],
-            "created_at": _now_iso(),
+            "created_at": _iso(now),
+            "updated_at": _iso(now),
+            "expires_at": _iso(expires_at),
+            "disabled_at": None,
+            "disabled_reason": None,
             "completed_at": None,
+            "audit_events": [
+                _audit_event(
+                    event_type="preview_plan_created",
+                    source_app=source_app,
+                    actor="bridge",
+                    details={"plan_hash": plan_hash},
+                ),
+            ],
         }
         self._persist_preview(payload)
         return payload
 
     def deploy(self, request: WebPreviewDeployInput) -> dict[str, Any]:
+        _manifest_path, _project_path, pre_manifest = self._load_manifest(request)
+        pre_source_app = str(
+            pre_manifest.get("source_app") or request.source_app or ""
+        ).strip()
+        previous = self.get_preview(_preview_id(pre_source_app)) if pre_source_app else None
         planned = self.plan(
             WebPreviewPlanInput(
                 project_path=request.project_path,
@@ -164,16 +192,71 @@ class WebPreviewDeployService:
                 message="expected_plan_hash does not match the current plan.",
                 status_code=409,
             )
+        if (
+            previous is not None
+            and previous.get("status") == "active"
+            and previous.get("plan_hash") == planned["plan_hash"]
+            and previous.get("applied_resources")
+        ):
+            recovered = {
+                **previous,
+                "recovery_status": "existing_active_verified",
+                "updated_at": _now_iso(),
+                "logs": [
+                    *(previous.get("logs") or []),
+                    {
+                        "level": "info",
+                        "message": "Existing active preview matches plan; treating rerun as recovered.",
+                    },
+                ],
+            }
+            recovered = self._with_audit_event(
+                recovered,
+                event_type="preview_recovery_verified",
+                details={"plan_hash": planned["plan_hash"]},
+            )
+            self._persist_preview(recovered)
+            return recovered
         self._assert_cloudflare_apply_configured()
         manifest_path, project_path, manifest = self._load_manifest(request)
+        recovery_status = None
+        if previous is not None and previous.get("status") in {
+            "applying",
+            "failed",
+            "blocked",
+        }:
+            recovery_status = f"recovering_from_{previous.get('status')}"
         state = {
             **planned,
             "status": "applying",
+            "recovery_status": recovery_status,
             "logs": [
                 *planned["logs"],
+                *(
+                    [
+                        {
+                            "level": "info",
+                            "message": (
+                                "Recovering interrupted preview publication from "
+                                f"{previous.get('status')} state."
+                            ),
+                        }
+                    ]
+                    if recovery_status
+                    else []
+                ),
                 {"level": "info", "message": "Apply gate passed; validating artifact."},
             ],
         }
+        if recovery_status:
+            state = self._with_audit_event(
+                state,
+                event_type="preview_recovery_started",
+                details={
+                    "previous_status": previous.get("status") if previous else None,
+                    "plan_hash": planned["plan_hash"],
+                },
+            )
         self._persist_preview(state)
         try:
             self._validate_project_for_apply(project_path, manifest)
@@ -189,6 +272,7 @@ class WebPreviewDeployService:
                 "status": "active",
                 "applied_resources": applied,
                 "completed_at": _now_iso(),
+                "updated_at": _now_iso(),
                 "logs": [
                     *state["logs"],
                     {
@@ -197,6 +281,11 @@ class WebPreviewDeployService:
                     },
                 ],
             }
+            state = self._with_audit_event(
+                state,
+                event_type="preview_publish_succeeded",
+                details={"applied_resources": len(applied)},
+            )
             self._persist_preview(state)
             invite_sync_summary = self.sync_invites_for_preview(
                 str(state["preview_id"]),
@@ -204,6 +293,7 @@ class WebPreviewDeployService:
             state = {
                 **state,
                 "invite_sync_summary": invite_sync_summary,
+                "updated_at": _now_iso(),
                 "logs": [
                     *state["logs"],
                     {
@@ -230,6 +320,7 @@ class WebPreviewDeployService:
                 "status": "failed",
                 "error": error,
                 "completed_at": _now_iso(),
+                "updated_at": _now_iso(),
                 "logs": [
                     *state["logs"],
                     {
@@ -238,6 +329,11 @@ class WebPreviewDeployService:
                     },
                 ],
             }
+            state = self._with_audit_event(
+                state,
+                event_type="preview_publish_failed",
+                details={"error": error},
+            )
         self._persist_preview(state)
         if state["status"] == "failed":
             raise WebPreviewError(
@@ -321,17 +417,117 @@ class WebPreviewDeployService:
         path = self._preview_state_dir / f"{_safe_id(preview_id)}.json"
         if not path.exists():
             return None
-        return json.loads(path.read_text(encoding="utf-8"))
+        return self._refresh_preview_lifecycle(
+            json.loads(path.read_text(encoding="utf-8"))
+        )
 
     def list_previews(self, *, limit: int = 50) -> tuple[dict[str, Any], ...]:
         previews = []
         for path in self._preview_state_dir.glob("*.json"):
             try:
-                previews.append(json.loads(path.read_text(encoding="utf-8")))
+                previews.append(
+                    self._refresh_preview_lifecycle(
+                        json.loads(path.read_text(encoding="utf-8"))
+                    )
+                )
             except (json.JSONDecodeError, OSError):
                 continue
         previews.sort(key=lambda item: str(item.get("created_at") or ""), reverse=True)
         return tuple(previews[: max(1, min(limit, 200))])
+
+    def disable_preview(self, request: WebPreviewLifecycleInput) -> dict[str, Any]:
+        state = self._load_preview_or_raise(request.preview_id)
+        now = _now_iso()
+        reason = (request.reason or "disabled by operator").strip()
+        state = {
+            **state,
+            "status": "disabled",
+            "disabled_at": state.get("disabled_at") or now,
+            "disabled_reason": reason,
+            "updated_at": now,
+            "logs": [
+                *(state.get("logs") or []),
+                {"level": "warning", "message": f"Preview disabled: {reason}"},
+            ],
+        }
+        state = self._with_audit_event(
+            state,
+            event_type="preview_disabled",
+            details={"reason": reason},
+        )
+        self._persist_preview(state)
+        return state
+
+    def expire_preview(self, request: WebPreviewLifecycleInput) -> dict[str, Any]:
+        state = self._load_preview_or_raise(request.preview_id)
+        now = _now_iso()
+        state = {
+            **state,
+            "status": "expired",
+            "expires_at": now,
+            "updated_at": now,
+            "logs": [
+                *(state.get("logs") or []),
+                {"level": "warning", "message": "Preview expired by operator."},
+            ],
+        }
+        state = self._with_audit_event(
+            state,
+            event_type="preview_expired",
+            details={"reason": request.reason or "operator_expire"},
+        )
+        self._persist_preview(state)
+        return state
+
+    def extend_preview(self, request: WebPreviewLifecycleInput) -> dict[str, Any]:
+        state = self._load_preview_or_raise(request.preview_id)
+        ttl_seconds = max(
+            1,
+            request.ttl_seconds
+            if request.ttl_seconds is not None
+            else self._settings.web_preview_default_ttl_seconds,
+        )
+        now = datetime.now(UTC).replace(microsecond=0)
+        expires_at = now + timedelta(seconds=ttl_seconds)
+        next_status = "active" if state.get("status") == "expired" else state.get("status")
+        state = {
+            **state,
+            "status": next_status,
+            "expires_at": _iso(expires_at),
+            "updated_at": _iso(now),
+            "logs": [
+                *(state.get("logs") or []),
+                {"level": "info", "message": f"Preview extended by {ttl_seconds}s."},
+            ],
+        }
+        state = self._with_audit_event(
+            state,
+            event_type="preview_extended",
+            details={"ttl_seconds": ttl_seconds, "expires_at": _iso(expires_at)},
+        )
+        self._persist_preview(state)
+        return state
+
+    def record_audit_event(
+        self,
+        *,
+        preview_id: str,
+        event_type: str,
+        actor: str = "bridge",
+        details: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        state = self.get_preview(preview_id)
+        if state is None:
+            return None
+        state = self._with_audit_event(
+            state,
+            event_type=event_type,
+            actor=actor,
+            details=details or {},
+        )
+        state["updated_at"] = _now_iso()
+        self._persist_preview(state)
+        return state
 
     def _load_manifest(
         self,
@@ -414,7 +610,7 @@ class WebPreviewDeployService:
         env = {
             **os.environ,
             "REQUIRE_WEB_BUILD_OUTPUT": "true",
-            "APP_RUNTIME_PROFILE": "real",
+            "APP_RUNTIME_PROFILE": "preview",
             "API_RUNTIME": "cloudflare_preview",
             "API_BASE_URL": str(
                 manifest.get("runtime", {}).get("api_base_url")
@@ -450,6 +646,67 @@ class WebPreviewDeployService:
     def _persist_preview(self, payload: dict[str, Any]) -> None:
         preview_id = _safe_id(str(payload["preview_id"]))
         _atomic_write_json(self._preview_state_dir / f"{preview_id}.json", payload)
+
+    def _load_preview_or_raise(self, preview_id: str) -> dict[str, Any]:
+        state = self.get_preview(preview_id)
+        if state is None:
+            raise WebPreviewError(
+                code="web_preview_not_found",
+                message="Web preview was not found.",
+                status_code=404,
+            )
+        return state
+
+    def _refresh_preview_lifecycle(self, state: dict[str, Any]) -> dict[str, Any]:
+        if state.get("disabled_at"):
+            if state.get("status") != "disabled":
+                state = {
+                    **state,
+                    "status": "disabled",
+                    "updated_at": _now_iso(),
+                }
+                self._persist_preview(state)
+            return state
+        if state.get("status") != "active":
+            return state
+        expires_at = _parse_iso(str(state.get("expires_at") or ""))
+        if expires_at is None or expires_at > datetime.now(UTC):
+            return state
+        state = {
+            **state,
+            "status": "expired",
+            "updated_at": _now_iso(),
+            "logs": [
+                *(state.get("logs") or []),
+                {"level": "warning", "message": "Preview expired automatically."},
+            ],
+        }
+        state = self._with_audit_event(
+            state,
+            event_type="preview_expired",
+            details={"reason": "expires_at_elapsed"},
+        )
+        self._persist_preview(state)
+        return state
+
+    def _with_audit_event(
+        self,
+        state: dict[str, Any],
+        *,
+        event_type: str,
+        actor: str = "bridge",
+        details: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        events = list(state.get("audit_events") or [])
+        events.append(
+            _audit_event(
+                event_type=event_type,
+                source_app=str(state.get("source_app") or ""),
+                actor=actor,
+                details=details or {},
+            )
+        )
+        return {**state, "audit_events": events}
 
     def _d1_sync_context(self, preview: dict[str, Any]) -> dict[str, str]:
         account_id = (self._settings.cloudflare_account_id or "").strip()
@@ -735,6 +992,49 @@ def _plan_hash(manifest: dict[str, Any], cloudflare_plan: dict[str, Any]) -> str
 
 def _now_iso() -> str:
     return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _iso(value: datetime) -> str:
+    return value.astimezone(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _parse_iso(value: str) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(UTC)
+    except ValueError:
+        return None
+
+
+def _audit_event(
+    *,
+    event_type: str,
+    source_app: str,
+    actor: str,
+    details: dict[str, Any],
+) -> dict[str, Any]:
+    timestamp = _now_iso()
+    material = json.dumps(
+        {
+            "event_type": event_type,
+            "source_app": source_app,
+            "actor": actor,
+            "details": details,
+            "created_at": timestamp,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return {
+        "event_id": f"wpa-{hashlib.sha256(material.encode()).hexdigest()[:16]}",
+        "source_app": source_app,
+        "app_slug": source_app,
+        "event_type": event_type,
+        "actor": actor,
+        "details": details,
+        "created_at": timestamp,
+    }
 
 
 def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:

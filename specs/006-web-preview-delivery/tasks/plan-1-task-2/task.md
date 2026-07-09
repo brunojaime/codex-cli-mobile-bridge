@@ -6,4 +6,4 @@ Plan: `Preview Contract And SDD Alignment`
 
 ## Checklist
 
-- [ ] T002 Define Preview API v1 endpoint, payload, error, auth, pagination, and timestamp contract.
+- [x] T002 Define Preview API v1 endpoint, payload, error, auth, pagination, and timestamp contract.

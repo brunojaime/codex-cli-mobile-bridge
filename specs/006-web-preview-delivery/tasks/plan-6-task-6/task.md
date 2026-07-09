@@ -6,4 +6,4 @@ Plan: `Admin Invite And Email Delivery`
 
 ## Checklist
 
-- [ ] T039 Add resend, revoke, expire, and list invite operations.
+- [x] T039 Add resend, revoke, expire, and list invite operations.

@@ -151,7 +151,7 @@
       "id": "plan-5",
       "number": 5,
       "title": "Validation And Release",
-      "status": "in_progress",
+      "status": "done",
       "description": "Test command behavior and release if needed.",
       "file": "plans/05-validation-release/plan.md",
       "tasks": [
@@ -191,7 +191,7 @@
           "id": "plan-5-task-5",
           "number": 5,
           "title": "T018 Publish Android release if frontend code changes ship to users",
-          "status": "planned",
+          "status": "done",
           "description": "Use the standard Android release flow only after tests pass.",
           "file": "tasks/plan-5-task-5/task.md"
         }

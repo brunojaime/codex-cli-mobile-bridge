@@ -5,12 +5,14 @@ requirements:
     acceptance_criteria:
       - Stable scope, board, column, card, evidence, and history payloads exist.
       - Confirmed task state is separated from inferred observer evidence.
+      - A scope index contract lists workspace, spec, Project Factory, and generated workspace scopes.
     tasks:
       - T001
       - T002
       - T003
       - T004
       - T005
+      - T039
     implementation:
       - backend/app/application/services/sdd_workbench_kanban_service.py
       - backend/app/api/schemas.py
@@ -19,6 +21,8 @@ requirements:
     acceptance_criteria:
       - SDD tasks, tree plans, metadata, phases, ordering, deltas, and cache are deterministic.
       - Projection state is stored outside SDD artifacts.
+      - Workbench `done`, `completed`, and `complete` states all render as Done in task and phase cards.
+      - Spec-scoped boards do not include workspace observer or Project Factory cards unless those scopes are explicit.
     tasks:
       - T006
       - T007
@@ -27,6 +31,8 @@ requirements:
       - T010
       - T011
       - T012
+      - T035
+      - T037
     implementation:
       - backend/app/application/services/sdd_workbench_kanban_service.py
       - tests/test_sdd_workbench_kanban.py
@@ -34,6 +40,7 @@ requirements:
     acceptance_criteria:
       - Project Factory drafts/jobs, run artifacts, JSONL tails, generated workspace mapping, validation outcomes, and reviewer findings are observed read-only.
       - Generator and Reviewer behavior remains unchanged.
+      - Live project creation can be viewed through reusable draft/job scopes before the generated workspace exists.
     tasks:
       - T013
       - T014
@@ -42,6 +49,7 @@ requirements:
       - T017
       - T018
       - T019
+      - T040
     implementation:
       - backend/app/application/services/sdd_workbench_kanban_service.py
       - backend/app/container.py
@@ -63,6 +71,8 @@ requirements:
   R-005-workbench-kanban-ui:
     acceptance_criteria:
       - Workbench has a Kanban tab with responsive board, latest update, history, clear states, and compact overview card.
+      - The Kanban tab can switch between workspace, spec, Project Factory, and generated workspace scopes, preserving the selected scope on refresh and polling.
+      - The initial selector value always matches the board request, including Project Factory-first scope ordering and scope-index fallback.
     tasks:
       - T025
       - T026
@@ -70,6 +80,9 @@ requirements:
       - T028
       - T029
       - T030
+      - T038
+      - T041
+      - T043
     implementation:
       - packages/codex_bridge_workbench/lib/src/models/sdd_project.dart
       - packages/codex_bridge_workbench/lib/src/services/sdd_explorer_client.dart
@@ -79,11 +92,71 @@ requirements:
     acceptance_criteria:
       - Backend projection/API and Flutter UI states are covered by regression tests.
       - New Project continuity is covered without changing Generator/Reviewer behavior.
+      - Scope index and UI request parameter preservation are covered for spec and job scopes.
     tasks:
       - T031
       - T032
       - T033
       - T034
+      - T036
+      - T042
     implementation:
       - tests/test_sdd_workbench_kanban.py
       - packages/codex_bridge_workbench/test/codex_bridge_workbench_test.dart
+implementation:
+  status: complete
+  completed_tasks:
+    - T001
+    - T002
+    - T003
+    - T004
+    - T005
+    - T006
+    - T007
+    - T008
+    - T009
+    - T010
+    - T011
+    - T012
+    - T013
+    - T014
+    - T015
+    - T016
+    - T017
+    - T018
+    - T019
+    - T020
+    - T021
+    - T022
+    - T023
+    - T024
+    - T025
+    - T026
+    - T027
+    - T028
+    - T029
+    - T030
+    - T031
+    - T032
+    - T033
+    - T034
+    - T035
+    - T036
+    - T037
+    - T038
+    - T039
+    - T040
+    - T041
+    - T042
+    - T043
+  pending_tasks: []
+  evidence:
+    - backend/app/application/services/sdd_workbench_kanban_service.py projects deterministic SDD cards, Project Factory/job cards, JSONL tails, run artifacts, release contract cards, reviewer findings, board deltas, latest Curator update, and append-only history outside SDD artifacts.
+    - backend/app/application/services/sdd_workbench_kanban_service.py records active scopes, computes watched-source signatures, refreshes changed or polling-due scopes with debounce, and preserves Project Factory history when a generated workspace appears.
+    - backend/app/application/services/sdd_workbench_kanban_service.py normalizes Workbench `done`, `completed`, and `complete` task states before mapping cards and phase progress.
+    - backend/app/application/services/sdd_workbench_kanban_service.py keeps pure spec-scoped boards limited to selected-spec SDD cards.
+    - backend/app/application/services/sdd_workbench_kanban_service.py builds reusable workspace, spec, Project Factory draft/job, and generated workspace scope options for live creation and post-generation continuity.
+    - backend/app/api/routes.py exposes board, scope index, refresh, history list, and history detail endpoints with backend coverage in tests/test_sdd_workbench_kanban.py.
+    - packages/codex_bridge_workbench/lib/src models, client, and widgets render the Kanban tab, scope selector, latest Curator update, history list/detail, blocked states, manual commands, compact overview card, and active-tab polling fallback with Flutter coverage in packages/codex_bridge_workbench/test/codex_bridge_workbench_test.dart.
+    - packages/codex_bridge_workbench/test/codex_bridge_workbench_test.dart verifies selected spec_id and Project Factory job_id are preserved through board load, refresh, and polling.
+    - packages/codex_bridge_workbench/test/codex_bridge_workbench_test.dart verifies Project Factory-first scope ordering and scope-index failures still select and request the workspace board consistently.

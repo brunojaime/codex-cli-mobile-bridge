@@ -1,0 +1,30 @@
+id: 014-project-factory-frontend-strategy
+slug: 014-project-factory-frontend-strategy
+title: Project Factory Frontend Strategy
+description: Define Flutter and Svelte as explicit New Project Factory frontend strategies with strategy-specific release, Cloudflare preview, validation, and installability contracts.
+status: complete
+last_run_state: passed
+generated:
+  title: false
+  description: false
+  user_pinned_title: true
+  user_pinned_description: true
+tasks:
+  total: 42
+  completed: 42
+  pending: 0
+diagrams:
+  total: 0
+  items: {}
+available_files:
+  - spec.md
+  - plan.md
+  - tasks.md
+  - tree.json
+  - traceability.yaml
+source_digests:
+  spec.md: f840af3d91b5390445eeaf83296ade095b4678768c0a830087741014ff7ffda7
+  plan.md: 499785443a9161fbf71e42321d82743c38f0125f23b627746899558e51f21d7c
+  tasks.md: e075c9bf3d8bd6bf747c1c1db38f540a2d569582b7eb922b8e6e28a0886808a8
+  tree.json: d21817d4793e0b1bf7de34207771e71a830d689c9c172c1913405f8448f942a1
+  traceability.yaml: 5d9cb43943400c5f64dea3f23f6bd25deae8343d96a26e0743fdea0ee6fd44d4

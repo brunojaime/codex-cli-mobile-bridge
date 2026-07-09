@@ -2,8 +2,8 @@ id: 001-codex-bridge-sdd-wrapper
 slug: 001-codex-bridge-sdd-wrapper
 title: Codex Bridge SDD Wrapper
 description: Codex Mobile Bridge projects must expose a mandatory SDD structure that can be
-status: draft
-last_run_state: metadata-refreshed
+status: complete
+last_run_state: implemented
 generated:
   title: true
   description: true

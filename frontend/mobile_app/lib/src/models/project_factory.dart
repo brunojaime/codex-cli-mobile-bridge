@@ -4,6 +4,8 @@ class ProjectFactoryOptions {
     required this.platforms,
     required this.defaultBackend,
     required this.backends,
+    this.defaultFrontendStrategy = 'flutter',
+    this.frontendStrategies = const <Map<String, dynamic>>[],
     required this.logoModes,
     required this.businessTypes,
     required this.creationWorkflow,
@@ -13,6 +15,8 @@ class ProjectFactoryOptions {
   final List<String> platforms;
   final String defaultBackend;
   final List<String> backends;
+  final String defaultFrontendStrategy;
+  final List<Map<String, dynamic>> frontendStrategies;
   final List<String> logoModes;
   final List<String> businessTypes;
   final Map<String, dynamic> creationWorkflow;
@@ -23,6 +27,14 @@ class ProjectFactoryOptions {
       platforms: _stringList(json['platforms']),
       defaultBackend: json['default_backend'] as String? ?? 'fastapi',
       backends: _stringList(json['backends']),
+      defaultFrontendStrategy: json['defaultFrontendStrategy'] as String? ??
+          json['default_frontend_strategy'] as String? ??
+          'flutter',
+      frontendStrategies: ((json['frontendStrategies'] ??
+                  json['frontend_strategies']) as List<dynamic>?)
+              ?.whereType<Map<String, dynamic>>()
+              .toList(growable: false) ??
+          const <Map<String, dynamic>>[],
       logoModes: _stringList(json['logo_modes']),
       businessTypes: _stringList(json['business_types']),
       creationWorkflow: (json['creation_workflow'] as Map<String, dynamic>?) ??
@@ -130,6 +142,107 @@ class ProjectFactoryDraftAsset {
   }
 }
 
+class ProjectFactoryGuidedIntakeAnswer {
+  const ProjectFactoryGuidedIntakeAnswer({
+    required this.questionId,
+    required this.value,
+    required this.source,
+    required this.confidence,
+    required this.updatedAt,
+  });
+
+  final String questionId;
+  final Object? value;
+  final String source;
+  final double confidence;
+  final String updatedAt;
+
+  factory ProjectFactoryGuidedIntakeAnswer.fromJson(Map<String, dynamic> json) {
+    return ProjectFactoryGuidedIntakeAnswer(
+      questionId:
+          json['questionId'] as String? ?? json['question_id'] as String? ?? '',
+      value: json['value'],
+      source: json['source'] as String? ?? 'user',
+      confidence: (json['confidence'] as num?)?.toDouble() ?? 1,
+      updatedAt:
+          json['updatedAt'] as String? ?? json['updated_at'] as String? ?? '',
+    );
+  }
+}
+
+class ProjectFactoryGuidedIntake {
+  const ProjectFactoryGuidedIntake({
+    required this.enabled,
+    required this.status,
+    required this.questions,
+    required this.answers,
+    required this.missingFields,
+    required this.assumptions,
+    required this.blockers,
+    required this.readyForConfirmation,
+    required this.buildAllowed,
+    this.contractPreview,
+    this.updatedAt = '',
+    this.confirmedAt,
+  });
+
+  static const empty = ProjectFactoryGuidedIntake(
+    enabled: false,
+    status: 'confirmed',
+    questions: <Map<String, dynamic>>[],
+    answers: <ProjectFactoryGuidedIntakeAnswer>[],
+    missingFields: <Map<String, dynamic>>[],
+    assumptions: <Map<String, dynamic>>[],
+    blockers: <Map<String, dynamic>>[],
+    readyForConfirmation: false,
+    buildAllowed: true,
+  );
+
+  final bool enabled;
+  final String status;
+  final List<Map<String, dynamic>> questions;
+  final List<ProjectFactoryGuidedIntakeAnswer> answers;
+  final List<Map<String, dynamic>> missingFields;
+  final List<Map<String, dynamic>> assumptions;
+  final List<Map<String, dynamic>> blockers;
+  final Map<String, dynamic>? contractPreview;
+  final String updatedAt;
+  final String? confirmedAt;
+  final bool readyForConfirmation;
+  final bool buildAllowed;
+
+  bool get isCollecting => status == 'collecting';
+  bool get isBlocked => status == 'blocked';
+  bool get isConfirmed => status == 'confirmed' || status == 'build_started';
+
+  factory ProjectFactoryGuidedIntake.fromJson(Map<String, dynamic> json) {
+    return ProjectFactoryGuidedIntake(
+      enabled: json['enabled'] as bool? ?? false,
+      status: json['status'] as String? ?? 'confirmed',
+      questions: _mapList(json['questions']),
+      answers: _mapList(json['answers'])
+          .map(ProjectFactoryGuidedIntakeAnswer.fromJson)
+          .toList(growable: false),
+      missingFields: _mapList(json['missingFields'] ?? json['missing_fields']),
+      assumptions: _mapList(json['assumptions']),
+      blockers: _mapList(json['blockers']),
+      contractPreview: _nullableMapFromJson(
+        json['contractPreview'] ?? json['contract_preview'],
+      ),
+      updatedAt:
+          json['updatedAt'] as String? ?? json['updated_at'] as String? ?? '',
+      confirmedAt:
+          json['confirmedAt'] as String? ?? json['confirmed_at'] as String?,
+      readyForConfirmation: json['readyForConfirmation'] as bool? ??
+          json['ready_for_confirmation'] as bool? ??
+          false,
+      buildAllowed: json['buildAllowed'] as bool? ??
+          json['build_allowed'] as bool? ??
+          false,
+    );
+  }
+}
+
 class ProjectFactoryDraftRequest {
   const ProjectFactoryDraftRequest({
     required this.name,
@@ -138,8 +251,11 @@ class ProjectFactoryDraftRequest {
     this.slug,
     this.platforms = const <String>['ios', 'android', 'web'],
     this.backend = 'fastapi',
+    this.frontendStrategy = 'flutter',
     this.logoMode = 'generate',
     this.firstReleaseMode = 'preview',
+    this.guidedIntakeEnabled = false,
+    this.initialAdminEmails = const <String>[],
     this.visualReferencePaths = const <String>[],
   });
 
@@ -149,8 +265,11 @@ class ProjectFactoryDraftRequest {
   final String? slug;
   final List<String> platforms;
   final String backend;
+  final String frontendStrategy;
   final String logoMode;
   final String firstReleaseMode;
+  final bool guidedIntakeEnabled;
+  final List<String> initialAdminEmails;
   final List<String> visualReferencePaths;
 
   Map<String, dynamic> toJson() {
@@ -161,8 +280,11 @@ class ProjectFactoryDraftRequest {
       if (slug != null && slug!.trim().isNotEmpty) 'slug': slug,
       'platforms': platforms,
       'backend': backend,
+      'frontendStrategy': frontendStrategy,
       'logoMode': logoMode,
       'firstReleaseMode': firstReleaseMode,
+      'guidedIntakeEnabled': guidedIntakeEnabled,
+      'initialAdminEmails': initialAdminEmails,
       'visualReferencePaths': visualReferencePaths,
     };
   }
@@ -174,14 +296,18 @@ class ProjectFactoryDraft {
     required this.createdAt,
     required this.manifestPlan,
     this.firstReleaseMode = 'preview',
+    this.frontendStrategy = 'flutter',
     this.initialPreviewRelease = InitialPreviewRelease.empty,
+    this.guidedIntake = ProjectFactoryGuidedIntake.empty,
   });
 
   final String draftId;
   final String createdAt;
   final Map<String, dynamic> manifestPlan;
   final String firstReleaseMode;
+  final String frontendStrategy;
   final InitialPreviewRelease initialPreviewRelease;
+  final ProjectFactoryGuidedIntake guidedIntake;
 
   factory ProjectFactoryDraft.fromJson(Map<String, dynamic> json) {
     return ProjectFactoryDraft(
@@ -192,9 +318,15 @@ class ProjectFactoryDraft {
       firstReleaseMode: json['firstReleaseMode'] as String? ??
           json['first_release_mode'] as String? ??
           'preview',
+      frontendStrategy: json['frontendStrategy'] as String? ??
+          json['frontend_strategy'] as String? ??
+          'flutter',
       initialPreviewRelease: InitialPreviewRelease.fromJson(
         _mapFromJson(
             json['initialPreviewRelease'] ?? json['initial_preview_release']),
+      ),
+      guidedIntake: ProjectFactoryGuidedIntake.fromJson(
+        _mapFromJson(json['guidedIntake'] ?? json['guided_intake']),
       ),
     );
   }
@@ -214,7 +346,9 @@ class ProjectFactoryDraftSummary {
     this.targetPath,
     this.error,
     this.firstReleaseMode = 'preview',
+    this.frontendStrategy = 'flutter',
     this.initialPreviewRelease = InitialPreviewRelease.empty,
+    this.guidedIntake = ProjectFactoryGuidedIntake.empty,
   });
 
   final String id;
@@ -229,7 +363,9 @@ class ProjectFactoryDraftSummary {
   final String? targetPath;
   final String? error;
   final String firstReleaseMode;
+  final String frontendStrategy;
   final InitialPreviewRelease initialPreviewRelease;
+  final ProjectFactoryGuidedIntake guidedIntake;
 
   factory ProjectFactoryDraftSummary.fromJson(Map<String, dynamic> json) {
     return ProjectFactoryDraftSummary(
@@ -247,9 +383,15 @@ class ProjectFactoryDraftSummary {
       firstReleaseMode: json['firstReleaseMode'] as String? ??
           json['first_release_mode'] as String? ??
           'preview',
+      frontendStrategy: json['frontendStrategy'] as String? ??
+          json['frontend_strategy'] as String? ??
+          'flutter',
       initialPreviewRelease: InitialPreviewRelease.fromJson(
         _mapFromJson(
             json['initialPreviewRelease'] ?? json['initial_preview_release']),
+      ),
+      guidedIntake: ProjectFactoryGuidedIntake.fromJson(
+        _mapFromJson(json['guidedIntake'] ?? json['guided_intake']),
       ),
     );
   }
@@ -291,6 +433,9 @@ class InitialPreviewRelease {
     required this.apiRuntime,
     required this.releaseChannel,
     required this.releaseTagPattern,
+    this.frontendStrategy = 'flutter',
+    this.installableAndroid = true,
+    this.bridgeRegistrationRequired = true,
     required this.productionReady,
     required this.mockOrDemo,
     required this.status,
@@ -308,6 +453,9 @@ class InitialPreviewRelease {
     apiRuntime: 'cloudflare_preview',
     releaseChannel: 'prerelease',
     releaseTagPattern: 'android-preview-v*',
+    frontendStrategy: 'flutter',
+    installableAndroid: true,
+    bridgeRegistrationRequired: true,
     productionReady: false,
     mockOrDemo: false,
     status: 'draft',
@@ -323,6 +471,9 @@ class InitialPreviewRelease {
   final String apiRuntime;
   final String releaseChannel;
   final String releaseTagPattern;
+  final String frontendStrategy;
+  final bool installableAndroid;
+  final bool bridgeRegistrationRequired;
   final bool productionReady;
   final bool mockOrDemo;
   final String status;
@@ -350,9 +501,21 @@ class InitialPreviewRelease {
       releaseChannel: json['releaseChannel'] as String? ??
           json['release_channel'] as String? ??
           'prerelease',
-      releaseTagPattern: json['releaseTagPattern'] as String? ??
-          json['release_tag_pattern'] as String? ??
-          'android-preview-v*',
+      releaseTagPattern: (json.containsKey('releaseTagPattern') ||
+              json.containsKey('release_tag_pattern'))
+          ? (json['releaseTagPattern'] as String? ??
+              json['release_tag_pattern'] as String? ??
+              '')
+          : 'android-preview-v*',
+      frontendStrategy: json['frontendStrategy'] as String? ??
+          json['frontend_strategy'] as String? ??
+          'flutter',
+      installableAndroid: json['installableAndroid'] as bool? ??
+          json['installable_android'] as bool? ??
+          true,
+      bridgeRegistrationRequired: json['bridgeRegistrationRequired'] as bool? ??
+          json['bridge_registration_required'] as bool? ??
+          true,
       productionReady: json['productionReady'] as bool? ??
           json['production_ready'] as bool? ??
           false,
@@ -396,6 +559,7 @@ class ProjectFactoryJob {
     required this.manifestPlan,
     required this.stepLogs,
     this.firstReleaseMode = 'preview',
+    this.frontendStrategy = 'flutter',
     this.initialPreviewRelease = InitialPreviewRelease.empty,
     this.startedAt,
     this.completedAt,
@@ -414,6 +578,7 @@ class ProjectFactoryJob {
   final Map<String, dynamic> manifestPlan;
   final List<Map<String, dynamic>> stepLogs;
   final String firstReleaseMode;
+  final String frontendStrategy;
   final InitialPreviewRelease initialPreviewRelease;
   final String? startedAt;
   final String? completedAt;
@@ -461,6 +626,9 @@ class ProjectFactoryJob {
       firstReleaseMode: json['firstReleaseMode'] as String? ??
           json['first_release_mode'] as String? ??
           'preview',
+      frontendStrategy: json['frontendStrategy'] as String? ??
+          json['frontend_strategy'] as String? ??
+          'flutter',
       initialPreviewRelease: InitialPreviewRelease.fromJson(
         _mapFromJson(
             json['initialPreviewRelease'] ?? json['initial_preview_release']),
@@ -493,6 +661,7 @@ class ProjectFactoryJobSummary {
     this.message,
     this.manualNextStep,
     this.firstReleaseMode = 'preview',
+    this.frontendStrategy = 'flutter',
     this.initialPreviewRelease = InitialPreviewRelease.empty,
   });
 
@@ -513,6 +682,7 @@ class ProjectFactoryJobSummary {
   final String? message;
   final String? manualNextStep;
   final String firstReleaseMode;
+  final String frontendStrategy;
   final InitialPreviewRelease initialPreviewRelease;
 
   bool get isReady => status == 'ready' || status == 'completed';
@@ -543,6 +713,9 @@ class ProjectFactoryJobSummary {
       firstReleaseMode: json['firstReleaseMode'] as String? ??
           json['first_release_mode'] as String? ??
           'preview',
+      frontendStrategy: json['frontendStrategy'] as String? ??
+          json['frontend_strategy'] as String? ??
+          'flutter',
       initialPreviewRelease: InitialPreviewRelease.fromJson(
         _mapFromJson(
             json['initialPreviewRelease'] ?? json['initial_preview_release']),
@@ -596,10 +769,15 @@ class WebPreview {
     this.healthUrl,
     this.error,
     this.completedAt,
+    this.updatedAt,
+    this.expiresAt,
+    this.disabledAt,
+    this.disabledReason,
     this.inviteSyncSummary,
     this.planHash,
     this.projectPath,
     this.manifestPath,
+    this.auditEvents = const <Map<String, dynamic>>[],
   });
 
   final String previewId;
@@ -609,6 +787,10 @@ class WebPreview {
   final String? healthUrl;
   final String? error;
   final String? completedAt;
+  final String? updatedAt;
+  final String? expiresAt;
+  final String? disabledAt;
+  final String? disabledReason;
   final String? planHash;
   final String? projectPath;
   final String? manifestPath;
@@ -616,11 +798,14 @@ class WebPreview {
   final List<Map<String, dynamic>> plannedResources;
   final List<Map<String, dynamic>> appliedResources;
   final List<Map<String, dynamic>> logs;
+  final List<Map<String, dynamic>> auditEvents;
   final String createdAt;
 
   bool get isActive => status == 'active';
   bool get isFailed => status == 'failed';
   bool get isApplyDisabled => status == 'apply_disabled';
+  bool get isDisabled => status == 'disabled' || disabledAt != null;
+  bool get isExpired => status == 'expired';
 
   factory WebPreview.fromJson(Map<String, dynamic> json) {
     return WebPreview(
@@ -631,6 +816,10 @@ class WebPreview {
       healthUrl: json['health_url'] as String?,
       error: json['error'] as String?,
       completedAt: json['completed_at'] as String?,
+      updatedAt: json['updated_at'] as String?,
+      expiresAt: json['expires_at'] as String?,
+      disabledAt: json['disabled_at'] as String?,
+      disabledReason: json['disabled_reason'] as String?,
       planHash: json['plan_hash'] as String?,
       projectPath: json['project_path'] as String?,
       manifestPath: json['manifest_path'] as String?,
@@ -638,6 +827,7 @@ class WebPreview {
       plannedResources: _mapList(json['planned_resources']),
       appliedResources: _mapList(json['applied_resources']),
       logs: _mapList(json['logs']),
+      auditEvents: _mapList(json['audit_events']),
       createdAt: json['created_at'] as String? ?? '',
     );
   }
@@ -651,11 +841,20 @@ class WebPreviewInvite {
     required this.appSlug,
     required this.createdAt,
     required this.expiresAt,
+    this.email,
+    this.role = 'admin',
     required this.singleUse,
     required this.syncStatus,
     required this.tokenSha256,
     this.usedAt,
     this.revokedAt,
+    this.expiredAt,
+    this.resendCount = 0,
+    this.lastSentAt,
+    this.emailProvider,
+    this.emailDeliveryStatus = 'not_requested',
+    this.emailDeliveryError,
+    this.manualDeliveryRequired = false,
     this.syncedAt,
     this.syncError,
     this.inviteUrl,
@@ -668,9 +867,18 @@ class WebPreviewInvite {
   final String appSlug;
   final String createdAt;
   final String expiresAt;
+  final String? email;
+  final String role;
   final bool singleUse;
   final String? usedAt;
   final String? revokedAt;
+  final String? expiredAt;
+  final int resendCount;
+  final String? lastSentAt;
+  final String? emailProvider;
+  final String emailDeliveryStatus;
+  final String? emailDeliveryError;
+  final bool manualDeliveryRequired;
   final String syncStatus;
   final String? syncedAt;
   final String? syncError;
@@ -689,9 +897,20 @@ class WebPreviewInvite {
       appSlug: json['app_slug'] as String? ?? '',
       createdAt: json['created_at'] as String? ?? '',
       expiresAt: json['expires_at'] as String? ?? '',
+      email: json['email'] as String?,
+      role: json['role'] as String? ?? 'admin',
       singleUse: json['single_use'] as bool? ?? true,
       usedAt: json['used_at'] as String?,
       revokedAt: json['revoked_at'] as String?,
+      expiredAt: json['expired_at'] as String?,
+      resendCount: json['resend_count'] as int? ?? 0,
+      lastSentAt: json['last_sent_at'] as String?,
+      emailProvider: json['email_provider'] as String?,
+      emailDeliveryStatus:
+          json['email_delivery_status'] as String? ?? 'not_requested',
+      emailDeliveryError: json['email_delivery_error'] as String?,
+      manualDeliveryRequired:
+          json['manual_delivery_required'] as bool? ?? false,
       syncStatus: json['sync_status'] as String? ?? 'not_deployed',
       syncedAt: json['synced_at'] as String?,
       syncError: json['sync_error'] as String?,
@@ -724,6 +943,11 @@ Map<String, dynamic> _mapFromJson(Object? value) {
     return value.map((key, item) => MapEntry(key.toString(), item));
   }
   return <String, dynamic>{};
+}
+
+Map<String, dynamic>? _nullableMapFromJson(Object? value) {
+  final mapped = _mapFromJson(value);
+  return mapped.isEmpty && value == null ? null : mapped;
 }
 
 int? _intOrNull(Object? value) {

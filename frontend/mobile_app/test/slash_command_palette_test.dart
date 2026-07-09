@@ -1,4 +1,5 @@
 import 'package:codex_mobile_frontend/src/screens/chat_screen.dart';
+import 'package:codex_mobile_frontend/src/models/slash_command.dart';
 import 'package:codex_mobile_frontend/src/services/audio_note_recorder.dart';
 import 'package:cross_file/cross_file.dart';
 import 'package:flutter/material.dart';
@@ -57,11 +58,86 @@ void main() {
     expect(executed, <String>['new-project']);
     expect(controller.text, isEmpty);
   });
+
+  testWidgets('apps and workbench commands dispatch panel callbacks',
+      (tester) async {
+    final controller = TextEditingController();
+    final executed = <String>[];
+    await tester.pumpWidget(_harness(
+      controller: controller,
+      onSlashCommand: (commandId, payload) async {
+        executed.add('$commandId:$payload');
+        return true;
+      },
+    ));
+
+    await tester.enterText(find.byType(TextField), '/apps');
+    await tester.pump();
+    await tester.tap(find.text('/apps  Apps'));
+    await tester.pump();
+
+    await tester.enterText(find.byType(TextField), '/workbench');
+    await tester.pump();
+    await tester.tap(find.text('/workbench  Workbench'));
+    await tester.pump();
+
+    expect(executed, <String>['apps:apps', 'workbench:workbench']);
+  });
+
+  testWidgets('backend guarded panel commands show unavailable state',
+      (tester) async {
+    final controller = TextEditingController();
+    final executed = <String>[];
+    await tester.pumpWidget(_harness(
+      controller: controller,
+      slashCommandContext: const SlashCommandContext(
+        hasActiveBackend: false,
+        workbenchAvailable: false,
+        appsAvailable: false,
+      ),
+      onSlashCommand: (commandId, payload) async {
+        executed.add(commandId);
+        return true;
+      },
+    ));
+
+    await tester.enterText(find.byType(TextField), '/apps');
+    await tester.pump();
+    await tester.tap(find.text('/apps  Apps'));
+    await tester.pump();
+
+    expect(find.text('No active bridge server.'), findsWidgets);
+    expect(executed, isEmpty);
+  });
+
+  testWidgets('ordinary slash-containing messages send normally',
+      (tester) async {
+    final controller = TextEditingController();
+    var sent = 0;
+    await tester.pumpWidget(_harness(
+      controller: controller,
+      onSend: () async {
+        sent += 1;
+        return true;
+      },
+      onSlashCommand: (_, __) async {
+        fail('ordinary slash-containing text must not dispatch a command');
+      },
+    ));
+
+    await tester.enterText(find.byType(TextField), 'please inspect /tmp/logs');
+    await tester.testTextInput.receiveAction(TextInputAction.send);
+    await tester.pump();
+
+    expect(sent, 1);
+  });
 }
 
 Widget _harness({
   required TextEditingController controller,
+  Future<bool> Function()? onSend,
   Future<bool> Function(String commandId, String payload)? onSlashCommand,
+  SlashCommandContext slashCommandContext = const SlashCommandContext(),
 }) {
   return MaterialApp(
     home: Scaffold(
@@ -70,9 +146,11 @@ Widget _harness({
         child: buildComposerVoiceRecordingHarnessForTest(
           controller: controller,
           audioRecorderFactory: _UnavailableAudioRecorder.new,
+          onSend: onSend,
           onSendAudio: (_, {message}) async => false,
           onSendAttachments: (_, {prompt}) async => false,
           onSlashCommand: onSlashCommand,
+          slashCommandContext: slashCommandContext,
         ),
       ),
     ),

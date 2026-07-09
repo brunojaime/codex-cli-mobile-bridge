@@ -6,4 +6,4 @@ Plan: `Feedback Linked To Specs And Diagrams`
 
 ## Checklist
 
-- [ ] Add diagram region selection and annotation.
+- [x] Add diagram region selection and annotation.

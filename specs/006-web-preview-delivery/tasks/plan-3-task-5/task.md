@@ -6,4 +6,4 @@ Plan: `Preview Runtime Data Model`
 
 ## Checklist
 
-- [ ] T017 Add preview expiration and disable state fields.
+- [x] T017 Add preview expiration and disable state fields.

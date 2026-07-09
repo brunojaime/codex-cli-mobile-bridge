@@ -87,21 +87,31 @@ class ProjectFactoryDraftRequest(BaseModel):
     slug: str | None = Field(default=None, max_length=80)
     platforms: list[str] = Field(default_factory=lambda: ["ios", "android", "web"])
     backend: str = "fastapi"
+    frontend_strategy: str = Field(default="flutter", alias="frontendStrategy")
     logo_mode: str = Field(default="generate", alias="logoMode")
     first_release_mode: str = Field(default="preview", alias="firstReleaseMode")
+    initial_admin_emails: list[str] = Field(
+        default_factory=list,
+        alias="initialAdminEmails",
+    )
     visual_reference_paths: list[str] = Field(
         default_factory=list,
         alias="visualReferencePaths",
     )
+    guided_intake_enabled: bool = Field(default=False, alias="guidedIntakeEnabled")
 
 
 class ProjectFactoryOptionsResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     kind: str
     version: int
     default_platforms: list[str]
     platforms: list[str]
     default_backend: str
     backends: list[str]
+    default_frontend_strategy: str = Field(alias="defaultFrontendStrategy")
+    frontend_strategies: list[dict[str, Any]] = Field(alias="frontendStrategies")
     logo_modes: list[str]
     business_types: list[str]
     creation_workflow: dict[str, Any]
@@ -115,11 +125,13 @@ class ProjectFactoryDraftResponse(BaseModel):
     draft_id: str
     created_at: str
     first_release_mode: str = Field(default="preview", alias="firstReleaseMode")
+    frontend_strategy: str = Field(default="flutter", alias="frontendStrategy")
     manifest_plan: dict[str, Any]
     initial_preview_release: dict[str, Any] = Field(
         default_factory=dict,
         alias="initialPreviewRelease",
     )
+    guided_intake: dict[str, Any] = Field(default_factory=dict, alias="guidedIntake")
 
 
 class ProjectFactoryDraftSummaryResponse(BaseModel):
@@ -137,10 +149,12 @@ class ProjectFactoryDraftSummaryResponse(BaseModel):
     target_path: str | None = None
     error: str | None = None
     first_release_mode: str = Field(default="preview", alias="firstReleaseMode")
+    frontend_strategy: str = Field(default="flutter", alias="frontendStrategy")
     initial_preview_release: dict[str, Any] = Field(
         default_factory=dict,
         alias="initialPreviewRelease",
     )
+    guided_intake: dict[str, Any] = Field(default_factory=dict, alias="guidedIntake")
 
 
 class ProjectFactoryDraftsResponse(BaseModel):
@@ -159,6 +173,7 @@ class ProjectFactoryDryRunResponse(BaseModel):
     target_path: str | None
     manifest_path: str | None
     first_release_mode: str = Field(default="preview", alias="firstReleaseMode")
+    frontend_strategy: str = Field(default="flutter", alias="frontendStrategy")
     manifest: dict[str, Any]
     errors: list[dict[str, Any]]
     next_actions: list[str]
@@ -166,6 +181,36 @@ class ProjectFactoryDryRunResponse(BaseModel):
         default_factory=dict,
         alias="initialPreviewRelease",
     )
+
+
+class ProjectFactoryGuidedIntakeAnswerRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    question_id: str = Field(..., min_length=1, max_length=120, alias="questionId")
+    value: Any
+    source: str = Field(default="user", max_length=40)
+    confidence: float = Field(default=1.0, ge=0.0, le=1.0)
+
+
+class ProjectFactoryGuidedIntakeResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    kind: str
+    version: int
+    enabled: bool
+    status: str
+    questions: list[dict[str, Any]]
+    answers: list[dict[str, Any]]
+    missing_fields: list[dict[str, Any]] = Field(alias="missingFields")
+    assumptions: list[dict[str, Any]]
+    blockers: list[dict[str, Any]]
+    contract_preview: dict[str, Any] | None = Field(
+        default=None, alias="contractPreview"
+    )
+    updated_at: str = Field(alias="updatedAt")
+    confirmed_at: str | None = Field(default=None, alias="confirmedAt")
+    ready_for_confirmation: bool = Field(alias="readyForConfirmation")
+    build_allowed: bool = Field(alias="buildAllowed")
 
 
 class ProjectFactoryJobResponse(BaseModel):
@@ -187,6 +232,7 @@ class ProjectFactoryJobResponse(BaseModel):
     project_path: str | None = None
     message: str
     first_release_mode: str = Field(default="preview", alias="firstReleaseMode")
+    frontend_strategy: str = Field(default="flutter", alias="frontendStrategy")
     manifest_plan: dict[str, Any]
     step_logs: list[dict[str, Any]] = Field(default_factory=list)
     generation_result: dict[str, Any] | None = None
@@ -216,6 +262,7 @@ class ProjectFactoryJobSummaryResponse(BaseModel):
     message: str | None = None
     manual_next_step: str | None = None
     first_release_mode: str = Field(default="preview", alias="firstReleaseMode")
+    frontend_strategy: str = Field(default="flutter", alias="frontendStrategy")
     initial_preview_release: dict[str, Any] = Field(
         default_factory=dict,
         alias="initialPreviewRelease",
@@ -335,6 +382,13 @@ class WebPreviewDeployRequest(WebPreviewPlanRequest):
     expected_plan_hash: str | None = Field(default=None, alias="expectedPlanHash")
 
 
+class WebPreviewLifecycleRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    ttl_seconds: int | None = Field(default=None, alias="ttlSeconds", gt=0)
+    reason: str | None = Field(default=None, max_length=500)
+
+
 class WebPreviewResponse(BaseModel):
     kind: str
     version: int
@@ -352,7 +406,13 @@ class WebPreviewResponse(BaseModel):
     error: str | None = None
     logs: list[dict[str, Any]] = Field(default_factory=list)
     created_at: str
+    updated_at: str | None = None
+    expires_at: str | None = None
+    disabled_at: str | None = None
+    disabled_reason: str | None = None
+    recovery_status: str | None = None
     completed_at: str | None = None
+    audit_events: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class WebPreviewListResponse(BaseModel):
@@ -366,6 +426,14 @@ class WebPreviewInviteCreateRequest(BaseModel):
 
     ttl_seconds: int | None = Field(default=None, alias="ttlSeconds", gt=0)
     single_use: bool = Field(default=True, alias="singleUse")
+    email: str | None = Field(default=None, max_length=254)
+    role: str = "admin"
+
+
+class WebPreviewInviteResendRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    ttl_seconds: int | None = Field(default=None, alias="ttlSeconds", gt=0)
 
 
 class WebPreviewInviteResponse(BaseModel):
@@ -379,9 +447,18 @@ class WebPreviewInviteResponse(BaseModel):
     scope: str
     created_at: str
     expires_at: str
+    email: str | None = None
+    role: str = "admin"
     single_use: bool = True
     used_at: str | None = None
     revoked_at: str | None = None
+    expired_at: str | None = None
+    resend_count: int = 0
+    last_sent_at: str | None = None
+    email_provider: str | None = None
+    email_delivery_status: str = "not_requested"
+    email_delivery_error: str | None = None
+    manual_delivery_required: bool = False
     sync_status: str = "not_deployed"
     synced_at: str | None = None
     sync_error: str | None = None
@@ -1541,6 +1618,26 @@ class SddProjectDiagramsResponse(BaseModel):
     diagrams: list[SddDiagramResponse] = Field(default_factory=list)
 
 
+class SddDoctorCheckResponse(BaseModel):
+    name: str
+    status: str
+    detail: str
+    next_actions: list[str] = Field(default_factory=list)
+    data: dict[str, Any] | None = None
+
+
+class SddDoctorResponse(BaseModel):
+    kind: str = "codex.sddDoctorReport"
+    version: int = 1
+    workspace: str
+    status: str
+    ok: bool
+    strict: bool = False
+    checks: list[SddDoctorCheckResponse] = Field(default_factory=list)
+    next_actions: list[str] = Field(default_factory=list)
+    index_status: dict[str, Any] | None = None
+
+
 class SddWorkbenchCheckResponse(BaseModel):
     name: str
     status: str
@@ -1672,6 +1769,16 @@ class SddWorkbenchKanbanResponse(BaseModel):
     curator: dict[str, Any] = Field(default_factory=dict)
     evidence: list[dict[str, Any]] = Field(default_factory=list)
     continuity: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class SddWorkbenchKanbanScopesResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    kind: str = "codex.sddWorkbenchKanbanScopes"
+    version: int = 1
+    workspace_path: str | None = Field(default=None, alias="workspacePath")
+    scopes: list[dict[str, Any]]
+    default_scope_id: str | None = Field(default=None, alias="defaultScopeId")
 
 
 class SddWorkbenchKanbanHistoryResponse(BaseModel):
@@ -2731,9 +2838,7 @@ class SessionDetailResponse(BaseModel):
                 )
                 for message in messages
             ],
-            transcript_window=TranscriptWindowResponse.from_domain(
-                transcript_window
-            ),
+            transcript_window=TranscriptWindowResponse.from_domain(transcript_window),
             turn_summaries=[
                 TurnSummaryResponse.from_domain(
                     summary,

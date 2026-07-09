@@ -25,4 +25,4 @@
 - [x] T023 Add backend tests for blocked/confirmed build gate behavior.
 - [x] T024 Add Flutter tests for models, API, question UI, preview UI, and build gating.
 - [x] T025 Run Project Factory regression tests.
-- [ ] T026 Run mobile analyze/tests and publish Android release if frontend code ships.
+- [x] T026 Run mobile analyze/tests and publish Android release if frontend code ships.

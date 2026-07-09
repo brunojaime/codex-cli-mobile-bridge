@@ -1,6 +1,6 @@
 spec_id: 004-workbench-scm-spec-intake
 title: Workbench SCM Spec Intake
-status: draft
+status: complete
 
 requirements:
   FR-001:

@@ -6,4 +6,4 @@ Plan: `Admin Invite And Email Delivery`
 
 ## Checklist
 
-- [ ] T035 Add fallback structured admin email field for non-chat flows.
+- [x] T035 Add fallback structured admin email field for non-chat flows.

@@ -2,8 +2,8 @@ id: 002-sdd-visual-workbench
 slug: 002-sdd-visual-workbench
 title: SDD Visual Workbench
 description: Build the development-mode visual workbench for Codex Mobile Bridge. The
-status: draft
-last_run_state: metadata-refreshed
+status: complete
+last_run_state: validated
 generated:
   title: true
   description: true
@@ -11,8 +11,8 @@ generated:
   user_pinned_description: false
 tasks:
   total: 36
-  completed: 25
-  pending: 11
+  completed: 36
+  pending: 0
 diagrams:
   total: 7
   items:
@@ -61,5 +61,5 @@ source_digests:
   diagrams/use-cases.yaml: cbf0d485c396129989aa94cd0ed78e3960775a9f15e95f68febaea863c557a6b
   plan.md: e9b4e69a55cf26ea0a9bfb5f64ca1c0e5343e3ef923486dfa937ab8311d87b8c
   spec.md: d67e85862c50a6b3fdc359e44a1b73c31e8772294e2a8e62e7f647f15503602b
-  tasks.md: 5c70ebac40ee0b8797669e1844d74fc93f001262ccbb1661468bd469c1866581
-  traceability.yaml: 67b6b4bbb07b4e9afeb2fc29a1a784d766a6c826e54a10d4dcef08b2bc3c5430
+  tasks.md: caf5fe85fecaf1c9d8dc2fcb2fcbb59b1e7433e64c67181baa22a4bb47b8aac3
+  traceability.yaml: 9fd8901143cce3f03dd5f6b140d63d2631ee76d9c5b24194f5cdceef8217e3f9

@@ -7,6 +7,7 @@ import os
 import re
 import secrets
 import subprocess
+import sys
 from collections.abc import Iterator
 from functools import lru_cache
 from pathlib import Path
@@ -92,6 +93,8 @@ from backend.app.api.schemas import (
     ProjectFactoryDraftsResponse,
     ProjectFactoryDoctorResponse,
     ProjectFactoryDryRunResponse,
+    ProjectFactoryGuidedIntakeAnswerRequest,
+    ProjectFactoryGuidedIntakeResponse,
     ProjectFactoryJobResponse,
     ProjectFactoryJobsResponse,
     ProjectFactoryOptionsResponse,
@@ -111,6 +114,7 @@ from backend.app.api.schemas import (
     SddCodexJobResponse,
     SddCodexJobRetryResponse,
     SddDiagramResponse,
+    SddDoctorResponse,
     SddFileResponse,
     SddMediaCleanupRequest,
     SddMediaDeleteRequest,
@@ -134,12 +138,15 @@ from backend.app.api.schemas import (
     SddWorkbenchKanbanHistoryItemResponse,
     SddWorkbenchKanbanHistoryResponse,
     SddWorkbenchKanbanResponse,
+    SddWorkbenchKanbanScopesResponse,
     SddWorkbenchViewResponse,
     TurnSummaryConfigRequest,
     WebPreviewDeployRequest,
     WebPreviewInviteCreateRequest,
     WebPreviewInviteListResponse,
+    WebPreviewInviteResendRequest,
     WebPreviewInviteResponse,
+    WebPreviewLifecycleRequest,
     WebPreviewListResponse,
     WebPreviewPlanRequest,
     WebPreviewResponse,
@@ -158,6 +165,7 @@ from backend.app.application.services.project_factory_reference_asset_service im
 from backend.app.application.services.web_preview_deploy_service import (
     WebPreviewDeployInput,
     WebPreviewError,
+    WebPreviewLifecycleInput,
     WebPreviewPlanInput,
 )
 from backend.app.application.services.web_preview_invite_service import (
@@ -573,6 +581,79 @@ async def project_factory_dry_run(
     return ProjectFactoryDryRunResponse(**manifest_plan.to_payload())
 
 
+@router.get(
+    "/project-factory/drafts/{draft_id}/intake",
+    response_model=ProjectFactoryGuidedIntakeResponse,
+)
+async def get_project_factory_guided_intake(
+    draft_id: str,
+    container: AppContainer = Depends(get_container),
+) -> ProjectFactoryGuidedIntakeResponse:
+    payload = await run_in_threadpool(
+        container.project_factory_service.get_guided_intake,
+        draft_id,
+    )
+    if payload is None:
+        raise HTTPException(status_code=404, detail="Project factory draft not found.")
+    return ProjectFactoryGuidedIntakeResponse(**payload)
+
+
+@router.post(
+    "/project-factory/drafts/{draft_id}/intake/answers",
+    response_model=ProjectFactoryGuidedIntakeResponse,
+)
+async def answer_project_factory_guided_intake(
+    draft_id: str,
+    request: ProjectFactoryGuidedIntakeAnswerRequest,
+    container: AppContainer = Depends(get_container),
+) -> ProjectFactoryGuidedIntakeResponse:
+    payload = await run_in_threadpool(
+        container.project_factory_service.answer_guided_intake_question,
+        draft_id,
+        question_id=request.question_id,
+        value=request.value,
+        source=request.source,
+        confidence=request.confidence,
+    )
+    if payload is None:
+        raise HTTPException(status_code=404, detail="Project factory draft not found.")
+    return ProjectFactoryGuidedIntakeResponse(**payload)
+
+
+@router.post(
+    "/project-factory/drafts/{draft_id}/intake/preview",
+    response_model=ProjectFactoryGuidedIntakeResponse,
+)
+async def preview_project_factory_guided_intake_contract(
+    draft_id: str,
+    container: AppContainer = Depends(get_container),
+) -> ProjectFactoryGuidedIntakeResponse:
+    payload = await run_in_threadpool(
+        container.project_factory_service.preview_guided_intake_contract,
+        draft_id,
+    )
+    if payload is None:
+        raise HTTPException(status_code=404, detail="Project factory draft not found.")
+    return ProjectFactoryGuidedIntakeResponse(**payload)
+
+
+@router.post(
+    "/project-factory/drafts/{draft_id}/intake/confirm",
+    response_model=ProjectFactoryGuidedIntakeResponse,
+)
+async def confirm_project_factory_guided_intake_contract(
+    draft_id: str,
+    container: AppContainer = Depends(get_container),
+) -> ProjectFactoryGuidedIntakeResponse:
+    payload = await run_in_threadpool(
+        container.project_factory_service.confirm_guided_intake_contract,
+        draft_id,
+    )
+    if payload is None:
+        raise HTTPException(status_code=404, detail="Project factory draft not found.")
+    return ProjectFactoryGuidedIntakeResponse(**payload)
+
+
 @router.post(
     "/project-factory/drafts/{draft_id}/reference-assets",
     response_model=ProjectFactoryReferenceAssetResponse,
@@ -689,7 +770,9 @@ async def list_project_factory_draft_assets(
         raise HTTPException(status_code=404, detail="Project factory draft not found.")
     return ProjectFactoryDraftAssetsResponse(
         draft_id=draft_id,
-        assets=[ProjectFactoryDraftAssetResponse(**asset.to_payload()) for asset in assets],
+        assets=[
+            ProjectFactoryDraftAssetResponse(**asset.to_payload()) for asset in assets
+        ],
     )
 
 
@@ -825,6 +908,70 @@ async def get_web_preview(
     return WebPreviewResponse(**preview)
 
 
+@router.post("/web-previews/{preview_id}/disable", response_model=WebPreviewResponse)
+async def disable_web_preview(
+    preview_id: str,
+    request: WebPreviewLifecycleRequest = Body(
+        default_factory=WebPreviewLifecycleRequest,
+    ),
+    container: AppContainer = Depends(get_container),
+) -> WebPreviewResponse:
+    try:
+        payload = await run_in_threadpool(
+            container.web_preview_deploy_service.disable_preview,
+            WebPreviewLifecycleInput(
+                preview_id=preview_id,
+                reason=request.reason,
+            ),
+        )
+    except WebPreviewError as exc:
+        raise _web_preview_http_error(exc) from exc
+    return WebPreviewResponse(**payload)
+
+
+@router.post("/web-previews/{preview_id}/expire", response_model=WebPreviewResponse)
+async def expire_web_preview(
+    preview_id: str,
+    request: WebPreviewLifecycleRequest = Body(
+        default_factory=WebPreviewLifecycleRequest,
+    ),
+    container: AppContainer = Depends(get_container),
+) -> WebPreviewResponse:
+    try:
+        payload = await run_in_threadpool(
+            container.web_preview_deploy_service.expire_preview,
+            WebPreviewLifecycleInput(
+                preview_id=preview_id,
+                reason=request.reason,
+            ),
+        )
+    except WebPreviewError as exc:
+        raise _web_preview_http_error(exc) from exc
+    return WebPreviewResponse(**payload)
+
+
+@router.post("/web-previews/{preview_id}/extend", response_model=WebPreviewResponse)
+async def extend_web_preview(
+    preview_id: str,
+    request: WebPreviewLifecycleRequest = Body(
+        default_factory=WebPreviewLifecycleRequest,
+    ),
+    container: AppContainer = Depends(get_container),
+) -> WebPreviewResponse:
+    try:
+        payload = await run_in_threadpool(
+            container.web_preview_deploy_service.extend_preview,
+            WebPreviewLifecycleInput(
+                preview_id=preview_id,
+                ttl_seconds=request.ttl_seconds,
+                reason=request.reason,
+            ),
+        )
+    except WebPreviewError as exc:
+        raise _web_preview_http_error(exc) from exc
+    return WebPreviewResponse(**payload)
+
+
 @router.post(
     "/web-previews/{preview_id}/invites",
     response_model=WebPreviewInviteResponse,
@@ -843,7 +990,53 @@ async def create_web_preview_invite(
                 preview_id=preview_id,
                 ttl_seconds=request.ttl_seconds,
                 single_use=request.single_use,
+                email=request.email,
+                role=request.role,
             ),
+        )
+    except WebPreviewInviteError as exc:
+        raise _web_preview_invite_http_error(exc) from exc
+    return WebPreviewInviteResponse(**payload)
+
+
+@router.post(
+    "/web-previews/{preview_id}/invites/{invite_id}/resend",
+    response_model=WebPreviewInviteResponse,
+)
+async def resend_web_preview_invite(
+    preview_id: str,
+    invite_id: str,
+    request: WebPreviewInviteResendRequest = Body(
+        default_factory=WebPreviewInviteResendRequest,
+    ),
+    container: AppContainer = Depends(get_container),
+) -> WebPreviewInviteResponse:
+    try:
+        payload = await run_in_threadpool(
+            container.web_preview_invite_service.resend_invite,
+            preview_id=preview_id,
+            invite_id=invite_id,
+            ttl_seconds=request.ttl_seconds,
+        )
+    except WebPreviewInviteError as exc:
+        raise _web_preview_invite_http_error(exc) from exc
+    return WebPreviewInviteResponse(**payload)
+
+
+@router.post(
+    "/web-previews/{preview_id}/invites/{invite_id}/expire",
+    response_model=WebPreviewInviteResponse,
+)
+async def expire_web_preview_invite(
+    preview_id: str,
+    invite_id: str,
+    container: AppContainer = Depends(get_container),
+) -> WebPreviewInviteResponse:
+    try:
+        payload = await run_in_threadpool(
+            container.web_preview_invite_service.expire_invite,
+            preview_id=preview_id,
+            invite_id=invite_id,
         )
     except WebPreviewInviteError as exc:
         raise _web_preview_invite_http_error(exc) from exc
@@ -858,10 +1051,13 @@ async def list_web_preview_invites(
     preview_id: str,
     container: AppContainer = Depends(get_container),
 ) -> WebPreviewInviteListResponse:
-    if await run_in_threadpool(
-        container.web_preview_deploy_service.get_preview,
-        preview_id,
-    ) is None:
+    if (
+        await run_in_threadpool(
+            container.web_preview_deploy_service.get_preview,
+            preview_id,
+        )
+        is None
+    ):
         raise HTTPException(status_code=404, detail={"code": "web_preview_not_found"})
     invites = await run_in_threadpool(
         container.web_preview_invite_service.list_invites,
@@ -995,6 +1191,52 @@ async def get_sdd_project_diagrams(
     )
 
 
+@router.get("/sdd/doctor", response_model=SddDoctorResponse)
+async def run_sdd_doctor(
+    workspace_path: str = Query(...),
+    strict: bool = Query(default=False),
+    selected_artifact: str | None = Query(default=None),
+    query: str = Query(default=""),
+    container: AppContainer = Depends(get_container),
+) -> SddDoctorResponse:
+    try:
+        workspace = Path(workspace_path).expanduser().resolve()
+        await run_in_threadpool(
+            container.sdd_project_service.get_project,
+            str(workspace),
+        )
+    except SddWorkspacePathError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    command = [
+        sys.executable,
+        str(Path(__file__).resolve().parents[3] / "scripts/codex_bridge_sdd_doctor.py"),
+        "--workspace",
+        str(workspace),
+        "--projects-root",
+        container.settings.projects_root,
+        "--json",
+    ]
+    if strict:
+        command.append("--strict")
+    if selected_artifact:
+        command.extend(["--selected-artifact", selected_artifact])
+    if query:
+        command.extend(["--query", query])
+    result = await run_in_threadpool(
+        subprocess.run,
+        command,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    try:
+        payload = json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        detail = result.stderr.strip() or result.stdout.strip() or str(exc)
+        raise HTTPException(status_code=500, detail=detail) from exc
+    return SddDoctorResponse(**payload)
+
+
 @router.get("/sdd/workbench/view", response_model=SddWorkbenchViewResponse)
 async def get_sdd_workbench_view(
     workspace_path: str = Query(...),
@@ -1058,6 +1300,33 @@ async def get_sdd_workbench_kanban(
         job_id=job_id,
     )
     return SddWorkbenchKanbanResponse(**result.payload)
+
+
+@router.get(
+    "/sdd/workbench/kanban/scopes",
+    response_model=SddWorkbenchKanbanScopesResponse,
+)
+async def get_sdd_workbench_kanban_scopes(
+    workspace_path: str | None = Query(default=None),
+    container: AppContainer = Depends(get_container),
+) -> SddWorkbenchKanbanScopesResponse:
+    project: SddProject | None = None
+    workspace: Path | None = None
+    if workspace_path:
+        try:
+            project = await run_in_threadpool(
+                container.sdd_project_service.get_project,
+                workspace_path,
+            )
+            workspace = Path(project.workspace_path)
+        except SddWorkspacePathError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+    payload = await run_in_threadpool(
+        container.sdd_workbench_kanban_service.build_scopes,
+        workspace=workspace,
+        project=project,
+    )
+    return SddWorkbenchKanbanScopesResponse(**payload)
 
 
 @router.post("/sdd/workbench/kanban/refresh", response_model=SddWorkbenchKanbanResponse)
@@ -4946,9 +5215,12 @@ def _project_factory_manifest_input(
         slug=request.slug,
         platforms=tuple(request.platforms),
         backend=request.backend,
+        frontend_strategy=request.frontend_strategy,
         logo_mode=request.logo_mode,
         first_release_mode=request.first_release_mode,
+        initial_admin_emails=tuple(request.initial_admin_emails),
         visual_reference_paths=tuple(request.visual_reference_paths),
+        guided_intake_enabled=request.guided_intake_enabled,
     )
 
 

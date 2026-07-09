@@ -6,4 +6,4 @@ Plan: `Cloudflare Worker Preview Runtime`
 
 ## Checklist
 
-- [ ] T027 Implement preview disable and expiration enforcement.
+- [x] T027 Implement preview disable and expiration enforcement.

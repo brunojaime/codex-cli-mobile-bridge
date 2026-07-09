@@ -81,6 +81,9 @@ def test_generator_writes_foundation_and_rolls_no_secrets(tmp_path: Path) -> Non
     assert (project / "release/runtime-profiles.md").is_file()
     assert (project / "release/preview-runtime.json").is_file()
     assert (project / "release/release-contracts.yaml").is_file()
+    assert (project / "release/aws-domain-delegation-runbook.md").is_file()
+    assert (project / "release/email-provider-runbook.md").is_file()
+    assert (project / "release/dns-cloudflare-troubleshooting.md").is_file()
     assert (project / "apps/mobile/.gitkeep").is_file()
     assert (project / "backend/.gitkeep").is_file()
     assert result.git_status == "initialized_committed"
@@ -112,6 +115,21 @@ def test_generator_writes_foundation_and_rolls_no_secrets(tmp_path: Path) -> Non
     assert "SEED_ADMIN_PASSWORD" in (project / "AGENTS.md").read_text(
         encoding="utf-8",
     )
+    api_client = (project / "apps/mobile/lib/src/api_client.dart").read_text(
+        encoding="utf-8"
+    )
+    screens = (project / "apps/mobile/lib/src/screens.dart").read_text(
+        encoding="utf-8"
+    )
+    session = (
+        project / "apps/mobile/lib/src/session_controller.dart"
+    ).read_text(encoding="utf-8")
+    assert "acceptPreviewInvite" in api_client
+    assert "'/invites/accept'" in api_client
+    assert "Initial Preview Access" in screens
+    assert "Invite token or link" in screens
+    assert "Accept invite" in screens
+    assert "isPreviewRuntime" in session
     manifest = (project / ".codex/project.yaml").read_text(encoding="utf-8")
     assert "runtime_profiles:" in manifest
     assert "APP_RUNTIME_PROFILE" in manifest
@@ -236,6 +254,270 @@ def test_generator_writes_executable_e2e_validation_script(tmp_path: Path) -> No
     assert "trap cleanup EXIT" in content
 
 
+def test_generator_writes_svelte_web_strategy_without_android_overpromise(
+    tmp_path: Path,
+) -> None:
+    manifest_plan = ProjectFactoryManifestService(
+        projects_root=tmp_path,
+    ).plan_manifest(
+        ProjectFactoryManifestInput(
+            name="Portal Clientes",
+            business_type="services",
+            primary_goal="Clientes consultan estados",
+            platforms=("web",),
+            frontend_strategy="svelte",
+        )
+    )
+
+    result = ProjectFactoryGeneratorService().generate(manifest_plan)
+
+    project = tmp_path / "portal-clientes"
+    assert result.ok is True
+    assert (project / "apps/web/package.json").is_file()
+    assert (project / "apps/web/package-lock.json").is_file()
+    assert (project / "apps/web/src/config.ts").is_file()
+    assert (project / "apps/web/test/preview-config.test.mjs").is_file()
+    assert not (project / "apps/mobile/pubspec.yaml").exists()
+    assert not (project / ".github/workflows/android-preview-release.yml").exists()
+    assert not (project / "scripts/publish_android_preview_release.sh").exists()
+    assert not (project / "scripts/register_installable_app.sh").exists()
+
+    runtime = json.loads(
+        (project / "release/preview-runtime.json").read_text(encoding="utf-8")
+    )
+    assert runtime["frontendStrategy"] == "svelte"
+    assert runtime["installableAndroid"] is False
+    assert runtime["bridgeRegistrationRequired"] is False
+    assert runtime["releaseChannel"] == "prerelease"
+    assert "releaseTagPattern" not in runtime
+
+    manifest = (project / ".codex/project.yaml").read_text(encoding="utf-8")
+    assert "frontend_strategy: svelte" in manifest
+    assert "source_root: apps/web" in manifest
+    assert "env: VITE_APP_RUNTIME_PROFILE" in manifest
+    assert "api_runtime_env: VITE_API_RUNTIME" in manifest
+    assert "preview_api_env: VITE_API_BASE_URL" in manifest
+    assert "android-preview-v" not in manifest
+    assert "android-mock-v" not in manifest
+    assert "android-v" not in manifest
+    assert "env: APP_RUNTIME_PROFILE" not in manifest
+    assert "APP_RUNTIME_PROFILE=preview" not in manifest
+    assert "APK assets and release metadata are required" not in manifest
+
+    preview_manifest = (
+        project / "deploy/web-preview/web-preview-manifest.yaml"
+    ).read_text(encoding="utf-8")
+    assert "frontend_strategy: svelte" in preview_manifest
+    assert "svelte_project: apps/web" in preview_manifest
+    assert "installable_android: false" in preview_manifest
+
+    config = (project / "apps/web/src/config.ts").read_text(encoding="utf-8")
+    assert "https://preview.nienfos.com/portal-clientes/api" in config
+    assert "localhost" in config
+    assert "throw new Error" in config
+
+    package_json = json.loads(
+        (project / "apps/web/package.json").read_text(encoding="utf-8")
+    )
+    assert package_json["scripts"]["validate:preview"] == (
+        "node test/preview-config.test.mjs --preview"
+    )
+    build_script = (project / "scripts/build_web_preview.sh").read_text(
+        encoding="utf-8"
+    )
+    validation_script = (
+        project / "scripts/validate_generated_project.sh"
+    ).read_text(encoding="utf-8")
+    assert "npm ci" in build_script
+    assert "npm install" not in build_script
+    assert "npm ci" in validation_script
+    assert "npm install" not in validation_script
+
+    release_files = {
+        "release/preview-signing-policy.json": (
+            project / "release/preview-signing-policy.json"
+        ).read_text(encoding="utf-8"),
+        "release/android-preview-signing.md": (
+            project / "release/android-preview-signing.md"
+        ).read_text(encoding="utf-8"),
+        "release/promotion-contract.json": (
+            project / "release/promotion-contract.json"
+        ).read_text(encoding="utf-8"),
+        "release/release-contracts.yaml": (
+            project / "release/release-contracts.yaml"
+        ).read_text(encoding="utf-8"),
+        "release/release-output-template.md": (
+            project / "release/release-output-template.md"
+        ).read_text(encoding="utf-8"),
+        "release/runtime-profiles.md": (
+            project / "release/runtime-profiles.md"
+        ).read_text(encoding="utf-8"),
+        "release/play-store-checklist.md": (
+            project / "release/play-store-checklist.md"
+        ).read_text(encoding="utf-8"),
+        "release/app-store-checklist.md": (
+            project / "release/app-store-checklist.md"
+        ).read_text(encoding="utf-8"),
+    }
+    for path, content in release_files.items():
+        assert "android-preview-v" not in content, path
+        assert "android-v" not in content, path
+        assert ".apk" not in content.lower(), path
+        assert "bridge_preview_registration" not in content, path
+        assert "production_signing_key" not in content, path
+        assert "Play Store readiness" not in content, path
+        assert "App Store readiness" not in content, path
+    contracts = release_files["release/release-contracts.yaml"]
+    assert "env: VITE_APP_RUNTIME_PROFILE" in contracts
+    assert "api_runtime_env: VITE_API_RUNTIME" in contracts
+    assert "preview_api_env: VITE_API_BASE_URL" in contracts
+    assert "env: APP_RUNTIME_PROFILE" not in contracts
+    assert "web_preview_ready: false" in release_files[
+        "release/release-output-template.md"
+    ]
+    assert "installable_android: false" in release_files[
+        "release/release-output-template.md"
+    ]
+    scanned_files = [
+        project / "README.md",
+        *sorted((project / "specs/001-product-foundation").glob("*.md")),
+        project / "specs/001-product-foundation/tree.json",
+        *sorted((project / "architecture").glob("*.mmd")),
+        *sorted((project / "release").glob("*.md")),
+        project / ".codex/project.yaml",
+    ]
+    forbidden_terms = (
+        "Flutter iOS/Android/Web",
+        "Flutter mobile v1",
+        "Flutter Mobile App",
+        "Flutter Web App",
+        "Installed Mobile App",
+        "App Store / Play Store",
+        "android-preview-v",
+        "android-mock-v",
+        "android-v",
+        ".apk",
+        "scripts/register_installable_app.sh",
+        "Bridge installable",
+        "Play Store readiness",
+        "App Store readiness",
+        "ready for Play Store",
+        "ready for App Store",
+    )
+    for scanned_file in scanned_files:
+        content = scanned_file.read_text(encoding="utf-8")
+        for term in forbidden_terms:
+            assert term not in content, f"{term!r} found in {scanned_file}"
+        assert "APP_RUNTIME_PROFILE=preview" not in content.replace(
+            "VITE_APP_RUNTIME_PROFILE=preview",
+            "",
+        ), scanned_file
+
+    final_gate = (
+        project / "scripts/validate_initial_preview_release.sh"
+    ).read_text(encoding="utf-8")
+    assert "scripts/smoke_web_preview.sh" in final_gate
+    assert "scripts/smoke_preview_api.sh" in final_gate
+    assert final_gate.index("scripts/smoke_web_preview.sh") < final_gate.index(
+        "web_preview_ready: true"
+    )
+    assert final_gate.index("scripts/smoke_preview_api.sh") < final_gate.index(
+        "web_preview_ready: true"
+    )
+
+
+def test_generated_svelte_project_npm_preview_contract_smoke(
+    tmp_path: Path,
+) -> None:
+    if shutil.which("npm") is None:
+        pytest.skip("npm is required for generated Svelte smoke validation")
+    manifest_plan = ProjectFactoryManifestService(
+        projects_root=tmp_path,
+    ).plan_manifest(
+        ProjectFactoryManifestInput(
+            name="Portal Clientes",
+            business_type="services",
+            primary_goal="Clientes consultan estados",
+            platforms=("web",),
+            frontend_strategy="svelte",
+        )
+    )
+    ProjectFactoryGeneratorService().generate(manifest_plan)
+
+    web_dir = tmp_path / "portal-clientes/apps/web"
+    install = subprocess.run(
+        ["npm", "ci"],
+        cwd=web_dir,
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=120,
+    )
+    assert install.returncode == 0, install.stdout + install.stderr
+    test = subprocess.run(
+        ["npm", "test"],
+        cwd=web_dir,
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=120,
+    )
+    assert test.returncode == 0, test.stdout + test.stderr
+    validate = subprocess.run(
+        ["npm", "run", "validate:preview"],
+        cwd=web_dir,
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=120,
+    )
+    assert validate.returncode == 0, validate.stdout + validate.stderr
+    build = subprocess.run(
+        ["npm", "run", "build"],
+        cwd=web_dir,
+        env={
+            **os.environ,
+            "VITE_APP_RUNTIME_PROFILE": "preview",
+            "VITE_API_RUNTIME": "cloudflare_preview",
+            "VITE_API_BASE_URL": (
+                "https://preview.nienfos.com/portal-clientes/api"
+            ),
+        },
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=120,
+    )
+    assert build.returncode == 0, build.stdout + build.stderr
+
+
+def test_generator_keeps_flutter_release_files_android_capable(
+    tmp_path: Path,
+) -> None:
+    manifest_plan = ProjectFactoryManifestService(
+        projects_root=tmp_path,
+    ).plan_manifest(
+        ProjectFactoryManifestInput(
+            name="Clinica Norte",
+            business_type="medical",
+            primary_goal="Reservar turnos",
+        )
+    )
+    ProjectFactoryGeneratorService().generate(manifest_plan)
+
+    project = tmp_path / "clinica-norte"
+    runtime = json.loads(
+        (project / "release/preview-runtime.json").read_text(encoding="utf-8")
+    )
+    assert runtime["frontendStrategy"] == "flutter"
+    assert runtime["releaseTagPattern"] == "android-preview-v*"
+    assert runtime["installableAndroid"] is True
+    assert runtime["bridgeRegistrationRequired"] is True
+    assert runtime["bridge"]["requiresApkUrl"] is True
+    assert (project / "scripts/register_installable_app.sh").is_file()
+    assert (project / "scripts/publish_android_preview_release.sh").is_file()
+
+
 def test_generator_writes_executable_publish_script(tmp_path: Path) -> None:
     manifest_plan = ProjectFactoryManifestService(
         projects_root=tmp_path,
@@ -255,6 +537,8 @@ def test_generator_writes_executable_publish_script(tmp_path: Path) -> None:
     content = script.read_text(encoding="utf-8")
     assert "gh repo create" in content
     assert "git push -u origin" in content
+    assert "gh variable set API_BASE_URL" in content
+    assert "https://preview.nienfos.com/$PROJECT_SLUG/api" in content
     assert "GITHUB_OWNER" in content
     assert "INITIAL_COMMIT_MESSAGE" in content
     assert "published: https://github.com/$REPO" in content
@@ -548,6 +832,11 @@ def test_generated_initial_preview_validation_rejects_bad_bridge_registration(
         encoding="utf-8",
     )
     (project / "scripts/smoke_preview_api.sh").chmod(0o755)
+    (project / "scripts/smoke_web_preview.sh").write_text(
+        "#!/usr/bin/env bash\nexit 0\n",
+        encoding="utf-8",
+    )
+    (project / "scripts/smoke_web_preview.sh").chmod(0o755)
 
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
@@ -664,6 +953,11 @@ def test_generated_initial_preview_validation_checks_expected_apk_sha256(
         encoding="utf-8",
     )
     (project / "scripts/smoke_preview_api.sh").chmod(0o755)
+    (project / "scripts/smoke_web_preview.sh").write_text(
+        "#!/usr/bin/env bash\nexit 0\n",
+        encoding="utf-8",
+    )
+    (project / "scripts/smoke_web_preview.sh").chmod(0o755)
 
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
@@ -852,6 +1146,15 @@ def test_generated_contract_docs_have_coherent_minimum_content(
     false_ready_doc = (project / "release/false-readiness-runbook.md").read_text(
         encoding="utf-8"
     )
+    aws_doc = (project / "release/aws-domain-delegation-runbook.md").read_text(
+        encoding="utf-8"
+    )
+    email_doc = (project / "release/email-provider-runbook.md").read_text(
+        encoding="utf-8"
+    )
+    dns_doc = (project / "release/dns-cloudflare-troubleshooting.md").read_text(
+        encoding="utf-8"
+    )
     bridge = (project / "codex-bridge.yaml").read_text(encoding="utf-8")
     workbench = (project / "docs/workbench.md").read_text(encoding="utf-8")
 
@@ -909,6 +1212,12 @@ def test_generated_contract_docs_have_coherent_minimum_content(
     assert "release/preview-signing-policy.json" in signing_doc
     assert "DEBUG_PREVIEW_SIGNING_ACKNOWLEDGED=true" in signing_doc
     assert "scripts/validate_cloudflare_cost_posture.sh" in operations_doc
+    assert "aws route53domains get-domain-detail" in aws_doc
+    assert "AutoRenew" in aws_doc
+    assert "WEB_PREVIEW_EMAIL_PROVIDER=smtp" in email_doc
+    assert "manual_delivery_required=true" in email_doc
+    assert "CLOUDFLARE_DNS_API_TOKEN" in dns_doc
+    assert "dig +trace preview.nienfos.com" in dns_doc
     assert "False Readiness Examples" in false_ready_doc
     assert "sourceApp: clinica-norte" in bridge
     assert "workbench-sdd/v1" in bridge
@@ -937,6 +1246,11 @@ def test_generated_cloudflare_cost_posture_script_blocks_paid_resources(
     assert "scripts/validate_cloudflare_cost_posture.sh" in (
         project / "scripts/apply_cloudflare_preview.sh"
     ).read_text(encoding="utf-8")
+    apply_script = (project / "scripts/apply_cloudflare_preview.sh").read_text(
+        encoding="utf-8"
+    )
+    assert '"active"' in apply_script
+    assert "cloudflare preview recovery" in apply_script
 
     completed = subprocess.run(
         ["scripts/validate_cloudflare_cost_posture.sh"],
@@ -1523,6 +1837,9 @@ def test_generated_web_preview_bundle_is_validable_locally(tmp_path: Path) -> No
     assert "/__preview/health" in worker_text
     assert "/api/health" in worker_text
     assert "/api/auth/login" in worker_text
+    assert "/api/invites/accept" in worker_text
+    assert "handlePreviewInviteAccept" in worker_text
+    assert "invite_password_setup" in worker_text
     assert "/api/admin/bootstrap" in worker_text
     assert "/api/app-updates/current" in worker_text
     assert "/api/domain/" in worker_text
@@ -1530,6 +1847,9 @@ def test_generated_web_preview_bundle_is_validable_locally(tmp_path: Path) -> No
     assert "ASSETS.fetch" in worker_text
     assert "WEB_PREVIEW_INVITE_SECRET" in worker_text
     assert "PREVIEW_DB" in worker_text
+    assert "recordAuditEvent" in worker_text
+    assert "login_succeeded" in worker_text
+    assert "invite_access_granted" in worker_text
     assert "used_invite_token" in worker_text
     assert "revoked_invite_token" in worker_text
     assert "missing_invite_token" in worker_text
@@ -1543,11 +1863,26 @@ def test_generated_web_preview_bundle_is_validable_locally(tmp_path: Path) -> No
     assert "WEB_PREVIEW_INVITE_SECRET" in wrangler.read_text(encoding="utf-8")
     migration_text = d1_migration.read_text(encoding="utf-8")
     assert "CREATE TABLE IF NOT EXISTS preview_invites" in migration_text
+    assert "CREATE TABLE IF NOT EXISTS preview_apps" in migration_text
+    assert "CREATE TABLE IF NOT EXISTS preview_builds" in migration_text
+    assert "CREATE TABLE IF NOT EXISTS preview_tenants" in migration_text
     assert "CREATE TABLE IF NOT EXISTS preview_users" in migration_text
+    assert "CREATE TABLE IF NOT EXISTS preview_roles" in migration_text
+    assert "CREATE TABLE IF NOT EXISTS preview_admin_invites" in migration_text
     assert "CREATE TABLE IF NOT EXISTS preview_sessions" in migration_text
+    assert "CREATE TABLE IF NOT EXISTS preview_audit_events" in migration_text
     assert "CREATE TABLE IF NOT EXISTS preview_app_updates" in migration_text
     assert "CREATE TABLE IF NOT EXISTS preview_domain_records" in migration_text
+    assert "CREATE TABLE IF NOT EXISTS preview_assets" in migration_text
+    assert "CREATE TABLE IF NOT EXISTS preview_events" in migration_text
     assert "CREATE TABLE IF NOT EXISTS preview_notifications" in migration_text
+    assert "CREATE INDEX IF NOT EXISTS idx_preview_apps_slug" in migration_text
+    assert "CREATE INDEX IF NOT EXISTS idx_preview_builds_app_created" in migration_text
+    assert "CREATE INDEX IF NOT EXISTS idx_preview_tenants_app" in migration_text
+    assert "CREATE INDEX IF NOT EXISTS idx_preview_roles_app_name" in migration_text
+    assert "CREATE INDEX IF NOT EXISTS idx_preview_admin_invites_app_email" in migration_text
+    assert "CREATE INDEX IF NOT EXISTS idx_preview_assets_app_type" in migration_text
+    assert "CREATE INDEX IF NOT EXISTS idx_preview_events_app_type" in migration_text
     assert "token_sha256" in migration_text
     assert "used_at" in migration_text
     assert "revoked_at" in migration_text

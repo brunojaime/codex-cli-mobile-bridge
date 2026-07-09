@@ -6,4 +6,4 @@ Plan: `Cloudflare Worker Preview Runtime`
 
 ## Checklist
 
-- [ ] T023 Implement admin invite accept and first password setup.
+- [x] T023 Implement admin invite accept and first password setup.

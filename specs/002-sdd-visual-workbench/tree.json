@@ -82,7 +82,7 @@
       "id": "plan-2",
       "number": 2,
       "title": "Diagram Rendering",
-      "status": "in_progress",
+      "status": "done",
       "description": "Render Mermaid diagrams visually in dev mode. The initial target is preview quality, not production diagram publishing. The original `.mmd` file remains the source of truth and rendered output is cache only.",
       "file": "plans/02-diagram-rendering/plan.md",
       "tasks": [
@@ -106,7 +106,7 @@
           "id": "plan-2-task-3",
           "number": 3,
           "title": "Provide full-screen diagram inspection",
-          "status": "planned",
+          "status": "done",
           "description": "Provide full-screen diagram inspection",
           "file": "tasks/plan-2-task-3/task.md"
         },
@@ -122,7 +122,7 @@
           "id": "plan-2-task-5",
           "number": 5,
           "title": "Support selecting or marking diagram nodes, edges, and regions",
-          "status": "planned",
+          "status": "done",
           "description": "Support selecting or marking diagram nodes, edges, and regions",
           "file": "tasks/plan-2-task-5/task.md"
         },
@@ -140,7 +140,7 @@
       "id": "plan-3",
       "number": 3,
       "title": "Architecture UX",
-      "status": "in_progress",
+      "status": "done",
       "description": "Turn the raw explorer into a focused architecture review surface with tabs, status summaries, search, and diagram family navigation.",
       "file": "plans/03-architecture-ux/plan.md",
       "tasks": [
@@ -164,7 +164,7 @@
           "id": "plan-3-task-3",
           "number": 3,
           "title": "Add search across specs, tasks, actors, components, entities, and diagrams",
-          "status": "planned",
+          "status": "done",
           "description": "Add search across specs, tasks, actors, components, entities, and diagrams",
           "file": "tasks/plan-3-task-3/task.md"
         },
@@ -190,7 +190,7 @@
       "id": "plan-4",
       "number": 4,
       "title": "Feedback Linked To Specs And Diagrams",
-      "status": "in_progress",
+      "status": "done",
       "description": "Extend developer feedback so items can be linked to specs, components, screens, actors, entities, sequence steps, and marked diagram regions.",
       "file": "plans/04-feedback-linked-to-specs-and-diagrams/plan.md",
       "tasks": [
@@ -206,7 +206,7 @@
           "id": "plan-4-task-2",
           "number": 2,
           "title": "Add diagram region selection and annotation",
-          "status": "planned",
+          "status": "done",
           "description": "Add diagram region selection and annotation",
           "file": "tasks/plan-4-task-2/task.md"
         },
@@ -214,7 +214,7 @@
           "id": "plan-4-task-3",
           "number": 3,
           "title": "Capture diagram node and edge selection metadata when available",
-          "status": "planned",
+          "status": "done",
           "description": "Capture diagram node and edge selection metadata when available",
           "file": "tasks/plan-4-task-3/task.md"
         },
@@ -230,7 +230,7 @@
           "id": "plan-4-task-5",
           "number": 5,
           "title": "Show feedback grouped by spec, component, actor, entity, and diagram",
-          "status": "planned",
+          "status": "done",
           "description": "Show feedback grouped by spec, component, actor, entity, and diagram",
           "file": "tasks/plan-4-task-5/task.md"
         },
@@ -248,7 +248,7 @@
       "id": "plan-5",
       "number": 5,
       "title": "Codex Actions From Specs",
-      "status": "in_progress",
+      "status": "done",
       "description": "Allow the user to trigger Codex workflows from a spec, task, feedback item, or diagram annotation.",
       "file": "plans/05-codex-actions-from-specs/plan.md",
       "tasks": [
@@ -280,7 +280,7 @@
           "id": "plan-5-task-4",
           "number": 4,
           "title": "Add actions to start an implementation session from a task",
-          "status": "planned",
+          "status": "done",
           "description": "Add actions to start an implementation session from a task",
           "file": "tasks/plan-5-task-4/task.md"
         },
@@ -288,7 +288,7 @@
           "id": "plan-5-task-5",
           "number": 5,
           "title": "Add actions to run the SDD doctor and summarize results",
-          "status": "planned",
+          "status": "done",
           "description": "Add actions to run the SDD doctor and summarize results",
           "file": "tasks/plan-5-task-5/task.md"
         }
@@ -298,7 +298,7 @@
       "id": "plan-6",
       "number": 6,
       "title": "Current Project Dashboard",
-      "status": "in_progress",
+      "status": "done",
       "description": "Create a dashboard for the project currently being inspected. In inherited apps, this dashboard must describe only that app/project. The bridge app may still provide project selection because it is the control surface.",
       "file": "plans/06-current-project-dashboard/plan.md",
       "tasks": [
@@ -330,7 +330,7 @@
           "id": "plan-6-task-4",
           "number": 4,
           "title": "In the bridge/control app, allow selecting a project before opening the project-local dashboard",
-          "status": "planned",
+          "status": "done",
           "description": "In the bridge/control app, allow selecting a project before opening the project-local dashboard",
           "file": "tasks/plan-6-task-4/task.md"
         },
@@ -338,7 +338,7 @@
           "id": "plan-6-task-5",
           "number": 5,
           "title": "Surface diagram coverage by required diagram family",
-          "status": "planned",
+          "status": "done",
           "description": "Surface diagram coverage by required diagram family",
           "file": "tasks/plan-6-task-5/task.md"
         },
@@ -346,7 +346,7 @@
           "id": "plan-6-task-6",
           "number": 6,
           "title": "Surface real Android release, updater, backend, and feedback configuration references for the selected/current project when available",
-          "status": "planned",
+          "status": "done",
           "description": "Surface real Android release, updater, backend, and feedback configuration references for the selected/current project when available",
           "file": "tasks/plan-6-task-6/task.md"
         },

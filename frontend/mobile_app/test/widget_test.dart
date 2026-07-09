@@ -2428,6 +2428,9 @@ flowchart LR
     expect(configuration.byId(AgentId.reviewer)?.label, 'Project Reviewer');
     expect(configuration.byId(AgentId.reviewer)?.maxTurns, 0);
     expect(isProjectFactoryIntakeConfiguration(configuration), isTrue);
+    final prompt = configuration.byId(AgentId.generator)?.prompt ?? '';
+    expect(prompt, contains('initial admin emails'));
+    expect(prompt, contains('manual-link fallback'));
   });
 
   test('project factory build configuration enables reviewer batches', () {

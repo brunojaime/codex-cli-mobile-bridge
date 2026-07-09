@@ -1,0 +1,65 @@
+spec_id: 012-chat-transcript-lazy-loading
+title: Chat Transcript Lazy Loading
+status: complete
+
+requirements:
+  FR-001:
+    name: Message window contract
+    acceptance_criteria: [AC-001, AC-002, AC-003, AC-004]
+    tasks: [T001, T002, T003, T004]
+  FR-002:
+    name: Backend pagination and summaries
+    acceptance_criteria: [AC-005, AC-006, AC-007, AC-008]
+    tasks: [T005, T006, T007, T008, T009, T010]
+  FR-003:
+    name: Frontend lazy transcript loading
+    acceptance_criteria: [AC-009, AC-010, AC-011]
+    tasks: [T011, T012, T013, T014, T015, T016]
+  FR-004:
+    name: Active run and context preservation
+    acceptance_criteria: [AC-012, AC-013]
+    tasks: [T017, T018, T019, T020]
+  FR-005:
+    name: Validation and rollout
+    acceptance_criteria: [AC-014]
+    tasks: [T021, T022, T023, T024, T025, T026]
+
+implementation:
+  status: complete
+  completed_tasks:
+    - T001
+    - T002
+    - T003
+    - T004
+    - T005
+    - T006
+    - T007
+    - T008
+    - T009
+    - T010
+    - T011
+    - T012
+    - T013
+    - T014
+    - T015
+    - T016
+    - T017
+    - T018
+    - T019
+    - T020
+    - T021
+    - T022
+    - T023
+    - T024
+    - T025
+    - T026
+  pending_tasks: []
+  evidence:
+    - backend/app/application/services/message_service.py exposes get_transcript_window with latest-user anchoring, stable encoded cursors, older-page loading, and explicit full transcript mode.
+    - backend repository implementations expose list_messages_before, list_recent_messages, and latest_user_message for in-memory and SQLite stores.
+    - backend/app/api/routes.py accepts before, limit, and transcript query params on GET /sessions/{session_id} and returns transcript_window metadata.
+    - frontend/mobile_app/lib/src/models/session_detail.dart and services/api_client.dart parse transcript windows and request window/full transcript modes.
+    - frontend/mobile_app/lib/src/state/chat_controller.dart prepends older pages, deduplicates messages, and preserves current session metadata while merging transcript windows.
+    - frontend/mobile_app/lib/src/screens/chat_screen.dart lazy-loads older messages near the top, preserves scroll offset, and renders loading/retry/exhausted history affordances.
+    - tests/test_session_management.py covers anchor selection, cursor pagination, tie-breaking, and the full-transcript escape hatch.
+    - frontend/mobile_app/test/chat_transcript_lazy_loading_test.dart covers model/API parsing, older-page request params, controller prepend, dedupe, and partial-window state.

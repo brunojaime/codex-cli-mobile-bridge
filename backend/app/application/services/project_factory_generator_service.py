@@ -173,51 +173,47 @@ def _project_files(manifest: dict[str, Any]) -> dict[str, str]:
     slug = str(manifest["slug"])
     business_type = str(manifest["business_type"])
     primary_goal = str(manifest["primary_goal"])
+    frontend_strategy = str(manifest.get("frontend_strategy") or "flutter")
     workflow = manifest["codex"]["creation_workflow"]
     project_assets = manifest.get("asset_depot", {}).get("project_assets", [])
     files = {
         ".codex/project.yaml": _to_yaml(manifest),
         "codex-bridge.yaml": _codex_bridge_yaml(slug, name),
         ".gitignore": _gitignore(),
-        "README.md": _readme(name, business_type, primary_goal),
+        "README.md": _readme(name, business_type, primary_goal, frontend_strategy),
         "AGENTS.md": _agents(name),
-        ".github/workflows/android-release.yml": _generated_android_release_workflow(
-            slug,
-        ),
-        ".github/workflows/android-preview-release.yml": (
-            _generated_android_preview_release_workflow(slug)
-        ),
         "scripts/finalize_local_commit.sh": _finalize_local_commit_script(),
         "scripts/publish_project.sh": _publish_script(),
-        "scripts/publish_android_preview_release.sh": (
-            _publish_android_preview_release_script(slug)
-        ),
-        "scripts/publish_android_release.sh": _publish_android_release_script(),
-        "scripts/register_installable_app.sh": _register_installable_app_script(
-            slug,
-            name,
-        ),
         "scripts/apply_cloudflare_preview.sh": _apply_cloudflare_preview_script(slug),
         "scripts/apply_preview_d1_migrations.sh": _apply_preview_d1_migrations_script(),
         "scripts/validate_cloudflare_cost_posture.sh": (
             _cloudflare_cost_posture_check_script()
         ),
         "scripts/smoke_preview_api.sh": _smoke_preview_api_script(slug),
-        "scripts/build_web_preview.sh": _build_web_preview_script(slug),
+        "scripts/smoke_web_preview.sh": _smoke_web_preview_script(slug),
+        "scripts/build_web_preview.sh": _build_web_preview_script(
+            slug,
+            frontend_strategy,
+        ),
         "scripts/deploy_web_preview.sh": _deploy_web_preview_script(slug),
-        "scripts/validate_web_preview.sh": _validate_web_preview_script(slug),
-        "scripts/validate_generated_project.sh": _validation_script(),
+        "scripts/validate_web_preview.sh": _validate_web_preview_script(
+            slug,
+            frontend_strategy,
+        ),
+        "scripts/validate_generated_project.sh": _validation_script(
+            frontend_strategy,
+        ),
         "scripts/validate_initial_preview_release.sh": (
-            _initial_preview_release_validation_script(slug)
+            _initial_preview_release_validation_script(slug, frontend_strategy)
         ),
         "scripts/validate_publication_ready.sh": _publication_validation_script(),
         "scripts/validate_release_profiles.sh": _release_profile_validation_script(),
         "scripts/validate_preview_release_profiles.sh": (
-            _preview_release_profile_validation_script(slug)
+            _preview_release_profile_validation_script(slug, frontend_strategy)
         ),
         "deploy/web-preview/README.md": _web_preview_readme(slug, name),
         "deploy/web-preview/web-preview-manifest.yaml": _to_yaml(
-            _web_preview_manifest_payload(slug, name)
+            _web_preview_manifest_payload(slug, name, frontend_strategy)
         ),
         "deploy/web-preview/wrangler.toml.example": _web_preview_wrangler_example(
             slug,
@@ -238,14 +234,27 @@ def _project_files(manifest: dict[str, Any]) -> dict[str, str]:
             primary_goal,
             workflow,
             project_assets,
+            frontend_strategy,
         ),
-        "specs/001-product-foundation/plan.md": _initial_plan(name),
-        "specs/001-product-foundation/tasks.md": _initial_tasks(),
-        "specs/001-product-foundation/tree.json": _initial_tree_json(),
+        "specs/001-product-foundation/plan.md": _initial_plan(
+            name,
+            frontend_strategy,
+        ),
+        "specs/001-product-foundation/tasks.md": _initial_tasks(
+            frontend_strategy,
+        ),
+        "specs/001-product-foundation/tree.json": _initial_tree_json(
+            frontend_strategy,
+        ),
         "specs/001-product-foundation/plans/01-foundation/plan.md": _initial_plan(
-            name
+            name,
+            frontend_strategy,
         ),
-        "specs/001-product-foundation/metadata.yaml": _initial_metadata(slug, name),
+        "specs/001-product-foundation/metadata.yaml": _initial_metadata(
+            slug,
+            name,
+            frontend_strategy,
+        ),
         ".sdd/spec-index.yaml": _spec_index(slug, name),
         ".sdd/diagram-index.yaml": _diagram_index(),
         "docs/research/business-brief.md": _placeholder_doc(
@@ -261,7 +270,7 @@ def _project_files(manifest: dict[str, Any]) -> dict[str, str]:
             "Feature Map",
             "Domain features and suggested MVP scope will be tracked here.",
         ),
-        "docs/workbench.md": _workbench_doc(slug, name),
+        "docs/workbench.md": _workbench_doc(slug, name, frontend_strategy),
         "design/app-style-guide.md": _placeholder_doc(
             "App Style Guide",
             "Generated look and feel decisions will be documented here.",
@@ -306,34 +315,190 @@ def _project_files(manifest: dict[str, Any]) -> dict[str, str]:
             "Deploy Plan",
             "The deployment plan will be generated here.",
         ),
-        "release/app-store-checklist.md": _placeholder_doc(
-            "App Store Checklist",
-            "Apple release readiness items and pending credentials will be tracked here.",
+        "release/app-store-checklist.md": _store_checklist_doc(
+            store="App Store",
+            frontend_strategy=frontend_strategy,
         ),
-        "release/play-store-checklist.md": _placeholder_doc(
-            "Play Store Checklist",
-            "Google Play release readiness items and pending credentials will be tracked here.",
+        "release/play-store-checklist.md": _store_checklist_doc(
+            store="Play Store",
+            frontend_strategy=frontend_strategy,
         ),
-        "release/runtime-profiles.md": _runtime_profiles_doc(name),
-        "release/preview-runtime.json": _preview_runtime_json(slug, name),
-        "release/preview-signing-policy.json": _preview_signing_policy_json(slug),
-        "release/promotion-contract.json": _promotion_contract_json(slug, name),
+        "release/runtime-profiles.md": _runtime_profiles_doc(
+            name,
+            frontend_strategy,
+        ),
+        "release/preview-runtime.json": _preview_runtime_json(
+            slug,
+            name,
+            frontend_strategy,
+        ),
+        "release/preview-signing-policy.json": _preview_signing_policy_json(
+            slug,
+            frontend_strategy,
+        ),
+        "release/promotion-contract.json": _promotion_contract_json(
+            slug,
+            name,
+            frontend_strategy,
+        ),
         "release/cloudflare-cost-posture.json": _cloudflare_cost_posture_json(slug),
-        "release/release-contracts.yaml": _release_contracts_yaml(slug),
-        "release/release-output-template.md": _release_output_template(),
-        "release/promotion-runbook.md": _promotion_runbook_doc(slug, name),
-        "release/android-preview-signing.md": _android_preview_signing_doc(slug),
-        "release/preview-operations-runbook.md": _preview_operations_runbook(slug),
-        "release/false-readiness-runbook.md": _false_readiness_runbook(slug),
+        "release/release-contracts.yaml": _release_contracts_yaml(
+            slug,
+            frontend_strategy,
+        ),
+        "release/release-output-template.md": _release_output_template(
+            frontend_strategy,
+        ),
+        "release/promotion-runbook.md": _promotion_runbook_doc(
+            slug,
+            name,
+            frontend_strategy,
+        ),
+        "release/android-preview-signing.md": _android_preview_signing_doc(
+            slug,
+            frontend_strategy,
+        ),
+        "release/preview-operations-runbook.md": _preview_operations_runbook(
+            slug,
+            frontend_strategy,
+        ),
+        "release/aws-domain-delegation-runbook.md": (
+            _aws_domain_delegation_runbook(slug)
+        ),
+        "release/email-provider-runbook.md": _email_provider_runbook(slug),
+        "release/dns-cloudflare-troubleshooting.md": (
+            _dns_cloudflare_troubleshooting_runbook(slug)
+        ),
+        "release/false-readiness-runbook.md": _false_readiness_runbook(
+            slug,
+            frontend_strategy,
+        ),
     }
-    files.update(_baseline_diagram_files(name, business_type, primary_goal))
-    files.update(_initial_task_node_files())
+    files.update(_baseline_diagram_files(name, business_type, primary_goal, frontend_strategy))
+    files.update(_initial_task_node_files(frontend_strategy))
     files.update(_backend_files(slug))
-    files.update(_mobile_files(name, slug))
+    if frontend_strategy == "svelte":
+        files.update(_svelte_files(name, slug))
+    else:
+        files.update(
+            {
+                ".github/workflows/android-release.yml": (
+                    _generated_android_release_workflow(slug)
+                ),
+                ".github/workflows/android-preview-release.yml": (
+                    _generated_android_preview_release_workflow(slug)
+                ),
+                "scripts/publish_android_preview_release.sh": (
+                    _publish_android_preview_release_script(slug)
+                ),
+                "scripts/publish_android_release.sh": _publish_android_release_script(),
+                "scripts/register_installable_app.sh": _register_installable_app_script(
+                    slug,
+                    name,
+                ),
+            }
+        )
+        files.update(_mobile_files(name, slug))
     return files
 
 
-def _readme(name: str, business_type: str, primary_goal: str) -> str:
+def _readme(
+    name: str,
+    business_type: str,
+    primary_goal: str,
+    frontend_strategy: str = "flutter",
+) -> str:
+    if frontend_strategy == "svelte":
+        return f"""# {name}
+
+Generated by Codex Mobile Bridge Project Factory.
+
+## Product
+
+- Business type: `{business_type}`
+- Primary goal: {primary_goal}
+- Frontend strategy: `svelte`
+- Initial runtime profile: `VITE_APP_RUNTIME_PROFILE=preview`. Mock/demo is
+  opt-in and production `real` is a later explicit promotion.
+
+## Structure
+
+- `.codex/project.yaml`: source of truth for project generation and validation.
+- `specs/001-product-foundation/`: initial SDD package for Workbench-driven work.
+- `architecture/`: baseline Workbench diagrams for Svelte web, API, D1, and deployment.
+- `apps/web/`: Svelte/Vite web app target.
+- `backend/`: API target.
+- `docs/research/`: business, UX, and visual research.
+- `design/`: visual direction and design tokens.
+- `infra/aws/`: AWS readiness notes for future production infrastructure.
+- `release/`: web preview, runtime profile, and release contract readiness.
+- `deploy/web-preview/`: Cloudflare web preview manifest, Worker scaffold, D1
+  migrations, and Wrangler example with no secrets.
+- `scripts/build_web_preview.sh`: builds the Svelte web artifact for preview.
+- `scripts/validate_web_preview.sh`: validates preview manifest/runtime guardrails.
+
+This strategy is web-only. It does not generate a native mobile package, Codex
+Mobile catalog registration, or native marketplace readiness. A future wrapper
+strategy must be implemented before claiming mobile installability.
+
+## Validation
+
+Run the generated backend and web contract validation with:
+
+```bash
+scripts/validate_generated_project.sh
+```
+
+Validate the Cloudflare web preview bundle locally with:
+
+```bash
+scripts/validate_web_preview.sh
+```
+
+The script uses process-local validation credentials unless `DATABASE_URL`,
+`SECRET_KEY`, `ADMIN_EMAIL`, and `ADMIN_INITIAL_PASSWORD` are already set. It
+does not write secrets to repository files.
+
+## Runtime Profiles
+
+Initial preview releases must use the Cloudflare preview API:
+
+```bash
+VITE_APP_RUNTIME_PROFILE=preview
+VITE_API_RUNTIME=cloudflare_preview
+VITE_API_BASE_URL=https://preview.nienfos.com/<slug>/api
+```
+
+Productive web releases must be an explicit promotion:
+
+```bash
+VITE_APP_RUNTIME_PROFILE=real
+VITE_API_BASE_URL=https://your-real-backend.example
+```
+
+Early demo builds must be explicit:
+
+```bash
+VITE_APP_RUNTIME_PROFILE=mock
+```
+
+Preview output is not complete until Cloudflare public web health,
+`/api/health`, D1 migrations, and generated validation all pass.
+
+## Publish Contract
+
+Project Factory must not leave this project as an uncommitted local scaffold.
+The generated baseline is committed locally by the factory. After validation,
+publish the repository with:
+
+```bash
+GITHUB_OWNER=<owner> scripts/publish_project.sh
+```
+
+The script creates or verifies the GitHub repository, pushes the current branch,
+and reports the remote URL. Public preview readiness remains blocked until the
+Cloudflare Worker, route, assets, and D1 evidence are present.
+"""
     return f"""# {name}
 
 Generated by Codex Mobile Bridge Project Factory.
@@ -350,7 +515,8 @@ Generated by Codex Mobile Bridge Project Factory.
 - `.codex/project.yaml`: source of truth for project generation and validation.
 - `specs/001-product-foundation/`: initial SDD package for Workbench-driven work.
 - `architecture/`: baseline Workbench diagrams for components, classes, data, and deployment.
-- `apps/mobile/`: Flutter app target.
+- `apps/mobile/`: Flutter app target when `frontend_strategy=flutter`.
+- `apps/web/`: Svelte/Vite app target when `frontend_strategy=svelte`.
 - `backend/`: API target.
 - `docs/research/`: business, UX, and visual research.
 - `design/`: visual direction and design tokens.
@@ -359,10 +525,10 @@ Generated by Codex Mobile Bridge Project Factory.
 - `deploy/web-preview/`: Cloudflare web preview manifest, Worker scaffold, and
   Wrangler example with no secrets.
 - `scripts/validate_release_profiles.sh`: guardrails for mock/demo vs productive releases.
-- `scripts/build_web_preview.sh`: builds the Flutter web artifact for preview.
+- `scripts/build_web_preview.sh`: builds the selected frontend web artifact for preview.
 - `scripts/validate_web_preview.sh`: validates preview manifest/runtime guardrails.
-- `scripts/register_installable_app.sh`: registers this app in Codex Mobile
-  Bridge so it appears in the Codex Mobile Apps catalog after an APK release.
+- `scripts/register_installable_app.sh`: Flutter-only Bridge Apps catalog
+  registration after an APK release.
 
 ## Validation
 
@@ -467,7 +633,24 @@ def _codex_bridge_yaml(slug: str, name: str) -> str:
     )
 
 
-def _workbench_doc(slug: str, name: str) -> str:
+def _workbench_doc(
+    slug: str,
+    name: str,
+    frontend_strategy: str = "flutter",
+) -> str:
+    runtime_env = (
+        "VITE_APP_RUNTIME_PROFILE"
+        if frontend_strategy == "svelte"
+        else "APP_RUNTIME_PROFILE"
+    )
+    frontend_note = (
+        "The Svelte web strategy exposes Workbench/feedback affordances only in "
+        "authorized web preview or internal runtime contexts. It does not imply "
+        "an installable mobile artifact."
+        if frontend_strategy == "svelte"
+        else "The Flutter strategy must keep Workbench visible in preview APKs for "
+        "`owner` and `admin`, and hidden from productive real releases."
+    )
     return f"""# Workbench
 
 `{name}` is generated with Workbench SDD artifacts from the first commit.
@@ -481,14 +664,16 @@ def _workbench_doc(slug: str, name: str) -> str:
 
 ## Runtime Visibility
 
-- `APP_RUNTIME_PROFILE=mock`: Workbench/developer feedback may be visible for
+- `{runtime_env}=mock`: Workbench/developer feedback may be visible for
   internal testing.
-- `APP_RUNTIME_PROFILE=preview`: Workbench must be visible for `owner` and
+- `{runtime_env}=preview`: Workbench must be visible for `owner` and
   `admin` users, or for explicitly authorized developer mode.
-- `APP_RUNTIME_PROFILE=staging`: Workbench/developer feedback may be available
+- `{runtime_env}=staging`: Workbench/developer feedback may be available
   to internal testers only.
-- `APP_RUNTIME_PROFILE=real`: Workbench/developer feedback must be hidden or
+- `{runtime_env}=real`: Workbench/developer feedback must be hidden or
   disabled in UI/build config.
+
+{frontend_note}
 
 Expected visibility contract:
 
@@ -530,11 +715,24 @@ def _backend_files(slug: str) -> dict[str, str]:
     }
 
 
-def _web_preview_manifest_payload(slug: str, name: str) -> dict[str, Any]:
+def _web_preview_manifest_payload(
+    slug: str,
+    name: str,
+    frontend_strategy: str = "flutter",
+) -> dict[str, Any]:
+    is_svelte = frontend_strategy == "svelte"
+    source_root = "apps/web" if is_svelte else "apps/mobile"
+    entrypoint = "apps/web/src/main.ts" if is_svelte else "apps/mobile/lib/main.dart"
+    required_files = (
+        ["index.html"]
+        if is_svelte
+        else ["index.html", "manifest.json", "flutter_bootstrap.js"]
+    )
     return {
         "schema_version": 1,
         "source_app": slug,
         "display_name": name,
+        "frontend_strategy": frontend_strategy,
         "stable_url": f"https://preview.nienfos.com/{slug}",
         "runtime": {
             "type": "cloudflare_worker_assets",
@@ -554,12 +752,14 @@ def _web_preview_manifest_payload(slug: str, name: str) -> dict[str, Any]:
             "api_runtime": "cloudflare_preview",
             "api_base_url": f"https://preview.nienfos.com/{slug}/api",
             "preview_url": f"https://preview.nienfos.com/{slug}",
-            "android_tag_pattern": "android-preview-v*",
+            "android_tag_pattern": None if is_svelte else "android-preview-v*",
             "android_release_channel": "prerelease",
             "backend_required": True,
             "mock_or_demo": False,
             "data_persistence": "cloudflare_d1",
             "production_android_release_deferred": True,
+            "installable_android": not is_svelte,
+            "bridge_registration_required": not is_svelte,
         },
         "access": {
             "mode": "invite_token",
@@ -576,17 +776,16 @@ def _web_preview_manifest_payload(slug: str, name: str) -> dict[str, Any]:
             "public_paths": ["/__preview/health", "/api/health"],
         },
         "build": {
-            "flutter_project": "apps/mobile",
+            "frontend_strategy": frontend_strategy,
+            "source_root": source_root,
+            "flutter_project": "apps/mobile" if not is_svelte else None,
+            "svelte_project": "apps/web" if is_svelte else None,
             "output_dir": f"build/web-preview/{slug}",
-            "entrypoint": "apps/mobile/lib/main.dart",
+            "entrypoint": entrypoint,
             "script": "scripts/build_web_preview.sh",
             "validation_script": "scripts/validate_web_preview.sh",
             "asset_entrypoint": "index.html",
-            "required_files": [
-                "index.html",
-                "manifest.json",
-                "flutter_bootstrap.js",
-            ],
+            "required_files": required_files,
         },
         "cloudflare": {
             "provider": "cloudflare",
@@ -790,6 +989,56 @@ CREATE INDEX IF NOT EXISTS idx_preview_invites_token_sha256
 CREATE INDEX IF NOT EXISTS idx_preview_invites_app
   ON preview_invites(source_app, app_slug);
 
+CREATE TABLE IF NOT EXISTS preview_apps (
+  source_app TEXT PRIMARY KEY,
+  app_slug TEXT NOT NULL,
+  display_name TEXT NOT NULL,
+  stable_url TEXT NOT NULL,
+  api_base_url TEXT NOT NULL,
+  runtime_profile TEXT NOT NULL DEFAULT 'preview',
+  api_runtime TEXT NOT NULL DEFAULT 'cloudflare_preview',
+  lifecycle_status TEXT NOT NULL DEFAULT 'active',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  expires_at TEXT,
+  disabled_at TEXT,
+  disabled_reason TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_preview_apps_slug
+  ON preview_apps(app_slug);
+
+CREATE TABLE IF NOT EXISTS preview_builds (
+  build_id TEXT PRIMARY KEY,
+  source_app TEXT NOT NULL,
+  app_slug TEXT NOT NULL,
+  release_channel TEXT NOT NULL DEFAULT 'preview',
+  release_tag TEXT,
+  commit_sha TEXT,
+  artifact_url TEXT,
+  metadata_json TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL,
+  FOREIGN KEY(source_app) REFERENCES preview_apps(source_app)
+);
+
+CREATE INDEX IF NOT EXISTS idx_preview_builds_app_created
+  ON preview_builds(source_app, app_slug, created_at);
+
+CREATE TABLE IF NOT EXISTS preview_tenants (
+  tenant_id TEXT PRIMARY KEY,
+  source_app TEXT NOT NULL,
+  app_slug TEXT NOT NULL,
+  display_name TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'active',
+  metadata_json TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE(source_app, app_slug, display_name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_preview_tenants_app
+  ON preview_tenants(source_app, app_slug, status);
+
 CREATE TABLE IF NOT EXISTS preview_access_attempts (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   invite_id TEXT,
@@ -814,6 +1063,39 @@ CREATE TABLE IF NOT EXISTS preview_users (
 CREATE INDEX IF NOT EXISTS idx_preview_users_app_email
   ON preview_users(source_app, app_slug, email);
 
+CREATE TABLE IF NOT EXISTS preview_roles (
+  role_id TEXT PRIMARY KEY,
+  source_app TEXT NOT NULL,
+  app_slug TEXT NOT NULL,
+  role_name TEXT NOT NULL,
+  permissions_json TEXT NOT NULL DEFAULT '[]',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE(source_app, app_slug, role_name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_preview_roles_app_name
+  ON preview_roles(source_app, app_slug, role_name);
+
+CREATE TABLE IF NOT EXISTS preview_admin_invites (
+  admin_invite_id TEXT PRIMARY KEY,
+  invite_id TEXT,
+  source_app TEXT NOT NULL,
+  app_slug TEXT NOT NULL,
+  email TEXT NOT NULL,
+  role_name TEXT NOT NULL DEFAULT 'admin',
+  delivery_status TEXT NOT NULL DEFAULT 'pending',
+  delivery_error TEXT,
+  created_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  accepted_at TEXT,
+  revoked_at TEXT,
+  UNIQUE(source_app, app_slug, email, revoked_at)
+);
+
+CREATE INDEX IF NOT EXISTS idx_preview_admin_invites_app_email
+  ON preview_admin_invites(source_app, app_slug, email);
+
 CREATE TABLE IF NOT EXISTS preview_sessions (
   session_id TEXT PRIMARY KEY,
   source_app TEXT NOT NULL,
@@ -828,6 +1110,19 @@ CREATE TABLE IF NOT EXISTS preview_sessions (
 
 CREATE INDEX IF NOT EXISTS idx_preview_sessions_token
   ON preview_sessions(token_sha256);
+
+CREATE TABLE IF NOT EXISTS preview_audit_events (
+  event_id TEXT PRIMARY KEY,
+  source_app TEXT NOT NULL,
+  app_slug TEXT NOT NULL,
+  event_type TEXT NOT NULL,
+  actor TEXT NOT NULL,
+  details_json TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_preview_audit_events_app
+  ON preview_audit_events(source_app, app_slug, created_at);
 
 CREATE TABLE IF NOT EXISTS preview_app_updates (
   source_app TEXT NOT NULL,
@@ -855,6 +1150,37 @@ CREATE TABLE IF NOT EXISTS preview_domain_records (
 
 CREATE INDEX IF NOT EXISTS idx_preview_domain_records_app_entity
   ON preview_domain_records(source_app, app_slug, entity);
+
+CREATE TABLE IF NOT EXISTS preview_assets (
+  asset_id TEXT PRIMARY KEY,
+  source_app TEXT NOT NULL,
+  app_slug TEXT NOT NULL,
+  asset_type TEXT NOT NULL,
+  path TEXT NOT NULL,
+  content_type TEXT,
+  sha256 TEXT,
+  size_bytes INTEGER,
+  metadata_json TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL,
+  UNIQUE(source_app, app_slug, path)
+);
+
+CREATE INDEX IF NOT EXISTS idx_preview_assets_app_type
+  ON preview_assets(source_app, app_slug, asset_type);
+
+CREATE TABLE IF NOT EXISTS preview_events (
+  event_id TEXT PRIMARY KEY,
+  source_app TEXT NOT NULL,
+  app_slug TEXT NOT NULL,
+  event_type TEXT NOT NULL,
+  subject_type TEXT,
+  subject_id TEXT,
+  payload_json TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_preview_events_app_type
+  ON preview_events(source_app, app_slug, event_type, created_at);
 
 CREATE TABLE IF NOT EXISTS preview_notifications (
   notification_id TEXT PRIMARY KEY,
@@ -1278,6 +1604,27 @@ function apiError(code, message, status = 400) {
   return json({ error: { code, message } }, { status });
 }
 
+async function recordAuditEvent(env, eventType, actor, details = {}) {
+  if (!env.PREVIEW_DB || typeof env.PREVIEW_DB.prepare !== 'function') {
+    return;
+  }
+  const createdAt = nowIso();
+  const material = `${SOURCE_APP}:${eventType}:${actor}:${createdAt}:${JSON.stringify(details)}`;
+  const eventId = `wpa-${(await sha256Hex(material)).slice(0, 16)}`;
+  try {
+    await env.PREVIEW_DB
+      .prepare(
+        `INSERT INTO preview_audit_events
+         (event_id, source_app, app_slug, event_type, actor, details_json, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)`,
+      )
+      .bind(eventId, SOURCE_APP, SOURCE_APP, eventType, actor, JSON.stringify(details), createdAt)
+      .run();
+  } catch (error) {
+    console.warn('preview audit event skipped', eventType, error?.message || error);
+  }
+}
+
 async function countPreviewUsers(env) {
   const row = await env.PREVIEW_DB
     .prepare(
@@ -1441,8 +1788,15 @@ async function handlePreviewBootstrap(request, env) {
       displayName: body.displayName || 'Preview Admin',
       roles,
     });
+    await recordAuditEvent(env, 'admin_bootstrap_user_created', email, {
+      userId: user.user_id,
+      roles,
+    });
   }
   const session = await createPreviewSession(env, user);
+  await recordAuditEvent(env, 'admin_bootstrap_login', email, {
+    userId: user.user_id,
+  });
   return json({
     status: 'ready',
     sourceApp: SOURCE_APP,
@@ -1460,9 +1814,68 @@ async function handlePreviewLogin(request, env) {
   const body = await readJson(request);
   const user = await findPreviewUserByEmail(env, body.email);
   if (!user || user.password_hash !== await passwordHash(env, String(body.password || ''))) {
+    await recordAuditEvent(env, 'login_failed', String(body.email || '').trim().toLowerCase(), {
+      reason: 'invalid_credentials',
+    });
     return apiError('invalid_credentials', 'Email or password is invalid.', 401);
   }
   const session = await createPreviewSession(env, user);
+  await recordAuditEvent(env, 'login_succeeded', user.email, {
+    userId: user.user_id,
+    sessionExpiresAt: session.expiresAt,
+  });
+  return json({
+    access_token: session.token,
+    token_type: 'bearer',
+    expires_at: session.expiresAt,
+    user: publicUser(user),
+  });
+}
+
+async function handlePreviewInviteAccept(request, env) {
+  const d1 = requirePreviewD1(env);
+  if (!d1.ok) return d1.response;
+  const body = await readJson(request);
+  const inviteToken = String(body.inviteToken || body.invite_token || '').trim();
+  const email = String(body.email || '').trim().toLowerCase();
+  const password = String(body.password || '');
+  if (!inviteToken || !email || !password) {
+    return apiError('invite_accept_required', 'Invite token, email, and password are required.', 400);
+  }
+  const verified = await verifyInviteToken(env, inviteToken);
+  if (!verified.ok) {
+    return apiError(verified.code, 'Preview invite token is invalid.', verified.status);
+  }
+  const tokenHash = await sha256Hex(inviteToken);
+  const lookup = await lookupInviteRow(env, verified.payload.invite_id, tokenHash);
+  if (!lookup.ok) {
+    return apiError(lookup.code, 'Preview invite row was not found.', lookup.status);
+  }
+  const active = validateInviteRow(lookup.row, { allowUsed: false });
+  if (!active.ok) {
+    return apiError(active.code, 'Preview invite token cannot be accepted.', active.status);
+  }
+  let user = await findPreviewUserByEmail(env, email);
+  if (!user) {
+    const userCount = await countPreviewUsers(env);
+    const roles = userCount === 0 ? ['owner', 'admin'] : ['admin'];
+    user = await createPreviewUser(env, {
+      email,
+      password,
+      displayName: body.displayName || email,
+      roles,
+    });
+  }
+  const marked = await markInviteUsed(env, lookup.row);
+  if (!marked.ok) {
+    return apiError(marked.code, 'Preview invite token cannot be accepted.', marked.status);
+  }
+  const session = await createPreviewSession(env, user);
+  await recordAuditEvent(env, 'invite_password_setup', email, {
+    inviteId: verified.payload.invite_id,
+    userId: user.user_id,
+    sessionExpiresAt: session.expiresAt,
+  });
   return json({
     access_token: session.token,
     token_type: 'bearer',
@@ -1495,6 +1908,7 @@ async function handlePreviewLogout(request, env) {
     )
     .bind(nowIso(), SOURCE_APP, SOURCE_APP, tokenHash)
     .run();
+  await recordAuditEvent(env, 'logout', 'api_user', {});
   return json({ ok: true });
 }
 
@@ -1650,6 +2064,9 @@ async function handlePreviewApi(request, env, assetPath) {
   }
   if (request.method === 'POST' && assetPath === '/api/auth/login') {
     return handlePreviewLogin(request, env);
+  }
+  if (request.method === 'POST' && assetPath === '/api/invites/accept') {
+    return handlePreviewInviteAccept(request, env);
   }
   if (request.method === 'GET' && assetPath === '/api/auth/me') {
     return handlePreviewMe(request, env);
@@ -1828,13 +2245,22 @@ async function handleRequest(request, env = globalThis) {
     }
     const active = validateInviteRow(lookup.row, { allowUsed: false });
     if (!active.ok) {
+      await recordAuditEvent(env, 'invite_access_denied', verified.payload.invite_id, {
+        reason: active.code,
+      });
       return accessDenied(active.code, active.status);
     }
     const marked = await markInviteUsed(env, lookup.row);
     if (!marked.ok) {
+      await recordAuditEvent(env, 'invite_access_denied', verified.payload.invite_id, {
+        reason: marked.code,
+      });
       return accessDenied(marked.code, marked.status);
     }
     const sessionToken = await createAccessSession(env, verified.payload, tokenHash);
+    await recordAuditEvent(env, 'invite_access_granted', verified.payload.invite_id, {
+      usedAt: marked.used_at || null,
+    });
     return redirectWithCookie(url, sessionToken, verified.payload);
   }
 
@@ -1928,6 +2354,16 @@ const validToken = signToken({
   iat: now,
   exp: now + 3600,
 }, secret);
+const setupToken = signToken({
+  aud: 'codex.web-preview',
+  scope: 'web_preview:access',
+  preview_id: 'wp-__SOURCE_APP__',
+  source_app: '__SOURCE_APP__',
+  app_slug: '__SOURCE_APP__',
+  invite_id: 'wpi-setup',
+  iat: now,
+  exp: now + 3600,
+}, secret);
 const expiredToken = signToken({
   aud: 'codex.web-preview',
   scope: 'web_preview:access',
@@ -1986,6 +2422,7 @@ function inviteRow(inviteId, token, extra = {}) {
 const d1Rows = new Map();
 for (const row of [
   inviteRow('wpi-local', validToken),
+  inviteRow('wpi-setup', setupToken),
   inviteRow('wpi-revoked', revokedToken, { revoked_at: new Date().toISOString() }),
   inviteRow('wpi-d1-expired', d1ExpiredToken, { expires_at: new Date(Date.now() - 1000).toISOString() }),
 ]) {
@@ -2221,6 +2658,19 @@ const loginBody = await login.json();
 assert.equal(loginBody.user.appSlug, '__SOURCE_APP__');
 const apiAuth = { authorization: `Bearer ${loginBody.access_token}` };
 
+const acceptedInvite = await fetchJson('/__SOURCE_APP__/api/invites/accept', {
+  method: 'POST',
+  body: {
+    inviteToken: setupToken,
+    email: 'invite-admin@example.com',
+    password: 'invite-password',
+  },
+});
+assert.equal(acceptedInvite.status, 200);
+const acceptedInviteBody = await acceptedInvite.json();
+assert.equal(acceptedInviteBody.user.appSlug, '__SOURCE_APP__');
+assert.match(acceptedInviteBody.access_token, /.+/);
+
 const me = await fetchJson('/__SOURCE_APP__/api/auth/me', { headers: apiAuth });
 assert.equal(me.status, 200);
 assert.equal((await me.json()).email, 'admin@example.com');
@@ -2231,7 +2681,7 @@ assert.ok((await roles.json()).includes('owner'));
 
 const users = await fetchJson('/__SOURCE_APP__/api/admin/users', { headers: apiAuth });
 assert.equal(users.status, 200);
-assert.equal((await users.json()).length, 1);
+assert.equal((await users.json()).length, 2);
 
 const createdRecord = await fetchJson('/__SOURCE_APP__/api/domain/customers', {
   method: 'POST',
@@ -2322,7 +2772,51 @@ console.log('worker local preview harness passed');
     return template.replace("__SOURCE_APP__", slug).replace("{{", "{").replace("}}", "}")
 
 
-def _build_web_preview_script(slug: str) -> str:
+def _build_web_preview_script(slug: str, frontend_strategy: str = "flutter") -> str:
+    if frontend_strategy == "svelte":
+        return f'''#!/usr/bin/env bash
+set -euo pipefail
+
+fail() {{
+  printf 'web preview build failed: %s\\n' "$*" >&2
+  exit 1
+}}
+
+ROOT_DIR="$(cd "$(dirname "${{BASH_SOURCE[0]}}")/.." && pwd)"
+WEB_DIR="$ROOT_DIR/apps/web"
+APP_SLUG="${{APP_SLUG:-{slug}}}"
+APP_RUNTIME_PROFILE="${{APP_RUNTIME_PROFILE:-preview}}"
+API_RUNTIME="${{API_RUNTIME:-cloudflare_preview}}"
+API_BASE_URL="${{API_BASE_URL:-https://preview.nienfos.com/{slug}/api}}"
+WEB_PREVIEW_BUILD_DIR="${{WEB_PREVIEW_BUILD_DIR:-$ROOT_DIR/build/web-preview/$APP_SLUG}}"
+
+case "$APP_RUNTIME_PROFILE" in
+  real|staging|preview|mock) ;;
+  *) fail "APP_RUNTIME_PROFILE must be real, staging, preview, or mock" ;;
+esac
+[[ "$APP_RUNTIME_PROFILE" != "mock" ]] || fail "Svelte Initial Preview Release cannot use mock runtime"
+[[ "$API_RUNTIME" == "cloudflare_preview" ]] || fail "API_RUNTIME must be cloudflare_preview"
+[[ "$API_BASE_URL" == "https://preview.nienfos.com/$APP_SLUG/api" ]] || fail "API_BASE_URL must be https://preview.nienfos.com/$APP_SLUG/api"
+[[ -f "$WEB_DIR/package.json" ]] || fail "missing apps/web/package.json"
+
+if ! command -v npm >/dev/null 2>&1; then
+  fail "npm is required to build the Svelte web preview artifact"
+fi
+
+cd "$WEB_DIR"
+npm ci
+VITE_APP_RUNTIME_PROFILE="$APP_RUNTIME_PROFILE" \\
+VITE_API_RUNTIME="$API_RUNTIME" \\
+VITE_API_BASE_URL="$API_BASE_URL" \\
+VITE_APP_SLUG="$APP_SLUG" \\
+npm run build
+
+rm -rf "$WEB_PREVIEW_BUILD_DIR"
+mkdir -p "$(dirname "$WEB_PREVIEW_BUILD_DIR")"
+cp -R dist "$WEB_PREVIEW_BUILD_DIR"
+
+printf 'web preview build completed: %s\\n' "$WEB_PREVIEW_BUILD_DIR"
+'''
     return f'''#!/usr/bin/env bash
 set -euo pipefail
 
@@ -2430,7 +2924,7 @@ PY
 '''
 
 
-def _validate_web_preview_script(slug: str) -> str:
+def _validate_web_preview_script(slug: str, frontend_strategy: str = "flutter") -> str:
     return f'''#!/usr/bin/env bash
 set -euo pipefail
 
@@ -2440,6 +2934,8 @@ fail() {{
 }}
 
 ROOT_DIR="$(cd "$(dirname "${{BASH_SOURCE[0]}}")/.." && pwd)"
+FRONTEND_STRATEGY="{frontend_strategy}"
+export FRONTEND_STRATEGY
 MANIFEST="$ROOT_DIR/deploy/web-preview/web-preview-manifest.yaml"
 WORKER="$ROOT_DIR/deploy/web-preview/worker/src/index.js"
 WORKER_HARNESS="$ROOT_DIR/deploy/web-preview/worker/local_preview_test.mjs"
@@ -2475,8 +2971,13 @@ fi
 [[ -f "$WRANGLER_EXAMPLE" ]] || fail "missing deploy/web-preview/wrangler.toml.example"
 [[ -f "$D1_MIGRATION" ]] || fail "missing deploy/web-preview/d1/migrations/0001_preview_invites.sql"
 [[ -f "$DOMAIN_D1_MIGRATION" ]] || fail "missing deploy/web-preview/d1/migrations/0002_domain_entities.sql"
-[[ -f "$ROOT_DIR/apps/mobile/pubspec.yaml" ]] || fail "missing apps/mobile/pubspec.yaml"
-[[ -f "$ROOT_DIR/apps/mobile/lib/main.dart" ]] || fail "missing apps/mobile/lib/main.dart"
+if [[ "$FRONTEND_STRATEGY" == "svelte" ]]; then
+  [[ -f "$ROOT_DIR/apps/web/package.json" ]] || fail "missing apps/web/package.json"
+  [[ -f "$ROOT_DIR/apps/web/src/main.ts" ]] || fail "missing apps/web/src/main.ts"
+else
+  [[ -f "$ROOT_DIR/apps/mobile/pubspec.yaml" ]] || fail "missing apps/mobile/pubspec.yaml"
+  [[ -f "$ROOT_DIR/apps/mobile/lib/main.dart" ]] || fail "missing apps/mobile/lib/main.dart"
+fi
 
 if ! command -v python3 >/dev/null 2>&1; then
   fail "python3 is required to validate web-preview-manifest.yaml"
@@ -2503,6 +3004,7 @@ access = payload.get("access")
 expected_routes = payload.get("expected_routes")
 checks = (
     ("source_app", payload.get("source_app"), expected_slug),
+    ("frontend_strategy", payload.get("frontend_strategy"), "{frontend_strategy}"),
     ("stable_url", payload.get("stable_url"), "https://preview.nienfos.com/" + expected_slug),
     ("runtime.type", runtime.get("type") if isinstance(runtime, dict) else None, "cloudflare_worker_assets"),
     ("runtime.api_runtime", runtime.get("api_runtime") if isinstance(runtime, dict) else None, "cloudflare_preview"),
@@ -2531,8 +3033,12 @@ if not isinstance(expected_routes, list) or "/" + expected_slug + "/api/health" 
 first_release = payload.get("first_release")
 if not isinstance(first_release, dict) or first_release.get("mode") != "preview":
     raise SystemExit("first_release.mode must be preview")
-if first_release.get("android_tag_pattern") != "android-preview-v*":
-    raise SystemExit("first_release.android_tag_pattern must be android-preview-v*")
+if "{frontend_strategy}" == "flutter":
+    if first_release.get("android_tag_pattern") != "android-preview-v*":
+        raise SystemExit("first_release.android_tag_pattern must be android-preview-v*")
+else:
+    if first_release.get("android_tag_pattern") is not None:
+        raise SystemExit("Svelte web preview must not declare android_tag_pattern")
 if not isinstance(access, dict) or "WEB_PREVIEW_INVITE_SECRET" not in access.get("required_worker_secrets", []):
     raise SystemExit("access.required_worker_secrets must include WEB_PREVIEW_INVITE_SECRET")
 PY
@@ -2557,9 +3063,16 @@ grep -q 'PREVIEW_DB' "$WRANGLER_EXAMPLE" || fail "wrangler D1 binding missing"
 grep -q 'binding = "ASSETS"' "$WRANGLER_EXAMPLE" || fail "wrangler assets binding missing"
 grep -q 'WEB_PREVIEW_INVITE_SECRET' "$WRANGLER_EXAMPLE" || fail "wrangler invite secret documentation missing"
 grep -q 'CREATE TABLE IF NOT EXISTS preview_invites' "$D1_MIGRATION" || fail "D1 preview_invites migration missing"
+grep -q 'CREATE TABLE IF NOT EXISTS preview_apps' "$D1_MIGRATION" || fail "D1 preview_apps migration missing"
+grep -q 'CREATE TABLE IF NOT EXISTS preview_builds' "$D1_MIGRATION" || fail "D1 preview_builds migration missing"
+grep -q 'CREATE TABLE IF NOT EXISTS preview_tenants' "$D1_MIGRATION" || fail "D1 preview_tenants migration missing"
 grep -q 'CREATE TABLE IF NOT EXISTS preview_users' "$D1_MIGRATION" || fail "D1 preview_users migration missing"
 grep -q 'CREATE TABLE IF NOT EXISTS preview_sessions' "$D1_MIGRATION" || fail "D1 preview_sessions migration missing"
+grep -q 'CREATE TABLE IF NOT EXISTS preview_roles' "$D1_MIGRATION" || fail "D1 preview_roles migration missing"
+grep -q 'CREATE TABLE IF NOT EXISTS preview_admin_invites' "$D1_MIGRATION" || fail "D1 preview_admin_invites migration missing"
 grep -q 'CREATE TABLE IF NOT EXISTS preview_domain_records' "$D1_MIGRATION" || fail "D1 preview_domain_records migration missing"
+grep -q 'CREATE TABLE IF NOT EXISTS preview_assets' "$D1_MIGRATION" || fail "D1 preview_assets migration missing"
+grep -q 'CREATE TABLE IF NOT EXISTS preview_events' "$D1_MIGRATION" || fail "D1 preview_events migration missing"
 grep -q 'CREATE TABLE IF NOT EXISTS preview_notifications' "$D1_MIGRATION" || fail "D1 preview_notifications migration missing"
 grep -q 'CREATE TABLE IF NOT EXISTS preview_app_updates' "$D1_MIGRATION" || fail "D1 preview_app_updates migration missing"
 grep -q 'CREATE TABLE IF NOT EXISTS preview_domain_entities' "$DOMAIN_D1_MIGRATION" || fail "D1 preview_domain_entities migration missing"
@@ -2570,9 +3083,15 @@ grep -q 'CREATE INDEX IF NOT EXISTS idx_preview_domain_entities_app_entity' "$DO
 grep -q 'token_sha256' "$D1_MIGRATION" || fail "D1 token hash column missing"
 grep -q 'used_at' "$D1_MIGRATION" || fail "D1 used_at column missing"
 grep -q 'revoked_at' "$D1_MIGRATION" || fail "D1 revoked_at column missing"
-grep -q 'APP_RUNTIME_PROFILE' "$ROOT_DIR/apps/mobile/lib/main.dart" || fail "Flutter runtime profile define missing"
-grep -q 'API_RUNTIME' "$ROOT_DIR/apps/mobile/lib/main.dart" || fail "Flutter API runtime define missing"
-grep -q 'APP_SLUG' "$ROOT_DIR/apps/mobile/lib/main.dart" || fail "Flutter app slug define missing"
+if [[ "$FRONTEND_STRATEGY" == "svelte" ]]; then
+  grep -q 'VITE_APP_RUNTIME_PROFILE' "$ROOT_DIR/apps/web/src/config.ts" || fail "Svelte runtime profile env missing"
+  grep -q 'VITE_API_RUNTIME' "$ROOT_DIR/apps/web/src/config.ts" || fail "Svelte API runtime env missing"
+  grep -q 'VITE_API_BASE_URL' "$ROOT_DIR/apps/web/src/config.ts" || fail "Svelte preview API env missing"
+else
+  grep -q 'APP_RUNTIME_PROFILE' "$ROOT_DIR/apps/mobile/lib/main.dart" || fail "Flutter runtime profile define missing"
+  grep -q 'API_RUNTIME' "$ROOT_DIR/apps/mobile/lib/main.dart" || fail "Flutter API runtime define missing"
+  grep -q 'APP_SLUG' "$ROOT_DIR/apps/mobile/lib/main.dart" || fail "Flutter app slug define missing"
+fi
 
 if command -v node >/dev/null 2>&1; then
   node --check --input-type=module < "$WORKER" >/dev/null
@@ -2583,9 +3102,14 @@ fi
 
 if [[ "$REQUIRE_WEB_BUILD_OUTPUT" == "true" ]]; then
   [[ -f "$WEB_PREVIEW_BUILD_DIR/index.html" ]] || fail "missing web build output index.html at $WEB_PREVIEW_BUILD_DIR"
-  [[ -f "$WEB_PREVIEW_BUILD_DIR/manifest.json" ]] || fail "missing web build output manifest.json at $WEB_PREVIEW_BUILD_DIR"
-  [[ -f "$WEB_PREVIEW_BUILD_DIR/flutter_bootstrap.js" ]] || fail "missing web build output flutter_bootstrap.js at $WEB_PREVIEW_BUILD_DIR"
-  [[ -d "$WEB_PREVIEW_BUILD_DIR/assets" ]] || fail "missing web build output assets directory at $WEB_PREVIEW_BUILD_DIR/assets"
+  if [[ "$FRONTEND_STRATEGY" == "svelte" ]]; then
+    grep -q '<script type="module"' "$WEB_PREVIEW_BUILD_DIR/index.html" || fail "Svelte web build index must load module assets"
+    [[ ! -f "$WEB_PREVIEW_BUILD_DIR/flutter_bootstrap.js" ]] || fail "Svelte web build must not include Flutter bootstrap"
+  else
+    [[ -f "$WEB_PREVIEW_BUILD_DIR/manifest.json" ]] || fail "missing web build output manifest.json at $WEB_PREVIEW_BUILD_DIR"
+    [[ -f "$WEB_PREVIEW_BUILD_DIR/flutter_bootstrap.js" ]] || fail "missing web build output flutter_bootstrap.js at $WEB_PREVIEW_BUILD_DIR"
+    [[ -d "$WEB_PREVIEW_BUILD_DIR/assets" ]] || fail "missing web build output assets directory at $WEB_PREVIEW_BUILD_DIR/assets"
+  fi
 else
   printf 'web build output check skipped; set REQUIRE_WEB_BUILD_OUTPUT=true after scripts/build_web_preview.sh\\n'
 fi
@@ -2594,13 +3118,15 @@ printf 'web preview validation completed: profile=%s api_runtime=%s url=%s\\n' "
 '''
 
 
-def _validation_script() -> str:
+def _validation_script(frontend_strategy: str = "flutter") -> str:
     return r'''#!/usr/bin/env bash
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BACKEND_DIR="$ROOT_DIR/backend"
 MOBILE_DIR="$ROOT_DIR/apps/mobile"
+WEB_DIR="$ROOT_DIR/apps/web"
+FRONTEND_STRATEGY="__FRONTEND_STRATEGY__"
 VALIDATION_DIR="$ROOT_DIR/.generated-validation"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 BACKEND_HOST="${BACKEND_HOST:-127.0.0.1}"
@@ -2736,20 +3262,40 @@ print("contract ok: auth/me/admin/domains/notifications")
 PY
 
 cd "$ROOT_DIR"
-APP_RELEASE_TAG=android-v0.1.0-build.1 \
-APP_RUNTIME_PROFILE=real \
-API_BASE_URL=https://api.validation.invalid \
-scripts/validate_release_profiles.sh
+if [[ "$FRONTEND_STRATEGY" == "flutter" ]]; then
+  APP_RELEASE_TAG=android-v0.1.0-build.1 \
+  APP_RUNTIME_PROFILE=real \
+  API_BASE_URL=https://api.validation.invalid \
+  scripts/validate_release_profiles.sh
 
-APP_RELEASE_TAG=android-mock-v0.1.0-build.1 \
-APP_RUNTIME_PROFILE=mock \
-scripts/validate_release_profiles.sh
+  APP_RELEASE_TAG=android-mock-v0.1.0-build.1 \
+  APP_RUNTIME_PROFILE=mock \
+  scripts/validate_release_profiles.sh
 
-if command -v flutter >/dev/null 2>&1; then
+  if command -v flutter >/dev/null 2>&1; then
   cd "$MOBILE_DIR"
   flutter test --dart-define=API_BASE_URL="http://$BACKEND_HOST:$BACKEND_PORT"
+  else
+    echo "flutter not found; skipping mobile template tests"
+  fi
 else
-  echo "flutter not found; skipping mobile template tests"
+  [[ -f "$WEB_DIR/package.json" ]] || {
+    echo "missing apps/web/package.json for Svelte strategy" >&2
+    exit 1
+  }
+  if command -v npm >/dev/null 2>&1; then
+    cd "$WEB_DIR"
+    npm ci
+    npm run lint
+    npm test
+    npm run validate:preview
+    VITE_APP_RUNTIME_PROFILE=preview \
+    VITE_API_RUNTIME=cloudflare_preview \
+    VITE_API_BASE_URL="https://preview.nienfos.com/${APP_SLUG:-$(basename "$ROOT_DIR")}/api" \
+    npm run build
+  else
+    echo "npm not found; skipping Svelte template tests"
+  fi
 fi
 
 cd "$ROOT_DIR"
@@ -2759,7 +3305,7 @@ API_BASE_URL=https://preview.nienfos.com/${APP_SLUG:-$(basename "$ROOT_DIR")}/ap
 scripts/validate_web_preview.sh
 
 echo "generated project validation completed"
-'''
+'''.replace("__FRONTEND_STRATEGY__", frontend_strategy)
 
 
 def _publish_script() -> str:
@@ -2824,6 +3370,14 @@ else
   fi
   git push -u origin "$BRANCH"
 fi
+
+PREVIEW_API_BASE_URL="${PREVIEW_API_BASE_URL:-${API_BASE_URL:-https://preview.nienfos.com/$PROJECT_SLUG/api}}"
+PREVIEW_API_BASE_URL="${PREVIEW_API_BASE_URL%/}"
+if [[ "$PREVIEW_API_BASE_URL" != "https://preview.nienfos.com/$PROJECT_SLUG/api" ]]; then
+  echo "PREVIEW_API_BASE_URL must be https://preview.nienfos.com/$PROJECT_SLUG/api" >&2
+  exit 2
+fi
+gh variable set API_BASE_URL --repo "$REPO" --body "$PREVIEW_API_BASE_URL" >/dev/null
 
 echo "published: https://github.com/$REPO"
 '''
@@ -3156,8 +3710,11 @@ from pathlib import Path
 
 payload = json.loads(Path("/tmp/project-factory-cloudflare-preview-apply.json").read_text())
 status = str(payload.get("status") or payload.get("state") or "").lower()
-if status and status not in {{"ready", "applied", "deployed", "ok"}}:
+if status and status not in {{"ready", "active", "applied", "deployed", "ok"}}:
     raise SystemExit(f"Cloudflare preview apply returned non-ready status: {{status}}")
+recovery_status = payload.get("recoveryStatus") or payload.get("recovery_status")
+if recovery_status:
+    print(f"cloudflare preview recovery: {{recovery_status}}")
 print("cloudflare preview apply completed")
 PY
 '''
@@ -3290,6 +3847,64 @@ if status != 200 or updates.get("releaseChannel") != "prerelease" or updates.get
     raise SystemExit(f"app update metadata failed: {{status}} {{updates}}")
 
 print(f"preview api smoke passed: {{base_url}}")
+PY
+'''
+
+
+def _smoke_web_preview_script(slug: str) -> str:
+    return f'''#!/usr/bin/env bash
+set -euo pipefail
+
+fail() {{
+  printf 'web preview smoke failed: %s\\n' "$*" >&2
+  exit 2
+}}
+
+SOURCE_APP="${{SOURCE_APP:-{slug}}}"
+PREVIEW_URL="${{PREVIEW_URL:-https://preview.nienfos.com/$SOURCE_APP}}"
+PREVIEW_URL="${{PREVIEW_URL%/}}"
+
+[[ "$PREVIEW_URL" == "https://preview.nienfos.com/$SOURCE_APP" ]] || \\
+  fail "PREVIEW_URL must be https://preview.nienfos.com/$SOURCE_APP"
+
+python3 - "$PREVIEW_URL" "$SOURCE_APP" <<'PY'
+from __future__ import annotations
+
+import json
+import sys
+import urllib.error
+import urllib.request
+
+preview_url, source_app = sys.argv[1:3]
+
+def get_json(path: str) -> tuple[int, dict]:
+    try:
+        with urllib.request.urlopen(preview_url + path, timeout=30) as response:
+            raw = response.read().decode()
+            return response.status, json.loads(raw) if raw else {{}}
+    except urllib.error.HTTPError as exc:
+        raw = exc.read().decode()
+        try:
+            body = json.loads(raw)
+        except Exception:
+            body = {{"raw": raw}}
+        return exc.code, body
+
+status, web_health = get_json("/__preview/health")
+if status != 200 or web_health.get("source_app") != source_app:
+    raise SystemExit(f"web preview health failed: {{status}} {{web_health}}")
+if web_health.get("runtime") != "cloudflare_preview":
+    raise SystemExit(f"web preview runtime mismatch: {{web_health}}")
+
+status, api_health = get_json("/api/health")
+if status != 200 or api_health.get("source_app") != source_app:
+    raise SystemExit(f"Preview API health failed: {{status}} {{api_health}}")
+if api_health.get("runtime") != "cloudflare_preview":
+    raise SystemExit(f"Preview API runtime mismatch: {{api_health}}")
+if not api_health.get("d1_bound"):
+    raise SystemExit("Preview API health did not report d1_bound=true")
+
+print(f"web preview smoke passed: {{preview_url}}")
 PY
 '''
 
@@ -3608,7 +4223,10 @@ printf 'publication validation completed\n'
 '''
 
 
-def _preview_release_profile_validation_script(slug: str) -> str:
+def _preview_release_profile_validation_script(
+    slug: str,
+    frontend_strategy: str = "flutter",
+) -> str:
     return f'''#!/usr/bin/env bash
 set -euo pipefail
 
@@ -3619,6 +4237,7 @@ fail() {{
 
 ROOT_DIR="$(cd "$(dirname "${{BASH_SOURCE[0]}}")/.." && pwd)"
 cd "$ROOT_DIR"
+FRONTEND_STRATEGY="{frontend_strategy}"
 
 RUNTIME_CONTRACT="$ROOT_DIR/release/preview-runtime.json"
 WEB_PREVIEW_MANIFEST="$ROOT_DIR/deploy/web-preview/web-preview-manifest.yaml"
@@ -3634,10 +4253,17 @@ ANDROID_PREVIEW_WORKFLOW="$ROOT_DIR/.github/workflows/android-preview-release.ym
 [[ -f "$PROJECT_MANIFEST" ]] || fail "missing .codex/project.yaml"
 [[ -f "$RELEASE_CONTRACTS" ]] || fail "missing release/release-contracts.yaml"
 [[ -f "$BACKEND_CONFIG" ]] || fail "missing backend/app/config.py"
-[[ -f "$FLUTTER_CONFIG" ]] || fail "missing apps/mobile/lib/src/config.dart"
-[[ -f "$ANDROID_PREVIEW_WORKFLOW" ]] || fail "missing .github/workflows/android-preview-release.yml"
+if [[ "$FRONTEND_STRATEGY" == "flutter" ]]; then
+  [[ -f "$FLUTTER_CONFIG" ]] || fail "missing apps/mobile/lib/src/config.dart"
+  [[ -f "$ANDROID_PREVIEW_WORKFLOW" ]] || fail "missing .github/workflows/android-preview-release.yml"
+else
+  [[ -f "$ROOT_DIR/apps/web/package.json" ]] || fail "missing apps/web/package.json"
+  [[ -f "$ROOT_DIR/apps/web/src/config.ts" ]] || fail "missing apps/web/src/config.ts"
+  [[ ! -f "$ANDROID_PREVIEW_WORKFLOW" ]] || fail "Svelte strategy must not generate Android preview workflow without wrapper support"
+  [[ ! -f "$ROOT_DIR/scripts/register_installable_app.sh" ]] || fail "Svelte strategy must not generate Bridge installable registration without wrapper support"
+fi
 
-python3 - "$RUNTIME_CONTRACT" "$WEB_PREVIEW_MANIFEST" "$PROJECT_MANIFEST" "$RELEASE_CONTRACTS" "{slug}" <<'PY'
+python3 - "$RUNTIME_CONTRACT" "$WEB_PREVIEW_MANIFEST" "$PROJECT_MANIFEST" "$RELEASE_CONTRACTS" "{slug}" "$FRONTEND_STRATEGY" <<'PY'
 from __future__ import annotations
 
 import json
@@ -3649,7 +4275,7 @@ try:
 except ModuleNotFoundError as exc:
     raise SystemExit("PyYAML is required to validate web-preview-manifest.yaml") from exc
 
-runtime_path, manifest_path, project_manifest_path, release_contracts_path, expected_slug = sys.argv[1:6]
+runtime_path, manifest_path, project_manifest_path, release_contracts_path, expected_slug, frontend_strategy = sys.argv[1:7]
 runtime = json.loads(Path(runtime_path).read_text(encoding="utf-8"))
 manifest = yaml.safe_load(Path(manifest_path).read_text(encoding="utf-8"))
 project_manifest = yaml.safe_load(Path(project_manifest_path).read_text(encoding="utf-8"))
@@ -3666,6 +4292,7 @@ manifest_runtime = manifest.get("runtime") if isinstance(manifest.get("runtime")
 first_release = manifest.get("first_release") if isinstance(manifest.get("first_release"), dict) else {{}}
 project_profiles = project_manifest.get("runtime_profiles") if isinstance(project_manifest.get("runtime_profiles"), dict) else {{}}
 release_profiles = release_contracts.get("runtime_profiles") if isinstance(release_contracts.get("runtime_profiles"), dict) else {{}}
+project_frontend = project_manifest.get("frontend") if isinstance(project_manifest.get("frontend"), dict) else {{}}
 checks = (
     ("sourceApp", runtime.get("sourceApp"), expected_slug),
     ("previewUrl", runtime.get("previewUrl"), f"https://preview.nienfos.com/{{expected_slug}}"),
@@ -3673,16 +4300,17 @@ checks = (
     ("runtimeProfile", runtime.get("runtimeProfile"), "preview"),
     ("apiRuntime", runtime.get("apiRuntime"), "cloudflare_preview"),
     ("releaseChannel", runtime.get("releaseChannel"), "prerelease"),
-    ("releaseTagPattern", runtime.get("releaseTagPattern"), "android-preview-v*"),
     ("productionReady", runtime.get("productionReady"), False),
     ("mockOrDemo", runtime.get("mockOrDemo"), False),
+    ("frontendStrategy", runtime.get("frontendStrategy"), frontend_strategy),
+    ("manifest.frontend_strategy", manifest.get("frontend_strategy"), frontend_strategy),
+    ("project.frontend.strategy", project_frontend.get("strategy"), frontend_strategy),
     ("manifest.source_app", manifest.get("source_app"), expected_slug),
     ("manifest.stable_url", manifest.get("stable_url"), runtime.get("previewUrl")),
     ("manifest.runtime.api_base_url", manifest_runtime.get("api_base_url"), runtime.get("apiBaseUrl")),
     ("manifest.runtime.default_profile", manifest_runtime.get("default_profile"), runtime.get("runtimeProfile")),
     ("manifest.runtime.api_runtime", manifest_runtime.get("api_runtime"), runtime.get("apiRuntime")),
     ("manifest.first_release.mode", first_release.get("mode"), "preview"),
-    ("manifest.first_release.android_tag_pattern", first_release.get("android_tag_pattern"), runtime.get("releaseTagPattern")),
     ("manifest.first_release.android_release_channel", first_release.get("android_release_channel"), runtime.get("releaseChannel")),
     ("project.runtime_profiles.default_profile", project_profiles.get("default_profile"), "preview"),
     ("release_contracts.runtime_profiles.default", release_profiles.get("default"), "preview"),
@@ -3690,6 +4318,22 @@ checks = (
 for label, actual, expected in checks:
     if actual != expected:
         raise SystemExit(f"{{label}} mismatch: expected {{expected!r}}, got {{actual!r}}")
+if frontend_strategy == "flutter":
+    if runtime.get("releaseTagPattern") != "android-preview-v*":
+        raise SystemExit("releaseTagPattern must be android-preview-v*")
+    if first_release.get("android_tag_pattern") != "android-preview-v*":
+        raise SystemExit("manifest.first_release.android_tag_pattern must be android-preview-v*")
+    if runtime.get("installableAndroid") is not True:
+        raise SystemExit("Flutter preview must declare installableAndroid=true")
+else:
+    if runtime.get("releaseTagPattern") is not None:
+        raise SystemExit("Svelte preview must not declare releaseTagPattern")
+    if first_release.get("android_tag_pattern") is not None:
+        raise SystemExit("Svelte preview must not declare android_tag_pattern")
+    if runtime.get("installableAndroid") is not False:
+        raise SystemExit("Svelte preview must declare installableAndroid=false")
+    if runtime.get("bridgeRegistrationRequired") is not False:
+        raise SystemExit("Svelte preview must declare bridgeRegistrationRequired=false")
 for source_label, profiles in (
     (".codex/project.yaml", project_profiles.get("allowed")),
     ("release/release-contracts.yaml", release_profiles.get("allowed")),
@@ -3700,17 +4344,27 @@ for source_label, profiles in (
 if "preview" not in project_profiles or not isinstance(project_profiles.get("preview"), dict):
     raise SystemExit(".codex/project.yaml runtime_profiles.preview is required")
 bridge = runtime.get("bridge")
-if not isinstance(bridge, dict) or bridge.get("verificationEndpoint") != f"/installable-apps/{{expected_slug}}":
+if frontend_strategy == "flutter" and (
+    not isinstance(bridge, dict)
+    or bridge.get("verificationEndpoint") != f"/installable-apps/{{expected_slug}}"
+):
     raise SystemExit("bridge.verificationEndpoint mismatch")
+if frontend_strategy == "svelte" and isinstance(bridge, dict) and bridge.get("requiresApkUrl"):
+    raise SystemExit("Svelte preview must not require APK URL")
 metadata = runtime.get("releaseMetadata")
 if not isinstance(metadata, dict) or metadata.get("initialPreviewRelease") is not True:
     raise SystemExit("releaseMetadata.initialPreviewRelease must be true")
 PY
 
 grep -q '"preview"' "$BACKEND_CONFIG" || fail "backend config must allow preview runtime profile"
-grep -q "runtimeProfile != 'preview'" "$FLUTTER_CONFIG" || fail "Flutter config must validate preview runtime profile"
-grep -q 'APP_RUNTIME_PROFILE: preview' "$ANDROID_PREVIEW_WORKFLOW" || fail "Android preview workflow must set APP_RUNTIME_PROFILE=preview"
-grep -q 'API_RUNTIME: cloudflare_preview' "$ANDROID_PREVIEW_WORKFLOW" || fail "Android preview workflow must set API_RUNTIME=cloudflare_preview"
+if [[ "$FRONTEND_STRATEGY" == "flutter" ]]; then
+  grep -q "runtimeProfile != 'preview'" "$FLUTTER_CONFIG" || fail "Flutter config must validate preview runtime profile"
+  grep -q 'APP_RUNTIME_PROFILE: preview' "$ANDROID_PREVIEW_WORKFLOW" || fail "Android preview workflow must set APP_RUNTIME_PROFILE=preview"
+  grep -q 'API_RUNTIME: cloudflare_preview' "$ANDROID_PREVIEW_WORKFLOW" || fail "Android preview workflow must set API_RUNTIME=cloudflare_preview"
+else
+  grep -q 'VITE_APP_RUNTIME_PROFILE' "$ROOT_DIR/apps/web/src/config.ts" || fail "Svelte config must validate preview runtime profile"
+  grep -q 'VITE_API_BASE_URL' "$ROOT_DIR/apps/web/src/config.ts" || fail "Svelte config must require preview API URL"
+fi
 
 python3 - "$SIGNING_POLICY" <<'PY'
 from __future__ import annotations
@@ -3723,6 +4377,19 @@ from pathlib import Path
 policy = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
 if not isinstance(policy, dict):
     raise SystemExit("release/preview-signing-policy.json must be a JSON object")
+frontend_strategy = os.environ.get("FRONTEND_STRATEGY", "flutter")
+if frontend_strategy == "svelte":
+    if policy.get("defaultSigningMode") != "not_applicable_web_only":
+        raise SystemExit("Svelte preview signing policy must be not_applicable_web_only")
+    if policy.get("signingRequired") is not False:
+        raise SystemExit("Svelte preview signing policy must set signingRequired=false")
+    if policy.get("installableAndroid") is not False:
+        raise SystemExit("Svelte preview signing policy must set installableAndroid=false")
+    if policy.get("bridgeRegistrationRequired") is not False:
+        raise SystemExit("Svelte preview signing policy must set bridgeRegistrationRequired=false")
+    if policy.get("releaseTagPattern") is not None:
+        raise SystemExit("Svelte preview signing policy must not declare Android release tags")
+    raise SystemExit(0)
 if policy.get("defaultSigningMode") != "preview":
     raise SystemExit("defaultSigningMode must remain preview")
 if policy.get("productionReady") is not False or policy.get("mockOrDemo") is not False:
@@ -3746,24 +4413,29 @@ if tag and not tag.startswith("android-preview-v"):
     raise SystemExit("debug preview signing can only use android-preview-v* tags")
 PY
 
-API_BASE_URL="$(python3 - "$RUNTIME_CONTRACT" <<'PY'
+if [[ "$FRONTEND_STRATEGY" == "flutter" ]]; then
+  API_BASE_URL="$(python3 - "$RUNTIME_CONTRACT" <<'PY'
 import json
 import sys
 from pathlib import Path
 
 print(json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))["apiBaseUrl"])
 PY
-)" \\
-APP_RUNTIME_PROFILE=preview \\
-API_RUNTIME=cloudflare_preview \\
-APP_RELEASE_TAG="${{APP_RELEASE_TAG:-android-preview-v0.0.0-build.0}}" \\
-scripts/validate_release_profiles.sh
+  )" \\
+  APP_RUNTIME_PROFILE=preview \\
+  API_RUNTIME=cloudflare_preview \\
+  APP_RELEASE_TAG="${{APP_RELEASE_TAG:-android-preview-v0.0.0-build.0}}" \\
+  scripts/validate_release_profiles.sh
+fi
 
 printf 'preview release profile validation completed\\n'
 '''
 
 
-def _initial_preview_release_validation_script(slug: str) -> str:
+def _initial_preview_release_validation_script(
+    slug: str,
+    frontend_strategy: str = "flutter",
+) -> str:
     return f'''#!/usr/bin/env bash
 set -euo pipefail
 
@@ -3774,6 +4446,7 @@ fail() {{
 
 ROOT_DIR="$(cd "$(dirname "${{BASH_SOURCE[0]}}")/.." && pwd)"
 cd "$ROOT_DIR"
+FRONTEND_STRATEGY="{frontend_strategy}"
 
 SOURCE_APP="${{SOURCE_APP:-{slug}}}"
 PREVIEW_API_BASE_URL="${{PREVIEW_API_BASE_URL:-${{API_BASE_URL:-https://preview.nienfos.com/$SOURCE_APP/api}}}}"
@@ -3782,6 +4455,75 @@ PREVIEW_API_BASE_URL="${{PREVIEW_API_BASE_URL%/}}"
   fail "Preview API must be https://preview.nienfos.com/$SOURCE_APP/api"
 
 scripts/validate_preview_release_profiles.sh
+scripts/smoke_web_preview.sh
+
+if [[ "$FRONTEND_STRATEGY" == "svelte" ]]; then
+  scripts/smoke_preview_api.sh
+  local_head="$(git rev-parse HEAD 2>/dev/null || echo unavailable)"
+  branch="$(git symbolic-ref --short HEAD 2>/dev/null || true)"
+  push_state="unknown"
+  upstream="$(git rev-parse --abbrev-ref --symbolic-full-name '@{{u}}' 2>/dev/null || true)"
+  if [[ -n "$upstream" ]]; then
+    remote_head="$(git rev-parse "$upstream" 2>/dev/null || true)"
+    if [[ "$remote_head" == "$local_head" ]]; then
+      push_state="pushed:$upstream"
+    else
+      push_state="not_pushed:$upstream"
+    fi
+  fi
+  python3 - "$ROOT_DIR/release/release-output-template.md" "$SOURCE_APP" "$local_head" "$branch" "$push_state" "$PREVIEW_API_BASE_URL" <<'PY'
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+output_path, source_app, commit_hash, branch, push_state, api_url = sys.argv[1:7]
+preview_url = f"https://preview.nienfos.com/{{source_app}}"
+content = f"""# Factory Final Output
+
+- source_app: {{source_app}}
+- commit_hash: {{commit_hash}}
+- push_state: {{push_state}}
+- branch: {{branch or "detached"}}
+- frontend_strategy: svelte
+- runtime_profile: preview
+- release_channel: prerelease
+- mock_or_demo: false
+- backend_required: true
+- production_ready: false
+- production_release_blocked: true
+- installable_android: false
+- productive_release_tag: blocked_until_explicit_promotion
+- release_url: not_applicable_web_only
+- bridge_installable_url: not_applicable_web_only
+- cloudflare_preview_url: {{preview_url}}
+- cloudflare_preview_health_url: {{preview_url}}/__preview/health
+- web_preview_ready: true
+- preview_api_base_url: {{api_url}}
+- preview_api_health_url: {{api_url}}/health
+- workbench_status: not_applicable_web_only
+- codex_mobile_catalog_status: not_applicable_web_only
+- validations_executed:
+  - backend tests
+  - Svelte tests
+  - Worker local preview test
+  - generated project validation
+  - release profile validation preview
+  - Cloudflare public health
+  - Preview API health
+  - preview persistence login smoke
+- blockers_remaining:
+  - Android APK and Bridge installability require a future wrapper strategy
+  - production release requires explicit promotion
+"""
+Path(output_path).write_text(content, encoding="utf-8")
+PY
+  grep -q "frontend_strategy: svelte" "$ROOT_DIR/release/release-output-template.md" || fail "release output must declare Svelte strategy"
+  grep -q "installable_android: false" "$ROOT_DIR/release/release-output-template.md" || fail "Svelte release output must not claim installable Android"
+  grep -q "bridge_installable_url: not_applicable_web_only" "$ROOT_DIR/release/release-output-template.md" || fail "Svelte release output must not claim Bridge installability"
+  printf 'initial svelte preview release ready: %s\\n' "$SOURCE_APP"
+  exit 0
+fi
 
 origin_url="$(git remote get-url origin 2>/dev/null || true)"
 [[ -n "$origin_url" ]] || fail "origin remote is not configured"
@@ -4215,7 +4957,44 @@ jobs:
 """
 
 
-def _runtime_profiles_doc(name: str) -> str:
+def _runtime_profiles_doc(
+    name: str,
+    frontend_strategy: str = "flutter",
+) -> str:
+    if frontend_strategy == "svelte":
+        return f"""# Runtime Profiles
+
+`{name}` uses the Svelte web-first strategy. Runtime profile metadata is carried
+through Vite environment variables and the Cloudflare Preview API.
+
+## Profiles
+
+- `VITE_APP_RUNTIME_PROFILE=preview`: default Initial Preview Release profile.
+  Requires `VITE_API_RUNTIME=cloudflare_preview` and
+  `VITE_API_BASE_URL=https://preview.nienfos.com/<slug>/api`.
+- `VITE_APP_RUNTIME_PROFILE=staging`: internal pre-production web/API path.
+- `VITE_APP_RUNTIME_PROFILE=real`: productive web/API path after explicit
+  promotion.
+- `VITE_APP_RUNTIME_PROFILE=mock`: opt-in local demo path only, not an Initial
+  Preview Release.
+
+## Release Shape
+
+- Initial preview is web/API only.
+- Native release tags, package signing, mobile marketplace readiness, and Codex
+  Mobile catalog installability are not part of the Svelte strategy.
+- A future wrapper strategy must define its own package/signing/catalog contract
+  before claiming installability.
+
+Run before web preview release validation:
+
+```bash
+VITE_APP_RUNTIME_PROFILE=preview \\
+VITE_API_RUNTIME=cloudflare_preview \\
+VITE_API_BASE_URL=https://preview.nienfos.com/<slug>/api \\
+npm run validate:preview
+```
+"""
     return f"""# Runtime Profiles
 
 `{name}` must keep mock/demo and productive runtime paths separate.
@@ -4249,33 +5028,77 @@ APP_RELEASE_TAG=<tag> APP_RUNTIME_PROFILE=<profile> API_BASE_URL=<url> scripts/v
 """
 
 
-def _release_contracts_yaml(slug: str) -> str:
+def _store_checklist_doc(*, store: str, frontend_strategy: str = "flutter") -> str:
+    if frontend_strategy == "svelte":
+        return """# Native Store Checklist
+
+Status: `not_applicable_web_only`.
+
+This project uses the Svelte web-first strategy. It does not produce a mobile
+binary, does not target native store submission, and must not be reported as
+ready for a native store release.
+
+Native store readiness requires a future explicit wrapper strategy with its own
+build, signing, release, checksum, and installability validation contract.
+"""
+    return _placeholder_doc(
+        f"{store} Checklist",
+        f"{store} release readiness items and pending credentials will be tracked here.",
+    )
+
+
+def _release_contracts_yaml(slug: str, frontend_strategy: str = "flutter") -> str:
+    is_svelte = frontend_strategy == "svelte"
     return _to_yaml(
         {
             "schema_version": 1,
             "source_app": slug,
+            "frontend_strategy": frontend_strategy,
+            "frontend_capabilities": {
+                "source_root": "apps/web" if is_svelte else "apps/mobile",
+                "project_kind": "web" if is_svelte else "mobile_web",
+                "web_build_output": f"build/web-preview/{slug}",
+                "supports_android_preview_apk": not is_svelte,
+                "supports_bridge_installable_app": not is_svelte,
+                "supports_workbench_apk_entry": not is_svelte,
+                "cloudflare_preview_required": True,
+                "d1_preview_required": True,
+                "release_channel": "prerelease",
+                "production_ready": False,
+                "mock_or_demo": False,
+            },
             "runtime_profiles": {
                 "default": "preview",
                 "allowed": ["mock", "preview", "real", "staging"],
-                "env": "APP_RUNTIME_PROFILE",
+                "env": "VITE_APP_RUNTIME_PROFILE" if is_svelte else "APP_RUNTIME_PROFILE",
+                "api_runtime_env": "VITE_API_RUNTIME" if is_svelte else "API_RUNTIME",
+                "preview_api_env": "VITE_API_BASE_URL" if is_svelte else "API_BASE_URL",
             },
             "initial_preview_release": {
-                "tag_patterns": ["android-preview-v*"],
+                "tag_patterns": [] if is_svelte else ["android-preview-v*"],
                 "runtime_profile": "preview",
                 "api_runtime": "cloudflare_preview",
                 "api_base_url": f"https://preview.nienfos.com/{slug}/api",
                 "mock_or_demo": False,
                 "backend_required": True,
                 "data_persistence": "cloudflare_d1",
-                "required_gates": [
-                    "cloudflare_health",
-                    "preview_api_smoke",
-                    "github_preview_apk_release",
-                    "codex_mobile_apps_registration",
-                ],
+                "required_gates": (
+                    [
+                        "cloudflare_health",
+                        "preview_api_smoke",
+                        "github_preview_apk_release",
+                        "codex_mobile_apps_registration",
+                    ]
+                    if not is_svelte
+                    else [
+                        "cloudflare_health",
+                        "preview_api_smoke",
+                        "svelte_web_build_validation",
+                    ]
+                ),
             },
             "mock_release": {
-                "tag_patterns": ["android-mock-v*", "android-local-v*"],
+                "tag_patterns": [] if is_svelte else ["android-mock-v*", "android-local-v*"],
                 "runtime_profile": "mock",
                 "mock_or_demo": True,
                 "backend_required": False,
@@ -4284,13 +5107,13 @@ def _release_contracts_yaml(slug: str) -> str:
                 "seed_role_selector": True,
             },
             "productive_release": {
-                "tag_patterns": ["android-v*"],
+                "tag_patterns": [] if is_svelte else ["android-v*"],
                 "runtime_profile": "real",
                 "mock_or_demo": False,
                 "backend_required": True,
                 "promotion_metadata": "release/promotion-contract.json",
                 "requires_preview_success": True,
-                "must_not_reuse_preview_tag": True,
+                "must_not_reuse_preview_tag": not is_svelte,
                 "forbidden": [
                     "LOCAL_DATA_MODE=true",
                     "localhost API_BASE_URL",
@@ -4298,14 +5121,22 @@ def _release_contracts_yaml(slug: str) -> str:
                     "visible seed users",
                     "visible Workbench UI",
                     "hardcoded demo data",
+                    *(
+                        [
+                            "Android APK claim without wrapper strategy",
+                            "Codex Mobile catalog claim without wrapper strategy",
+                        ]
+                        if is_svelte
+                        else []
+                    ),
                 ],
             },
             "preview_to_production_promotion": {
                 "artifact": "release/promotion-contract.json",
                 "initial_preview_is_production": False,
-                "preview_tag_pattern": "android-preview-v*",
-                "production_tag_pattern": "android-v*",
-                "mock_tag_patterns": ["android-mock-v*", "android-local-v*"],
+                "preview_tag_pattern": None if is_svelte else "android-preview-v*",
+                "production_tag_pattern": None if is_svelte else "android-v*",
+                "mock_tag_patterns": [] if is_svelte else ["android-mock-v*", "android-local-v*"],
             },
             "cloudflare_cost_posture": {
                 "artifact": "release/cloudflare-cost-posture.json",
@@ -4314,18 +5145,18 @@ def _release_contracts_yaml(slug: str) -> str:
                 "paid_resources_require_operator_confirmation": True,
             },
             "workbench": {
-                "required": True,
-                "visible_profiles": ["mock"],
+                "required": not is_svelte,
+                "visible_profiles": [] if is_svelte else ["mock"],
                 "hidden_profiles": ["real"],
                 "identity_file": "codex-bridge.yaml",
                 "docs": "docs/workbench.md",
             },
             "codex_mobile_catalog": {
-                "required": True,
-                "registration_script": "scripts/register_installable_app.sh",
+                "required": not is_svelte,
+                "registration_script": None if is_svelte else "scripts/register_installable_app.sh",
                 "bridge_endpoint": "/installable-apps",
                 "verification_endpoint": "/installable-apps/{sourceApp}",
-                "requires_apk_url": True,
+                "requires_apk_url": not is_svelte,
             },
             "web_preview": {
                 "required": True,
@@ -4376,7 +5207,61 @@ def _cloudflare_cost_posture_json(slug: str) -> str:
     )
 
 
-def _promotion_contract_json(slug: str, name: str) -> str:
+def _promotion_contract_json(
+    slug: str,
+    name: str,
+    frontend_strategy: str = "flutter",
+) -> str:
+    is_svelte = frontend_strategy == "svelte"
+    if is_svelte:
+        payload = {
+            "schemaVersion": 1,
+            "sourceApp": slug,
+            "displayName": name,
+            "frontendStrategy": "svelte",
+            "initialPreview": {
+                "productionReady": False,
+                "releaseChannel": "prerelease",
+                "tagPattern": None,
+                "runtimeProfile": "preview",
+                "apiRuntime": "cloudflare_preview",
+                "apiBaseUrl": f"https://preview.nienfos.com/{slug}/api",
+                "webPreviewUrl": f"https://preview.nienfos.com/{slug}",
+                "dataPersistence": "cloudflare_d1",
+                "mockOrDemo": False,
+                "installableAndroid": False,
+                "bridgeRegistrationRequired": False,
+            },
+            "productionPromotion": {
+                "releaseChannel": "production",
+                "tagPattern": None,
+                "runtimeProfile": "real",
+                "requiresSeparateBackend": True,
+                "requiresProductionSigning": False,
+                "requiresPreviewGates": [
+                    "cloudflare_web_preview_health",
+                    "preview_api_smoke",
+                    "svelte_web_build_validation",
+                ],
+                "requiresProductionGates": [
+                    "production_backend_health",
+                    "production_api_base_url",
+                    "mock_or_demo_false",
+                ],
+                "forbidden": [
+                    "placeholder API_BASE_URL",
+                    "localhost API_BASE_URL",
+                    "android APK claim without wrapper strategy",
+                    "Codex Mobile catalog claim without wrapper strategy",
+                ],
+            },
+            "mockDemo": {
+                "optInOnly": True,
+                "tagPatterns": [],
+                "mustNotPromoteToProduction": True,
+            },
+        }
+        return json.dumps(payload, indent=2, sort_keys=True) + "\n"
     return (
         json.dumps(
             {
@@ -4434,7 +5319,35 @@ def _promotion_contract_json(slug: str, name: str) -> str:
     )
 
 
-def _preview_signing_policy_json(slug: str) -> str:
+def _preview_signing_policy_json(
+    slug: str,
+    frontend_strategy: str = "flutter",
+) -> str:
+    if frontend_strategy == "svelte":
+        return (
+            json.dumps(
+                {
+                    "schemaVersion": 1,
+                    "sourceApp": slug,
+                    "frontendStrategy": "svelte",
+                    "releaseChannel": "prerelease",
+                    "releaseTagPattern": None,
+                    "defaultSigningMode": "not_applicable_web_only",
+                    "signingRequired": False,
+                    "installableAndroid": False,
+                    "bridgeRegistrationRequired": False,
+                    "productionReady": False,
+                    "mockOrDemo": False,
+                    "debugPreview": {
+                        "enabled": False,
+                        "reason": "Svelte strategy is web-only and does not produce APK artifacts.",
+                    },
+                },
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n"
+        )
     return (
         json.dumps(
             {
@@ -4513,35 +5426,123 @@ PY
 '''
 
 
-def _preview_runtime_json(slug: str, name: str) -> str:
-    return (
-        json.dumps(
+def _preview_runtime_json(
+    slug: str,
+    name: str,
+    frontend_strategy: str = "flutter",
+) -> str:
+    is_svelte = frontend_strategy == "svelte"
+    payload = {
+        "schemaVersion": 1,
+        "sourceApp": slug,
+        "displayName": f"{name} Preview",
+        "frontendStrategy": frontend_strategy,
+        "frontendSourceRoot": "apps/web" if is_svelte else "apps/mobile",
+        "frontendProjectKind": "web" if is_svelte else "mobile_web",
+        "webBuildOutput": f"build/web-preview/{slug}",
+        "previewUrl": f"https://preview.nienfos.com/{slug}",
+        "apiBaseUrl": f"https://preview.nienfos.com/{slug}/api",
+        "runtimeProfile": "preview",
+        "apiRuntime": "cloudflare_preview",
+        "releaseChannel": "prerelease",
+        "productionReady": False,
+        "mockOrDemo": False,
+        "backendRequired": True,
+        "dataPersistence": "cloudflare_d1",
+        "cloudflarePreviewRequired": True,
+        "d1PreviewRequired": True,
+        "installableAndroid": not is_svelte,
+        "bridgeRegistrationRequired": not is_svelte,
+        "workbenchApkEntryRequired": not is_svelte,
+        "releaseMetadata": {
+            "initialPreviewRelease": True,
+            "runtimeProfile": "preview",
+            "apiRuntime": "cloudflare_preview",
+            "frontendStrategy": frontend_strategy,
+        },
+    }
+    if is_svelte:
+        payload["bridge"] = {
+            "endpoint": "/installable-apps",
+            "verificationEndpoint": None,
+            "requiresApkUrl": False,
+        }
+    else:
+        payload.update(
             {
-                "schemaVersion": 1,
-                "sourceApp": slug,
-                "displayName": f"{name} Preview",
-                "previewUrl": f"https://preview.nienfos.com/{slug}",
-                "apiBaseUrl": f"https://preview.nienfos.com/{slug}/api",
-                "runtimeProfile": "preview",
-                "apiRuntime": "cloudflare_preview",
-                "releaseChannel": "prerelease",
                 "releaseTagPattern": "android-preview-v*",
                 "apkAssetPattern": f"{slug}*.apk",
                 "latestAssetName": f"{slug}.apk",
-                "productionReady": False,
-                "mockOrDemo": False,
                 "bridge": {
                     "endpoint": "/installable-apps",
                     "verificationEndpoint": f"/installable-apps/{slug}",
                     "requiresApkUrl": True,
                 },
-                "releaseMetadata": {
-                    "initialPreviewRelease": True,
-                    "releaseTagPattern": "android-preview-v*",
-                    "latestAssetName": f"{slug}.apk",
-                    "runtimeProfile": "preview",
-                    "apiRuntime": "cloudflare_preview",
+            }
+        )
+        payload["releaseMetadata"].update(
+            {
+                "releaseTagPattern": "android-preview-v*",
+                "latestAssetName": f"{slug}.apk",
+            }
+        )
+    return (
+        json.dumps(
+            payload,
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n"
+    )
+
+
+def _svelte_files(name: str, slug: str) -> dict[str, str]:
+    package_name = _npm_package_name(slug)
+    return {
+        "apps/web/package.json": _svelte_package_json(package_name),
+        "apps/web/package-lock.json": _svelte_package_lock_json(package_name),
+        "apps/web/index.html": _svelte_index_html(name),
+        "apps/web/vite.config.ts": _svelte_vite_config_ts(),
+        "apps/web/src/main.ts": _svelte_main_ts(),
+        "apps/web/src/App.svelte": _svelte_app_svelte(name),
+        "apps/web/src/config.ts": _svelte_config_ts(slug),
+        "apps/web/test/preview-config.test.mjs": _svelte_preview_config_test_mjs(slug),
+        "apps/web/README.md": _svelte_readme(name, slug),
+    }
+
+
+def _npm_package_name(slug: str) -> str:
+    value = slug.lower().replace("_", "-")
+    value = re.sub(r"[^a-z0-9-]+", "-", value).strip("-")
+    if not value:
+        value = "project-factory-app"
+    if value[0].isdigit():
+        value = f"app-{value}"
+    return value
+
+
+def _svelte_package_json(package_name: str) -> str:
+    return (
+        json.dumps(
+            {
+                "name": package_name,
+                "private": True,
+                "version": "0.1.0",
+                "type": "module",
+                "scripts": {
+                    "dev": "vite --host 0.0.0.0",
+                    "lint": "node test/preview-config.test.mjs --static",
+                    "test": "node test/preview-config.test.mjs",
+                    "validate:preview": "node test/preview-config.test.mjs --preview",
+                    "build": "vite build",
+                    "preview": "vite preview --host 0.0.0.0",
                 },
+                "dependencies": {
+                    "@sveltejs/vite-plugin-svelte": "3.1.2",
+                    "svelte": "4.2.19",
+                    "vite": "5.4.21",
+                },
+                "devDependencies": {},
             },
             indent=2,
             sort_keys=True,
@@ -4550,7 +5551,1385 @@ def _preview_runtime_json(slug: str, name: str) -> str:
     )
 
 
-def _release_output_template() -> str:
+def _svelte_package_lock_json(package_name: str) -> str:
+    template = r'''{
+  "name": "__PACKAGE_NAME__",
+  "version": "0.1.0",
+  "lockfileVersion": 3,
+  "requires": true,
+  "packages": {
+    "": {
+      "name": "__PACKAGE_NAME__",
+      "version": "0.1.0",
+      "dependencies": {
+        "@sveltejs/vite-plugin-svelte": "3.1.2",
+        "svelte": "4.2.19",
+        "vite": "5.4.21"
+      },
+      "devDependencies": {}
+    },
+    "node_modules/@ampproject/remapping": {
+      "version": "2.3.0",
+      "resolved": "https://registry.npmjs.org/@ampproject/remapping/-/remapping-2.3.0.tgz",
+      "integrity": "sha512-30iZtAPgz+LTIYoeivqYo853f02jBYSd5uGnGpkFV0M3xOt9aN73erkgYAmZU43x4VfqcnLxW9Kpg3R5LC4YYw==",
+      "dependencies": {
+        "@jridgewell/gen-mapping": "^0.3.5",
+        "@jridgewell/trace-mapping": "^0.3.24"
+      },
+      "engines": {
+        "node": ">=6.0.0"
+      }
+    },
+    "node_modules/@esbuild/aix-ppc64": {
+      "version": "0.21.5",
+      "resolved": "https://registry.npmjs.org/@esbuild/aix-ppc64/-/aix-ppc64-0.21.5.tgz",
+      "integrity": "sha512-1SDgH6ZSPTlggy1yI6+Dbkiz8xzpHJEVAlF/AM1tHPLsf5STom9rwtjE4hKAF20FfXXNTFqEYXyJNWh1GiZedQ==",
+      "cpu": [
+        "ppc64"
+      ],
+      "optional": true,
+      "os": [
+        "aix"
+      ],
+      "engines": {
+        "node": ">=12"
+      }
+    },
+    "node_modules/@esbuild/android-arm": {
+      "version": "0.21.5",
+      "resolved": "https://registry.npmjs.org/@esbuild/android-arm/-/android-arm-0.21.5.tgz",
+      "integrity": "sha512-vCPvzSjpPHEi1siZdlvAlsPxXl7WbOVUBBAowWug4rJHb68Ox8KualB+1ocNvT5fjv6wpkX6o/iEpbDrf68zcg==",
+      "cpu": [
+        "arm"
+      ],
+      "optional": true,
+      "os": [
+        "android"
+      ],
+      "engines": {
+        "node": ">=12"
+      }
+    },
+    "node_modules/@esbuild/android-arm64": {
+      "version": "0.21.5",
+      "resolved": "https://registry.npmjs.org/@esbuild/android-arm64/-/android-arm64-0.21.5.tgz",
+      "integrity": "sha512-c0uX9VAUBQ7dTDCjq+wdyGLowMdtR/GoC2U5IYk/7D1H1JYC0qseD7+11iMP2mRLN9RcCMRcjC4YMclCzGwS/A==",
+      "cpu": [
+        "arm64"
+      ],
+      "optional": true,
+      "os": [
+        "android"
+      ],
+      "engines": {
+        "node": ">=12"
+      }
+    },
+    "node_modules/@esbuild/android-x64": {
+      "version": "0.21.5",
+      "resolved": "https://registry.npmjs.org/@esbuild/android-x64/-/android-x64-0.21.5.tgz",
+      "integrity": "sha512-D7aPRUUNHRBwHxzxRvp856rjUHRFW1SdQATKXH2hqA0kAZb1hKmi02OpYRacl0TxIGz/ZmXWlbZgjwWYaCakTA==",
+      "cpu": [
+        "x64"
+      ],
+      "optional": true,
+      "os": [
+        "android"
+      ],
+      "engines": {
+        "node": ">=12"
+      }
+    },
+    "node_modules/@esbuild/darwin-arm64": {
+      "version": "0.21.5",
+      "resolved": "https://registry.npmjs.org/@esbuild/darwin-arm64/-/darwin-arm64-0.21.5.tgz",
+      "integrity": "sha512-DwqXqZyuk5AiWWf3UfLiRDJ5EDd49zg6O9wclZ7kUMv2WRFr4HKjXp/5t8JZ11QbQfUS6/cRCKGwYhtNAY88kQ==",
+      "cpu": [
+        "arm64"
+      ],
+      "optional": true,
+      "os": [
+        "darwin"
+      ],
+      "engines": {
+        "node": ">=12"
+      }
+    },
+    "node_modules/@esbuild/darwin-x64": {
+      "version": "0.21.5",
+      "resolved": "https://registry.npmjs.org/@esbuild/darwin-x64/-/darwin-x64-0.21.5.tgz",
+      "integrity": "sha512-se/JjF8NlmKVG4kNIuyWMV/22ZaerB+qaSi5MdrXtd6R08kvs2qCN4C09miupktDitvh8jRFflwGFBQcxZRjbw==",
+      "cpu": [
+        "x64"
+      ],
+      "optional": true,
+      "os": [
+        "darwin"
+      ],
+      "engines": {
+        "node": ">=12"
+      }
+    },
+    "node_modules/@esbuild/freebsd-arm64": {
+      "version": "0.21.5",
+      "resolved": "https://registry.npmjs.org/@esbuild/freebsd-arm64/-/freebsd-arm64-0.21.5.tgz",
+      "integrity": "sha512-5JcRxxRDUJLX8JXp/wcBCy3pENnCgBR9bN6JsY4OmhfUtIHe3ZW0mawA7+RDAcMLrMIZaf03NlQiX9DGyB8h4g==",
+      "cpu": [
+        "arm64"
+      ],
+      "optional": true,
+      "os": [
+        "freebsd"
+      ],
+      "engines": {
+        "node": ">=12"
+      }
+    },
+    "node_modules/@esbuild/freebsd-x64": {
+      "version": "0.21.5",
+      "resolved": "https://registry.npmjs.org/@esbuild/freebsd-x64/-/freebsd-x64-0.21.5.tgz",
+      "integrity": "sha512-J95kNBj1zkbMXtHVH29bBriQygMXqoVQOQYA+ISs0/2l3T9/kj42ow2mpqerRBxDJnmkUDCaQT/dfNXWX/ZZCQ==",
+      "cpu": [
+        "x64"
+      ],
+      "optional": true,
+      "os": [
+        "freebsd"
+      ],
+      "engines": {
+        "node": ">=12"
+      }
+    },
+    "node_modules/@esbuild/linux-arm": {
+      "version": "0.21.5",
+      "resolved": "https://registry.npmjs.org/@esbuild/linux-arm/-/linux-arm-0.21.5.tgz",
+      "integrity": "sha512-bPb5AHZtbeNGjCKVZ9UGqGwo8EUu4cLq68E95A53KlxAPRmUyYv2D6F0uUI65XisGOL1hBP5mTronbgo+0bFcA==",
+      "cpu": [
+        "arm"
+      ],
+      "optional": true,
+      "os": [
+        "linux"
+      ],
+      "engines": {
+        "node": ">=12"
+      }
+    },
+    "node_modules/@esbuild/linux-arm64": {
+      "version": "0.21.5",
+      "resolved": "https://registry.npmjs.org/@esbuild/linux-arm64/-/linux-arm64-0.21.5.tgz",
+      "integrity": "sha512-ibKvmyYzKsBeX8d8I7MH/TMfWDXBF3db4qM6sy+7re0YXya+K1cem3on9XgdT2EQGMu4hQyZhan7TeQ8XkGp4Q==",
+      "cpu": [
+        "arm64"
+      ],
+      "optional": true,
+      "os": [
+        "linux"
+      ],
+      "engines": {
+        "node": ">=12"
+      }
+    },
+    "node_modules/@esbuild/linux-ia32": {
+      "version": "0.21.5",
+      "resolved": "https://registry.npmjs.org/@esbuild/linux-ia32/-/linux-ia32-0.21.5.tgz",
+      "integrity": "sha512-YvjXDqLRqPDl2dvRODYmmhz4rPeVKYvppfGYKSNGdyZkA01046pLWyRKKI3ax8fbJoK5QbxblURkwK/MWY18Tg==",
+      "cpu": [
+        "ia32"
+      ],
+      "optional": true,
+      "os": [
+        "linux"
+      ],
+      "engines": {
+        "node": ">=12"
+      }
+    },
+    "node_modules/@esbuild/linux-loong64": {
+      "version": "0.21.5",
+      "resolved": "https://registry.npmjs.org/@esbuild/linux-loong64/-/linux-loong64-0.21.5.tgz",
+      "integrity": "sha512-uHf1BmMG8qEvzdrzAqg2SIG/02+4/DHB6a9Kbya0XDvwDEKCoC8ZRWI5JJvNdUjtciBGFQ5PuBlpEOXQj+JQSg==",
+      "cpu": [
+        "loong64"
+      ],
+      "optional": true,
+      "os": [
+        "linux"
+      ],
+      "engines": {
+        "node": ">=12"
+      }
+    },
+    "node_modules/@esbuild/linux-mips64el": {
+      "version": "0.21.5",
+      "resolved": "https://registry.npmjs.org/@esbuild/linux-mips64el/-/linux-mips64el-0.21.5.tgz",
+      "integrity": "sha512-IajOmO+KJK23bj52dFSNCMsz1QP1DqM6cwLUv3W1QwyxkyIWecfafnI555fvSGqEKwjMXVLokcV5ygHW5b3Jbg==",
+      "cpu": [
+        "mips64el"
+      ],
+      "optional": true,
+      "os": [
+        "linux"
+      ],
+      "engines": {
+        "node": ">=12"
+      }
+    },
+    "node_modules/@esbuild/linux-ppc64": {
+      "version": "0.21.5",
+      "resolved": "https://registry.npmjs.org/@esbuild/linux-ppc64/-/linux-ppc64-0.21.5.tgz",
+      "integrity": "sha512-1hHV/Z4OEfMwpLO8rp7CvlhBDnjsC3CttJXIhBi+5Aj5r+MBvy4egg7wCbe//hSsT+RvDAG7s81tAvpL2XAE4w==",
+      "cpu": [
+        "ppc64"
+      ],
+      "optional": true,
+      "os": [
+        "linux"
+      ],
+      "engines": {
+        "node": ">=12"
+      }
+    },
+    "node_modules/@esbuild/linux-riscv64": {
+      "version": "0.21.5",
+      "resolved": "https://registry.npmjs.org/@esbuild/linux-riscv64/-/linux-riscv64-0.21.5.tgz",
+      "integrity": "sha512-2HdXDMd9GMgTGrPWnJzP2ALSokE/0O5HhTUvWIbD3YdjME8JwvSCnNGBnTThKGEB91OZhzrJ4qIIxk/SBmyDDA==",
+      "cpu": [
+        "riscv64"
+      ],
+      "optional": true,
+      "os": [
+        "linux"
+      ],
+      "engines": {
+        "node": ">=12"
+      }
+    },
+    "node_modules/@esbuild/linux-s390x": {
+      "version": "0.21.5",
+      "resolved": "https://registry.npmjs.org/@esbuild/linux-s390x/-/linux-s390x-0.21.5.tgz",
+      "integrity": "sha512-zus5sxzqBJD3eXxwvjN1yQkRepANgxE9lgOW2qLnmr8ikMTphkjgXu1HR01K4FJg8h1kEEDAqDcZQtbrRnB41A==",
+      "cpu": [
+        "s390x"
+      ],
+      "optional": true,
+      "os": [
+        "linux"
+      ],
+      "engines": {
+        "node": ">=12"
+      }
+    },
+    "node_modules/@esbuild/linux-x64": {
+      "version": "0.21.5",
+      "resolved": "https://registry.npmjs.org/@esbuild/linux-x64/-/linux-x64-0.21.5.tgz",
+      "integrity": "sha512-1rYdTpyv03iycF1+BhzrzQJCdOuAOtaqHTWJZCWvijKD2N5Xu0TtVC8/+1faWqcP9iBCWOmjmhoH94dH82BxPQ==",
+      "cpu": [
+        "x64"
+      ],
+      "optional": true,
+      "os": [
+        "linux"
+      ],
+      "engines": {
+        "node": ">=12"
+      }
+    },
+    "node_modules/@esbuild/netbsd-x64": {
+      "version": "0.21.5",
+      "resolved": "https://registry.npmjs.org/@esbuild/netbsd-x64/-/netbsd-x64-0.21.5.tgz",
+      "integrity": "sha512-Woi2MXzXjMULccIwMnLciyZH4nCIMpWQAs049KEeMvOcNADVxo0UBIQPfSmxB3CWKedngg7sWZdLvLczpe0tLg==",
+      "cpu": [
+        "x64"
+      ],
+      "optional": true,
+      "os": [
+        "netbsd"
+      ],
+      "engines": {
+        "node": ">=12"
+      }
+    },
+    "node_modules/@esbuild/openbsd-x64": {
+      "version": "0.21.5",
+      "resolved": "https://registry.npmjs.org/@esbuild/openbsd-x64/-/openbsd-x64-0.21.5.tgz",
+      "integrity": "sha512-HLNNw99xsvx12lFBUwoT8EVCsSvRNDVxNpjZ7bPn947b8gJPzeHWyNVhFsaerc0n3TsbOINvRP2byTZ5LKezow==",
+      "cpu": [
+        "x64"
+      ],
+      "optional": true,
+      "os": [
+        "openbsd"
+      ],
+      "engines": {
+        "node": ">=12"
+      }
+    },
+    "node_modules/@esbuild/sunos-x64": {
+      "version": "0.21.5",
+      "resolved": "https://registry.npmjs.org/@esbuild/sunos-x64/-/sunos-x64-0.21.5.tgz",
+      "integrity": "sha512-6+gjmFpfy0BHU5Tpptkuh8+uw3mnrvgs+dSPQXQOv3ekbordwnzTVEb4qnIvQcYXq6gzkyTnoZ9dZG+D4garKg==",
+      "cpu": [
+        "x64"
+      ],
+      "optional": true,
+      "os": [
+        "sunos"
+      ],
+      "engines": {
+        "node": ">=12"
+      }
+    },
+    "node_modules/@esbuild/win32-arm64": {
+      "version": "0.21.5",
+      "resolved": "https://registry.npmjs.org/@esbuild/win32-arm64/-/win32-arm64-0.21.5.tgz",
+      "integrity": "sha512-Z0gOTd75VvXqyq7nsl93zwahcTROgqvuAcYDUr+vOv8uHhNSKROyU961kgtCD1e95IqPKSQKH7tBTslnS3tA8A==",
+      "cpu": [
+        "arm64"
+      ],
+      "optional": true,
+      "os": [
+        "win32"
+      ],
+      "engines": {
+        "node": ">=12"
+      }
+    },
+    "node_modules/@esbuild/win32-ia32": {
+      "version": "0.21.5",
+      "resolved": "https://registry.npmjs.org/@esbuild/win32-ia32/-/win32-ia32-0.21.5.tgz",
+      "integrity": "sha512-SWXFF1CL2RVNMaVs+BBClwtfZSvDgtL//G/smwAc5oVK/UPu2Gu9tIaRgFmYFFKrmg3SyAjSrElf0TiJ1v8fYA==",
+      "cpu": [
+        "ia32"
+      ],
+      "optional": true,
+      "os": [
+        "win32"
+      ],
+      "engines": {
+        "node": ">=12"
+      }
+    },
+    "node_modules/@esbuild/win32-x64": {
+      "version": "0.21.5",
+      "resolved": "https://registry.npmjs.org/@esbuild/win32-x64/-/win32-x64-0.21.5.tgz",
+      "integrity": "sha512-tQd/1efJuzPC6rCFwEvLtci/xNFcTZknmXs98FYDfGE4wP9ClFV98nyKrzJKVPMhdDnjzLhdUyMX4PsQAPjwIw==",
+      "cpu": [
+        "x64"
+      ],
+      "optional": true,
+      "os": [
+        "win32"
+      ],
+      "engines": {
+        "node": ">=12"
+      }
+    },
+    "node_modules/@jridgewell/gen-mapping": {
+      "version": "0.3.13",
+      "resolved": "https://registry.npmjs.org/@jridgewell/gen-mapping/-/gen-mapping-0.3.13.tgz",
+      "integrity": "sha512-2kkt/7niJ6MgEPxF0bYdQ6etZaA+fQvDcLKckhy1yIQOzaoKjBBjSj63/aLVjYE3qhRt5dvM+uUyfCg6UKCBbA==",
+      "dependencies": {
+        "@jridgewell/sourcemap-codec": "^1.5.0",
+        "@jridgewell/trace-mapping": "^0.3.24"
+      }
+    },
+    "node_modules/@jridgewell/resolve-uri": {
+      "version": "3.1.2",
+      "resolved": "https://registry.npmjs.org/@jridgewell/resolve-uri/-/resolve-uri-3.1.2.tgz",
+      "integrity": "sha512-bRISgCIjP20/tbWSPWMEi54QVPRZExkuD9lJL+UIxUKtwVJA8wW1Trb1jMs1RFXo1CBTNZ/5hpC9QvmKWdopKw==",
+      "engines": {
+        "node": ">=6.0.0"
+      }
+    },
+    "node_modules/@jridgewell/sourcemap-codec": {
+      "version": "1.5.5",
+      "resolved": "https://registry.npmjs.org/@jridgewell/sourcemap-codec/-/sourcemap-codec-1.5.5.tgz",
+      "integrity": "sha512-cYQ9310grqxueWbl+WuIUIaiUaDcj7WOq5fVhEljNVgRfOUhY9fy2zTvfoqWsnebh8Sl70VScFbICvJnLKB0Og=="
+    },
+    "node_modules/@jridgewell/trace-mapping": {
+      "version": "0.3.31",
+      "resolved": "https://registry.npmjs.org/@jridgewell/trace-mapping/-/trace-mapping-0.3.31.tgz",
+      "integrity": "sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw==",
+      "dependencies": {
+        "@jridgewell/resolve-uri": "^3.1.0",
+        "@jridgewell/sourcemap-codec": "^1.4.14"
+      }
+    },
+    "node_modules/@rollup/rollup-android-arm-eabi": {
+      "version": "4.62.2",
+      "resolved": "https://registry.npmjs.org/@rollup/rollup-android-arm-eabi/-/rollup-android-arm-eabi-4.62.2.tgz",
+      "integrity": "sha512-6o7ZLZK+BeenkZCFNDXqpbjw9bD6nuWonvS/lwQJp7NoVVxm6p3qE7qQ5jGuBjiFsgvqjD8mZAU5oWxTmbOeOg==",
+      "cpu": [
+        "arm"
+      ],
+      "optional": true,
+      "os": [
+        "android"
+      ]
+    },
+    "node_modules/@rollup/rollup-android-arm64": {
+      "version": "4.62.2",
+      "resolved": "https://registry.npmjs.org/@rollup/rollup-android-arm64/-/rollup-android-arm64-4.62.2.tgz",
+      "integrity": "sha512-BaH7BllCACHoH1LguOU56UItGfUWjujlO65kS9LAodViaN4bwIKd7oeW/ZHJ/4ljr/7MIiENnNy3HJ0zXv8Zkw==",
+      "cpu": [
+        "arm64"
+      ],
+      "optional": true,
+      "os": [
+        "android"
+      ]
+    },
+    "node_modules/@rollup/rollup-darwin-arm64": {
+      "version": "4.62.2",
+      "resolved": "https://registry.npmjs.org/@rollup/rollup-darwin-arm64/-/rollup-darwin-arm64-4.62.2.tgz",
+      "integrity": "sha512-v39RCCvj4He82I9sFmk+M1VZ0PLM9sfsLVikjfx2hYBNALhrrOR2D3JjQA6AhlaSOgcR+RzrKY7e1+bT6SUO/A==",
+      "cpu": [
+        "arm64"
+      ],
+      "optional": true,
+      "os": [
+        "darwin"
+      ]
+    },
+    "node_modules/@rollup/rollup-darwin-x64": {
+      "version": "4.62.2",
+      "resolved": "https://registry.npmjs.org/@rollup/rollup-darwin-x64/-/rollup-darwin-x64-4.62.2.tgz",
+      "integrity": "sha512-yl0y2vq3S3lHeuXhEdss6TWfKW8vkujImO12tn4ZkG/4oghr09LvdYm2RElVjokTQiUvDUGXLGsYeLqUMCKpGA==",
+      "cpu": [
+        "x64"
+      ],
+      "optional": true,
+      "os": [
+        "darwin"
+      ]
+    },
+    "node_modules/@rollup/rollup-freebsd-arm64": {
+      "version": "4.62.2",
+      "resolved": "https://registry.npmjs.org/@rollup/rollup-freebsd-arm64/-/rollup-freebsd-arm64-4.62.2.tgz",
+      "integrity": "sha512-tT4pvt4qXD+vEoezupCWi+a1F0vvDiksiHc+PxRlYTOH1I6/X4id9jPxTP+Fg+545euaFT1jJVs4CEdHZAU1vw==",
+      "cpu": [
+        "arm64"
+      ],
+      "optional": true,
+      "os": [
+        "freebsd"
+      ]
+    },
+    "node_modules/@rollup/rollup-freebsd-x64": {
+      "version": "4.62.2",
+      "resolved": "https://registry.npmjs.org/@rollup/rollup-freebsd-x64/-/rollup-freebsd-x64-4.62.2.tgz",
+      "integrity": "sha512-6nU5F2wCW+qvCBhTn1pdIU3bzsIoF7EUwsCDRxilWGprQR6yd508YnH9+OKFCwpfS8pjZqDUmnCAr7exax0XCg==",
+      "cpu": [
+        "x64"
+      ],
+      "optional": true,
+      "os": [
+        "freebsd"
+      ]
+    },
+    "node_modules/@rollup/rollup-linux-arm-gnueabihf": {
+      "version": "4.62.2",
+      "resolved": "https://registry.npmjs.org/@rollup/rollup-linux-arm-gnueabihf/-/rollup-linux-arm-gnueabihf-4.62.2.tgz",
+      "integrity": "sha512-n1GJHPOvpIfhi3TmrCeh6S6URt9BFCt0KQE3qvexyGCTAKpR4Lg+eWvNZEqu7epxwus/8ElT3hacYEucm49SZg==",
+      "cpu": [
+        "arm"
+      ],
+      "optional": true,
+      "os": [
+        "linux"
+      ]
+    },
+    "node_modules/@rollup/rollup-linux-arm-musleabihf": {
+      "version": "4.62.2",
+      "resolved": "https://registry.npmjs.org/@rollup/rollup-linux-arm-musleabihf/-/rollup-linux-arm-musleabihf-4.62.2.tgz",
+      "integrity": "sha512-JqgflS8wEB+UXV/vS1RpRbifGBeN4D5lz8D8oOFbFZw4vedvdOgCFAjfBmIMdW3yL10XpQQ0Ambepw6MXrhOnA==",
+      "cpu": [
+        "arm"
+      ],
+      "optional": true,
+      "os": [
+        "linux"
+      ]
+    },
+    "node_modules/@rollup/rollup-linux-arm64-gnu": {
+      "version": "4.62.2",
+      "resolved": "https://registry.npmjs.org/@rollup/rollup-linux-arm64-gnu/-/rollup-linux-arm64-gnu-4.62.2.tgz",
+      "integrity": "sha512-wnFJkogWvN4jm/hQRF2UBaeUmk20j5+DmHvoyWii2b8HJDyvz1MF2OU/6ynXt2KR63rbZLWkFpoytpdc/yBuSA==",
+      "cpu": [
+        "arm64"
+      ],
+      "optional": true,
+      "os": [
+        "linux"
+      ]
+    },
+    "node_modules/@rollup/rollup-linux-arm64-musl": {
+      "version": "4.62.2",
+      "resolved": "https://registry.npmjs.org/@rollup/rollup-linux-arm64-musl/-/rollup-linux-arm64-musl-4.62.2.tgz",
+      "integrity": "sha512-HVu2bp0zhvJ8xHEV9+UUs7S90VadmBSY3LcIMvozbPo4AuMGDWlz3ymHLHZPX4hR67TKTt8Qp5PJ5RBg/i+RMQ==",
+      "cpu": [
+        "arm64"
+      ],
+      "optional": true,
+      "os": [
+        "linux"
+      ]
+    },
+    "node_modules/@rollup/rollup-linux-loong64-gnu": {
+      "version": "4.62.2",
+      "resolved": "https://registry.npmjs.org/@rollup/rollup-linux-loong64-gnu/-/rollup-linux-loong64-gnu-4.62.2.tgz",
+      "integrity": "sha512-mQqqAV8QaoSgr9I2fKDLY2BAVvmKjWoGiu/cSYQonsLvtqwEn1E4QYfnCOcp5zoEqNhsDYin1s6jx/VJmrxlZg==",
+      "cpu": [
+        "loong64"
+      ],
+      "optional": true,
+      "os": [
+        "linux"
+      ]
+    },
+    "node_modules/@rollup/rollup-linux-loong64-musl": {
+      "version": "4.62.2",
+      "resolved": "https://registry.npmjs.org/@rollup/rollup-linux-loong64-musl/-/rollup-linux-loong64-musl-4.62.2.tgz",
+      "integrity": "sha512-IxKLoxCQ2IWi6bT2akyDUBGsOImDKB+sPp4EsTmwFQ/fMwpCKm8uLSSgP/Kx/QYUgKis6SEZ5/Nlhup0DIA0PQ==",
+      "cpu": [
+        "loong64"
+      ],
+      "optional": true,
+      "os": [
+        "linux"
+      ]
+    },
+    "node_modules/@rollup/rollup-linux-ppc64-gnu": {
+      "version": "4.62.2",
+      "resolved": "https://registry.npmjs.org/@rollup/rollup-linux-ppc64-gnu/-/rollup-linux-ppc64-gnu-4.62.2.tgz",
+      "integrity": "sha512-Mk5ha2RQSgyFfmYYLkBpPnUk8D8FriBxesO1u9O75X0mHgXL1UQcH5Itl2lurWL2tj0RxV9b9tJgipac0hRY9A==",
+      "cpu": [
+        "ppc64"
+      ],
+      "optional": true,
+      "os": [
+        "linux"
+      ]
+    },
+    "node_modules/@rollup/rollup-linux-ppc64-musl": {
+      "version": "4.62.2",
+      "resolved": "https://registry.npmjs.org/@rollup/rollup-linux-ppc64-musl/-/rollup-linux-ppc64-musl-4.62.2.tgz",
+      "integrity": "sha512-CjvEnqJL/0/TQ3TXX3OPIJ/kmBellrWd4heXUmHeJlTnmwjKpSJzoehLaL6Xk0ZnMHBu9dZuFADNOrtjF4v+2w==",
+      "cpu": [
+        "ppc64"
+      ],
+      "optional": true,
+      "os": [
+        "linux"
+      ]
+    },
+    "node_modules/@rollup/rollup-linux-riscv64-gnu": {
+      "version": "4.62.2",
+      "resolved": "https://registry.npmjs.org/@rollup/rollup-linux-riscv64-gnu/-/rollup-linux-riscv64-gnu-4.62.2.tgz",
+      "integrity": "sha512-1SiZbzwdkaDURsew/tSOrooKiYy7EQGT6m8ufavAi9NEyQb/6VuIxFXAL1fqa4iZe3g4NbNk4P7J32z2tw5Mgg==",
+      "cpu": [
+        "riscv64"
+      ],
+      "optional": true,
+      "os": [
+        "linux"
+      ]
+    },
+    "node_modules/@rollup/rollup-linux-riscv64-musl": {
+      "version": "4.62.2",
+      "resolved": "https://registry.npmjs.org/@rollup/rollup-linux-riscv64-musl/-/rollup-linux-riscv64-musl-4.62.2.tgz",
+      "integrity": "sha512-nQts12zJ3NQRoE6uYljOH89v7szzLDvG2JD/vsX+vGXU8w/At1GowTZ5/7qeFQ8m7L55rpR8Okugnuo5bgjy2Q==",
+      "cpu": [
+        "riscv64"
+      ],
+      "optional": true,
+      "os": [
+        "linux"
+      ]
+    },
+    "node_modules/@rollup/rollup-linux-s390x-gnu": {
+      "version": "4.62.2",
+      "resolved": "https://registry.npmjs.org/@rollup/rollup-linux-s390x-gnu/-/rollup-linux-s390x-gnu-4.62.2.tgz",
+      "integrity": "sha512-E9/ll019jhPIJgpzfZoIkBGhcz+kKNgVWYRY0zr9srBdPPFVpvOKW8VaJKUbeK+eZXyQF9ltME+Kk6affeaPgg==",
+      "cpu": [
+        "s390x"
+      ],
+      "optional": true,
+      "os": [
+        "linux"
+      ]
+    },
+    "node_modules/@rollup/rollup-linux-x64-gnu": {
+      "version": "4.62.2",
+      "resolved": "https://registry.npmjs.org/@rollup/rollup-linux-x64-gnu/-/rollup-linux-x64-gnu-4.62.2.tgz",
+      "integrity": "sha512-5BqxR/pshjey51iliyzTD5Xi3EN0aLmQ2lZ3lvefVV9c82BvrLo2/6OT55iifpWBufs6kdwWbuOKS841DrmK9A==",
+      "cpu": [
+        "x64"
+      ],
+      "optional": true,
+      "os": [
+        "linux"
+      ]
+    },
+    "node_modules/@rollup/rollup-linux-x64-musl": {
+      "version": "4.62.2",
+      "resolved": "https://registry.npmjs.org/@rollup/rollup-linux-x64-musl/-/rollup-linux-x64-musl-4.62.2.tgz",
+      "integrity": "sha512-uNN83XxQrRAh/w0/pmAfibcwyb6YWt4gP+dpnQKPVJshAloQ785ii8CT8ZCIxkGg9opVsvAlGhFitSm6D1Jjpg==",
+      "cpu": [
+        "x64"
+      ],
+      "optional": true,
+      "os": [
+        "linux"
+      ]
+    },
+    "node_modules/@rollup/rollup-openbsd-x64": {
+      "version": "4.62.2",
+      "resolved": "https://registry.npmjs.org/@rollup/rollup-openbsd-x64/-/rollup-openbsd-x64-4.62.2.tgz",
+      "integrity": "sha512-srjEIxSH3LRnJN6THczDHWQplqEMFiAJrTab0msUryh9kwNpkICf3Ea6q6MN/2cZwRFUNx5w+h6Hpi4QuHS6Zg==",
+      "cpu": [
+        "x64"
+      ],
+      "optional": true,
+      "os": [
+        "openbsd"
+      ]
+    },
+    "node_modules/@rollup/rollup-openharmony-arm64": {
+      "version": "4.62.2",
+      "resolved": "https://registry.npmjs.org/@rollup/rollup-openharmony-arm64/-/rollup-openharmony-arm64-4.62.2.tgz",
+      "integrity": "sha512-8hOJnxgbyObnCm5AlRA3A931xX19xq80RjVTKgJOvEKWqJruP/Uf12IbAOaDjjEXYRewwHLfmF0YRIdK3OwKWA==",
+      "cpu": [
+        "arm64"
+      ],
+      "optional": true,
+      "os": [
+        "openharmony"
+      ]
+    },
+    "node_modules/@rollup/rollup-win32-arm64-msvc": {
+      "version": "4.62.2",
+      "resolved": "https://registry.npmjs.org/@rollup/rollup-win32-arm64-msvc/-/rollup-win32-arm64-msvc-4.62.2.tgz",
+      "integrity": "sha512-mmF4AY1i0hG/bLWUctUq59gtmgaSIRa3cu/A3JFRp/sCNEme2bgDEiDS22P9FbnJB8NJNF4jPJiSP5RHQpUTDg==",
+      "cpu": [
+        "arm64"
+      ],
+      "optional": true,
+      "os": [
+        "win32"
+      ]
+    },
+    "node_modules/@rollup/rollup-win32-ia32-msvc": {
+      "version": "4.62.2",
+      "resolved": "https://registry.npmjs.org/@rollup/rollup-win32-ia32-msvc/-/rollup-win32-ia32-msvc-4.62.2.tgz",
+      "integrity": "sha512-DZgkknc6jhHrk46V25vbAM0zZkyP0nSDkJB8/dRkLTxv470dOmWDqGoEJl/9A0dFfS7yE3REOwNDxpHwSLSt0Q==",
+      "cpu": [
+        "ia32"
+      ],
+      "optional": true,
+      "os": [
+        "win32"
+      ]
+    },
+    "node_modules/@rollup/rollup-win32-x64-gnu": {
+      "version": "4.62.2",
+      "resolved": "https://registry.npmjs.org/@rollup/rollup-win32-x64-gnu/-/rollup-win32-x64-gnu-4.62.2.tgz",
+      "integrity": "sha512-T6xr6ucWSFto+VGajA8YH26LdpHRuP4YLHEKAtCWvJDOlnmWcDZVCI2Jmjr+IFHDlt2zRaTAKE4tfjTaWLgJBg==",
+      "cpu": [
+        "x64"
+      ],
+      "optional": true,
+      "os": [
+        "win32"
+      ]
+    },
+    "node_modules/@rollup/rollup-win32-x64-msvc": {
+      "version": "4.62.2",
+      "resolved": "https://registry.npmjs.org/@rollup/rollup-win32-x64-msvc/-/rollup-win32-x64-msvc-4.62.2.tgz",
+      "integrity": "sha512-BfzEnDJOt9T8M989/lA37EcJgat01wLRnoi5dQf3QzOH7jzpqTAzdDbVfRljVr5r+jzKqpbHeyOfAaXxAd0PAA==",
+      "cpu": [
+        "x64"
+      ],
+      "optional": true,
+      "os": [
+        "win32"
+      ]
+    },
+    "node_modules/@sveltejs/vite-plugin-svelte": {
+      "version": "3.1.2",
+      "resolved": "https://registry.npmjs.org/@sveltejs/vite-plugin-svelte/-/vite-plugin-svelte-3.1.2.tgz",
+      "integrity": "sha512-Txsm1tJvtiYeLUVRNqxZGKR/mI+CzuIQuc2gn+YCs9rMTowpNZ2Nqt53JdL8KF9bLhAf2ruR/dr9eZCwdTriRA==",
+      "dependencies": {
+        "@sveltejs/vite-plugin-svelte-inspector": "^2.1.0",
+        "debug": "^4.3.4",
+        "deepmerge": "^4.3.1",
+        "kleur": "^4.1.5",
+        "magic-string": "^0.30.10",
+        "svelte-hmr": "^0.16.0",
+        "vitefu": "^0.2.5"
+      },
+      "engines": {
+        "node": "^18.0.0 || >=20"
+      },
+      "peerDependencies": {
+        "svelte": "^4.0.0 || ^5.0.0-next.0",
+        "vite": "^5.0.0"
+      }
+    },
+    "node_modules/@sveltejs/vite-plugin-svelte-inspector": {
+      "version": "2.1.0",
+      "resolved": "https://registry.npmjs.org/@sveltejs/vite-plugin-svelte-inspector/-/vite-plugin-svelte-inspector-2.1.0.tgz",
+      "integrity": "sha512-9QX28IymvBlSCqsCll5t0kQVxipsfhFFL+L2t3nTWfXnddYwxBuAEtTtlaVQpRz9c37BhJjltSeY4AJSC03SSg==",
+      "dependencies": {
+        "debug": "^4.3.4"
+      },
+      "engines": {
+        "node": "^18.0.0 || >=20"
+      },
+      "peerDependencies": {
+        "@sveltejs/vite-plugin-svelte": "^3.0.0",
+        "svelte": "^4.0.0 || ^5.0.0-next.0",
+        "vite": "^5.0.0"
+      }
+    },
+    "node_modules/@types/estree": {
+      "version": "1.0.9",
+      "resolved": "https://registry.npmjs.org/@types/estree/-/estree-1.0.9.tgz",
+      "integrity": "sha512-GhdPgy1el4/ImP05X05Uw4cw2/M93BCUmnEvWZNStlCzEKME4Fkk+YpoA5OiHNQmoS7Cafb8Xa3Pya8m1Qrzeg=="
+    },
+    "node_modules/acorn": {
+      "version": "8.17.0",
+      "resolved": "https://registry.npmjs.org/acorn/-/acorn-8.17.0.tgz",
+      "integrity": "sha512-xRQbDb9BnwDafYNn6Vwl839DYVjqXYb1XVGtWAZ1kcDc6iwAL4hg3B1dZlRiuENFeO2H53gFG3in621AdERVAg==",
+      "bin": {
+        "acorn": "bin/acorn"
+      },
+      "engines": {
+        "node": ">=0.4.0"
+      }
+    },
+    "node_modules/aria-query": {
+      "version": "5.3.2",
+      "resolved": "https://registry.npmjs.org/aria-query/-/aria-query-5.3.2.tgz",
+      "integrity": "sha512-COROpnaoap1E2F000S62r6A60uHZnmlvomhfyT2DlTcrY1OrBKn2UhH7qn5wTC9zMvD0AY7csdPSNwKP+7WiQw==",
+      "engines": {
+        "node": ">= 0.4"
+      }
+    },
+    "node_modules/axobject-query": {
+      "version": "4.1.0",
+      "resolved": "https://registry.npmjs.org/axobject-query/-/axobject-query-4.1.0.tgz",
+      "integrity": "sha512-qIj0G9wZbMGNLjLmg1PT6v2mE9AH2zlnADJD/2tC6E00hgmhUOfEB6greHPAfLRSufHqROIUTkw6E+M3lH0PTQ==",
+      "engines": {
+        "node": ">= 0.4"
+      }
+    },
+    "node_modules/code-red": {
+      "version": "1.0.4",
+      "resolved": "https://registry.npmjs.org/code-red/-/code-red-1.0.4.tgz",
+      "integrity": "sha512-7qJWqItLA8/VPVlKJlFXU+NBlo/qyfs39aJcuMT/2ere32ZqvF5OSxgdM5xOfJJ7O429gg2HM47y8v9P+9wrNw==",
+      "dependencies": {
+        "@jridgewell/sourcemap-codec": "^1.4.15",
+        "@types/estree": "^1.0.1",
+        "acorn": "^8.10.0",
+        "estree-walker": "^3.0.3",
+        "periscopic": "^3.1.0"
+      }
+    },
+    "node_modules/css-tree": {
+      "version": "2.3.1",
+      "resolved": "https://registry.npmjs.org/css-tree/-/css-tree-2.3.1.tgz",
+      "integrity": "sha512-6Fv1DV/TYw//QF5IzQdqsNDjx/wc8TrMBZsqjL9eW01tWb7R7k/mq+/VXfJCl7SoD5emsJop9cOByJZfs8hYIw==",
+      "dependencies": {
+        "mdn-data": "2.0.30",
+        "source-map-js": "^1.0.1"
+      },
+      "engines": {
+        "node": "^10 || ^12.20.0 || ^14.13.0 || >=15.0.0"
+      }
+    },
+    "node_modules/debug": {
+      "version": "4.4.3",
+      "resolved": "https://registry.npmjs.org/debug/-/debug-4.4.3.tgz",
+      "integrity": "sha512-RGwwWnwQvkVfavKVt22FGLw+xYSdzARwm0ru6DhTVA3umU5hZc28V3kO4stgYryrTlLpuvgI9GiijltAjNbcqA==",
+      "dependencies": {
+        "ms": "^2.1.3"
+      },
+      "engines": {
+        "node": ">=6.0"
+      },
+      "peerDependenciesMeta": {
+        "supports-color": {
+          "optional": true
+        }
+      }
+    },
+    "node_modules/deepmerge": {
+      "version": "4.3.1",
+      "resolved": "https://registry.npmjs.org/deepmerge/-/deepmerge-4.3.1.tgz",
+      "integrity": "sha512-3sUqbMEc77XqpdNO7FRyRog+eW3ph+GYCbj+rK+uYyRMuwsVy0rMiVtPn+QJlKFvWP/1PYpapqYn0Me2knFn+A==",
+      "engines": {
+        "node": ">=0.10.0"
+      }
+    },
+    "node_modules/esbuild": {
+      "version": "0.21.5",
+      "resolved": "https://registry.npmjs.org/esbuild/-/esbuild-0.21.5.tgz",
+      "integrity": "sha512-mg3OPMV4hXywwpoDxu3Qda5xCKQi+vCTZq8S9J/EpkhB2HzKXq4SNFZE3+NK93JYxc8VMSep+lOUSC/RVKaBqw==",
+      "hasInstallScript": true,
+      "bin": {
+        "esbuild": "bin/esbuild"
+      },
+      "engines": {
+        "node": ">=12"
+      },
+      "optionalDependencies": {
+        "@esbuild/aix-ppc64": "0.21.5",
+        "@esbuild/android-arm": "0.21.5",
+        "@esbuild/android-arm64": "0.21.5",
+        "@esbuild/android-x64": "0.21.5",
+        "@esbuild/darwin-arm64": "0.21.5",
+        "@esbuild/darwin-x64": "0.21.5",
+        "@esbuild/freebsd-arm64": "0.21.5",
+        "@esbuild/freebsd-x64": "0.21.5",
+        "@esbuild/linux-arm": "0.21.5",
+        "@esbuild/linux-arm64": "0.21.5",
+        "@esbuild/linux-ia32": "0.21.5",
+        "@esbuild/linux-loong64": "0.21.5",
+        "@esbuild/linux-mips64el": "0.21.5",
+        "@esbuild/linux-ppc64": "0.21.5",
+        "@esbuild/linux-riscv64": "0.21.5",
+        "@esbuild/linux-s390x": "0.21.5",
+        "@esbuild/linux-x64": "0.21.5",
+        "@esbuild/netbsd-x64": "0.21.5",
+        "@esbuild/openbsd-x64": "0.21.5",
+        "@esbuild/sunos-x64": "0.21.5",
+        "@esbuild/win32-arm64": "0.21.5",
+        "@esbuild/win32-ia32": "0.21.5",
+        "@esbuild/win32-x64": "0.21.5"
+      }
+    },
+    "node_modules/estree-walker": {
+      "version": "3.0.3",
+      "resolved": "https://registry.npmjs.org/estree-walker/-/estree-walker-3.0.3.tgz",
+      "integrity": "sha512-7RUKfXgSMMkzt6ZuXmqapOurLGPPfgj6l9uRZ7lRGolvk0y2yocc35LdcxKC5PQZdn2DMqioAQ2NoWcrTKmm6g==",
+      "dependencies": {
+        "@types/estree": "^1.0.0"
+      }
+    },
+    "node_modules/fsevents": {
+      "version": "2.3.3",
+      "resolved": "https://registry.npmjs.org/fsevents/-/fsevents-2.3.3.tgz",
+      "integrity": "sha512-5xoDfX+fL7faATnagmWPpbFtwh/R77WmMMqqHGS65C3vvB0YHrgF+B1YmZ3441tMj5n63k0212XNoJwzlhffQw==",
+      "hasInstallScript": true,
+      "optional": true,
+      "os": [
+        "darwin"
+      ],
+      "engines": {
+        "node": "^8.16.0 || ^10.6.0 || >=11.0.0"
+      }
+    },
+    "node_modules/is-reference": {
+      "version": "3.0.3",
+      "resolved": "https://registry.npmjs.org/is-reference/-/is-reference-3.0.3.tgz",
+      "integrity": "sha512-ixkJoqQvAP88E6wLydLGGqCJsrFUnqoH6HnaczB8XmDH1oaWU+xxdptvikTgaEhtZ53Ky6YXiBuUI2WXLMCwjw==",
+      "dependencies": {
+        "@types/estree": "^1.0.6"
+      }
+    },
+    "node_modules/kleur": {
+      "version": "4.1.5",
+      "resolved": "https://registry.npmjs.org/kleur/-/kleur-4.1.5.tgz",
+      "integrity": "sha512-o+NO+8WrRiQEE4/7nwRJhN1HWpVmJm511pBHUxPLtp0BUISzlBplORYSmTclCnJvQq2tKu/sgl3xVpkc7ZWuQQ==",
+      "engines": {
+        "node": ">=6"
+      }
+    },
+    "node_modules/locate-character": {
+      "version": "3.0.0",
+      "resolved": "https://registry.npmjs.org/locate-character/-/locate-character-3.0.0.tgz",
+      "integrity": "sha512-SW13ws7BjaeJ6p7Q6CO2nchbYEc3X3J6WrmTTDto7yMPqVSZTUyY5Tjbid+Ab8gLnATtygYtiDIJGQRRn2ZOiA=="
+    },
+    "node_modules/magic-string": {
+      "version": "0.30.21",
+      "resolved": "https://registry.npmjs.org/magic-string/-/magic-string-0.30.21.tgz",
+      "integrity": "sha512-vd2F4YUyEXKGcLHoq+TEyCjxueSeHnFxyyjNp80yg0XV4vUhnDer/lvvlqM/arB5bXQN5K2/3oinyCRyx8T2CQ==",
+      "dependencies": {
+        "@jridgewell/sourcemap-codec": "^1.5.5"
+      }
+    },
+    "node_modules/mdn-data": {
+      "version": "2.0.30",
+      "resolved": "https://registry.npmjs.org/mdn-data/-/mdn-data-2.0.30.tgz",
+      "integrity": "sha512-GaqWWShW4kv/G9IEucWScBx9G1/vsFZZJUO+tD26M8J8z3Kw5RDQjaoZe03YAClgeS/SWPOcb4nkFBTEi5DUEA=="
+    },
+    "node_modules/ms": {
+      "version": "2.1.3",
+      "resolved": "https://registry.npmjs.org/ms/-/ms-2.1.3.tgz",
+      "integrity": "sha512-6FlzubTLZG3J2a/NVCAleEhjzq5oxgHyaCU9yYXvcLsvoVaHJq/s5xXI6/XXP6tz7R9xAOtHnSO/tXtF3WRTlA=="
+    },
+    "node_modules/nanoid": {
+      "version": "3.3.15",
+      "resolved": "https://registry.npmjs.org/nanoid/-/nanoid-3.3.15.tgz",
+      "integrity": "sha512-y7Wygv/7mEOvxTuEQDB8StXdMRBWf1kR/tlhAzBRUFkB2jfcLOAxO/SHmOO2zgz1pVgK29/kyupn059/bCHdjA==",
+      "funding": [
+        {
+          "type": "github",
+          "url": "https://github.com/sponsors/ai"
+        }
+      ],
+      "bin": {
+        "nanoid": "bin/nanoid.cjs"
+      },
+      "engines": {
+        "node": "^10 || ^12 || ^13.7 || ^14 || >=15.0.1"
+      }
+    },
+    "node_modules/periscopic": {
+      "version": "3.1.0",
+      "resolved": "https://registry.npmjs.org/periscopic/-/periscopic-3.1.0.tgz",
+      "integrity": "sha512-vKiQ8RRtkl9P+r/+oefh25C3fhybptkHKCZSPlcXiJux2tJF55GnEj3BVn4A5gKfq9NWWXXrxkHBwVPUfH0opw==",
+      "dependencies": {
+        "@types/estree": "^1.0.0",
+        "estree-walker": "^3.0.0",
+        "is-reference": "^3.0.0"
+      }
+    },
+    "node_modules/picocolors": {
+      "version": "1.1.1",
+      "resolved": "https://registry.npmjs.org/picocolors/-/picocolors-1.1.1.tgz",
+      "integrity": "sha512-xceH2snhtb5M9liqDsmEw56le376mTZkEX/jEb/RxNFyegNul7eNslCXP9FDj/Lcu0X8KEyMceP2ntpaHrDEVA=="
+    },
+    "node_modules/postcss": {
+      "version": "8.5.16",
+      "resolved": "https://registry.npmjs.org/postcss/-/postcss-8.5.16.tgz",
+      "integrity": "sha512-vuwillviilfKZsg0VGj5R/YwwcHx4SLsIOI/7K6mQkWx+l5cUHTjj5g0AasTBcyXsbfTgrwsUNmVUb5xVwyPwg==",
+      "funding": [
+        {
+          "type": "opencollective",
+          "url": "https://opencollective.com/postcss/"
+        },
+        {
+          "type": "tidelift",
+          "url": "https://tidelift.com/funding/github/npm/postcss"
+        },
+        {
+          "type": "github",
+          "url": "https://github.com/sponsors/ai"
+        }
+      ],
+      "dependencies": {
+        "nanoid": "^3.3.12",
+        "picocolors": "^1.1.1",
+        "source-map-js": "^1.2.1"
+      },
+      "engines": {
+        "node": "^10 || ^12 || >=14"
+      }
+    },
+    "node_modules/rollup": {
+      "version": "4.62.2",
+      "resolved": "https://registry.npmjs.org/rollup/-/rollup-4.62.2.tgz",
+      "integrity": "sha512-RFnrW4lhXA3s3eqHDZvN654g8OTjzRfqpIRJYczCGB6HzphckVAi/Qh4tbPUbRuDi7s1Llv8g/NspLkttY3gTA==",
+      "dependencies": {
+        "@types/estree": "1.0.9"
+      },
+      "bin": {
+        "rollup": "dist/bin/rollup"
+      },
+      "engines": {
+        "node": ">=18.0.0",
+        "npm": ">=8.0.0"
+      },
+      "optionalDependencies": {
+        "@rollup/rollup-android-arm-eabi": "4.62.2",
+        "@rollup/rollup-android-arm64": "4.62.2",
+        "@rollup/rollup-darwin-arm64": "4.62.2",
+        "@rollup/rollup-darwin-x64": "4.62.2",
+        "@rollup/rollup-freebsd-arm64": "4.62.2",
+        "@rollup/rollup-freebsd-x64": "4.62.2",
+        "@rollup/rollup-linux-arm-gnueabihf": "4.62.2",
+        "@rollup/rollup-linux-arm-musleabihf": "4.62.2",
+        "@rollup/rollup-linux-arm64-gnu": "4.62.2",
+        "@rollup/rollup-linux-arm64-musl": "4.62.2",
+        "@rollup/rollup-linux-loong64-gnu": "4.62.2",
+        "@rollup/rollup-linux-loong64-musl": "4.62.2",
+        "@rollup/rollup-linux-ppc64-gnu": "4.62.2",
+        "@rollup/rollup-linux-ppc64-musl": "4.62.2",
+        "@rollup/rollup-linux-riscv64-gnu": "4.62.2",
+        "@rollup/rollup-linux-riscv64-musl": "4.62.2",
+        "@rollup/rollup-linux-s390x-gnu": "4.62.2",
+        "@rollup/rollup-linux-x64-gnu": "4.62.2",
+        "@rollup/rollup-linux-x64-musl": "4.62.2",
+        "@rollup/rollup-openbsd-x64": "4.62.2",
+        "@rollup/rollup-openharmony-arm64": "4.62.2",
+        "@rollup/rollup-win32-arm64-msvc": "4.62.2",
+        "@rollup/rollup-win32-ia32-msvc": "4.62.2",
+        "@rollup/rollup-win32-x64-gnu": "4.62.2",
+        "@rollup/rollup-win32-x64-msvc": "4.62.2",
+        "fsevents": "~2.3.2"
+      }
+    },
+    "node_modules/source-map-js": {
+      "version": "1.2.1",
+      "resolved": "https://registry.npmjs.org/source-map-js/-/source-map-js-1.2.1.tgz",
+      "integrity": "sha512-UXWMKhLOwVKb728IUtQPXxfYU+usdybtUrK/8uGE8CQMvrhOpwvzDBwj0QhSL7MQc7vIsISBG8VQ8+IDQxpfQA==",
+      "engines": {
+        "node": ">=0.10.0"
+      }
+    },
+    "node_modules/svelte": {
+      "version": "4.2.19",
+      "resolved": "https://registry.npmjs.org/svelte/-/svelte-4.2.19.tgz",
+      "integrity": "sha512-IY1rnGr6izd10B0A8LqsBfmlT5OILVuZ7XsI0vdGPEvuonFV7NYEUK4dAkm9Zg2q0Um92kYjTpS1CAP3Nh/KWw==",
+      "dependencies": {
+        "@ampproject/remapping": "^2.2.1",
+        "@jridgewell/sourcemap-codec": "^1.4.15",
+        "@jridgewell/trace-mapping": "^0.3.18",
+        "@types/estree": "^1.0.1",
+        "acorn": "^8.9.0",
+        "aria-query": "^5.3.0",
+        "axobject-query": "^4.0.0",
+        "code-red": "^1.0.3",
+        "css-tree": "^2.3.1",
+        "estree-walker": "^3.0.3",
+        "is-reference": "^3.0.1",
+        "locate-character": "^3.0.0",
+        "magic-string": "^0.30.4",
+        "periscopic": "^3.1.0"
+      },
+      "engines": {
+        "node": ">=16"
+      }
+    },
+    "node_modules/svelte-hmr": {
+      "version": "0.16.0",
+      "resolved": "https://registry.npmjs.org/svelte-hmr/-/svelte-hmr-0.16.0.tgz",
+      "integrity": "sha512-Gyc7cOS3VJzLlfj7wKS0ZnzDVdv3Pn2IuVeJPk9m2skfhcu5bq3wtIZyQGggr7/Iim5rH5cncyQft/kRLupcnA==",
+      "engines": {
+        "node": "^12.20 || ^14.13.1 || >= 16"
+      },
+      "peerDependencies": {
+        "svelte": "^3.19.0 || ^4.0.0"
+      }
+    },
+    "node_modules/vite": {
+      "version": "5.4.21",
+      "resolved": "https://registry.npmjs.org/vite/-/vite-5.4.21.tgz",
+      "integrity": "sha512-o5a9xKjbtuhY6Bi5S3+HvbRERmouabWbyUcpXXUA1u+GNUKoROi9byOJ8M0nHbHYHkYICiMlqxkg1KkYmm25Sw==",
+      "dependencies": {
+        "esbuild": "^0.21.3",
+        "postcss": "^8.4.43",
+        "rollup": "^4.20.0"
+      },
+      "bin": {
+        "vite": "bin/vite.js"
+      },
+      "engines": {
+        "node": "^18.0.0 || >=20.0.0"
+      },
+      "funding": {
+        "url": "https://github.com/vitejs/vite?sponsor=1"
+      },
+      "optionalDependencies": {
+        "fsevents": "~2.3.3"
+      },
+      "peerDependencies": {
+        "@types/node": "^18.0.0 || >=20.0.0",
+        "less": "*",
+        "lightningcss": "^1.21.0",
+        "sass": "*",
+        "sass-embedded": "*",
+        "stylus": "*",
+        "sugarss": "*",
+        "terser": "^5.4.0"
+      },
+      "peerDependenciesMeta": {
+        "@types/node": {
+          "optional": true
+        },
+        "less": {
+          "optional": true
+        },
+        "lightningcss": {
+          "optional": true
+        },
+        "sass": {
+          "optional": true
+        },
+        "sass-embedded": {
+          "optional": true
+        },
+        "stylus": {
+          "optional": true
+        },
+        "sugarss": {
+          "optional": true
+        },
+        "terser": {
+          "optional": true
+        }
+      }
+    },
+    "node_modules/vitefu": {
+      "version": "0.2.5",
+      "resolved": "https://registry.npmjs.org/vitefu/-/vitefu-0.2.5.tgz",
+      "integrity": "sha512-SgHtMLoqaeeGnd2evZ849ZbACbnwQCIwRH57t18FxcXoZop0uQu0uzlIhJBlF/eWVzuce0sHeqPcDo+evVcg8Q==",
+      "peerDependencies": {
+        "vite": "^3.0.0 || ^4.0.0 || ^5.0.0"
+      },
+      "peerDependenciesMeta": {
+        "vite": {
+          "optional": true
+        }
+      }
+    }
+  }
+}
+'''
+    return template.replace("__PACKAGE_NAME__", package_name)
+
+
+def _svelte_index_html(name: str) -> str:
+    return f"""<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>{name}</title>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
+"""
+
+
+def _svelte_vite_config_ts() -> str:
+    return """import { svelte } from '@sveltejs/vite-plugin-svelte';
+import { defineConfig } from 'vite';
+
+export default defineConfig({
+  plugins: [svelte()],
+});
+"""
+
+
+def _svelte_main_ts() -> str:
+    return """import App from './App.svelte';
+
+const app = new App({
+  target: document.getElementById('app') as HTMLElement,
+});
+
+export default app;
+"""
+
+
+def _svelte_app_svelte(name: str) -> str:
+    return f"""<script lang="ts">
+  import {{ previewConfig }} from './config';
+</script>
+
+<main>
+  <section class="shell">
+    <p class="eyebrow">{{previewConfig.runtimeProfile}}</p>
+    <h1>{name}</h1>
+    <p>Preview API: {{previewConfig.apiBaseUrl}}</p>
+  </section>
+</main>
+
+<style>
+  :global(body) {{
+    margin: 0;
+    font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    color: #172026;
+    background: #f7f8fa;
+  }}
+
+  main {{
+    min-height: 100vh;
+    display: grid;
+    place-items: center;
+    padding: 32px;
+  }}
+
+  .shell {{
+    width: min(720px, 100%);
+    border: 1px solid #d7dde4;
+    background: #ffffff;
+    border-radius: 8px;
+    padding: 32px;
+  }}
+
+  .eyebrow {{
+    margin: 0 0 12px;
+    color: #4f6f52;
+    font-size: 13px;
+    font-weight: 700;
+    text-transform: uppercase;
+  }}
+
+  h1 {{
+    margin: 0 0 16px;
+    font-size: 32px;
+    line-height: 1.15;
+  }}
+
+  p {{
+    overflow-wrap: anywhere;
+  }}
+</style>
+"""
+
+
+def _svelte_config_ts(slug: str) -> str:
+    return f"""const runtimeProfile = import.meta.env.VITE_APP_RUNTIME_PROFILE || 'preview';
+const apiRuntime = import.meta.env.VITE_API_RUNTIME || 'cloudflare_preview';
+const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'https://preview.nienfos.com/{slug}/api';
+const appSlug = import.meta.env.VITE_APP_SLUG || '{slug}';
+
+const forbiddenApiFragments = ['localhost', '127.0.0.1', '10.0.2.2', 'example', 'placeholder', 'mock'];
+
+if (runtimeProfile !== 'preview') {{
+  throw new Error('Svelte Initial Preview Release requires VITE_APP_RUNTIME_PROFILE=preview');
+}}
+if (apiRuntime !== 'cloudflare_preview') {{
+  throw new Error('Svelte Initial Preview Release requires VITE_API_RUNTIME=cloudflare_preview');
+}}
+if (apiBaseUrl !== `https://preview.nienfos.com/${{appSlug}}/api`) {{
+  throw new Error('Svelte Initial Preview Release requires VITE_API_BASE_URL=https://preview.nienfos.com/{{slug}}/api');
+}}
+if (forbiddenApiFragments.some((fragment) => apiBaseUrl.includes(fragment))) {{
+  throw new Error('Svelte Initial Preview Release cannot use localhost, mock, demo, or placeholder API URLs');
+}}
+
+export const previewConfig = {{
+  appSlug,
+  runtimeProfile,
+  apiRuntime,
+  apiBaseUrl,
+  productionReady: false,
+  mockOrDemo: false,
+  releaseChannel: 'prerelease',
+}};
+"""
+
+
+def _svelte_preview_config_test_mjs(slug: str) -> str:
+    return f"""import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+
+const root = path.resolve(process.cwd());
+const configPath = path.join(root, 'src', 'config.ts');
+const packagePath = path.join(root, 'package.json');
+const config = fs.readFileSync(configPath, 'utf8');
+const pkg = JSON.parse(fs.readFileSync(packagePath, 'utf8'));
+
+assert.match(config, /VITE_APP_RUNTIME_PROFILE/);
+assert.match(config, /VITE_API_RUNTIME/);
+assert.match(config, /VITE_API_BASE_URL/);
+assert.match(config, /cloudflare_preview/);
+assert.match(config, /https:\\/\\/preview\\.nienfos\\.com\\/\\$\\{{appSlug\\}}\\/api/);
+assert.equal(pkg.scripts.build, 'vite build');
+assert.equal(pkg.scripts.test, 'node test/preview-config.test.mjs');
+assert.equal(pkg.scripts['validate:preview'], 'node test/preview-config.test.mjs --preview');
+
+const expectedUrl = 'https://preview.nienfos.com/{slug}/api';
+const forbiddenApiFragments = ['localhost', '127.0.0.1', '10.0.2.2', 'example', 'placeholder', 'mock'];
+
+function resolvePreviewConfig(env) {{
+  const appSlug = env.VITE_APP_SLUG || '{slug}';
+  const runtimeProfile = env.VITE_APP_RUNTIME_PROFILE || 'preview';
+  const apiRuntime = env.VITE_API_RUNTIME || 'cloudflare_preview';
+  const apiBaseUrl = env.VITE_API_BASE_URL || expectedUrl;
+  if (runtimeProfile !== 'preview') {{
+    throw new Error('runtime profile must be preview');
+  }}
+  if (apiRuntime !== 'cloudflare_preview') {{
+    throw new Error('API runtime must be cloudflare_preview');
+  }}
+  if (apiBaseUrl !== `https://preview.nienfos.com/${{appSlug}}/api`) {{
+    throw new Error('API base URL must point to the public preview API');
+  }}
+  if (forbiddenApiFragments.some((fragment) => apiBaseUrl.includes(fragment))) {{
+    throw new Error('API base URL must not be local/mock/placeholder');
+  }}
+  return {{ appSlug, runtimeProfile, apiRuntime, apiBaseUrl }};
+}}
+
+const runtime = resolvePreviewConfig(process.env);
+assert.equal(runtime.runtimeProfile, 'preview');
+assert.equal(runtime.apiRuntime, 'cloudflare_preview');
+assert.equal(runtime.apiBaseUrl, expectedUrl);
+
+for (const env of [
+  {{ VITE_API_BASE_URL: 'http://localhost:8000/api' }},
+  {{ VITE_API_BASE_URL: 'https://example.com/api' }},
+  {{ VITE_API_BASE_URL: 'https://preview.nienfos.com/placeholder/api' }},
+  {{ VITE_API_BASE_URL: 'https://preview.nienfos.com/{slug}/mock' }},
+  {{ VITE_APP_RUNTIME_PROFILE: 'mock', VITE_API_BASE_URL: expectedUrl }},
+  {{ VITE_API_RUNTIME: 'fastapi', VITE_API_BASE_URL: expectedUrl }},
+]) {{
+  assert.throws(() => resolvePreviewConfig(env));
+}}
+
+console.log('Svelte preview config contract passed');
+"""
+
+
+def _svelte_readme(name: str, slug: str) -> str:
+    return f"""# {name} Web
+
+Svelte/Vite app generated by Project Factory with real Cloudflare Preview API
+configuration. This strategy is web-only until an explicit Android wrapper
+strategy exists.
+
+```bash
+npm ci
+VITE_APP_RUNTIME_PROFILE=preview \\
+VITE_API_RUNTIME=cloudflare_preview \\
+VITE_API_BASE_URL=https://preview.nienfos.com/{slug}/api \\
+npm test
+npm run validate:preview
+npm run build
+```
+"""
+
+
+def _release_output_template(frontend_strategy: str = "flutter") -> str:
+    if frontend_strategy == "svelte":
+        return """# Factory Final Output
+
+- source_app:
+- commit_hash:
+- push_state:
+- branch:
+- frontend_strategy: svelte
+- runtime_profile: preview
+- release_channel: prerelease
+- mock_or_demo: false
+- backend_required: true
+- production_ready: false
+- production_release_blocked: true
+- installable_android: false
+- web_preview_ready: false
+- productive_release_tag: blocked_until_explicit_promotion
+- release_url: not_applicable_web_only
+- bridge_installable_url: not_applicable_web_only
+- cloudflare_preview_url:
+- cloudflare_preview_health_url:
+- preview_api_base_url:
+- preview_api_health_url:
+- workbench_status: not_applicable_web_only
+- codex_mobile_catalog_status: not_applicable_web_only
+- validations_executed:
+- blockers_remaining:
+"""
     return """# Factory Final Output
 
 - source_app:
@@ -4580,7 +6959,44 @@ def _release_output_template() -> str:
 """
 
 
-def _promotion_runbook_doc(slug: str, name: str) -> str:
+def _promotion_runbook_doc(
+    slug: str,
+    name: str,
+    frontend_strategy: str = "flutter",
+) -> str:
+    if frontend_strategy == "svelte":
+        return f"""# Preview To Production Promotion
+
+`{name}` starts with a Svelte web Initial Preview Release. The preview is public
+web/API only; it does not produce a native mobile package and is not registered
+in the Codex Mobile installable catalog.
+
+## Separation Contract
+
+- Preview URL: `https://preview.nienfos.com/{slug}`.
+- Preview API: `https://preview.nienfos.com/{slug}/api`.
+- Native mobile tags and package signing are not applicable for this strategy.
+- Never promote localhost, placeholder API URLs, mock/demo data, or a mobile
+  installability claim without a named wrapper strategy.
+
+## Required Before Promotion
+
+Promotion can only happen after:
+
+- Web preview health and Preview API health pass.
+- Preview API smoke confirms D1 persistence.
+- A real production backend exists.
+- `API_BASE_URL` points to production, not the preview API.
+- `mockOrDemo=false`.
+
+## Promotion Command Shape
+
+```bash
+APP_RUNTIME_PROFILE=real \\
+API_BASE_URL=https://api.example.com \\
+scripts/validate_release_profiles.sh
+```
+"""
     return f"""# Preview To Production Promotion
 
 `{name}` starts with an Initial Preview Release. That preview is installable, but
@@ -4628,7 +7044,27 @@ scripts/publish_android_release.sh
 """
 
 
-def _android_preview_signing_doc(slug: str) -> str:
+def _android_preview_signing_doc(
+    slug: str,
+    frontend_strategy: str = "flutter",
+) -> str:
+    if frontend_strategy == "svelte":
+        return f"""# Preview Signing Policy
+
+The Svelte strategy is web-only. It does not generate native mobile artifacts,
+does not use native preview signing, and must not publish native mobile release
+tags.
+
+Preview validation still requires:
+
+- `VITE_APP_RUNTIME_PROFILE=preview`;
+- `VITE_API_RUNTIME=cloudflare_preview`;
+- `VITE_API_BASE_URL=https://preview.nienfos.com/{slug}/api`;
+- Cloudflare Worker/D1 public health checks.
+
+Mobile installability requires a future explicit wrapper strategy with its own
+signing, package, prerelease, checksum, and catalog registration contract.
+"""
     return f"""# Android Preview Signing Policy
 
 Initial Preview Release uses `android-preview-v*` and `APP_RUNTIME_PROFILE=preview`.
@@ -4673,7 +7109,45 @@ Production signing is reserved for the later `android-v*` promotion path.
 """
 
 
-def _preview_operations_runbook(slug: str) -> str:
+def _preview_operations_runbook(
+    slug: str,
+    frontend_strategy: str = "flutter",
+) -> str:
+    if frontend_strategy == "svelte":
+        return f"""# Preview Update Disable Extend Troubleshooting
+
+The Svelte preview lane uses real Cloudflare Preview API and persistent D1 data.
+It is web-only until a wrapper strategy is implemented.
+
+## Update Preview
+
+```bash
+scripts/validate_generated_project.sh
+scripts/validate_cloudflare_cost_posture.sh
+scripts/apply_cloudflare_preview.sh
+scripts/smoke_web_preview.sh
+scripts/smoke_preview_api.sh
+scripts/validate_initial_preview_release.sh
+```
+
+## Extend Preview
+
+Add real Preview API routes under `deploy/web-preview/worker/src/index.js`, add
+D1 schema changes, then rerun:
+
+```bash
+scripts/validate_web_preview.sh
+scripts/apply_cloudflare_preview.sh
+scripts/smoke_web_preview.sh
+scripts/smoke_preview_api.sh
+```
+
+## Troubleshooting
+
+- Missing Cloudflare config: run `scripts/deploy_web_preview.sh --plan`.
+- Wrong API URL: `VITE_API_BASE_URL` must be `https://preview.nienfos.com/{slug}/api`.
+- Native mobile output requested: choose a supported mobile strategy or implement an explicit wrapper strategy.
+"""
     return f"""# Preview Update Disable Extend Troubleshooting
 
 The preview lane uses real Cloudflare Preview API and persistent D1 data. Mock or
@@ -4725,7 +7199,171 @@ scripts/smoke_preview_api.sh
 """
 
 
-def _false_readiness_runbook(slug: str) -> str:
+def _aws_domain_delegation_runbook(slug: str) -> str:
+    return f"""# AWS Domain Delegation And Renewal Runbook
+
+Initial Preview Release uses `https://preview.nienfos.com/{slug}` through
+Cloudflare. It is not production and must not be promoted by changing DNS only.
+
+## Route 53 Delegation Check
+
+```bash
+export DOMAIN_NAME=nienfos.com
+export PREVIEW_HOST=preview.nienfos.com
+
+aws route53 list-hosted-zones-by-name --dns-name "$DOMAIN_NAME"
+aws route53domains get-domain-detail --domain-name "$DOMAIN_NAME"
+dig NS "$DOMAIN_NAME"
+dig CNAME "$PREVIEW_HOST"
+```
+
+Expected:
+
+- Registrar nameservers match the intended hosted zone or Cloudflare zone.
+- `preview.nienfos.com` resolves through Cloudflare before apply is ready.
+- Domain auto-renew is enabled if AWS owns the registration.
+
+```bash
+aws route53domains get-domain-detail --domain-name "$DOMAIN_NAME" \\
+  --query '{{DomainName:DomainName,AutoRenew:AutoRenew,ExpirationDate:ExpirationDate}}'
+```
+
+If `AutoRenew=false`, keep preview delivery blocked and document the owner.
+"""
+
+
+def _email_provider_runbook(slug: str) -> str:
+    return f"""# Web Preview Email Provider Runbook
+
+Preview invite email is operator-owned. Missing provider config must fall back
+to visible manual-link delivery; it must not fake successful delivery.
+
+## Bridge Env Vars
+
+```bash
+WEB_PREVIEW_EMAIL_PROVIDER=smtp
+WEB_PREVIEW_EMAIL_FROM=preview@nienfos.com
+WEB_PREVIEW_SMTP_HOST=smtp.example.com
+WEB_PREVIEW_SMTP_PORT=587
+WEB_PREVIEW_SMTP_USERNAME=<smtp-user>
+WEB_PREVIEW_SMTP_PASSWORD=<smtp-password>
+WEB_PREVIEW_SMTP_USE_TLS=true
+WEB_PREVIEW_SMTP_TIMEOUT_SECONDS=10
+WEB_PREVIEW_INVITE_SECRET=<same-secret-as-worker>
+```
+
+Manual fallback:
+
+```bash
+WEB_PREVIEW_EMAIL_PROVIDER=manual
+```
+
+## Sender Domain Verification
+
+```bash
+dig TXT nienfos.com
+dig TXT default._domainkey.nienfos.com
+dig TXT _dmarc.nienfos.com
+```
+
+## Create And Resend Invites
+
+```bash
+BRIDGE_URL=http://127.0.0.1:8000
+curl -X POST "$BRIDGE_URL/web-previews/wp-{slug}/invites" \\
+  -H 'content-type: application/json' \\
+  -d '{{"email":"admin@example.com","role":"owner","ttlSeconds":604800}}'
+
+curl -X POST "$BRIDGE_URL/web-previews/wp-{slug}/invites/<invite-id>/resend" \\
+  -H 'content-type: application/json' \\
+  -d '{{"ttlSeconds":604800}}'
+```
+
+If response contains `manual_delivery_required=true`, copy `invite_url` through
+an approved channel and keep email delivery visible as a manual-link state.
+"""
+
+
+def _dns_cloudflare_troubleshooting_runbook(slug: str) -> str:
+    return f"""# DNS And Cloudflare Troubleshooting
+
+Use this when Web Preview apply, health, or smoke checks fail for
+`https://preview.nienfos.com/{slug}`.
+
+## Required Env
+
+```bash
+CLOUDFLARE_API_TOKEN=<workers-d1-pages-token>
+CLOUDFLARE_DNS_API_TOKEN=<dns-edit-token>
+CLOUDFLARE_ACCOUNT_ID=<account-id>
+CLOUDFLARE_ZONE_ID=<zone-id>
+CLOUDFLARE_ZONE_NAME=nienfos.com
+PREVIEW_D1_DATABASE=nienfos-preview
+WEB_PREVIEW_APPLY_ENABLED=true
+```
+
+## Doctor And Plan
+
+```bash
+BRIDGE_URL=http://127.0.0.1:8000
+curl "$BRIDGE_URL/project-factory/doctor"
+scripts/deploy_web_preview.sh --plan
+scripts/validate_cloudflare_cost_posture.sh
+scripts/validate_web_preview.sh
+```
+
+## DNS Propagation
+
+```bash
+dig CNAME preview.nienfos.com
+dig +trace preview.nienfos.com
+curl -I https://preview.nienfos.com/{slug}/__preview/health
+curl https://preview.nienfos.com/{slug}/api/health
+```
+
+Blocked states:
+
+- `cloudflare_configuration_missing`: fill Bridge env vars above.
+- `apply_disabled`: set `WEB_PREVIEW_APPLY_ENABLED=true` on the Bridge host.
+- `preview_validation_failed`: run `scripts/validate_web_preview.sh` locally.
+- `d1_database_id_missing`: rerun `scripts/apply_preview_d1_migrations.sh`.
+- `health failed`: inspect Worker route and Cloudflare DNS proxy state.
+
+These checks validate preview only. They do not claim production readiness.
+"""
+
+
+def _false_readiness_runbook(
+    slug: str,
+    frontend_strategy: str = "flutter",
+) -> str:
+    if frontend_strategy == "svelte":
+        return f"""# False Readiness Examples
+
+A Svelte Project Factory job is not ready until Cloudflare web health, Preview
+API health, Preview API smoke, and Svelte build validation pass.
+
+## Blocked Examples
+
+```bash
+VITE_APP_RUNTIME_PROFILE=mock \\
+VITE_API_BASE_URL=https://preview.nienfos.com/{slug}/api \\
+npm run validate:preview
+```
+
+Fails because Initial Preview Release cannot use mock as the runtime.
+
+```bash
+VITE_APP_RUNTIME_PROFILE=preview \\
+VITE_API_BASE_URL=http://localhost:8000 \\
+npm run validate:preview
+```
+
+Fails because preview cannot use localhost.
+
+Codex Mobile catalog registration is blocked because Svelte web-only does not
+generate native mobile package metadata.
+"""
     return f"""# False Readiness Examples
 
 A Project Factory job is not ready until Cloudflare health, Preview API smoke,
@@ -5031,7 +7669,7 @@ def _mobile_models_dart() -> str:
     return """class AppUser {
   const AppUser({required this.id, required this.email, required this.roles});
 
-  final int id;
+  final String id;
   final String email;
   final List<String> roles;
 
@@ -5058,7 +7696,7 @@ def _mobile_models_dart() -> str:
 
   factory AppUser.fromJson(Map<String, dynamic> json) {
     return AppUser(
-      id: json['id'] as int,
+      id: json['id'].toString(),
       email: json['email'] as String,
       roles: (json['roles'] as List<dynamic>? ?? <dynamic>[])
           .whereType<String>()
@@ -5083,30 +7721,30 @@ class AuthToken {
 
 class AdminUser {
   const AdminUser({required this.id, required this.email, required this.isActive});
-  final int id;
+  final String id;
   final String email;
   final bool isActive;
 
   factory AdminUser.fromJson(Map<String, dynamic> json) {
     return AdminUser(
-      id: json['id'] as int,
+      id: json['id'].toString(),
       email: json['email'] as String,
-      isActive: json['is_active'] as bool,
+      isActive: json['is_active'] as bool? ?? true,
     );
   }
 }
 
 class DomainRecord {
   const DomainRecord({required this.id, required this.name, required this.isActive});
-  final int id;
+  final String id;
   final String name;
   final bool isActive;
 
   factory DomainRecord.fromJson(Map<String, dynamic> json) {
     return DomainRecord(
-      id: json['id'] as int,
+      id: json['id'].toString(),
       name: json['name'] as String,
-      isActive: json['is_active'] as bool,
+      isActive: json['is_active'] as bool? ?? true,
     );
   }
 }
@@ -5120,7 +7758,7 @@ class AppNotification {
     required this.createdAt,
   });
 
-  final int id;
+  final String id;
   final String title;
   final String body;
   final String? readAt;
@@ -5130,11 +7768,11 @@ class AppNotification {
 
   factory AppNotification.fromJson(Map<String, dynamic> json) {
     return AppNotification(
-      id: json['id'] as int,
+      id: json['id'].toString(),
       title: json['title'] as String,
       body: json['body'] as String,
-      readAt: json['read_at'] as String?,
-      createdAt: json['created_at'] as String,
+      readAt: (json['read_at'] ?? json['readAt']) as String?,
+      createdAt: (json['created_at'] ?? json['createdAt']).toString(),
     );
   }
 }
@@ -5172,6 +7810,22 @@ class ProjectApiClient {
     final response = await _postJson('/auth/login', {'email': email, 'password': password});
     if (response.statusCode != 200) {
       throw ApiException('Login failed', response.statusCode, response.body);
+    }
+    return AuthToken.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+  }
+
+  Future<AuthToken> acceptPreviewInvite({
+    required String inviteToken,
+    required String email,
+    required String password,
+  }) async {
+    final response = await _postJson('/invites/accept', {
+      'inviteToken': inviteToken,
+      'email': email,
+      'password': password,
+    });
+    if (response.statusCode != 200) {
+      throw ApiException('Preview invite accept failed', response.statusCode, response.body);
     }
     return AuthToken.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
   }
@@ -5228,7 +7882,7 @@ class ProjectApiClient {
     return _list(response).map(AppNotification.fromJson).toList(growable: false);
   }
 
-  Future<void> markNotificationRead(String token, int id) async {
+  Future<void> markNotificationRead(String token, String id) async {
     final response = await _client.post(_uri('/notifications/$id/read'), headers: _authHeaders(token));
     if (response.statusCode != 200) {
       throw ApiException('Mark notification read failed', response.statusCode, response.body);
@@ -5280,11 +7934,11 @@ class MockProjectApiClient extends ProjectApiClient {
   final Map<String, AppUser> _sessions = <String, AppUser>{};
   final List<AdminUser> _users = <AdminUser>[];
   final List<DomainRecord> _domains = <DomainRecord>[
-    DomainRecord(id: 1, name: 'Demo workspace', isActive: true),
+    DomainRecord(id: '1', name: 'Demo workspace', isActive: true),
   ];
   final List<AppNotification> _notifications = <AppNotification>[
     AppNotification(
-      id: 1,
+      id: '1',
       title: 'Demo notification',
       body: 'This notification exists only in APP_RUNTIME_PROFILE=mock.',
       readAt: null,
@@ -5309,7 +7963,7 @@ class MockProjectApiClient extends ProjectApiClient {
     final safeRole = seedRoles.contains(role) ? role : 'guest';
     final token = 'mock-token-$safeRole';
     final user = AppUser(
-      id: seedRoles.indexOf(safeRole) + 1,
+      id: '${seedRoles.indexOf(safeRole) + 1}',
       email: '$safeRole@mock.local',
       roles: <String>[safeRole],
     );
@@ -5324,7 +7978,7 @@ class MockProjectApiClient extends ProjectApiClient {
     required String password,
   }) async {
     final token = 'mock-token-user-${_sessions.length + 1}';
-    final user = AppUser(id: _sessions.length + 1, email: email, roles: const <String>['customer']);
+    final user = AppUser(id: '${_sessions.length + 1}', email: email, roles: const <String>['customer']);
     _sessions[token] = user;
     _users.add(AdminUser(id: user.id, email: user.email, isActive: true));
     return AuthToken(accessToken: token, tokenType: 'mock');
@@ -5336,7 +7990,7 @@ class MockProjectApiClient extends ProjectApiClient {
   }
 
   @override
-  Future<AppUser> me(String token) async => _sessions[token] ?? const AppUser(id: 0, email: 'guest@mock.local', roles: <String>['guest']);
+  Future<AppUser> me(String token) async => _sessions[token] ?? const AppUser(id: '0', email: 'guest@mock.local', roles: <String>['guest']);
 
   @override
   Future<void> logout(String token) async {}
@@ -5352,7 +8006,7 @@ class MockProjectApiClient extends ProjectApiClient {
 
   @override
   Future<DomainRecord> createDomain(String token, String name) async {
-    final domain = DomainRecord(id: _domains.length + 1, name: name, isActive: true);
+    final domain = DomainRecord(id: '${_domains.length + 1}', name: name, isActive: true);
     _domains.add(domain);
     return domain;
   }
@@ -5361,7 +8015,7 @@ class MockProjectApiClient extends ProjectApiClient {
   Future<List<AppNotification>> notifications(String token) async => List<AppNotification>.from(_notifications);
 
   @override
-  Future<void> markNotificationRead(String token, int id) async {}
+  Future<void> markNotificationRead(String token, String id) async {}
 }
 """
 
@@ -5384,6 +8038,7 @@ class SessionController extends ChangeNotifier {
   String? error;
 
   bool get isMockRuntime => runtimeProfile == 'mock';
+  bool get isPreviewRuntime => runtimeProfile == 'preview';
 
   List<String> get seedRoles => MockProjectApiClient.seedRoles;
 
@@ -5400,6 +8055,22 @@ class SessionController extends ChangeNotifier {
   Future<void> register({required String email, required String password}) async {
     await _run(() async {
       final auth = await api.register(email: email, password: password);
+      token = auth.accessToken;
+      user = await api.me(token!);
+    });
+  }
+
+  Future<void> acceptPreviewInvite({
+    required String inviteToken,
+    required String email,
+    required String password,
+  }) async {
+    await _run(() async {
+      final auth = await api.acceptPreviewInvite(
+        inviteToken: inviteToken,
+        email: email,
+        password: password,
+      );
       token = auth.accessToken;
       user = await api.me(token!);
     });
@@ -5556,6 +8227,7 @@ class AuthScreen extends StatefulWidget {{
 }}
 
 class _AuthScreenState extends State<AuthScreen> {{
+  final _inviteToken = TextEditingController();
   final _email = TextEditingController();
   final _password = TextEditingController();
   bool _register = false;
@@ -5563,6 +8235,7 @@ class _AuthScreenState extends State<AuthScreen> {{
 
   @override
   void dispose() {{
+    _inviteToken.dispose();
     _email.dispose();
     _password.dispose();
     super.dispose();
@@ -5580,6 +8253,15 @@ class _AuthScreenState extends State<AuthScreen> {{
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: <Widget>[
+                if (widget.controller.isPreviewRuntime) ...[
+                  Text('Initial Preview Access', style: Theme.of(context).textTheme.titleMedium),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: _inviteToken,
+                    decoration: const InputDecoration(labelText: 'Invite token or link'),
+                  ),
+                  const SizedBox(height: 12),
+                ],
                 TextField(controller: _email, decoration: const InputDecoration(labelText: 'Email')),
                 const SizedBox(height: 12),
                 TextField(controller: _password, decoration: const InputDecoration(labelText: 'Password'), obscureText: true),
@@ -5607,12 +8289,13 @@ class _AuthScreenState extends State<AuthScreen> {{
                 const SizedBox(height: 8),
                 FilledButton(
                   onPressed: widget.controller.loading ? null : _submit,
-                  child: Text(_register ? 'Register' : 'Login'),
+                  child: Text(widget.controller.isPreviewRuntime ? 'Accept invite' : (_register ? 'Register' : 'Login')),
                 ),
-                TextButton(
-                  onPressed: () => setState(() => _register = !_register),
-                  child: Text(_register ? 'Use login' : 'Create account'),
-                ),
+                if (!widget.controller.isPreviewRuntime)
+                  TextButton(
+                    onPressed: () => setState(() => _register = !_register),
+                    child: Text(_register ? 'Use login' : 'Create account'),
+                  ),
               ],
             ),
           ),
@@ -5622,11 +8305,25 @@ class _AuthScreenState extends State<AuthScreen> {{
   }}
 
   Future<void> _submit() async {{
-    if (_register) {{
+    if (widget.controller.isPreviewRuntime) {{
+      await widget.controller.acceptPreviewInvite(
+        inviteToken: _extractInviteToken(_inviteToken.text.trim()),
+        email: _email.text.trim(),
+        password: _password.text,
+      );
+    }} else if (_register) {{
       await widget.controller.register(email: _email.text.trim(), password: _password.text);
     }} else {{
       await widget.controller.login(email: _email.text.trim(), password: _password.text);
     }}
+  }}
+
+  String _extractInviteToken(String value) {{
+    final uri = Uri.tryParse(value);
+    if (uri != null && uri.queryParameters['token'] != null) {{
+      return uri.queryParameters['token']!;
+    }}
+    return value;
   }}
 }}
 
@@ -5822,6 +8519,7 @@ void main() {{
       client: MockClient((request) async {{
         calls.add('${{request.method}} ${{request.url.path}}');
         if (request.url.path == '/health') return http.Response('{{"status":"ok"}}', 200);
+        if (request.url.path == '/invites/accept') return http.Response('{{"access_token":"invite-token","token_type":"bearer"}}', 200);
         if (request.url.path == '/auth/login') return http.Response('{{"access_token":"t","token_type":"bearer"}}', 200);
         if (request.url.path == '/auth/me') return http.Response('{{"id":1,"email":"a@example.com","roles":["owner"]}}', 200);
         if (request.url.path == '/admin/users') return http.Response('[{{"id":1,"email":"a@example.com","is_active":true}}]', 200);
@@ -5834,6 +8532,12 @@ void main() {{
       }}),
     );
     expect(await api.health(), isTrue);
+    final inviteToken = await api.acceptPreviewInvite(
+      inviteToken: 'signed-token',
+      email: 'invite@example.com',
+      password: 'secret',
+    );
+    expect(inviteToken.accessToken, 'invite-token');
     final token = await api.login(email: 'a@example.com', password: 'secret');
     expect(token.accessToken, 't');
     expect((await api.me('t')).canAccessAdmin, isTrue);
@@ -5842,8 +8546,9 @@ void main() {{
     expect(await api.domains('t'), hasLength(1));
     expect((await api.createDomain('t', 'new')).name, 'new');
     expect(await api.notifications('t'), hasLength(1));
-    await api.markNotificationRead('t', 1);
+    await api.markNotificationRead('t', '1');
     expect(calls, contains('GET /health'));
+    expect(calls, contains('POST /invites/accept'));
   }});
 }}
 """
@@ -5864,6 +8569,18 @@ void main() {{
     expect(controller.user!.canAccessAdmin, isTrue);
   }});
 
+  test('preview invite accept stores token and user', () async {{
+    final controller = SessionController(api: _FakeApi(), runtimeProfile: 'preview');
+    await controller.acceptPreviewInvite(
+      inviteToken: 'signed-token',
+      email: 'admin@example.com',
+      password: 'secret',
+    );
+    expect(controller.isAuthenticated, isTrue);
+    expect(controller.token, 'invite-token');
+    expect(controller.user!.canAccessAdmin, isTrue);
+  }});
+
   test('mock runtime can enter as seed role', () async {{
     final controller = SessionController(
       api: MockProjectApiClient(),
@@ -5875,15 +8592,15 @@ void main() {{
   }});
 
   test('rbac denies admin for customer role', () {{
-    const user = AppUser(id: 1, email: 'user@example.com', roles: ['customer']);
+    const user = AppUser(id: '1', email: 'user@example.com', roles: ['customer']);
     expect(user.canAccessAdmin, isFalse);
   }});
 
   test('preview runtime shows Workbench only to owner admin or authorized developer', () {{
-    const owner = AppUser(id: 1, email: 'owner@example.com', roles: ['owner']);
-    const admin = AppUser(id: 2, email: 'admin@example.com', roles: ['admin']);
-    const developer = AppUser(id: 3, email: 'dev@example.com', roles: ['developer']);
-    const customer = AppUser(id: 4, email: 'user@example.com', roles: ['customer']);
+    const owner = AppUser(id: '1', email: 'owner@example.com', roles: ['owner']);
+    const admin = AppUser(id: '2', email: 'admin@example.com', roles: ['admin']);
+    const developer = AppUser(id: '3', email: 'dev@example.com', roles: ['developer']);
+    const customer = AppUser(id: '4', email: 'user@example.com', roles: ['customer']);
     expect(owner.canAccessWorkbench('preview'), isTrue);
     expect(admin.canAccessWorkbench('preview'), isTrue);
     expect(developer.canAccessWorkbench('preview'), isFalse);
@@ -5905,8 +8622,17 @@ class _FakeApi extends ProjectApiClient {{
   }}
 
   @override
+  Future<AuthToken> acceptPreviewInvite({{
+    required String inviteToken,
+    required String email,
+    required String password,
+  }}) async {{
+    return const AuthToken(accessToken: 'invite-token', tokenType: 'bearer');
+  }}
+
+  @override
   Future<AppUser> me(String token) async {{
-    return const AppUser(id: 1, email: 'admin@example.com', roles: ['owner']);
+    return const AppUser(id: '1', email: 'admin@example.com', roles: ['owner']);
   }}
 }}
 """
@@ -5921,22 +8647,39 @@ import 'package:{package_name}/src/screens.dart';
 import 'package:{package_name}/src/session_controller.dart';
 
 void main() {{
+  testWidgets('preview auth accepts invite token and password setup', (tester) async {{
+    final controller = SessionController(api: _FakeApi(), runtimeProfile: 'preview');
+    await tester.pumpWidget(_app(controller, runtimeProfile: 'preview'));
+
+    expect(find.text('Initial Preview Access'), findsOneWidget);
+    expect(find.text('Accept invite'), findsOneWidget);
+
+    await tester.enterText(find.byType(TextField).at(0), 'https://preview.nienfos.com/generated/__preview/access?token=signed-token');
+    await tester.enterText(find.byType(TextField).at(1), 'admin@example.com');
+    await tester.enterText(find.byType(TextField).at(2), 'secret-password');
+    await tester.tap(find.text('Accept invite'));
+    await tester.pumpAndSettle();
+
+    expect(controller.isAuthenticated, isTrue);
+    expect(find.text('admin@example.com'), findsOneWidget);
+  }});
+
   testWidgets('APP_RUNTIME_PROFILE=preview shows Workbench for owner/admin', (tester) async {{
-    final owner = _controller('preview', const AppUser(id: 1, email: 'owner@example.com', roles: ['owner']));
+    final owner = _controller('preview', const AppUser(id: '1', email: 'owner@example.com', roles: ['owner']));
     await tester.pumpWidget(_app(owner, runtimeProfile: 'preview'));
     expect(find.text('Workbench'), findsOneWidget);
 
-    final admin = _controller('preview', const AppUser(id: 2, email: 'admin@example.com', roles: ['admin']));
+    final admin = _controller('preview', const AppUser(id: '2', email: 'admin@example.com', roles: ['admin']));
     await tester.pumpWidget(_app(admin, runtimeProfile: 'preview'));
     expect(find.text('Workbench'), findsOneWidget);
   }});
 
   testWidgets('preview hides Workbench from normal users unless developer authorized', (tester) async {{
-    final customer = _controller('preview', const AppUser(id: 3, email: 'user@example.com', roles: ['customer']));
+    final customer = _controller('preview', const AppUser(id: '3', email: 'user@example.com', roles: ['customer']));
     await tester.pumpWidget(_app(customer, runtimeProfile: 'preview'));
     expect(find.text('Workbench'), findsNothing);
 
-    final developer = _controller('preview', const AppUser(id: 4, email: 'dev@example.com', roles: ['developer']));
+    final developer = _controller('preview', const AppUser(id: '4', email: 'dev@example.com', roles: ['developer']));
     await tester.pumpWidget(_app(
       developer,
       runtimeProfile: 'preview',
@@ -5946,7 +8689,7 @@ void main() {{
   }});
 
   testWidgets('real runtime hides Workbench even for owner', (tester) async {{
-    final owner = _controller('real', const AppUser(id: 5, email: 'owner@example.com', roles: ['owner']));
+    final owner = _controller('real', const AppUser(id: '5', email: 'owner@example.com', roles: ['owner']));
     await tester.pumpWidget(_app(
       owner,
       runtimeProfile: 'real',
@@ -5980,6 +8723,20 @@ Widget _app(
 
 class _FakeApi extends ProjectApiClient {{
   _FakeApi() : super(baseUrl: 'http://fake');
+
+  @override
+  Future<AuthToken> acceptPreviewInvite({{
+    required String inviteToken,
+    required String email,
+    required String password,
+  }}) async {{
+    return const AuthToken(accessToken: 'invite-token', tokenType: 'bearer');
+  }}
+
+  @override
+  Future<AppUser> me(String token) async {{
+    return const AppUser(id: '1', email: 'admin@example.com', roles: ['owner']);
+  }}
 }}
 """
 
@@ -6676,9 +9433,16 @@ def _baseline_diagram_files(
     name: str,
     business_type: str,
     primary_goal: str,
+    frontend_strategy: str = "flutter",
 ) -> dict[str, str]:
+    is_svelte = frontend_strategy == "svelte"
+    frontend_summary = (
+        "Svelte/Vite web app, Cloudflare Preview Worker/API, D1 persistence"
+        if is_svelte
+        else "Flutter clients, a FastAPI backend, RBAC"
+    )
     return {
-        "architecture/components.mmd": _components_diagram(),
+        "architecture/components.mmd": _components_diagram(frontend_strategy),
         "architecture/components.yaml": _diagram_metadata(
             "components",
             "component",
@@ -6699,7 +9463,7 @@ def _baseline_diagram_files(
             "architecture/entity-relationship.mmd",
             f"Baseline data model for {name}.",
         ),
-        "architecture/deployment.mmd": _deployment_diagram(name),
+        "architecture/deployment.mmd": _deployment_diagram(name, frontend_strategy),
         "architecture/deployment.yaml": _diagram_metadata(
             "deployment",
             "deployment",
@@ -6708,8 +9472,8 @@ def _baseline_diagram_files(
         ),
         "architecture/overview.md": (
             "# Architecture Overview\n\n"
-            f"`{name}` starts with Flutter clients, a FastAPI backend, RBAC, "
-            "domain management, notifications, and Workbench SDD artifacts.\n\n"
+            f"`{name}` starts with {frontend_summary}, domain management, "
+            "notifications, and Workbench SDD artifacts.\n\n"
             f"- Business type: `{business_type}`\n"
             f"- Primary goal: {primary_goal}\n\n"
             "Keep these baseline diagrams updated as specs, plans, and tasks evolve.\n"
@@ -6717,7 +9481,30 @@ def _baseline_diagram_files(
     }
 
 
-def _components_diagram() -> str:
+def _components_diagram(frontend_strategy: str = "flutter") -> str:
+    if frontend_strategy == "svelte":
+        return """flowchart LR
+    user[User Browser]
+    admin[Admin Browser]
+    web[Svelte Web App]
+    worker[Cloudflare Preview Worker]
+    api[Preview API]
+    d1[(Cloudflare D1)]
+    assets[Cloudflare Preview Assets]
+    workbench[Codex Dev Workbench]
+    specs[Specs / Plan / Tasks]
+
+    user --> web
+    admin --> web
+    web --> assets
+    web --> worker
+    worker --> api
+    api --> d1
+    worker --> assets
+    workbench --> specs
+    specs --> web
+    specs --> worker
+"""
     return """flowchart LR
     user[User]
     admin[Admin]
@@ -6827,7 +9614,30 @@ def _erd_diagram() -> str:
 """
 
 
-def _deployment_diagram(name: str) -> str:
+def _deployment_diagram(name: str, frontend_strategy: str = "flutter") -> str:
+    if frontend_strategy == "svelte":
+        preview_slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-") or "app"
+        return f"""flowchart TB
+    browser[Browser]
+    preview[preview.nienfos.com/{preview_slug}]
+    worker[Cloudflare Worker]
+    assets[Svelte/Vite Static Assets]
+    api[Cloudflare Preview API]
+    d1[(Cloudflare D1)]
+    secrets[Cloudflare Secrets]
+    workbench[Codex Dev Workbench]
+    repo[{name} Repo]
+
+    browser --> preview
+    preview --> worker
+    worker --> assets
+    worker --> api
+    api --> d1
+    secrets --> worker
+    workbench --> repo
+    repo --> assets
+    repo --> worker
+"""
     return f"""flowchart TB
     phone[Installed Mobile App]
     browser[Web App]
@@ -7059,7 +9869,57 @@ def _initial_spec(
     primary_goal: str,
     workflow: dict[str, Any],
     project_assets: object,
+    frontend_strategy: str = "flutter",
 ) -> str:
+    if frontend_strategy == "svelte":
+        return f"""# Product Foundation
+
+## Intent
+
+Build `{name}` as a Svelte/Vite web app under `apps/web` with a Cloudflare
+Preview Worker/API, D1 persistence, auth, admin, roles, permissions, domain
+management, notifications, Codex Feedback Bridge workspace metadata, and
+Workbench-driven feature growth.
+
+This strategy is web-only. It does not generate a mobile package, native store
+release path, or Codex Mobile catalog registration unless a future wrapper
+strategy is explicitly implemented.
+
+## Business Context
+
+- Business type: `{business_type}`
+- Primary goal: {primary_goal}
+
+## Promoted Assets
+
+{_promoted_assets_spec_section(project_assets)}
+
+## Creation Workflow
+
+New-project creation uses Codex CLI by default with:
+
+- generator runs: {workflow["generator_runs"]}
+- reviewer runs: {workflow["reviewer_runs"]}
+- mode: `{workflow["mode"]}`
+
+## Required Foundation
+
+- Login and registration.
+- Google login placeholders.
+- RBAC with owner/admin/manager/staff/customer/guest.
+- Admin domain-management shell.
+- Notification foundations.
+- FastAPI backend v1 with SQLite DATABASE_URL, PBKDF2 password hashing,
+  JWT-compatible HS256 tokens, admin seed by env, RBAC guards, domain CRUD,
+  notification outbox, healthcheck, CORS, and generated tests.
+- Svelte web v1 with VITE_APP_RUNTIME_PROFILE, VITE_API_RUNTIME,
+  VITE_API_BASE_URL configuration, Cloudflare preview API contract validation,
+  web preview build output, and generated tests.
+- Cloudflare Preview Worker/API/D1 contract for the initial preview release.
+- SDD artifacts for future Workbench features.
+- Baseline Workbench diagrams for components, classes, entity relationships, and
+  deployment.
+"""
     return f"""# Product Foundation
 
 ## Intent
@@ -7103,7 +9963,19 @@ New-project creation uses Codex CLI by default with:
 """
 
 
-def _initial_plan(name: str) -> str:
+def _initial_plan(name: str, frontend_strategy: str = "flutter") -> str:
+    if frontend_strategy == "svelte":
+        return f"""# Plan
+
+Create the foundation for `{name}` in incremental validated slices:
+
+1. Complete business research and visual direction.
+2. Extend the generated Svelte/Vite web app with domain UX.
+3. Extend FastAPI backend v1 beyond the generated auth/RBAC/admin/notification base.
+4. Add domain-specific resources and workflows.
+5. Wire Workbench/feedback metadata for web preview.
+6. Validate local run, Cloudflare Preview API/D1 readiness, and web release readiness.
+"""
     return f"""# Plan
 
 Create the foundation for `{name}` in incremental validated slices:
@@ -7117,7 +9989,65 @@ Create the foundation for `{name}` in incremental validated slices:
 """
 
 
-def _initial_task_items() -> tuple[dict[str, str], ...]:
+def _initial_task_items(frontend_strategy: str = "flutter") -> tuple[dict[str, str], ...]:
+    if frontend_strategy == "svelte":
+        return (
+            {
+                "title": "Complete business research.",
+                "status": "planned",
+                "description": "Research users, operational constraints, risks, and domain-specific workflows.",
+            },
+            {
+                "title": "Complete visual reference analysis.",
+                "status": "planned",
+                "description": "Analyze user-provided visual references and convert them into tokens, components, and screen patterns.",
+            },
+            {
+                "title": "Generate Svelte/Vite web v1 with VITE runtime config, auth/session, RBAC admin gating, domain management, notifications, and generated tests.",
+                "status": "done",
+                "description": "Generated Svelte/Vite web v1 foundation is present under apps/web.",
+            },
+            {
+                "title": "Generate backend v1 with FastAPI, auth, RBAC, admin, domain CRUD foundation, and notifications.",
+                "status": "done",
+                "description": "Generated FastAPI backend v1 foundation is present.",
+            },
+            {
+                "title": "Add auth and Google login placeholders.",
+                "status": "done",
+                "description": "Generated auth includes real email/password flow and explicit Google credential placeholders.",
+            },
+            {
+                "title": "Add RBAC and admin shell.",
+                "status": "done",
+                "description": "Generated RBAC roles and admin shell are present.",
+            },
+            {
+                "title": "Add domain CRUD foundation.",
+                "status": "done",
+                "description": "Generated domain management foundation is present.",
+            },
+            {
+                "title": "Add notification foundation.",
+                "status": "done",
+                "description": "Generated notification model/endpoints/client foundation is present.",
+            },
+            {
+                "title": "Add baseline SDD diagrams for Svelte web, Preview API, D1 data, and deployment.",
+                "status": "done",
+                "description": "Generated baseline Mermaid diagrams and metadata are present.",
+            },
+            {
+                "title": "Wire Workbench and feedback metadata for web preview.",
+                "status": "planned",
+                "description": "Verify app-specific feedback routing and Workbench visibility before web release.",
+            },
+            {
+                "title": "Validate Cloudflare Preview API/D1 and web release readiness.",
+                "status": "planned",
+                "description": "Run generated validation, web preview checks, public health checks, and Workbench checks.",
+            },
+        )
     return (
         {
             "title": "Complete business research.",
@@ -7177,17 +10107,17 @@ def _initial_task_items() -> tuple[dict[str, str], ...]:
     )
 
 
-def _initial_tasks() -> str:
+def _initial_tasks(frontend_strategy: str = "flutter") -> str:
     lines = ["# Tasks", ""]
-    for item in _initial_task_items():
+    for item in _initial_task_items(frontend_strategy):
         marker = "x" if item["status"] == "done" else " "
         lines.append(f"- [{marker}] {item['title']}")
     return "\n".join(lines) + "\n"
 
 
-def _initial_tree_json() -> str:
+def _initial_tree_json(frontend_strategy: str = "flutter") -> str:
     tasks = []
-    for index, item in enumerate(_initial_task_items(), start=1):
+    for index, item in enumerate(_initial_task_items(frontend_strategy), start=1):
         task_id = f"plan-1-task-{index}"
         tasks.append(
             {
@@ -7221,9 +10151,9 @@ def _initial_tree_json() -> str:
     )
 
 
-def _initial_task_node_files() -> dict[str, str]:
+def _initial_task_node_files(frontend_strategy: str = "flutter") -> dict[str, str]:
     files: dict[str, str] = {}
-    for index, item in enumerate(_initial_task_items(), start=1):
+    for index, item in enumerate(_initial_task_items(frontend_strategy), start=1):
         task_id = f"plan-1-task-{index}"
         files[
             f"specs/001-product-foundation/tasks/{task_id}/task.md"
@@ -7236,8 +10166,12 @@ Status: {item["status"]}
     return files
 
 
-def _initial_metadata(slug: str, name: str) -> str:
-    task_items = _initial_task_items()
+def _initial_metadata(
+    slug: str,
+    name: str,
+    frontend_strategy: str = "flutter",
+) -> str:
+    task_items = _initial_task_items(frontend_strategy)
     completed = sum(1 for item in task_items if item["status"] == "done")
     pending = len(task_items) - completed
     return _to_yaml(

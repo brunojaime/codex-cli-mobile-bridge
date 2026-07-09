@@ -1,9 +1,48 @@
 spec_id: 001-codex-bridge-sdd-wrapper
+status: complete
 requirements:
-  FR-001:
+  R-001-sdd-contract-files:
     acceptance_criteria:
-      - AC-001
+      - Required SDD contract files and diagrams exist in the repository.
     tasks:
       - T001
+    implementation:
+      - specs/001-codex-bridge-sdd-wrapper/spec.md
+      - specs/001-codex-bridge-sdd-wrapper/plan.md
+      - specs/001-codex-bridge-sdd-wrapper/tasks.md
+      - specs/001-codex-bridge-sdd-wrapper/tree.json
     diagrams:
       - specs/001-codex-bridge-sdd-wrapper/diagrams/read-model.mmd
+  R-002-read-only-sdd-backend:
+    acceptance_criteria:
+      - Backend exposes read-only SDD project and diagram endpoints.
+      - SDD file reads are path-safe and extension-limited.
+      - Capabilities expose SDD support.
+    tasks:
+      - T002
+      - T003
+      - T004
+      - T006
+    implementation:
+      - backend/app/application/services/sdd_project_service.py
+      - backend/app/api/routes.py
+      - backend/app/api/schemas.py
+      - tests/test_sdd_project.py
+  R-003-sdd-doctor:
+    acceptance_criteria:
+      - The SDD doctor reports contract readiness, warnings, and strict failures.
+    tasks:
+      - T005
+    implementation:
+      - scripts/codex_bridge_sdd_doctor.py
+      - tests/test_sdd_doctor_contract.py
+  R-004-dev-mode-wrapper-gate:
+    acceptance_criteria:
+      - Frontend Workbench visibility is controlled by CODEX_BRIDGE_DEV_MODE.
+      - Normal app UI is unchanged when dev mode is disabled.
+    tasks:
+      - T007
+    implementation:
+      - frontend/mobile_app/lib/main.dart
+      - packages/codex_bridge_workbench/lib
+      - packages/codex_bridge_workbench/test/codex_bridge_workbench_test.dart

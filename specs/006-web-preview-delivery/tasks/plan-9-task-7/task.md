@@ -6,4 +6,4 @@ Plan: `Validation And Contract Tests`
 
 ## Checklist
 
-- [ ] T059 Add cost posture validation for free-tier-compatible MVP previews.
+- [x] T059 Add cost posture validation for free-tier-compatible MVP previews.

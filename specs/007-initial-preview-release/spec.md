@@ -276,7 +276,9 @@ the project as installable.
 Remote preview publication mode must run these phases in order:
 
 1. Finalize and validate local generated project.
-2. Create or verify GitHub repository and push the branch.
+2. Create or verify GitHub repository, push the branch, and configure the
+   GitHub Actions `API_BASE_URL` variable to
+   `https://preview.nienfos.com/<app-slug>/api`.
 3. Provision or update Cloudflare preview resources.
 4. Apply D1 migrations and generated preview seed/bootstrap data.
 5. Build and smoke-test Flutter web preview.

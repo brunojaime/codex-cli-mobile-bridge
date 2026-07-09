@@ -6,4 +6,4 @@ Plan: `Operations And Documentation`
 
 ## Checklist
 
-- [ ] T061 Document AWS domain delegation and auto-renew requirements.
+- [x] T061 Document AWS domain delegation and auto-renew requirements.

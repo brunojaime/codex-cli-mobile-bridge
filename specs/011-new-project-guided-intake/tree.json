@@ -225,7 +225,7 @@
       "id": "plan-6",
       "number": 6,
       "title": "Validation",
-      "status": "in_progress",
+      "status": "done",
       "description": "Cover backend, frontend, and Project Factory regression behavior.",
       "file": "plans/06-validation/plan.md",
       "tasks": [
@@ -265,7 +265,7 @@
           "id": "plan-6-task-5",
           "number": 5,
           "title": "T026 Run mobile analyze/tests and publish Android release if frontend code ships",
-          "status": "planned",
+          "status": "done",
           "description": "Validate and release user-visible frontend changes.",
           "file": "tasks/plan-6-task-5/task.md"
         }

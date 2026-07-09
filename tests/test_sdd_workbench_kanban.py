@@ -43,6 +43,71 @@ def test_kanban_projection_maps_tasks_deterministically_and_persists_history(
     assert history["count"] == 1
 
 
+def test_kanban_projection_treats_tree_done_as_authoritative_completion(
+    tmp_path: Path,
+) -> None:
+    projects_root = tmp_path / "projects"
+    project_path = projects_root / "demo"
+    _write_kanban_project(project_path)
+    spec_dir = project_path / "specs/001-demo"
+    (spec_dir / "tasks.md").write_text(
+        textwrap.dedent(
+            """\
+            # Tasks
+            - [ ] T001 Define board contract
+            - [ ] T002 Build board API
+            - [ ] T003 Render Flutter board
+            """
+        ),
+        encoding="utf-8",
+    )
+    tree_path = spec_dir / "tree.json"
+    tree = json.loads(tree_path.read_text(encoding="utf-8"))
+    for plan in tree["plans"]:
+        plan["status"] = "done"
+        for task in plan["tasks"]:
+            task["status"] = "done"
+    tree_path.write_text(json.dumps(tree), encoding="utf-8")
+    project_service = SddProjectService(projects_root=str(projects_root))
+    project = project_service.get_project(str(project_path))
+    service = SddWorkbenchKanbanService(projects_root=projects_root)
+
+    payload = service.build_board(workspace=project_path, project=project).payload
+
+    cards = {
+        card["id"]: card
+        for card in payload["board"]["cards"]
+        if card["scopeId"] == "001-demo"
+    }
+    assert cards["spec-task:001-demo:T001"]["column"] == "done"
+    assert cards["spec-task:001-demo:T002"]["column"] == "done"
+    assert cards["spec-task:001-demo:T003"]["column"] == "done"
+    assert cards["plan-phase:001-demo:1"]["column"] == "done"
+    assert cards["plan-phase:001-demo:2"]["column"] == "done"
+
+
+def test_kanban_spec_scope_excludes_workspace_observer_cards(
+    tmp_path: Path,
+) -> None:
+    projects_root = tmp_path / "projects"
+    project_path = projects_root / "demo"
+    _write_kanban_project(project_path)
+    project_service = SddProjectService(projects_root=str(projects_root))
+    project = project_service.get_project(str(project_path))
+    service = SddWorkbenchKanbanService(projects_root=projects_root)
+
+    payload = service.build_board(
+        workspace=project_path,
+        project=project,
+        spec_id="001-demo",
+    ).payload
+
+    cards = {card["id"]: card for card in payload["board"]["cards"]}
+    assert "review-finding:reviews-review-notes.md" not in cards
+    assert "run-step:release:preview-runtime" not in cards
+    assert {card["scopeId"] for card in cards.values()} == {"001-demo"}
+
+
 def test_kanban_delta_records_task_moves_without_mutating_sdd_artifacts(
     tmp_path: Path,
 ) -> None:
@@ -59,7 +124,9 @@ def test_kanban_delta_records_task_moves_without_mutating_sdd_artifacts(
         project=project_service.get_project(str(project_path)),
     )
     (project_path / "specs/001-demo/tasks.md").write_text(
-        original_tasks.replace("- [ ] T002 Build board API", "- [x] T002 Build board API"),
+        original_tasks.replace(
+            "- [ ] T002 Build board API", "- [x] T002 Build board API"
+        ),
         encoding="utf-8",
     )
 
@@ -74,8 +141,10 @@ def test_kanban_delta_records_task_moves_without_mutating_sdd_artifacts(
         "to": "done",
     } in moved["board"]["delta"]["movedCards"]
     assert (
-        project_path / "specs/001-demo/tasks.md"
-    ).read_text(encoding="utf-8").startswith("# Tasks")
+        (project_path / "specs/001-demo/tasks.md")
+        .read_text(encoding="utf-8")
+        .startswith("# Tasks")
+    )
     assert "workbench-kanban" not in (
         project_path / "specs/001-demo/tasks.md"
     ).read_text(encoding="utf-8")
@@ -102,17 +171,36 @@ def test_kanban_api_returns_board_refresh_and_history(tmp_path: Path) -> None:
 
     history_response = client.get(
         "/sdd/workbench/kanban/history",
-        params={"workspace_path": str(project_path), "scope_id": payload["scope"]["id"]},
+        params={
+            "workspace_path": str(project_path),
+            "scope_id": payload["scope"]["id"],
+        },
     )
     assert history_response.status_code == 200
     assert history_response.json()["count"] == 1
 
     detail_response = client.get(
         f"/sdd/workbench/kanban/history/{update_id}",
-        params={"workspace_path": str(project_path), "scope_id": payload["scope"]["id"]},
+        params={
+            "workspace_path": str(project_path),
+            "scope_id": payload["scope"]["id"],
+        },
     )
     assert detail_response.status_code == 200
     assert detail_response.json()["update"]["id"] == update_id
+
+    scopes_response = client.get(
+        "/sdd/workbench/kanban/scopes",
+        params={"workspace_path": str(project_path)},
+    )
+    assert scopes_response.status_code == 200
+    scopes_payload = scopes_response.json()
+    assert scopes_payload["kind"] == "codex.sddWorkbenchKanbanScopes"
+    assert {
+        "workspace_spec",
+        "workspace",
+    }.issubset({scope["type"] for scope in scopes_payload["scopes"]})
+    assert any(scope.get("specId") == "001-demo" for scope in scopes_payload["scopes"])
 
 
 def test_kanban_observes_project_factory_scope_without_workspace(
@@ -137,7 +225,126 @@ def test_kanban_observes_project_factory_scope_without_workspace(
     ]
 
 
+def test_kanban_scope_index_lists_workspace_factory_and_generated_scopes(
+    tmp_path: Path,
+) -> None:
+    projects_root = tmp_path / "projects"
+    project_path = projects_root / "demo"
+    generated_path = projects_root / "generated-demo"
+    _write_kanban_project(project_path)
+    generated_path.mkdir(parents=True)
+    project_service = SddProjectService(projects_root=str(projects_root))
+    project = project_service.get_project(str(project_path))
+    service = SddWorkbenchKanbanService(
+        projects_root=projects_root,
+        project_factory_service=_FakeProjectFactoryService(target_path=generated_path),
+    )
+
+    payload = service.build_scopes(workspace=project_path, project=project)
+
+    scopes = {scope["id"]: scope for scope in payload["scopes"]}
+    assert payload["scopes"][0]["id"] == "project-factory:job:job-1"
+    assert payload["defaultScopeId"] == f"workspace:{project.workspace_path}"
+    assert scopes[f"workspace:{project.workspace_path}"]["type"] == "workspace"
+    assert scopes[f"workspace:{project.workspace_path}:spec:001-demo"] == {
+        "id": f"workspace:{project.workspace_path}:spec:001-demo",
+        "type": "workspace_spec",
+        "group": "specs",
+        "title": "Demo Spec",
+        "workspacePath": project.workspace_path,
+        "specId": "001-demo",
+        "status": "in_progress",
+        "detail": "specs/001-demo",
+        "priority": 401,
+    }
+    assert scopes["project-factory:draft:draft-1"]["type"] == "project_factory_draft"
+    assert scopes["project-factory:job:job-1"]["jobId"] == "job-1"
+    assert scopes[f"workspace:{generated_path.resolve()}"]["type"] == (
+        "generated_workspace"
+    )
+
+    factory_only = service.build_scopes()
+    assert factory_only["defaultScopeId"] == "project-factory:job:job-1"
+
+
+def test_kanban_scheduler_refreshes_active_scope_from_source_changes(
+    tmp_path: Path,
+) -> None:
+    projects_root = tmp_path / "projects"
+    project_path = projects_root / "demo"
+    _write_kanban_project(project_path)
+    project_service = SddProjectService(projects_root=str(projects_root))
+    service = SddWorkbenchKanbanService(projects_root=projects_root)
+
+    first = service.build_board(
+        workspace=project_path,
+        project=project_service.get_project(str(project_path)),
+    ).payload
+    idle = service.run_scheduled_refreshes()
+
+    assert idle["counts"]["refreshed"] == 0
+    assert idle["skipped"][0]["reason"] == "not_due"
+
+    tasks_path = project_path / "specs/001-demo/tasks.md"
+    tasks_path.write_text(
+        tasks_path.read_text(encoding="utf-8").replace(
+            "- [ ] T002 Build board API",
+            "- [x] T002 Build board API",
+        ),
+        encoding="utf-8",
+    )
+    refreshed = service.run_scheduled_refreshes(debounce_seconds=0)
+
+    assert refreshed["counts"]["refreshed"] == 1
+    assert refreshed["refreshed"][0]["reason"] == "source_changed"
+    cache_path = next(
+        (project_path / ".codex/workbench-kanban").glob("workspace-*/board-cache.json")
+    )
+    cache = json.loads(cache_path.read_text(encoding="utf-8"))
+    assert cache["board"]["snapshotId"] != first["board"]["snapshotId"]
+    cards = {card["id"]: card for card in cache["board"]["cards"]}
+    assert cards["spec-task:001-demo:T002"]["column"] == "done"
+
+
+def test_kanban_preserves_project_factory_history_when_workspace_appears(
+    tmp_path: Path,
+) -> None:
+    projects_root = tmp_path / "projects"
+    project_path = projects_root / "demo"
+    _write_kanban_project(project_path)
+    project_service = SddProjectService(projects_root=str(projects_root))
+    service = SddWorkbenchKanbanService(
+        projects_root=projects_root,
+        project_factory_service=_FakeProjectFactoryService(target_path=project_path),
+    )
+
+    before_workspace = service.build_board(draft_id="draft-1", job_id="job-1").payload
+    before_update_id = before_workspace["latestUpdate"]["id"]
+    after_workspace = service.build_board(
+        workspace=project_path,
+        project=project_service.get_project(str(project_path)),
+        draft_id="draft-1",
+        job_id="job-1",
+    ).payload
+
+    assert {
+        "fromScope": "project-factory:job:job-1",
+        "toScope": f"workspace:{project_path}",
+        "status": "history_migrated",
+        "marker": "project_factory_history_continuity",
+    } in after_workspace["continuity"]
+    history = service.history(
+        workspace=project_path,
+        scope_id="project-factory:job:job-1",
+    )
+    history_ids = {item["id"] for item in history["history"]}
+    assert before_update_id in history_ids
+
+
 class _FakeProjectFactoryService:
+    def __init__(self, *, target_path: Path | None = None) -> None:
+        self._target_path = str(target_path) if target_path is not None else ""
+
     def list_drafts(self, *, limit: int = 50):
         return (
             {
@@ -160,6 +367,8 @@ class _FakeProjectFactoryService:
                 "current_phase": "android_preview_release",
                 "message": "Release upload failed",
                 "error": "Missing GH token",
+                "target_path": self._target_path,
+                "project_path": self._target_path,
                 "initial_preview_release": {
                     "phaseStatuses": {
                         "android_preview_release": {

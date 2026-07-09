@@ -17,4 +17,4 @@
 - [x] T015 Add widget tests for palette rendering and command selection.
 - [x] T016 Add regression tests that ordinary slash-containing messages still send normally.
 - [x] T017 Run mobile analyze and tests.
-- [ ] T018 Publish Android release if frontend code changes ship to users.
+- [x] T018 Publish Android release if frontend code changes ship to users.

@@ -209,7 +209,6 @@ class HttpCloudflareClient:
         return self._request(
             "GET",
             f"/zones/{zone_id}/workers/routes?{urlencode({'pattern': pattern})}",
-            use_dns_token=True,
         )
 
     def create_worker_route(
@@ -222,7 +221,6 @@ class HttpCloudflareClient:
             "POST",
             f"/zones/{zone_id}/workers/routes",
             json=payload,
-            use_dns_token=True,
         )
 
     def update_worker_route(
@@ -236,7 +234,6 @@ class HttpCloudflareClient:
             "PUT",
             f"/zones/{zone_id}/workers/routes/{route_id}",
             json=payload,
-            use_dns_token=True,
         )
 
     def list_worker_scripts(self, account_id: str) -> CloudflareLookupResult:
@@ -489,6 +486,7 @@ class CloudflarePreviewDoctorService:
             "cloudflare_zone_id_configured",
             "cloudflare_zone_name_configured",
             "preview_base_domain_configured",
+            "web_preview_apply_enabled",
             "cloudflare_account",
             "cloudflare_zone",
             "preview_dns_access",
@@ -547,6 +545,11 @@ class CloudflarePreviewDoctorService:
                 "preview_base_domain_configured",
                 bool((self._settings.preview_base_domain or "").strip()),
                 "PREVIEW_BASE_DOMAIN must be configured.",
+            ),
+            _check(
+                "web_preview_apply_enabled",
+                bool(self._settings.web_preview_apply_enabled),
+                "WEB_PREVIEW_APPLY_ENABLED must be true before Project Factory can create public previews.",
             ),
         ]
 

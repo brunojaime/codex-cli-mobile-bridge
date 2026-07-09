@@ -2,8 +2,8 @@ id: 008-sdd-workbench-lazy-loading
 slug: 008-sdd-workbench-lazy-loading
 title: SDD Workbench Lazy Loading
 description: Load SDD project summaries at Workbench startup and fetch full spec trees, plans, and tasks only when a spec is opened.
-status: active
-last_run_state: release-published
+status: complete
+last_run_state: implemented
 generated:
   title: false
   description: false

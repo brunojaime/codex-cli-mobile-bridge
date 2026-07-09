@@ -6,4 +6,4 @@ Plan: `Validation And Contract Tests`
 
 ## Checklist
 
-- [ ] T056 Add preview URL smoke test.
+- [x] T056 Add preview URL smoke test.

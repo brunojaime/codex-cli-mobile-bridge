@@ -6,4 +6,4 @@ Plan: `Admin Invite And Email Delivery`
 
 ## Checklist
 
-- [ ] T037 Add email provider abstraction and bridge-host provider settings.
+- [x] T037 Add email provider abstraction and bridge-host provider settings.

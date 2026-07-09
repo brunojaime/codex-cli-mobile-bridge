@@ -1,9 +1,119 @@
 spec_id: 002-sdd-visual-workbench
+status: complete
+summary:
+  total_tasks: 36
+  completed_tasks: 36
+  pending_tasks: 0
+implementation:
+  frontend:
+    - packages/codex_bridge_workbench/lib/src/widgets/sdd_explorer_panel.dart
+  tests:
+    - packages/codex_bridge_workbench/test/codex_bridge_workbench_test.dart
+  backend_contract_tests:
+    - tests/test_sdd_project.py
+    - tests/test_sdd_workbench_view.py
+completed_tasks:
+  - id: plan-2-task-3
+    evidence:
+      - "Full-screen diagram previews are covered by the Workbench widget tests."
+  - id: plan-2-task-5
+    evidence:
+      - "Diagram rows expose selectable region, node, and edge targets derived from Mermaid source when available."
+      - "Widget coverage verifies region and edge selection metadata is attached to feedback."
+  - id: plan-3-task-3
+    evidence:
+      - "Specs and diagrams tabs expose search fields that match spec text, tasks, and diagram metadata/source."
+      - "Widget coverage verifies matching and empty search states."
+  - id: plan-4-task-5
+    evidence:
+      - "Queued SDD feedback is grouped in the overview by spec, diagram, and artifact type."
+      - "Widget coverage submits diagram feedback and verifies grouped counters."
+  - id: plan-4-task-2
+    evidence:
+      - "Diagram selection includes a visible-region annotation target when exact SVG hit-testing is unavailable."
+  - id: plan-4-task-3
+    evidence:
+      - "Parsed diagram node and edge selections are captured in feedback context metadata."
+  - id: plan-5-task-4
+    evidence:
+      - "Task rows expose an Implement task Codex action with spec, plan, task, and workspace context."
+      - "Widget coverage captures the generated implementation action draft."
+  - id: plan-5-task-5
+    evidence:
+      - "Workbench Overview runs the real SDD doctor through /sdd/doctor and displays status, check counts, next actions, and check summaries."
+      - "Backend coverage verifies /sdd/doctor returns the doctor report contract."
+      - "Widget coverage verifies the doctor summary is rendered."
+  - id: plan-6-task-4
+    evidence:
+      - "Bridge/control app mode lists SDD projects first and requires selecting one before loading the dashboard."
+      - "Widget coverage verifies the project selector calls /sdd/projects before /sdd/project/summary."
+  - id: plan-6-task-5
+    evidence:
+      - "The overview surfaces diagram coverage by required diagram family."
+  - id: plan-6-task-6
+    evidence:
+      - "The overview surfaces Android release, updater, backend, and feedback references from the project manifest when present."
+pending_tasks: []
 requirements:
   FR-001:
     acceptance_criteria:
       - AC-001
     tasks:
-      - T001
+      - plan-1-task-1
+      - plan-1-task-2
+      - plan-1-task-3
+      - plan-1-task-4
+      - plan-1-task-5
+      - plan-1-task-6
+      - plan-1-task-7
     diagrams:
       - specs/002-sdd-visual-workbench/diagrams/classes.mmd
+  FR-002:
+    acceptance_criteria:
+      - AC-002
+    tasks:
+      - plan-2-task-1
+      - plan-2-task-2
+      - plan-2-task-3
+      - plan-2-task-4
+      - plan-2-task-5
+      - plan-2-task-6
+  FR-003:
+    acceptance_criteria:
+      - AC-003
+    tasks:
+      - plan-3-task-1
+      - plan-3-task-2
+      - plan-3-task-3
+      - plan-3-task-4
+      - plan-3-task-5
+  FR-004:
+    acceptance_criteria:
+      - AC-004
+    tasks:
+      - plan-4-task-1
+      - plan-4-task-2
+      - plan-4-task-3
+      - plan-4-task-4
+      - plan-4-task-5
+      - plan-4-task-6
+  FR-005:
+    acceptance_criteria:
+      - AC-005
+    tasks:
+      - plan-5-task-1
+      - plan-5-task-2
+      - plan-5-task-3
+      - plan-5-task-4
+      - plan-5-task-5
+  FR-006:
+    acceptance_criteria:
+      - AC-006
+    tasks:
+      - plan-6-task-1
+      - plan-6-task-2
+      - plan-6-task-3
+      - plan-6-task-4
+      - plan-6-task-5
+      - plan-6-task-6
+      - plan-6-task-7

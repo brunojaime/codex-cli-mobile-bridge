@@ -6,4 +6,4 @@ Plan: `Preview Runtime Data Model`
 
 ## Checklist
 
-- [ ] T016 Add password hash and invite token hash storage rules.
+- [x] T016 Add password hash and invite token hash storage rules.

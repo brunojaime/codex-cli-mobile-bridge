@@ -1,0 +1,44 @@
+# Project Factory Frontend Strategy Tasks
+
+- [x] T001 Define frontend strategy registry schema for `flutter` and `svelte`.
+- [x] T002 Define strategy capability fields for Android APK, Bridge installable app, Workbench APK entry, web preview, Cloudflare API, and D1.
+- [x] T003 Define strategy selection rules for explicit strategy, platform inference, and unsupported combinations.
+- [x] T004 Define strategy source-of-truth requirements across manifest, release contracts, runtime metadata, workflows, and release output.
+- [x] T005 Add Project Factory option payloads for known frontend strategies.
+- [x] T006 Add API schema fields for `frontendStrategy` in draft creation, dry-run, draft summaries, and job payloads.
+- [x] T007 Add mobile UI strategy selector with Flutter default and Svelte web-first option.
+- [x] T008 Persist selected strategy in Project Factory draft state.
+- [x] T009 Add manifest validation for unsupported strategy/platform combinations.
+- [x] T010 Add generated spec/plan/tasks text that names the selected strategy and release capability contract.
+- [x] T011 Refactor current generated Flutter files into explicit Flutter strategy helpers.
+- [x] T012 Keep Flutter Android preview workflow on `android-preview-v*` with `APP_RUNTIME_PROFILE=preview`.
+- [x] T013 Keep Flutter web preview build pointed at `https://preview.nienfos.com/{slug}/api`.
+- [x] T014 Keep Flutter Workbench preview visibility tests for owner/admin.
+- [x] T015 Add Flutter strategy regression tests proving existing Initial Preview Release behavior is unchanged.
+- [x] T016 Generate Svelte app scaffold under `apps/web`.
+- [x] T017 Generate Svelte package scripts for install, lint, test, build, and preview validation.
+- [x] T018 Generate Svelte runtime config that requires Cloudflare preview API for Initial Preview Release.
+- [x] T019 Generate Svelte tests that fail on localhost, mock, placeholder, or missing preview API config.
+- [x] T020 Generate Svelte web preview build script and output contract.
+- [x] T021 Add Svelte strategy metadata to `.codex/project.yaml` and `release/release-contracts.yaml`.
+- [x] T022 Add Svelte web preview manifest entries for build command, output dir, and static assets.
+- [x] T023 Reuse Cloudflare Worker route, health, D1 migrations, and Preview API routes for both strategies.
+- [x] T024 Make Worker local preview tests strategy-neutral.
+- [x] T025 Make Cloudflare apply validate strategy-specific asset output before reporting ready.
+- [x] T026 Make release orchestration skip Android APK phases only for strategies that do not promise APK.
+- [x] T027 Make web-only Svelte release output state `installable_android=false` and `web_preview_ready=true` only after public health passes.
+- [x] T028 Block Svelte plus Android installability unless a named wrapper strategy is selected.
+- [x] T029 Prevent Bridge installable app registration for web-only Svelte projects.
+- [x] T030 Add future wrapper extension point for `svelte-capacitor-android` without implementing it.
+- [x] T031 Add generated project validation for strategy source-of-truth consistency.
+- [x] T032 Add release profile validation for strategy capability promises.
+- [x] T033 Add backend tests for strategy selection, manifest validation, and draft/job payloads.
+- [x] T034 Add generator tests for Flutter strategy output.
+- [x] T035 Add generator tests for Svelte strategy output.
+- [x] T036 Add Cloudflare preview deploy tests for strategy-specific web asset validation.
+- [x] T037 Add release output tests that fail on overpromised APK/Bridge installability.
+- [x] T038 Add mobile UI tests for strategy selector and unsupported combination blockers.
+- [x] T039 Add SDD Workbench readiness fields for selected strategy and capability blockers.
+- [x] T040 Update documentation/runbooks for Flutter and Svelte preview release paths.
+- [x] T041 Validate spec, plan, tasks, traceability, and metadata.
+- [x] T042 Run the full Project Factory, Cloudflare, mobile UI, Svelte generator, and SDD validation suites.

@@ -24,6 +24,7 @@ def test_cloudflare_doctor_reports_missing_configuration_without_client_calls() 
             cloudflare_dns_api_token=None,
             cloudflare_account_id=None,
             cloudflare_zone_id=None,
+            web_preview_apply_enabled=False,
         ),
         client=fake_client,
     )
@@ -36,6 +37,7 @@ def test_cloudflare_doctor_reports_missing_configuration_without_client_calls() 
     checks = {item["code"]: item for item in payload["checks"]}
     assert checks["cloudflare_platform_token_configured"]["ok"] is False
     assert checks["cloudflare_dns_token_configured"]["ok"] is False
+    assert checks["web_preview_apply_enabled"]["ok"] is False
     assert fake_client.calls == []
     assert payload["planner"]["dry_run"] is True
 
@@ -73,6 +75,7 @@ def test_cloudflare_doctor_validates_required_cloudflare_surfaces() -> None:
     assert checks["workers_routes_edit_access"]["ok"] is True
     assert checks["d1_access"]["ok"] is True
     assert checks["pages_project"]["ok"] is True
+    assert checks["web_preview_apply_enabled"]["ok"] is True
     assert checks["r2_optional_access"]["ok"] is True
     assert checks["r2_optional_access"]["status"] == "disabled_or_blocked"
     assert "platform-token" not in str(payload)
@@ -120,6 +123,29 @@ def test_cloudflare_doctor_blocks_missing_workers_routes_edit_permission() -> No
     checks = {item["code"]: item for item in payload["checks"]}
     assert checks["workers_routes_edit_access"]["ok"] is False
     assert "Workers Routes: Edit" in checks["workers_routes_edit_access"]["detail"]
+
+
+def test_cloudflare_doctor_blocks_apply_disabled_with_valid_cloudflare_config() -> None:
+    service = CloudflarePreviewDoctorService(
+        settings=_configured_settings(web_preview_apply_enabled=False),
+        client=_FakeCloudflareClient(
+            dns_records=[
+                {
+                    "id": "dns-1",
+                    "name": "preview.nienfos.com",
+                    "type": "CNAME",
+                },
+            ],
+        ),
+    )
+
+    payload = service.doctor()
+
+    assert payload["ok"] is False
+    assert payload["status"] == "blocked_configuration"
+    checks = {item["code"]: item for item in payload["checks"]}
+    assert checks["web_preview_apply_enabled"]["ok"] is False
+    assert "WEB_PREVIEW_APPLY_ENABLED" in checks["web_preview_apply_enabled"]["detail"]
 
 
 def test_cloudflare_provisioning_planner_is_dry_run_and_side_effect_free() -> None:
@@ -252,11 +278,13 @@ def test_http_cloudflare_client_uses_expected_paths_and_tokens(monkeypatch) -> N
     assert calls[5]["url"].endswith(
         "/zones/zone-1/workers/routes?pattern=preview.nienfos.com%2F%2A",
     )
-    assert calls[5]["headers"]["Authorization"] == "Bearer dns-token"
+    assert calls[5]["headers"]["Authorization"] == "Bearer platform-token"
     assert calls[6]["method"] == "POST"
     assert calls[6]["url"].endswith("/zones/zone-1/workers/routes")
+    assert calls[6]["headers"]["Authorization"] == "Bearer platform-token"
     assert calls[7]["method"] == "PUT"
     assert calls[7]["url"].endswith("/zones/zone-1/workers/routes/route-1")
+    assert calls[7]["headers"]["Authorization"] == "Bearer platform-token"
     assert calls[8]["url"].endswith("/accounts/acct-1/d1/database")
     assert calls[9]["method"] == "POST"
     assert calls[9]["url"].endswith("/accounts/acct-1/d1/database")
@@ -269,7 +297,7 @@ def test_http_cloudflare_client_uses_expected_paths_and_tokens(monkeypatch) -> N
     assert calls[12]["url"].endswith("/accounts/acct-1/pages/projects")
 
 
-def _configured_settings() -> Settings:
+def _configured_settings(*, web_preview_apply_enabled: bool = True) -> Settings:
     return Settings(
         cloudflare_api_token="platform-token",
         cloudflare_dns_api_token="dns-token",
@@ -281,6 +309,7 @@ def _configured_settings() -> Settings:
         preview_d1_database_name="nienfos-preview",
         preview_pages_project_name="nienfos-preview-web",
         preview_r2_bucket_name=None,
+        web_preview_apply_enabled=web_preview_apply_enabled,
     )
 
 

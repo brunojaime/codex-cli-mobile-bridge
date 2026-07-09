@@ -1,5 +1,5 @@
 # T017 Run mobile analyze and tests
 
-Status: planned
+Status: done
 
 Run frontend validation after implementation.

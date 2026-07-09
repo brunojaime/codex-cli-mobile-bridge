@@ -6,4 +6,4 @@ Plan: `Preview Runtime Data Model`
 
 ## Checklist
 
-- [ ] T019 Add D1 schema tests using local or mocked D1 execution.
+- [x] T019 Add D1 schema tests using local or mocked D1 execution.

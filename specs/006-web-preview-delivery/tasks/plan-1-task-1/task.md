@@ -6,4 +6,4 @@ Plan: `Preview Contract And SDD Alignment`
 
 ## Checklist
 
-- [ ] T001 Add `006-web-preview-delivery` SDD metadata and link it to Project Factory.
+- [x] T001 Add `006-web-preview-delivery` SDD metadata and link it to Project Factory.

@@ -6,4 +6,4 @@ Plan: `Diagram Rendering`
 
 ## Checklist
 
-- [ ] Provide full-screen diagram inspection.
+- [x] Provide full-screen diagram inspection.

@@ -6,4 +6,4 @@ Plan: `Validation And Contract Tests`
 
 ## Checklist
 
-- [ ] T053 Add Preview API v1 contract test suite.
+- [x] T053 Add Preview API v1 contract test suite.

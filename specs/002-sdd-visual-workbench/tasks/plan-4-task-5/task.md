@@ -6,4 +6,4 @@ Plan: `Feedback Linked To Specs And Diagrams`
 
 ## Checklist
 
-- [ ] Show feedback grouped by spec, component, actor, entity, and diagram.
+- [x] Show feedback grouped by spec, component, actor, entity, and diagram.

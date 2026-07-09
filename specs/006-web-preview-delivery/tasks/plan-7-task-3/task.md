@@ -6,4 +6,4 @@ Plan: `Project Factory Backend Integration`
 
 ## Checklist
 
-- [ ] T043 Add preview delivery stage to Project Factory job runner after local validation.
+- [x] T043 Add preview delivery stage to Project Factory job runner after local validation.

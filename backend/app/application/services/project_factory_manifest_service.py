@@ -11,6 +11,7 @@ DEFAULT_PLATFORMS = ("ios", "android", "web")
 DEFAULT_ROLES = ("owner", "admin", "manager", "staff", "customer", "guest")
 DEFAULT_BACKEND = "fastapi"
 DEFAULT_FRONTEND = "flutter"
+DEFAULT_FRONTEND_STRATEGY = "flutter"
 DEFAULT_CREATION_GENERATOR_RUNS = 20
 DEFAULT_CREATION_REVIEWER_RUNS = 20
 DEFAULT_FIRST_RELEASE_MODE = "preview"
@@ -22,6 +23,50 @@ ALLOWED_FIRST_RELEASE_MODES = frozenset({"preview", "mock"})
 BLOCKED_INITIAL_RELEASE_MODES = frozenset({"production", "promote", "promotion", "real"})
 SLUG_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]{0,78}[a-z0-9]$")
 
+FRONTEND_STRATEGIES: dict[str, dict[str, Any]] = {
+    "flutter": {
+        "id": "flutter",
+        "display_name": "Flutter",
+        "framework": "flutter",
+        "project_kind": "mobile_web",
+        "source_root": "apps/mobile",
+        "web_build_command": "scripts/build_web_preview.sh",
+        "web_build_output": "build/web-preview/{slug}",
+        "preview_api_env": "API_BASE_URL",
+        "runtime_profile_env": "APP_RUNTIME_PROFILE",
+        "api_runtime_env": "API_RUNTIME",
+        "supports_android_preview_apk": True,
+        "supports_bridge_installable_app": True,
+        "supports_workbench_apk_entry": True,
+        "cloudflare_preview_required": True,
+        "d1_preview_required": True,
+        "release_channel": "prerelease",
+        "production_ready": False,
+        "mock_or_demo": False,
+    },
+    "svelte": {
+        "id": "svelte",
+        "display_name": "Svelte",
+        "framework": "svelte",
+        "project_kind": "web",
+        "source_root": "apps/web",
+        "web_build_command": "scripts/build_web_preview.sh",
+        "web_build_output": "build/web-preview/{slug}",
+        "preview_api_env": "VITE_API_BASE_URL",
+        "runtime_profile_env": "VITE_APP_RUNTIME_PROFILE",
+        "api_runtime_env": "VITE_API_RUNTIME",
+        "supports_android_preview_apk": False,
+        "supports_bridge_installable_app": False,
+        "supports_workbench_apk_entry": False,
+        "cloudflare_preview_required": True,
+        "d1_preview_required": True,
+        "release_channel": "prerelease",
+        "production_ready": False,
+        "mock_or_demo": False,
+    },
+}
+ALLOWED_FRONTEND_STRATEGIES = frozenset(FRONTEND_STRATEGIES)
+
 
 @dataclass(frozen=True, slots=True)
 class ProjectFactoryManifestInput:
@@ -31,11 +76,14 @@ class ProjectFactoryManifestInput:
     slug: str | None = None
     platforms: tuple[str, ...] = DEFAULT_PLATFORMS
     backend: str = DEFAULT_BACKEND
+    frontend_strategy: str = DEFAULT_FRONTEND_STRATEGY
     logo_mode: str = "generate"
     first_release_mode: str = DEFAULT_FIRST_RELEASE_MODE
+    initial_admin_emails: tuple[str, ...] = ()
     visual_reference_paths: tuple[str, ...] = ()
     visual_reference_assets: tuple[Mapping[str, object], ...] = ()
     project_assets: tuple[Mapping[str, object], ...] = ()
+    guided_intake_enabled: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,6 +112,7 @@ class ProjectFactoryManifestPlan:
             "target_path": self.target_path,
             "manifest_path": self.manifest_path,
             "first_release_mode": _first_release_mode_from_manifest(self.manifest),
+            "frontend_strategy": _frontend_strategy_from_manifest(self.manifest),
             "manifest": self.manifest,
             "errors": [
                 {
@@ -99,9 +148,18 @@ class ProjectFactoryManifestService:
         self._validate_slug(slug, errors)
         self._validate_platforms(request.platforms, errors)
         self._validate_backend(request.backend, errors)
+        frontend_strategy = normalize_frontend_strategy(
+            request.frontend_strategy,
+            request.platforms,
+            errors,
+        )
         self._validate_logo_mode(request.logo_mode, errors)
         first_release_mode = normalize_first_release_mode(
             request.first_release_mode,
+            errors,
+        )
+        initial_admin_emails = _normalize_admin_emails(
+            request.initial_admin_emails,
             errors,
         )
         self._validate_visual_reference_paths(request.visual_reference_paths, errors)
@@ -134,8 +192,10 @@ class ProjectFactoryManifestService:
                 primary_goal=primary_goal,
                 platforms=request.platforms,
                 backend=request.backend,
+                frontend_strategy=frontend_strategy,
                 logo_mode=request.logo_mode,
                 first_release_mode=first_release_mode,
+                initial_admin_emails=initial_admin_emails,
                 visual_reference_paths=request.visual_reference_paths,
                 visual_reference_assets=request.visual_reference_assets,
                 project_assets=request.project_assets,
@@ -327,12 +387,19 @@ def _build_manifest(
     primary_goal: str,
     platforms: tuple[str, ...],
     backend: str,
+    frontend_strategy: str,
     logo_mode: str,
     first_release_mode: str,
+    initial_admin_emails: tuple[str, ...],
     visual_reference_paths: tuple[str, ...],
     visual_reference_assets: tuple[Mapping[str, object], ...],
     project_assets: tuple[Mapping[str, object], ...],
 ) -> dict[str, Any]:
+    strategy = _strategy_payload(frontend_strategy, slug)
+    is_svelte = frontend_strategy == "svelte"
+    runtime_env = str(strategy["runtime_profile_env"])
+    api_runtime_env = str(strategy["api_runtime_env"])
+    preview_api_env = str(strategy["preview_api_env"])
     return {
         "schema_version": 1,
         "name": name,
@@ -340,11 +407,21 @@ def _build_manifest(
         "business_type": business_type,
         "primary_goal": primary_goal,
         "platforms": {platform: platform in platforms for platform in DEFAULT_PLATFORMS},
+        "frontend_strategy": frontend_strategy,
         "frontend": {
-            "framework": DEFAULT_FRONTEND,
+            "framework": strategy["framework"],
+            "strategy": frontend_strategy,
+            "display_name": strategy["display_name"],
+            "project_kind": strategy["project_kind"],
+            "source_root": strategy["source_root"],
             "responsive_web": True,
-            "mobile_first": True,
-            "mobile_template": "flutter-runtime-profiles-auth-admin-notifications-v1",
+            "mobile_first": frontend_strategy == "flutter",
+            "mobile_template": (
+                "flutter-runtime-profiles-auth-admin-notifications-v1"
+                if frontend_strategy == "flutter"
+                else None
+            ),
+            "strategy_capabilities": strategy,
         },
         "backend": {
             "framework": backend,
@@ -356,7 +433,9 @@ def _build_manifest(
             "default_profile": "preview",
             "first_release_mode": first_release_mode,
             "allowed": ["mock", "preview", "real", "staging"],
-            "env": "APP_RUNTIME_PROFILE",
+            "env": runtime_env,
+            "api_runtime_env": api_runtime_env,
+            "preview_api_env": preview_api_env,
             "preview": {
                 "default_for_initial_release": True,
                 "backend_required": True,
@@ -364,21 +443,23 @@ def _build_manifest(
                 "api_runtime": "cloudflare_preview",
                 "api_base_url": f"https://preview.nienfos.com/{slug}/api",
                 "data_persistence": "cloudflare_d1",
-                "release_tag_patterns": ["android-preview-v*"],
+                "release_tag_patterns": [] if is_svelte else ["android-preview-v*"],
             },
             "mock": {
                 "opt_in": True,
                 "backend_required": False,
                 "mock_or_demo": True,
                 "seed_role_selector": True,
-                "release_tag_patterns": ["android-mock-v*", "android-local-v*"],
+                "release_tag_patterns": (
+                    [] if is_svelte else ["android-mock-v*", "android-local-v*"]
+                ),
             },
             "real": {
                 "default_for_productive_release": True,
                 "backend_required": True,
                 "mock_or_demo": False,
                 "seed_role_selector": False,
-                "release_tag_patterns": ["android-v*"],
+                "release_tag_patterns": [] if is_svelte else ["android-v*"],
             },
             "staging": {
                 "backend_required": True,
@@ -456,6 +537,13 @@ def _build_manifest(
             "user_management": True,
             "role_management": True,
             "permission_management": True,
+            "initial_invites": {
+                "required_for_web_preview": True,
+                "emails": list(initial_admin_emails),
+                "default_role": "owner",
+                "dedupe": True,
+                "delivery": "web_preview_invite_email_or_manual_link",
+            },
         },
         "seed_admin": {
             "enabled_by_env": True,
@@ -501,23 +589,37 @@ def _build_manifest(
             "mock_or_demo_release_opt_in": True,
             "productive_release_required": False,
             "ci_contracts": [
-                "android-preview-v tags must use APP_RUNTIME_PROFILE=preview",
-                "android-preview-v tags must use https://preview.nienfos.com/<slug>/api",
-                "android-v tags must not use APP_RUNTIME_PROFILE=mock",
-                "android-v tags must not use LOCAL_DATA_MODE=true",
-                "productive releases must not use localhost, placeholder, or example API URLs",
-                "productive updater metadata must return mock_or_demo=false",
-                "mock releases must use android-mock-v* or android-local-v* tags",
-                "APK assets and release metadata are required",
-                "Workbench integration must be present or blocked with exact command",
+                *(
+                    [
+                        "VITE_APP_RUNTIME_PROFILE must be preview for Initial Preview Release",
+                        "VITE_API_RUNTIME must be cloudflare_preview",
+                        f"VITE_API_BASE_URL must be https://preview.nienfos.com/{slug}/api",
+                        "Svelte web-first must not claim mobile binary or Bridge installability without wrapper strategy",
+                        "productive releases must not use localhost, placeholder, or example API URLs",
+                    ]
+                    if is_svelte
+                    else [
+                        "android-preview-v tags must use APP_RUNTIME_PROFILE=preview",
+                        "android-preview-v tags must use https://preview.nienfos.com/<slug>/api",
+                        "android-v tags must not use APP_RUNTIME_PROFILE=mock",
+                        "android-v tags must not use LOCAL_DATA_MODE=true",
+                        "productive releases must not use localhost, placeholder, or example API URLs",
+                        "productive updater metadata must return mock_or_demo=false",
+                        "mock releases must use android-mock-v* or android-local-v* tags",
+                        "APK assets and release metadata are required",
+                        "Workbench integration must be present or blocked with exact command",
+                    ]
+                ),
             ],
-            "app_store_ready": True,
-            "play_store_ready": True,
+            "app_store_ready": not is_svelte,
+            "play_store_ready": not is_svelte,
             "publish_contract": {
                 "local_git_commit_required": True,
                 "github_repository_required": True,
                 "push_required": True,
                 "release_status_must_be_explicit": True,
+                "bridge_installable_required": not is_svelte,
+                "android_preview_apk_required": not is_svelte,
             },
         },
         "cloud": {
@@ -560,6 +662,76 @@ def normalize_first_release_mode(
     return DEFAULT_FIRST_RELEASE_MODE
 
 
+def _normalize_admin_emails(
+    values: tuple[str, ...],
+    errors: list[ProjectFactoryValidationError],
+) -> tuple[str, ...]:
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for raw in values:
+        email = raw.strip().lower()
+        if not email:
+            continue
+        if len(email) > 254 or "@" not in email:
+            errors.append(
+                ProjectFactoryValidationError(
+                    "invalid_admin_email",
+                    "initial_admin_emails",
+                    "Initial admin emails must be valid email addresses.",
+                )
+            )
+            continue
+        local, domain = email.rsplit("@", 1)
+        if not local or not domain or "." not in domain:
+            errors.append(
+                ProjectFactoryValidationError(
+                    "invalid_admin_email",
+                    "initial_admin_emails",
+                    "Initial admin emails must be valid email addresses.",
+                )
+            )
+            continue
+        if email in seen:
+            continue
+        seen.add(email)
+        normalized.append(email)
+    return tuple(normalized)
+
+
+def normalize_frontend_strategy(
+    value: str | None,
+    platforms: tuple[str, ...],
+    errors: list[ProjectFactoryValidationError] | None = None,
+) -> str:
+    strategy = (value or DEFAULT_FRONTEND_STRATEGY).strip().lower()
+    if not strategy:
+        strategy = DEFAULT_FRONTEND_STRATEGY
+    if strategy not in ALLOWED_FRONTEND_STRATEGIES:
+        if errors is not None:
+            errors.append(
+                ProjectFactoryValidationError(
+                    "unsupported_frontend_strategy",
+                    "frontend_strategy",
+                    "Frontend strategy must be one of: "
+                    + ", ".join(sorted(ALLOWED_FRONTEND_STRATEGIES))
+                    + ".",
+                )
+            )
+        return DEFAULT_FRONTEND_STRATEGY
+    mobile_platforms = {"android", "ios"} & set(platforms)
+    if strategy == "svelte" and mobile_platforms and errors is not None:
+        errors.append(
+            ProjectFactoryValidationError(
+                "unsupported_frontend_strategy_platforms",
+                "frontend_strategy",
+                "Svelte is web-first in this release and cannot promise "
+                "Android/iOS or installable APK output. Select Flutter for "
+                "mobile platforms.",
+            )
+        )
+    return strategy
+
+
 def _first_release_mode_from_manifest(manifest: Mapping[str, Any]) -> str:
     runtime_profiles = manifest.get("runtime_profiles")
     if isinstance(runtime_profiles, Mapping):
@@ -572,6 +744,24 @@ def _first_release_mode_from_manifest(manifest: Mapping[str, Any]) -> str:
         if isinstance(mode, str) and mode.strip():
             return mode
     return DEFAULT_FIRST_RELEASE_MODE
+
+
+def _frontend_strategy_from_manifest(manifest: Mapping[str, Any]) -> str:
+    strategy = manifest.get("frontend_strategy")
+    if isinstance(strategy, str) and strategy.strip():
+        return strategy
+    frontend = manifest.get("frontend")
+    if isinstance(frontend, Mapping):
+        strategy = frontend.get("strategy")
+        if isinstance(strategy, str) and strategy.strip():
+            return strategy
+    return DEFAULT_FRONTEND_STRATEGY
+
+
+def _strategy_payload(strategy: str, slug: str) -> dict[str, Any]:
+    payload = dict(FRONTEND_STRATEGIES[strategy])
+    payload["web_build_output"] = str(payload["web_build_output"]).format(slug=slug)
+    return payload
 
 
 def _normalize_slug(value: str) -> str:

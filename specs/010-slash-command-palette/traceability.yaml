@@ -1,0 +1,57 @@
+spec_id: 010-slash-command-palette
+title: Slash Command Palette
+status: complete
+
+requirements:
+  FR-001:
+    name: Command registry and availability contract
+    acceptance_criteria: [AC-001, AC-002]
+    tasks: [T001, T002]
+  FR-002:
+    name: Composer slash palette UI
+    acceptance_criteria: [AC-003, AC-004]
+    tasks: [T003, T004]
+  FR-003:
+    name: Command registration and dispatch
+    acceptance_criteria: [AC-005, AC-006, AC-007, AC-008]
+    tasks: [T005, T006, T010, T011, T012, T013]
+  FR-004:
+    name: Feature-owned contextual commands
+    acceptance_criteria: [AC-009]
+    tasks: [T007, T008, T009]
+  FR-005:
+    name: Validation and Android publication
+    acceptance_criteria: [AC-010]
+    tasks: [T014, T015, T016, T017, T018]
+
+implementation:
+  status: complete
+  completed_tasks:
+    - T001
+    - T002
+    - T003
+    - T004
+    - T005
+    - T006
+    - T007
+    - T008
+    - T009
+    - T010
+    - T011
+    - T012
+    - T013
+    - T014
+    - T015
+    - T016
+    - T017
+    - T018
+  pending_tasks: []
+  evidence:
+    - frontend/mobile_app/lib/src/models/slash_command.dart defines the slash command model, action kinds, contextual provider interface, default global provider, New Project provider, slash-token parser, filtering, and availability guards.
+    - frontend/mobile_app/lib/src/screens/chat_screen.dart renders the palette from provider output and dispatches insertText, sendMessage, openPanel, route, backend, callback, and disabled actions through one switch.
+    - The mobile composer registers global commands including /new-project, /status, /review, /feedback, /compact, /diff, /apps, /workbench, disabled guarded commands, and New Project contextual commands.
+    - /apps opens the existing installable apps sheet; /workbench opens the existing Codex tools/Workbench-capable panel and both are guarded when no active backend is available.
+    - frontend/mobile_app/test/slash_command_model_test.dart covers command parsing, filtering, contextual providers, and availability guards.
+    - frontend/mobile_app/test/slash_command_palette_test.dart covers palette filtering, disabled-command safety, /new-project callback dispatch, /apps and /workbench panel dispatch, unavailable panel commands, and normal slash-containing message send behavior.
+    - Android release android-v1.0.0-build.88 points at the current HEAD that contains the slash command palette code and was published with APK assets on 2026-07-09.
+  pending_reasons: {}

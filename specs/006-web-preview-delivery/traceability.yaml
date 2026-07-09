@@ -1,7 +1,152 @@
 spec_id: 006-web-preview-delivery
+title: Web Preview Delivery Platform
+status: complete
+
 requirements:
   FR-001:
-    acceptance_criteria:
-      - AC-001
-    tasks:
-      - T001
+    name: Preview contract and SDD alignment
+    acceptance_criteria: [AC-001, AC-002, AC-009, AC-010, AC-013, AC-016]
+    tasks: [T001, T002, T003, T004, T005, T006]
+    status: complete
+  FR-002:
+    name: Cloudflare configuration and client boundary
+    acceptance_criteria: [AC-001, AC-010, AC-011, AC-013, AC-014]
+    tasks: [T007, T008, T009, T010, T011, T012]
+    status: complete
+  FR-003:
+    name: Preview runtime data model
+    acceptance_criteria: [AC-004, AC-005, AC-006, AC-011]
+    tasks: [T013, T014, T015, T016, T017, T018, T019]
+    status: complete
+  FR-004:
+    name: Cloudflare Worker Preview Runtime
+    acceptance_criteria: [AC-005, AC-006, AC-007, AC-008, AC-012]
+    tasks: [T020, T021, T022, T023, T024, T025, T026, T027]
+    status: complete
+  FR-005:
+    name: Flutter Web Preview Adapter
+    acceptance_criteria: [AC-007, AC-008]
+    tasks: [T028, T029, T030, T031, T032, T033]
+    status: complete
+  FR-006:
+    name: Admin invite and email delivery
+    acceptance_criteria: [AC-003, AC-004, AC-005, AC-010, AC-011]
+    tasks: [T034, T035, T036, T037, T038, T039, T040]
+    status: complete
+  FR-007:
+    name: Project Factory backend integration
+    acceptance_criteria: [AC-001, AC-002, AC-009, AC-010]
+    tasks: [T041, T042, T043, T044, T045, T046, T047]
+    status: complete
+  FR-008:
+    name: Mobile and Workbench UX
+    acceptance_criteria: [AC-003, AC-009, AC-015]
+    tasks: [T048, T049, T050, T051, T052]
+    status: complete
+  FR-009:
+    name: Validation and contract tests
+    acceptance_criteria: [AC-008, AC-010, AC-011, AC-013, AC-016]
+    tasks: [T053, T054, T055, T056, T057, T058, T059]
+    status: complete
+  FR-010:
+    name: Operations and documentation
+    acceptance_criteria: [AC-010, AC-011, AC-012, AC-016]
+    tasks: [T060, T061, T062, T063, T064, T065, T066, T067, T068]
+    status: complete
+
+implementation:
+  status: complete
+  completed_tasks:
+    - T001
+    - T002
+    - T003
+    - T004
+    - T005
+    - T006
+    - T007
+    - T008
+    - T009
+    - T010
+    - T011
+    - T012
+    - T013
+    - T017
+    - T018
+    - T014
+    - T015
+    - T016
+    - T019
+    - T020
+    - T021
+    - T022
+    - T023
+    - T024
+    - T025
+    - T026
+    - T027
+    - T028
+    - T029
+    - T030
+    - T031
+    - T032
+    - T033
+    - T034
+    - T035
+    - T036
+    - T037
+    - T038
+    - T039
+    - T040
+    - T041
+    - T042
+    - T043
+    - T044
+    - T045
+    - T046
+    - T047
+    - T048
+    - T049
+    - T050
+    - T051
+    - T052
+    - T053
+    - T054
+    - T055
+    - T056
+    - T057
+    - T058
+    - T059
+    - T060
+    - T061
+    - T062
+    - T063
+    - T064
+    - T065
+    - T066
+    - T067
+    - T068
+  pending_tasks: []
+  evidence:
+    - specs/006-web-preview-delivery/spec.md defines the Preview API v1, stable URL, lifecycle, job payload, security, cost, and additive-release contracts.
+    - backend/app/application/services/cloudflare_preview_service.py implements Cloudflare doctor, dry-run planning, DNS, Worker, D1, Pages, and optional R2 client boundaries with tests in tests/test_cloudflare_preview_doctor.py.
+    - backend/app/application/services/web_preview_deploy_service.py implements web preview plan, apply gate, idempotent Cloudflare apply, preview state/history, D1 invite sync, blocked/failed persistence, and API coverage in tests/test_web_preview_deploy_service.py.
+    - backend/app/application/services/web_preview_deploy_service.py now persists expires_at, disabled_at, disabled_reason, updated_at, and app-scoped audit_events, exposes extend/disable/expire operations, refreshes elapsed active previews to expired, and blocks invite sync for inactive previews.
+    - backend/app/application/services/web_preview_invite_service.py implements signed invite tokens, token hashing, TTL validation, create/list/revoke/sync, no plaintext token persistence, and API coverage in tests/test_web_preview_invite_service.py.
+    - backend/app/application/services/web_preview_invite_service.py records invite_created, invite_resent, invite_expired, and invite_revoked audit events and rejects create/resend when a preview is disabled or expired.
+    - backend/app/application/services/web_preview_invite_service.py now validates and deduplicates admin invite email/role input, persists expiration and delivery metadata, supports manual-link fallback, supports SMTP delivery settings, and exposes resend/expire lifecycle operations.
+    - backend/app/application/services/project_factory_manifest_service.py and Project Factory API schemas persist fallback structured initialAdminEmails for non-chat flows, with deduped admin invite defaults covered by tests/test_project_factory_manifest_service.py and tests/test_project_factory_api.py.
+    - backend/app/application/services/project_factory_generator_service.py generates deploy/web-preview manifests, Worker runtime, wrangler example, D1 migrations, web preview build/deploy/validation scripts, preview runtime config, and generated docs.
+    - backend/app/application/services/project_factory_generator_service.py now generates idempotent app-scoped D1 migrations covering preview apps, builds, tenants, users, sessions, roles, admin invites, notifications, domain entities, domain records, assets, app updates, audit events, and generic events.
+    - backend/app/application/services/project_factory_generator_service.py generates preview_audit_events D1 storage, best-effort Worker audit events for bootstrap/login/logout/invite access, smoke_web_preview.sh, and smoke_preview_api.sh.
+    - The generated Worker covers health, auth login/me/logout, admin bootstrap/users/roles, notifications, app updates, domain CRUD, invite-token access, D1 persistence, single-use/revoked/expired invite enforcement, and local contract harness validation.
+    - The generated Flutter template includes preview runtime config, real /invites/accept password setup UI, login/register fallback for non-preview runtimes, admin routing for owner/admin users, and generated Flutter tests for runtime config, invite accept, login, Workbench visibility, and admin gating.
+    - backend/app/application/services/web_preview_deploy_service.py recovers interrupted applying/failed/blocked preview states, verifies matching active previews without duplicate apply, reuses existing Cloudflare resources, and records preview_recovery_started/preview_recovery_verified audit events.
+    - frontend/mobile_app/lib/src/services/api_client.dart exposes create/resend/expire web-preview invite calls and frontend/mobile_app/lib/src/models/project_factory.dart parses email, role, expiration, delivery, and resend metadata.
+    - frontend/mobile_app/lib/src/services/api_client.dart exposes web preview extend/disable/expire calls, frontend/mobile_app/lib/src/models/project_factory.dart parses lifecycle/audit fields, and frontend/mobile_app/lib/src/screens/chat_screen.dart shows open/copy/invite/resend/expire/extend/disable actions.
+    - frontend/mobile_app/lib/src/screens/chat_screen.dart Project Factory intake/kickoff copy requires initial admin emails before build-ready and includes preview URL, API URL, D1, invite delivery, expiration/default TTL, Android preview APK, Bridge registration, blockers, and validation expectations.
+    - backend/app/application/services/sdd_workbench_view_service.py exposes preview_readiness from release/preview-runtime.json with status, blockers, preview URL, API URL, runtime profile, tag pattern, Bridge requirement, productionReady, and mockOrDemo fields.
+    - Generated release/aws-domain-delegation-runbook.md documents Route 53 delegation, registrar auto-renew checks, AWS CLI commands, and blocked states when ownership or renewal cannot be verified.
+    - Generated release/email-provider-runbook.md documents WEB_PREVIEW_EMAIL_PROVIDER SMTP/manual modes, sender-domain TXT checks, invite create/resend commands, and manual-link fallback handling.
+    - Generated release/dns-cloudflare-troubleshooting.md documents required Cloudflare env vars, doctor/plan commands, dig propagation checks, health/smoke commands, and activation troubleshooting states.
+    - Generated validation and regression tests preserve Android release workflow, updater metadata, release scripts, installable-app registration, no-secret behavior, and cost posture checks after web preview integration.
+  remaining_scope: []

@@ -420,6 +420,61 @@ class SddDiagram extends SddFile {
   }
 }
 
+class SddDoctorCheck {
+  const SddDoctorCheck({
+    required this.name,
+    required this.status,
+    required this.detail,
+    this.nextActions = const <String>[],
+  });
+
+  final String name;
+  final String status;
+  final String detail;
+  final List<String> nextActions;
+
+  factory SddDoctorCheck.fromJson(Map<String, dynamic> json) {
+    return SddDoctorCheck(
+      name: json['name'] as String? ?? 'unknown',
+      status: json['status'] as String? ?? 'unknown',
+      detail: json['detail'] as String? ?? '',
+      nextActions: _stringList(json['next_actions']),
+    );
+  }
+}
+
+class SddDoctorReport {
+  const SddDoctorReport({
+    required this.workspace,
+    required this.status,
+    required this.ok,
+    required this.checks,
+    required this.nextActions,
+  });
+
+  final String workspace;
+  final String status;
+  final bool ok;
+  final List<SddDoctorCheck> checks;
+  final List<String> nextActions;
+
+  factory SddDoctorReport.fromJson(Map<String, dynamic> json) {
+    final rawChecks = json['checks'];
+    return SddDoctorReport(
+      workspace: json['workspace'] as String? ?? '',
+      status: json['status'] as String? ?? 'unknown',
+      ok: json['ok'] as bool? ?? false,
+      checks: rawChecks is List
+          ? rawChecks
+                .whereType<Map<String, dynamic>>()
+                .map(SddDoctorCheck.fromJson)
+                .toList(growable: false)
+          : const <SddDoctorCheck>[],
+      nextActions: _stringList(json['next_actions']),
+    );
+  }
+}
+
 class SddWorkbenchKanban {
   const SddWorkbenchKanban({
     required this.scope,
@@ -450,6 +505,76 @@ class SddWorkbenchKanban {
       curator: _mapValue(json['curator']),
       evidence: _mapList(json['evidence']),
       continuity: _mapList(json['continuity']),
+    );
+  }
+}
+
+class SddKanbanScopeIndex {
+  const SddKanbanScopeIndex({
+    required this.scopes,
+    this.workspacePath,
+    this.defaultScopeId,
+  });
+
+  final List<SddKanbanScopeOption> scopes;
+  final String? workspacePath;
+  final String? defaultScopeId;
+
+  factory SddKanbanScopeIndex.fromJson(Map<String, dynamic> json) {
+    final rawScopes = json['scopes'];
+    return SddKanbanScopeIndex(
+      workspacePath: _trimmedString(json['workspacePath']),
+      defaultScopeId: _trimmedString(json['defaultScopeId']),
+      scopes: rawScopes is List
+          ? rawScopes
+                .whereType<Map<String, dynamic>>()
+                .map(SddKanbanScopeOption.fromJson)
+                .toList(growable: false)
+          : const <SddKanbanScopeOption>[],
+    );
+  }
+}
+
+class SddKanbanScopeOption {
+  const SddKanbanScopeOption({
+    required this.id,
+    required this.type,
+    required this.group,
+    required this.title,
+    this.workspacePath,
+    this.specId,
+    this.draftId,
+    this.jobId,
+    this.status = '',
+    this.detail = '',
+    this.priority = 9999,
+  });
+
+  final String id;
+  final String type;
+  final String group;
+  final String title;
+  final String? workspacePath;
+  final String? specId;
+  final String? draftId;
+  final String? jobId;
+  final String status;
+  final String detail;
+  final int priority;
+
+  factory SddKanbanScopeOption.fromJson(Map<String, dynamic> json) {
+    return SddKanbanScopeOption(
+      id: json['id'] as String? ?? '',
+      type: json['type'] as String? ?? 'workspace',
+      group: json['group'] as String? ?? 'workspace',
+      title: json['title'] as String? ?? 'Workbench',
+      workspacePath: _trimmedString(json['workspacePath']),
+      specId: _trimmedString(json['specId']),
+      draftId: _trimmedString(json['draftId']),
+      jobId: _trimmedString(json['jobId']),
+      status: _trimmedString(json['status']) ?? '',
+      detail: _trimmedString(json['detail']) ?? '',
+      priority: _intValue(json['priority']) ?? 9999,
     );
   }
 }

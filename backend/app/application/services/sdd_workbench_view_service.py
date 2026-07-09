@@ -248,6 +248,10 @@ def _preview_readiness(workspace: Path) -> dict[str, object]:
             ],
         }
     bridge = payload.get("bridge") if isinstance(payload.get("bridge"), dict) else {}
+    frontend_strategy = str(payload.get("frontendStrategy") or "flutter")
+    installable_android = payload.get("installableAndroid")
+    bridge_registration_required = payload.get("bridgeRegistrationRequired")
+    workbench_apk_entry_required = payload.get("workbenchApkEntryRequired")
     production_ready_value = payload.get("productionReady")
     mock_or_demo_value = payload.get("mockOrDemo")
     production_ready = production_ready_value is True
@@ -262,8 +266,28 @@ def _preview_readiness(workspace: Path) -> dict[str, object]:
     if payload.get("releaseChannel") != "prerelease":
         blockers.append("Initial Preview Release releaseChannel must be prerelease.")
     if payload.get("releaseTagPattern") != "android-preview-v*":
+        if frontend_strategy == "svelte" and payload.get("releaseTagPattern") is None:
+            pass
+        else:
+            blockers.append(
+                "Initial Preview Release releaseTagPattern must be android-preview-v*.",
+            )
+    if frontend_strategy == "svelte":
+        if installable_android is not False:
+            blockers.append("Svelte preview must declare installableAndroid=false.")
+        if bridge_registration_required is not False:
+            blockers.append(
+                "Svelte preview must declare bridgeRegistrationRequired=false.",
+            )
+        if workbench_apk_entry_required is not False:
+            blockers.append(
+                "Svelte preview must declare workbenchApkEntryRequired=false.",
+            )
+        if bridge.get("requiresApkUrl") is True:
+            blockers.append("Svelte preview must not require a Bridge APK URL.")
+    elif installable_android is False or bridge_registration_required is False:
         blockers.append(
-            "Initial Preview Release releaseTagPattern must be android-preview-v*.",
+            "Flutter preview must keep Android APK and Bridge registration enabled.",
         )
     if production_ready_value is not False:
         blockers.append("Initial Preview Release productionReady must be false.")
@@ -276,6 +300,10 @@ def _preview_readiness(workspace: Path) -> dict[str, object]:
         "sourceApp": payload.get("sourceApp"),
         "previewUrl": payload.get("previewUrl"),
         "apiBaseUrl": payload.get("apiBaseUrl"),
+        "frontendStrategy": frontend_strategy,
+        "frontendSourceRoot": payload.get("frontendSourceRoot"),
+        "frontendProjectKind": payload.get("frontendProjectKind"),
+        "installableAndroid": installable_android,
         "runtimeProfile": payload.get("runtimeProfile"),
         "apiRuntime": payload.get("apiRuntime"),
         "releaseChannel": payload.get("releaseChannel"),
@@ -285,7 +313,12 @@ def _preview_readiness(workspace: Path) -> dict[str, object]:
         "androidPreviewApk": payload.get("latestAssetName")
         or payload.get("apkAssetPattern")
         or "android-preview-v*.apk",
-        "bridgeRegistrationRequired": True,
+        "bridgeRegistrationRequired": (
+            bridge_registration_required
+            if isinstance(bridge_registration_required, bool)
+            else frontend_strategy != "svelte"
+        ),
+        "workbenchApkEntryRequired": workbench_apk_entry_required,
         "productionReady": production_ready,
         "mockOrDemo": mock_or_demo,
         "bridge": bridge,

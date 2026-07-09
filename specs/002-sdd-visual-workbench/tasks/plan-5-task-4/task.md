@@ -6,4 +6,4 @@ Plan: `Codex Actions From Specs`
 
 ## Checklist
 
-- [ ] Add actions to start an implementation session from a task.
+- [x] Add actions to start an implementation session from a task.

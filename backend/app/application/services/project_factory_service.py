@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 import json
 import os
@@ -22,6 +22,7 @@ from backend.app.application.services.project_factory_job_runner import (
     ProjectFactoryJobRunner,
     ProjectFactoryJobRunnerBlockedError,
     ProjectFactoryJobRunnerError,
+    ProjectFactoryRemotePreflight,
     ProjectFactoryRunnerContext,
 )
 from backend.app.application.services.project_factory_manifest_service import (
@@ -29,7 +30,9 @@ from backend.app.application.services.project_factory_manifest_service import (
     DEFAULT_CREATION_GENERATOR_RUNS,
     DEFAULT_CREATION_REVIEWER_RUNS,
     DEFAULT_FIRST_RELEASE_MODE,
+    DEFAULT_FRONTEND_STRATEGY,
     DEFAULT_PLATFORMS,
+    FRONTEND_STRATEGIES,
     ProjectFactoryManifestInput,
     ProjectFactoryManifestPlan,
     ProjectFactoryManifestService,
@@ -52,6 +55,7 @@ class ProjectFactoryDraft:
     created_at: str
     request: ProjectFactoryManifestInput
     manifest_plan: ProjectFactoryManifestPlan
+    guided_intake: "ProjectFactoryGuidedIntake"
 
     def to_payload(self) -> dict[str, object]:
         return {
@@ -60,10 +64,64 @@ class ProjectFactoryDraft:
             "draft_id": self.id,
             "created_at": self.created_at,
             "first_release_mode": self.request.first_release_mode,
+            "frontend_strategy": self.request.frontend_strategy,
             "manifest_plan": self.manifest_plan.to_payload(),
+            "guided_intake": self.guided_intake.to_payload(),
             "initial_preview_release": _initial_preview_release_status(
                 manifest=self.manifest_plan.manifest,
             ),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class ProjectFactoryGuidedIntakeAnswer:
+    question_id: str
+    value: object
+    source: str
+    confidence: float
+    updated_at: str
+
+    def to_payload(self) -> dict[str, object]:
+        return {
+            "questionId": self.question_id,
+            "value": self.value,
+            "source": self.source,
+            "confidence": self.confidence,
+            "updatedAt": self.updated_at,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class ProjectFactoryGuidedIntake:
+    enabled: bool
+    status: str
+    questions: tuple[dict[str, object], ...]
+    answers: tuple[ProjectFactoryGuidedIntakeAnswer, ...]
+    missing_fields: tuple[dict[str, object], ...]
+    assumptions: tuple[dict[str, object], ...]
+    blockers: tuple[dict[str, object], ...]
+    contract_preview: dict[str, object] | None
+    updated_at: str
+    confirmed_at: str | None = None
+
+    def to_payload(self) -> dict[str, object]:
+        return {
+            "kind": "codex.projectFactoryGuidedIntake",
+            "version": 1,
+            "enabled": self.enabled,
+            "status": self.status,
+            "questions": [dict(question) for question in self.questions],
+            "answers": [answer.to_payload() for answer in self.answers],
+            "missingFields": [dict(field) for field in self.missing_fields],
+            "assumptions": [dict(item) for item in self.assumptions],
+            "blockers": [dict(item) for item in self.blockers],
+            "contractPreview": (
+                dict(self.contract_preview) if self.contract_preview is not None else None
+            ),
+            "updatedAt": self.updated_at,
+            "confirmedAt": self.confirmed_at,
+            "readyForConfirmation": self.status == "ready_for_review",
+            "buildAllowed": self.status in {"confirmed", "build_started"},
         }
 
 
@@ -105,6 +163,9 @@ class ProjectFactoryJob:
             "project_path": self.project_path,
             "message": self.message,
             "first_release_mode": _first_release_mode_from_manifest_plan(
+                self.manifest_plan,
+            ),
+            "frontend_strategy": _frontend_strategy_from_manifest_plan(
                 self.manifest_plan,
             ),
             "manifest_plan": self.manifest_plan.to_payload(),
@@ -175,6 +236,7 @@ class ProjectFactoryService:
         run_generated_validation: bool = False,
         publication_validation_mode: str = "remote",
         runner: ProjectFactoryJobRunner | None = None,
+        remote_publication_preflight: ProjectFactoryRemotePreflight | None = None,
         async_jobs: bool = True,
     ) -> None:
         self._projects_root = Path(projects_root).expanduser().resolve()
@@ -201,6 +263,7 @@ class ProjectFactoryService:
         )
         self._runner = runner or ProjectFactoryJobRunner(
             generator_service=self._generator_service,
+            remote_preflight=remote_publication_preflight,
         )
         self._codex_command = codex_command
         self._timeout_seconds = timeout_seconds
@@ -227,6 +290,8 @@ class ProjectFactoryService:
             "platforms": ["ios", "android", "web"],
             "default_backend": DEFAULT_BACKEND,
             "backends": ["fastapi", "go", "none"],
+            "default_frontend_strategy": DEFAULT_FRONTEND_STRATEGY,
+            "frontend_strategies": [dict(FRONTEND_STRATEGIES[key]) for key in sorted(FRONTEND_STRATEGIES)],
             "logo_modes": ["generate", "upload", "placeholder"],
             "business_types": [
                 "restaurant",
@@ -297,6 +362,12 @@ class ProjectFactoryService:
             created_at=_now_iso(),
             request=request,
             manifest_plan=manifest_plan,
+            guided_intake=_build_guided_intake(
+                request=request,
+                manifest_plan=manifest_plan,
+                draft_assets=(),
+                enabled=request.guided_intake_enabled,
+            ),
         )
         with self._lock:
             self._drafts[draft.id] = draft
@@ -406,11 +477,192 @@ class ProjectFactoryService:
             return None
         return self._manifest_plan_for_draft(draft)
 
+    def get_guided_intake(self, draft_id: str) -> dict[str, object] | None:
+        with self._lock:
+            draft = self._drafts.get(draft_id)
+            if draft is None:
+                return None
+            refreshed = self._refresh_guided_intake(draft)
+            return refreshed.guided_intake.to_payload()
+
+    def answer_guided_intake_question(
+        self,
+        draft_id: str,
+        *,
+        question_id: str,
+        value: object,
+        source: str = "user",
+        confidence: float = 1.0,
+    ) -> dict[str, object] | None:
+        with self._lock:
+            draft = self._drafts.get(draft_id)
+            if draft is None:
+                return None
+            updated_request = _apply_guided_answer_to_request(
+                draft.request,
+                question_id=question_id,
+                value=value,
+            )
+            answers = [
+                answer
+                for answer in draft.guided_intake.answers
+                if answer.question_id != question_id
+            ]
+            answers.append(
+                ProjectFactoryGuidedIntakeAnswer(
+                    question_id=question_id,
+                    value=value,
+                    source=_normalize_answer_source(source),
+                    confidence=max(0.0, min(float(confidence), 1.0)),
+                    updated_at=_now_iso(),
+                )
+            )
+            manifest_plan = self._manifest_service.plan_manifest(updated_request)
+            intake = _build_guided_intake(
+                request=updated_request,
+                manifest_plan=manifest_plan,
+                draft_assets=tuple(self._draft_assets.get(draft_id, [])),
+                enabled=True,
+                answers=tuple(answers),
+                previous_status=draft.guided_intake.status,
+            )
+            updated = replace(
+                draft,
+                request=updated_request,
+                manifest_plan=manifest_plan,
+                guided_intake=intake,
+            )
+            self._drafts[draft_id] = updated
+            self._persist_draft(updated)
+            return intake.to_payload()
+
+    def preview_guided_intake_contract(
+        self,
+        draft_id: str,
+    ) -> dict[str, object] | None:
+        with self._lock:
+            draft = self._drafts.get(draft_id)
+            if draft is None:
+                return None
+            refreshed = self._refresh_guided_intake(draft)
+            preview = _guided_contract_preview(
+                request=refreshed.request,
+                manifest_plan=refreshed.manifest_plan,
+                draft_assets=tuple(self._draft_assets.get(draft_id, [])),
+                intake=refreshed.guided_intake,
+            )
+            status = (
+                "blocked"
+                if _has_local_intake_blockers(refreshed.guided_intake)
+                else (
+                    "ready_for_review"
+                    if not refreshed.guided_intake.missing_fields
+                    else "collecting"
+                )
+            )
+            intake = replace(
+                refreshed.guided_intake,
+                status=status,
+                contract_preview=preview,
+                updated_at=_now_iso(),
+            )
+            updated = replace(refreshed, guided_intake=intake)
+            self._drafts[draft_id] = updated
+            self._persist_draft(updated)
+            return intake.to_payload()
+
+    def confirm_guided_intake_contract(
+        self,
+        draft_id: str,
+    ) -> dict[str, object] | None:
+        with self._lock:
+            draft = self._drafts.get(draft_id)
+            if draft is None:
+                return None
+            refreshed = self._refresh_guided_intake(draft)
+            preview = refreshed.guided_intake.contract_preview or _guided_contract_preview(
+                request=refreshed.request,
+                manifest_plan=refreshed.manifest_plan,
+                draft_assets=tuple(self._draft_assets.get(draft_id, [])),
+                intake=refreshed.guided_intake,
+            )
+            if refreshed.guided_intake.missing_fields or _has_local_intake_blockers(refreshed.guided_intake):
+                intake = replace(
+                    refreshed.guided_intake,
+                    status="blocked" if _has_local_intake_blockers(refreshed.guided_intake) else "collecting",
+                    contract_preview=preview,
+                    updated_at=_now_iso(),
+                )
+            else:
+                now = _now_iso()
+                intake = replace(
+                    refreshed.guided_intake,
+                    status="confirmed",
+                    contract_preview=preview,
+                    confirmed_at=now,
+                    updated_at=now,
+                )
+            updated = replace(refreshed, guided_intake=intake)
+            self._drafts[draft_id] = updated
+            self._persist_draft(updated)
+            return intake.to_payload()
+
     def start_generation(self, draft_id: str) -> ProjectFactoryJob | None:
         with self._lock:
             draft = self._drafts.get(draft_id)
             if draft is None:
                 return None
+            if draft.guided_intake.enabled and draft.guided_intake.status not in {
+                "confirmed",
+                "build_started",
+            }:
+                now = _now_iso()
+                manifest_plan = self._manifest_plan_for_draft(draft)
+                job = ProjectFactoryJob(
+                    id=_new_id("pf-job"),
+                    draft_id=draft.id,
+                    created_at=now,
+                    updated_at=now,
+                    status="blocked",
+                    current_step="guided_intake_confirmation",
+                    message="Confirm the guided New Project contract before generation.",
+                    manifest_plan=manifest_plan,
+                    current_phase="guided_intake_confirmation",
+                    progress=0,
+                    completed_at=now,
+                    error="Guided intake contract is not confirmed.",
+                    step_logs=[],
+                )
+                self._jobs[job.id] = job
+                self._persist_job(job)
+                return job
+            if draft.guided_intake.enabled and draft.guided_intake.status == "confirmed":
+                draft = replace(
+                    draft,
+                    guided_intake=replace(
+                        draft.guided_intake,
+                        status="build_started",
+                        updated_at=_now_iso(),
+                    ),
+                )
+                self._drafts[draft_id] = draft
+                self._persist_draft(draft)
+            existing = self._job_for_draft(draft_id)
+            if existing is not None:
+                if (
+                    existing.status == "blocked"
+                    and existing.current_phase == "guided_intake_confirmation"
+                ):
+                    self._jobs.pop(existing.id, None)
+                    try:
+                        (self._job_state_dir / f"{existing.id}.json").unlink()
+                    except FileNotFoundError:
+                        pass
+                else:
+                    raise ProjectFactoryGenerationConflictError(
+                        f"Project generation already exists for draft {draft_id}: "
+                        f"{existing.id} is {existing.status}."
+                    )
             existing = self._job_for_draft(draft_id)
             if existing is not None:
                 raise ProjectFactoryGenerationConflictError(
@@ -698,6 +950,9 @@ class ProjectFactoryService:
             message=_ready_message(
                 result.generation_result.message,
                 publication_validation_mode=self._publication_validation_mode,
+                frontend_strategy=_frontend_strategy_from_manifest_plan(
+                    manifest_plan,
+                ),
             ),
             project_path=result.generation_result.target_path,
             generation_result=result.generation_result,
@@ -752,15 +1007,42 @@ class ProjectFactoryService:
             slug=draft.request.slug,
             platforms=draft.request.platforms,
             backend=draft.request.backend,
+            frontend_strategy=draft.request.frontend_strategy,
             logo_mode=draft.request.logo_mode,
             first_release_mode=draft.request.first_release_mode,
+            initial_admin_emails=draft.request.initial_admin_emails,
             visual_reference_paths=draft.request.visual_reference_paths,
             visual_reference_assets=tuple(
                 asset.to_manifest_item() for asset in assets
             ),
             project_assets=tuple(asset.to_manifest_item() for asset in project_assets),
+            guided_intake_enabled=draft.request.guided_intake_enabled,
         )
         return self._manifest_service.plan_manifest(request)
+
+    def _refresh_guided_intake(
+        self,
+        draft: ProjectFactoryDraft,
+    ) -> ProjectFactoryDraft:
+        manifest_plan = self._manifest_plan_for_draft(draft)
+        intake = _build_guided_intake(
+            request=draft.request,
+            manifest_plan=manifest_plan,
+            draft_assets=tuple(self._draft_assets.get(draft.id, [])),
+            enabled=draft.guided_intake.enabled,
+            answers=draft.guided_intake.answers,
+            previous_status=draft.guided_intake.status,
+            contract_preview=draft.guided_intake.contract_preview,
+            confirmed_at=draft.guided_intake.confirmed_at,
+        )
+        updated = replace(
+            draft,
+            manifest_plan=manifest_plan,
+            guided_intake=intake,
+        )
+        self._drafts[draft.id] = updated
+        self._persist_draft(updated)
+        return updated
 
     def _job_for_draft(self, draft_id: str) -> ProjectFactoryJob | None:
         for job in self._jobs.values():
@@ -882,6 +1164,8 @@ def _draft_summary(draft: ProjectFactoryDraft) -> dict[str, object]:
         "target_path": draft.manifest_plan.target_path,
         "error": _summary_error(draft.manifest_plan.errors),
         "first_release_mode": draft.request.first_release_mode,
+        "frontend_strategy": draft.request.frontend_strategy,
+        "guided_intake": draft.guided_intake.to_payload(),
         "initial_preview_release": _initial_preview_release_status(
             manifest=manifest,
         ),
@@ -913,6 +1197,7 @@ def _job_summary(job: ProjectFactoryJob) -> dict[str, object]:
         "message": _truncate_summary(job.message),
         "manual_next_step": _manual_next_step(job),
         "first_release_mode": _first_release_mode_from_manifest_plan(job.manifest_plan),
+        "frontend_strategy": _frontend_strategy_from_manifest_plan(job.manifest_plan),
         "initial_preview_release": _initial_preview_release_status(
             manifest=manifest,
             status=job.status,
@@ -921,6 +1206,314 @@ def _job_summary(job: ProjectFactoryJob) -> dict[str, object]:
             step_logs=list(job.step_logs or []),
         ),
     }
+
+
+def _build_guided_intake(
+    *,
+    request: ProjectFactoryManifestInput,
+    manifest_plan: ProjectFactoryManifestPlan,
+    draft_assets: tuple[ProjectFactoryDraftAsset, ...],
+    enabled: bool,
+    answers: tuple[ProjectFactoryGuidedIntakeAnswer, ...] = (),
+    previous_status: str | None = None,
+    contract_preview: dict[str, object] | None = None,
+    confirmed_at: str | None = None,
+) -> ProjectFactoryGuidedIntake:
+    now = _now_iso()
+    if not enabled:
+        return ProjectFactoryGuidedIntake(
+            enabled=False,
+            status="confirmed",
+            questions=(),
+            answers=answers,
+            missing_fields=(),
+            assumptions=(),
+            blockers=(),
+            contract_preview=contract_preview,
+            confirmed_at=confirmed_at or now,
+            updated_at=now,
+        )
+    missing_fields = _guided_missing_fields(request, manifest_plan)
+    questions = _guided_questions(request, missing_fields)
+    assumptions = _guided_assumptions(request, draft_assets)
+    blockers = _guided_blockers(request, manifest_plan)
+    if any(not bool(blocker.get("external")) for blocker in blockers):
+        status = "blocked"
+    elif confirmed_at and previous_status in {"confirmed", "build_started"}:
+        status = previous_status or "confirmed"
+    elif not missing_fields:
+        status = "ready_for_review"
+    else:
+        status = "collecting"
+    return ProjectFactoryGuidedIntake(
+        enabled=True,
+        status=status,
+        questions=tuple(questions),
+        answers=answers,
+        missing_fields=tuple(missing_fields),
+        assumptions=tuple(assumptions),
+        blockers=tuple(blockers),
+        contract_preview=contract_preview,
+        confirmed_at=confirmed_at,
+        updated_at=now,
+    )
+
+
+def _guided_missing_fields(
+    request: ProjectFactoryManifestInput,
+    manifest_plan: ProjectFactoryManifestPlan,
+) -> list[dict[str, object]]:
+    missing: list[dict[str, object]] = []
+    if not request.name.strip():
+        missing.append(_missing_field("name", "Project name is required.", "local"))
+    if not request.business_type.strip():
+        missing.append(_missing_field("business_type", "Business type is required.", "local"))
+    if not request.primary_goal.strip():
+        missing.append(_missing_field("primary_goal", "Primary goal is required.", "local"))
+    if not request.platforms:
+        missing.append(_missing_field("platforms", "At least one platform is required.", "local"))
+    if request.first_release_mode == "preview" and not request.initial_admin_emails:
+        missing.append(
+            _missing_field(
+                "initial_admin_emails",
+                "Initial admin email is required before web-preview invite delivery.",
+                "release",
+            )
+        )
+    for error in manifest_plan.errors:
+        if not any(item["field"] == error.field for item in missing):
+            missing.append(_missing_field(error.field, error.message, "local"))
+    return missing
+
+
+def _missing_field(field: str, message: str, scope: str) -> dict[str, object]:
+    return {"field": field, "message": message, "scope": scope}
+
+
+def _guided_questions(
+    request: ProjectFactoryManifestInput,
+    missing_fields: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    questions: list[dict[str, object]] = []
+    missing = {str(item["field"]) for item in missing_fields}
+    if "initial_admin_emails" in missing:
+        questions.append(
+            {
+                "id": "initial_admin_emails",
+                "field": "initial_admin_emails",
+                "title": "Initial admin emails",
+                "prompt": "Who should receive the first preview admin invite?",
+                "answerType": "email_list",
+                "required": True,
+                "options": [
+                    {
+                        "id": "owner-email",
+                        "label": "Use owner/admin email",
+                        "value": "",
+                        "recommended": True,
+                    }
+                ],
+            }
+        )
+    if "platforms" in missing:
+        questions.append(
+            {
+                "id": "platforms",
+                "field": "platforms",
+                "title": "Platforms",
+                "prompt": "Which platforms should the first project target?",
+                "answerType": "string_list",
+                "required": True,
+                "options": [
+                    {
+                        "id": "flutter-default",
+                        "label": "iOS, Android, and Web",
+                        "value": ["ios", "android", "web"],
+                        "recommended": True,
+                    },
+                    {
+                        "id": "web-only",
+                        "label": "Web only",
+                        "value": ["web"],
+                        "recommended": False,
+                    },
+                ],
+            }
+        )
+    if "frontend_strategy" in missing or request.frontend_strategy == "svelte":
+        questions.append(
+            {
+                "id": "frontend_strategy",
+                "field": "frontend_strategy",
+                "title": "Frontend strategy",
+                "prompt": "Choose Flutter for APK/installable preview or Svelte for web-only preview.",
+                "answerType": "single_choice",
+                "required": True,
+                "options": [
+                    {
+                        "id": "flutter",
+                        "label": "Flutter APK + Web",
+                        "value": "flutter",
+                        "recommended": request.frontend_strategy != "svelte",
+                    },
+                    {
+                        "id": "svelte",
+                        "label": "Svelte web only",
+                        "value": "svelte",
+                        "recommended": request.frontend_strategy == "svelte",
+                    },
+                ],
+            }
+        )
+    return questions
+
+
+def _guided_assumptions(
+    request: ProjectFactoryManifestInput,
+    draft_assets: tuple[ProjectFactoryDraftAsset, ...],
+) -> list[dict[str, object]]:
+    assumptions = [
+        {
+            "field": "runtime_profile",
+            "value": "preview",
+            "source": "default",
+            "confidence": 1.0,
+        },
+        {
+            "field": "first_release_mode",
+            "value": request.first_release_mode,
+            "source": "default" if request.first_release_mode == "preview" else "user",
+            "confidence": 0.9,
+        },
+    ]
+    for asset in draft_assets:
+        assumptions.append(
+            {
+                "field": f"asset:{asset.asset_id}",
+                "value": asset.role,
+                "source": "asset_role",
+                "confidence": 1.0,
+                "notes": asset.notes,
+            }
+        )
+    return assumptions
+
+
+def _guided_blockers(
+    request: ProjectFactoryManifestInput,
+    manifest_plan: ProjectFactoryManifestPlan,
+) -> list[dict[str, object]]:
+    blockers: list[dict[str, object]] = []
+    if not manifest_plan.ok:
+        blockers.append(
+            {
+                "scope": "local_planning",
+                "code": "manifest_validation",
+                "message": "Fix manifest validation before confirming the contract.",
+            }
+        )
+    if request.first_release_mode == "preview":
+        blockers.extend(
+            [
+                {
+                    "scope": "release",
+                    "code": "cloudflare_credentials",
+                    "message": "Cloudflare preview credentials must pass doctor before remote publication.",
+                    "external": True,
+                },
+                {
+                    "scope": "release",
+                    "code": "email_delivery",
+                    "message": "Email provider may use manual-link fallback until SMTP/sender domain is configured.",
+                    "external": True,
+                },
+                {
+                    "scope": "installable_app",
+                    "code": "bridge_registration",
+                    "message": "Bridge installable-app registration is verified during Initial Preview Release.",
+                    "external": True,
+                },
+            ]
+        )
+    return blockers
+
+
+def _guided_contract_preview(
+    *,
+    request: ProjectFactoryManifestInput,
+    manifest_plan: ProjectFactoryManifestPlan,
+    draft_assets: tuple[ProjectFactoryDraftAsset, ...],
+    intake: ProjectFactoryGuidedIntake,
+) -> dict[str, object]:
+    manifest = manifest_plan.manifest
+    slug = manifest.get("slug") or request.slug
+    return {
+        "status": "blocked" if _has_local_intake_blockers(intake) else "ready_for_review",
+        "decisions": {
+            "name": request.name,
+            "slug": slug,
+            "businessType": request.business_type,
+            "primaryGoal": request.primary_goal,
+            "platforms": list(request.platforms),
+            "backend": request.backend,
+            "frontendStrategy": request.frontend_strategy,
+            "firstReleaseMode": request.first_release_mode,
+            "initialAdminEmails": list(request.initial_admin_emails),
+        },
+        "defaults": {
+            "runtimeProfile": "preview",
+            "apiRuntime": "cloudflare_preview",
+            "previewUrl": f"https://preview.nienfos.com/{slug}" if slug else None,
+            "apiBaseUrl": f"https://preview.nienfos.com/{slug}/api" if slug else None,
+        },
+        "assumptions": [dict(item) for item in intake.assumptions],
+        "missingFields": [dict(item) for item in intake.missing_fields],
+        "blockers": [dict(item) for item in intake.blockers],
+        "assets": [asset.to_payload() for asset in draft_assets],
+        "manifestPlan": manifest_plan.to_payload(),
+    }
+
+
+def _apply_guided_answer_to_request(
+    request: ProjectFactoryManifestInput,
+    *,
+    question_id: str,
+    value: object,
+) -> ProjectFactoryManifestInput:
+    if question_id == "initial_admin_emails":
+        emails = _coerce_string_list(value)
+        return replace(request, initial_admin_emails=tuple(emails), guided_intake_enabled=True)
+    if question_id == "platforms":
+        platforms = _coerce_string_list(value)
+        return replace(request, platforms=tuple(platforms), guided_intake_enabled=True)
+    if question_id == "frontend_strategy":
+        return replace(request, frontend_strategy=str(value), guided_intake_enabled=True)
+    if question_id == "primary_goal":
+        return replace(request, primary_goal=str(value), guided_intake_enabled=True)
+    if question_id == "business_type":
+        return replace(request, business_type=str(value), guided_intake_enabled=True)
+    if question_id == "name":
+        return replace(request, name=str(value), guided_intake_enabled=True)
+    return replace(request, guided_intake_enabled=True)
+
+
+def _coerce_string_list(value: object) -> list[str]:
+    if isinstance(value, str):
+        return [item.strip() for item in value.split(",") if item.strip()]
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    if isinstance(value, tuple):
+        return [str(item).strip() for item in value if str(item).strip()]
+    return []
+
+
+def _normalize_answer_source(source: str) -> str:
+    normalized = source.strip().lower()
+    return normalized if normalized in {"user", "inference", "default", "asset", "system"} else "user"
+
+
+def _has_local_intake_blockers(intake: ProjectFactoryGuidedIntake) -> bool:
+    return any(not bool(blocker.get("external")) for blocker in intake.blockers)
 
 
 def _summary_error(errors: tuple[ProjectFactoryValidationError, ...]) -> str | None:
@@ -941,6 +1534,18 @@ def _first_release_mode_from_manifest_plan(plan: ProjectFactoryManifestPlan) -> 
         if isinstance(mode, str) and mode.strip():
             return mode
     return DEFAULT_FIRST_RELEASE_MODE
+
+
+def _frontend_strategy_from_manifest_plan(plan: ProjectFactoryManifestPlan) -> str:
+    strategy = plan.manifest.get("frontend_strategy")
+    if isinstance(strategy, str) and strategy.strip():
+        return strategy
+    frontend = plan.manifest.get("frontend")
+    if isinstance(frontend, dict):
+        strategy = frontend.get("strategy")
+        if isinstance(strategy, str) and strategy.strip():
+            return strategy
+    return DEFAULT_FRONTEND_STRATEGY
 
 
 def _manual_next_step(job: ProjectFactoryJob) -> str | None:
@@ -966,16 +1571,37 @@ def _initial_preview_release_status(
     step_logs: list[dict[str, object]] | None = None,
 ) -> dict[str, object]:
     slug = str(manifest.get("slug") or "")
+    frontend_strategy = str(manifest.get("frontend_strategy") or DEFAULT_FRONTEND_STRATEGY)
+    frontend = manifest.get("frontend") if isinstance(manifest.get("frontend"), dict) else {}
+    capabilities = (
+        frontend.get("strategy_capabilities")
+        if isinstance(frontend, dict)
+        else {}
+    )
+    supports_android_installable = bool(
+        isinstance(capabilities, dict)
+        and capabilities.get("supports_android_preview_apk") is True
+        and capabilities.get("supports_bridge_installable_app") is True
+    )
+    if not capabilities:
+        supports_android_installable = frontend_strategy == "flutter"
     preview_url = f"https://preview.nienfos.com/{slug}" if slug else None
     api_url = f"{preview_url}/api" if preview_url else None
-    phases = (
+    phases = [
+        "cloudflare_preview_preflight",
         "github_publish",
         "cloudflare_preview_apply",
+        "web_preview_smoke",
         "preview_api_smoke",
-        "android_preview_release",
-        "installable_app_registration",
-        "publish_verification",
-    )
+    ]
+    if supports_android_installable:
+        phases.extend(
+            [
+                "android_preview_release",
+                "installable_app_registration",
+            ]
+        )
+    phases.append("publish_verification")
     phase_statuses: dict[str, dict[str, object]] = {
         phase: {
             "status": "pending",
@@ -1001,10 +1627,14 @@ def _initial_preview_release_status(
         "sourceApp": slug,
         "previewUrl": preview_url,
         "apiBaseUrl": api_url,
+        "frontendStrategy": frontend_strategy,
+        "strategyCapabilities": dict(capabilities) if isinstance(capabilities, dict) else {},
+        "installableAndroid": supports_android_installable,
+        "bridgeRegistrationRequired": supports_android_installable,
         "runtimeProfile": "preview",
         "apiRuntime": "cloudflare_preview",
         "releaseChannel": "prerelease",
-        "releaseTagPattern": "android-preview-v*",
+        "releaseTagPattern": "android-preview-v*" if supports_android_installable else None,
         "productionReady": False,
         "mockOrDemo": False,
         "status": status or "draft",
@@ -1012,19 +1642,29 @@ def _initial_preview_release_status(
         "phaseStatuses": phase_statuses,
         "blockerText": _truncate_summary(blocker_text, limit=1000),
         "manualCommandHints": [
+            "GET /project-factory/doctor",
             "scripts/apply_cloudflare_preview.sh",
+            "scripts/smoke_web_preview.sh",
             "scripts/smoke_preview_api.sh",
-            "scripts/publish_android_preview_release.sh --push --watch",
-            "scripts/register_installable_app.sh",
             "scripts/validate_initial_preview_release.sh",
-        ],
+        ]
+        + (
+            [
+                "scripts/publish_android_preview_release.sh --push --watch",
+                "scripts/register_installable_app.sh",
+            ]
+            if supports_android_installable
+            else []
+        ),
     }
 
 
 def _manual_command_for_phase(phase: str) -> list[str]:
     commands = {
+        "cloudflare_preview_preflight": ["GET", "/project-factory/doctor"],
         "github_publish": ["bash", "scripts/publish_project.sh"],
         "cloudflare_preview_apply": ["bash", "scripts/apply_cloudflare_preview.sh"],
+        "web_preview_smoke": ["bash", "scripts/smoke_web_preview.sh"],
         "preview_api_smoke": ["bash", "scripts/smoke_preview_api.sh"],
         "android_preview_release": [
             "bash",
@@ -1038,8 +1678,19 @@ def _manual_command_for_phase(phase: str) -> list[str]:
     return commands.get(phase, [])
 
 
-def _ready_message(local_message: str, *, publication_validation_mode: str) -> str:
+def _ready_message(
+    local_message: str,
+    *,
+    publication_validation_mode: str,
+    frontend_strategy: str = DEFAULT_FRONTEND_STRATEGY,
+) -> str:
     if publication_validation_mode == "remote":
+        if frontend_strategy == "svelte":
+            return (
+                "Project published to GitHub and Cloudflare web/API preview "
+                "verified. Android installability is not part of the Svelte "
+                "strategy."
+            )
         return (
             "Project published to GitHub, Android release verified, and "
             "installable app registration completed."
@@ -1108,14 +1759,18 @@ def _draft_storage_payload(draft: ProjectFactoryDraft) -> dict[str, object]:
             "slug": draft.request.slug,
             "platforms": list(draft.request.platforms),
             "backend": draft.request.backend,
+            "frontend_strategy": draft.request.frontend_strategy,
             "logo_mode": draft.request.logo_mode,
             "first_release_mode": draft.request.first_release_mode,
+            "initial_admin_emails": list(draft.request.initial_admin_emails),
             "visual_reference_paths": list(draft.request.visual_reference_paths),
             "visual_reference_assets": [
                 dict(item) for item in draft.request.visual_reference_assets
             ],
+            "guided_intake_enabled": draft.request.guided_intake_enabled,
         },
         "manifest_plan": draft.manifest_plan.to_payload(),
+        "guided_intake": draft.guided_intake.to_payload(),
     }
 
 
@@ -1137,6 +1792,13 @@ def _draft_from_storage_payload(payload: dict[str, object]) -> ProjectFactoryDra
         request=_request_from_payload(request_payload),
         manifest_plan=_manifest_plan_from_payload(
             _expect_mapping(payload["manifest_plan"]),
+        ),
+        guided_intake=_guided_intake_from_payload(
+            payload.get("guided_intake"),
+            request=_request_from_payload(request_payload),
+            manifest_plan=_manifest_plan_from_payload(
+                _expect_mapping(payload["manifest_plan"]),
+            ),
         ),
     )
 
@@ -1186,9 +1848,17 @@ def _request_from_payload(payload: dict[str, object]) -> ProjectFactoryManifestI
             if isinstance(item, str)
         ),
         backend=str(payload.get("backend") or DEFAULT_BACKEND),
+        frontend_strategy=str(
+            payload.get("frontend_strategy") or DEFAULT_FRONTEND_STRATEGY
+        ),
         logo_mode=str(payload.get("logo_mode") or "generate"),
         first_release_mode=str(
             payload.get("first_release_mode") or DEFAULT_FIRST_RELEASE_MODE
+        ),
+        initial_admin_emails=tuple(
+            str(item)
+            for item in payload.get("initial_admin_emails", [])
+            if isinstance(item, str)
         ),
         visual_reference_paths=tuple(
             str(item)
@@ -1200,6 +1870,64 @@ def _request_from_payload(payload: dict[str, object]) -> ProjectFactoryManifestI
             for item in payload.get("visual_reference_assets", [])
             if isinstance(item, dict)
         ),
+        guided_intake_enabled=bool(payload.get("guided_intake_enabled") or False),
+    )
+
+
+def _guided_intake_from_payload(
+    value: object,
+    *,
+    request: ProjectFactoryManifestInput,
+    manifest_plan: ProjectFactoryManifestPlan,
+) -> ProjectFactoryGuidedIntake:
+    if not isinstance(value, dict):
+        return _build_guided_intake(
+            request=replace(request, guided_intake_enabled=False),
+            manifest_plan=manifest_plan,
+            draft_assets=(),
+            enabled=False,
+        )
+    answers = tuple(
+        ProjectFactoryGuidedIntakeAnswer(
+            question_id=str(item.get("questionId") or item.get("question_id") or ""),
+            value=item.get("value"),
+            source=str(item.get("source") or "user"),
+            confidence=float(item.get("confidence") or 1.0),
+            updated_at=str(item.get("updatedAt") or item.get("updated_at") or _now_iso()),
+        )
+        for item in value.get("answers", [])
+        if isinstance(item, dict)
+    )
+    enabled = bool(value.get("enabled"))
+    return ProjectFactoryGuidedIntake(
+        enabled=enabled,
+        status=str(value.get("status") or ("collecting" if enabled else "confirmed")),
+        questions=tuple(
+            dict(item) for item in value.get("questions", []) if isinstance(item, dict)
+        ),
+        answers=answers,
+        missing_fields=tuple(
+            dict(item)
+            for item in (value.get("missingFields") or value.get("missing_fields") or [])
+            if isinstance(item, dict)
+        ),
+        assumptions=tuple(
+            dict(item) for item in value.get("assumptions", []) if isinstance(item, dict)
+        ),
+        blockers=tuple(
+            dict(item) for item in value.get("blockers", []) if isinstance(item, dict)
+        ),
+        contract_preview=(
+            dict(value["contractPreview"])
+            if isinstance(value.get("contractPreview"), dict)
+            else (
+                dict(value["contract_preview"])
+                if isinstance(value.get("contract_preview"), dict)
+                else None
+            )
+        ),
+        confirmed_at=_optional_str(value.get("confirmedAt") or value.get("confirmed_at")),
+        updated_at=str(value.get("updatedAt") or value.get("updated_at") or _now_iso()),
     )
 
 

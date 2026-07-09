@@ -1,0 +1,119 @@
+{
+  "spec": {
+    "file": "spec.md"
+  },
+  "plans": [
+    {
+      "id": "plan-1",
+      "number": 1,
+      "title": "Strategy Domain Contract",
+      "status": "done",
+      "description": "Define frontend strategy registry, capability schema, selection rules, and release semantics.",
+      "file": "plan.md",
+      "tasks": [
+        {"id": "plan-1-task-1", "number": 1, "title": "T001 Define frontend strategy registry schema for flutter and svelte", "status": "done", "description": "Create stable strategy identifiers and registry payloads.", "file": "tasks.md"},
+        {"id": "plan-1-task-2", "number": 2, "title": "T002 Define strategy capability fields", "status": "done", "description": "Represent APK, Bridge, Workbench, web preview, Cloudflare API, and D1 support.", "file": "tasks.md"},
+        {"id": "plan-1-task-3", "number": 3, "title": "T003 Define strategy selection rules", "status": "done", "description": "Handle explicit strategy, platform inference, and unsupported combinations.", "file": "tasks.md"},
+        {"id": "plan-1-task-4", "number": 4, "title": "T004 Define strategy source-of-truth requirements", "status": "done", "description": "Require strategy metadata across manifests, workflows, runtime metadata, and output.", "file": "tasks.md"}
+      ]
+    },
+    {
+      "id": "plan-2",
+      "number": 2,
+      "title": "Project Factory Intake And Manifest",
+      "status": "done",
+      "description": "Expose frontendStrategy through options, API schemas, mobile UI, draft state, and manifest planning.",
+      "file": "plan.md",
+      "tasks": [
+        {"id": "plan-2-task-1", "number": 1, "title": "T005 Add Project Factory option payloads", "status": "done", "description": "Expose known frontend strategies from backend options.", "file": "tasks.md"},
+        {"id": "plan-2-task-2", "number": 2, "title": "T006 Add API schema fields for frontendStrategy", "status": "done", "description": "Carry selected strategy through draft and job payloads.", "file": "tasks.md"},
+        {"id": "plan-2-task-3", "number": 3, "title": "T007 Add mobile UI strategy selector", "status": "done", "description": "Default to Flutter and expose Svelte web-first option.", "file": "tasks.md"},
+        {"id": "plan-2-task-4", "number": 4, "title": "T008 Persist selected strategy", "status": "done", "description": "Store selected strategy in Project Factory draft state.", "file": "tasks.md"},
+        {"id": "plan-2-task-5", "number": 5, "title": "T009 Add manifest validation for unsupported combinations", "status": "done", "description": "Block Svelte Android installability without wrapper support.", "file": "tasks.md"},
+        {"id": "plan-2-task-6", "number": 6, "title": "T010 Add generated spec plan tasks strategy text", "status": "done", "description": "Name selected strategy and release capabilities in generated SDD artifacts.", "file": "tasks.md"}
+      ]
+    },
+    {
+      "id": "plan-3",
+      "number": 3,
+      "title": "Flutter Strategy Hardening",
+      "status": "done",
+      "description": "Extract current Flutter path into an explicit strategy without regressing Initial Preview Release.",
+      "file": "plan.md",
+      "tasks": [
+        {"id": "plan-3-task-1", "number": 1, "title": "T011 Refactor current generated Flutter files into strategy helpers", "status": "done", "description": "Make Flutter generation explicit and reusable.", "file": "tasks.md"},
+        {"id": "plan-3-task-2", "number": 2, "title": "T012 Keep Flutter Android preview workflow", "status": "done", "description": "Maintain android-preview-v* and preview runtime defines.", "file": "tasks.md"},
+        {"id": "plan-3-task-3", "number": 3, "title": "T013 Keep Flutter web preview build pointed at Cloudflare API", "status": "done", "description": "Validate Flutter web preview API_BASE_URL.", "file": "tasks.md"},
+        {"id": "plan-3-task-4", "number": 4, "title": "T014 Keep Flutter Workbench preview visibility tests", "status": "done", "description": "Owner/admin Workbench visibility remains required.", "file": "tasks.md"},
+        {"id": "plan-3-task-5", "number": 5, "title": "T015 Add Flutter strategy regression tests", "status": "done", "description": "Prove existing Initial Preview Release behavior is unchanged.", "file": "tasks.md"}
+      ]
+    },
+    {
+      "id": "plan-4",
+      "number": 4,
+      "title": "Svelte Web Strategy Generation",
+      "status": "done",
+      "description": "Generate independent Svelte web projects with Cloudflare preview config and tests.",
+      "file": "plan.md",
+      "tasks": [
+        {"id": "plan-4-task-1", "number": 1, "title": "T016 Generate Svelte app scaffold", "status": "done", "description": "Create apps/web Svelte project structure.", "file": "tasks.md"},
+        {"id": "plan-4-task-2", "number": 2, "title": "T017 Generate Svelte package scripts", "status": "done", "description": "Add install, lint, test, build, and preview validation scripts.", "file": "tasks.md"},
+        {"id": "plan-4-task-3", "number": 3, "title": "T018 Generate Svelte runtime config", "status": "done", "description": "Require Cloudflare preview API for Initial Preview Release.", "file": "tasks.md"},
+        {"id": "plan-4-task-4", "number": 4, "title": "T019 Generate Svelte config tests", "status": "done", "description": "Fail on localhost, mock, placeholder, or missing preview API config.", "file": "tasks.md"},
+        {"id": "plan-4-task-5", "number": 5, "title": "T020 Generate Svelte web preview build script", "status": "done", "description": "Build Svelte assets for Cloudflare preview.", "file": "tasks.md"},
+        {"id": "plan-4-task-6", "number": 6, "title": "T021 Add Svelte strategy metadata", "status": "done", "description": "Write strategy metadata to project and release contracts.", "file": "tasks.md"},
+        {"id": "plan-4-task-7", "number": 7, "title": "T022 Add Svelte web preview manifest entries", "status": "done", "description": "Declare build command, output dir, and static assets.", "file": "tasks.md"}
+      ]
+    },
+    {
+      "id": "plan-5",
+      "number": 5,
+      "title": "Shared Cloudflare Preview Runtime",
+      "status": "done",
+      "description": "Reuse Worker, D1, health, and Preview API routes across strategies.",
+      "file": "plan.md",
+      "tasks": [
+        {"id": "plan-5-task-1", "number": 1, "title": "T023 Reuse Cloudflare Worker route and D1 migrations", "status": "done", "description": "Keep shared backend runtime strategy-neutral.", "file": "tasks.md"},
+        {"id": "plan-5-task-2", "number": 2, "title": "T024 Make Worker local preview tests strategy-neutral", "status": "done", "description": "Validate Worker behavior for Flutter and Svelte clients.", "file": "tasks.md"},
+        {"id": "plan-5-task-3", "number": 3, "title": "T025 Validate strategy-specific asset output before ready", "status": "done", "description": "Cloudflare apply must verify assets for the selected strategy.", "file": "tasks.md"}
+      ]
+    },
+    {
+      "id": "plan-6",
+      "number": 6,
+      "title": "Strategy-Aware Release Orchestration",
+      "status": "done",
+      "description": "Make release phases, output, Bridge registration, and blockers depend on declared capabilities.",
+      "file": "plan.md",
+      "tasks": [
+        {"id": "plan-6-task-1", "number": 1, "title": "T026 Skip Android APK phases only when strategy does not promise APK", "status": "done", "description": "Do not fail web-only Svelte on missing APK.", "file": "tasks.md"},
+        {"id": "plan-6-task-2", "number": 2, "title": "T027 Make Svelte web release output explicit", "status": "done", "description": "Report installable_android=false and web readiness evidence.", "file": "tasks.md"},
+        {"id": "plan-6-task-3", "number": 3, "title": "T028 Block Svelte plus Android installability without wrapper", "status": "done", "description": "Avoid overpromising installable APKs.", "file": "tasks.md"},
+        {"id": "plan-6-task-4", "number": 4, "title": "T029 Prevent Bridge installable registration for web-only Svelte", "status": "done", "description": "Only register installable apps when artifacts exist.", "file": "tasks.md"},
+        {"id": "plan-6-task-5", "number": 5, "title": "T030 Add future wrapper extension point", "status": "done", "description": "Reserve svelte-capacitor-android without implementing it.", "file": "tasks.md"}
+      ]
+    },
+    {
+      "id": "plan-7",
+      "number": 7,
+      "title": "Validation Matrix And Rollout",
+      "status": "done",
+      "description": "Add contract, generator, Cloudflare, release output, UI, and SDD validation coverage.",
+      "file": "plan.md",
+      "tasks": [
+        {"id": "plan-7-task-1", "number": 1, "title": "T031 Add strategy source-of-truth validation", "status": "done", "description": "Fail when strategy is missing from generated sources.", "file": "tasks.md"},
+        {"id": "plan-7-task-2", "number": 2, "title": "T032 Add release profile validation for strategy promises", "status": "done", "description": "Match phases to declared capabilities.", "file": "tasks.md"},
+        {"id": "plan-7-task-3", "number": 3, "title": "T033 Add backend strategy tests", "status": "done", "description": "Cover selection, manifest validation, and payloads.", "file": "tasks.md"},
+        {"id": "plan-7-task-4", "number": 4, "title": "T034 Add Flutter strategy generator tests", "status": "done", "description": "Protect current Flutter output.", "file": "tasks.md"},
+        {"id": "plan-7-task-5", "number": 5, "title": "T035 Add Svelte strategy generator tests", "status": "done", "description": "Verify Svelte output and config.", "file": "tasks.md"},
+        {"id": "plan-7-task-6", "number": 6, "title": "T036 Add Cloudflare strategy asset tests", "status": "done", "description": "Verify strategy-specific asset validation.", "file": "tasks.md"},
+        {"id": "plan-7-task-7", "number": 7, "title": "T037 Add release output overpromise tests", "status": "done", "description": "Fail on APK or Bridge claims without evidence.", "file": "tasks.md"},
+        {"id": "plan-7-task-8", "number": 8, "title": "T038 Add mobile UI strategy tests", "status": "done", "description": "Cover selector and blockers.", "file": "tasks.md"},
+        {"id": "plan-7-task-9", "number": 9, "title": "T039 Add Workbench readiness strategy fields", "status": "done", "description": "Expose selected strategy and capability blockers.", "file": "tasks.md"},
+        {"id": "plan-7-task-10", "number": 10, "title": "T040 Update documentation and runbooks", "status": "done", "description": "Document Flutter and Svelte preview release paths.", "file": "tasks.md"},
+        {"id": "plan-7-task-11", "number": 11, "title": "T041 Validate spec plan tasks traceability metadata", "status": "done", "description": "Keep SDD artifacts consistent.", "file": "tasks.md"},
+        {"id": "plan-7-task-12", "number": 12, "title": "T042 Run full validation suites", "status": "done", "description": "Run Project Factory, Cloudflare, mobile UI, Svelte generator, and SDD tests.", "file": "tasks.md"}
+      ]
+    }
+  ]
+}

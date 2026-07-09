@@ -1,6 +1,6 @@
 spec_id: 003-workbench-sdd-standard
 title: Workbench SDD Standard And Context Routing
-status: draft
+status: complete
 
 requirements:
   FR-001:

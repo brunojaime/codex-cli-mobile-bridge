@@ -6,4 +6,4 @@ Plan: `Operations And Documentation`
 
 ## Checklist
 
-- [ ] T062 Document email provider setup and sender-domain verification.
+- [x] T062 Document email provider setup and sender-domain verification.

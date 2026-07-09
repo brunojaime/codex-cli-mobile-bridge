@@ -36,15 +36,50 @@ if ! command -v tailscale >/dev/null 2>&1; then
   exit 1
 fi
 
-if [[ -n "${TAILSCALE_SOCKET}" ]]; then
-  if tailscale --socket="${TAILSCALE_SOCKET}" serve status | grep -Fq "|-- / proxy ${TARGET_URL}"; then
-    exit 0
-  fi
-  exec tailscale --socket="${TAILSCALE_SOCKET}" serve --http=80 "${TARGET_URL}"
-fi
+configure_serve() {
+  local -a tailscale_args=("$@")
+  local status
+  status="$(tailscale "${tailscale_args[@]}" serve status --json 2>/dev/null || printf '{}')"
 
-if tailscale serve status | grep -Fq "|-- / proxy ${TARGET_URL}"; then
+  if ! proxy_matches "${status}" "443"; then
+    tailscale "${tailscale_args[@]}" serve --bg --https=443 --yes "${TARGET_URL}"
+  fi
+
+  status="$(tailscale "${tailscale_args[@]}" serve status --json 2>/dev/null || printf '{}')"
+  if ! proxy_matches "${status}" "80"; then
+    tailscale "${tailscale_args[@]}" serve --bg --http=80 --yes "${TARGET_URL}"
+  fi
+}
+
+proxy_matches() {
+  local status_json="$1"
+  local port="$2"
+  STATUS_JSON="${status_json}" python3 - "${port}" "${TARGET_URL}" <<'PY'
+import json
+import os
+import sys
+
+port = sys.argv[1]
+target = sys.argv[2]
+try:
+    payload = json.loads(os.environ.get("STATUS_JSON", "{}"))
+except json.JSONDecodeError:
+    raise SystemExit(1)
+
+for key, value in (payload.get("Web") or {}).items():
+    if not key.endswith(f":{port}"):
+        continue
+    handlers = value.get("Handlers") or {}
+    root = handlers.get("/") or {}
+    if root.get("Proxy") == target:
+        raise SystemExit(0)
+raise SystemExit(1)
+PY
+}
+
+if [[ -n "${TAILSCALE_SOCKET}" ]]; then
+  configure_serve --socket="${TAILSCALE_SOCKET}"
   exit 0
 fi
 
-exec tailscale serve --http=80 "${TARGET_URL}"
+configure_serve

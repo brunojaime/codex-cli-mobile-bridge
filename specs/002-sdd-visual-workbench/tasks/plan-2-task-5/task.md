@@ -6,4 +6,4 @@ Plan: `Diagram Rendering`
 
 ## Checklist
 
-- [ ] Support selecting or marking diagram nodes, edges, and regions.
+- [x] Support selecting or marking diagram nodes, edges, and regions.

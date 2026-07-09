@@ -6,4 +6,4 @@ Plan: `Project Factory Backend Integration`
 
 ## Checklist
 
-- [ ] T044 Persist preview metadata in draft/job state.
+- [x] T044 Persist preview metadata in draft/job state.

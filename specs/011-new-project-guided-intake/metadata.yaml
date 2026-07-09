@@ -2,7 +2,7 @@ id: 011-new-project-guided-intake
 slug: 011-new-project-guided-intake
 title: New Project Guided Intake
 description: Add a guided question-and-contract layer before New Project build execution.
-status: active
+status: complete
 last_run_state: validated
 generated:
   title: false
@@ -11,8 +11,8 @@ generated:
   user_pinned_description: true
 tasks:
   total: 26
-  completed: 25
-  pending: 1
+  completed: 26
+  pending: 0
 diagrams:
   total: 0
   items: {}
@@ -21,3 +21,8 @@ available_files:
   - plan.md
   - tasks.md
   - tree.json
+  - traceability.yaml
+source_digests:
+  tasks.md: 0e40feb8c228177b84787479fc2106227211e3483c6295f9502229bc32dfb4cb
+  tree.json: 530caa119cb92c9f64f74151ec0bb6a83ce6440c3a8f10a2d9c26675fef657c6
+  traceability.yaml: fb2d40abb18cb60a140d5fa4f00a16dc18f516809175309bf32d30d7cedc308b

@@ -153,6 +153,9 @@ def build_container(settings: Settings | None = None) -> AppContainer:
         codex_command=resolved_settings.codex_command,
         timeout_seconds=resolved_settings.execution_timeout_seconds,
     )
+    cloudflare_preview_doctor_service = CloudflarePreviewDoctorService(
+        settings=resolved_settings,
+    )
     project_factory_service = ProjectFactoryService(
         projects_root=resolved_settings.projects_root,
         reference_asset_storage_root=(
@@ -175,14 +178,12 @@ def build_container(settings: Settings | None = None) -> AppContainer:
         publication_validation_mode=(
             resolved_settings.project_factory_publication_validation_mode
         ),
+        remote_publication_preflight=cloudflare_preview_doctor_service.doctor,
         async_jobs=resolved_settings.project_factory_async_jobs,
     )
     sdd_workbench_kanban_service = SddWorkbenchKanbanService(
         projects_root=resolved_settings.projects_root,
         project_factory_service=project_factory_service,
-    )
-    cloudflare_preview_doctor_service = CloudflarePreviewDoctorService(
-        settings=resolved_settings,
     )
     web_preview_deploy_service = WebPreviewDeployService(
         settings=resolved_settings,

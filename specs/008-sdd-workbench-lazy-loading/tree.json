@@ -140,10 +140,18 @@
         {
           "id": "plan-4-task-3",
           "number": 3,
-          "title": "T013 Run backend, Workbench package, and mobile validation; T014 publish release",
+          "title": "T013 Run backend, Workbench package, and mobile validation",
           "status": "done",
-          "description": "Run validation and publish the Codex Mobile Android release.",
+          "description": "Run backend, Workbench package, and mobile validation.",
           "file": "tasks/plan-4-task-3/task.md"
+        },
+        {
+          "id": "plan-4-task-4",
+          "number": 4,
+          "title": "T014 Publish Codex Mobile Android release",
+          "status": "done",
+          "description": "Publish the Codex Mobile Android release after validation.",
+          "file": "tasks/plan-4-task-4/task.md"
         }
       ]
     }

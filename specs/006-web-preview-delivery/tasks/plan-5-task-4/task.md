@@ -6,4 +6,4 @@ Plan: `Flutter Web Preview Adapter`
 
 ## Checklist
 
-- [ ] T031 Add invite accept/password setup screen to the generated Flutter template.
+- [x] T031 Add invite accept/password setup screen to the generated Flutter template.

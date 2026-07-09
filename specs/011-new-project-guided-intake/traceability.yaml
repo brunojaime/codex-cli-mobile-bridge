@@ -1,0 +1,79 @@
+spec_id: 011-new-project-guided-intake
+title: New Project Guided Intake
+status: complete
+
+requirements:
+  FR-001:
+    name: Structured intake contract
+    acceptance_criteria: [AC-001, AC-002, AC-003]
+    tasks: [T001, T002, T003]
+  FR-002:
+    name: Backend draft persistence and API
+    acceptance_criteria: [AC-004, AC-005, AC-006]
+    tasks: [T004, T005, T006, T007, T008, T009]
+  FR-003:
+    name: Intake engine and blockers
+    acceptance_criteria: [AC-007, AC-008]
+    tasks: [T011, T012, T013, T014]
+  FR-004:
+    name: Chat-first guided intake UI
+    acceptance_criteria: [AC-009, AC-010]
+    tasks: [T015, T016, T017, T018, T019, T020, T021]
+  FR-005:
+    name: Confirmed build gate
+    acceptance_criteria: [AC-011]
+    tasks: [T010]
+  FR-006:
+    name: Validation and release
+    acceptance_criteria: [AC-012]
+    tasks: [T022, T023, T024, T025, T026]
+
+implementation:
+  status: complete
+  completed_tasks:
+    - T001
+    - T002
+    - T003
+    - T004
+    - T005
+    - T006
+    - T007
+    - T008
+    - T009
+    - T010
+    - T011
+    - T012
+    - T013
+    - T014
+    - T015
+    - T016
+    - T017
+    - T018
+    - T019
+    - T020
+    - T021
+    - T022
+    - T023
+    - T024
+    - T025
+    - T026
+  pending_tasks: []
+  evidence:
+    - backend/app/application/services/project_factory_service.py defines ProjectFactoryGuidedIntake, answer provenance/confidence, missing fields, assumptions, external blockers, contract preview state, and a guided build gate for guidedIntakeEnabled drafts.
+    - Project Factory draft storage persists guided_intake while loading older drafts with backward-compatible confirmed defaults.
+    - backend/app/api/schemas.py and backend/app/api/routes.py expose typed guided intake get, answer, preview, and confirm endpoints under /project-factory/drafts/{draft_id}/intake.
+    - The intake engine detects required local topics, generates recommended options for admin emails/platform/frontend strategy, keeps release/web-preview/installable-app blockers separate as external blockers, and exposes linked asset-role assumptions in contract preview state.
+    - frontend/mobile_app/lib/src/models/project_factory.dart and frontend/mobile_app/lib/src/services/api_client.dart parse guided intake payloads and call get/answer/preview/confirm APIs.
+    - frontend/mobile_app/lib/src/screens/chat_screen.dart includes a ProjectFactoryGuidedIntakeCard that renders questions, recommended options, free-text answers, contract preview, blockers, and confirmation gating in the live New Project chat timeline.
+    - The New Project app-bar/slash entry now creates or reuses a persisted guidedIntakeEnabled Project Factory draft, resumes the current session draft when present, and reattaches reusable active guided drafts without creating duplicates.
+    - Live chat answer chips and free-text submissions call the guided intake answer API, refresh persisted preview state when ready, and display ready/blocked/changes-requested status from backend state.
+    - Contract preview, defaults, blockers, and external next steps render from the persisted guided intake response before confirmation.
+    - Guided intake confirmation can stage the build confirmation and the build-mode gate accepts the persisted buildAllowed state as well as the legacy ready marker.
+    - frontend/mobile_app/lib/src/screens/chat_screen.dart adds a Project Factory intake agent configuration, kickoff prompt, guided intake card, build-ready marker fallback, and confirmation gating before reviewer build mode.
+    - The guided intake card disables confirm until backend readiness is present, satisfying the visible confirm/build action gate.
+    - Slash command contextual hooks exist for /project-contract and /project-build while the composer is in Project Factory intake mode.
+    - tests/test_project_factory_api.py covers guided intake state transitions, persisted recovery, contract preview, blocked premature generation, confirmation, and successful generation after confirmation.
+    - frontend/mobile_app/test/guided_project_intake_test.dart and frontend/mobile_app/test/api_client_test.dart cover guided intake models, API client calls, question UI, preview UI, option/free-text answer affordances, live New Project draft creation/reuse, answer submission, persisted preview, blocked state display, and confirm/build gating.
+    - Project Factory API and manifest regression tests pass with the guided intake API and legacy draft generation path intact.
+    - Android release android-v1.0.0-build.88 points at the current HEAD and was published with APK assets on 2026-07-09.
+  pending_reasons: {}

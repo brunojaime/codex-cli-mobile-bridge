@@ -6,4 +6,4 @@ Plan: `Flutter Web Preview Adapter`
 
 ## Checklist
 
-- [ ] T030 Update generated Flutter API client to use Preview API v1 in preview mode.
+- [x] T030 Update generated Flutter API client to use Preview API v1 in preview mode.

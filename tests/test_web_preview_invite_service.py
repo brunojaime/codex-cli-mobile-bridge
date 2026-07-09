@@ -16,6 +16,7 @@ from backend.app.application.services.project_factory_manifest_service import (
 )
 from backend.app.application.services.web_preview_deploy_service import (
     WebPreviewDeployService,
+    WebPreviewLifecycleInput,
     WebPreviewPlanInput,
 )
 from backend.app.application.services.web_preview_invite_service import (
@@ -156,6 +157,193 @@ def test_web_preview_invite_creation_persists_metadata_without_plain_token(
     assert "invite_url" not in listed[0]
 
 
+def test_web_preview_invite_validates_email_role_and_duplicate_active_invite(
+    tmp_path: Path,
+) -> None:
+    deploy_service = _planned_preview(tmp_path)
+    service = WebPreviewInviteService(
+        settings=_settings(tmp_path),
+        preview_service=deploy_service,
+    )
+
+    invite = service.create_invite(
+        WebPreviewInviteCreateInput(
+            preview_id="wp-clinica-norte",
+            email="ADMIN@Example.COM",
+            role="owner",
+        )
+    )
+
+    assert invite["email"] == "admin@example.com"
+    assert invite["role"] == "owner"
+    assert invite["email_delivery_status"] == "manual_link_required"
+    assert invite["manual_delivery_required"] is True
+    with pytest.raises(WebPreviewInviteError) as duplicate:
+        service.create_invite(
+            WebPreviewInviteCreateInput(
+                preview_id="wp-clinica-norte",
+                email="admin@example.com",
+                role="owner",
+            )
+        )
+    with pytest.raises(WebPreviewInviteError) as invalid_role:
+        service.create_invite(
+            WebPreviewInviteCreateInput(
+                preview_id="wp-clinica-norte",
+                email="other@example.com",
+                role="customer",
+            )
+        )
+
+    assert duplicate.value.code == "duplicate_admin_invite"
+    assert invalid_role.value.code == "invalid_admin_role"
+
+
+def test_web_preview_invite_resend_and_expire_lifecycle(tmp_path: Path) -> None:
+    deploy_service = _planned_preview(tmp_path)
+    service = WebPreviewInviteService(
+        settings=_settings(tmp_path),
+        preview_service=deploy_service,
+    )
+    invite = service.create_invite(
+        WebPreviewInviteCreateInput(
+            preview_id="wp-clinica-norte",
+            email="admin@example.com",
+            ttl_seconds=300,
+        )
+    )
+
+    resent = service.resend_invite(
+        preview_id="wp-clinica-norte",
+        invite_id=invite["invite_id"],
+        ttl_seconds=600,
+    )
+    expired = service.expire_invite(
+        preview_id="wp-clinica-norte",
+        invite_id=invite["invite_id"],
+    )
+
+    assert resent["invite_id"] == invite["invite_id"]
+    assert resent["token"] != invite["token"]
+    assert resent["resend_count"] == 1
+    assert resent["last_sent_at"]
+    assert expired["expired_at"]
+    assert expired["expires_at"] == expired["expired_at"]
+    preview = deploy_service.get_preview("wp-clinica-norte")
+    assert preview is not None
+    event_types = {event["event_type"] for event in preview["audit_events"]}
+    assert {"invite_created", "invite_resent", "invite_expired"} <= event_types
+
+
+def test_web_preview_invites_block_when_preview_disabled(
+    tmp_path: Path,
+) -> None:
+    deploy_service = _planned_preview(tmp_path)
+    service = WebPreviewInviteService(
+        settings=_settings(tmp_path),
+        preview_service=deploy_service,
+    )
+    invite = service.create_invite(
+        WebPreviewInviteCreateInput(preview_id="wp-clinica-norte")
+    )
+
+    deploy_service.disable_preview(
+        WebPreviewLifecycleInput(
+            preview_id="wp-clinica-norte",
+            reason="operator pause",
+        )
+    )
+    with pytest.raises(WebPreviewInviteError) as create_disabled:
+        service.create_invite(
+            WebPreviewInviteCreateInput(preview_id="wp-clinica-norte")
+        )
+    with pytest.raises(WebPreviewInviteError) as resend_disabled:
+        service.resend_invite(
+            preview_id="wp-clinica-norte",
+            invite_id=invite["invite_id"],
+        )
+
+    assert create_disabled.value.code == "web_preview_not_active"
+    assert resend_disabled.value.code == "web_preview_not_active"
+
+
+def test_web_preview_invites_block_when_preview_expired(
+    tmp_path: Path,
+) -> None:
+    deploy_service = _planned_preview(tmp_path)
+    service = WebPreviewInviteService(
+        settings=_settings(tmp_path),
+        preview_service=deploy_service,
+    )
+    deploy_service.expire_preview(
+        WebPreviewLifecycleInput(preview_id="wp-clinica-norte")
+    )
+
+    with pytest.raises(WebPreviewInviteError) as expired:
+        service.create_invite(
+            WebPreviewInviteCreateInput(preview_id="wp-clinica-norte")
+        )
+
+    assert expired.value.code == "web_preview_not_active"
+
+
+def test_web_preview_invite_smtp_provider_sends_email(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sent: list[object] = []
+
+    class FakeSmtp:
+        def __init__(self, host: str, port: int, timeout: float) -> None:
+            assert host == "smtp.example.com"
+            assert port == 2525
+            assert timeout == 3.0
+
+        def __enter__(self) -> "FakeSmtp":
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def starttls(self) -> None:
+            return None
+
+        def login(self, username: str, password: str) -> None:
+            assert username == "smtp-user"
+            assert password == "smtp-password"
+
+        def send_message(self, message: object) -> None:
+            sent.append(message)
+
+    monkeypatch.setattr("smtplib.SMTP", FakeSmtp)
+    deploy_service = _planned_preview(tmp_path)
+    service = WebPreviewInviteService(
+        settings=_settings(
+            tmp_path,
+            email_provider="smtp",
+            email_from="preview@example.com",
+            smtp_host="smtp.example.com",
+            smtp_port=2525,
+            smtp_username="smtp-user",
+            smtp_password="smtp-password",
+            smtp_timeout=3.0,
+        ),
+        preview_service=deploy_service,
+    )
+
+    invite = service.create_invite(
+        WebPreviewInviteCreateInput(
+            preview_id="wp-clinica-norte",
+            email="admin@example.com",
+        )
+    )
+
+    assert invite["email_delivery_status"] == "sent"
+    assert invite["manual_delivery_required"] is False
+    assert invite["last_sent_at"]
+    assert sent
+
+
 def test_web_preview_invite_revoke_marks_metadata_without_plain_token(
     tmp_path: Path,
 ) -> None:
@@ -199,7 +387,12 @@ def test_web_preview_invite_api_create_and_list(tmp_path: Path) -> None:
 
     response = client.post(
         f"/web-previews/{plan.json()['preview_id']}/invites",
-        json={"ttlSeconds": 300, "singleUse": True},
+        json={
+            "ttlSeconds": 300,
+            "singleUse": True,
+            "email": "admin@example.com",
+            "role": "admin",
+        },
     )
     listed = client.get(f"/web-previews/{plan.json()['preview_id']}/invites")
 
@@ -208,6 +401,9 @@ def test_web_preview_invite_api_create_and_list(tmp_path: Path) -> None:
     assert payload["token"]
     assert payload["invite_url"].endswith(payload["token"])
     assert payload["single_use"] is True
+    assert payload["email"] == "admin@example.com"
+    assert payload["role"] == "admin"
+    assert payload["email_delivery_status"] == "manual_link_required"
     assert payload["used_at"] is None
     assert payload["revoked_at"] is None
     assert payload["sync_status"] == "not_deployed"
@@ -224,6 +420,17 @@ def test_web_preview_invite_api_create_and_list(tmp_path: Path) -> None:
     )
     assert retry.status_code == 200
     assert retry.json()["sync_status"] == "not_deployed"
+    resend = client.post(
+        f"/web-previews/{plan.json()['preview_id']}/invites/{payload['invite_id']}/resend",
+        json={"ttlSeconds": 600},
+    )
+    assert resend.status_code == 200
+    assert resend.json()["resend_count"] == 1
+    expire = client.post(
+        f"/web-previews/{plan.json()['preview_id']}/invites/{payload['invite_id']}/expire",
+    )
+    assert expire.status_code == 200
+    assert expire.json()["expired_at"]
     revoke = client.delete(
         f"/web-previews/{plan.json()['preview_id']}/invites/{payload['invite_id']}",
     )
@@ -291,7 +498,18 @@ def _generated_project(tmp_path: Path) -> Path:
     return projects_root / "clinica-norte"
 
 
-def _settings(tmp_path: Path, *, secret: str | None = SECRET) -> Settings:
+def _settings(
+    tmp_path: Path,
+    *,
+    secret: str | None = SECRET,
+    email_provider: str = "manual",
+    email_from: str | None = None,
+    smtp_host: str | None = None,
+    smtp_port: int = 587,
+    smtp_username: str | None = None,
+    smtp_password: str | None = None,
+    smtp_timeout: float = 10.0,
+) -> Settings:
     return Settings(
         projects_root=str(tmp_path / "projects"),
         project_factory_state_dir=str(tmp_path / "state/project_factory"),
@@ -299,6 +517,13 @@ def _settings(tmp_path: Path, *, secret: str | None = SECRET) -> Settings:
         web_preview_invite_secret=secret,
         web_preview_invite_default_ttl_seconds=300,
         web_preview_invite_max_ttl_seconds=604800,
+        web_preview_email_provider=email_provider,
+        web_preview_email_from=email_from,
+        web_preview_smtp_host=smtp_host,
+        web_preview_smtp_port=smtp_port,
+        web_preview_smtp_username=smtp_username,
+        web_preview_smtp_password=smtp_password,
+        web_preview_smtp_timeout_seconds=smtp_timeout,
         cloudflare_api_token=None,
         cloudflare_dns_api_token=None,
         cloudflare_account_id=None,

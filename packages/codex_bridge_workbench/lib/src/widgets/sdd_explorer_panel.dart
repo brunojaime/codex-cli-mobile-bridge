@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
@@ -50,6 +51,9 @@ class SddFeedbackTarget {
     this.specTitle,
     this.diagramType,
     this.diagramScope,
+    this.diagramSelectionType,
+    this.diagramSelectionLabel,
+    this.diagramSelectionMetadata = const <String, Object?>{},
   });
 
   final String workspacePath;
@@ -65,6 +69,9 @@ class SddFeedbackTarget {
   final String? specTitle;
   final String? diagramType;
   final String? diagramScope;
+  final String? diagramSelectionType;
+  final String? diagramSelectionLabel;
+  final Map<String, Object?> diagramSelectionMetadata;
 
   bool get isDiagram => diagramType != null;
 
@@ -87,6 +94,12 @@ class SddFeedbackTarget {
         if (specTitle != null) 'specTitle': specTitle,
         if (diagramType != null) 'diagramType': diagramType,
         if (diagramScope != null) 'diagramScope': diagramScope,
+        if (diagramSelectionType != null)
+          'diagramSelection': <String, Object?>{
+            'type': diagramSelectionType,
+            if (diagramSelectionLabel != null) 'label': diagramSelectionLabel,
+            ...diagramSelectionMetadata,
+          },
         'sourceExcerpt': sourceExcerpt,
       },
     };
@@ -102,6 +115,7 @@ enum SddCodexActionKind {
   explainDiagramImpact,
   alignDiagramWithSpec,
   addressFeedback,
+  implementTask,
   auditSdd,
 }
 
@@ -115,6 +129,7 @@ extension SddCodexActionKindLabel on SddCodexActionKind {
     SddCodexActionKind.explainDiagramImpact => 'sdd.explain_diagram_impact',
     SddCodexActionKind.alignDiagramWithSpec => 'sdd.align_diagram_with_spec',
     SddCodexActionKind.addressFeedback => 'sdd.address_feedback',
+    SddCodexActionKind.implementTask => 'sdd.implement_task',
     SddCodexActionKind.auditSdd => 'sdd.audit',
   };
 
@@ -127,6 +142,7 @@ extension SddCodexActionKindLabel on SddCodexActionKind {
     SddCodexActionKind.explainDiagramImpact => 'Explain impact',
     SddCodexActionKind.alignDiagramWithSpec => 'Align with spec/task',
     SddCodexActionKind.addressFeedback => 'Address feedback',
+    SddCodexActionKind.implementTask => 'Implement task',
     SddCodexActionKind.auditSdd => 'Audit SDD',
   };
 
@@ -147,6 +163,8 @@ extension SddCodexActionKindLabel on SddCodexActionKind {
       'Align the referenced diagram with the related spec, plan, tasks, and source context.',
     SddCodexActionKind.addressFeedback =>
       'Address the linked queued feedback using the referenced SDD artifact or diagram context.',
+    SddCodexActionKind.implementTask =>
+      'Start an implementation session for the referenced SDD task, keeping the task, plan, spec, and workspace context attached.',
     SddCodexActionKind.auditSdd =>
       'Audit missing or incomplete SDD artifacts for this workspace and propose the next concrete fixes.',
   };
@@ -185,24 +203,28 @@ class SddDashboardActivity {
     this.lastFeedbackTarget,
     this.lastActionLabel,
     this.lastActionSessionId,
+    this.feedbackTargets = const <SddFeedbackTarget>[],
   });
 
   final String? lastFeedbackId;
   final String? lastFeedbackTarget;
   final String? lastActionLabel;
   final String? lastActionSessionId;
+  final List<SddFeedbackTarget> feedbackTargets;
 
   SddDashboardActivity copyWith({
     String? lastFeedbackId,
     String? lastFeedbackTarget,
     String? lastActionLabel,
     String? lastActionSessionId,
+    List<SddFeedbackTarget>? feedbackTargets,
   }) {
     return SddDashboardActivity(
       lastFeedbackId: lastFeedbackId ?? this.lastFeedbackId,
       lastFeedbackTarget: lastFeedbackTarget ?? this.lastFeedbackTarget,
       lastActionLabel: lastActionLabel ?? this.lastActionLabel,
       lastActionSessionId: lastActionSessionId ?? this.lastActionSessionId,
+      feedbackTargets: feedbackTargets ?? this.feedbackTargets,
     );
   }
 }
@@ -320,13 +342,14 @@ class SddExplorerPanel extends StatefulWidget {
 }
 
 class _SddExplorerPanelState extends State<SddExplorerPanel> {
-  late Future<SddProject?> _projectFuture;
+  late Future<Object?> _workbenchFuture;
+  String? _selectedWorkspacePath;
   SddDashboardActivity _activity = const SddDashboardActivity();
 
   @override
   void initState() {
     super.initState();
-    _projectFuture = _load();
+    _workbenchFuture = _load();
   }
 
   @override
@@ -336,26 +359,37 @@ class _SddExplorerPanelState extends State<SddExplorerPanel> {
         oldWidget.workspacePath != widget.workspacePath ||
         oldWidget.metaWorkspacePath != widget.metaWorkspacePath ||
         oldWidget.loader != widget.loader) {
-      _projectFuture = _load();
+      _selectedWorkspacePath = null;
+      _workbenchFuture = _load();
     }
   }
 
-  Future<SddProject?> _load() {
+  Future<Object?> _load() {
     final loader = widget.loader;
     if (loader != null) {
       return loader(widget.bridgeUrl);
     }
-    final client = SddExplorerClient(baseUrl: widget.bridgeUrl);
-    final workspacePath = widget.workspacePath?.trim();
+    final client =
+        widget.specIntakeClient ?? SddExplorerClient(baseUrl: widget.bridgeUrl);
+    final workspacePath =
+        _selectedWorkspacePath ?? widget.workspacePath?.trim();
     if (workspacePath != null && workspacePath.isNotEmpty) {
       return client.loadProject(workspacePath);
     }
-    return client.loadDefaultProject();
+    return client.listProjects();
   }
 
   void _retry() {
     setState(() {
-      _projectFuture = _load();
+      _workbenchFuture = _load();
+    });
+  }
+
+  void _selectProject(String workspacePath) {
+    setState(() {
+      _selectedWorkspacePath = workspacePath;
+      _activity = const SddDashboardActivity();
+      _workbenchFuture = _load();
     });
   }
 
@@ -382,8 +416,8 @@ class _SddExplorerPanelState extends State<SddExplorerPanel> {
                 children: <Widget>[
                   _SddExplorerHeader(onClose: widget.onClose),
                   Expanded(
-                    child: FutureBuilder<SddProject?>(
-                      future: _projectFuture,
+                    child: FutureBuilder<Object?>(
+                      future: _workbenchFuture,
                       builder: (context, snapshot) {
                         if (snapshot.connectionState != ConnectionState.done) {
                           return const _SddExplorerLoading();
@@ -394,7 +428,15 @@ class _SddExplorerPanelState extends State<SddExplorerPanel> {
                             onRetry: _retry,
                           );
                         }
-                        final project = snapshot.data;
+                        final data = snapshot.data;
+                        if (data is SddProjectsIndex) {
+                          return _SddProjectSelector(
+                            index: data,
+                            onRetry: _retry,
+                            onSelected: _selectProject,
+                          );
+                        }
+                        final project = data is SddProject ? data : null;
                         if (project == null) {
                           return _SddExplorerEmpty(onRetry: _retry);
                         }
@@ -472,6 +514,10 @@ class _SddExplorerPanelState extends State<SddExplorerPanel> {
       _activity = _activity.copyWith(
         lastFeedbackId: item.id,
         lastFeedbackTarget: target.artifactTitle,
+        feedbackTargets: <SddFeedbackTarget>[
+          ..._activity.feedbackTargets,
+          target,
+        ],
       );
     });
   }
@@ -886,6 +932,100 @@ class _StateMessage extends StatelessWidget {
   }
 }
 
+class _SddProjectSelector extends StatelessWidget {
+  const _SddProjectSelector({
+    required this.index,
+    required this.onRetry,
+    required this.onSelected,
+  });
+
+  final SddProjectsIndex index;
+  final VoidCallback onRetry;
+  final ValueChanged<String> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    if (index.projects.isEmpty) {
+      return _SddExplorerEmpty(onRetry: onRetry);
+    }
+    final defaultPath = index.defaultWorkspacePath;
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(18, 18, 18, 28),
+      children: <Widget>[
+        const Text(
+          'Select SDD project',
+          style: TextStyle(
+            color: _WorkbenchColors.onBackground,
+            fontSize: 18,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
+        const SizedBox(height: 6),
+        const Text(
+          'Choose a project before opening the project-local dashboard.',
+          style: TextStyle(color: _WorkbenchColors.secondaryText),
+        ),
+        const SizedBox(height: 14),
+        ...index.projects.map(
+          (project) => Padding(
+            padding: const EdgeInsets.only(bottom: 10),
+            child: _PanelCard(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Row(
+                    children: <Widget>[
+                      const Icon(
+                        Icons.dashboard_customize_outlined,
+                        color: _WorkbenchColors.primary,
+                        size: 18,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          project.workspaceName,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: _WorkbenchColors.onBackground,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                      ),
+                      if (project.workspacePath == defaultPath)
+                        const _SmallBadge('Default'),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  _KeyValueLine(
+                    label: 'Workspace',
+                    value: _workspaceFolderName(project.workspacePath),
+                  ),
+                  _KeyValueLine(
+                    label: 'Specs',
+                    value:
+                        '${project.specCount} specs · ${project.diagramCount} diagrams',
+                    warning: project.missingRequired.isNotEmpty,
+                  ),
+                  const SizedBox(height: 10),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: FilledButton.icon(
+                      onPressed: () => onSelected(project.workspacePath),
+                      icon: const Icon(Icons.open_in_new_rounded, size: 16),
+                      label: const Text('Open dashboard'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 class _SddProjectView extends StatefulWidget {
   const _SddProjectView({
     required this.bridgeUrl,
@@ -991,6 +1131,7 @@ class _SddProjectViewState extends State<_SddProjectView> {
         client: client,
         showCuratorUpdate: widget.showOverviewCurator,
         onNavigate: _selectTab,
+        onCodexAction: widget.onCodexAction,
       ),
       _KanbanTab(client: client, project: widget.project),
       _SpecsTab(
@@ -1292,6 +1433,7 @@ class _OverviewTab extends StatelessWidget {
     required this.client,
     required this.showCuratorUpdate,
     required this.onNavigate,
+    required this.onCodexAction,
   });
 
   final SddProject project;
@@ -1299,6 +1441,7 @@ class _OverviewTab extends StatelessWidget {
   final SddExplorerClient client;
   final bool showCuratorUpdate;
   final ValueChanged<int> onNavigate;
+  final ValueChanged<SddCodexActionRequest> onCodexAction;
 
   @override
   Widget build(BuildContext context) {
@@ -1368,9 +1511,24 @@ class _OverviewTab extends StatelessWidget {
                 label: 'Workspace',
                 value: _workspaceFolderName(project.workspacePath),
               ),
+              const SizedBox(height: 8),
+              Align(
+                alignment: Alignment.centerRight,
+                child: TextButton.icon(
+                  onPressed: () => onCodexAction(
+                    SddCodexActionRequest(
+                      kind: SddCodexActionKind.auditSdd,
+                      target: _projectFeedbackTarget(project),
+                    ),
+                  ),
+                  icon: const Icon(Icons.health_and_safety_outlined, size: 16),
+                  label: const Text('Audit SDD'),
+                ),
+              ),
             ],
           ),
         ),
+        _SddDoctorCard(client: client, project: project),
         _PanelCard(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -1395,6 +1553,9 @@ class _OverviewTab extends StatelessWidget {
             ],
           ),
         ),
+        _FeedbackGroupsCard(targets: activity.feedbackTargets),
+        _DiagramCoverageCard(project: project),
+        _RuntimeReferencesCard(project: project),
         if (project.missingRequired.isNotEmpty)
           _MissingArtifacts(items: project.missingRequired),
         if (project.specs.isEmpty)
@@ -1403,6 +1564,240 @@ class _OverviewTab extends StatelessWidget {
             detail: 'This project has no readable SDD specs yet.',
           ),
       ],
+    );
+  }
+}
+
+class _FeedbackGroupsCard extends StatelessWidget {
+  const _FeedbackGroupsCard({required this.targets});
+
+  final List<SddFeedbackTarget> targets;
+
+  @override
+  Widget build(BuildContext context) {
+    final groups = _feedbackGroups(targets);
+    return _PanelCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          const Text(
+            'Feedback groups',
+            style: TextStyle(fontWeight: FontWeight.w800),
+          ),
+          const SizedBox(height: 8),
+          if (groups.isEmpty)
+            const Text(
+              'No grouped SDD feedback queued in this session yet.',
+              style: TextStyle(color: _WorkbenchColors.secondaryText),
+            )
+          else
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: groups.entries
+                  .map(
+                    (entry) => _TinyMetaChip(
+                      icon: Icons.rate_review_outlined,
+                      label: '${entry.key}: ${entry.value}',
+                    ),
+                  )
+                  .toList(growable: false),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SddDoctorCard extends StatefulWidget {
+  const _SddDoctorCard({required this.client, required this.project});
+
+  final SddExplorerClient client;
+  final SddProject project;
+
+  @override
+  State<_SddDoctorCard> createState() => _SddDoctorCardState();
+}
+
+class _SddDoctorCardState extends State<_SddDoctorCard> {
+  SddDoctorReport? _report;
+  String? _error;
+  bool _running = false;
+
+  Future<void> _runDoctor() async {
+    setState(() {
+      _running = true;
+      _error = null;
+    });
+    try {
+      final report = await widget.client.runDoctor(
+        widget.project.workspacePath,
+      );
+      if (!mounted) return;
+      setState(() {
+        _report = report;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _error = error.toString();
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _running = false;
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final report = _report;
+    final failures =
+        report?.checks.where((check) => check.status == 'fail').length ?? 0;
+    final warnings =
+        report?.checks
+            .where(
+              (check) => check.status == 'warn' || check.status == 'degraded',
+            )
+            .length ??
+        0;
+    return _PanelCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Row(
+            children: <Widget>[
+              const Icon(
+                Icons.health_and_safety_outlined,
+                color: _WorkbenchColors.primary,
+                size: 18,
+              ),
+              const SizedBox(width: 8),
+              const Expanded(
+                child: Text(
+                  'SDD doctor',
+                  style: TextStyle(
+                    color: _WorkbenchColors.onBackground,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+              TextButton.icon(
+                onPressed: _running ? null : _runDoctor,
+                icon: _running
+                    ? const SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.play_arrow_rounded, size: 16),
+                label: Text(_running ? 'Running' : 'Run doctor'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          if (_error != null)
+            _KeyValueLine(label: 'Error', value: _error!, warning: true)
+          else if (report == null)
+            const Text(
+              'Run the real SDD doctor for this workspace.',
+              style: TextStyle(color: _WorkbenchColors.secondaryText),
+            )
+          else ...[
+            _KeyValueLine(
+              label: 'Status',
+              value:
+                  '${report.status} · ${report.checks.length} checks · $failures fail · $warnings warn',
+              warning: !report.ok || warnings > 0,
+            ),
+            if (report.nextActions.isNotEmpty)
+              _KeyValueLine(
+                label: 'Next',
+                value: report.nextActions.take(2).join(' · '),
+                warning: !report.ok,
+              ),
+            const SizedBox(height: 6),
+            ...report.checks
+                .take(4)
+                .map(
+                  (check) => _KeyValueLine(
+                    label: check.status,
+                    value: '${check.name}: ${check.detail}',
+                    warning: check.status != 'pass',
+                  ),
+                ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _DiagramCoverageCard extends StatelessWidget {
+  const _DiagramCoverageCard({required this.project});
+
+  final SddProject project;
+
+  @override
+  Widget build(BuildContext context) {
+    final coverage = _diagramCoverage(project);
+    return _PanelCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          const Text(
+            'Diagram coverage',
+            style: TextStyle(fontWeight: FontWeight.w800),
+          ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: coverage.entries
+                .map(
+                  (entry) => _TinyMetaChip(
+                    icon: entry.value > 0
+                        ? Icons.account_tree_outlined
+                        : Icons.warning_amber_rounded,
+                    label: '${_diagramTypeLabel(entry.key)}: ${entry.value}',
+                    warning: entry.value == 0,
+                  ),
+                )
+                .toList(growable: false),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _RuntimeReferencesCard extends StatelessWidget {
+  const _RuntimeReferencesCard({required this.project});
+
+  final SddProject project;
+
+  @override
+  Widget build(BuildContext context) {
+    final refs = _runtimeReferences(project);
+    return _PanelCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          const Text(
+            'Runtime references',
+            style: TextStyle(fontWeight: FontWeight.w800),
+          ),
+          const SizedBox(height: 8),
+          for (final entry in refs.entries)
+            _KeyValueLine(
+              label: entry.key,
+              value: entry.value,
+              warning: entry.value == 'not found',
+            ),
+        ],
+      ),
     );
   }
 }
@@ -1493,11 +1888,16 @@ class _KanbanTab extends StatefulWidget {
 }
 
 class _KanbanTabState extends State<_KanbanTab> {
+  static const String _workspaceScopeId = '__workspace__';
   late Future<SddWorkbenchKanban> _future;
+  late Future<SddKanbanScopeIndex> _scopesFuture;
+  Timer? _pollTimer;
+  SddKanbanScopeOption? _selectedScope;
 
   @override
   void initState() {
     super.initState();
+    _scopesFuture = _loadScopes();
     _future = _load();
   }
 
@@ -1506,48 +1906,277 @@ class _KanbanTabState extends State<_KanbanTab> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.project.workspacePath != widget.project.workspacePath ||
         oldWidget.client != widget.client) {
+      _pollTimer?.cancel();
+      _selectedScope = null;
+      _scopesFuture = _loadScopes();
       _future = _load();
     }
   }
 
+  Future<SddKanbanScopeIndex> _loadScopes() {
+    return widget.client.getKanbanScopes(
+      workspacePath: widget.project.workspacePath,
+    );
+  }
+
   Future<SddWorkbenchKanban> _load() {
-    return widget.client.getKanban(workspacePath: widget.project.workspacePath);
+    return widget.client
+        .getKanban(
+          workspacePath: _requestWorkspacePath,
+          specId: _selectedScope?.specId,
+          draftId: _selectedScope?.draftId,
+          jobId: _selectedScope?.jobId,
+        )
+        .then((kanban) {
+          _schedulePolling(kanban);
+          return kanban;
+        });
   }
 
   void _refresh() {
+    _pollTimer?.cancel();
     setState(() {
-      _future = widget.client.refreshKanban(
-        workspacePath: widget.project.workspacePath,
-      );
+      _future = widget.client
+          .refreshKanban(
+            workspacePath: _requestWorkspacePath,
+            specId: _selectedScope?.specId,
+            draftId: _selectedScope?.draftId,
+            jobId: _selectedScope?.jobId,
+          )
+          .then((kanban) {
+            _schedulePolling(kanban);
+            return kanban;
+          });
+    });
+  }
+
+  String? get _requestWorkspacePath {
+    final scope = _selectedScope;
+    if (scope == null || scope.type == 'workspace') {
+      return widget.project.workspacePath;
+    }
+    if (scope.type == 'project_factory_draft' ||
+        scope.type == 'project_factory_job') {
+      return null;
+    }
+    return scope.workspacePath ?? widget.project.workspacePath;
+  }
+
+  void _selectScope(String? value, List<SddKanbanScopeOption> scopes) {
+    if (value == null || value.isEmpty) return;
+    final nextScope = scopes.firstWhere(
+      (scope) => scope.id == value,
+      orElse: () => _fallbackWorkspaceScope(),
+    );
+    if (nextScope.id == (_selectedScope?.id ?? _workspaceScopeId)) return;
+    _pollTimer?.cancel();
+    setState(() {
+      _selectedScope = nextScope.id == _workspaceScopeId ? null : nextScope;
+      _future = _load();
+    });
+  }
+
+  void _schedulePolling(SddWorkbenchKanban kanban) {
+    _pollTimer?.cancel();
+    final rawSeconds = kanban.board.refresh['pollingFallbackSeconds'];
+    final seconds = rawSeconds is int ? rawSeconds : 30;
+    if (seconds <= 0 || !mounted) return;
+    _pollTimer = Timer(Duration(seconds: seconds), () {
+      if (!mounted) return;
+      _refresh();
     });
   }
 
   @override
+  void dispose() {
+    _pollTimer?.cancel();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return FutureBuilder<SddWorkbenchKanban>(
-      future: _future,
-      builder: (context, snapshot) {
-        if (snapshot.connectionState != ConnectionState.done) {
-          return const _KanbanLoading();
-        }
-        if (snapshot.hasError) {
-          return _KanbanError(
-            errorText: snapshot.error.toString(),
-            onRetry: _refresh,
-          );
-        }
-        final kanban = snapshot.data;
-        if (kanban == null || kanban.board.cards.isEmpty) {
-          return _KanbanEmpty(onRetry: _refresh);
-        }
-        return _KanbanContent(
-          kanban: kanban,
-          client: widget.client,
-          workspacePath: widget.project.workspacePath,
-          onRefresh: _refresh,
-        );
-      },
+    return Column(
+      children: <Widget>[
+        FutureBuilder<SddKanbanScopeIndex>(
+          future: _scopesFuture,
+          builder: (context, snapshot) {
+            final scopes = snapshot.data?.scopes ?? _fallbackScopes();
+            final selectedId = _selectedScopeId(
+              index: snapshot.data,
+              scopes: scopes,
+            );
+            return _KanbanScopeSelector(
+              scopes: scopes,
+              selectedValue: selectedId,
+              loading: snapshot.connectionState != ConnectionState.done,
+              onChanged: (value) => _selectScope(value, scopes),
+              onReload: () {
+                setState(() {
+                  _scopesFuture = _loadScopes();
+                });
+              },
+            );
+          },
+        ),
+        Expanded(
+          child: FutureBuilder<SddWorkbenchKanban>(
+            future: _future,
+            builder: (context, snapshot) {
+              if (snapshot.connectionState != ConnectionState.done) {
+                return const _KanbanLoading();
+              }
+              if (snapshot.hasError) {
+                return _KanbanError(
+                  errorText: snapshot.error.toString(),
+                  onRetry: _refresh,
+                );
+              }
+              final kanban = snapshot.data;
+              if (kanban == null || kanban.board.cards.isEmpty) {
+                return _KanbanEmpty(onRetry: _refresh);
+              }
+              return _KanbanContent(
+                kanban: kanban,
+                client: widget.client,
+                workspacePath: _requestWorkspacePath,
+                onRefresh: _refresh,
+              );
+            },
+          ),
+        ),
+      ],
     );
+  }
+
+  SddKanbanScopeOption _fallbackWorkspaceScope() {
+    return SddKanbanScopeOption(
+      id: _workspaceScopeId,
+      type: 'workspace',
+      group: 'workspace',
+      title: 'All specs',
+      workspacePath: widget.project.workspacePath,
+      status: 'overview',
+      detail: widget.project.workspaceName,
+      priority: 300,
+    );
+  }
+
+  String _selectedScopeId({
+    required SddKanbanScopeIndex? index,
+    required List<SddKanbanScopeOption> scopes,
+  }) {
+    final selected = _selectedScope;
+    if (selected != null && scopes.any((scope) => scope.id == selected.id)) {
+      return selected.id;
+    }
+    final defaultScope = _defaultScopeOption(index: index, scopes: scopes);
+    return defaultScope.id;
+  }
+
+  SddKanbanScopeOption _defaultScopeOption({
+    required SddKanbanScopeIndex? index,
+    required List<SddKanbanScopeOption> scopes,
+  }) {
+    final defaultScopeId = index?.defaultScopeId;
+    if (defaultScopeId != null) {
+      for (final scope in scopes) {
+        if (scope.id == defaultScopeId) return scope;
+      }
+    }
+    for (final scope in scopes) {
+      if (scope.type == 'workspace' &&
+          scope.workspacePath == widget.project.workspacePath) {
+        return scope;
+      }
+    }
+    return scopes.isEmpty ? _fallbackWorkspaceScope() : scopes.first;
+  }
+
+  List<SddKanbanScopeOption> _fallbackScopes() {
+    return <SddKanbanScopeOption>[
+      _fallbackWorkspaceScope(),
+      for (var index = 0; index < widget.project.specs.length; index += 1)
+        SddKanbanScopeOption(
+          id: '${widget.project.workspacePath}:spec:${widget.project.specs[index].id}',
+          type: 'workspace_spec',
+          group: 'specs',
+          title: widget.project.specs[index].title.isEmpty
+              ? widget.project.specs[index].id
+              : widget.project.specs[index].title,
+          workspacePath: widget.project.workspacePath,
+          specId: widget.project.specs[index].id,
+          status: widget.project.specs[index].lifecycleStatus,
+          detail: widget.project.specs[index].path,
+          priority: 400 + index,
+        ),
+    ];
+  }
+}
+
+class _KanbanScopeSelector extends StatelessWidget {
+  const _KanbanScopeSelector({
+    required this.scopes,
+    required this.selectedValue,
+    required this.loading,
+    required this.onChanged,
+    required this.onReload,
+  });
+
+  final List<SddKanbanScopeOption> scopes;
+  final String selectedValue;
+  final bool loading;
+  final ValueChanged<String?> onChanged;
+  final VoidCallback onReload;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 0),
+      child: Row(
+        children: <Widget>[
+          Expanded(
+            child: DropdownButtonFormField<String>(
+              key: const Key('kanban-scope-selector'),
+              initialValue: selectedValue,
+              isExpanded: true,
+              decoration: InputDecoration(
+                labelText: loading ? 'Kanban scope (loading)' : 'Kanban scope',
+                border: const OutlineInputBorder(),
+                isDense: true,
+              ),
+              items: <DropdownMenuItem<String>>[
+                for (final scope in scopes)
+                  DropdownMenuItem<String>(
+                    value: scope.id,
+                    child: Text(
+                      _scopeOptionLabel(scope),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+              ],
+              onChanged: onChanged,
+            ),
+          ),
+          const SizedBox(width: 8),
+          IconButton(
+            tooltip: 'Reload Kanban scopes',
+            onPressed: onReload,
+            icon: const Icon(Icons.sync_rounded),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _scopeOptionLabel(SddKanbanScopeOption scope) {
+    final group = switch (scope.group) {
+      'creating' => 'Creating',
+      'generated' => 'Generated',
+      'specs' => 'Spec',
+      _ => 'Workspace',
+    };
+    final status = scope.status.isEmpty ? '' : ' · ${scope.status}';
+    return '$group · ${scope.title}$status';
   }
 }
 
@@ -1561,7 +2190,7 @@ class _KanbanContent extends StatelessWidget {
 
   final SddWorkbenchKanban kanban;
   final SddExplorerClient client;
-  final String workspacePath;
+  final String? workspacePath;
   final VoidCallback onRefresh;
 
   @override
@@ -1621,7 +2250,7 @@ class _KanbanHeader extends StatelessWidget {
 
   final SddWorkbenchKanban kanban;
   final SddExplorerClient client;
-  final String workspacePath;
+  final String? workspacePath;
   final VoidCallback onRefresh;
 
   @override
@@ -1639,7 +2268,7 @@ class _KanbanHeader extends StatelessWidget {
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  kanban.scope.title,
+                  '${_kanbanScopePrefix(kanban.scope.type)} · ${kanban.scope.title}',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
@@ -1687,6 +2316,16 @@ class _KanbanHeader extends StatelessWidget {
       ),
     );
   }
+}
+
+String _kanbanScopePrefix(String type) {
+  return switch (type) {
+    'workspace_spec' => 'Spec',
+    'project_factory_draft' => 'Creating draft',
+    'project_factory_job' => 'Creating project',
+    'generated_workspace' => 'Generated project',
+    _ => 'All specs',
+  };
 }
 
 class _CuratorUpdatePanel extends StatelessWidget {
@@ -2006,7 +2645,7 @@ class _CountBadge extends StatelessWidget {
 void _showKanbanHistory(
   BuildContext context, {
   required SddExplorerClient client,
-  required String workspacePath,
+  required String? workspacePath,
   required String scopeId,
 }) {
   showDialog<void>(
@@ -2087,7 +2726,7 @@ void _showKanbanHistory(
 void _showKanbanHistoryDetail(
   BuildContext context, {
   required SddExplorerClient client,
-  required String workspacePath,
+  required String? workspacePath,
   required String scopeId,
   required String updateId,
 }) {
@@ -2198,6 +2837,7 @@ class _SpecsTabState extends State<_SpecsTab> {
     kind: _SpecArtifactKind.spec,
   );
   bool _showDetail = false;
+  String _searchQuery = '';
 
   @override
   void initState() {
@@ -2274,6 +2914,10 @@ class _SpecsTabState extends State<_SpecsTab> {
   @override
   Widget build(BuildContext context) {
     final specs = _project.specs;
+    final visibleSpecs = specs.indexed
+        .map((entry) => MapEntry(entry.$1, entry.$2))
+        .where((entry) => _matchesSpecSearch(entry.value, _searchQuery))
+        .toList(growable: false);
     if (specs.isEmpty) {
       return const SingleChildScrollView(
         padding: EdgeInsets.fromLTRB(14, 12, 14, 96),
@@ -2360,7 +3004,7 @@ class _SpecsTabState extends State<_SpecsTab> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: <Widget>[
           _SpecListOverview(
-            specs: specs,
+            specs: visibleSpecs,
             selection: selection,
             onSelected: (index) => _select(
               _SpecArtifactSelection(
@@ -2369,6 +3013,19 @@ class _SpecsTabState extends State<_SpecsTab> {
               ),
             ),
           ),
+          const SizedBox(height: 10),
+          _WorkbenchSearchField(
+            label: 'Search specs, tasks, entities, actors, and diagrams',
+            value: _searchQuery,
+            onChanged: (value) => setState(() => _searchQuery = value),
+          ),
+          if (visibleSpecs.isEmpty) ...[
+            const SizedBox(height: 10),
+            const _InfoCard(
+              title: 'No search results',
+              detail: 'No specs, tasks, or diagrams match this query.',
+            ),
+          ],
         ],
       ),
     );
@@ -4293,7 +4950,7 @@ class _SpecListOverview extends StatelessWidget {
     required this.onSelected,
   });
 
-  final List<SddSpec> specs;
+  final List<MapEntry<int, SddSpec>> specs;
   final _SpecArtifactSelection selection;
   final ValueChanged<int> onSelected;
 
@@ -4327,9 +4984,9 @@ class _SpecListOverview extends StatelessWidget {
             if (entry.$1 > 0)
               const Divider(height: 18, color: _WorkbenchColors.border),
             _SpecListRow(
-              spec: entry.$2,
-              selected: entry.$1 == selection.specIndex,
-              onTap: () => onSelected(entry.$1),
+              spec: entry.$2.value,
+              selected: entry.$2.key == selection.specIndex,
+              onTap: () => onSelected(entry.$2.key),
             ),
           ],
         ],
@@ -6140,7 +6797,10 @@ class _TreeTaskNodeSection extends StatelessWidget {
             fallbackTitle: task.title,
           ),
           onFeedback: onFeedback,
-          actions: const <SddCodexActionKind>[SddCodexActionKind.updateTasks],
+          actions: const <SddCodexActionKind>[
+            SddCodexActionKind.implementTask,
+            SddCodexActionKind.updateTasks,
+          ],
           onCodexAction: onCodexAction,
         ),
         const SizedBox(height: 8),
@@ -6353,6 +7013,7 @@ class _DiagramsTab extends StatefulWidget {
 
 class _DiagramsTabState extends State<_DiagramsTab> {
   String _typeFilter = 'all';
+  String _searchQuery = '';
 
   @override
   Widget build(BuildContext context) {
@@ -6361,11 +7022,14 @@ class _DiagramsTabState extends State<_DiagramsTab> {
       'all',
       ...diagrams.map((item) => item.diagram.diagramType),
     }.toList(growable: false);
-    final filtered = _typeFilter == 'all'
-        ? diagrams
-        : diagrams
-              .where((item) => item.diagram.diagramType == _typeFilter)
-              .toList(growable: false);
+    final filtered = diagrams
+        .where(
+          (item) =>
+              (_typeFilter == 'all' ||
+                  item.diagram.diagramType == _typeFilter) &&
+              _matchesDiagramSearch(item, _searchQuery),
+        )
+        .toList(growable: false);
     final grouped = <String, List<_DiagramListItem>>{};
     for (final item in filtered) {
       grouped
@@ -6394,19 +7058,32 @@ class _DiagramsTabState extends State<_DiagramsTab> {
               ),
             ],
           ),
-          const SizedBox(height: 14),
-          ...grouped.entries.map(
-            (entry) => _DiagramListGroup(
-              title: entry.key == 'architecture'
-                  ? 'Architecture diagrams'
-                  : '${entry.key} diagrams',
-              items: entry.value,
-              diagramRenderer: widget.diagramRenderer,
-              project: widget.project,
-              onFeedback: widget.onFeedback,
-              onCodexAction: widget.onCodexAction,
-            ),
+          const SizedBox(height: 10),
+          _WorkbenchSearchField(
+            label: 'Search diagrams',
+            value: _searchQuery,
+            onChanged: (value) => setState(() => _searchQuery = value),
           ),
+          const SizedBox(height: 14),
+          if (filtered.isEmpty)
+            const _InfoCard(
+              title: 'No diagram matches',
+              detail:
+                  'No diagram path, type, scope, or source matches this query.',
+            )
+          else
+            ...grouped.entries.map(
+              (entry) => _DiagramListGroup(
+                title: entry.key == 'architecture'
+                    ? 'Architecture diagrams'
+                    : '${entry.key} diagrams',
+                items: entry.value,
+                diagramRenderer: widget.diagramRenderer,
+                project: widget.project,
+                onFeedback: widget.onFeedback,
+                onCodexAction: widget.onCodexAction,
+              ),
+            ),
         ],
       ],
     );
@@ -6493,11 +7170,100 @@ class _DiagramFilterMenu extends StatelessWidget {
   }
 }
 
+class _WorkbenchSearchField extends StatefulWidget {
+  const _WorkbenchSearchField({
+    required this.label,
+    required this.value,
+    required this.onChanged,
+  });
+
+  final String label;
+  final String value;
+  final ValueChanged<String> onChanged;
+
+  @override
+  State<_WorkbenchSearchField> createState() => _WorkbenchSearchFieldState();
+}
+
+class _WorkbenchSearchFieldState extends State<_WorkbenchSearchField> {
+  late final TextEditingController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: widget.value);
+  }
+
+  @override
+  void didUpdateWidget(_WorkbenchSearchField oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.value != widget.value && _controller.text != widget.value) {
+      _controller.value = TextEditingValue(
+        text: widget.value,
+        selection: TextSelection.collapsed(offset: widget.value.length),
+      );
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return TextField(
+      controller: _controller,
+      onChanged: widget.onChanged,
+      style: const TextStyle(color: _WorkbenchColors.onBackground),
+      decoration: InputDecoration(
+        prefixIcon: const Icon(Icons.search_rounded),
+        suffixIcon: widget.value.isEmpty
+            ? null
+            : IconButton(
+                tooltip: 'Clear search',
+                onPressed: () {
+                  _controller.clear();
+                  widget.onChanged('');
+                },
+                icon: const Icon(Icons.close_rounded),
+              ),
+        labelText: widget.label,
+        filled: true,
+        fillColor: _WorkbenchColors.surfaceHigh,
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+      ),
+    );
+  }
+}
+
 class _DiagramListItem {
   const _DiagramListItem({required this.diagram, this.spec});
 
   final SddDiagram diagram;
   final SddSpec? spec;
+}
+
+class _DiagramSelection {
+  const _DiagramSelection({
+    required this.type,
+    required this.label,
+    required this.sourceExcerpt,
+    this.metadata = const <String, Object?>{},
+  });
+
+  final String type;
+  final String label;
+  final String sourceExcerpt;
+  final Map<String, Object?> metadata;
+
+  String get menuLabel => switch (type) {
+    'node' => 'Node: $label',
+    'edge' => 'Edge: $label',
+    'region' => 'Region: $label',
+    _ => label,
+  };
 }
 
 class _DiagramListGroup extends StatelessWidget {
@@ -6576,6 +7342,7 @@ class _DiagramListTile extends StatelessWidget {
       spec: item.spec,
       diagram: diagram,
     );
+    final selections = _diagramSelections(diagram);
     final title = _diagramDisplayLabel(diagram);
     return Material(
       color: Colors.transparent,
@@ -6624,6 +7391,31 @@ class _DiagramListTile extends StatelessWidget {
                 tooltip: 'Add diagram feedback',
                 onPressed: () => onFeedback(target),
                 icon: const Icon(Icons.rate_review_outlined, size: 18),
+              ),
+              PopupMenuButton<_DiagramSelection>(
+                tooltip: 'Select diagram target',
+                onSelected: (selection) => onFeedback(
+                  _diagramSelectionFeedbackTarget(
+                    project: project,
+                    spec: item.spec,
+                    diagram: diagram,
+                    selection: selection,
+                  ),
+                ),
+                itemBuilder: (context) => selections
+                    .map(
+                      (selection) => PopupMenuItem<_DiagramSelection>(
+                        value: selection,
+                        child: Text(
+                          selection.menuLabel,
+                          style: const TextStyle(
+                            color: _WorkbenchColors.onBackground,
+                          ),
+                        ),
+                      ),
+                    )
+                    .toList(growable: false),
+                icon: const Icon(Icons.ads_click_rounded, size: 18),
               ),
               PopupMenuButton<SddCodexActionKind>(
                 tooltip: 'Open diagram Codex actions',
@@ -7782,6 +8574,130 @@ List<SddDiagram> _allDiagrams(SddProject project) {
   ];
 }
 
+Map<String, int> _feedbackGroups(List<SddFeedbackTarget> targets) {
+  final groups = <String, int>{};
+  for (final target in targets) {
+    final keys = <String>[
+      if (target.specTitle != null) 'spec ${target.specTitle}',
+      if (target.diagramScope != null) 'diagram ${target.diagramScope}',
+      target.artifactType,
+    ];
+    for (final key in keys) {
+      groups[key] = (groups[key] ?? 0) + 1;
+    }
+  }
+  return groups;
+}
+
+Map<String, int> _diagramCoverage(SddProject project) {
+  const required = <String>[
+    'component-impact',
+    'deployment',
+    'sequence',
+    'class',
+    'data-impact',
+    'use-case',
+  ];
+  final coverage = <String, int>{for (final type in required) type: 0};
+  for (final diagram in _allDiagrams(project)) {
+    final normalized = _coverageDiagramType(diagram);
+    coverage[normalized] = (coverage[normalized] ?? 0) + 1;
+  }
+  return coverage;
+}
+
+bool _matchesSpecSearch(SddSpec spec, String query) {
+  final normalized = query.trim().toLowerCase();
+  if (normalized.isEmpty) return true;
+  final haystack = <String>[
+    spec.id,
+    spec.title,
+    spec.description,
+    spec.path,
+    spec.spec?.content ?? '',
+    spec.plan?.content ?? '',
+    spec.tasks?.content ?? '',
+    ...spec.allSpecFiles.map((file) => '${file.path} ${file.content ?? ''}'),
+    ...spec.allPlanFiles.map((file) => '${file.path} ${file.content ?? ''}'),
+    ...spec.allTaskFiles.map((file) => '${file.path} ${file.content ?? ''}'),
+    ...spec.diagrams.map(
+      (diagram) =>
+          '${diagram.path} ${diagram.diagramType} ${diagram.scope} ${diagram.content}',
+    ),
+    if (spec.tree != null)
+      ...spec.tree!.plans.expand(
+        (plan) => <String>[
+          plan.title,
+          plan.description,
+          ...plan.tasks.map((task) => '${task.title} ${task.description}'),
+        ],
+      ),
+  ].join(' ').toLowerCase();
+  return haystack.contains(normalized);
+}
+
+bool _matchesDiagramSearch(_DiagramListItem item, String query) {
+  final normalized = query.trim().toLowerCase();
+  if (normalized.isEmpty) return true;
+  final diagram = item.diagram;
+  final haystack = <String>[
+    diagram.path,
+    diagram.title ?? '',
+    diagram.diagramType,
+    diagram.scope,
+    diagram.content ?? '',
+    item.spec?.id ?? '',
+    item.spec?.title ?? '',
+  ].join(' ').toLowerCase();
+  return haystack.contains(normalized);
+}
+
+String _coverageDiagramType(SddDiagram diagram) {
+  final label = _diagramTypeLabel(
+    diagram.diagramType,
+    path: diagram.path,
+    content: diagram.content,
+  ).toLowerCase();
+  if (label.contains('deployment')) return 'deployment';
+  if (label.contains('sequence')) return 'sequence';
+  if (label.contains('class')) return 'class';
+  if (label.contains('er') || label.contains('data')) return 'data-impact';
+  if (label.contains('use case')) return 'use-case';
+  return diagram.diagramType.isEmpty ? 'component-impact' : diagram.diagramType;
+}
+
+Map<String, String> _runtimeReferences(SddProject project) {
+  String value(List<String> keys) =>
+      _manifestValue(project.manifest, keys) ?? 'not found';
+  return <String, String>{
+    'Android release': value(const <String>[
+      'android_release_tag',
+      'androidReleaseTag',
+      'release_tag',
+      'releaseTag',
+    ]),
+    'Updater': value(const <String>[
+      'updater',
+      'updater_channel',
+      'updaterChannel',
+      'app_update_channel',
+      'appUpdateChannel',
+    ]),
+    'Backend': value(const <String>[
+      'api_base_url',
+      'apiBaseUrl',
+      'backend_url',
+      'backendUrl',
+    ]),
+    'Feedback': value(const <String>[
+      'feedback_endpoint',
+      'feedbackEndpoint',
+      'feedback_queue',
+      'feedbackQueue',
+    ]),
+  };
+}
+
 List<_DiagramListItem> _allDiagramItems(SddProject project) {
   return <_DiagramListItem>[
     ...project.architectureDiagrams.map(
@@ -8146,6 +9062,17 @@ SddFeedbackTarget? _fileFeedbackTarget({
   );
 }
 
+SddFeedbackTarget _projectFeedbackTarget(SddProject project) {
+  return SddFeedbackTarget(
+    workspacePath: project.workspacePath,
+    targetWorkspaceName: _projectDisplayName(project),
+    artifactType: 'workspace',
+    artifactPath: _safeMetadataPath(project.workspacePath),
+    artifactTitle: _projectDisplayName(project),
+    sourceExcerpt: _sourceExcerpt(project.manifest?.content),
+  );
+}
+
 SddFeedbackTarget _diagramFeedbackTarget({
   required SddProject project,
   required SddDiagram diagram,
@@ -8163,6 +9090,92 @@ SddFeedbackTarget _diagramFeedbackTarget({
     diagramType: diagram.diagramType,
     diagramScope: diagram.scope,
   );
+}
+
+SddFeedbackTarget _diagramSelectionFeedbackTarget({
+  required SddProject project,
+  required SddDiagram diagram,
+  required _DiagramSelection selection,
+  SddSpec? spec,
+}) {
+  return SddFeedbackTarget(
+    workspacePath: project.workspacePath,
+    targetWorkspaceName: _projectDisplayName(project),
+    artifactType: 'diagram',
+    artifactPath: _safeMetadataPath(diagram.path),
+    artifactTitle: '${_diagramDisplayLabel(diagram)} · ${selection.menuLabel}',
+    sourceExcerpt: selection.sourceExcerpt,
+    specId: spec?.id,
+    specTitle: spec?.title,
+    diagramType: diagram.diagramType,
+    diagramScope: diagram.scope,
+    diagramSelectionType: selection.type,
+    diagramSelectionLabel: selection.label,
+    diagramSelectionMetadata: selection.metadata,
+  );
+}
+
+List<_DiagramSelection> _diagramSelections(SddDiagram diagram) {
+  final selections = <_DiagramSelection>[
+    const _DiagramSelection(
+      type: 'region',
+      label: 'visible diagram',
+      sourceExcerpt: 'Region annotation: visible rendered diagram area',
+      metadata: <String, Object?>{
+        'region': 'visible_diagram',
+        'coordinateSpace': 'rendered_preview',
+      },
+    ),
+  ];
+  final content = diagram.content ?? '';
+  final nodes = <String>{};
+  final edges = <_DiagramSelection>[];
+  final edgePattern = RegExp(
+    r'^\s*([A-Za-z][A-Za-z0-9_.-]*)\s*(?:-->|--|-\)|-\]|->|<-->|<--)\s*([A-Za-z][A-Za-z0-9_.-]*)',
+  );
+  final classPattern = RegExp(r'^\s*class\s+([A-Za-z][A-Za-z0-9_.-]*)\b');
+  for (final line in content.split('\n')) {
+    final trimmed = line.trim();
+    if (trimmed.isEmpty || trimmed.startsWith('%%')) continue;
+    final edge = edgePattern.firstMatch(trimmed);
+    if (edge != null) {
+      final from = edge.group(1)!;
+      final to = edge.group(2)!;
+      nodes.add(from);
+      nodes.add(to);
+      edges.add(
+        _DiagramSelection(
+          type: 'edge',
+          label: '$from --> $to',
+          sourceExcerpt: trimmed,
+          metadata: <String, Object?>{
+            'from': from,
+            'to': to,
+            'sourceLine': trimmed,
+          },
+        ),
+      );
+      continue;
+    }
+    final classMatch = classPattern.firstMatch(trimmed);
+    if (classMatch != null) {
+      nodes.add(classMatch.group(1)!);
+    }
+  }
+  selections.addAll(
+    nodes
+        .take(6)
+        .map(
+          (node) => _DiagramSelection(
+            type: 'node',
+            label: node,
+            sourceExcerpt: 'Node selection: $node',
+            metadata: <String, Object?>{'nodeId': node},
+          ),
+        ),
+  );
+  selections.addAll(edges.take(6));
+  return selections;
 }
 
 T? _fileAt<T>(List<T> files, int index) {

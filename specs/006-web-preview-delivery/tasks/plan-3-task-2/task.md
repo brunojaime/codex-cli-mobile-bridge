@@ -6,4 +6,4 @@ Plan: `Preview Runtime Data Model`
 
 ## Checklist
 
-- [ ] T014 Add migration idempotency checks.
+- [x] T014 Add migration idempotency checks.

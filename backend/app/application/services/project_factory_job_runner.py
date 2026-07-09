@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import shlex
 import subprocess
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
@@ -149,6 +149,7 @@ class ProjectFactoryJobRunnerBlockedError(ProjectFactoryJobRunnerError):
 
 
 ProjectFactoryEventSink = Callable[[dict[str, object]], None]
+ProjectFactoryRemotePreflight = Callable[[], Mapping[str, object]]
 
 
 class ProjectFactoryJobRunner:
@@ -157,9 +158,11 @@ class ProjectFactoryJobRunner:
         *,
         generator_service: ProjectFactoryGeneratorService,
         process_runner: ProjectFactoryProcessRunner | None = None,
+        remote_preflight: ProjectFactoryRemotePreflight | None = None,
     ) -> None:
         self._generator_service = generator_service
         self._process_runner = process_runner or SubprocessProjectFactoryProcessRunner()
+        self._remote_preflight = remote_preflight
 
     def run(
         self,
@@ -168,11 +171,30 @@ class ProjectFactoryJobRunner:
         event_sink: ProjectFactoryEventSink,
     ) -> ProjectFactoryRunnerResult:
         remote_publication = context.publication_validation_mode == "remote"
-        publication_steps = 5 if remote_publication else 0
+        supports_android_installable = _supports_android_installable(
+            context.manifest_plan,
+        )
+        publication_steps = (
+            (6 if supports_android_installable else 4)
+            if remote_publication
+            else 0
+        )
+        preflight_steps = 1 if remote_publication and self._remote_preflight else 0
         total_steps = (
-            6 + publication_steps + context.generator_runs + context.reviewer_runs
+            6
+            + preflight_steps
+            + publication_steps
+            + context.generator_runs
+            + context.reviewer_runs
         )
         completed_steps = 0
+
+        if remote_publication and self._remote_preflight is not None:
+            completed_steps = self._run_remote_preflight(
+                completed_steps=completed_steps,
+                total_steps=total_steps,
+                event_sink=event_sink,
+            )
 
         event_sink(_event("scaffold", "running", "Creating project scaffold.", 0))
         generation_result = self._generator_service.generate(
@@ -373,6 +395,17 @@ class ProjectFactoryJobRunner:
             )
             completed_steps = self._run_command_step(
                 project_path=project_path,
+                argv=("bash", "scripts/smoke_web_preview.sh"),
+                phase="web_preview_smoke",
+                label="Web preview smoke",
+                completed_steps=completed_steps,
+                total_steps=total_steps,
+                event_sink=event_sink,
+                timeout_seconds=context.timeout_seconds,
+                block_on_failure=True,
+            )
+            completed_steps = self._run_command_step(
+                project_path=project_path,
                 argv=("bash", "scripts/smoke_preview_api.sh"),
                 phase="preview_api_smoke",
                 label="Preview API smoke",
@@ -382,33 +415,34 @@ class ProjectFactoryJobRunner:
                 timeout_seconds=context.timeout_seconds,
                 block_on_failure=True,
             )
-            completed_steps = self._run_command_step(
-                project_path=project_path,
-                argv=(
-                    "bash",
-                    "scripts/publish_android_preview_release.sh",
-                    "--push",
-                    "--watch",
-                ),
-                phase="android_preview_release",
-                label="Android preview release",
-                completed_steps=completed_steps,
-                total_steps=total_steps,
-                event_sink=event_sink,
-                timeout_seconds=context.timeout_seconds,
-                block_on_failure=True,
-            )
-            completed_steps = self._run_command_step(
-                project_path=project_path,
-                argv=("bash", "scripts/register_installable_app.sh"),
-                phase="installable_app_registration",
-                label="Installable app registration",
-                completed_steps=completed_steps,
-                total_steps=total_steps,
-                event_sink=event_sink,
-                timeout_seconds=context.timeout_seconds,
-                block_on_failure=True,
-            )
+            if supports_android_installable:
+                completed_steps = self._run_command_step(
+                    project_path=project_path,
+                    argv=(
+                        "bash",
+                        "scripts/publish_android_preview_release.sh",
+                        "--push",
+                        "--watch",
+                    ),
+                    phase="android_preview_release",
+                    label="Android preview release",
+                    completed_steps=completed_steps,
+                    total_steps=total_steps,
+                    event_sink=event_sink,
+                    timeout_seconds=context.timeout_seconds,
+                    block_on_failure=True,
+                )
+                completed_steps = self._run_command_step(
+                    project_path=project_path,
+                    argv=("bash", "scripts/register_installable_app.sh"),
+                    phase="installable_app_registration",
+                    label="Installable app registration",
+                    completed_steps=completed_steps,
+                    total_steps=total_steps,
+                    event_sink=event_sink,
+                    timeout_seconds=context.timeout_seconds,
+                    block_on_failure=True,
+                )
         completed_steps = self._run_command_step(
             project_path=project_path,
             argv=(
@@ -433,6 +467,62 @@ class ProjectFactoryJobRunner:
             block_on_failure=remote_publication,
         )
         return ProjectFactoryRunnerResult(generation_result=generation_result)
+
+    def _run_remote_preflight(
+        self,
+        *,
+        completed_steps: int,
+        total_steps: int,
+        event_sink: ProjectFactoryEventSink,
+    ) -> int:
+        phase = "cloudflare_preview_preflight"
+        event_sink(
+            _event(
+                phase,
+                "running",
+                "Checking Cloudflare preview readiness before remote publication.",
+                _progress(completed_steps, total_steps),
+            )
+        )
+        try:
+            payload = self._remote_preflight() if self._remote_preflight else {}
+        except Exception as exc:
+            event_sink(
+                _event(
+                    phase,
+                    "failed",
+                    "Cloudflare preview preflight failed.",
+                    _progress(completed_steps, total_steps),
+                    stderr=str(exc),
+                )
+            )
+            raise ProjectFactoryJobRunnerError(
+                "Cloudflare preview preflight failed."
+            ) from exc
+        if not _preflight_ready(payload):
+            blockers = _preflight_blockers(payload)
+            event_sink(
+                _event(
+                    phase,
+                    "blocked",
+                    "Cloudflare preview preflight blocked remote publication.",
+                    _progress(completed_steps, total_steps),
+                    stderr="\n".join(blockers),
+                )
+            )
+            raise ProjectFactoryJobRunnerBlockedError(
+                "Cloudflare preview preflight blocked remote publication."
+            )
+        completed_steps += 1
+        event_sink(
+            _event(
+                phase,
+                "completed",
+                "Cloudflare preview preflight completed.",
+                _progress(completed_steps, total_steps),
+            )
+        )
+        return completed_steps
 
     def _run_cli_step(
         self,
@@ -596,6 +686,13 @@ class ProjectFactoryJobRunner:
         project_path: Path,
     ) -> None:
         manifest = context.manifest_plan.manifest
+        frontend_strategy = str(manifest.get("frontend_strategy") or "flutter")
+        frontend = manifest.get("frontend") if isinstance(manifest, dict) else {}
+        source_root = (
+            frontend.get("source_root")
+            if isinstance(frontend, dict)
+            else ("apps/web" if frontend_strategy == "svelte" else "apps/mobile")
+        )
         reference_lines = [
             f"- {asset.id}: {asset.original_filename} ({asset.content_type})"
             for asset in context.reference_assets
@@ -614,7 +711,12 @@ Business type: `{manifest.get("business_type")}`
 Primary goal: {manifest.get("primary_goal")}
 
 Required defaults:
-- Flutter iOS/Android/Web.
+- Frontend strategy: `{frontend_strategy}`.
+- Frontend source root: `{source_root}`.
+- Flutter keeps iOS/Android/Web, APK preview, Bridge installability, and
+  Workbench APK entry.
+- Svelte is web-first under `apps/web`; do not claim APK or Bridge
+  installability without an explicit wrapper strategy.
 - FastAPI backend unless manifest says otherwise.
 - Auth, registration, Google login placeholders.
 - RBAC, admin, domain management, notifications.
@@ -655,6 +757,44 @@ def _codex_argv(command: str, prompt: str) -> tuple[str, ...]:
 
 def _allowed_env() -> dict[str, str]:
     return {key: value for key, value in os.environ.items() if key in ALLOWED_ENV_KEYS}
+
+
+def _preflight_ready(payload: Mapping[str, object]) -> bool:
+    if payload.get("ok") is True:
+        return True
+    return str(payload.get("status") or "").lower() == "ready"
+
+
+def _supports_android_installable(manifest_plan: ProjectFactoryManifestPlan) -> bool:
+    manifest = manifest_plan.manifest
+    frontend = manifest.get("frontend") if isinstance(manifest, dict) else None
+    capabilities = (
+        frontend.get("strategy_capabilities")
+        if isinstance(frontend, dict)
+        else None
+    )
+    if isinstance(capabilities, dict):
+        return bool(
+            capabilities.get("supports_android_preview_apk") is True
+            and capabilities.get("supports_bridge_installable_app") is True
+        )
+    return str(manifest.get("frontend_strategy") or "flutter") == "flutter"
+
+
+def _preflight_blockers(payload: Mapping[str, object]) -> list[str]:
+    blockers: list[str] = []
+    checks = payload.get("checks")
+    if isinstance(checks, list):
+        for item in checks:
+            if not isinstance(item, Mapping) or item.get("ok") is True:
+                continue
+            code = str(item.get("code") or "cloudflare_preview_check")
+            detail = str(item.get("detail") or item.get("message") or "not ready")
+            blockers.append(f"{code}: {detail}")
+    if blockers:
+        return blockers
+    status = str(payload.get("status") or "blocked")
+    return [f"cloudflare_preview_doctor: status={status}"]
 
 
 def _event(

@@ -149,6 +149,19 @@ void main() {
               "platforms": ["ios", "android", "web"],
               "default_backend": "fastapi",
               "backends": ["fastapi", "go", "none"],
+              "defaultFrontendStrategy": "flutter",
+              "frontendStrategies": [
+                {
+                  "id": "flutter",
+                  "display_name": "Flutter",
+                  "supports_android_preview_apk": true
+                },
+                {
+                  "id": "svelte",
+                  "display_name": "Svelte",
+                  "supports_android_preview_apk": false
+                }
+              ],
               "logo_modes": ["generate", "upload", "placeholder"],
               "business_types": ["medical_appointments"],
               "creation_workflow": {
@@ -171,6 +184,7 @@ void main() {
           expect(request.body,
               contains('"primaryGoal":"Pacientes reservan turnos"'));
           expect(request.body, contains('"firstReleaseMode":"preview"'));
+          expect(request.body, contains('"frontendStrategy":"flutter"'));
           return http.Response(
             '''
             {
@@ -179,6 +193,7 @@ void main() {
               "draft_id": "pf-draft-1",
               "created_at": "2026-07-07T00:00:00Z",
               "firstReleaseMode": "preview",
+              "frontendStrategy": "flutter",
             "manifest_plan": {
               "ok": true,
               "first_release_mode": "preview",
@@ -220,6 +235,7 @@ void main() {
             "current_step": "ready",
             "message": "Local project foundation generated.",
             "firstReleaseMode": "preview",
+            "frontendStrategy": "flutter",
             "manifest_plan": {
               "ok": true,
               "first_release_mode": "preview",
@@ -261,6 +277,9 @@ void main() {
     final options = await client.getProjectFactoryOptions();
     expect(options.creationWorkflow['generator_runs'], 20);
     expect(options.creationWorkflow['reviewer_runs'], 20);
+    expect(options.defaultFrontendStrategy, 'flutter');
+    expect(options.frontendStrategies.map((item) => item['id']),
+        containsAll(<String>['flutter', 'svelte']));
 
     final draft = await client.createProjectFactoryDraft(
       const ProjectFactoryDraftRequest(
@@ -271,6 +290,7 @@ void main() {
     );
     expect(draft.draftId, 'pf-draft-1');
     expect(draft.firstReleaseMode, 'preview');
+    expect(draft.frontendStrategy, 'flutter');
     expect(
       draft.initialPreviewRelease.previewUrl,
       'https://preview.nienfos.com/clinica-norte',
@@ -279,11 +299,86 @@ void main() {
     final job = await client.generateProjectFactoryDraft(draft.draftId);
     expect(job.isReady, isTrue);
     expect(job.firstReleaseMode, 'preview');
+    expect(job.frontendStrategy, 'flutter');
     expect(job.targetPath, '/projects/clinica-norte');
     expect(job.initialPreviewRelease.releaseChannel, 'prerelease');
     expect(
         job.initialPreviewRelease.phaseStatuses['publish_verification']?.status,
         'completed');
+  });
+
+  test('project factory guided intake API methods parse state', () async {
+    final calls = <String>[];
+    final client = ApiClient(
+      baseUrl: 'http://localhost:8000',
+      client: MockClient((request) async {
+        calls.add('${request.method} ${request.url.path}');
+        if (request.url.path.endsWith('/answers')) {
+          expect(request.body, contains('"questionId":"initial_admin_emails"'));
+          expect(request.body, contains('owner@example.com'));
+        }
+        return http.Response(
+          '''
+          {
+            "kind": "codex.projectFactoryGuidedIntake",
+            "version": 1,
+            "enabled": true,
+            "status": "ready_for_review",
+            "questions": [
+              {
+                "id": "initial_admin_emails",
+                "title": "Initial admin emails",
+                "options": []
+              }
+            ],
+            "answers": [
+              {
+                "questionId": "initial_admin_emails",
+                "value": ["owner@example.com"],
+                "source": "user",
+                "confidence": 1,
+                "updatedAt": "2026-07-09T00:00:00Z"
+              }
+            ],
+            "missingFields": [],
+            "assumptions": [],
+            "blockers": [],
+            "contractPreview": {
+              "decisions": {"name": "Clinica Norte"}
+            },
+            "updatedAt": "2026-07-09T00:00:00Z",
+            "confirmedAt": null,
+            "readyForConfirmation": true,
+            "buildAllowed": false
+          }
+          ''',
+          200,
+          headers: <String, String>{'content-type': 'application/json'},
+        );
+      }),
+    );
+
+    final state = await client.getProjectFactoryGuidedIntake('pf-draft-1');
+    final answered = await client.answerProjectFactoryGuidedIntake(
+      draftId: 'pf-draft-1',
+      questionId: 'initial_admin_emails',
+      value: <String>['owner@example.com'],
+    );
+    final preview =
+        await client.previewProjectFactoryGuidedIntake('pf-draft-1');
+    final confirmed =
+        await client.confirmProjectFactoryGuidedIntake('pf-draft-1');
+
+    expect(state.questions.single['id'], 'initial_admin_emails');
+    expect(answered.answers.single.value, <String>['owner@example.com']);
+    expect(preview.contractPreview!['decisions']['name'], 'Clinica Norte');
+    expect(confirmed.readyForConfirmation, isTrue);
+    expect(calls, <String>[
+      'GET /project-factory/drafts/pf-draft-1/intake',
+      'POST /project-factory/drafts/pf-draft-1/intake/answers',
+      'POST /project-factory/drafts/pf-draft-1/intake/preview',
+      'POST /project-factory/drafts/pf-draft-1/intake/confirm',
+    ]);
   });
 
   test('project factory options 404 reports backend update action', () async {
@@ -651,6 +746,8 @@ void main() {
           expect(request.url.path, '/web-previews/wp-clinica-norte/invites');
           expect(request.body, contains('"ttlSeconds":300'));
           expect(request.body, contains('"singleUse":true'));
+          expect(request.body, contains('"email":"admin@example.com"'));
+          expect(request.body, contains('"role":"owner"'));
           return http.Response(_webPreviewInviteJson(withToken: true), 200);
         }
         if (step == 6) {
@@ -669,18 +766,61 @@ void main() {
           );
           return http.Response(_webPreviewInviteJson(revoked: true), 200);
         }
+        if (step == 8) {
+          expect(request.method, 'POST');
+          expect(
+            request.url.path,
+            '/web-previews/wp-clinica-norte/invites/wpi-1/resend',
+          );
+          expect(request.body, contains('"ttlSeconds":600'));
+          return http.Response(
+            _webPreviewInviteJson(withToken: true, resendCount: 1),
+            200,
+          );
+        }
+        if (step == 9) {
+          expect(request.method, 'POST');
+          expect(
+            request.url.path,
+            '/web-previews/wp-clinica-norte/invites/wpi-1/expire',
+          );
+          return http.Response(_webPreviewInviteJson(expired: true), 200);
+        }
+        if (step == 10) {
+          expect(request.method, 'POST');
+          expect(
+            request.url.path,
+            '/web-previews/wp-clinica-norte/invites/wpi-1/sync',
+          );
+          return http.Response(
+              _webPreviewInviteJson(syncStatus: 'synced'), 200);
+        }
+        if (step == 11) {
+          expect(request.method, 'POST');
+          expect(request.url.path, '/web-previews/wp-clinica-norte/disable');
+          expect(request.body, contains('"reason":"operator pause"'));
+          return http.Response(
+              _webPreviewJson.replaceFirst('"active"', '"disabled"'), 200);
+        }
+        if (step == 12) {
+          expect(request.method, 'POST');
+          expect(request.url.path, '/web-previews/wp-clinica-norte/extend');
+          expect(request.body, contains('"ttlSeconds":604800'));
+          return http.Response(_webPreviewJson, 200);
+        }
         expect(request.method, 'POST');
-        expect(
-          request.url.path,
-          '/web-previews/wp-clinica-norte/invites/wpi-1/sync',
-        );
-        return http.Response(_webPreviewInviteJson(syncStatus: 'synced'), 200);
+        expect(request.url.path, '/web-previews/wp-clinica-norte/expire');
+        return http.Response(
+            _webPreviewJson.replaceFirst('"active"', '"expired"'), 200);
       }),
     );
 
     final previews = await client.listWebPreviews(limit: 10);
     expect(previews.single.status, 'active');
     expect(previews.single.inviteSyncSummary?['synced'], 1);
+    expect(previews.single.expiresAt, '2026-08-07T00:00:00Z');
+    expect(previews.single.auditEvents.single['event_type'],
+        'preview_publish_succeeded');
 
     final detail = await client.getWebPreview('wp-clinica-norte');
     expect(detail.isActive, isTrue);
@@ -694,9 +834,14 @@ void main() {
     final created = await client.createWebPreviewInvite(
       'wp-clinica-norte',
       ttlSeconds: 300,
+      email: 'admin@example.com',
+      role: 'owner',
     );
     expect(created.inviteUrl, contains('__preview/access'));
     expect(created.token, 'secret-token');
+    expect(created.email, 'admin@example.com');
+    expect(created.role, 'owner');
+    expect(created.manualDeliveryRequired, isTrue);
 
     final invites = await client.listWebPreviewInvites('wp-clinica-norte');
     expect(invites.single.syncStatus, 'failed');
@@ -708,11 +853,41 @@ void main() {
     );
     expect(revoked.isRevoked, isTrue);
 
+    final resent = await client.resendWebPreviewInvite(
+      previewId: 'wp-clinica-norte',
+      inviteId: 'wpi-1',
+      ttlSeconds: 600,
+    );
+    expect(resent.resendCount, 1);
+
+    final expired = await client.expireWebPreviewInvite(
+      previewId: 'wp-clinica-norte',
+      inviteId: 'wpi-1',
+    );
+    expect(expired.expiredAt, isNotEmpty);
+
     final synced = await client.syncWebPreviewInvite(
       previewId: 'wp-clinica-norte',
       inviteId: 'wpi-1',
     );
     expect(synced.syncStatus, 'synced');
+
+    final disabled = await client.disableWebPreview(
+      previewId: 'wp-clinica-norte',
+      reason: 'operator pause',
+    );
+    expect(disabled.isDisabled, isTrue);
+
+    final extended = await client.extendWebPreview(
+      previewId: 'wp-clinica-norte',
+      ttlSeconds: 604800,
+    );
+    expect(extended.isActive, isTrue);
+
+    final previewExpired = await client.expireWebPreview(
+      previewId: 'wp-clinica-norte',
+    );
+    expect(previewExpired.isExpired, isTrue);
   });
 
   test('sendMessage includes codex options when requested', () async {
@@ -1224,6 +1399,11 @@ const String _webPreviewJson = '''
   "error": null,
   "logs": [],
   "created_at": "2026-07-07T00:00:00Z",
+  "updated_at": "2026-07-07T00:01:00Z",
+  "expires_at": "2026-08-07T00:00:00Z",
+  "disabled_at": null,
+  "disabled_reason": null,
+  "audit_events": [{"event_type":"preview_publish_succeeded","source_app":"clinica-norte"}],
   "completed_at": "2026-07-07T00:01:00Z"
 }
 ''';
@@ -1239,6 +1419,8 @@ const String _webPreviewListJson = '''
 String _webPreviewInviteJson({
   bool withToken = false,
   bool revoked = false,
+  bool expired = false,
+  int resendCount = 0,
   String syncStatus = 'failed',
 }) {
   return '''
@@ -1253,9 +1435,18 @@ String _webPreviewInviteJson({
     "scope": "web_preview:access",
     "created_at": "2026-07-07T00:00:00Z",
     "expires_at": "2026-07-14T00:00:00Z",
+    "email": "admin@example.com",
+    "role": "owner",
     "single_use": true,
     "used_at": null,
     "revoked_at": ${revoked ? '"2026-07-07T00:05:00Z"' : 'null'},
+    "expired_at": ${expired ? '"2026-07-07T00:06:00Z"' : 'null'},
+    "resend_count": $resendCount,
+    "last_sent_at": ${resendCount > 0 ? '"2026-07-07T00:03:00Z"' : 'null'},
+    "email_provider": "manual",
+    "email_delivery_status": "manual_link_required",
+    "email_delivery_error": null,
+    "manual_delivery_required": true,
     "sync_status": "$syncStatus",
     "synced_at": ${syncStatus == 'synced' ? '"2026-07-07T00:02:00Z"' : 'null'},
     "sync_error": ${syncStatus == 'failed' ? '"D1 unavailable"' : 'null'},

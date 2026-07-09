@@ -6,4 +6,4 @@ Plan: `Validation And Contract Tests`
 
 ## Checklist
 
-- [ ] T058 Add no-secret scan coverage for Cloudflare, email, invite, and session secrets.
+- [x] T058 Add no-secret scan coverage for Cloudflare, email, invite, and session secrets.

@@ -6,4 +6,4 @@ Plan: `Cloudflare Worker Preview Runtime`
 
 ## Checklist
 
-- [ ] T024 Implement admin users and roles APIs.
+- [x] T024 Implement admin users and roles APIs.

@@ -1,5 +1,5 @@
 # T020 Render changes-requested and blocked states with next steps
 
-Status: planned
+Status: done
 
 Show focused next actions for revisions and blockers.

@@ -6,4 +6,4 @@ Plan: `Feedback Linked To Specs And Diagrams`
 
 ## Checklist
 
-- [ ] Capture diagram node and edge selection metadata when available.
+- [x] Capture diagram node and edge selection metadata when available.

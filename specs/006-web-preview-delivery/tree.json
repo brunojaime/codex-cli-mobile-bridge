@@ -7,7 +7,7 @@
       "id": "plan-1",
       "number": 1,
       "title": "Preview Contract And SDD Alignment",
-      "status": "planned",
+      "status": "done",
       "description": "Define the Web Preview Delivery contract before implementation.",
       "file": "plans/01-preview-contract-and-sdd-alignment/plan.md",
       "tasks": [
@@ -15,7 +15,7 @@
           "id": "plan-1-task-1",
           "number": 1,
           "title": "T001 Add 006-web-preview-delivery SDD metadata and link it to Project Factory",
-          "status": "planned",
+          "status": "done",
           "description": "T001 Add 006-web-preview-delivery SDD metadata and link it to Project Factory",
           "file": "tasks/plan-1-task-1/task.md"
         },
@@ -23,7 +23,7 @@
           "id": "plan-1-task-2",
           "number": 2,
           "title": "T002 Define Preview API v1 endpoint, payload, error, auth, pagination, and timestamp contract",
-          "status": "planned",
+          "status": "done",
           "description": "T002 Define Preview API v1 endpoint, payload, error, auth, pagination, and timestamp contract",
           "file": "tasks/plan-1-task-2/task.md"
         },
@@ -31,7 +31,7 @@
           "id": "plan-1-task-3",
           "number": 3,
           "title": "T003 Define web preview final job payload including stable URL, build id, invites, Cloudflare resources, validation, and blockers",
-          "status": "planned",
+          "status": "done",
           "description": "T003 Define web preview final job payload including stable URL, build id, invites, Cloudflare resources, validation, and blockers",
           "file": "tasks/plan-1-task-3/task.md"
         },
@@ -39,7 +39,7 @@
           "id": "plan-1-task-4",
           "number": 4,
           "title": "T004 Define stable URL rules for https://preview.nienfos.com/<app-slug>",
-          "status": "planned",
+          "status": "done",
           "description": "T004 Define stable URL rules for https://preview.nienfos.com/<app-slug>",
           "file": "tasks/plan-1-task-4/task.md"
         },
@@ -47,7 +47,7 @@
           "id": "plan-1-task-5",
           "number": 5,
           "title": "T005 Define preview lifecycle states: draft, provisioning, active, updating, expired, disabled, blocked, and failed",
-          "status": "planned",
+          "status": "done",
           "description": "T005 Define preview lifecycle states: draft, provisioning, active, updating, expired, disabled, blocked, and failed",
           "file": "tasks/plan-1-task-5/task.md"
         },
@@ -55,7 +55,7 @@
           "id": "plan-1-task-6",
           "number": 6,
           "title": "T006 Define security and cost guardrail language for preview delivery",
-          "status": "planned",
+          "status": "done",
           "description": "T006 Define security and cost guardrail language for preview delivery",
           "file": "tasks/plan-1-task-6/task.md"
         }
@@ -123,7 +123,7 @@
       "id": "plan-3",
       "number": 3,
       "title": "Preview Runtime Data Model",
-      "status": "planned",
+      "status": "done",
       "description": "Design and implement D1 migrations for the shared preview platform.",
       "file": "plans/03-preview-runtime-data-model/plan.md",
       "tasks": [
@@ -131,7 +131,7 @@
           "id": "plan-3-task-1",
           "number": 1,
           "title": "T013 Define D1 migrations for preview apps, builds, tenants, users, sessions, roles, admin invites, notifications, domain entities, domain records, assets, and events",
-          "status": "planned",
+          "status": "done",
           "description": "T013 Define D1 migrations for preview apps, builds, tenants, users, sessions, roles, admin invites, notifications, domain entities, domain records, assets, and events",
           "file": "tasks/plan-3-task-1/task.md"
         },
@@ -139,7 +139,7 @@
           "id": "plan-3-task-2",
           "number": 2,
           "title": "T014 Add migration idempotency checks",
-          "status": "planned",
+          "status": "done",
           "description": "T014 Add migration idempotency checks",
           "file": "tasks/plan-3-task-2/task.md"
         },
@@ -147,7 +147,7 @@
           "id": "plan-3-task-3",
           "number": 3,
           "title": "T015 Add app/tenant scoping constraints and indexes",
-          "status": "planned",
+          "status": "done",
           "description": "T015 Add app/tenant scoping constraints and indexes",
           "file": "tasks/plan-3-task-3/task.md"
         },
@@ -155,7 +155,7 @@
           "id": "plan-3-task-4",
           "number": 4,
           "title": "T016 Add password hash and invite token hash storage rules",
-          "status": "planned",
+          "status": "done",
           "description": "T016 Add password hash and invite token hash storage rules",
           "file": "tasks/plan-3-task-4/task.md"
         },
@@ -163,7 +163,7 @@
           "id": "plan-3-task-5",
           "number": 5,
           "title": "T017 Add preview expiration and disable state fields",
-          "status": "planned",
+          "status": "done",
           "description": "T017 Add preview expiration and disable state fields",
           "file": "tasks/plan-3-task-5/task.md"
         },
@@ -171,7 +171,7 @@
           "id": "plan-3-task-6",
           "number": 6,
           "title": "T018 Add audit event records for invite, login, preview publish, update, disable, and extend actions",
-          "status": "planned",
+          "status": "done",
           "description": "T018 Add audit event records for invite, login, preview publish, update, disable, and extend actions",
           "file": "tasks/plan-3-task-6/task.md"
         },
@@ -179,7 +179,7 @@
           "id": "plan-3-task-7",
           "number": 7,
           "title": "T019 Add D1 schema tests using local or mocked D1 execution",
-          "status": "planned",
+          "status": "done",
           "description": "T019 Add D1 schema tests using local or mocked D1 execution",
           "file": "tasks/plan-3-task-7/task.md"
         }
@@ -189,7 +189,7 @@
       "id": "plan-4",
       "number": 4,
       "title": "Cloudflare Worker Preview Runtime",
-      "status": "in_progress",
+      "status": "done",
       "description": "Build the Worker runtime that serves Preview API v1.",
       "file": "plans/04-cloudflare-worker-preview-runtime/plan.md",
       "tasks": [
@@ -213,7 +213,7 @@
           "id": "plan-4-task-3",
           "number": 3,
           "title": "T022 Implement auth login, logout, session refresh, and auth/me",
-          "status": "planned",
+          "status": "done",
           "description": "T022 Implement auth login, logout, session refresh, and auth/me",
           "file": "tasks/plan-4-task-3/task.md"
         },
@@ -221,7 +221,7 @@
           "id": "plan-4-task-4",
           "number": 4,
           "title": "T023 Implement admin invite accept and first password setup",
-          "status": "planned",
+          "status": "done",
           "description": "T023 Implement admin invite accept and first password setup",
           "file": "tasks/plan-4-task-4/task.md"
         },
@@ -229,7 +229,7 @@
           "id": "plan-4-task-5",
           "number": 5,
           "title": "T024 Implement admin users and roles APIs",
-          "status": "planned",
+          "status": "done",
           "description": "T024 Implement admin users and roles APIs",
           "file": "tasks/plan-4-task-5/task.md"
         },
@@ -237,7 +237,7 @@
           "id": "plan-4-task-6",
           "number": 6,
           "title": "T025 Implement notification APIs",
-          "status": "planned",
+          "status": "done",
           "description": "T025 Implement notification APIs",
           "file": "tasks/plan-4-task-6/task.md"
         },
@@ -245,7 +245,7 @@
           "id": "plan-4-task-7",
           "number": 7,
           "title": "T026 Implement generic domain CRUD APIs with app/tenant isolation",
-          "status": "planned",
+          "status": "done",
           "description": "T026 Implement generic domain CRUD APIs with app/tenant isolation",
           "file": "tasks/plan-4-task-7/task.md"
         },
@@ -253,7 +253,7 @@
           "id": "plan-4-task-8",
           "number": 8,
           "title": "T027 Implement preview disable and expiration enforcement",
-          "status": "planned",
+          "status": "done",
           "description": "T027 Implement preview disable and expiration enforcement",
           "file": "tasks/plan-4-task-8/task.md"
         }
@@ -263,7 +263,7 @@
       "id": "plan-5",
       "number": 5,
       "title": "Flutter Web Preview Adapter",
-      "status": "in_progress",
+      "status": "done",
       "description": "Update generated Flutter templates so the web build can run against the shared preview runtime.",
       "file": "plans/05-flutter-web-preview-adapter/plan.md",
       "tasks": [
@@ -287,7 +287,7 @@
           "id": "plan-5-task-3",
           "number": 3,
           "title": "T030 Update generated Flutter API client to use Preview API v1 in preview mode",
-          "status": "planned",
+          "status": "done",
           "description": "T030 Update generated Flutter API client to use Preview API v1 in preview mode",
           "file": "tasks/plan-5-task-3/task.md"
         },
@@ -295,7 +295,7 @@
           "id": "plan-5-task-4",
           "number": 4,
           "title": "T031 Add invite accept/password setup screen to the generated Flutter template",
-          "status": "planned",
+          "status": "done",
           "description": "T031 Add invite accept/password setup screen to the generated Flutter template",
           "file": "tasks/plan-5-task-4/task.md"
         },
@@ -303,7 +303,7 @@
           "id": "plan-5-task-5",
           "number": 5,
           "title": "T032 Add admin/user management screens to consume Preview API v1",
-          "status": "planned",
+          "status": "done",
           "description": "T032 Add admin/user management screens to consume Preview API v1",
           "file": "tasks/plan-5-task-5/task.md"
         },
@@ -311,7 +311,7 @@
           "id": "plan-5-task-6",
           "number": 6,
           "title": "T033 Add Flutter tests for preview runtime config, invite accept, login, and admin routing",
-          "status": "planned",
+          "status": "done",
           "description": "T033 Add Flutter tests for preview runtime config, invite accept, login, and admin routing",
           "file": "tasks/plan-5-task-6/task.md"
         }
@@ -321,7 +321,7 @@
       "id": "plan-6",
       "number": 6,
       "title": "Admin Invite And Email Delivery",
-      "status": "planned",
+      "status": "done",
       "description": "Add the invite workflow end to end.",
       "file": "plans/06-admin-invite-and-email-delivery/plan.md",
       "tasks": [
@@ -329,7 +329,7 @@
           "id": "plan-6-task-1",
           "number": 1,
           "title": "T034 Extend New Project chat intake prompt to ask for initial admin emails",
-          "status": "planned",
+          "status": "done",
           "description": "T034 Extend New Project chat intake prompt to ask for initial admin emails",
           "file": "tasks/plan-6-task-1/task.md"
         },
@@ -337,7 +337,7 @@
           "id": "plan-6-task-2",
           "number": 2,
           "title": "T035 Add fallback structured admin email field for non-chat flows",
-          "status": "planned",
+          "status": "done",
           "description": "T035 Add fallback structured admin email field for non-chat flows",
           "file": "tasks/plan-6-task-2/task.md"
         },
@@ -345,7 +345,7 @@
           "id": "plan-6-task-3",
           "number": 3,
           "title": "T036 Add admin invite validation, deduplication, role selection, and expiration defaults",
-          "status": "planned",
+          "status": "done",
           "description": "T036 Add admin invite validation, deduplication, role selection, and expiration defaults",
           "file": "tasks/plan-6-task-3/task.md"
         },
@@ -353,7 +353,7 @@
           "id": "plan-6-task-4",
           "number": 4,
           "title": "T037 Add email provider abstraction and bridge-host provider settings",
-          "status": "planned",
+          "status": "done",
           "description": "T037 Add email provider abstraction and bridge-host provider settings",
           "file": "tasks/plan-6-task-4/task.md"
         },
@@ -361,7 +361,7 @@
           "id": "plan-6-task-5",
           "number": 5,
           "title": "T038 Add first provider implementation, with missing-provider blocked/manual-link behavior",
-          "status": "planned",
+          "status": "done",
           "description": "T038 Add first provider implementation, with missing-provider blocked/manual-link behavior",
           "file": "tasks/plan-6-task-5/task.md"
         },
@@ -369,7 +369,7 @@
           "id": "plan-6-task-6",
           "number": 6,
           "title": "T039 Add resend, revoke, expire, and list invite operations",
-          "status": "planned",
+          "status": "done",
           "description": "T039 Add resend, revoke, expire, and list invite operations",
           "file": "tasks/plan-6-task-6/task.md"
         },
@@ -377,7 +377,7 @@
           "id": "plan-6-task-7",
           "number": 7,
           "title": "T040 Add tests for token hashing, single-use behavior, expiry, resend, and manual invite fallback",
-          "status": "planned",
+          "status": "done",
           "description": "T040 Add tests for token hashing, single-use behavior, expiry, resend, and manual invite fallback",
           "file": "tasks/plan-6-task-7/task.md"
         }
@@ -387,7 +387,7 @@
       "id": "plan-7",
       "number": 7,
       "title": "Project Factory Backend Integration",
-      "status": "in_progress",
+      "status": "done",
       "description": "Extend Project Factory services and APIs.",
       "file": "plans/07-project-factory-backend-integration/plan.md",
       "tasks": [
@@ -403,7 +403,7 @@
           "id": "plan-7-task-2",
           "number": 2,
           "title": "T042 Add preview delivery service that combines Cloudflare planning, Flutter web build metadata, Worker/D1 provisioning, DNS, and invite creation",
-          "status": "planned",
+          "status": "done",
           "description": "T042 Add preview delivery service that combines Cloudflare planning, Flutter web build metadata, Worker/D1 provisioning, DNS, and invite creation",
           "file": "tasks/plan-7-task-2/task.md"
         },
@@ -411,7 +411,7 @@
           "id": "plan-7-task-3",
           "number": 3,
           "title": "T043 Add preview delivery stage to Project Factory job runner after local validation",
-          "status": "planned",
+          "status": "done",
           "description": "T043 Add preview delivery stage to Project Factory job runner after local validation",
           "file": "tasks/plan-7-task-3/task.md"
         },
@@ -419,7 +419,7 @@
           "id": "plan-7-task-4",
           "number": 4,
           "title": "T044 Persist preview metadata in draft/job state",
-          "status": "planned",
+          "status": "done",
           "description": "T044 Persist preview metadata in draft/job state",
           "file": "tasks/plan-7-task-4/task.md"
         },
@@ -443,7 +443,7 @@
           "id": "plan-7-task-7",
           "number": 7,
           "title": "T047 Add interrupted preview job recovery behavior",
-          "status": "planned",
+          "status": "done",
           "description": "T047 Add interrupted preview job recovery behavior",
           "file": "tasks/plan-7-task-7/task.md"
         }
@@ -453,7 +453,7 @@
       "id": "plan-8",
       "number": 8,
       "title": "Mobile And Workbench UX",
-      "status": "planned",
+      "status": "done",
       "description": "Expose the workflow without making the user manage infrastructure details.",
       "file": "plans/08-mobile-and-workbench-ux/plan.md",
       "tasks": [
@@ -461,7 +461,7 @@
           "id": "plan-8-task-1",
           "number": 1,
           "title": "T048 Update New Project kickoff prompt to require admin emails before build-ready marker",
-          "status": "planned",
+          "status": "done",
           "description": "T048 Update New Project kickoff prompt to require admin emails before build-ready marker",
           "file": "tasks/plan-8-task-1/task.md"
         },
@@ -469,7 +469,7 @@
           "id": "plan-8-task-2",
           "number": 2,
           "title": "T049 Update build-ready preview text to include admin emails, URL, expiration, and delivery assumptions",
-          "status": "planned",
+          "status": "done",
           "description": "T049 Update build-ready preview text to include admin emails, URL, expiration, and delivery assumptions",
           "file": "tasks/plan-8-task-2/task.md"
         },
@@ -477,7 +477,7 @@
           "id": "plan-8-task-3",
           "number": 3,
           "title": "T050 Add Project Factory history UI fields for web preview status, URL, build id, expiration, and invite status",
-          "status": "planned",
+          "status": "done",
           "description": "T050 Add Project Factory history UI fields for web preview status, URL, build id, expiration, and invite status",
           "file": "tasks/plan-8-task-3/task.md"
         },
@@ -485,7 +485,7 @@
           "id": "plan-8-task-4",
           "number": 4,
           "title": "T051 Add UI actions to open/copy preview URL, resend invite, create invite, extend preview, and disable preview",
-          "status": "planned",
+          "status": "done",
           "description": "T051 Add UI actions to open/copy preview URL, resend invite, create invite, extend preview, and disable preview",
           "file": "tasks/plan-8-task-4/task.md"
         },
@@ -493,7 +493,7 @@
           "id": "plan-8-task-5",
           "number": 5,
           "title": "T052 Add Workbench release/readiness view fields for web preview status and blockers",
-          "status": "planned",
+          "status": "done",
           "description": "T052 Add Workbench release/readiness view fields for web preview status and blockers",
           "file": "tasks/plan-8-task-5/task.md"
         }
@@ -503,7 +503,7 @@
       "id": "plan-9",
       "number": 9,
       "title": "Validation And Contract Tests",
-      "status": "in_progress",
+      "status": "done",
       "description": "Add validation layers that fail before a broken preview is reported as ready.",
       "file": "plans/09-validation-and-contract-tests/plan.md",
       "tasks": [
@@ -511,7 +511,7 @@
           "id": "plan-9-task-1",
           "number": 1,
           "title": "T053 Add Preview API v1 contract test suite",
-          "status": "planned",
+          "status": "done",
           "description": "T053 Add Preview API v1 contract test suite",
           "file": "tasks/plan-9-task-1/task.md"
         },
@@ -535,7 +535,7 @@
           "id": "plan-9-task-4",
           "number": 4,
           "title": "T056 Add preview URL smoke test",
-          "status": "planned",
+          "status": "done",
           "description": "T056 Add preview URL smoke test",
           "file": "tasks/plan-9-task-4/task.md"
         },
@@ -543,7 +543,7 @@
           "id": "plan-9-task-5",
           "number": 5,
           "title": "T057 Add invite accept smoke test with a disposable test invite",
-          "status": "planned",
+          "status": "done",
           "description": "T057 Add invite accept smoke test with a disposable test invite",
           "file": "tasks/plan-9-task-5/task.md"
         },
@@ -551,7 +551,7 @@
           "id": "plan-9-task-6",
           "number": 6,
           "title": "T058 Add no-secret scan coverage for Cloudflare, email, invite, and session secrets",
-          "status": "planned",
+          "status": "done",
           "description": "T058 Add no-secret scan coverage for Cloudflare, email, invite, and session secrets",
           "file": "tasks/plan-9-task-6/task.md"
         },
@@ -559,7 +559,7 @@
           "id": "plan-9-task-7",
           "number": 7,
           "title": "T059 Add cost posture validation for free-tier-compatible MVP previews",
-          "status": "planned",
+          "status": "done",
           "description": "T059 Add cost posture validation for free-tier-compatible MVP previews",
           "file": "tasks/plan-9-task-7/task.md"
         }
@@ -569,7 +569,7 @@
       "id": "plan-10",
       "number": 10,
       "title": "Operations And Documentation",
-      "status": "planned",
+      "status": "done",
       "description": "Document and support operating the preview platform.",
       "file": "plans/10-operations-and-documentation/plan.md",
       "tasks": [
@@ -577,7 +577,7 @@
           "id": "plan-10-task-1",
           "number": 1,
           "title": "T060 Document Cloudflare setup for nienfos.com, tokens, D1, Worker, Pages, DNS, and optional R2",
-          "status": "planned",
+          "status": "done",
           "description": "T060 Document Cloudflare setup for nienfos.com, tokens, D1, Worker, Pages, DNS, and optional R2",
           "file": "tasks/plan-10-task-1/task.md"
         },
@@ -585,7 +585,7 @@
           "id": "plan-10-task-2",
           "number": 2,
           "title": "T061 Document AWS domain delegation and auto-renew requirements",
-          "status": "planned",
+          "status": "done",
           "description": "T061 Document AWS domain delegation and auto-renew requirements",
           "file": "tasks/plan-10-task-2/task.md"
         },
@@ -593,7 +593,7 @@
           "id": "plan-10-task-3",
           "number": 3,
           "title": "T062 Document email provider setup and sender-domain verification",
-          "status": "planned",
+          "status": "done",
           "description": "T062 Document email provider setup and sender-domain verification",
           "file": "tasks/plan-10-task-3/task.md"
         },
@@ -601,7 +601,7 @@
           "id": "plan-10-task-4",
           "number": 4,
           "title": "T063 Document preview lifecycle operations: publish, update, extend, disable, expire, resend invite, revoke invite",
-          "status": "planned",
+          "status": "done",
           "description": "T063 Document preview lifecycle operations: publish, update, extend, disable, expire, resend invite, revoke invite",
           "file": "tasks/plan-10-task-4/task.md"
         },
@@ -609,7 +609,7 @@
           "id": "plan-10-task-5",
           "number": 5,
           "title": "T064 Document DNS propagation and Cloudflare activation troubleshooting",
-          "status": "planned",
+          "status": "done",
           "description": "T064 Document DNS propagation and Cloudflare activation troubleshooting",
           "file": "tasks/plan-10-task-5/task.md"
         },
@@ -617,7 +617,7 @@
           "id": "plan-10-task-6",
           "number": 6,
           "title": "T065 Document secret rotation and token scope expectations",
-          "status": "planned",
+          "status": "done",
           "description": "T065 Document secret rotation and token scope expectations",
           "file": "tasks/plan-10-task-6/task.md"
         },
@@ -625,7 +625,7 @@
           "id": "plan-10-task-7",
           "number": 7,
           "title": "T066 Update Project Factory operational docs and generated-project readiness docs",
-          "status": "planned",
+          "status": "done",
           "description": "T066 Update Project Factory operational docs and generated-project readiness docs",
           "file": "tasks/plan-10-task-7/task.md"
         },
@@ -633,7 +633,7 @@
           "id": "plan-10-task-8",
           "number": 8,
           "title": "T067 Document that Web Preview Delivery is additive and does not replace GitHub publication, Android APK release, updater metadata, or Bridge installable-app registration",
-          "status": "planned",
+          "status": "done",
           "description": "T067 Document that Web Preview Delivery is additive and does not replace GitHub publication, Android APK release, updater metadata, or Bridge installable-app registration",
           "file": "tasks/plan-10-task-8/task.md"
         },
@@ -641,7 +641,7 @@
           "id": "plan-10-task-9",
           "number": 9,
           "title": "T068 Add regression tests proving generated release scripts, Android workflow, updater endpoint, release metadata, and installable-app registration remain present after preview delivery integration",
-          "status": "planned",
+          "status": "done",
           "description": "T068 Add regression tests proving generated release scripts, Android workflow, updater endpoint, release metadata, and installable-app registration remain present after preview delivery integration",
           "file": "tasks/plan-10-task-9/task.md"
         }

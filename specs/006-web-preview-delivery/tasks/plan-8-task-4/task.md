@@ -6,4 +6,4 @@ Plan: `Mobile And Workbench UX`
 
 ## Checklist
 
-- [ ] T051 Add UI actions to open/copy preview URL, resend invite, create invite, extend preview, and disable preview.
+- [x] T051 Add UI actions to open/copy preview URL, resend invite, create invite, extend preview, and disable preview.

@@ -6,4 +6,4 @@ Plan: `Cloudflare Worker Preview Runtime`
 
 ## Checklist
 
-- [ ] T025 Implement notification APIs.
+- [x] T025 Implement notification APIs.

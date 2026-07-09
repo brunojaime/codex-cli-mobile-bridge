@@ -6,4 +6,4 @@ Plan: `Mobile And Workbench UX`
 
 ## Checklist
 
-- [ ] T048 Update New Project kickoff prompt to require admin emails before build-ready marker.
+- [x] T048 Update New Project kickoff prompt to require admin emails before build-ready marker.

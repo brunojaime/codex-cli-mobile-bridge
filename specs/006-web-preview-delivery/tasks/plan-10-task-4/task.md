@@ -6,4 +6,4 @@ Plan: `Operations And Documentation`
 
 ## Checklist
 
-- [ ] T063 Document preview lifecycle operations: publish, update, extend, disable, expire, resend invite, revoke invite.
+- [x] T063 Document preview lifecycle operations: publish, update, extend, disable, expire, resend invite, revoke invite.
