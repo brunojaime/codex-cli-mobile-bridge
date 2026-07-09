@@ -1,0 +1,36 @@
+# Workbench Kanban Curator Tasks
+
+- [ ] T001 Define Kanban scope model for workspace specs and New Project draft/job scopes.
+- [ ] T002 Define deterministic board snapshot, column, card, and ordering schema.
+- [ ] T003 Define evidence, source, confidence, and confirmed-versus-inferred semantics.
+- [ ] T004 Define Curator update, latest pointer, history item, and retention schema.
+- [ ] T005 Define API response contracts for board snapshot, latest update, and history.
+- [ ] T006 Implement SDD task parser integration for `tasks.md`, `tree.json`, metadata, and plan phases.
+- [ ] T007 Implement deterministic task-to-column mapping rules.
+- [ ] T008 Implement phase progress and ready/backlog ordering rules.
+- [ ] T009 Implement board delta calculation between snapshots.
+- [ ] T010 Persist projection/cache state outside SDD artifacts.
+- [ ] T011 Add API endpoint to fetch current Kanban board for a scope.
+- [ ] T012 Add API endpoint or stream support for board refresh metadata.
+- [ ] T013 Observe persisted Project Factory job and draft state as read-only evidence.
+- [ ] T014 Create run-step cards for active Generator, Reviewer, command, test, build, and release steps.
+- [ ] T015 Observe Codex/session transcript or JSONL sources when available without requiring full transcript downloads.
+- [ ] T016 Observe generated repository creation and map draft/job scope to workspace scope.
+- [ ] T017 Observe command, test, build, and release outcomes as blocker or validation evidence.
+- [ ] T018 Parse Reviewer findings from existing artifacts or messages when safely detectable.
+- [ ] T019 Implement change-triggered projection refresh with polling fallback.
+- [ ] T020 Define Curator prompt and read-only input envelope.
+- [ ] T021 Implement Curator scheduler with debounce, interval, and active-scope gating.
+- [ ] T022 Implement Curator update generation with evidence hashing and no-op dedupe.
+- [ ] T023 Persist latest Curator update and append-only history outside SDD artifacts.
+- [ ] T024 Add history query and detail APIs.
+- [ ] T025 Add Workbench Kanban primary tab and routing.
+- [ ] T026 Render Kanban board columns, cards, badges, counts, and empty/loading/error states.
+- [ ] T027 Render latest Curator update panel in Kanban.
+- [ ] T028 Add `View history` list and history detail view.
+- [ ] T029 Add compact latest Curator update card to Workbench overview.
+- [ ] T030 Add responsive mobile layout for Kanban and history.
+- [ ] T031 Add backend tests for deterministic projection and task-state mapping.
+- [ ] T032 Add backend tests for passive observer inputs, Curator dedupe, and history persistence.
+- [ ] T033 Add Flutter tests for Kanban board, latest update, history, and responsive states.
+- [ ] T034 Add New Project continuity regression tests and verify Generator/Reviewer behavior remains unchanged.
