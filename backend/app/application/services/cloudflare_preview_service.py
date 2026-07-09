@@ -175,6 +175,45 @@ class HttpCloudflareClient:
             use_dns_token=True,
         )
 
+    def list_worker_routes(
+        self,
+        *,
+        zone_id: str,
+        pattern: str,
+    ) -> CloudflareLookupResult:
+        return self._request(
+            "GET",
+            f"/zones/{zone_id}/workers/routes?{urlencode({'pattern': pattern})}",
+            use_dns_token=True,
+        )
+
+    def create_worker_route(
+        self,
+        *,
+        zone_id: str,
+        payload: dict[str, Any],
+    ) -> CloudflareLookupResult:
+        return self._request(
+            "POST",
+            f"/zones/{zone_id}/workers/routes",
+            json=payload,
+            use_dns_token=True,
+        )
+
+    def update_worker_route(
+        self,
+        *,
+        zone_id: str,
+        route_id: str,
+        payload: dict[str, Any],
+    ) -> CloudflareLookupResult:
+        return self._request(
+            "PUT",
+            f"/zones/{zone_id}/workers/routes/{route_id}",
+            json=payload,
+            use_dns_token=True,
+        )
+
     def list_worker_scripts(self, account_id: str) -> CloudflareLookupResult:
         return self._request("GET", f"/accounts/{account_id}/workers/scripts")
 
@@ -540,13 +579,19 @@ class CloudflareProvisioningPlanner:
                 "kind": "dns_record",
                 "name": base_domain,
                 "record_type": "CNAME",
-                "target": f"{worker_name}.workers.dev",
+                "target": self._settings.cloudflare_zone_name,
                 "mode": "read_or_create",
             },
             {
                 "kind": "worker_script",
                 "name": worker_name,
                 "mode": "read_or_deploy",
+            },
+            {
+                "kind": "worker_route",
+                "name": f"{base_domain}/*",
+                "script": worker_name,
+                "mode": "read_or_create",
             },
             {
                 "kind": "d1_database",

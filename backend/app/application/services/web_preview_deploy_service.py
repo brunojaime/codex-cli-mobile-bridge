@@ -481,6 +481,7 @@ class CloudflarePreviewProvisioner:
         source_app = str(manifest.get("source_app") or "")
         base_domain = str(cloudflare.get("base_domain") or "preview.nienfos.com")
         worker_name = str(resources.get("worker_name") or "nienfos-preview-runtime")
+        worker_route = str(cloudflare.get("route") or f"{base_domain}/{source_app}/*")
         pages_project = str(resources.get("pages_project") or "nienfos-preview-web")
         d1_database = str(resources.get("d1_database") or "nienfos-preview")
         r2_bucket = resources.get("r2_bucket")
@@ -490,12 +491,17 @@ class CloudflarePreviewProvisioner:
             self._ensure_dns_record(
                 zone_id=zone_id,
                 name=f"{base_domain}",
-                target=f"{worker_name}.workers.dev",
+                target=self._settings.cloudflare_zone_name,
             ),
             self._ensure_worker(
                 account_id=account_id,
                 worker_name=worker_name,
                 script_path=project_path / "deploy/web-preview/worker/src/index.js",
+            ),
+            self._ensure_worker_route(
+                zone_id=zone_id,
+                pattern=worker_route,
+                worker_name=worker_name,
             ),
         ]
         d1_resource = self._ensure_d1(account_id=account_id, database_name=d1_database)
@@ -512,12 +518,6 @@ class CloudflarePreviewProvisioner:
         applied.extend(
             [
                 self._ensure_pages_project(account_id=account_id, name=pages_project),
-                {
-                    "kind": "route",
-                    "name": f"{base_domain}/{source_app}",
-                    "status": "planned_external",
-                    "detail": "Stable route is served by the shared preview Worker/Pages routing.",
-                },
             ]
         )
         if r2_bucket:
@@ -555,7 +555,26 @@ class CloudflarePreviewProvisioner:
         _raise_if_failed(existing, "dns_list_failed")
         records = _cloudflare_result_list(existing.payload)
         if records:
-            return {"kind": "dns_record", "name": name, "status": "existing"}
+            record = records[0]
+            record_id = str(record.get("id") or "")
+            content = str(record.get("content") or "")
+            proxied = bool(record.get("proxied"))
+            if content == target and proxied:
+                return {"kind": "dns_record", "name": name, "status": "existing"}
+            if not record_id:
+                raise RuntimeError("dns_record_id_missing")
+            updated = self._client.update_dns_record(
+                zone_id=zone_id,
+                record_id=record_id,
+                payload={
+                    "type": "CNAME",
+                    "name": name,
+                    "content": target,
+                    "proxied": True,
+                },
+            )
+            _raise_if_failed(updated, "dns_update_failed")
+            return {"kind": "dns_record", "name": name, "status": "updated"}
         created = self._client.create_dns_record(
             zone_id=zone_id,
             payload={
@@ -592,6 +611,35 @@ class CloudflarePreviewProvisioner:
         )
         _raise_if_failed(deployed, "worker_deploy_failed")
         return {"kind": "worker_script", "name": worker_name, "status": "created"}
+
+    def _ensure_worker_route(
+        self,
+        *,
+        zone_id: str,
+        pattern: str,
+        worker_name: str,
+    ) -> dict[str, Any]:
+        existing = self._client.list_worker_routes(zone_id=zone_id, pattern=pattern)
+        _raise_if_failed(existing, "worker_route_list_failed")
+        routes = _cloudflare_result_list(existing.payload)
+        payload = {"pattern": pattern, "script": worker_name}
+        if routes:
+            route = routes[0]
+            route_id = str(route.get("id") or "")
+            if route.get("script") == worker_name:
+                return {"kind": "worker_route", "name": pattern, "status": "existing"}
+            if not route_id:
+                raise RuntimeError("worker_route_id_missing")
+            updated = self._client.update_worker_route(
+                zone_id=zone_id,
+                route_id=route_id,
+                payload=payload,
+            )
+            _raise_if_failed(updated, "worker_route_update_failed")
+            return {"kind": "worker_route", "name": pattern, "status": "updated"}
+        created = self._client.create_worker_route(zone_id=zone_id, payload=payload)
+        _raise_if_failed(created, "worker_route_create_failed")
+        return {"kind": "worker_route", "name": pattern, "status": "created"}
 
     def _ensure_d1(self, *, account_id: str, database_name: str) -> dict[str, Any]:
         existing = self._client.list_d1_databases(account_id)

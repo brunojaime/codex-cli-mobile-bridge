@@ -158,6 +158,7 @@ def test_web_preview_deploy_applies_resources_with_fake_cloudflare(
     statuses = {(item["kind"], item["status"]) for item in payload["applied_resources"]}
     assert ("dns_record", "created") in statuses
     assert ("worker_script", "created") in statuses
+    assert ("worker_route", "created") in statuses
     assert ("d1_database", "created") in statuses
     assert ("d1_migration", "applied") in statuses
     assert ("pages_project", "created") in statuses
@@ -165,6 +166,10 @@ def test_web_preview_deploy_applies_resources_with_fake_cloudflare(
     assert payload["invite_sync_summary"]["synced"] == 1
     assert fake.calls.count("create_dns_record:zone-1") == 1
     assert "deploy_worker_script:acct-1:nienfos-preview-runtime" in fake.calls
+    assert (
+        "create_worker_route:zone-1:preview.nienfos.com/clinica-norte/*"
+        in fake.calls
+    )
     assert "execute_d1_sql:acct-1:d1-1" in fake.calls
     stored = _read_invite(tmp_path, invite["invite_id"])
     assert stored["sync_status"] == "synced"
@@ -200,6 +205,7 @@ def test_web_preview_deploy_is_idempotent_when_resources_exist(
     )
     assert not any(call.startswith("create_dns_record") for call in fake.calls)
     assert not any(call.startswith("deploy_worker_script") for call in fake.calls)
+    assert not any(call.startswith("create_worker_route") for call in fake.calls)
     assert not any(call.startswith("create_d1_database") for call in fake.calls)
     assert not any(call.startswith("create_pages_project") for call in fake.calls)
     assert "execute_d1_sql:acct-1:d1-1" in fake.calls
@@ -507,7 +513,15 @@ class _FakeCloudflareClient:
     ) -> CloudflareLookupResult:
         self.calls.append(f"list_dns_records:{zone_id}:{name}:{record_type}")
         records: list[dict[str, Any]] = (
-            [{"id": "dns-1", "name": name, "type": record_type or "CNAME"}]
+            [
+                {
+                    "id": "dns-1",
+                    "name": name,
+                    "type": record_type or "CNAME",
+                    "content": "nienfos.com",
+                    "proxied": True,
+                }
+            ]
             if self.resources_exist
             else []
         )
@@ -530,6 +544,39 @@ class _FakeCloudflareClient:
         payload: dict[str, Any],
     ) -> CloudflareLookupResult:
         self.calls.append(f"update_dns_record:{zone_id}:{record_id}")
+        return CloudflareLookupResult(ok=True, payload={"result": payload})
+
+    def list_worker_routes(
+        self,
+        *,
+        zone_id: str,
+        pattern: str,
+    ) -> CloudflareLookupResult:
+        self.calls.append(f"list_worker_routes:{zone_id}:{pattern}")
+        routes: list[dict[str, Any]] = (
+            [{"id": "route-1", "pattern": pattern, "script": "nienfos-preview-runtime"}]
+            if self.resources_exist
+            else []
+        )
+        return CloudflareLookupResult(ok=True, payload={"result": routes})
+
+    def create_worker_route(
+        self,
+        *,
+        zone_id: str,
+        payload: dict[str, Any],
+    ) -> CloudflareLookupResult:
+        self.calls.append(f"create_worker_route:{zone_id}:{payload['pattern']}")
+        return CloudflareLookupResult(ok=True, payload={"result": payload})
+
+    def update_worker_route(
+        self,
+        *,
+        zone_id: str,
+        route_id: str,
+        payload: dict[str, Any],
+    ) -> CloudflareLookupResult:
+        self.calls.append(f"update_worker_route:{zone_id}:{route_id}")
         return CloudflareLookupResult(ok=True, payload={"result": payload})
 
     def list_worker_scripts(self, account_id: str) -> CloudflareLookupResult:
