@@ -4,9 +4,9 @@ Spec: 016-diagram-mcp-rendering-engine
 
 Plan: Layout Anchors And Routing Engine
 
-Status: pending
+Status: completed
 
-- [ ] T011 Define semantic connection normalization.
+- [x] T011 Define semantic connection normalization.
 
 ## Acceptance Notes
 

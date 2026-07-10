@@ -4,9 +4,9 @@ Spec: 016-diagram-mcp-rendering-engine
 
 Plan: Quality Observability And Export
 
-Status: pending
+Status: completed
 
-- [ ] T031 Define export acceptance tests.
+- [x] T031 Define export acceptance tests.
 
 ## Acceptance Notes
 

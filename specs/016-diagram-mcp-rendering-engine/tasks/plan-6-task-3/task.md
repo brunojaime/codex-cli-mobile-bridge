@@ -4,9 +4,9 @@ Spec: 016-diagram-mcp-rendering-engine
 
 Plan: Quality Observability And Export
 
-Status: pending
+Status: completed
 
-- [ ] T029 Define MCP tool integration tests.
+- [x] T029 Define MCP tool integration tests.
 
 ## Acceptance Notes
 

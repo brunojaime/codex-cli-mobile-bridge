@@ -4,9 +4,9 @@ Spec: 016-diagram-mcp-rendering-engine
 
 Plan: SVG Templates And Renderer
 
-Status: pending
+Status: completed
 
-- [ ] T021 Define theme, scaling, and viewBox behavior.
+- [x] T021 Define theme, scaling, and viewBox behavior.
 
 ## Acceptance Notes
 

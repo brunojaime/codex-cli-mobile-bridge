@@ -4,9 +4,9 @@ Spec: 016-diagram-mcp-rendering-engine
 
 Plan: Interactive Editor Integration
 
-Status: pending
+Status: completed
 
-- [ ] T022 Define editor canvas contract.
+- [x] T022 Define editor canvas contract.
 
 ## Acceptance Notes
 

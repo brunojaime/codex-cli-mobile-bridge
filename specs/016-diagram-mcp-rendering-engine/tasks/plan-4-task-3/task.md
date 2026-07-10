@@ -4,9 +4,9 @@ Spec: 016-diagram-mcp-rendering-engine
 
 Plan: SVG Templates And Renderer
 
-Status: pending
+Status: completed
 
-- [ ] T019 Define provided_required_interface SVG template.
+- [x] T019 Define provided_required_interface SVG template.
 
 ## Acceptance Notes
 

@@ -4,9 +4,9 @@ Spec: 016-diagram-mcp-rendering-engine
 
 Plan: Layout Anchors And Routing Engine
 
-Status: pending
+Status: completed
 
-- [ ] T012 Define automatic LR layout phases.
+- [x] T012 Define automatic LR layout phases.
 
 ## Acceptance Notes
 

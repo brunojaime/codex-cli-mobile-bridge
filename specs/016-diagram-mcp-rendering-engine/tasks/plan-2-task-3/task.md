@@ -4,9 +4,9 @@ Spec: 016-diagram-mcp-rendering-engine
 
 Plan: MCP Local HTTPS Server Contract
 
-Status: pending
+Status: completed
 
-- [ ] T008 Define create and update diagram tools.
+- [x] T008 Define create and update diagram tools.
 
 ## Acceptance Notes
 

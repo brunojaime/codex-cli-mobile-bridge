@@ -6,7 +6,7 @@ This file is the legacy index for tools that expect a root plan.md. The canonica
 
 File: plans/01-diagram-domain-and-schema-contract/plan.md
 
-Status: pending
+Status: completed
 
 Tasks: 5
 
@@ -14,7 +14,7 @@ Tasks: 5
 
 File: plans/02-mcp-local-https-server-contract/plan.md
 
-Status: pending
+Status: completed
 
 Tasks: 5
 
@@ -22,7 +22,7 @@ Tasks: 5
 
 File: plans/03-layout-anchors-and-routing-engine/plan.md
 
-Status: pending
+Status: completed
 
 Tasks: 6
 
@@ -30,7 +30,7 @@ Tasks: 6
 
 File: plans/04-svg-templates-and-renderer/plan.md
 
-Status: pending
+Status: completed
 
 Tasks: 5
 
@@ -38,7 +38,7 @@ Tasks: 5
 
 File: plans/05-interactive-editor-integration/plan.md
 
-Status: pending
+Status: completed
 
 Tasks: 5
 
@@ -46,6 +46,6 @@ Tasks: 5
 
 File: plans/06-quality-observability-and-export/plan.md
 
-Status: pending
+Status: completed
 
 Tasks: 6

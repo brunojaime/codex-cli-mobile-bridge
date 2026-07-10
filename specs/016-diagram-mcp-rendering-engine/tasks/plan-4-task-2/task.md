@@ -4,9 +4,9 @@ Spec: 016-diagram-mcp-rendering-engine
 
 Plan: SVG Templates And Renderer
 
-Status: pending
+Status: completed
 
-- [ ] T018 Define uml_component SVG template.
+- [x] T018 Define uml_component SVG template.
 
 ## Acceptance Notes
 

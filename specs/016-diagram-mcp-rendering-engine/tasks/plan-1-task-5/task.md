@@ -4,9 +4,9 @@ Spec: 016-diagram-mcp-rendering-engine
 
 Plan: Diagram Domain And Schema Contract
 
-Status: pending
+Status: completed
 
-- [ ] T005 Define validation errors and warnings.
+- [x] T005 Define validation errors and warnings.
 
 ## Acceptance Notes
 

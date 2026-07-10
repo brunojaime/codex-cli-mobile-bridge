@@ -4,9 +4,9 @@ Spec: 016-diagram-mcp-rendering-engine
 
 Plan: Quality Observability And Export
 
-Status: pending
+Status: completed
 
-- [ ] T028 Define deterministic snapshot tests.
+- [x] T028 Define deterministic snapshot tests.
 
 ## Acceptance Notes
 

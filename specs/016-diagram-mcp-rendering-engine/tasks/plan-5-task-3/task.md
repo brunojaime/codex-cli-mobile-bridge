@@ -4,9 +4,9 @@ Spec: 016-diagram-mcp-rendering-engine
 
 Plan: Interactive Editor Integration
 
-Status: pending
+Status: completed
 
-- [ ] T024 Define selected element and inspector model.
+- [x] T024 Define selected element and inspector model.
 
 ## Acceptance Notes
 

@@ -4,9 +4,9 @@ Spec: 016-diagram-mcp-rendering-engine
 
 Plan: Diagram Domain And Schema Contract
 
-Status: pending
+Status: completed
 
-- [ ] T003 Define template registry contract.
+- [x] T003 Define template registry contract.
 
 ## Acceptance Notes
 

@@ -4,9 +4,9 @@ Spec: 016-diagram-mcp-rendering-engine
 
 Plan: Quality Observability And Export
 
-Status: pending
+Status: completed
 
-- [ ] T030 Define observability and diagnostics.
+- [x] T030 Define observability and diagnostics.
 
 ## Acceptance Notes
 

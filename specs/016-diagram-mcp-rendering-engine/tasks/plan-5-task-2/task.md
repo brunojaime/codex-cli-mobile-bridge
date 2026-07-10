@@ -4,9 +4,9 @@ Spec: 016-diagram-mcp-rendering-engine
 
 Plan: Interactive Editor Integration
 
-Status: pending
+Status: completed
 
-- [ ] T023 Define drag, snap, and pin behavior.
+- [x] T023 Define drag, snap, and pin behavior.
 
 ## Acceptance Notes
 

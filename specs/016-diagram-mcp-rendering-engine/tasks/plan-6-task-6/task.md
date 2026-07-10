@@ -4,9 +4,9 @@ Spec: 016-diagram-mcp-rendering-engine
 
 Plan: Quality Observability And Export
 
-Status: pending
+Status: completed
 
-- [ ] T032 Define rollout and documentation package.
+- [x] T032 Define rollout and documentation package.
 
 ## Acceptance Notes
 

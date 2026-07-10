@@ -1,6 +1,6 @@
 spec_id: 016-diagram-mcp-rendering-engine
 title: Diagram MCP Rendering Engine
-status: draft
+status: implemented
 
 requirements:
   FR-001:
@@ -79,15 +79,19 @@ acceptance_criteria:
   AC-008:
     tests:
       - tests/mcp_tools/test_move_node.py::test_move_node_persists_position_and_pins_node
+      - tests/mcp_tools/test_persisted_diagram_tools.py::test_persisted_diagram_tool_flow
   AC-009:
     tests:
       - tests/mcp_tools/test_move_node.py::test_move_node_reroutes_connections_without_changing_semantics
+      - tests/mcp_tools/test_persisted_diagram_tools.py::test_persisted_diagram_tool_flow
   AC-010:
     tests:
       - tests/mcp_server/test_https_loopback.py::test_server_requires_https_loopback_configuration
+      - tests/mcp_server/test_https_loopback.py::test_https_mode_runs_streamable_http_with_tls
   AC-011:
     tests:
       - tests/export/test_export_diagram.py::test_export_diagram_returns_self_contained_svg
+      - tests/mcp_tools/test_persisted_diagram_tools.py::test_persisted_diagram_tool_flow
   AC-012:
     tests:
       - tests/rendering/test_svg_renderer.py::test_svg_can_be_consumed_without_frontend_uml_logic

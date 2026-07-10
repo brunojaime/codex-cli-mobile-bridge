@@ -4,9 +4,9 @@ Spec: 016-diagram-mcp-rendering-engine
 
 Plan: Diagram Domain And Schema Contract
 
-Status: pending
+Status: completed
 
-- [ ] T002 Define component and connection semantic model.
+- [x] T002 Define component and connection semantic model.
 
 ## Acceptance Notes
 

@@ -4,9 +4,9 @@ Spec: 016-diagram-mcp-rendering-engine
 
 Plan: Layout Anchors And Routing Engine
 
-Status: pending
+Status: completed
 
-- [ ] T015 Define collision and overlap handling.
+- [x] T015 Define collision and overlap handling.
 
 ## Acceptance Notes
 

@@ -4,9 +4,9 @@ Spec: 016-diagram-mcp-rendering-engine
 
 Plan: SVG Templates And Renderer
 
-Status: pending
+Status: completed
 
-- [ ] T020 Define connector rendering and interface labels.
+- [x] T020 Define connector rendering and interface labels.
 
 ## Acceptance Notes
 

@@ -4,9 +4,9 @@ Spec: 016-diagram-mcp-rendering-engine
 
 Plan: Interactive Editor Integration
 
-Status: pending
+Status: completed
 
-- [ ] T025 Define diagram state synchronization.
+- [x] T025 Define diagram state synchronization.
 
 ## Acceptance Notes
 

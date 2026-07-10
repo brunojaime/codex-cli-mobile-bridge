@@ -4,9 +4,9 @@ Spec: 016-diagram-mcp-rendering-engine
 
 Plan: Layout Anchors And Routing Engine
 
-Status: pending
+Status: completed
 
-- [ ] T014 Define orthogonal routing strategy.
+- [x] T014 Define orthogonal routing strategy.
 
 ## Acceptance Notes
 

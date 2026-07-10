@@ -4,9 +4,9 @@ Spec: 016-diagram-mcp-rendering-engine
 
 Plan: Diagram Domain And Schema Contract
 
-Status: pending
+Status: completed
 
-- [ ] T001 Define DiagramSpec JSON schema.
+- [x] T001 Define DiagramSpec JSON schema.
 
 ## Acceptance Notes
 

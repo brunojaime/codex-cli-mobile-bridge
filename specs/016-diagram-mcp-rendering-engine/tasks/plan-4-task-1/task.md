@@ -4,9 +4,9 @@ Spec: 016-diagram-mcp-rendering-engine
 
 Plan: SVG Templates And Renderer
 
-Status: pending
+Status: completed
 
-- [ ] T017 Define SVG document contract.
+- [x] T017 Define SVG document contract.
 
 ## Acceptance Notes
 

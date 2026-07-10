@@ -4,9 +4,9 @@ Spec: 016-diagram-mcp-rendering-engine
 
 Plan: MCP Local HTTPS Server Contract
 
-Status: pending
+Status: completed
 
-- [ ] T010 Define security, auth, and origin controls.
+- [x] T010 Define security, auth, and origin controls.
 
 ## Acceptance Notes
 

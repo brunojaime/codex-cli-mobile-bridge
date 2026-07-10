@@ -4,9 +4,9 @@ Spec: 016-diagram-mcp-rendering-engine
 
 Plan: Layout Anchors And Routing Engine
 
-Status: pending
+Status: completed
 
-- [ ] T016 Define incremental layout behavior for pinned nodes.
+- [x] T016 Define incremental layout behavior for pinned nodes.
 
 ## Acceptance Notes
 

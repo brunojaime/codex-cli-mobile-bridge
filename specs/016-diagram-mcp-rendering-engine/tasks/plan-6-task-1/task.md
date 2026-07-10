@@ -4,9 +4,9 @@ Spec: 016-diagram-mcp-rendering-engine
 
 Plan: Quality Observability And Export
 
-Status: pending
+Status: completed
 
-- [ ] T027 Define persistence and diagram IDs.
+- [x] T027 Define persistence and diagram IDs.
 
 ## Acceptance Notes
 

@@ -4,9 +4,9 @@ Spec: 016-diagram-mcp-rendering-engine
 
 Plan: Interactive Editor Integration
 
-Status: pending
+Status: completed
 
-- [ ] T026 Define undo redo and change history.
+- [x] T026 Define undo redo and change history.
 
 ## Acceptance Notes
 

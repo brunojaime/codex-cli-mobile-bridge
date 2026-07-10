@@ -4,9 +4,9 @@ Spec: 016-diagram-mcp-rendering-engine
 
 Plan: MCP Local HTTPS Server Contract
 
-Status: pending
+Status: completed
 
-- [ ] T007 Define MCP tool manifest and lifecycle.
+- [x] T007 Define MCP tool manifest and lifecycle.
 
 ## Acceptance Notes
 

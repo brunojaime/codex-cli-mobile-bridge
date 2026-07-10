@@ -4,9 +4,9 @@ Spec: 016-diagram-mcp-rendering-engine
 
 Plan: MCP Local HTTPS Server Contract
 
-Status: pending
+Status: completed
 
-- [ ] T006 Define local HTTPS server configuration.
+- [x] T006 Define local HTTPS server configuration.
 
 ## Acceptance Notes
 
