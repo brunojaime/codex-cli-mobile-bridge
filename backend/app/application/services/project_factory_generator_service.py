@@ -228,8 +228,8 @@ def _project_files(manifest: dict[str, Any]) -> dict[str, str]:
         "deploy/web-preview/d1/migrations/0001_preview_invites.sql": (
             _web_preview_d1_invites_migration()
         ),
-        "deploy/web-preview/d1/migrations/0002_domain_entities.sql": (
-            _web_preview_d1_domain_entities_migration(slug)
+        "deploy/web-preview/d1/migrations/0002_business_records.sql": (
+            _web_preview_d1_business_records_migration(slug)
         ),
         "deploy/web-preview/d1/migrations/0003_preview_schema_evolution.sql": (
             _web_preview_d1_schema_evolution_migration()
@@ -1156,18 +1156,17 @@ CREATE TABLE IF NOT EXISTS preview_app_updates (
   PRIMARY KEY(source_app, app_slug, release_channel)
 );
 
-CREATE TABLE IF NOT EXISTS preview_domain_records (
+CREATE TABLE IF NOT EXISTS preview_business_records (
   record_id TEXT PRIMARY KEY,
   source_app TEXT NOT NULL,
   app_slug TEXT NOT NULL,
-  entity TEXT NOT NULL,
   payload_json TEXT NOT NULL,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
 
-CREATE INDEX IF NOT EXISTS idx_preview_domain_records_app_entity
-  ON preview_domain_records(source_app, app_slug, entity);
+CREATE INDEX IF NOT EXISTS idx_preview_business_records_app
+  ON preview_business_records(source_app, app_slug, created_at);
 
 CREATE TABLE IF NOT EXISTS preview_assets (
   asset_id TEXT PRIMARY KEY,
@@ -1216,48 +1215,27 @@ CREATE INDEX IF NOT EXISTS idx_preview_notifications_app_user
 """
 
 
-def _web_preview_d1_domain_entities_migration(slug: str) -> str:
-    return f"""-- Generated domain entity storage for {slug} Initial Preview Release.
+def _web_preview_d1_business_records_migration(slug: str) -> str:
+    return f"""-- Generated business records storage for {slug} Initial Preview Release.
 -- This migration is intentionally separate from auth/session/update tables.
 -- It is app-scoped and idempotent so it can be safely reapplied.
 
-CREATE TABLE IF NOT EXISTS preview_domain_entities (
-  entity_id TEXT PRIMARY KEY,
-  source_app TEXT NOT NULL,
-  app_slug TEXT NOT NULL,
-  entity_type TEXT NOT NULL,
-  external_key TEXT,
-  display_name TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'active',
-  payload_json TEXT NOT NULL DEFAULT '{{}}',
-  created_by_user_id TEXT,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL,
-  UNIQUE(source_app, app_slug, entity_type, external_key)
-);
-
-CREATE INDEX IF NOT EXISTS idx_preview_domain_entities_app_entity
-  ON preview_domain_entities(source_app, app_slug, entity_type);
-
-CREATE INDEX IF NOT EXISTS idx_preview_domain_entities_app_status
-  ON preview_domain_entities(source_app, app_slug, status);
-
-CREATE TABLE IF NOT EXISTS preview_domain_entity_events (
+CREATE TABLE IF NOT EXISTS preview_business_record_events (
   event_id TEXT PRIMARY KEY,
   source_app TEXT NOT NULL,
   app_slug TEXT NOT NULL,
-  entity_id TEXT NOT NULL,
+  record_id TEXT NOT NULL,
   event_type TEXT NOT NULL,
   payload_json TEXT NOT NULL DEFAULT '{{}}',
   created_at TEXT NOT NULL,
-  FOREIGN KEY(entity_id) REFERENCES preview_domain_entities(entity_id)
+  FOREIGN KEY(record_id) REFERENCES preview_business_records(record_id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_preview_domain_entity_events_app_entity
-  ON preview_domain_entity_events(source_app, app_slug, entity_id);
+CREATE INDEX IF NOT EXISTS idx_preview_business_record_events_app_record
+  ON preview_business_record_events(source_app, app_slug, record_id);
 
-CREATE INDEX IF NOT EXISTS idx_preview_domain_entity_events_app_type
-  ON preview_domain_entity_events(source_app, app_slug, event_type);
+CREATE INDEX IF NOT EXISTS idx_preview_business_record_events_app_type
+  ON preview_business_record_events(source_app, app_slug, event_type);
 """
 
 
@@ -1987,8 +1965,8 @@ async function handlePreviewAdmin(request, env, assetPath) {
       const rows = await env.PREVIEW_DB
         .prepare(
           `SELECT record_id, payload_json, created_at, updated_at
-           FROM preview_domain_records
-           WHERE source_app = ?1 AND app_slug = ?2 AND entity = 'business_records'
+           FROM preview_business_records
+           WHERE source_app = ?1 AND app_slug = ?2
            ORDER BY created_at DESC`,
         )
         .bind(SOURCE_APP, SOURCE_APP)
@@ -2007,12 +1985,12 @@ async function handlePreviewAdmin(request, env, assetPath) {
     if (request.method === 'POST') {
       const payload = await readJson(request);
       const timestamp = nowIso();
-      const recordId = randomId('dom');
+      const recordId = randomId('biz');
       await env.PREVIEW_DB
         .prepare(
-          `INSERT INTO preview_domain_records
-           (record_id, source_app, app_slug, entity, payload_json, created_at, updated_at)
-           VALUES (?1, ?2, ?3, 'business_records', ?4, ?5, ?6)`,
+          `INSERT INTO preview_business_records
+           (record_id, source_app, app_slug, payload_json, created_at, updated_at)
+           VALUES (?1, ?2, ?3, ?4, ?5, ?6)`,
         )
         .bind(
           recordId,
@@ -2068,33 +2046,28 @@ async function handlePreviewAppUpdate(env) {
   });
 }
 
-async function handlePreviewDomain(request, env, entity) {
+async function handlePreviewBusinessRecords(request, env) {
   const d1 = requirePreviewD1(env);
   if (!d1.ok) return d1.response;
   const session = await requireApiSession(env, request);
   if (!session.ok) return session.response;
-  if (!/^[A-Za-z][A-Za-z0-9_-]{0,63}$/.test(entity || '')) {
-    return apiError('invalid_entity', 'Business entity must be a stable identifier.', 400);
-  }
   if (request.method === 'GET') {
     const rows = await env.PREVIEW_DB
       .prepare(
-        `SELECT record_id, source_app, app_slug, entity, payload_json, created_at, updated_at
-         FROM preview_domain_records
-         WHERE source_app = ?1 AND app_slug = ?2 AND entity = ?3
+        `SELECT record_id, source_app, app_slug, payload_json, created_at, updated_at
+         FROM preview_business_records
+         WHERE source_app = ?1 AND app_slug = ?2
          ORDER BY created_at DESC`,
       )
-      .bind(SOURCE_APP, SOURCE_APP, entity)
+      .bind(SOURCE_APP, SOURCE_APP)
       .all();
     return json({
       sourceApp: SOURCE_APP,
       appSlug: SOURCE_APP,
-      entity,
       records: (rows.results || []).map((row) => ({
         id: row.record_id,
         sourceApp: row.source_app,
         appSlug: row.app_slug,
-        entity: row.entity,
         payload: JSON.parse(row.payload_json || '{}'),
         createdAt: row.created_at,
         updatedAt: row.updated_at,
@@ -2107,17 +2080,16 @@ async function handlePreviewDomain(request, env, entity) {
     const recordId = randomId('rec');
     await env.PREVIEW_DB
       .prepare(
-        `INSERT INTO preview_domain_records
-         (record_id, source_app, app_slug, entity, payload_json, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)`,
+        `INSERT INTO preview_business_records
+         (record_id, source_app, app_slug, payload_json, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)`,
       )
-      .bind(recordId, SOURCE_APP, SOURCE_APP, entity, JSON.stringify(payload), timestamp, timestamp)
+      .bind(recordId, SOURCE_APP, SOURCE_APP, JSON.stringify(payload), timestamp, timestamp)
       .run();
     return json({
       id: recordId,
       sourceApp: SOURCE_APP,
       appSlug: SOURCE_APP,
-      entity,
       payload,
       createdAt: timestamp,
       updatedAt: timestamp,
@@ -2176,7 +2148,7 @@ async function handlePreviewApi(request, env, assetPath) {
     return handlePreviewAdmin(request, env, assetPath);
   }
   if (assetPath === '/api/business/records') {
-    return handlePreviewDomain(request, env, 'business_records');
+    return handlePreviewBusinessRecords(request, env);
   }
   if (request.method === 'GET' && assetPath === '/api/app-updates/current') {
     return handlePreviewAppUpdate(env);
@@ -2663,18 +2635,15 @@ function fakeD1() {
                 });
                 return { meta: { changes: 1 } };
               }
-              if (normalized.startsWith('insert into preview_domain_records')) {
+              if (normalized.startsWith('insert into preview_business_records')) {
                 const [recordId, sourceApp, appSlug] = args;
-                const usesLiteralDomainEntity = normalized.includes("'business_records'");
-                const entity = usesLiteralDomainEntity ? 'business_records' : args[3];
-                const payloadJson = usesLiteralDomainEntity ? args[3] : args[4];
-                const createdAt = usesLiteralDomainEntity ? args[4] : args[5];
-                const updatedAt = usesLiteralDomainEntity ? args[5] : args[6];
+                const payloadJson = args[3];
+                const createdAt = args[4];
+                const updatedAt = args[5];
                 previewBusinessRecords.push({
                   record_id: recordId,
                   source_app: sourceApp,
                   app_slug: appSlug,
-                  entity,
                   payload_json: payloadJson,
                   created_at: createdAt,
                   updated_at: updatedAt,
@@ -2690,11 +2659,10 @@ function fakeD1() {
                   results: [...previewUsers.values()].filter((row) => row.source_app === sourceApp && row.app_slug === appSlug),
                 };
               }
-              if (normalized.includes('from preview_domain_records')) {
+              if (normalized.includes('from preview_business_records')) {
                 const [sourceApp, appSlug] = args;
-                const entity = normalized.includes("'business_records'") ? 'business_records' : args[2];
                 return {
-                  results: previewBusinessRecords.filter((row) => row.source_app === sourceApp && row.app_slug === appSlug && row.entity === entity),
+                  results: previewBusinessRecords.filter((row) => row.source_app === sourceApp && row.app_slug === appSlug),
                 };
               }
               if (normalized.includes('from preview_notifications')) {
@@ -3118,7 +3086,7 @@ WORKER="$ROOT_DIR/deploy/web-preview/worker/src/index.js"
 WORKER_HARNESS="$ROOT_DIR/deploy/web-preview/worker/local_preview_test.mjs"
 WRANGLER_EXAMPLE="$ROOT_DIR/deploy/web-preview/wrangler.toml.example"
 D1_MIGRATION="$ROOT_DIR/deploy/web-preview/d1/migrations/0001_preview_invites.sql"
-DOMAIN_D1_MIGRATION="$ROOT_DIR/deploy/web-preview/d1/migrations/0002_domain_entities.sql"
+BUSINESS_D1_MIGRATION="$ROOT_DIR/deploy/web-preview/d1/migrations/0002_business_records.sql"
 SCHEMA_EVOLUTION_D1_MIGRATION="$ROOT_DIR/deploy/web-preview/d1/migrations/0003_preview_schema_evolution.sql"
 APP_SLUG="${{APP_SLUG:-{slug}}}"
 APP_RUNTIME_PROFILE="${{APP_RUNTIME_PROFILE:-preview}}"
@@ -3149,7 +3117,7 @@ fi
 [[ -f "$WRANGLER_EXAMPLE" ]] || fail "missing deploy/web-preview/wrangler.toml.example"
 [[ -f "$ROOT_DIR/scripts/load_bridge_env.sh" ]] || fail "missing scripts/load_bridge_env.sh"
 [[ -f "$D1_MIGRATION" ]] || fail "missing deploy/web-preview/d1/migrations/0001_preview_invites.sql"
-[[ -f "$DOMAIN_D1_MIGRATION" ]] || fail "missing deploy/web-preview/d1/migrations/0002_domain_entities.sql"
+[[ -f "$BUSINESS_D1_MIGRATION" ]] || fail "missing deploy/web-preview/d1/migrations/0002_business_records.sql"
 [[ -f "$SCHEMA_EVOLUTION_D1_MIGRATION" ]] || fail "missing deploy/web-preview/d1/migrations/0003_preview_schema_evolution.sql"
 if [[ "$FRONTEND_STRATEGY" == "svelte" ]]; then
   [[ -f "$ROOT_DIR/apps/web/package.json" ]] || fail "missing apps/web/package.json"
@@ -3231,7 +3199,7 @@ grep -q '/__preview/health' "$WORKER" || fail "worker health route missing"
 grep -q '/api/health' "$WORKER" || fail "worker Preview API health route missing"
 grep -q '/api/auth/login' "$WORKER" || fail "worker Preview API auth route missing"
 grep -q '/api/business/records' "$WORKER" || fail "worker Preview API business records route missing"
-grep -q '/api/admin/business-records' "$WORKER" || fail "worker generated Flutter admin domain route missing"
+grep -q '/api/admin/business-records' "$WORKER" || fail "worker generated Flutter admin business records route missing"
 grep -q 'ASSETS' "$WORKER" || fail "worker asset binding missing"
 grep -q 'asset_not_found' "$WORKER" || fail "worker asset 404 missing"
 grep -q 'content-security-policy' "$WORKER" || fail "worker security headers missing"
@@ -3258,17 +3226,16 @@ grep -q 'CREATE TABLE IF NOT EXISTS preview_users' "$D1_MIGRATION" || fail "D1 p
 grep -q 'CREATE TABLE IF NOT EXISTS preview_sessions' "$D1_MIGRATION" || fail "D1 preview_sessions migration missing"
 grep -q 'CREATE TABLE IF NOT EXISTS preview_roles' "$D1_MIGRATION" || fail "D1 preview_roles migration missing"
 grep -q 'CREATE TABLE IF NOT EXISTS preview_admin_invites' "$D1_MIGRATION" || fail "D1 preview_admin_invites migration missing"
-grep -q 'CREATE TABLE IF NOT EXISTS preview_domain_records' "$D1_MIGRATION" || fail "D1 preview_domain_records migration missing"
+grep -q 'CREATE TABLE IF NOT EXISTS preview_business_records' "$D1_MIGRATION" || fail "D1 preview_business_records migration missing"
 grep -q 'CREATE TABLE IF NOT EXISTS preview_assets' "$D1_MIGRATION" || fail "D1 preview_assets migration missing"
 grep -q 'CREATE TABLE IF NOT EXISTS preview_events' "$D1_MIGRATION" || fail "D1 preview_events migration missing"
 grep -q 'CREATE TABLE IF NOT EXISTS preview_notifications' "$D1_MIGRATION" || fail "D1 preview_notifications migration missing"
 grep -q 'CREATE TABLE IF NOT EXISTS preview_app_updates' "$D1_MIGRATION" || fail "D1 preview_app_updates migration missing"
-grep -q 'CREATE TABLE IF NOT EXISTS preview_domain_entities' "$DOMAIN_D1_MIGRATION" || fail "D1 preview_domain_entities migration missing"
-grep -q 'CREATE TABLE IF NOT EXISTS preview_domain_entity_events' "$DOMAIN_D1_MIGRATION" || fail "D1 preview_domain_entity_events migration missing"
+grep -q 'CREATE TABLE IF NOT EXISTS preview_business_record_events' "$BUSINESS_D1_MIGRATION" || fail "D1 preview_business_record_events migration missing"
 grep -q 'codex:d1:add-column' "$SCHEMA_EVOLUTION_D1_MIGRATION" || fail "D1 schema evolution directives missing"
-grep -q 'source_app TEXT NOT NULL' "$DOMAIN_D1_MIGRATION" || fail "D1 domain migration source_app scope missing"
-grep -q 'app_slug TEXT NOT NULL' "$DOMAIN_D1_MIGRATION" || fail "D1 domain migration app_slug scope missing"
-grep -q 'CREATE INDEX IF NOT EXISTS idx_preview_domain_entities_app_entity' "$DOMAIN_D1_MIGRATION" || fail "D1 domain entity index must be idempotent"
+grep -q 'source_app TEXT NOT NULL' "$BUSINESS_D1_MIGRATION" || fail "D1 business records migration source_app scope missing"
+grep -q 'app_slug TEXT NOT NULL' "$BUSINESS_D1_MIGRATION" || fail "D1 business records migration app_slug scope missing"
+grep -q 'CREATE INDEX IF NOT EXISTS idx_preview_business_record_events_app_record' "$BUSINESS_D1_MIGRATION" || fail "D1 business record event index must be idempotent"
 grep -q 'token_sha256' "$D1_MIGRATION" || fail "D1 token hash column missing"
 grep -q 'used_at' "$D1_MIGRATION" || fail "D1 used_at column missing"
 grep -q 'revoked_at' "$D1_MIGRATION" || fail "D1 revoked_at column missing"
@@ -4048,9 +4015,16 @@ fi
 forbidden_patterns=(
   'D1 blocked'
   'domains endpoint'
-  '/api/domain/'
-  '/admin/domains'
-  '/domain/smoke_records'
+  '/api/''domain/'
+  '/admin/''domains'
+  '/domain/''smoke_records'
+  '/''domains'
+  'domain ''CRUD'
+  'domain-''management'
+  'domain ''management'
+  'preview_''domain_'
+  'handlePreview''Domain'
+  '0002_''domain_entities'
   'android-mock-v'
   'android-local-v'
   'mock_or_demo: true'
@@ -4096,7 +4070,7 @@ source "$ROOT_DIR/scripts/github_repo_access.sh"
 [[ -f deploy/web-preview/web-preview-manifest.yaml ]] || fail "missing deploy/web-preview/web-preview-manifest.yaml"
 [[ -f deploy/web-preview/worker/src/index.js ]] || fail "missing Preview API Worker"
 [[ -f deploy/web-preview/d1/migrations/0001_preview_invites.sql ]] || fail "missing D1 migration"
-[[ -f deploy/web-preview/d1/migrations/0002_domain_entities.sql ]] || fail "missing domain D1 migration"
+[[ -f deploy/web-preview/d1/migrations/0002_business_records.sql ]] || fail "missing business records D1 migration"
 bridge_env_require APP_RUNTIME_PROFILE API_RUNTIME API_BASE_URL BRIDGE_URL CLOUDFLARE_API_TOKEN
 bridge_env_require_any "preview D1 database" PREVIEW_D1_DATABASE CLOUDFLARE_D1_DATABASE
 [[ "$APP_RUNTIME_PROFILE" == "preview" ]] || fail "APP_RUNTIME_PROFILE must be preview for initial release"
@@ -10779,7 +10753,7 @@ def _baseline_diagram_files(
         ),
         "architecture/overview.md": (
             "# Architecture Overview\n\n"
-            f"`{name}` starts with {frontend_summary}, domain management, "
+            f"`{name}` starts with {frontend_summary}, business records management, "
             "notifications, and Workbench SDD artifacts.\n\n"
             f"- Business type: `{business_type}`\n"
             f"- Primary goal: {primary_goal}\n\n"
@@ -11214,10 +11188,10 @@ New-project creation uses Codex CLI by default with:
 - Login and registration.
 - Google login placeholders.
 - RBAC with owner/admin/manager/staff/customer/guest.
-- Admin domain-management shell.
+- Admin business-records shell.
 - Notification foundations.
 - FastAPI backend v1 with SQLite DATABASE_URL, PBKDF2 password hashing,
-  JWT-compatible HS256 tokens, admin seed by env, RBAC guards, domain CRUD,
+  JWT-compatible HS256 tokens, admin seed by env, RBAC guards, business records CRUD,
   notification outbox, healthcheck, CORS, and generated tests.
 - Svelte web v1 with VITE_APP_RUNTIME_PROFILE, VITE_API_RUNTIME,
   VITE_API_BASE_URL configuration, Cloudflare preview API contract validation,
@@ -11232,7 +11206,7 @@ New-project creation uses Codex CLI by default with:
 ## Intent
 
 Build `{name}` as a Flutter iOS/Android/Web app with a FastAPI backend, auth,
-admin, roles, permissions, domain management, notifications, Codex Feedback
+admin, roles, permissions, business records management, notifications, Codex Feedback
 Bridge, app updater, and Workbench-driven feature growth.
 
 ## Business Context
@@ -11257,13 +11231,13 @@ New-project creation uses Codex CLI by default with:
 - Login and registration.
 - Google login placeholders.
 - RBAC with owner/admin/manager/staff/customer/guest.
-- Admin domain-management shell.
+- Admin business-records shell.
 - Notification foundations.
 - FastAPI backend v1 with SQLite DATABASE_URL, PBKDF2 password hashing,
-  JWT-compatible HS256 tokens, admin seed by env, RBAC guards, domain CRUD,
+  JWT-compatible HS256 tokens, admin seed by env, RBAC guards, business records CRUD,
   notification outbox, healthcheck, CORS, and generated tests.
 - Flutter mobile v1 with API_BASE_URL configuration, real auth/session calls,
-  RBAC admin gating, domain management screens, notifications, and generated tests.
+  RBAC admin gating, business records screens, notifications, and generated tests.
 - SDD artifacts for future Workbench features.
 - Baseline Workbench diagrams for components, classes, entity relationships, and
   deployment.
@@ -11310,12 +11284,12 @@ def _initial_task_items(frontend_strategy: str = "flutter") -> tuple[dict[str, s
                 "description": "Analyze user-provided visual references and convert them into tokens, components, and screen patterns.",
             },
             {
-                "title": "Generate Svelte/Vite web v1 with VITE runtime config, auth/session, RBAC admin gating, domain management, notifications, and generated tests.",
+                "title": "Generate Svelte/Vite web v1 with VITE runtime config, auth/session, RBAC admin gating, business records management, notifications, and generated tests.",
                 "status": "done",
                 "description": "Generated Svelte/Vite web v1 foundation is present under apps/web.",
             },
             {
-                "title": "Generate backend v1 with FastAPI, auth, RBAC, admin, domain CRUD foundation, and notifications.",
+                "title": "Generate backend v1 with FastAPI, auth, RBAC, admin, business records CRUD foundation, and notifications.",
                 "status": "done",
                 "description": "Generated FastAPI backend v1 foundation is present.",
             },
@@ -11330,9 +11304,9 @@ def _initial_task_items(frontend_strategy: str = "flutter") -> tuple[dict[str, s
                 "description": "Generated RBAC roles and admin shell are present.",
             },
             {
-                "title": "Add domain CRUD foundation.",
+                "title": "Add business records CRUD foundation.",
                 "status": "done",
-                "description": "Generated domain management foundation is present.",
+                "description": "Generated business records management foundation is present.",
             },
             {
                 "title": "Add notification foundation.",
@@ -11367,12 +11341,12 @@ def _initial_task_items(frontend_strategy: str = "flutter") -> tuple[dict[str, s
             "description": "Analyze user-provided visual references and convert them into tokens, components, and screen patterns.",
         },
         {
-            "title": "Generate Flutter mobile v1 with API_BASE_URL, auth/session, RBAC admin gating, domain management, notifications, and generated tests.",
+            "title": "Generate Flutter mobile v1 with API_BASE_URL, auth/session, RBAC admin gating, business records management, notifications, and generated tests.",
             "status": "done",
             "description": "Generated Flutter mobile v1 foundation is present.",
         },
         {
-            "title": "Generate backend v1 with FastAPI, auth, RBAC, admin, domain CRUD foundation, and notifications.",
+            "title": "Generate backend v1 with FastAPI, auth, RBAC, admin, business records CRUD foundation, and notifications.",
             "status": "done",
             "description": "Generated FastAPI backend v1 foundation is present.",
         },
@@ -11387,9 +11361,9 @@ def _initial_task_items(frontend_strategy: str = "flutter") -> tuple[dict[str, s
             "description": "Generated RBAC roles and admin shell are present.",
         },
         {
-            "title": "Add domain CRUD foundation.",
+            "title": "Add business records CRUD foundation.",
             "status": "done",
-            "description": "Generated domain management foundation is present.",
+            "description": "Generated business records management foundation is present.",
         },
         {
             "title": "Add notification foundation.",

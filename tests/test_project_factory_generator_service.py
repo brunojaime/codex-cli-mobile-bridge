@@ -1602,7 +1602,7 @@ def test_generated_cloudflare_cost_posture_script_blocks_paid_resources(
     assert confirmed.returncode == 0, confirmed.stdout + confirmed.stderr
 
 
-def test_generated_domain_d1_migration_is_app_scoped_and_idempotent(
+def test_generated_business_records_d1_migration_is_app_scoped_and_idempotent(
     tmp_path: Path,
 ) -> None:
     manifest_plan = ProjectFactoryManifestService(
@@ -1617,16 +1617,52 @@ def test_generated_domain_d1_migration_is_app_scoped_and_idempotent(
     ProjectFactoryGeneratorService().generate(manifest_plan)
 
     project = tmp_path / "clinica-norte"
-    sql = (
+    assert not (
         project / "deploy/web-preview/d1/migrations/0002_domain_entities.sql"
+    ).exists()
+    sql = (
+        project / "deploy/web-preview/d1/migrations/0002_business_records.sql"
     ).read_text(encoding="utf-8")
 
-    assert "CREATE TABLE IF NOT EXISTS preview_domain_entities" in sql
-    assert "CREATE TABLE IF NOT EXISTS preview_domain_entity_events" in sql
+    assert "CREATE TABLE IF NOT EXISTS preview_business_record_events" in sql
     assert "source_app TEXT NOT NULL" in sql
     assert "app_slug TEXT NOT NULL" in sql
-    assert "CREATE INDEX IF NOT EXISTS idx_preview_domain_entities_app_entity" in sql
-    assert "CREATE INDEX IF NOT EXISTS idx_preview_domain_entity_events_app_entity" in sql
+    assert "CREATE INDEX IF NOT EXISTS idx_preview_business_record_events_app_record" in sql
+    assert "preview_domain_" not in sql
+
+
+def test_generated_project_has_no_stale_domain_contract(
+    tmp_path: Path,
+) -> None:
+    manifest_plan = ProjectFactoryManifestService(
+        projects_root=tmp_path,
+    ).plan_manifest(
+        ProjectFactoryManifestInput(
+            name="Clinica Norte",
+            business_type="medical",
+            primary_goal="Reservar turnos",
+        )
+    )
+    ProjectFactoryGeneratorService().generate(manifest_plan)
+
+    project = tmp_path / "clinica-norte"
+    generated_text = _read_all_text(project)
+    stale_patterns = [
+        "preview_domain_",
+        "handlePreviewDomain",
+        "0002_domain_entities",
+        "domain CRUD",
+        "domain-management",
+        "domain management",
+        "/api/domain",
+        "/admin/domains",
+        "/domains",
+    ]
+    for pattern in stale_patterns:
+        assert pattern not in generated_text
+    assert "preview_business_records" in generated_text
+    assert "business_records" in generated_text
+    assert "business-records" in generated_text
 
 
 def test_generated_apply_preview_d1_migrations_blocks_and_reapplies_safely(
@@ -1703,7 +1739,8 @@ def test_generated_apply_preview_d1_migrations_blocks_and_reapplies_safely(
     assert any("ALTER TABLE preview_invites ADD COLUMN email TEXT" in line for line in lines)
     assert any(line.startswith("d1 execute preview-db --remote --file") for line in lines)
     assert any("0001_preview_invites.sql" in line for line in lines)
-    assert any("0002_domain_entities.sql" in line for line in lines)
+    assert any("0002_business_records.sql" in line for line in lines)
+    assert not any("0002_domain_entities.sql" in line for line in lines)
 
 
 def test_generated_preview_signing_policy_blocks_debug_without_metadata(
@@ -2147,6 +2184,9 @@ def test_generated_web_preview_bundle_is_validable_locally(tmp_path: Path) -> No
     assert "/api/app-updates/current" in worker_text
     assert "/api/business/records" in worker_text
     assert "/api/domain/" not in worker_text
+    assert "handlePreviewBusinessRecords" in worker_text
+    assert "handlePreviewDomain" not in worker_text
+    assert "preview_domain_" not in worker_text
     assert "/api/notifications" in worker_text
     assert "ASSETS.fetch" in worker_text
     assert "WEB_PREVIEW_INVITE_SECRET" in worker_text
@@ -2176,7 +2216,8 @@ def test_generated_web_preview_bundle_is_validable_locally(tmp_path: Path) -> No
     assert "CREATE TABLE IF NOT EXISTS preview_sessions" in migration_text
     assert "CREATE TABLE IF NOT EXISTS preview_audit_events" in migration_text
     assert "CREATE TABLE IF NOT EXISTS preview_app_updates" in migration_text
-    assert "CREATE TABLE IF NOT EXISTS preview_domain_records" in migration_text
+    assert "CREATE TABLE IF NOT EXISTS preview_business_records" in migration_text
+    assert "preview_domain_" not in migration_text
     assert "CREATE TABLE IF NOT EXISTS preview_assets" in migration_text
     assert "CREATE TABLE IF NOT EXISTS preview_events" in migration_text
     assert "CREATE TABLE IF NOT EXISTS preview_notifications" in migration_text
