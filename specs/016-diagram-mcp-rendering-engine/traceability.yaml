@@ -87,7 +87,9 @@ acceptance_criteria:
   AC-010:
     tests:
       - tests/mcp_server/test_https_loopback.py::test_server_requires_https_loopback_configuration
+      - tests/mcp_server/test_https_loopback.py::test_stdio_mode_runs_stdio_transport
       - tests/mcp_server/test_https_loopback.py::test_https_mode_runs_streamable_http_with_tls
+      - tests/mcp_server/test_https_loopback.py::test_mcp_tool_registry_exposes_documented_tools
   AC-011:
     tests:
       - tests/export/test_export_diagram.py::test_export_diagram_returns_self_contained_svg
