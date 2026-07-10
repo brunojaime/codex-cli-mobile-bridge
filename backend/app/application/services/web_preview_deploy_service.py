@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from email import policy
+from email.parser import BytesParser
 import hashlib
 import json
 import os
@@ -23,6 +25,7 @@ from backend.app.infrastructure.config.settings import Settings
 
 
 _SOURCE_APP_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,78}[a-z0-9])?$")
+_D1_DIRECTIVE_RE = re.compile(r"^\s*--\s*codex:d1:(add-column|backfill)\s+(.+?)\s*$")
 _INVITE_UPSERT_SQL = """
 INSERT INTO preview_invites (
   invite_id,
@@ -30,16 +33,20 @@ INSERT INTO preview_invites (
   source_app,
   app_slug,
   single_use,
+  email,
+  role,
   created_at,
   expires_at,
   used_at,
   revoked_at
-) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL, ?8)
+) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, NULL, ?10)
 ON CONFLICT(invite_id) DO UPDATE SET
   token_sha256 = excluded.token_sha256,
   source_app = excluded.source_app,
   app_slug = excluded.app_slug,
   single_use = excluded.single_use,
+  email = excluded.email,
+  role = excluded.role,
   created_at = excluded.created_at,
   expires_at = excluded.expires_at,
   revoked_at = excluded.revoked_at
@@ -110,7 +117,8 @@ class WebPreviewDeployService:
         planner = CloudflareProvisioningPlanner(settings=self._settings)
         cloudflare_plan = planner.plan_for_manifest(manifest)
         preview_id = _preview_id(source_app)
-        plan_hash = _plan_hash(manifest, cloudflare_plan)
+        worker_script_hash = _worker_script_hash(project_path)
+        plan_hash = _plan_hash(manifest, cloudflare_plan, worker_script_hash)
         health_path = str(cloudflare_plan.get("health_path") or "/api/health")
         preview_url = str(manifest.get("stable_url") or "")
         now = datetime.now(UTC).replace(microsecond=0)
@@ -128,6 +136,7 @@ class WebPreviewDeployService:
             "preview_url": preview_url,
             "health_url": f"{preview_url.rstrip('/')}{health_path}",
             "plan_hash": plan_hash,
+            "worker_script_sha256": worker_script_hash,
             "planned_resources": cloudflare_plan["resources"],
             "applied_resources": [],
             "error": None,
@@ -271,6 +280,7 @@ class WebPreviewDeployService:
                 **state,
                 "status": "active",
                 "applied_resources": applied,
+                "worker_script_verification_status": _worker_verification_status(applied),
                 "completed_at": _now_iso(),
                 "updated_at": _now_iso(),
                 "logs": [
@@ -856,18 +866,82 @@ class CloudflarePreviewProvisioner:
             script_name=worker_name,
         )
         if existing.ok:
-            return {"kind": "worker_script", "name": worker_name, "status": "existing"}
+            if not script_path.is_file():
+                raise RuntimeError("worker script source is missing")
+            script_content = script_path.read_text(encoding="utf-8")
+            deployed = self._client.deploy_worker_script(
+                account_id=account_id,
+                script_name=worker_name,
+                script_content=script_content,
+                worker_format="module",
+            )
+            _raise_if_failed(deployed, "worker_update_failed")
+            verification = self._verify_worker_script(
+                account_id=account_id,
+                worker_name=worker_name,
+                expected_script_content=script_content,
+            )
+            return {
+                "kind": "worker_script",
+                "name": worker_name,
+                "status": "updated",
+                "sha256": hashlib.sha256(script_content.encode("utf-8")).hexdigest(),
+                "worker_format": "module",
+                **verification,
+            }
         if existing.status_code not in (404, None):
             _raise_if_failed(existing, "worker_lookup_failed")
         if not script_path.is_file():
             raise RuntimeError("worker script source is missing")
+        script_content = script_path.read_text(encoding="utf-8")
         deployed = self._client.deploy_worker_script(
             account_id=account_id,
             script_name=worker_name,
-            script_content=script_path.read_text(encoding="utf-8"),
+            script_content=script_content,
+            worker_format="module",
         )
         _raise_if_failed(deployed, "worker_deploy_failed")
-        return {"kind": "worker_script", "name": worker_name, "status": "created"}
+        verification = self._verify_worker_script(
+            account_id=account_id,
+            worker_name=worker_name,
+            expected_script_content=script_content,
+        )
+        return {
+            "kind": "worker_script",
+            "name": worker_name,
+            "status": "created",
+            "sha256": hashlib.sha256(script_content.encode("utf-8")).hexdigest(),
+            "worker_format": "module",
+            **verification,
+        }
+
+    def _verify_worker_script(
+        self,
+        *,
+        account_id: str,
+        worker_name: str,
+        expected_script_content: str,
+    ) -> dict[str, Any]:
+        expected_sha = hashlib.sha256(expected_script_content.encode("utf-8")).hexdigest()
+        remote = self._client.get_worker_script(
+            account_id=account_id,
+            script_name=worker_name,
+        )
+        _raise_if_failed(remote, "worker_verify_lookup_failed")
+        remote_script = _worker_script_content(remote.payload)
+        if remote_script is None:
+            raise RuntimeError("worker_verify_missing_remote_script")
+        remote_sha = hashlib.sha256(remote_script.encode("utf-8")).hexdigest()
+        if remote_sha != expected_sha:
+            raise RuntimeError(
+                "worker_verify_hash_mismatch: "
+                f"expected {expected_sha}, got {remote_sha}"
+            )
+        return {
+            "verified": True,
+            "verification_status": "verified",
+            "remote_sha256": remote_sha,
+        }
 
     def _ensure_worker_route(
         self,
@@ -935,23 +1009,126 @@ class CloudflarePreviewProvisioner:
             raise RuntimeError("d1_migrations_missing")
         applied: list[dict[str, Any]] = []
         for migration in sorted(migrations_dir.glob("*.sql")):
-            result = self._client.execute_d1_sql(
+            sql = migration.read_text(encoding="utf-8")
+            directive_events = self._apply_d1_schema_directives(
                 account_id=account_id,
                 database_id=database_id,
-                sql=migration.read_text(encoding="utf-8"),
+                sql=sql,
             )
-            _raise_if_failed(result, "d1_migration_failed")
+            executable_sql = _d1_sql_without_directives(sql)
+            if _d1_sql_has_executable_statements(executable_sql):
+                result = self._client.execute_d1_sql(
+                    account_id=account_id,
+                    database_id=database_id,
+                    sql=executable_sql,
+                )
+                _raise_if_failed(result, "d1_migration_failed")
             applied.append(
                 {
                     "kind": "d1_migration",
                     "name": migration.name,
                     "database": database_name,
                     "status": "applied",
+                    "schema_evolution": directive_events,
                 }
             )
         if not applied:
             raise RuntimeError("d1_migrations_missing")
         return applied
+
+    def _apply_d1_schema_directives(
+        self,
+        *,
+        account_id: str,
+        database_id: str,
+        sql: str,
+    ) -> list[dict[str, str]]:
+        events: list[dict[str, str]] = []
+        known_columns: dict[str, set[str]] = {}
+
+        def columns_for(table: str) -> set[str]:
+            if table not in known_columns:
+                known_columns[table] = self._d1_table_columns(
+                    account_id=account_id,
+                    database_id=database_id,
+                    table=table,
+                )
+            return known_columns[table]
+
+        for line in sql.splitlines():
+            match = _D1_DIRECTIVE_RE.match(line)
+            if not match:
+                continue
+            action, payload = match.groups()
+            if action == "add-column":
+                parts = payload.split(None, 2)
+                if len(parts) != 3:
+                    raise RuntimeError(f"d1_invalid_add_column_directive:{payload}")
+                table, column, definition = parts
+                columns = columns_for(table)
+                if column in columns:
+                    events.append(
+                        {
+                            "action": "add-column",
+                            "table": table,
+                            "column": column,
+                            "status": "skipped_existing",
+                        }
+                    )
+                    continue
+                result = self._client.execute_d1_sql(
+                    account_id=account_id,
+                    database_id=database_id,
+                    sql=f"ALTER TABLE {table} ADD COLUMN {column} {definition}",
+                )
+                _raise_if_failed(result, "d1_schema_evolution_failed")
+                columns.add(column)
+                events.append(
+                    {
+                        "action": "add-column",
+                        "table": table,
+                        "column": column,
+                        "status": "applied",
+                    }
+                )
+                continue
+            if action == "backfill":
+                parts = payload.split(None, 3)
+                if len(parts) != 4:
+                    raise RuntimeError(f"d1_invalid_backfill_directive:{payload}")
+                table, column, value, predicate = parts
+                if column not in columns_for(table):
+                    raise RuntimeError(f"d1_backfill_column_missing:{table}.{column}")
+                result = self._client.execute_d1_sql(
+                    account_id=account_id,
+                    database_id=database_id,
+                    sql=f"UPDATE {table} SET {column} = {value} WHERE {predicate}",
+                )
+                _raise_if_failed(result, "d1_schema_backfill_failed")
+                events.append(
+                    {
+                        "action": "backfill",
+                        "table": table,
+                        "column": column,
+                        "status": "applied",
+                    }
+                )
+        return events
+
+    def _d1_table_columns(
+        self,
+        *,
+        account_id: str,
+        database_id: str,
+        table: str,
+    ) -> set[str]:
+        result = self._client.execute_d1_sql(
+            account_id=account_id,
+            database_id=database_id,
+            sql=f"PRAGMA table_info({table})",
+        )
+        _raise_if_failed(result, "d1_schema_introspection_failed")
+        return _d1_column_names(result.payload)
 
     def _ensure_pages_project(self, *, account_id: str, name: str) -> dict[str, Any]:
         existing = self._client.get_pages_project(
@@ -976,7 +1153,11 @@ def _safe_id(value: str) -> str:
     return safe.strip("-") or "preview"
 
 
-def _plan_hash(manifest: dict[str, Any], cloudflare_plan: dict[str, Any]) -> str:
+def _plan_hash(
+    manifest: dict[str, Any],
+    cloudflare_plan: dict[str, Any],
+    worker_script_hash: str | None = None,
+) -> str:
     material = {
         "source_app": manifest.get("source_app"),
         "stable_url": manifest.get("stable_url"),
@@ -985,9 +1166,100 @@ def _plan_hash(manifest: dict[str, Any], cloudflare_plan: dict[str, Any]) -> str
         "resources": cloudflare_plan.get("resources"),
         "runtime_type": cloudflare_plan.get("runtime_type"),
         "health_path": cloudflare_plan.get("health_path"),
+        "worker_script_sha256": worker_script_hash,
     }
     encoded = json.dumps(material, sort_keys=True, separators=(",", ":")).encode()
     return hashlib.sha256(encoded).hexdigest()
+
+
+def _worker_script_hash(project_path: Path) -> str | None:
+    script = project_path / "deploy/web-preview/worker/src/index.js"
+    if not script.is_file():
+        return None
+    return hashlib.sha256(script.read_bytes()).hexdigest()
+
+
+def _worker_script_content(payload: dict[str, Any] | list[Any] | None) -> str | None:
+    if isinstance(payload, dict):
+        raw = payload.get("raw")
+        if isinstance(raw, str):
+            content_type = payload.get("content_type")
+            if isinstance(content_type, str) and "multipart/" in content_type.lower():
+                multipart_script = _worker_script_from_multipart(raw, content_type)
+                if multipart_script is not None:
+                    return multipart_script
+            return raw
+        result = payload.get("result")
+        if isinstance(result, str):
+            return result
+        if isinstance(result, dict):
+            script = result.get("script") or result.get("content")
+            if isinstance(script, str):
+                return script
+    return None
+
+
+def _worker_script_from_multipart(raw: str, content_type: str) -> str | None:
+    message_bytes = (
+        f"Content-Type: {content_type}\r\nMIME-Version: 1.0\r\n\r\n{raw}"
+    ).encode("utf-8")
+    message = BytesParser(policy=policy.default).parsebytes(message_bytes)
+    if not message.is_multipart():
+        return None
+    fallback: str | None = None
+    for part in message.iter_parts():
+        disposition = str(part.get("content-disposition") or "")
+        part_content_type = str(part.get_content_type() or "")
+        content = part.get_content()
+        if isinstance(content, bytes):
+            content = content.decode(part.get_content_charset() or "utf-8")
+        if not isinstance(content, str):
+            continue
+        if 'name="index.js"' in disposition or 'filename="index.js"' in disposition:
+            return content
+        if part_content_type == "application/javascript+module":
+            fallback = content
+    return fallback
+
+
+def _worker_verification_status(applied: list[dict[str, Any]]) -> str | None:
+    for item in applied:
+        if item.get("kind") == "worker_script":
+            return str(item.get("verification_status") or "unverified")
+    return None
+
+
+def _d1_sql_without_directives(sql: str) -> str:
+    return "\n".join(
+        line for line in sql.splitlines() if not _D1_DIRECTIVE_RE.match(line)
+    ).strip()
+
+
+def _d1_sql_has_executable_statements(sql: str) -> bool:
+    for line in sql.splitlines():
+        stripped = line.strip()
+        if stripped and not stripped.startswith("--"):
+            return True
+    return False
+
+
+def _d1_column_names(payload: dict[str, Any] | list[Any] | None) -> set[str]:
+    rows: Any = payload
+    if isinstance(payload, dict):
+        rows = payload.get("result") or payload.get("results") or []
+    if isinstance(rows, list) and rows and isinstance(rows[0], dict):
+        first = rows[0]
+        if isinstance(first.get("results"), list):
+            rows = first["results"]
+        elif isinstance(first.get("result"), list):
+            rows = first["result"]
+    if not isinstance(rows, list):
+        return set()
+    return {
+        str(row["name"])
+        for row in rows
+        if isinstance(row, dict) and isinstance(row.get("name"), str)
+    }
 
 
 def _now_iso() -> str:
@@ -1087,6 +1359,8 @@ def _invite_sync_params(invite: dict[str, Any]) -> list[Any]:
         str(invite.get("source_app") or ""),
         str(invite.get("app_slug") or invite.get("source_app") or ""),
         1 if invite.get("single_use", True) else 0,
+        invite.get("email"),
+        str(invite.get("role") or "admin"),
         str(invite.get("created_at") or ""),
         str(invite.get("expires_at") or ""),
         invite.get("revoked_at"),

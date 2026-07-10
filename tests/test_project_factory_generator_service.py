@@ -126,9 +126,11 @@ def test_generator_writes_foundation_and_rolls_no_secrets(tmp_path: Path) -> Non
     ).read_text(encoding="utf-8")
     assert "acceptPreviewInvite" in api_client
     assert "'/invites/accept'" in api_client
-    assert "Initial Preview Access" in screens
-    assert "Invite token or link" in screens
-    assert "Accept invite" in screens
+    assert "Activate preview account" in screens
+    assert "Invite token or link" not in screens
+    assert "Activate account" in screens
+    assert "Repeat password" in screens
+    assert "label: 'Workbench'" not in screens
     assert "isPreviewRuntime" in session
     manifest = (project / ".codex/project.yaml").read_text(encoding="utf-8")
     assert "runtime_profiles:" in manifest
@@ -568,6 +570,8 @@ def test_generator_writes_executable_publish_script(tmp_path: Path) -> None:
     assert "apps/mobile/android is required" in android_preview_content
     assert "android-preview-v${version//+/-build.}" in android_preview_content
     assert "scripts/smoke_preview_api.sh" in android_preview_content
+    assert "scripts/load_bridge_env.sh" in android_preview_content
+    assert "bridge_env_load_preview_signing" in android_preview_content
     assert "APP_RUNTIME_PROFILE=preview" in android_preview_content
     assert "DEBUG_PREVIEW_SIGNING" in android_preview_content
     assert "https://preview.nienfos.com/$SOURCE_APP/api" in android_preview_content
@@ -612,7 +616,12 @@ def test_generator_writes_executable_publish_script(tmp_path: Path) -> None:
     d1_apply_script = tmp_path / "clinica-norte/scripts/apply_preview_d1_migrations.sh"
     assert d1_apply_script.is_file()
     assert d1_apply_script.stat().st_mode & stat.S_IXUSR
-    assert "wrangler d1 execute" in d1_apply_script.read_text(encoding="utf-8")
+    d1_apply_content = d1_apply_script.read_text(encoding="utf-8")
+    assert "wrangler d1 execute" in d1_apply_content
+    assert "codex:d1:add-column" in (
+        tmp_path
+        / "clinica-norte/deploy/web-preview/d1/migrations/0003_preview_schema_evolution.sql"
+    ).read_text(encoding="utf-8")
     assert "scripts/apply_preview_d1_migrations.sh" in (
         tmp_path / "clinica-norte/scripts/apply_cloudflare_preview.sh"
     ).read_text(encoding="utf-8")
@@ -786,7 +795,7 @@ def test_generated_android_preview_release_blocks_wrong_api_before_git_or_networ
     ProjectFactoryGeneratorService().generate(manifest_plan)
 
     project = tmp_path / "clinica-norte"
-    (project / "apps/mobile/android").mkdir(parents=True)
+    (project / "apps/mobile/android").mkdir(parents=True, exist_ok=True)
     completed = subprocess.run(
         ["scripts/publish_android_preview_release.sh", "--push", "--watch"],
         cwd=project,
@@ -918,11 +927,11 @@ def test_generated_initial_preview_validation_rejects_bad_bridge_registration(
         completed = subprocess.run(
             ["scripts/validate_initial_preview_release.sh"],
             cwd=project,
-            env={
-                **os.environ,
+            env=_initial_preview_env(
+                {
                 "PATH": f"{fake_bin}:{os.environ['PATH']}",
-                "BRIDGE_URL": "https://bridge.test",
-            },
+                }
+            ),
             text=True,
             capture_output=True,
             check=False,
@@ -999,12 +1008,12 @@ def test_generated_initial_preview_validation_checks_expected_apk_sha256(
     completed = subprocess.run(
         ["scripts/validate_initial_preview_release.sh"],
         cwd=project,
-        env={
-            **os.environ,
+        env=_initial_preview_env(
+            {
             "PATH": f"{fake_bin}:{os.environ['PATH']}",
-            "BRIDGE_URL": "https://bridge.test",
             "EXPECTED_SHA256": "0" * 64,
-        },
+            }
+        ),
         text=True,
         capture_output=True,
         check=False,
@@ -1214,7 +1223,18 @@ def test_generated_contract_docs_have_coherent_minimum_content(
     assert "scripts/validate_cloudflare_cost_posture.sh" in operations_doc
     assert "aws route53domains get-domain-detail" in aws_doc
     assert "AutoRenew" in aws_doc
-    assert "WEB_PREVIEW_EMAIL_PROVIDER=smtp" in email_doc
+    assert "WEB_PREVIEW_EMAIL_PROVIDER=cloudflare_email" in email_doc
+    assert "deploy/cloudflare-email-endpoint" in email_doc
+    assert "wrangler secret put EMAIL_ENDPOINT_TOKEN" in email_doc
+    assert "Cloudflare Workers Free can host this endpoint" in email_doc
+    assert "Native Cloudflare Email" in email_doc
+    assert "Service sending to arbitrary invite recipients requires Workers Paid" in (
+        " ".join(email_doc.split())
+    )
+    assert "Amazon SES SMTP profile" in email_doc
+    assert "email-smtp.us-east-1.amazonaws.com" in email_doc
+    assert "Request SES production access" in email_doc
+    assert "WEB_PREVIEW_SMTP_IMPLICIT_TLS=false" in email_doc
     assert "manual_delivery_required=true" in email_doc
     assert "CLOUDFLARE_DNS_API_TOKEN" in dns_doc
     assert "dig +trace preview.nienfos.com" in dns_doc
@@ -1222,7 +1242,8 @@ def test_generated_contract_docs_have_coherent_minimum_content(
     assert "sourceApp: clinica-norte" in bridge
     assert "workbench-sdd/v1" in bridge
     assert "APP_RUNTIME_PROFILE=real" in workbench
-    assert "hidden or disabled" in " ".join(workbench.split())
+    assert "no `Workbench` item" in workbench
+    assert "Bridge-owned entry point" in workbench
 
 
 def test_generated_cloudflare_cost_posture_script_blocks_paid_resources(
@@ -1338,6 +1359,10 @@ def test_generated_apply_preview_d1_migrations_blocks_and_reapplies_safely(
     blocked = subprocess.run(
         ["scripts/apply_preview_d1_migrations.sh"],
         cwd=project,
+        env={
+            **os.environ,
+            "CODEX_MOBILE_BRIDGE_ROOT": str(tmp_path / "empty-bridge-root"),
+        },
         text=True,
         capture_output=True,
         check=False,
@@ -1352,6 +1377,7 @@ def test_generated_apply_preview_d1_migrations_blocks_and_reapplies_safely(
     fake_wrangler.write_text(
         "#!/usr/bin/env bash\n"
         "printf '%s\\n' \"$*\" >> \"$WRANGLER_CALLS\"\n"
+        "if [[ \"$*\" == *'--json'* ]]; then printf '[]\\n'; fi\n"
         "exit 0\n",
         encoding="utf-8",
     )
@@ -1363,6 +1389,7 @@ def test_generated_apply_preview_d1_migrations_blocks_and_reapplies_safely(
         "WRANGLER_CALLS": str(calls),
         "PREVIEW_D1_DATABASE": "preview-db",
         "WRANGLER_AUTH_READY": "true",
+        "CODEX_MOBILE_BRIDGE_ROOT": str(tmp_path / "empty-bridge-root"),
     }
     first = subprocess.run(
         ["scripts/apply_preview_d1_migrations.sh"],
@@ -1384,8 +1411,9 @@ def test_generated_apply_preview_d1_migrations_blocks_and_reapplies_safely(
     assert first.returncode == 0, first.stdout + first.stderr
     assert second.returncode == 0, second.stdout + second.stderr
     lines = calls.read_text(encoding="utf-8").splitlines()
-    assert len(lines) == 4
-    assert all(line.startswith("d1 execute preview-db --remote --file") for line in lines)
+    assert any("--command PRAGMA table_info(preview_invites)" in line for line in lines)
+    assert any("ALTER TABLE preview_invites ADD COLUMN email TEXT" in line for line in lines)
+    assert any(line.startswith("d1 execute preview-db --remote --file") for line in lines)
     assert any("0001_preview_invites.sql" in line for line in lines)
     assert any("0002_domain_entities.sql" in line for line in lines)
 
@@ -1584,10 +1612,11 @@ def test_generated_register_installable_app_script_dry_run_uses_release_asset(
             "PATH": f"{fake_bin}:{os.environ['PATH']}",
             "BRIDGE_URL": "http://bridge.test",
             "BRIDGE_REGISTRATION_TOKEN": "token",
-            "GITHUB_REPO": "brunojaime/clinica-norte",
-            "APP_RELEASE_TAG": "android-preview-v0.1.0-build.1",
-            "LATEST_ASSET_NAME": "clinica-norte.apk",
-        },
+                "GITHUB_REPO": "brunojaime/clinica-norte",
+                "APP_RELEASE_TAG": "android-preview-v0.1.0-build.1",
+                "LATEST_ASSET_NAME": "clinica-norte.apk",
+                "CODEX_MOBILE_BRIDGE_ROOT": str(tmp_path / "empty-bridge-root"),
+            },
         text=True,
         capture_output=True,
         check=False,
@@ -1665,10 +1694,11 @@ def test_generated_register_installable_app_script_posts_preview_metadata(
             **os.environ,
             "PATH": f"{fake_bin}:{os.environ['PATH']}",
             "BRIDGE_URL": "https://bridge.test",
-            "BRIDGE_REGISTRATION_TOKEN": "token",
-            "GITHUB_REPO": "brunojaime/clinica-norte",
-            "APP_RELEASE_TAG": "android-preview-v0.1.0-build.1",
-        },
+                "BRIDGE_REGISTRATION_TOKEN": "token",
+                "GITHUB_REPO": "brunojaime/clinica-norte",
+                "APP_RELEASE_TAG": "android-preview-v0.1.0-build.1",
+                "CODEX_MOBILE_BRIDGE_ROOT": str(tmp_path / "empty-bridge-root"),
+            },
         text=True,
         capture_output=True,
         check=False,
@@ -2036,6 +2066,27 @@ def test_generator_rejects_invalid_plan_and_existing_target(tmp_path: Path) -> N
     (tmp_path / "clinica-norte").mkdir()
     with pytest.raises(ProjectFactoryGeneratorError):
         ProjectFactoryGeneratorService().generate(valid)
+
+
+def _initial_preview_env(extra: dict[str, str] | None = None) -> dict[str, str]:
+    env = {
+        **os.environ,
+        "APP_RUNTIME_PROFILE": "preview",
+        "API_RUNTIME": "cloudflare_preview",
+        "API_BASE_URL": "https://preview.nienfos.com/clinica-norte/api",
+        "APP_RELEASE_TAG": "android-preview-v0.1.0-build.1",
+        "APP_ANDROID_PREVIEW_RELEASE_TAG": "android-preview-v0.1.0-build.1",
+        "BRIDGE_URL": "https://bridge.test",
+        "INSTALLABLE_APPS_REGISTRATION_TOKEN": "token",
+        "PREVIEW_ADMIN_PASSWORD": "preview-password",
+        "PREVIEW_ADMIN_BOOTSTRAP_TOKEN": "bootstrap-token",
+        "PREVIEW_D1_DATABASE": "nienfos-preview",
+        "CLOUDFLARE_D1_DATABASE": "nienfos-preview",
+        "CODEX_MOBILE_BRIDGE_ROOT": "/tmp/project-factory-test-no-env",
+    }
+    if extra:
+        env.update(extra)
+    return env
 
 
 def _read_all_text(project: Path) -> str:

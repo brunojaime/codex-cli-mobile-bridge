@@ -1,0 +1,30 @@
+id: 015-project-factory-preview-hardening
+slug: 015-project-factory-preview-hardening
+title: Project Factory Preview Hardening
+description: Harden New Project Factory Initial Preview Releases using SAT Showroom lessons for invite UX, Workbench boundaries, Cloudflare preview routing/cache, and Cloudflare-backed email delivery.
+status: implemented
+last_run_state: passed
+generated:
+  title: false
+  description: false
+  user_pinned_title: true
+  user_pinned_description: true
+tasks:
+  total: 39
+  completed: 39
+  pending: 0
+diagrams:
+  total: 0
+  items: {}
+available_files:
+  - spec.md
+  - plan.md
+  - tasks.md
+  - tree.json
+  - traceability.yaml
+source_digests:
+  spec.md: dfd539344f55d357adf020a89df11da3d1010d40e34994bdbb34bd41386c15f6
+  plan.md: 71c9ddfd02835c20bc1937b6a7f899cc20eca3995a4585faad28aa79e85c2005
+  tasks.md: daf5529e8b87d9bc87c9a95183f4c8fbfad98510e91441b55d900937ccd6ffb0
+  tree.json: ac945fa2eb03a5ebc1170f45933db7cc9eb2e2a9fed896f700c658adea50aeee
+  traceability.yaml: d089c964d295678b72dbc3931962f0d82eb7d7e8246d058883c23092b66edc99

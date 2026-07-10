@@ -1,0 +1,49 @@
+# Project Factory Preview Hardening Tasks
+
+- [x] T001 Audit generated Flutter navigation for Workbench bottom-nav items, routes, labels, and product RBAC permissions.
+- [x] T002 Audit generated Svelte navigation for Workbench routes, labels, menus, and product RBAC permissions.
+- [x] T003 Define the Bridge-owned Workbench launch contract for generated projects.
+- [x] T004 Update generated Workbench/SDD documentation to state that downstream repos expose artifacts, not product UI.
+- [x] T005 Update RBAC generation so owner/admin product roles do not receive Bridge Workbench UI permissions inside the product app.
+- [x] T006 Add generator regression tests that fail on `Workbench` as a generated product tab or route.
+- [x] T007 Add Bridge Workbench tests proving generated project SDD remains discoverable by workspace/source app.
+- [x] T008 Redesign generated preview auth state machine for invite activation, invite access refresh, login, and expired/revoked states.
+- [x] T009 Auto-read invite tokens from URL/query/path state and remove the user-facing token/link input for first access.
+- [x] T010 Generate first-access activation UI with email, create password, repeat password, and `Activate account` action.
+- [x] T011 Prefill and lock or clearly bind email when invite metadata contains the invited email address.
+- [x] T012 Add normal email/password login mode for re-entry after logout.
+- [x] T013 Keep `/api/invites/accept` single-use and add tests proving accepted tokens cannot create another account/session.
+- [x] T014 Allow used but valid invite links to refresh preview access until expiration or revocation.
+- [x] T015 Separate preview access cookie lifecycle from generated app auth session lifecycle.
+- [x] T016 Add clear expired/revoked/used-accept error messaging and manual-link renewal guidance.
+- [x] T017 Add Flutter and Svelte UI tests for URL token auto-consumption, password confirmation, first activation, logout/login re-entry, and expired links.
+- [x] T018 Generate ES module preview Workers for D1, Assets, and Fetch handlers.
+- [x] T019 Update Bridge web preview deploy service to update existing module Workers and verify the deployed Worker version.
+- [x] T020 Remove `not_found_handling = "single-page-application"` from protected preview asset configs.
+- [x] T021 Make the Worker own API routing, invite/access routing, health routing, static asset serving, and protected SPA fallback.
+- [x] T022 Set no-cache/no-store headers for `index.html`, `flutter_bootstrap.js`, `main.dart.js`, `manifest.json`, invite routes, and access routes in preview.
+- [x] T023 Keep only content-hashed static assets immutable and add validation for non-hashed Flutter JS cache headers.
+- [x] T024 Add explicit cache purge or versioned asset deployment support without creating ad hoc preview route aliases.
+- [x] T025 Make manifest and icon assets public-safe while keeping protected app shell/API/data access controlled.
+- [x] T026 Add CSP generation for Flutter web CanvasKit/fonts or self-host the runtime dependencies.
+- [x] T027 Add local Worker harness tests for Accept headers, cookie set, asset MIME types, invite routing, and SPA fallback.
+- [x] T028 Add deployed Chrome/Android-browser smoke tests proving the preview renders nonblank after invite access.
+- [x] T029 Define the `cloudflare_email` provider contract with sender, credentials, endpoint/transport, message ID, and delivery status.
+- [x] T030 Add Bridge settings/env support for Cloudflare email provider credentials with secret redaction.
+- [x] T031 Add invite email templates with app name, preview label, expiration, production-not-ready notice, and manual fallback link.
+- [x] T032 Add sender-domain runbook for SPF, DKIM, DMARC, token scope, permissions, and provider diagnostics.
+- [x] T033 Preserve manual-link fallback when provider config is missing or delivery fails, and never report fake sent status.
+- [x] T034 Add resend/expire/delivery-status tests for Cloudflare provider success, failure, and manual fallback.
+- [x] T035 Update Project Factory generator templates to emit hardened preview Worker, auth UX, Workbench boundary docs, and email runbook.
+- [x] T036 Update `release/preview-runtime.json`, web preview manifests, READMEs, validation scripts, and reviewer checklists.
+- [x] T037 Add SAT Showroom regression fixture or generated-project golden test for the exact failures documented in this spec.
+- [x] T038 Add Initial Preview Release gate checks: no blank preview, no Workbench product tab, no token field on URL invite, visible email delivery state, D1 auth persistence.
+- [x] T039 Run backend, generator, deploy, Flutter, Svelte, Bridge mobile UI, and SDD validation suites and record evidence.
+- [x] T040 Generate and document the official Bridge env/secrets loader for Initial Preview Release scripts.
+- [x] T041 Use the loader from D1 migrations, Cloudflare deploy, smoke scripts, invite delivery, APK release, Bridge registration, and final validation.
+- [x] T042 Add idempotent D1 schema-evolution directives and make Bridge deploy apply them with column checks.
+- [x] T043 Require explicit User-Agent, retries, and stable `d1_bound`/`assets_bound` health in preview smoke scripts.
+- [x] T044 Replace self-referential release-output commit validation with stable source/tag/report commit fields.
+- [x] T045 Add strict final preflight for preview admin, Bridge, app tags, runtime, API URL, and D1 env.
+- [x] T046 Generate stable Android preview signing workflow, local signing policy, and apksigner verification.
+- [x] T047 Generate final readiness audit checks for stale TODO/blocker/mock/generic-endpoint/release-tag/commit language.

@@ -1,0 +1,43 @@
+{
+  "id": "015-project-factory-preview-hardening",
+  "title": "Project Factory Preview Hardening",
+  "status": "implemented",
+  "nodes": [
+    {
+      "id": "plan-1",
+      "title": "Workbench Boundary And Generated App UX",
+      "status": "done",
+      "tasks": ["T001", "T002", "T003", "T004", "T005", "T006", "T007"]
+    },
+    {
+      "id": "plan-2",
+      "title": "Invite URL And First Access UX",
+      "status": "done",
+      "tasks": ["T008", "T009", "T010", "T011", "T012", "T013", "T014", "T015", "T016", "T017"]
+    },
+    {
+      "id": "plan-3",
+      "title": "Cloudflare Worker, Assets, Routing, Cache",
+      "status": "done",
+      "tasks": ["T018", "T019", "T020", "T021", "T022", "T023", "T024", "T025", "T026", "T027", "T028"]
+    },
+    {
+      "id": "plan-4",
+      "title": "Email Delivery Via Cloudflare",
+      "status": "done",
+      "tasks": ["T029", "T030", "T031", "T032", "T033", "T034"]
+    },
+    {
+      "id": "plan-5",
+      "title": "Generator Contracts And Regression Coverage",
+      "status": "done",
+      "tasks": ["T035", "T036", "T037", "T038", "T039"]
+    }
+  ],
+  "files": {
+    "spec": "spec.md",
+    "plan": "plan.md",
+    "tasks": "tasks.md",
+    "traceability": "traceability.yaml"
+  }
+}

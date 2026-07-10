@@ -183,12 +183,14 @@ def _project_files(manifest: dict[str, Any]) -> dict[str, str]:
         "README.md": _readme(name, business_type, primary_goal, frontend_strategy),
         "AGENTS.md": _agents(name),
         "scripts/finalize_local_commit.sh": _finalize_local_commit_script(),
+        "scripts/load_bridge_env.sh": _bridge_env_loader_script(),
         "scripts/publish_project.sh": _publish_script(),
         "scripts/apply_cloudflare_preview.sh": _apply_cloudflare_preview_script(slug),
         "scripts/apply_preview_d1_migrations.sh": _apply_preview_d1_migrations_script(),
         "scripts/validate_cloudflare_cost_posture.sh": (
             _cloudflare_cost_posture_check_script()
         ),
+        "scripts/final_readiness_audit.sh": _final_readiness_audit_script(),
         "scripts/smoke_preview_api.sh": _smoke_preview_api_script(slug),
         "scripts/smoke_web_preview.sh": _smoke_web_preview_script(slug),
         "scripts/build_web_preview.sh": _build_web_preview_script(
@@ -227,6 +229,9 @@ def _project_files(manifest: dict[str, Any]) -> dict[str, str]:
         ),
         "deploy/web-preview/d1/migrations/0002_domain_entities.sql": (
             _web_preview_d1_domain_entities_migration(slug)
+        ),
+        "deploy/web-preview/d1/migrations/0003_preview_schema_evolution.sql": (
+            _web_preview_d1_schema_evolution_migration()
         ),
         "specs/001-product-foundation/spec.md": _initial_spec(
             name,
@@ -644,12 +649,11 @@ def _workbench_doc(
         else "APP_RUNTIME_PROFILE"
     )
     frontend_note = (
-        "The Svelte web strategy exposes Workbench/feedback affordances only in "
-        "authorized web preview or internal runtime contexts. It does not imply "
-        "an installable mobile artifact."
+        "The Svelte web strategy exposes SDD artifacts to Bridge Workbench only. "
+        "It does not imply an installable mobile artifact or product Workbench route."
         if frontend_strategy == "svelte"
-        else "The Flutter strategy must keep Workbench visible in preview APKs for "
-        "`owner` and `admin`, and hidden from productive real releases."
+        else "The Flutter strategy must not expose Bridge Workbench as product "
+        "navigation. Bridge opens SDD artifacts through a Bridge-owned entry point."
     )
     return f"""# Workbench
 
@@ -664,23 +668,25 @@ def _workbench_doc(
 
 ## Runtime Visibility
 
-- `{runtime_env}=mock`: Workbench/developer feedback may be visible for
-  internal testing.
-- `{runtime_env}=preview`: Workbench must be visible for `owner` and
-  `admin` users, or for explicitly authorized developer mode.
-- `{runtime_env}=staging`: Workbench/developer feedback may be available
-  to internal testers only.
-- `{runtime_env}=real`: Workbench/developer feedback must be hidden or
-  disabled in UI/build config.
+- `{runtime_env}=mock`: product UI may expose explicit demo/test affordances,
+  but Bridge Workbench remains a Bridge-owned development entry point.
+- `{runtime_env}=preview`: product navigation must contain only product-domain
+  surfaces. Bridge may launch Workbench for this workspace externally.
+- `{runtime_env}=staging`: product UI remains product-domain only unless an
+  explicit Bridge-owned developer overlay is attached.
+- `{runtime_env}=real`: Workbench/developer tooling must be hidden or disabled
+  in product UI/build config.
 
 {frontend_note}
 
 Expected visibility contract:
 
-- `mock`: visible.
-- `preview`: visible to `owner`/`admin`.
-- `staging`: internal/developer-authorized only.
-- `real`: hidden.
+- Product app tabs/routes: no `Workbench` item in any runtime profile.
+- Bridge Workbench artifacts: discoverable through `codex-bridge.yaml`,
+  `.sdd/spec-index.yaml`, `.sdd/diagram-index.yaml`, and `specs/`.
+- Bridge launch: Codex Mobile Bridge opens the workspace by `sourceApp`.
+- Product RBAC: owner/admin roles do not grant Bridge Workbench UI permissions
+  inside the generated app.
 
 ## Bridge Registration
 
@@ -770,6 +776,9 @@ def _web_preview_manifest_payload(
             "token_query_param": "token",
             "cookie_name": "codex_preview_access",
             "single_use": True,
+            "acceptance_single_use": True,
+            "used_invite_access_refresh": True,
+            "preview_access_cookie_separate_from_auth_session": True,
             "d1_binding": "PREVIEW_DB",
             "migrations_dir": "deploy/web-preview/d1/migrations",
             "required_worker_secrets": ["WEB_PREVIEW_INVITE_SECRET"],
@@ -928,10 +937,14 @@ curl -X POST "$BRIDGE_URL/web-previews/wp-{slug}/invites/<invite-id>/sync"
 ```
 
 6. Open the returned `invite_url`. The Worker validates the token, checks D1,
-marks first use atomically when `single_use=true`, sets an HttpOnly cookie, and
-redirects to the app. The Bridge stores invite metadata and token SHA256 only,
-never the plaintext token. `used_at` is written by the Worker in D1; the Bridge
-does not read it back yet.
+sets or refreshes the preview-access HttpOnly cookie, and redirects to the app.
+If the invite is unused, the redirect includes URL state for account activation;
+if it is already used but still valid, the redirect opens normal login.
+
+7. The generated app accepts the invite through `/api/invites/accept` exactly
+once with email, password, and password confirmation. That endpoint marks
+`used_at` atomically when `single_use=true`. The Bridge stores invite metadata
+and token SHA256 only, never the plaintext token.
 """
 
 
@@ -954,7 +967,7 @@ database_id = "set-in-cloudflare-dashboard-or-doctor-output"
 [assets]
 binding = "ASSETS"
 directory = "../../build/web-preview/{slug}"
-not_found_handling = "single-page-application"
+# Protected previews must let the Worker own SPA fallback after access checks.
 
 [vars]
 PREVIEW_ACCESS_MODE = "invite_token"
@@ -977,6 +990,8 @@ CREATE TABLE IF NOT EXISTS preview_invites (
   source_app TEXT NOT NULL,
   app_slug TEXT NOT NULL,
   single_use INTEGER NOT NULL DEFAULT 1,
+  email TEXT,
+  role TEXT NOT NULL DEFAULT 'admin',
   created_at TEXT NOT NULL,
   expires_at TEXT NOT NULL,
   used_at TEXT,
@@ -1243,6 +1258,17 @@ CREATE INDEX IF NOT EXISTS idx_preview_domain_entity_events_app_type
 """
 
 
+def _web_preview_d1_schema_evolution_migration() -> str:
+    return """-- Project Factory D1 schema evolution directives.
+-- These directives are applied by scripts/apply_preview_d1_migrations.sh and
+-- Bridge WebPreviewDeployService with column checks before ALTER TABLE.
+-- codex:d1:add-column preview_invites email TEXT
+-- codex:d1:add-column preview_invites role TEXT NOT NULL DEFAULT 'admin'
+-- codex:d1:add-column preview_app_updates sha256 TEXT
+-- codex:d1:backfill preview_invites role 'admin' role IS NULL OR role = ''
+"""
+
+
 def _web_preview_worker_js(slug: str, name: str) -> str:
     template = """const SOURCE_APP = '__SOURCE_APP__';
 const DISPLAY_NAME = __DISPLAY_NAME__;
@@ -1320,18 +1346,28 @@ function securityHeaders() {
     'x-content-type-options': 'nosniff',
     'referrer-policy': 'strict-origin-when-cross-origin',
     'permissions-policy': 'camera=(), microphone=(), geolocation=()',
-    'content-security-policy': "default-src 'self'; connect-src 'self' https://preview.nienfos.com; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self' 'wasm-unsafe-eval'; font-src 'self' data:;",
+    'content-security-policy': "default-src 'self'; connect-src 'self' https://preview.nienfos.com; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; script-src 'self' 'wasm-unsafe-eval' https://www.gstatic.com; font-src 'self' data: https://fonts.gstatic.com; worker-src 'self' blob:;",
   };
 }
 
 function cacheControlFor(pathname) {
-  if (pathname === '/' || pathname.endsWith('/index.html')) {
+  if (
+    pathname === '/' ||
+    pathname.endsWith('/index.html') ||
+    pathname.endsWith('/flutter_bootstrap.js') ||
+    pathname.endsWith('/main.dart.js') ||
+    pathname.endsWith('/manifest.json') ||
+    pathname.includes('/__preview/access')
+  ) {
     return 'no-cache, no-store, must-revalidate';
   }
   if (/[.-][a-f0-9]{8,}\\./i.test(pathname)) {
     return 'public, max-age=31536000, immutable';
   }
-  return 'public, max-age=3600';
+  if (pathname.endsWith('.js') || pathname.endsWith('.css')) {
+    return 'no-cache, no-store, must-revalidate';
+  }
+  return 'no-cache';
 }
 
 function base64UrlDecode(value) {
@@ -1513,7 +1549,7 @@ async function lookupInviteRow(env, inviteId, tokenHash) {
   }
   const row = await env.PREVIEW_DB
     .prepare(
-      `SELECT invite_id, token_sha256, source_app, app_slug, single_use, expires_at, used_at, revoked_at
+      `SELECT invite_id, token_sha256, source_app, app_slug, single_use, email, role, expires_at, used_at, revoked_at
        FROM preview_invites
        WHERE invite_id = ?1 AND token_sha256 = ?2 AND source_app = ?3 AND app_slug = ?4
        LIMIT 1`,
@@ -1839,8 +1875,12 @@ async function handlePreviewInviteAccept(request, env) {
   const inviteToken = String(body.inviteToken || body.invite_token || '').trim();
   const email = String(body.email || '').trim().toLowerCase();
   const password = String(body.password || '');
-  if (!inviteToken || !email || !password) {
-    return apiError('invite_accept_required', 'Invite token, email, and password are required.', 400);
+  const passwordConfirmation = String(body.passwordConfirmation || body.password_confirmation || '');
+  if (!inviteToken || !email || !password || !passwordConfirmation) {
+    return apiError('invite_accept_required', 'Invite token, email, password, and password confirmation are required.', 400);
+  }
+  if (password !== passwordConfirmation) {
+    return apiError('password_confirmation_mismatch', 'Password confirmation must match.', 400);
   }
   const verified = await verifyInviteToken(env, inviteToken);
   if (!verified.ok) {
@@ -1854,6 +1894,9 @@ async function handlePreviewInviteAccept(request, env) {
   const active = validateInviteRow(lookup.row, { allowUsed: false });
   if (!active.ok) {
     return apiError(active.code, 'Preview invite token cannot be accepted.', active.status);
+  }
+  if (lookup.row.email && String(lookup.row.email).toLowerCase() !== email) {
+    return apiError('invite_email_mismatch', 'This invite is bound to a different email address.', 403);
   }
   let user = await findPreviewUserByEmail(env, email);
   if (!user) {
@@ -1935,6 +1978,59 @@ async function handlePreviewAdmin(request, env, assetPath) {
       .bind(SOURCE_APP, SOURCE_APP)
       .all();
     return json((rows.results || []).map(publicUser));
+  }
+  if (assetPath === '/api/admin/domains') {
+    if (request.method === 'GET') {
+      const rows = await env.PREVIEW_DB
+        .prepare(
+          `SELECT record_id, payload_json, created_at, updated_at
+           FROM preview_domain_records
+           WHERE source_app = ?1 AND app_slug = ?2 AND entity = 'domains'
+           ORDER BY created_at DESC`,
+        )
+        .bind(SOURCE_APP, SOURCE_APP)
+        .all();
+      return json((rows.results || []).map((row) => {
+        const payload = JSON.parse(row.payload_json || '{}');
+        return {
+          id: row.record_id,
+          name: payload.name || 'domain',
+          is_active: payload.is_active !== false,
+          created_at: row.created_at,
+          updated_at: row.updated_at,
+        };
+      }));
+    }
+    if (request.method === 'POST') {
+      const payload = await readJson(request);
+      const timestamp = nowIso();
+      const recordId = randomId('dom');
+      await env.PREVIEW_DB
+        .prepare(
+          `INSERT INTO preview_domain_records
+           (record_id, source_app, app_slug, entity, payload_json, created_at, updated_at)
+           VALUES (?1, ?2, ?3, 'domains', ?4, ?5, ?6)`,
+        )
+        .bind(
+          recordId,
+          SOURCE_APP,
+          SOURCE_APP,
+          JSON.stringify({
+            name: String(payload.name || '').trim(),
+            is_active: payload.is_active !== false,
+          }),
+          timestamp,
+          timestamp,
+        )
+        .run();
+      return json({
+        id: recordId,
+        name: String(payload.name || '').trim(),
+        is_active: payload.is_active !== false,
+        created_at: timestamp,
+        updated_at: timestamp,
+      });
+    }
   }
   return apiError('preview_admin_route_not_found', `Preview admin route not found: ${assetPath}`, 404);
 }
@@ -2074,7 +2170,7 @@ async function handlePreviewApi(request, env, assetPath) {
   if (request.method === 'POST' && assetPath === '/api/auth/logout') {
     return handlePreviewLogout(request, env);
   }
-  if (assetPath === '/api/admin/users' || assetPath === '/api/admin/roles') {
+  if (assetPath === '/api/admin/users' || assetPath === '/api/admin/roles' || assetPath === '/api/admin/domains') {
     return handlePreviewAdmin(request, env, assetPath);
   }
   if (request.method === 'GET' && assetPath === '/api/app-updates/current') {
@@ -2132,6 +2228,24 @@ function redirectWithCookie(url, sessionToken, payload) {
   });
 }
 
+function redirectWithPreviewAccess(url, sessionToken, payload, row, inviteToken) {
+  const target = new URL(url.toString());
+  target.pathname = `/${SOURCE_APP}/`;
+  target.search = '';
+  if (row.used_at) {
+    target.searchParams.set('invite_state', 'login');
+  } else {
+    target.searchParams.set('invite_state', 'activate');
+    target.searchParams.set('invite_token', inviteToken);
+    if (row.email) {
+      target.searchParams.set('email', row.email);
+      target.searchParams.set('email_bound', 'true');
+    }
+  }
+  url.searchParams.set('next', `${target.pathname}${target.search}`);
+  return redirectWithCookie(url, sessionToken, payload);
+}
+
 function isStaticAssetPath(pathname) {
   const lastSegment = pathname.split('/').pop() || '';
   if (pathname.startsWith('/assets/') || pathname.startsWith('/canvaskit/') || pathname.startsWith('/icons/')) {
@@ -2142,6 +2256,13 @@ function isStaticAssetPath(pathname) {
     return false;
   }
   return STATIC_ASSET_EXTENSIONS.has(lastSegment.slice(dot).toLowerCase());
+}
+
+function isPublicSafeAssetPath(pathname) {
+  return pathname === '/manifest.json' ||
+    pathname === '/favicon.png' ||
+    pathname === '/favicon.ico' ||
+    pathname.startsWith('/icons/');
 }
 
 async function fetchAsset(env, request, pathname) {
@@ -2186,7 +2307,7 @@ async function serveSpa(env, request) {
   }, { status: 503 });
 }
 
-async function handleRequest(request, env = globalThis) {
+async function handleRequest(request, env = globalThis, ctx = undefined) {
   const url = new URL(request.url);
   const appSlug = appSlugFromPath(url.pathname);
   const assetPath = stripAppPrefix(url.pathname);
@@ -2243,29 +2364,36 @@ async function handleRequest(request, env = globalThis) {
     if (!lookup.ok) {
       return accessDenied(lookup.code, lookup.status);
     }
-    const active = validateInviteRow(lookup.row, { allowUsed: false });
+    const active = validateInviteRow(lookup.row, { allowUsed: true });
     if (!active.ok) {
       await recordAuditEvent(env, 'invite_access_denied', verified.payload.invite_id, {
         reason: active.code,
       });
       return accessDenied(active.code, active.status);
     }
-    const marked = await markInviteUsed(env, lookup.row);
-    if (!marked.ok) {
-      await recordAuditEvent(env, 'invite_access_denied', verified.payload.invite_id, {
-        reason: marked.code,
-      });
-      return accessDenied(marked.code, marked.status);
-    }
     const sessionToken = await createAccessSession(env, verified.payload, tokenHash);
     await recordAuditEvent(env, 'invite_access_granted', verified.payload.invite_id, {
-      usedAt: marked.used_at || null,
+      usedAt: lookup.row.used_at || null,
+      state: lookup.row.used_at ? 'invite_access_refresh' : 'invite_activation',
     });
-    return redirectWithCookie(url, sessionToken, verified.payload);
+    return redirectWithPreviewAccess(url, sessionToken, verified.payload, lookup.row, token);
   }
 
     if (request.method !== 'GET' && request.method !== 'HEAD') {
     return json({ error: { code: 'method_not_allowed', message: 'Method not allowed' } }, { status: 405 });
+  }
+
+    if (isPublicSafeAssetPath(assetPath)) {
+    const response = await assetResponse(env, request, assetPath);
+    if (response) {
+      return response;
+    }
+    return json({
+      error: {
+        code: 'asset_not_found',
+        message: `Static asset not found: ${assetPath}`,
+      },
+    }, { status: 404 });
   }
 
     const access = await requireAccess(env, request, url);
@@ -2289,10 +2417,11 @@ async function handleRequest(request, env = globalThis) {
   return serveSpa(env, request);
 }
 
-globalThis.__previewWorkerFetch = handleRequest;
-addEventListener('fetch', (event) => {
-  event.respondWith(handleRequest(event.request, globalThis));
-});
+export default {
+  async fetch(request, env, ctx) {
+    return handleRequest(request, env, ctx);
+  },
+};
 """
     return template.replace("__SOURCE_APP__", slug).replace(
         "__DISPLAY_NAME__",
@@ -2310,15 +2439,11 @@ if (!globalThis.crypto) {
 }
 
 const workerSource = await readFile(new URL('./src/index.js', import.meta.url), 'utf8');
-globalThis.addEventListener = (type, listener) => {
-  if (type === 'fetch') {
-    globalThis.__previewFetchListener = listener;
-  }
-};
-await import(
+const workerModule = await import(
   `data:text/javascript;base64,${{Buffer.from(workerSource).toString('base64')}}`
 );
-const worker = { fetch: globalThis.__previewWorkerFetch };
+const worker = workerModule.default;
+assert.equal(typeof worker, 'object');
 assert.equal(typeof worker.fetch, 'function');
 
 function response(body, init = {{}}) {{
@@ -2538,7 +2663,12 @@ function fakeD1() {
                 return { meta: { changes: 1 } };
               }
               if (normalized.startsWith('insert into preview_domain_records')) {
-                const [recordId, sourceApp, appSlug, entity, payloadJson, createdAt, updatedAt] = args;
+                const [recordId, sourceApp, appSlug] = args;
+                const usesLiteralDomainEntity = normalized.includes("'domains'");
+                const entity = usesLiteralDomainEntity ? 'domains' : args[3];
+                const payloadJson = usesLiteralDomainEntity ? args[3] : args[4];
+                const createdAt = usesLiteralDomainEntity ? args[4] : args[5];
+                const updatedAt = usesLiteralDomainEntity ? args[5] : args[6];
                 previewDomainRecords.push({
                   record_id: recordId,
                   source_app: sourceApp,
@@ -2560,7 +2690,8 @@ function fakeD1() {
                 };
               }
               if (normalized.includes('from preview_domain_records')) {
-                const [sourceApp, appSlug, entity] = args;
+                const [sourceApp, appSlug] = args;
+                const entity = normalized.includes("'domains'") ? 'domains' : args[2];
                 return {
                   results: previewDomainRecords.filter((row) => row.source_app === sourceApp && row.app_slug === appSlug && row.entity === entity),
                 };
@@ -2664,12 +2795,29 @@ const acceptedInvite = await fetchJson('/__SOURCE_APP__/api/invites/accept', {
     inviteToken: setupToken,
     email: 'invite-admin@example.com',
     password: 'invite-password',
+    passwordConfirmation: 'invite-password',
   },
 });
 assert.equal(acceptedInvite.status, 200);
 const acceptedInviteBody = await acceptedInvite.json();
 assert.equal(acceptedInviteBody.user.appSlug, '__SOURCE_APP__');
 assert.match(acceptedInviteBody.access_token, /.+/);
+
+const duplicateInviteAccept = await fetchJson('/__SOURCE_APP__/api/invites/accept', {
+  method: 'POST',
+  body: {
+    inviteToken: setupToken,
+    email: 'invite-admin@example.com',
+    password: 'invite-password',
+    passwordConfirmation: 'invite-password',
+  },
+});
+assert.equal(duplicateInviteAccept.status, 403);
+assert.equal((await duplicateInviteAccept.json()).error.code, 'used_invite_token');
+
+const usedInviteAccessRefresh = await fetchPath(`/__SOURCE_APP__/__preview/access?token=${setupToken}`);
+assert.equal(usedInviteAccessRefresh.status, 302);
+assert.match(usedInviteAccessRefresh.headers.get('location') || '', /invite_state=login/);
 
 const me = await fetchJson('/__SOURCE_APP__/api/auth/me', { headers: apiAuth });
 assert.equal(me.status, 200);
@@ -2698,6 +2846,20 @@ assert.equal(recordsBody.sourceApp, '__SOURCE_APP__');
 assert.equal(recordsBody.records.length, 1);
 assert.equal(recordsBody.records[0].payload.name, 'Ada Lovelace');
 
+const adminDomain = await fetchJson('/__SOURCE_APP__/api/admin/domains', {
+  method: 'POST',
+  headers: apiAuth,
+  body: { name: 'Primary workspace' },
+});
+assert.equal(adminDomain.status, 200);
+assert.equal((await adminDomain.json()).name, 'Primary workspace');
+
+const adminDomains = await fetchJson('/__SOURCE_APP__/api/admin/domains', { headers: apiAuth });
+assert.equal(adminDomains.status, 200);
+const adminDomainsBody = await adminDomains.json();
+assert.equal(adminDomainsBody.length, 1);
+assert.equal(adminDomainsBody[0].name, 'Primary workspace');
+
 const notifications = await fetchJson('/__SOURCE_APP__/api/notifications', { headers: apiAuth });
 assert.equal(notifications.status, 200);
 assert.equal((await notifications.json()).notifications.length, 1);
@@ -2716,10 +2878,10 @@ const access = await fetchPath(`/__SOURCE_APP__/__preview/access?token=${validTo
 assert.equal(access.status, 302);
 const cookie = access.headers.get('set-cookie') || '';
 assert.match(cookie, /codex_preview_access=/);
+assert.match(access.headers.get('location') || '', /invite_state=activate/);
 
 const secondUse = await fetchPath(`/__SOURCE_APP__/__preview/access?token=${validToken}`);
-assert.equal(secondUse.status, 403);
-assert.equal((await secondUse.json()).error.code, 'used_invite_token');
+assert.equal(secondUse.status, 302);
 
 const expired = await fetchPath(`/__SOURCE_APP__/__preview/access?token=${expiredToken}`);
 assert.equal(expired.status, 403);
@@ -2878,11 +3040,16 @@ fail() {{
 }}
 
 ROOT_DIR="$(cd "$(dirname "${{BASH_SOURCE[0]}}")/.." && pwd)"
-BRIDGE_URL="${{BRIDGE_URL:-http://127.0.0.1:8000}}"
+cd "$ROOT_DIR"
+# shellcheck disable=SC1091
+source "$ROOT_DIR/scripts/load_bridge_env.sh"
+bridge_env_require BRIDGE_URL
+BRIDGE_URL="${{BRIDGE_URL}}"
 BRIDGE_URL="${{BRIDGE_URL%/}}"
 MODE="${{1:---plan}}"
 PROJECT_PATH="${{PROJECT_PATH:-$ROOT_DIR}}"
 SOURCE_APP="${{SOURCE_APP:-{slug}}}"
+USER_AGENT="${{PREVIEW_SMOKE_USER_AGENT:-CodexProjectFactoryPreviewSmoke/1.0}}"
 
 case "$MODE" in
   --plan)
@@ -2900,7 +3067,7 @@ case "$MODE" in
     ;;
 esac
 
-python3 - "$endpoint" "$payload" <<'PY'
+python3 - "$endpoint" "$payload" "$USER_AGENT" <<'PY'
 import json
 import sys
 import urllib.error
@@ -2908,10 +3075,11 @@ import urllib.request
 
 url = sys.argv[1]
 payload = sys.argv[2].encode()
+user_agent = sys.argv[3]
 request = urllib.request.Request(
     url,
     data=payload,
-    headers={{"content-type": "application/json"}},
+    headers={{"content-type": "application/json", "user-agent": user_agent}},
     method="POST",
 )
 try:
@@ -2942,6 +3110,7 @@ WORKER_HARNESS="$ROOT_DIR/deploy/web-preview/worker/local_preview_test.mjs"
 WRANGLER_EXAMPLE="$ROOT_DIR/deploy/web-preview/wrangler.toml.example"
 D1_MIGRATION="$ROOT_DIR/deploy/web-preview/d1/migrations/0001_preview_invites.sql"
 DOMAIN_D1_MIGRATION="$ROOT_DIR/deploy/web-preview/d1/migrations/0002_domain_entities.sql"
+SCHEMA_EVOLUTION_D1_MIGRATION="$ROOT_DIR/deploy/web-preview/d1/migrations/0003_preview_schema_evolution.sql"
 APP_SLUG="${{APP_SLUG:-{slug}}}"
 APP_RUNTIME_PROFILE="${{APP_RUNTIME_PROFILE:-preview}}"
 API_RUNTIME="${{API_RUNTIME:-cloudflare_preview}}"
@@ -2969,8 +3138,10 @@ fi
 [[ -f "$WORKER" ]] || fail "missing deploy/web-preview/worker/src/index.js"
 [[ -f "$WORKER_HARNESS" ]] || fail "missing deploy/web-preview/worker/local_preview_test.mjs"
 [[ -f "$WRANGLER_EXAMPLE" ]] || fail "missing deploy/web-preview/wrangler.toml.example"
+[[ -f "$ROOT_DIR/scripts/load_bridge_env.sh" ]] || fail "missing scripts/load_bridge_env.sh"
 [[ -f "$D1_MIGRATION" ]] || fail "missing deploy/web-preview/d1/migrations/0001_preview_invites.sql"
 [[ -f "$DOMAIN_D1_MIGRATION" ]] || fail "missing deploy/web-preview/d1/migrations/0002_domain_entities.sql"
+[[ -f "$SCHEMA_EVOLUTION_D1_MIGRATION" ]] || fail "missing deploy/web-preview/d1/migrations/0003_preview_schema_evolution.sql"
 if [[ "$FRONTEND_STRATEGY" == "svelte" ]]; then
   [[ -f "$ROOT_DIR/apps/web/package.json" ]] || fail "missing apps/web/package.json"
   [[ -f "$ROOT_DIR/apps/web/src/main.ts" ]] || fail "missing apps/web/src/main.ts"
@@ -3043,17 +3214,24 @@ if not isinstance(access, dict) or "WEB_PREVIEW_INVITE_SECRET" not in access.get
     raise SystemExit("access.required_worker_secrets must include WEB_PREVIEW_INVITE_SECRET")
 PY
 
-if grep -q 'export default' "$WORKER"; then
-  fail "worker must use classic addEventListener format for application/javascript deploy"
-fi
-grep -q "addEventListener('fetch'" "$WORKER" || fail "worker classic fetch listener missing"
+grep -q 'export default' "$WORKER" || fail "worker must use ES module export default"
+grep -q 'async fetch(request, env, ctx)' "$WORKER" || fail "worker module fetch entrypoint missing"
+! grep -q "addEventListener('fetch'" "$WORKER" || fail "worker must not use classic addEventListener fetch syntax"
+! grep -q '__previewWorkerFetch' "$WORKER" || fail "worker must not use global classic harness exports"
 grep -q '/__preview/health' "$WORKER" || fail "worker health route missing"
 grep -q '/api/health' "$WORKER" || fail "worker Preview API health route missing"
 grep -q '/api/auth/login' "$WORKER" || fail "worker Preview API auth route missing"
 grep -q '/api/domain/' "$WORKER" || fail "worker Preview API domain route missing"
+grep -q '/api/admin/domains' "$WORKER" || fail "worker generated Flutter admin domain route missing"
 grep -q 'ASSETS' "$WORKER" || fail "worker asset binding missing"
 grep -q 'asset_not_found' "$WORKER" || fail "worker asset 404 missing"
 grep -q 'content-security-policy' "$WORKER" || fail "worker security headers missing"
+grep -q 'fonts.gstatic.com' "$WORKER" || fail "worker CSP must allow Flutter font runtime"
+grep -q 'www.gstatic.com' "$WORKER" || fail "worker CSP must allow Flutter CanvasKit runtime"
+grep -q 'flutter_bootstrap.js' "$WORKER" || fail "worker no-cache coverage missing for flutter_bootstrap.js"
+grep -q 'main.dart.js' "$WORKER" || fail "worker no-cache coverage missing for main.dart.js"
+grep -q 'manifest.json' "$WORKER" || fail "worker manifest handling missing"
+grep -q 'isPublicSafeAssetPath' "$WORKER" || fail "worker public-safe manifest/icon handling missing"
 grep -q 'WEB_PREVIEW_INVITE_SECRET' "$WORKER" || fail "worker invite secret binding missing"
 grep -q 'PREVIEW_DB' "$WORKER" || fail "worker D1 binding missing"
 grep -q '/__preview/access' "$WORKER" || fail "worker access route missing"
@@ -3061,6 +3239,7 @@ grep -q 'missing_invite_token' "$WORKER" || fail "worker missing-token response 
 grep -q 'expired_invite_token' "$WORKER" || fail "worker expired-token response missing"
 grep -q 'PREVIEW_DB' "$WRANGLER_EXAMPLE" || fail "wrangler D1 binding missing"
 grep -q 'binding = "ASSETS"' "$WRANGLER_EXAMPLE" || fail "wrangler assets binding missing"
+! grep -q 'not_found_handling = "single-page-application"' "$WRANGLER_EXAMPLE" || fail "protected previews must not use Cloudflare Assets SPA fallback"
 grep -q 'WEB_PREVIEW_INVITE_SECRET' "$WRANGLER_EXAMPLE" || fail "wrangler invite secret documentation missing"
 grep -q 'CREATE TABLE IF NOT EXISTS preview_invites' "$D1_MIGRATION" || fail "D1 preview_invites migration missing"
 grep -q 'CREATE TABLE IF NOT EXISTS preview_apps' "$D1_MIGRATION" || fail "D1 preview_apps migration missing"
@@ -3077,12 +3256,15 @@ grep -q 'CREATE TABLE IF NOT EXISTS preview_notifications' "$D1_MIGRATION" || fa
 grep -q 'CREATE TABLE IF NOT EXISTS preview_app_updates' "$D1_MIGRATION" || fail "D1 preview_app_updates migration missing"
 grep -q 'CREATE TABLE IF NOT EXISTS preview_domain_entities' "$DOMAIN_D1_MIGRATION" || fail "D1 preview_domain_entities migration missing"
 grep -q 'CREATE TABLE IF NOT EXISTS preview_domain_entity_events' "$DOMAIN_D1_MIGRATION" || fail "D1 preview_domain_entity_events migration missing"
+grep -q 'codex:d1:add-column' "$SCHEMA_EVOLUTION_D1_MIGRATION" || fail "D1 schema evolution directives missing"
 grep -q 'source_app TEXT NOT NULL' "$DOMAIN_D1_MIGRATION" || fail "D1 domain migration source_app scope missing"
 grep -q 'app_slug TEXT NOT NULL' "$DOMAIN_D1_MIGRATION" || fail "D1 domain migration app_slug scope missing"
 grep -q 'CREATE INDEX IF NOT EXISTS idx_preview_domain_entities_app_entity' "$DOMAIN_D1_MIGRATION" || fail "D1 domain entity index must be idempotent"
 grep -q 'token_sha256' "$D1_MIGRATION" || fail "D1 token hash column missing"
 grep -q 'used_at' "$D1_MIGRATION" || fail "D1 used_at column missing"
 grep -q 'revoked_at' "$D1_MIGRATION" || fail "D1 revoked_at column missing"
+grep -q 'email TEXT' "$D1_MIGRATION" || fail "D1 invite email column missing"
+grep -q 'role TEXT' "$D1_MIGRATION" || fail "D1 invite role column missing"
 if [[ "$FRONTEND_STRATEGY" == "svelte" ]]; then
   grep -q 'VITE_APP_RUNTIME_PROFILE' "$ROOT_DIR/apps/web/src/config.ts" || fail "Svelte runtime profile env missing"
   grep -q 'VITE_API_RUNTIME' "$ROOT_DIR/apps/web/src/config.ts" || fail "Svelte API runtime env missing"
@@ -3387,6 +3569,9 @@ def _register_installable_app_script(slug: str, name: str) -> str:
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${{BASH_SOURCE[0]}}")/.." && pwd)"
+cd "$ROOT_DIR"
+# shellcheck disable=SC1091
+source "$ROOT_DIR/scripts/load_bridge_env.sh"
 DRY_RUN=false
 BRIDGE_URL="${{BRIDGE_URL:-}}"
 SOURCE_APP="${{SOURCE_APP:-}}"
@@ -3427,8 +3612,6 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
-
-cd "$ROOT_DIR"
 
 if [[ -f "$RUNTIME_CONTRACT" ]]; then
   eval "$(python3 - "$RUNTIME_CONTRACT" <<'PY'
@@ -3653,6 +3836,169 @@ printf 'local git commit ready\n'
 '''
 
 
+def _bridge_env_loader_script() -> str:
+    return r'''#!/usr/bin/env bash
+# Official Project Factory loader for real Bridge-owned Initial Preview Release
+# secrets. It intentionally prints only file presence and missing variable names,
+# never variable values.
+
+bridge_env_load() {
+  local bridge_root="${CODEX_MOBILE_BRIDGE_ROOT:-/home/batata/Projects/codex-cli-mobile-bridge}"
+  local loaded=0
+  local env_file
+  for env_file in "$bridge_root/secrets/cloudflare.env" "$bridge_root/.env"; do
+    if [[ -f "$env_file" ]]; then
+      bridge_env_load_file "$env_file"
+      loaded=1
+    fi
+  done
+  export CODEX_MOBILE_BRIDGE_ENV_LOADED="$loaded"
+}
+
+bridge_env_load_file() {
+  local env_file="$1"
+  local line key value
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line="${line%$'\r'}"
+    [[ -z "$line" || "$line" == \#* ]] && continue
+    [[ "$line" =~ ^[[:space:]]*export[[:space:]]+ ]] && line="${line#export }"
+    [[ "$line" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]] || continue
+    key="${line%%=*}"
+    value="${line#*=}"
+    if [[ "$value" == \"*\" && "$value" == *\" ]]; then
+      value="${value:1:${#value}-2}"
+    elif [[ "$value" == \'*\' && "$value" == *\' ]]; then
+      value="${value:1:${#value}-2}"
+    fi
+    export "$key=$value"
+  done < "$env_file"
+}
+
+bridge_env_require() {
+  local missing=()
+  local key
+  for key in "$@"; do
+    if [[ -z "${!key:-}" ]]; then
+      missing+=("$key")
+    fi
+  done
+  if (( ${#missing[@]} > 0 )); then
+    printf 'Bridge env preflight failed. Missing required variable(s): %s\n' "${missing[*]}" >&2
+    printf 'Load them from /home/batata/Projects/codex-cli-mobile-bridge/secrets/cloudflare.env or /home/batata/Projects/codex-cli-mobile-bridge/.env.\n' >&2
+    return 2
+  fi
+}
+
+bridge_env_require_any() {
+  local label="$1"
+  shift
+  local key
+  for key in "$@"; do
+    if [[ -n "${!key:-}" ]]; then
+      return 0
+    fi
+  done
+  printf 'Bridge env preflight failed. Missing one of %s: %s\n' "$label" "$*" >&2
+  printf 'Load it from /home/batata/Projects/codex-cli-mobile-bridge/secrets/cloudflare.env or /home/batata/Projects/codex-cli-mobile-bridge/.env.\n' >&2
+  return 2
+}
+
+bridge_env_load_preview_signing() {
+  local source_app="${SOURCE_APP:-${APP_SLUG:-}}"
+  if [[ -z "$source_app" ]]; then
+    printf 'Bridge env preflight failed. SOURCE_APP or APP_SLUG is required before loading preview signing.\n' >&2
+    return 2
+  fi
+  local bridge_root="${CODEX_MOBILE_BRIDGE_ROOT:-/home/batata/Projects/codex-cli-mobile-bridge}"
+  local signing_env="$bridge_root/secrets/$source_app-preview-signing.env"
+  local keystore="$bridge_root/secrets/$source_app-preview-upload-keystore.jks"
+  [[ -f "$signing_env" ]] || {
+    printf 'Android preview signing env missing: %s\n' "$signing_env" >&2
+    return 2
+  }
+  [[ -f "$keystore" ]] || {
+    printf 'Android preview keystore missing: %s\n' "$keystore" >&2
+    return 2
+  }
+  set -a
+  # shellcheck disable=SC1090
+  source "$signing_env"
+  set +a
+  export ANDROID_KEYSTORE_PATH="$keystore"
+  bridge_env_require ANDROID_KEY_ALIAS ANDROID_STORE_PASSWORD ANDROID_KEY_PASSWORD
+}
+
+bridge_env_load
+'''
+
+
+def _final_readiness_audit_script() -> str:
+    return r'''#!/usr/bin/env bash
+set -euo pipefail
+
+fail() {
+  printf 'final readiness audit failed: %s\n' "$*" >&2
+  exit 2
+}
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT_DIR"
+
+files=()
+for path in \
+  design/visual-validation-report.md \
+  release/release-output-template.md \
+  docs/workbench.md
+do
+  [[ -f "$path" ]] && files+=("$path")
+done
+while IFS= read -r path; do
+  files+=("$path")
+done < <(find specs -path '*/tasks.md' -type f 2>/dev/null | sort)
+while IFS= read -r path; do
+  files+=("$path")
+done < <(find architecture -type f \( -name '*.md' -o -name '*.mmd' -o -name '*.yaml' -o -name '*.yml' \) 2>/dev/null | sort)
+
+(( ${#files[@]} > 0 )) || fail "no readiness audit files found"
+
+if grep -InE 'TODO|TBD|FIXME' "${files[@]}" >/tmp/project-factory-readiness-todos.txt; then
+  if ! grep -InE 'TODO\(justified\)|TODO: justified|justified TODO' "${files[@]}" >/dev/null; then
+    cat /tmp/project-factory-readiness-todos.txt >&2
+    fail "unjustified TODO/TBD/FIXME markers remain"
+  fi
+fi
+
+forbidden_patterns=(
+  'D1 blocked'
+  'domains endpoint'
+  '/domains'
+  'android-mock-v'
+  'android-local-v'
+  'mock_or_demo: true'
+  'mockOrDemo: true'
+  'LOCAL_DEMO_MODE=true'
+  'runtime_profile: mock'
+)
+
+for pattern in "${forbidden_patterns[@]}"; do
+  if grep -In "$pattern" "${files[@]}" >/tmp/project-factory-readiness-match.txt; then
+    cat /tmp/project-factory-readiness-match.txt >&2
+    fail "stale or forbidden readiness text found: $pattern"
+  fi
+done
+
+if grep -InE '\b[0-9a-f]{7,39}\b' "${files[@]}" >/tmp/project-factory-ambiguous-commits.txt; then
+  cat /tmp/project-factory-ambiguous-commits.txt >&2
+  fail "ambiguous short commit hashes found; use full 40-character fields"
+fi
+
+grep -q 'validated_source_commit:' release/release-output-template.md || fail "release output missing validated_source_commit"
+grep -q 'report_generated_from_commit:' release/release-output-template.md || fail "release output missing report_generated_from_commit"
+
+printf 'final readiness audit passed\n'
+'''
+
+
 def _apply_cloudflare_preview_script(slug: str) -> str:
     return f'''#!/usr/bin/env bash
 set -euo pipefail
@@ -3664,17 +4010,23 @@ fail() {{
 
 ROOT_DIR="$(cd "$(dirname "${{BASH_SOURCE[0]}}")/.." && pwd)"
 cd "$ROOT_DIR"
+# shellcheck disable=SC1091
+source "$ROOT_DIR/scripts/load_bridge_env.sh"
 
 [[ -f deploy/web-preview/web-preview-manifest.yaml ]] || fail "missing deploy/web-preview/web-preview-manifest.yaml"
 [[ -f deploy/web-preview/worker/src/index.js ]] || fail "missing Preview API Worker"
 [[ -f deploy/web-preview/d1/migrations/0001_preview_invites.sql ]] || fail "missing D1 migration"
 [[ -f deploy/web-preview/d1/migrations/0002_domain_entities.sql ]] || fail "missing domain D1 migration"
-[[ "${{APP_RUNTIME_PROFILE:-preview}}" == "preview" ]] || fail "APP_RUNTIME_PROFILE must be preview for initial release"
-[[ "${{API_RUNTIME:-cloudflare_preview}}" == "cloudflare_preview" ]] || fail "API_RUNTIME must be cloudflare_preview"
+bridge_env_require APP_RUNTIME_PROFILE API_RUNTIME API_BASE_URL BRIDGE_URL CLOUDFLARE_API_TOKEN
+bridge_env_require_any "preview D1 database" PREVIEW_D1_DATABASE CLOUDFLARE_D1_DATABASE
+[[ "$APP_RUNTIME_PROFILE" == "preview" ]] || fail "APP_RUNTIME_PROFILE must be preview for initial release"
+[[ "$API_RUNTIME" == "cloudflare_preview" ]] || fail "API_RUNTIME must be cloudflare_preview"
 
-BRIDGE_URL="${{BRIDGE_URL:-http://127.0.0.1:8000}}"
+BRIDGE_URL="${{BRIDGE_URL}}"
 BRIDGE_URL="${{BRIDGE_URL%/}}"
 SOURCE_APP="${{SOURCE_APP:-{slug}}}"
+[[ "${{API_BASE_URL%/}}" == "https://preview.nienfos.com/$SOURCE_APP/api" ]] || \\
+  fail "API_BASE_URL must be https://preview.nienfos.com/$SOURCE_APP/api"
 export BRIDGE_URL SOURCE_APP PROJECT_PATH="${{PROJECT_PATH:-$ROOT_DIR}}"
 
 scripts/validate_web_preview.sh
@@ -3717,6 +4069,9 @@ if recovery_status:
     print(f"cloudflare preview recovery: {{recovery_status}}")
 print("cloudflare preview apply completed")
 PY
+
+scripts/smoke_web_preview.sh
+scripts/smoke_preview_api.sh
 '''
 
 
@@ -3731,14 +4086,18 @@ fail() {
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MIGRATIONS_DIR="$ROOT_DIR/deploy/web-preview/d1/migrations"
+# shellcheck disable=SC1091
+source "$ROOT_DIR/scripts/load_bridge_env.sh"
 DATABASE="${PREVIEW_D1_DATABASE:-${CLOUDFLARE_D1_DATABASE:-}}"
 
 [[ -d "$MIGRATIONS_DIR" ]] || fail "missing deploy/web-preview/d1/migrations"
-[[ -n "$DATABASE" ]] || fail "set PREVIEW_D1_DATABASE or CLOUDFLARE_D1_DATABASE"
+bridge_env_require_any "preview D1 database" PREVIEW_D1_DATABASE CLOUDFLARE_D1_DATABASE
 command -v wrangler >/dev/null 2>&1 || fail "wrangler is required to apply D1 migrations"
 if [[ -z "${CLOUDFLARE_API_TOKEN:-}" && "${WRANGLER_AUTH_READY:-false}" != "true" ]]; then
   fail "set CLOUDFLARE_API_TOKEN or WRANGLER_AUTH_READY=true"
 fi
+# Migration execution is delegated to Python so it can run wrangler d1 execute
+# PRAGMA checks before idempotent ALTER TABLE ADD COLUMN directives.
 
 shopt -s nullglob
 migrations=("$MIGRATIONS_DIR"/*.sql)
@@ -3746,7 +4105,81 @@ migrations=("$MIGRATIONS_DIR"/*.sql)
 
 for migration in "${migrations[@]}"; do
   printf 'applying preview D1 migration: %s\n' "${migration#$ROOT_DIR/}"
-  wrangler d1 execute "$DATABASE" --remote --file "$migration"
+  python3 - "$DATABASE" "$migration" <<'PY'
+from __future__ import annotations
+
+import json
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+database, migration_path = sys.argv[1:3]
+path = Path(migration_path)
+content = path.read_text(encoding="utf-8")
+
+def run_wrangler(args: list[str]) -> str:
+    completed = subprocess.run(
+        ["wrangler", "d1", "execute", database, "--remote", *args],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        raise SystemExit(completed.stderr.strip() or completed.stdout.strip())
+    return completed.stdout
+
+column_cache: dict[str, set[str]] = {}
+
+def table_columns(table: str) -> set[str]:
+    if table in column_cache:
+        return column_cache[table]
+    raw = run_wrangler(["--command", f"PRAGMA table_info({table})", "--json"])
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise SystemExit(f"Could not parse wrangler JSON for PRAGMA table_info({table})") from exc
+    rows = payload
+    if isinstance(payload, list) and payload and isinstance(payload[0], dict):
+        rows = payload[0].get("results") or payload[0].get("result") or payload
+    if isinstance(payload, dict):
+        rows = payload.get("results") or payload.get("result") or []
+    column_cache[table] = {str(row.get("name")) for row in rows if isinstance(row, dict) and row.get("name")}
+    return column_cache[table]
+
+directive_re = re.compile(r"^\s*--\s*codex:d1:(add-column|backfill)\s+(.+?)\s*$")
+for line in content.splitlines():
+    match = directive_re.match(line)
+    if not match:
+        continue
+    action, payload = match.groups()
+    if action == "add-column":
+        parts = payload.split(None, 2)
+        if len(parts) != 3:
+            raise SystemExit(f"Invalid add-column directive in {path.name}: {payload}")
+        table, column, definition = parts
+        if column in table_columns(table):
+            print(f"skipping existing D1 column: {table}.{column}")
+            continue
+        run_wrangler(["--command", f"ALTER TABLE {table} ADD COLUMN {column} {definition}"])
+        table_columns(table).add(column)
+        print(f"added D1 column: {table}.{column}")
+    elif action == "backfill":
+        parts = payload.split(None, 3)
+        if len(parts) != 4:
+            raise SystemExit(f"Invalid backfill directive in {path.name}: {payload}")
+        table, column, value, predicate = parts
+        if column not in table_columns(table):
+            raise SystemExit(f"Cannot backfill missing D1 column: {table}.{column}")
+        run_wrangler(["--command", f"UPDATE {table} SET {column} = {value} WHERE {predicate}"])
+        print(f"backfilled D1 column: {table}.{column}")
+
+sql_without_directives = "\n".join(
+    line for line in content.splitlines() if not directive_re.match(line)
+).strip()
+if sql_without_directives:
+    run_wrangler(["--file", str(path)])
+PY
 done
 
 printf 'preview D1 migrations applied: %s\n' "$DATABASE"
@@ -3763,28 +4196,34 @@ fail() {{
 }}
 
 SOURCE_APP="${{SOURCE_APP:-{slug}}}"
+ROOT_DIR="$(cd "$(dirname "${{BASH_SOURCE[0]}}")/.." && pwd)"
+# shellcheck disable=SC1091
+source "$ROOT_DIR/scripts/load_bridge_env.sh"
 PREVIEW_API_BASE_URL="${{PREVIEW_API_BASE_URL:-${{API_BASE_URL:-https://preview.nienfos.com/$SOURCE_APP/api}}}}"
 PREVIEW_API_BASE_URL="${{PREVIEW_API_BASE_URL%/}}"
+USER_AGENT="${{PREVIEW_SMOKE_USER_AGENT:-CodexProjectFactoryPreviewSmoke/1.0}}"
 
 [[ "$PREVIEW_API_BASE_URL" == "https://preview.nienfos.com/$SOURCE_APP/api" ]] || \\
   fail "PREVIEW_API_BASE_URL must be https://preview.nienfos.com/$SOURCE_APP/api"
+bridge_env_require PREVIEW_ADMIN_PASSWORD
 
-python3 - "$PREVIEW_API_BASE_URL" "$SOURCE_APP" <<'PY'
+python3 - "$PREVIEW_API_BASE_URL" "$SOURCE_APP" "$USER_AGENT" <<'PY'
 from __future__ import annotations
 
 import json
 import os
 import sys
+import time
 import urllib.error
 import urllib.request
 
-base_url, source_app = sys.argv[1], sys.argv[2]
+base_url, source_app, user_agent = sys.argv[1:4]
 email = os.environ.get("PREVIEW_ADMIN_EMAIL", "admin.preview@example.com")
 password = os.environ.get("PREVIEW_ADMIN_PASSWORD", "")
 bootstrap_token = os.environ.get("PREVIEW_ADMIN_BOOTSTRAP_TOKEN", "")
 
 def request(method: str, path: str, payload: dict | None = None, token: str | None = None) -> tuple[int, dict]:
-    headers = {{"content-type": "application/json"}}
+    headers = {{"content-type": "application/json", "user-agent": user_agent}}
     if token:
         headers["authorization"] = f"Bearer {{token}}"
     data = json.dumps(payload).encode() if payload is not None else None
@@ -3801,11 +4240,23 @@ def request(method: str, path: str, payload: dict | None = None, token: str | No
             body = {{"raw": raw}}
         return exc.code, body
 
-status, health = request("GET", "/health")
+def retry_request(method: str, path: str, payload: dict | None = None, token: str | None = None) -> tuple[int, dict]:
+    last: tuple[int, dict] = (0, {{"error": "not attempted"}})
+    for delay in (0.5, 1.0, 2.0, 3.0):
+        last = request(method, path, payload, token)
+        status, body = last
+        if status < 500 and status != 0:
+            return last
+        time.sleep(delay)
+    return last
+
+status, health = retry_request("GET", "/health")
 if status != 200 or health.get("runtime") != "cloudflare_preview" or health.get("source_app") != source_app:
     raise SystemExit(f"health failed: {{status}} {{health}}")
 if not health.get("d1_bound"):
     raise SystemExit("health did not report d1_bound=true")
+if not health.get("assets_bound"):
+    raise SystemExit("health did not report assets_bound=true")
 
 if not password:
     raise SystemExit("PREVIEW_ADMIN_PASSWORD is required for deployed auth smoke")
@@ -3861,25 +4312,35 @@ fail() {{
 }}
 
 SOURCE_APP="${{SOURCE_APP:-{slug}}}"
+ROOT_DIR="$(cd "$(dirname "${{BASH_SOURCE[0]}}")/.." && pwd)"
+# shellcheck disable=SC1091
+source "$ROOT_DIR/scripts/load_bridge_env.sh"
 PREVIEW_URL="${{PREVIEW_URL:-https://preview.nienfos.com/$SOURCE_APP}}"
 PREVIEW_URL="${{PREVIEW_URL%/}}"
+USER_AGENT="${{PREVIEW_SMOKE_USER_AGENT:-CodexProjectFactoryPreviewSmoke/1.0}}"
 
 [[ "$PREVIEW_URL" == "https://preview.nienfos.com/$SOURCE_APP" ]] || \\
   fail "PREVIEW_URL must be https://preview.nienfos.com/$SOURCE_APP"
 
-python3 - "$PREVIEW_URL" "$SOURCE_APP" <<'PY'
+python3 - "$PREVIEW_URL" "$SOURCE_APP" "$USER_AGENT" <<'PY'
 from __future__ import annotations
 
 import json
 import sys
+import time
 import urllib.error
 import urllib.request
 
-preview_url, source_app = sys.argv[1:3]
+preview_url, source_app, user_agent = sys.argv[1:4]
 
 def get_json(path: str) -> tuple[int, dict]:
+    request = urllib.request.Request(
+        preview_url + path,
+        headers={{"user-agent": user_agent, "accept": "application/json"}},
+        method="GET",
+    )
     try:
-        with urllib.request.urlopen(preview_url + path, timeout=30) as response:
+        with urllib.request.urlopen(request, timeout=30) as response:
             raw = response.read().decode()
             return response.status, json.loads(raw) if raw else {{}}
     except urllib.error.HTTPError as exc:
@@ -3890,19 +4351,35 @@ def get_json(path: str) -> tuple[int, dict]:
             body = {{"raw": raw}}
         return exc.code, body
 
-status, web_health = get_json("/__preview/health")
+def retry_get_json(path: str) -> tuple[int, dict]:
+    last: tuple[int, dict] = (0, {{"error": "not attempted"}})
+    for delay in (0.5, 1.0, 2.0, 3.0):
+        last = get_json(path)
+        status, body = last
+        if status == 200 and body.get("runtime") == "cloudflare_preview":
+            return last
+        time.sleep(delay)
+    return last
+
+status, web_health = retry_get_json("/__preview/health")
 if status != 200 or web_health.get("source_app") != source_app:
     raise SystemExit(f"web preview health failed: {{status}} {{web_health}}")
 if web_health.get("runtime") != "cloudflare_preview":
     raise SystemExit(f"web preview runtime mismatch: {{web_health}}")
+if web_health.get("d1_bound") is not True:
+    raise SystemExit(f"web preview health did not report d1_bound=true: {{web_health}}")
+if web_health.get("assets_bound") is not True:
+    raise SystemExit(f"web preview health did not report assets_bound=true: {{web_health}}")
 
-status, api_health = get_json("/api/health")
+status, api_health = retry_get_json("/api/health")
 if status != 200 or api_health.get("source_app") != source_app:
     raise SystemExit(f"Preview API health failed: {{status}} {{api_health}}")
 if api_health.get("runtime") != "cloudflare_preview":
     raise SystemExit(f"Preview API runtime mismatch: {{api_health}}")
-if not api_health.get("d1_bound"):
-    raise SystemExit("Preview API health did not report d1_bound=true")
+if api_health.get("d1_bound") is not True:
+    raise SystemExit(f"Preview API health did not report d1_bound=true: {{api_health}}")
+if api_health.get("assets_bound") is not True:
+    raise SystemExit(f"Preview API health did not report assets_bound=true: {{api_health}}")
 
 print(f"web preview smoke passed: {{preview_url}}")
 PY
@@ -3915,6 +4392,8 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${{BASH_SOURCE[0]}}")/.." && pwd)"
 cd "$ROOT_DIR"
+# shellcheck disable=SC1091
+source "$ROOT_DIR/scripts/load_bridge_env.sh"
 
 fail_blocked() {{
   printf 'android preview release blocked: %s\\n' "$*" >&2
@@ -3950,10 +4429,21 @@ export DEBUG_PREVIEW_SIGNING DEBUG_PREVIEW_SIGNING_ACKNOWLEDGED DEBUG_PREVIEW_SI
 
 [[ -f apps/mobile/pubspec.yaml ]] || fail_blocked "apps/mobile/pubspec.yaml is required"
 [[ -d apps/mobile/android ]] || fail_blocked "apps/mobile/android is required; run 'cd apps/mobile && flutter create --platforms=android .'"
+bridge_env_require APP_RUNTIME_PROFILE API_RUNTIME API_BASE_URL
 [[ "$PREVIEW_API_BASE_URL" == "https://preview.nienfos.com/$SOURCE_APP/api" ]] || \\
   fail_blocked "initial preview API must be https://preview.nienfos.com/$SOURCE_APP/api"
-[[ "${{APP_RUNTIME_PROFILE:-preview}}" == "preview" ]] || fail_blocked "APP_RUNTIME_PROFILE must be preview"
-[[ "${{API_RUNTIME:-cloudflare_preview}}" == "cloudflare_preview" ]] || fail_blocked "API_RUNTIME must be cloudflare_preview"
+[[ "$APP_RUNTIME_PROFILE" == "preview" ]] || fail_blocked "APP_RUNTIME_PROFILE must be preview"
+[[ "$API_RUNTIME" == "cloudflare_preview" ]] || fail_blocked "API_RUNTIME must be cloudflare_preview"
+[[ "${{API_BASE_URL%/}}" == "$PREVIEW_API_BASE_URL" ]] || fail_blocked "API_BASE_URL must match preview API"
+bridge_env_load_preview_signing || fail_blocked "stable Android preview signing is required"
+cp "$ANDROID_KEYSTORE_PATH" apps/mobile/android/upload-keystore.jks
+cat > apps/mobile/android/key.properties <<EOF
+storeFile=upload-keystore.jks
+storePassword=$ANDROID_STORE_PASSWORD
+keyPassword=$ANDROID_KEY_PASSWORD
+keyAlias=$ANDROID_KEY_ALIAS
+storeType=${{ANDROID_STORE_TYPE:-JKS}}
+EOF
 
 scripts/smoke_preview_api.sh
 
@@ -4446,16 +4936,41 @@ fail() {{
 
 ROOT_DIR="$(cd "$(dirname "${{BASH_SOURCE[0]}}")/.." && pwd)"
 cd "$ROOT_DIR"
+# shellcheck disable=SC1091
+source "$ROOT_DIR/scripts/load_bridge_env.sh"
 FRONTEND_STRATEGY="{frontend_strategy}"
 
 SOURCE_APP="${{SOURCE_APP:-{slug}}}"
 PREVIEW_API_BASE_URL="${{PREVIEW_API_BASE_URL:-${{API_BASE_URL:-https://preview.nienfos.com/$SOURCE_APP/api}}}}"
 PREVIEW_API_BASE_URL="${{PREVIEW_API_BASE_URL%/}}"
+APP_ANDROID_PREVIEW_RELEASE_TAG="${{APP_ANDROID_PREVIEW_RELEASE_TAG:-${{APP_RELEASE_TAG:-}}}}"
+
+bridge_env_require APP_RUNTIME_PROFILE API_RUNTIME API_BASE_URL BRIDGE_URL PREVIEW_ADMIN_PASSWORD
+bridge_env_require_any "preview D1 database" PREVIEW_D1_DATABASE CLOUDFLARE_D1_DATABASE
+if [[ "$FRONTEND_STRATEGY" == "flutter" ]]; then
+  bridge_env_require_any "installable apps registration token" INSTALLABLE_APPS_REGISTRATION_TOKEN BRIDGE_REGISTRATION_TOKEN
+  [[ -n "${{APP_RELEASE_TAG:-}}" || -n "${{APP_ANDROID_PREVIEW_RELEASE_TAG:-}}" ]] || \\
+    fail "APP_RELEASE_TAG or APP_ANDROID_PREVIEW_RELEASE_TAG is required"
+fi
+if grep -q "PREVIEW_ADMIN_BOOTSTRAP_TOKEN" deploy/web-preview/worker/src/index.js 2>/dev/null; then
+  bridge_env_require PREVIEW_ADMIN_BOOTSTRAP_TOKEN
+fi
+[[ "$APP_RUNTIME_PROFILE" == "preview" ]] || fail "APP_RUNTIME_PROFILE must be preview"
+[[ "$API_RUNTIME" == "cloudflare_preview" ]] || fail "API_RUNTIME must be cloudflare_preview"
 [[ "$PREVIEW_API_BASE_URL" == "https://preview.nienfos.com/$SOURCE_APP/api" ]] || \\
   fail "Preview API must be https://preview.nienfos.com/$SOURCE_APP/api"
+[[ "${{API_BASE_URL%/}}" == "$PREVIEW_API_BASE_URL" ]] || fail "API_BASE_URL must match Preview API"
 
 scripts/validate_preview_release_profiles.sh
 scripts/smoke_web_preview.sh
+
+if [[ "$FRONTEND_STRATEGY" == "flutter" ]]; then
+  [[ -f "$ROOT_DIR/apps/mobile/lib/src/screens.dart" ]] || fail "Flutter screens.dart missing"
+  ! grep -q "label: 'Workbench'" "$ROOT_DIR/apps/mobile/lib/src/screens.dart" || fail "generated product app must not expose a Workbench navigation tab"
+  ! grep -q "Invite token or link" "$ROOT_DIR/apps/mobile/lib/src/screens.dart" || fail "URL invite flow must not ask users to paste invite tokens"
+  grep -q "Activate account" "$ROOT_DIR/apps/mobile/lib/src/screens.dart" || fail "invite activation action missing"
+  grep -q "Repeat password" "$ROOT_DIR/apps/mobile/lib/src/screens.dart" || fail "password confirmation field missing"
+fi
 
 if [[ "$FRONTEND_STRATEGY" == "svelte" ]]; then
   scripts/smoke_preview_api.sh
@@ -4471,18 +4986,22 @@ if [[ "$FRONTEND_STRATEGY" == "svelte" ]]; then
       push_state="not_pushed:$upstream"
     fi
   fi
-  python3 - "$ROOT_DIR/release/release-output-template.md" "$SOURCE_APP" "$local_head" "$branch" "$push_state" "$PREVIEW_API_BASE_URL" <<'PY'
+  if [[ "${{UPDATE_RELEASE_OUTPUT:-false}}" == "true" ]]; then
+    python3 - "$ROOT_DIR/release/release-output-template.md" "$SOURCE_APP" "$local_head" "$branch" "$push_state" "$PREVIEW_API_BASE_URL" <<'PY'
 from __future__ import annotations
 
 import sys
 from pathlib import Path
 
-output_path, source_app, commit_hash, branch, push_state, api_url = sys.argv[1:7]
+output_path, source_app, source_commit, branch, push_state, api_url = sys.argv[1:7]
 preview_url = f"https://preview.nienfos.com/{{source_app}}"
 content = f"""# Factory Final Output
 
 - source_app: {{source_app}}
-- commit_hash: {{commit_hash}}
+- validated_source_commit: {{source_commit}}
+- android_tag_commit: not_applicable_web_only
+- report_generated_from_commit: {{source_commit}}
+- release_report_commit:
 - push_state: {{push_state}}
 - branch: {{branch or "detached"}}
 - frontend_strategy: svelte
@@ -4518,9 +5037,13 @@ content = f"""# Factory Final Output
 """
 Path(output_path).write_text(content, encoding="utf-8")
 PY
+  fi
+  grep -q "validated_source_commit:" "$ROOT_DIR/release/release-output-template.md" || fail "release output must include validated_source_commit"
+  grep -q "report_generated_from_commit:" "$ROOT_DIR/release/release-output-template.md" || fail "release output must include report_generated_from_commit"
   grep -q "frontend_strategy: svelte" "$ROOT_DIR/release/release-output-template.md" || fail "release output must declare Svelte strategy"
   grep -q "installable_android: false" "$ROOT_DIR/release/release-output-template.md" || fail "Svelte release output must not claim installable Android"
   grep -q "bridge_installable_url: not_applicable_web_only" "$ROOT_DIR/release/release-output-template.md" || fail "Svelte release output must not claim Bridge installability"
+  scripts/final_readiness_audit.sh
   printf 'initial svelte preview release ready: %s\\n' "$SOURCE_APP"
   exit 0
 fi
@@ -4645,7 +5168,8 @@ if [[ -n "$upstream" ]]; then
   fi
 fi
 
-python3 - "$ROOT_DIR/release/release-output-template.md" "$SOURCE_APP" "$expected_tag" "$local_head" "$branch" "$push_state" "$release_url" "$PREVIEW_API_BASE_URL" "${{BRIDGE_URL%/}}/installable-apps/$SOURCE_APP" <<'PY'
+if [[ "${{UPDATE_RELEASE_OUTPUT:-false}}" == "true" ]]; then
+  python3 - "$ROOT_DIR/release/release-output-template.md" "$SOURCE_APP" "$expected_tag" "$local_head" "$branch" "$push_state" "$release_url" "$PREVIEW_API_BASE_URL" "${{BRIDGE_URL%/}}/installable-apps/$SOURCE_APP" <<'PY'
 from __future__ import annotations
 
 import json
@@ -4657,7 +5181,7 @@ from pathlib import Path
     output_path,
     source_app,
     release_tag,
-    commit_hash,
+    source_commit,
     branch,
     push_state,
     release_url,
@@ -4688,12 +5212,16 @@ validations = [
     "preview persistence login smoke",
     "GitHub prerelease APK",
     "Bridge installable lookup",
-    "APK preview Workbench owner/admin visibility",
+    "Bridge Workbench artifact discoverability",
+    "No Workbench product navigation",
 ]
 content = f"""# Factory Final Output
 
 - source_app: {{source_app}}
-- commit_hash: {{commit_hash}}
+- validated_source_commit: {{source_commit}}
+- android_tag_commit: {{source_commit}}
+- report_generated_from_commit: {{source_commit}}
+- release_report_commit:
 - push_state: {{push_state}}
 - branch: {{branch or "detached"}}
 - runtime_profile: preview
@@ -4712,7 +5240,7 @@ content = f"""# Factory Final Output
 - cloudflare_preview_health_url: {{preview_url}}/__preview/health
 - preview_api_base_url: {{api_url}}
 - preview_api_health_url: {{api_url}}/health
-- workbench_status: visible_for_owner_admin_in_preview
+- workbench_status: bridge_owned_dev_entrypoint
 - codex_mobile_catalog_status: installable_preview_available
 - validations_executed:
 {{chr(10).join(f"  - {{item}}" for item in validations)}}
@@ -4724,12 +5252,18 @@ for forbidden in ("preview listo sin APK", "release listo sin APK", "installable
         raise SystemExit(f"release output overpromises: {{forbidden}}")
 Path(output_path).write_text(content, encoding="utf-8")
 PY
+fi
 
-grep -q "commit_hash: $local_head" "$ROOT_DIR/release/release-output-template.md" || fail "release output is stale for current commit"
+grep -q "validated_source_commit:" "$ROOT_DIR/release/release-output-template.md" || fail "release output must include validated_source_commit"
+grep -q "android_tag_commit:" "$ROOT_DIR/release/release-output-template.md" || fail "release output must include android_tag_commit"
+grep -q "report_generated_from_commit:" "$ROOT_DIR/release/release-output-template.md" || fail "release output must include report_generated_from_commit"
 grep -q "release_channel: prerelease" "$ROOT_DIR/release/release-output-template.md" || fail "release output must declare prerelease channel"
 grep -q "production_ready: false" "$ROOT_DIR/release/release-output-template.md" || fail "release output must not overpromise production readiness"
-grep -q "android_preview_apk_url: http" "$ROOT_DIR/release/release-output-template.md" || fail "release output must include APK URL"
-grep -q "bridge_installable_url: http" "$ROOT_DIR/release/release-output-template.md" || fail "release output must include Bridge installable URL"
+if [[ "${{UPDATE_RELEASE_OUTPUT:-false}}" == "true" ]]; then
+  grep -q "android_preview_apk_url: http" "$ROOT_DIR/release/release-output-template.md" || fail "release output must include APK URL"
+  grep -q "bridge_installable_url: http" "$ROOT_DIR/release/release-output-template.md" || fail "release output must include Bridge installable URL"
+fi
+scripts/final_readiness_audit.sh
 '''
 
 
@@ -4936,6 +5470,34 @@ jobs:
         working-directory: apps/mobile
         run: flutter test
 
+      - name: Configure Android preview signing
+        working-directory: apps/mobile/android
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{{{ secrets.ANDROID_KEYSTORE_BASE64 }}}}
+          ANDROID_KEY_ALIAS: ${{{{ secrets.ANDROID_KEY_ALIAS }}}}
+          ANDROID_KEY_PASSWORD: ${{{{ secrets.ANDROID_KEY_PASSWORD }}}}
+          ANDROID_STORE_PASSWORD: ${{{{ secrets.ANDROID_STORE_PASSWORD }}}}
+          ANDROID_STORE_TYPE: ${{{{ secrets.ANDROID_STORE_TYPE || 'JKS' }}}}
+        run: |
+          missing=()
+          for key in ANDROID_KEYSTORE_BASE64 ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD ANDROID_STORE_PASSWORD; do
+            if [[ -z "${{!key}}" ]]; then
+              missing+=("$key")
+            fi
+          done
+          if (( ${{#missing[@]}} > 0 )); then
+            printf 'Missing Android preview signing secret(s): %s\\n' "${{missing[*]}}" >&2
+            exit 2
+          fi
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 -d > upload-keystore.jks
+          {{
+            printf 'storeFile=upload-keystore.jks\\n'
+            printf 'storePassword=%s\\n' "$ANDROID_STORE_PASSWORD"
+            printf 'keyPassword=%s\\n' "$ANDROID_KEY_PASSWORD"
+            printf 'keyAlias=%s\\n' "$ANDROID_KEY_ALIAS"
+            printf 'storeType=%s\\n' "$ANDROID_STORE_TYPE"
+          }} > key.properties
+
       - name: Build Android preview APK
         working-directory: apps/mobile
         run: |
@@ -4947,6 +5509,20 @@ jobs:
             --dart-define=CODEX_FEEDBACK_BRIDGE_URL="${{{{ vars.CODEX_FEEDBACK_BRIDGE_URL }}}}" \\
             --dart-define=CODEX_FEEDBACK_ENABLED="${{{{ vars.CODEX_FEEDBACK_ENABLED || 'false' }}}}"
           cp build/app/outputs/flutter-apk/app-release.apk build/app/outputs/flutter-apk/{slug}.apk
+
+      - name: Verify Android preview APK signing
+        working-directory: apps/mobile
+        run: |
+          apk="build/app/outputs/flutter-apk/{slug}.apk"
+          sdkmanager "build-tools;35.0.0"
+          apksigner="$ANDROID_HOME/build-tools/35.0.0/apksigner"
+          "$apksigner" verify --verbose --print-certs "$apk" | tee /tmp/apksigner.txt
+          grep -q "Verified using" /tmp/apksigner.txt
+          if grep -Eqi 'CN=Android Debug|Android Debug' /tmp/apksigner.txt; then
+            echo "Preview APK must not be signed with Android debug certificate." >&2
+            exit 2
+          fi
+          sha256sum "$apk" | tee /tmp/{slug}-apk.sha256
 
       - name: Publish GitHub preview release
         uses: softprops/action-gh-release@v2
@@ -5060,7 +5636,7 @@ def _release_contracts_yaml(slug: str, frontend_strategy: str = "flutter") -> st
                 "web_build_output": f"build/web-preview/{slug}",
                 "supports_android_preview_apk": not is_svelte,
                 "supports_bridge_installable_app": not is_svelte,
-                "supports_workbench_apk_entry": not is_svelte,
+                "supports_workbench_apk_entry": False,
                 "cloudflare_preview_required": True,
                 "d1_preview_required": True,
                 "release_channel": "prerelease",
@@ -5145,11 +5721,20 @@ def _release_contracts_yaml(slug: str, frontend_strategy: str = "flutter") -> st
                 "paid_resources_require_operator_confirmation": True,
             },
             "workbench": {
-                "required": not is_svelte,
-                "visible_profiles": [] if is_svelte else ["mock"],
+                "required": True,
+                "launch_owner": "codex_mobile_bridge",
+                "product_navigation_allowed": False,
+                "visible_profiles": [],
                 "hidden_profiles": ["real"],
                 "identity_file": "codex-bridge.yaml",
                 "docs": "docs/workbench.md",
+                "artifact_sources": [
+                    ".sdd/spec-index.yaml",
+                    ".sdd/diagram-index.yaml",
+                    "specs/",
+                    "architecture/",
+                    "release/preview-runtime.json",
+                ],
             },
             "codex_mobile_catalog": {
                 "required": not is_svelte,
@@ -5453,7 +6038,9 @@ def _preview_runtime_json(
         "d1PreviewRequired": True,
         "installableAndroid": not is_svelte,
         "bridgeRegistrationRequired": not is_svelte,
-        "workbenchApkEntryRequired": not is_svelte,
+        "workbenchApkEntryRequired": False,
+        "workbenchLaunchOwner": "codex_mobile_bridge",
+        "productWorkbenchNavigationAllowed": False,
         "releaseMetadata": {
             "initialPreviewRelease": True,
             "runtimeProfile": "preview",
@@ -6906,7 +7493,10 @@ def _release_output_template(frontend_strategy: str = "flutter") -> str:
         return """# Factory Final Output
 
 - source_app:
-- commit_hash:
+- validated_source_commit:
+- android_tag_commit: not_applicable_web_only
+- report_generated_from_commit:
+- release_report_commit:
 - push_state:
 - branch:
 - frontend_strategy: svelte
@@ -6933,7 +7523,10 @@ def _release_output_template(frontend_strategy: str = "flutter") -> str:
     return """# Factory Final Output
 
 - source_app:
-- commit_hash:
+- validated_source_commit:
+- android_tag_commit:
+- report_generated_from_commit:
+- release_report_commit:
 - push_state:
 - branch:
 - runtime_profile: preview
@@ -7130,6 +7723,16 @@ scripts/smoke_preview_api.sh
 scripts/validate_initial_preview_release.sh
 ```
 
+## Bridge Env Loader
+
+All preview scripts load real Bridge secrets through `scripts/load_bridge_env.sh`.
+The loader reads, when present:
+
+- `/home/batata/Projects/codex-cli-mobile-bridge/secrets/cloudflare.env`
+- `/home/batata/Projects/codex-cli-mobile-bridge/.env`
+
+It prints missing variable names only, never secret values.
+
 ## Extend Preview
 
 Add real Preview API routes under `deploy/web-preview/worker/src/index.js`, add
@@ -7164,6 +7767,22 @@ scripts/publish_android_preview_release.sh
 scripts/register_installable_app.sh
 scripts/validate_initial_preview_release.sh
 ```
+
+## Bridge Env Loader
+
+All preview scripts load real Bridge secrets through `scripts/load_bridge_env.sh`.
+The loader reads, when present:
+
+- `/home/batata/Projects/codex-cli-mobile-bridge/secrets/cloudflare.env`
+- `/home/batata/Projects/codex-cli-mobile-bridge/.env`
+
+For Android preview signing it also expects:
+
+- `/home/batata/Projects/codex-cli-mobile-bridge/secrets/{slug}-preview-upload-keystore.jks`
+- `/home/batata/Projects/codex-cli-mobile-bridge/secrets/{slug}-preview-signing.env`
+
+It prints missing variable names only, never secret values. Existing keystores
+must be reused for compatible APK updates.
 
 ## Disable Preview
 
@@ -7241,16 +7860,76 @@ to visible manual-link delivery; it must not fake successful delivery.
 ## Bridge Env Vars
 
 ```bash
-WEB_PREVIEW_EMAIL_PROVIDER=smtp
+WEB_PREVIEW_EMAIL_PROVIDER=cloudflare_email
 WEB_PREVIEW_EMAIL_FROM=preview@nienfos.com
+WEB_PREVIEW_EMAIL_ENDPOINT=https://api.cloudflare.example/email/send
+WEB_PREVIEW_EMAIL_API_TOKEN=<operator-secret>
+WEB_PREVIEW_INVITE_SECRET=<same-secret-as-worker>
+```
+
+`cloudflare_email` means the Bridge posts invite payloads to the
+operator-provided `WEB_PREVIEW_EMAIL_ENDPOINT` with
+`WEB_PREVIEW_EMAIL_API_TOKEN`. That endpoint may be a Cloudflare Worker or
+another Cloudflare-backed mail transport controlled by the operator. Cloudflare
+Email Routing alone is not assumed to send outbound mail; only report `sent`
+when the configured endpoint accepts the message and returns success.
+
+Repo-provided Cloudflare Worker endpoint:
+
+```bash
+cd deploy/cloudflare-email-endpoint
+cp wrangler.toml.example wrangler.toml
+wrangler secret put EMAIL_ENDPOINT_TOKEN
+wrangler secret put BREVO_API_KEY
+wrangler deploy
+```
+
+Set `WEB_PREVIEW_EMAIL_ENDPOINT` to the deployed Worker URL and set
+`WEB_PREVIEW_EMAIL_API_TOKEN` to the same secret used for
+`EMAIL_ENDPOINT_TOKEN`. Cloudflare Workers Free can host this endpoint, but
+outbound mail still needs a sending backend. The included free-compatible relay
+mode uses Brevo transactional email via `BREVO_API_KEY`. Native Cloudflare Email
+Service sending to arbitrary invite recipients requires Workers Paid; Email
+Routing is inbound/forwarding and is not enough by itself.
+
+SMTP fallback:
+
+```bash
+WEB_PREVIEW_EMAIL_PROVIDER=smtp
+WEB_PREVIEW_EMAIL_FROM=invites@nienfos.com
 WEB_PREVIEW_SMTP_HOST=smtp.example.com
 WEB_PREVIEW_SMTP_PORT=587
 WEB_PREVIEW_SMTP_USERNAME=<smtp-user>
 WEB_PREVIEW_SMTP_PASSWORD=<smtp-password>
 WEB_PREVIEW_SMTP_USE_TLS=true
+WEB_PREVIEW_SMTP_IMPLICIT_TLS=false
 WEB_PREVIEW_SMTP_TIMEOUT_SECONDS=10
 WEB_PREVIEW_INVITE_SECRET=<same-secret-as-worker>
 ```
+
+Amazon SES SMTP profile (same pattern used by Ambientando Calendar):
+
+```bash
+WEB_PREVIEW_EMAIL_PROVIDER=smtp
+WEB_PREVIEW_EMAIL_FROM=preview@nienfos.com
+WEB_PREVIEW_SMTP_HOST=email-smtp.us-east-1.amazonaws.com
+WEB_PREVIEW_SMTP_PORT=587
+WEB_PREVIEW_SMTP_USERNAME=<ses-smtp-username>
+WEB_PREVIEW_SMTP_PASSWORD=<ses-smtp-password>
+WEB_PREVIEW_SMTP_USE_TLS=true
+WEB_PREVIEW_SMTP_IMPLICIT_TLS=false
+WEB_PREVIEW_SMTP_TIMEOUT_SECONDS=10
+WEB_PREVIEW_INVITE_SECRET=<same-secret-as-worker>
+```
+
+SES currently includes up to 3,000 message charges per month for 12 months after
+starting to use SES, subject to AWS free-tier account rules. This is separate
+from SES sandbox: while sandboxed, both sender and recipient addresses must be
+verified. Request SES production access before sending preview invites to
+arbitrary users.
+
+For implicit TLS on port `465`, set `WEB_PREVIEW_SMTP_IMPLICIT_TLS=true` so the
+Bridge uses an SMTP_SSL-compatible client.
 
 Manual fallback:
 
@@ -7265,6 +7944,10 @@ dig TXT nienfos.com
 dig TXT default._domainkey.nienfos.com
 dig TXT _dmarc.nienfos.com
 ```
+
+Validate SPF, DKIM, DMARC alignment, sender permissions for
+`preview@nienfos.com` or `invites@nienfos.com`, token/API scope, provider
+diagnostics, and message IDs before reporting delivery as sent.
 
 ## Create And Resend Invites
 
@@ -7424,6 +8107,10 @@ def _mobile_files(name: str, slug: str) -> dict[str, str]:
         "apps/mobile/lib/src/screens.dart": _mobile_screens_dart(name),
         "apps/mobile/web/index.html": _mobile_web_index_html(name),
         "apps/mobile/web/manifest.json": _mobile_web_manifest_json(name),
+        "apps/mobile/android/.gitignore": "upload-keystore.jks\nkey.properties\n",
+        "apps/mobile/android/app/src/main/AndroidManifest.xml": (
+            _mobile_android_manifest()
+        ),
         "apps/mobile/test/config_test.dart": _mobile_config_test_dart(package_name),
         "apps/mobile/test/api_client_test.dart": _mobile_api_client_test_dart(
             package_name
@@ -7498,6 +8185,34 @@ flutter test
 
 Session tokens are kept in memory in template v1. Add secure storage in a later
 slice when persistence across app restarts is required.
+"""
+
+
+def _mobile_android_manifest() -> str:
+    return """<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.INTERNET" />
+    <application
+        android:label="Generated Preview"
+        android:name="${applicationName}"
+        android:icon="@mipmap/ic_launcher">
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTop"
+            android:theme="@style/LaunchTheme"
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
+            android:hardwareAccelerated="true"
+            android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+        <meta-data
+            android:name="flutterEmbedding"
+            android:value="2" />
+    </application>
+</manifest>
 """
 
 
@@ -7680,18 +8395,7 @@ def _mobile_models_dart() -> str:
     String runtimeProfile, {
     bool developerModeAuthorized = false,
   }) {
-    switch (runtimeProfile) {
-      case 'mock':
-        return true;
-      case 'preview':
-        return canAccessAdmin || (developerModeAuthorized && isDeveloperAuthorized);
-      case 'staging':
-        return developerModeAuthorized && (canAccessAdmin || isDeveloperAuthorized);
-      case 'real':
-        return false;
-      default:
-        return false;
-    }
+    return false;
   }
 
   factory AppUser.fromJson(Map<String, dynamic> json) {
@@ -7818,11 +8522,13 @@ class ProjectApiClient {
     required String inviteToken,
     required String email,
     required String password,
+    required String passwordConfirmation,
   }) async {
     final response = await _postJson('/invites/accept', {
       'inviteToken': inviteToken,
       'email': email,
       'password': password,
+      'passwordConfirmation': passwordConfirmation,
     });
     if (response.statusCode != 200) {
       throw ApiException('Preview invite accept failed', response.statusCode, response.body);
@@ -8064,12 +8770,14 @@ class SessionController extends ChangeNotifier {
     required String inviteToken,
     required String email,
     required String password,
+    required String passwordConfirmation,
   }) async {
     await _run(() async {
       final auth = await api.acceptPreviewInvite(
         inviteToken: inviteToken,
         email: email,
         password: password,
+        passwordConfirmation: passwordConfirmation,
       );
       token = auth.accessToken;
       user = await api.me(token!);
@@ -8167,15 +8875,9 @@ class _ProjectHomeState extends State<ProjectHome> {{
           return AuthScreen(controller: widget.controller, projectName: widget.projectName);
         }}
         final user = widget.controller.user!;
-        final showWorkbench = user.canAccessWorkbench(
-          widget.runtimeProfile,
-          developerModeAuthorized: widget.developerWorkbenchEnabled,
-        );
         final pages = <Widget>[
           HomeScreen(user: user, onLogout: widget.controller.logout),
           NotificationsScreen(api: widget.controller.api, token: widget.controller.token!),
-          if (showWorkbench)
-            WorkbenchScreen(runtimeProfile: widget.runtimeProfile),
           if (user.canAccessAdmin)
             AdminScreen(api: widget.controller.api, token: widget.controller.token!),
         ];
@@ -8188,8 +8890,6 @@ class _ProjectHomeState extends State<ProjectHome> {{
             destinations: <Widget>[
               const NavigationDestination(icon: Icon(Icons.home_outlined), label: 'Home'),
               const NavigationDestination(icon: Icon(Icons.notifications_outlined), label: 'Notifications'),
-              if (showWorkbench)
-                const NavigationDestination(icon: Icon(Icons.dashboard_customize_outlined), label: 'Workbench'),
               if (user.canAccessAdmin)
                 const NavigationDestination(icon: Icon(Icons.admin_panel_settings_outlined), label: 'Admin'),
             ],
@@ -8200,44 +8900,49 @@ class _ProjectHomeState extends State<ProjectHome> {{
   }}
 }}
 
-class WorkbenchScreen extends StatelessWidget {{
-  const WorkbenchScreen({{super.key, required this.runtimeProfile}});
-  final String runtimeProfile;
-
-  @override
-  Widget build(BuildContext context) {{
-    return ListView(
-      padding: const EdgeInsets.all(20),
-      children: <Widget>[
-        Text('Workbench', style: Theme.of(context).textTheme.titleLarge),
-        const SizedBox(height: 8),
-        Text('Runtime profile: $runtimeProfile'),
-      ],
-    );
-  }}
-}}
-
 class AuthScreen extends StatefulWidget {{
-  const AuthScreen({{super.key, required this.controller, required this.projectName}});
+  const AuthScreen({{
+    super.key,
+    required this.controller,
+    required this.projectName,
+    this.initialUri,
+  }});
   final SessionController controller;
   final String projectName;
+  final Uri? initialUri;
 
   @override
   State<AuthScreen> createState() => _AuthScreenState();
 }}
 
 class _AuthScreenState extends State<AuthScreen> {{
-  final _inviteToken = TextEditingController();
   final _email = TextEditingController();
   final _password = TextEditingController();
+  final _passwordConfirmation = TextEditingController();
   bool _register = false;
   String _seedRole = 'owner';
+  late final String? _inviteTokenFromUrl;
+  late final bool _emailBound;
+  late final String _inviteState;
+
+  @override
+  void initState() {{
+    super.initState();
+    final uri = widget.initialUri ?? Uri.base;
+    _inviteTokenFromUrl = uri.queryParameters['invite_token'] ?? uri.queryParameters['token'];
+    _inviteState = uri.queryParameters['invite_state'] ?? (_inviteTokenFromUrl == null ? 'login' : 'activate');
+    final invitedEmail = uri.queryParameters['email'] ?? '';
+    _emailBound = uri.queryParameters['email_bound'] == 'true' && invitedEmail.isNotEmpty;
+    if (invitedEmail.isNotEmpty) {{
+      _email.text = invitedEmail;
+    }}
+  }}
 
   @override
   void dispose() {{
-    _inviteToken.dispose();
     _email.dispose();
     _password.dispose();
+    _passwordConfirmation.dispose();
     super.dispose();
   }}
 
@@ -8253,18 +8958,19 @@ class _AuthScreenState extends State<AuthScreen> {{
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: <Widget>[
-                if (widget.controller.isPreviewRuntime) ...[
-                  Text('Initial Preview Access', style: Theme.of(context).textTheme.titleMedium),
-                  const SizedBox(height: 8),
-                  TextField(
-                    controller: _inviteToken,
-                    decoration: const InputDecoration(labelText: 'Invite token or link'),
-                  ),
-                  const SizedBox(height: 12),
-                ],
-                TextField(controller: _email, decoration: const InputDecoration(labelText: 'Email')),
+                Text(_title, style: Theme.of(context).textTheme.titleMedium),
                 const SizedBox(height: 12),
-                TextField(controller: _password, decoration: const InputDecoration(labelText: 'Password'), obscureText: true),
+                TextField(
+                  controller: _email,
+                  readOnly: _emailBound,
+                  decoration: InputDecoration(labelText: 'Email', helperText: _emailBound ? 'Fixed by invite' : null),
+                ),
+                const SizedBox(height: 12),
+                TextField(controller: _password, decoration: InputDecoration(labelText: _isInviteActivation ? 'Create password' : 'Password'), obscureText: true),
+                if (_isInviteActivation) ...[
+                  const SizedBox(height: 12),
+                  TextField(controller: _passwordConfirmation, decoration: const InputDecoration(labelText: 'Repeat password'), obscureText: true),
+                ],
                 const SizedBox(height: 16),
                 if (widget.controller.isMockRuntime) ...[
                   DropdownButtonFormField<String>(
@@ -8289,7 +8995,7 @@ class _AuthScreenState extends State<AuthScreen> {{
                 const SizedBox(height: 8),
                 FilledButton(
                   onPressed: widget.controller.loading ? null : _submit,
-                  child: Text(widget.controller.isPreviewRuntime ? 'Accept invite' : (_register ? 'Register' : 'Login')),
+                  child: Text(_primaryAction),
                 ),
                 if (!widget.controller.isPreviewRuntime)
                   TextButton(
@@ -8304,26 +9010,40 @@ class _AuthScreenState extends State<AuthScreen> {{
     );
   }}
 
+  bool get _isInviteActivation =>
+      widget.controller.isPreviewRuntime &&
+      _inviteTokenFromUrl != null &&
+      _inviteState != 'login';
+
+  String get _title {{
+    if (_isInviteActivation) return 'Activate preview account';
+    return widget.controller.isPreviewRuntime ? 'Preview login' : (_register ? 'Create account' : 'Login');
+  }}
+
+  String get _primaryAction {{
+    if (_isInviteActivation) return 'Activate account';
+    return _register && !widget.controller.isPreviewRuntime ? 'Register' : 'Login';
+  }}
+
   Future<void> _submit() async {{
-    if (widget.controller.isPreviewRuntime) {{
+    if (_isInviteActivation) {{
+      if (_password.text != _passwordConfirmation.text) {{
+        setState(() => widget.controller.error = 'Password confirmation must match.');
+        return;
+      }}
       await widget.controller.acceptPreviewInvite(
-        inviteToken: _extractInviteToken(_inviteToken.text.trim()),
+        inviteToken: _inviteTokenFromUrl!,
         email: _email.text.trim(),
         password: _password.text,
+        passwordConfirmation: _passwordConfirmation.text,
       );
+    }} else if (widget.controller.isPreviewRuntime) {{
+      await widget.controller.login(email: _email.text.trim(), password: _password.text);
     }} else if (_register) {{
       await widget.controller.register(email: _email.text.trim(), password: _password.text);
     }} else {{
       await widget.controller.login(email: _email.text.trim(), password: _password.text);
     }}
-  }}
-
-  String _extractInviteToken(String value) {{
-    final uri = Uri.tryParse(value);
-    if (uri != null && uri.queryParameters['token'] != null) {{
-      return uri.queryParameters['token']!;
-    }}
-    return value;
   }}
 }}
 
@@ -8536,6 +9256,7 @@ void main() {{
       inviteToken: 'signed-token',
       email: 'invite@example.com',
       password: 'secret',
+      passwordConfirmation: 'secret',
     );
     expect(inviteToken.accessToken, 'invite-token');
     final token = await api.login(email: 'a@example.com', password: 'secret');
@@ -8575,6 +9296,7 @@ void main() {{
       inviteToken: 'signed-token',
       email: 'admin@example.com',
       password: 'secret',
+      passwordConfirmation: 'secret',
     );
     expect(controller.isAuthenticated, isTrue);
     expect(controller.token, 'invite-token');
@@ -8596,17 +9318,17 @@ void main() {{
     expect(user.canAccessAdmin, isFalse);
   }});
 
-  test('preview runtime shows Workbench only to owner admin or authorized developer', () {{
+  test('product RBAC never grants Bridge Workbench UI inside the generated app', () {{
     const owner = AppUser(id: '1', email: 'owner@example.com', roles: ['owner']);
     const admin = AppUser(id: '2', email: 'admin@example.com', roles: ['admin']);
     const developer = AppUser(id: '3', email: 'dev@example.com', roles: ['developer']);
     const customer = AppUser(id: '4', email: 'user@example.com', roles: ['customer']);
-    expect(owner.canAccessWorkbench('preview'), isTrue);
-    expect(admin.canAccessWorkbench('preview'), isTrue);
+    expect(owner.canAccessWorkbench('preview'), isFalse);
+    expect(admin.canAccessWorkbench('preview'), isFalse);
     expect(developer.canAccessWorkbench('preview'), isFalse);
     expect(
       developer.canAccessWorkbench('preview', developerModeAuthorized: true),
-      isTrue,
+      isFalse,
     );
     expect(customer.canAccessWorkbench('preview'), isFalse);
     expect(owner.canAccessWorkbench('real', developerModeAuthorized: true), isFalse);
@@ -8626,6 +9348,7 @@ class _FakeApi extends ProjectApiClient {{
     required String inviteToken,
     required String email,
     required String password,
+    required String passwordConfirmation,
   }}) async {{
     return const AuthToken(accessToken: 'invite-token', tokenType: 'bearer');
   }}
@@ -8647,36 +9370,56 @@ import 'package:{package_name}/src/screens.dart';
 import 'package:{package_name}/src/session_controller.dart';
 
 void main() {{
-  testWidgets('preview auth accepts invite token and password setup', (tester) async {{
+  testWidgets('preview auth consumes URL invite token and asks for password confirmation', (tester) async {{
     final controller = SessionController(api: _FakeApi(), runtimeProfile: 'preview');
-    await tester.pumpWidget(_app(controller, runtimeProfile: 'preview'));
+    await tester.pumpWidget(MaterialApp(
+      home: AuthScreen(
+        controller: controller,
+        projectName: 'Generated App',
+        initialUri: Uri.parse('https://preview.nienfos.com/generated/?invite_state=activate&invite_token=signed-token&email=admin@example.com&email_bound=true'),
+      ),
+    ));
 
-    expect(find.text('Initial Preview Access'), findsOneWidget);
-    expect(find.text('Accept invite'), findsOneWidget);
+    expect(find.text('Activate preview account'), findsOneWidget);
+    expect(find.text('Activate account'), findsOneWidget);
+    expect(find.text('Invite token or link'), findsNothing);
 
-    await tester.enterText(find.byType(TextField).at(0), 'https://preview.nienfos.com/generated/__preview/access?token=signed-token');
-    await tester.enterText(find.byType(TextField).at(1), 'admin@example.com');
+    await tester.enterText(find.byType(TextField).at(1), 'secret-password');
     await tester.enterText(find.byType(TextField).at(2), 'secret-password');
-    await tester.tap(find.text('Accept invite'));
+    await tester.tap(find.text('Activate account'));
     await tester.pumpAndSettle();
 
     expect(controller.isAuthenticated, isTrue);
     expect(find.text('admin@example.com'), findsOneWidget);
   }});
 
-  testWidgets('APP_RUNTIME_PROFILE=preview shows Workbench for owner/admin', (tester) async {{
+  testWidgets('preview re-entry uses normal login when invite is already accepted', (tester) async {{
+    final controller = SessionController(api: _FakeApi(), runtimeProfile: 'preview');
+    await tester.pumpWidget(MaterialApp(
+      home: AuthScreen(
+        controller: controller,
+        projectName: 'Generated App',
+        initialUri: Uri.parse('https://preview.nienfos.com/generated/?invite_state=login'),
+      ),
+    ));
+
+    expect(find.text('Preview login'), findsOneWidget);
+    expect(find.text('Invite token or link'), findsNothing);
+    await tester.enterText(find.byType(TextField).at(0), 'admin@example.com');
+    await tester.enterText(find.byType(TextField).at(1), 'secret-password');
+    await tester.tap(find.text('Login'));
+    await tester.pumpAndSettle();
+
+    expect(controller.isAuthenticated, isTrue);
+  }});
+
+  testWidgets('APP_RUNTIME_PROFILE=preview does not show Workbench as product navigation', (tester) async {{
     final owner = _controller('preview', const AppUser(id: '1', email: 'owner@example.com', roles: ['owner']));
     await tester.pumpWidget(_app(owner, runtimeProfile: 'preview'));
-    expect(find.text('Workbench'), findsOneWidget);
+    expect(find.text('Workbench'), findsNothing);
 
     final admin = _controller('preview', const AppUser(id: '2', email: 'admin@example.com', roles: ['admin']));
     await tester.pumpWidget(_app(admin, runtimeProfile: 'preview'));
-    expect(find.text('Workbench'), findsOneWidget);
-  }});
-
-  testWidgets('preview hides Workbench from normal users unless developer authorized', (tester) async {{
-    final customer = _controller('preview', const AppUser(id: '3', email: 'user@example.com', roles: ['customer']));
-    await tester.pumpWidget(_app(customer, runtimeProfile: 'preview'));
     expect(find.text('Workbench'), findsNothing);
 
     final developer = _controller('preview', const AppUser(id: '4', email: 'dev@example.com', roles: ['developer']));
@@ -8685,7 +9428,7 @@ void main() {{
       runtimeProfile: 'preview',
       developerWorkbenchEnabled: true,
     ));
-    expect(find.text('Workbench'), findsOneWidget);
+    expect(find.text('Workbench'), findsNothing);
   }});
 
   testWidgets('real runtime hides Workbench even for owner', (tester) async {{
@@ -8729,8 +9472,17 @@ class _FakeApi extends ProjectApiClient {{
     required String inviteToken,
     required String email,
     required String password,
+    required String passwordConfirmation,
   }}) async {{
     return const AuthToken(accessToken: 'invite-token', tokenType: 'bearer');
+  }}
+
+  @override
+  Future<AuthToken> login({{
+    required String email,
+    required String password,
+  }}) async {{
+    return const AuthToken(accessToken: 'login-token', tokenType: 'bearer');
   }}
 
   @override
@@ -10346,6 +11098,8 @@ def _gitignore() -> str:
 !.env.example
 .dart_tool/
 build/
+apps/mobile/android/upload-keystore.jks
+apps/mobile/android/key.properties
 __pycache__/
 *.pyc
 .codex-bridge/

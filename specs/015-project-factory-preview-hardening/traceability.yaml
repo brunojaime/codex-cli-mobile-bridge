@@ -1,0 +1,162 @@
+spec_id: 015-project-factory-preview-hardening
+status: implemented
+requirements:
+  R-001-workbench-boundary:
+    acceptance_criteria:
+      - Generated product apps do not expose Workbench as product navigation, routes, labels, or product RBAC permissions.
+      - Bridge Workbench can still discover generated project SDD artifacts.
+    tasks:
+      - T001
+      - T002
+      - T003
+      - T004
+      - T005
+      - T006
+      - T007
+    implementation:
+      - backend/app/application/services/project_factory_generator_service.py
+      - backend/app/application/services/sdd_workbench_view_service.py
+      - frontend/mobile_app/lib/src/screens/workbench_screen.dart
+      - tests/test_project_factory_generator_service.py
+    evidence:
+      - ".venv/bin/pytest -q tests/test_project_factory_generator_service.py tests/test_web_preview_deploy_service.py tests/test_web_preview_invite_service.py"
+      - ".venv/bin/pytest -q tests/test_sdd_workbench_view.py tests/test_project_factory_job_runner.py"
+  R-002-invite-first-access:
+    acceptance_criteria:
+      - Invite links auto-consume URL tokens without showing a token/link input.
+      - First access creates a password with confirmation.
+      - Logout and re-entry use normal email/password login.
+      - Used invites cannot be accepted twice but can refresh preview access while valid.
+    tasks:
+      - T008
+      - T009
+      - T010
+      - T011
+      - T012
+      - T013
+      - T014
+      - T015
+      - T016
+      - T017
+    implementation:
+      - backend/app/application/services/project_factory_generator_service.py
+      - backend/app/application/services/web_preview_invite_service.py
+      - tests/test_web_preview_invite_service.py
+    evidence:
+      - ".venv/bin/pytest -q tests/test_project_factory_generator_service.py tests/test_web_preview_invite_service.py"
+  R-003-cloudflare-preview-runtime:
+    acceptance_criteria:
+      - Protected preview routing is owned by the Worker and does not rely on Cloudflare Assets SPA fallback.
+      - Preview shell and non-hashed boot assets cannot be cached stale.
+      - Browser smoke tests prove the deployed preview renders nonblank.
+    tasks:
+      - T018
+      - T019
+      - T020
+      - T021
+      - T022
+      - T023
+      - T024
+      - T025
+      - T026
+      - T027
+      - T028
+    implementation:
+      - backend/app/application/services/web_preview_deploy_service.py
+      - backend/app/application/services/project_factory_generator_service.py
+      - tests/test_web_preview_deploy_service.py
+      - tests/test_project_factory_generator_service.py
+    evidence:
+      - ".venv/bin/pytest -q tests/test_project_factory_generator_service.py tests/test_web_preview_deploy_service.py tests/test_web_preview_invite_service.py tests/test_cloudflare_preview_doctor.py"
+      - "Generated project scripts/validate_web_preview.sh passed with ES module Worker harness and /api/admin/domains route coverage."
+  R-004-cloudflare-email-delivery:
+    acceptance_criteria:
+      - Cloudflare-backed invite email provider can be configured without hardcoded secrets.
+      - Delivery state distinguishes delivered, failed, pending, and manual fallback.
+      - Manual-link fallback remains available and truthful.
+    tasks:
+      - T029
+      - T030
+      - T031
+      - T032
+      - T033
+      - T034
+    implementation:
+      - backend/app/api/routes.py
+      - backend/app/api/schemas.py
+      - backend/app/application/services/web_preview_invite_service.py
+      - backend/app/infrastructure/config/settings.py
+      - docs/web-preview-email-ses.md
+      - deploy/cloudflare-email-endpoint/README.md
+      - deploy/cloudflare-email-endpoint/worker/local_test.mjs
+      - deploy/cloudflare-email-endpoint/worker/src/index.js
+      - deploy/cloudflare-email-endpoint/wrangler.toml.example
+      - scripts/validate_cloudflare_email_endpoint.sh
+      - tests/test_cloudflare_email_endpoint_worker.py
+      - tests/test_web_preview_invite_service.py
+    evidence:
+      - ".venv/bin/pytest -q tests/test_web_preview_invite_service.py"
+      - "Invite email preflight reports ready, manual_fallback, and misconfigured states with redacted Cloudflare email token errors."
+      - "scripts/validate_cloudflare_email_endpoint.sh validates the operator-provided Cloudflare Worker endpoint with Brevo free-compatible and Cloudflare Email Service provider modes."
+      - "docs/web-preview-email-ses.md documents the Amazon SES SMTP path, free-tier constraints, sandbox, and production access checklist."
+      - "Invite email delivery uses multipart text+HTML with an Activate account button, expiration copy, preview warning, and manual fallback URL."
+  R-005-generator-release-gates:
+    acceptance_criteria:
+      - Generated release manifests, docs, validation scripts, and reviewer checklists include the hardened preview contract.
+      - SAT Showroom regressions are covered by a fixture or golden generated project test.
+      - Validation evidence is recorded in SDD traceability.
+    tasks:
+      - T035
+      - T036
+      - T037
+      - T038
+      - T039
+    implementation:
+      - backend/app/application/services/project_factory_generator_service.py
+      - backend/app/application/services/project_factory_job_runner.py
+      - tests/test_project_factory_generator_service.py
+      - tests/test_project_factory_job_runner.py
+    evidence:
+      - ".venv/bin/pytest -q tests/test_project_factory_generator_service.py tests/test_project_factory_job_runner.py"
+      - "Generated Flutter project flutter test passed invite activation, re-entry, and no Workbench product navigation tests."
+validation_evidence:
+  - command: ".venv/bin/pytest -q tests/test_web_preview_invite_service.py tests/test_cloudflare_email_endpoint_worker.py"
+    result: "20 passed in 4.01s"
+  - command: "scripts/validate_cloudflare_email_endpoint.sh"
+    result: "cloudflare email endpoint validation completed"
+  - command: ".venv/bin/ruff check backend/app/application/services/web_preview_invite_service.py tests/test_web_preview_invite_service.py tests/test_cloudflare_email_endpoint_worker.py"
+    result: "All checks passed"
+  - command: ".venv/bin/pytest -q tests/test_project_factory_generator_service.py tests/test_web_preview_invite_service.py tests/test_cloudflare_email_endpoint_worker.py"
+    result: "50 passed, 2 warnings in 41.69s"
+  - command: "scripts/validate_cloudflare_email_endpoint.sh"
+    result: "cloudflare email endpoint validation completed"
+  - command: ".venv/bin/pytest -q tests/test_cloudflare_email_endpoint_worker.py tests/test_project_factory_generator_service.py::test_generated_contract_docs_have_coherent_minimum_content"
+    result: "2 passed, 2 warnings in 0.60s"
+  - command: ".venv/bin/pytest -q tests/test_cloudflare_email_endpoint_worker.py tests/test_web_preview_invite_service.py tests/test_project_factory_generator_service.py tests/test_web_preview_deploy_service.py tests/test_cloudflare_preview_doctor.py"
+    result: "78 passed in 43.30s"
+  - command: ".venv/bin/ruff check backend/app/application/services/project_factory_generator_service.py tests/test_project_factory_generator_service.py tests/test_cloudflare_email_endpoint_worker.py"
+    result: "All checks passed"
+  - command: ".venv/bin/pytest -q tests/test_cloudflare_email_endpoint_worker.py tests/test_web_preview_invite_service.py"
+    result: "20 passed in 3.81s"
+  - command: ".venv/bin/pytest -q tests/test_web_preview_invite_service.py"
+    result: "19 passed, 2 warnings in 3.98s"
+  - command: ".venv/bin/pytest -q tests/test_project_factory_generator_service.py tests/test_web_preview_deploy_service.py tests/test_web_preview_invite_service.py tests/test_cloudflare_preview_doctor.py"
+    result: "77 passed in 46.29s"
+  - command: ".venv/bin/ruff check backend/app/api/routes.py backend/app/api/schemas.py backend/app/application/services/web_preview_invite_service.py backend/app/application/services/project_factory_generator_service.py tests/test_web_preview_invite_service.py"
+    result: "All checks passed"
+  - command: ".venv/bin/pytest -q tests/test_project_factory_generator_service.py tests/test_web_preview_deploy_service.py tests/test_web_preview_invite_service.py tests/test_cloudflare_preview_doctor.py tests/test_sdd_workbench_view.py tests/test_project_factory_job_runner.py"
+    result: "104 passed in 76.33s"
+  - command: "Generated project: node deploy/web-preview/worker/local_preview_test.mjs"
+    result: "worker local preview harness passed"
+  - command: "Generated project: scripts/validate_web_preview.sh"
+    result: "web preview validation completed: profile=preview api_runtime=cloudflare_preview"
+  - command: "Generated project: cd apps/mobile && flutter test"
+    result: "11 passed"
+  - command: ".venv/bin/ruff check backend/app/application/services/cloudflare_preview_service.py backend/app/application/services/project_factory_generator_service.py backend/app/application/services/project_factory_manifest_service.py backend/app/application/services/web_preview_deploy_service.py backend/app/application/services/web_preview_invite_service.py backend/app/infrastructure/config/settings.py tests/test_cloudflare_preview_doctor.py tests/test_project_factory_generator_service.py tests/test_web_preview_deploy_service.py tests/test_web_preview_invite_service.py"
+    result: "All checks passed"
+  - command: ".venv/bin/python parse specs/015 metadata.yaml traceability.yaml tree.json"
+    result: "metadata.yaml ok; traceability.yaml ok; tree.json ok"
+  - command: ".venv/bin/pytest -q tests/test_sdd_workbench_view.py tests/test_project_factory_job_runner.py"
+    result: "30 passed in 8.47s"
+  - command: "cd frontend/mobile_app && flutter test"
+    result: "249 passed"
