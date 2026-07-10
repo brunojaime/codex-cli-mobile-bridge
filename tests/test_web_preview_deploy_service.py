@@ -24,6 +24,7 @@ from backend.app.application.services.web_preview_deploy_service import (
     WebPreviewError,
     WebPreviewLifecycleInput,
     WebPreviewPlanInput,
+    _worker_script_content,
 )
 from backend.app.application.services.web_preview_invite_service import (
     WebPreviewInviteCreateInput,
@@ -67,6 +68,32 @@ def test_web_preview_plan_is_stable_and_persisted(tmp_path: Path) -> None:
     assert first["disabled_at"] is None
     assert first["audit_events"][0]["event_type"] == "preview_plan_created"
     assert first["audit_events"][0]["source_app"] == "clinica-norte"
+
+
+def test_worker_script_content_extracts_module_from_multipart_payload() -> None:
+    boundary = "----preview-worker-boundary"
+    script = "export default { async fetch(request, env, ctx) { return new Response('ok'); } };"
+    raw = (
+        f"--{boundary}\r\n"
+        'Content-Disposition: form-data; name="metadata"\r\n'
+        "Content-Type: application/json\r\n\r\n"
+        '{"main_module":"index.js"}\r\n'
+        f"--{boundary}\r\n"
+        'Content-Disposition: form-data; name="index.js"; filename="index.js"\r\n'
+        "Content-Type: application/javascript+module\r\n\r\n"
+        f"{script}\r\n"
+        f"--{boundary}--\r\n"
+    )
+
+    assert (
+        _worker_script_content(
+            {
+                "raw": raw,
+                "content_type": f"multipart/form-data; boundary={boundary}",
+            }
+        )
+        == script
+    )
 
 
 def test_web_preview_lifecycle_extend_disable_and_expire_are_persisted(
@@ -228,7 +255,14 @@ def test_web_preview_deploy_applies_resources_with_fake_cloudflare(
     assert ("r2_bucket", "skipped") in statuses
     assert payload["invite_sync_summary"]["synced"] == 1
     assert fake.calls.count("create_dns_record:zone-1") == 1
-    assert "deploy_worker_script:acct-1:nienfos-preview-runtime" in fake.calls
+    assert "deploy_worker_script:acct-1:nienfos-preview-runtime:module" in fake.calls
+    worker_resource = next(
+        item for item in payload["applied_resources"] if item["kind"] == "worker_script"
+    )
+    assert worker_resource["worker_format"] == "module"
+    assert worker_resource["verified"] is True
+    assert worker_resource["verification_status"] == "verified"
+    assert payload["worker_script_verification_status"] == "verified"
     assert (
         "create_worker_route:zone-1:preview.nienfos.com/clinica-norte/*"
         in fake.calls
@@ -263,15 +297,46 @@ def test_web_preview_deploy_is_idempotent_when_resources_exist(
 
     assert payload["status"] == "active"
     assert all(
-        item["status"] in {"existing", "planned_external", "skipped", "applied"}
+        item["status"] in {
+            "existing",
+            "updated",
+            "planned_external",
+            "skipped",
+            "applied",
+        }
         for item in payload["applied_resources"]
     )
     assert not any(call.startswith("create_dns_record") for call in fake.calls)
-    assert not any(call.startswith("deploy_worker_script") for call in fake.calls)
+    assert "deploy_worker_script:acct-1:nienfos-preview-runtime:module" in fake.calls
     assert not any(call.startswith("create_worker_route") for call in fake.calls)
     assert not any(call.startswith("create_d1_database") for call in fake.calls)
     assert not any(call.startswith("create_pages_project") for call in fake.calls)
     assert "execute_d1_sql:acct-1:d1-1" in fake.calls
+
+
+def test_web_preview_deploy_fails_when_worker_remote_verification_mismatches(
+    tmp_path: Path,
+) -> None:
+    project = _generated_project(tmp_path)
+    _write_web_build_output(project)
+    fake = _FakeCloudflareClient(worker_verify_mismatch=True)
+    service = _service(tmp_path, apply_enabled=True, fake=fake)
+    plan = service.plan(WebPreviewPlanInput(project_path=str(project)))
+
+    with pytest.raises(WebPreviewError) as exc:
+        service.deploy(
+            WebPreviewDeployInput(
+                project_path=str(project),
+                confirm_apply=True,
+                expected_plan_hash=plan["plan_hash"],
+            )
+        )
+
+    assert exc.value.code == "deploy_failed"
+    assert "worker_verify_hash_mismatch" in exc.value.message
+    state = _read_preview(tmp_path, plan["preview_id"])
+    assert state["status"] == "failed"
+    assert "worker_verify_hash_mismatch" in state["error"]
 
 
 def test_web_preview_deploy_recovers_existing_active_without_duplicate_apply(
@@ -330,7 +395,13 @@ def test_web_preview_deploy_recovers_interrupted_applying_state_with_existing_re
     assert recovered["status"] == "active"
     assert recovered["recovery_status"] == "recovering_from_applying"
     assert all(
-        item["status"] in {"existing", "planned_external", "skipped", "applied"}
+        item["status"] in {
+            "existing",
+            "updated",
+            "planned_external",
+            "skipped",
+            "applied",
+        }
         for item in recovered["applied_resources"]
     )
     assert "preview_recovery_started" in {
@@ -648,6 +719,14 @@ def _read_invite(tmp_path: Path, invite_id: str) -> dict[str, Any]:
     )
 
 
+def _read_preview(tmp_path: Path, preview_id: str) -> dict[str, Any]:
+    return json.loads(
+        (tmp_path / "state/previews" / f"{preview_id}.json").read_text(
+            encoding="utf-8",
+        )
+    )
+
+
 def _settings(
     tmp_path: Path,
     *,
@@ -697,13 +776,16 @@ class _FakeCloudflareClient:
         *,
         resources_exist: bool = False,
         fail_worker: bool = False,
+        worker_verify_mismatch: bool = False,
         fail_invite_sync: bool = False,
     ) -> None:
         self.calls: list[str] = []
         self.sql_calls: list[dict[str, Any]] = []
         self.resources_exist = resources_exist
         self.fail_worker = fail_worker
+        self.worker_verify_mismatch = worker_verify_mismatch
         self.fail_invite_sync = fail_invite_sync
+        self.worker_scripts: dict[str, str] = {}
 
     def get_account(self, account_id: str) -> CloudflareLookupResult:
         self.calls.append(f"get_account:{account_id}")
@@ -799,10 +881,17 @@ class _FakeCloudflareClient:
         script_name: str,
     ) -> CloudflareLookupResult:
         self.calls.append(f"get_worker_script:{account_id}:{script_name}")
+        if script_name in self.worker_scripts:
+            content = (
+                "mismatched remote worker"
+                if self.worker_verify_mismatch
+                else self.worker_scripts[script_name]
+            )
+            return CloudflareLookupResult(ok=True, payload={"raw": content})
         if self.resources_exist:
             return CloudflareLookupResult(
                 ok=True,
-                payload={"result": {"id": script_name}},
+                payload={"raw": "// existing worker script"},
             )
         return CloudflareLookupResult(ok=False, status_code=404, error="not found")
 
@@ -812,14 +901,18 @@ class _FakeCloudflareClient:
         account_id: str,
         script_name: str,
         script_content: str,
+        worker_format: str = "module",
     ) -> CloudflareLookupResult:
-        self.calls.append(f"deploy_worker_script:{account_id}:{script_name}")
+        self.calls.append(
+            f"deploy_worker_script:{account_id}:{script_name}:{worker_format}"
+        )
         if self.fail_worker:
             return CloudflareLookupResult(
                 ok=False,
                 status_code=500,
                 error="Bearer secret-token worker deploy failed",
             )
+        self.worker_scripts[script_name] = script_content
         return CloudflareLookupResult(
             ok=True,
             payload={"result": {"id": script_name, "size": len(script_content)}},

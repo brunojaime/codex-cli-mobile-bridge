@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 import base64
 from email.message import EmailMessage
+from html import escape
 import hashlib
 import hmac
 import json
@@ -12,7 +13,9 @@ import secrets
 import smtplib
 from tempfile import NamedTemporaryFile
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
+import urllib.error
+import urllib.request
 
 from backend.app.application.services.web_preview_deploy_service import (
     WebPreviewDeployService,
@@ -48,6 +51,15 @@ class WebPreviewInviteDeliveryResult:
     delivered_at: str | None = None
     error: str | None = None
     manual_delivery_required: bool = False
+    provider_message_id: str | None = None
+
+
+SUPPORTED_WEB_PREVIEW_EMAIL_PROVIDERS = {
+    "disabled",
+    "manual",
+    "smtp",
+    "cloudflare_email",
+}
 
 
 class WebPreviewInviteService:
@@ -62,6 +74,107 @@ class WebPreviewInviteService:
         self._state_root = Path(settings.web_preview_state_dir).expanduser().resolve()
         self._invite_state_dir = self._state_root / "invites"
         self._invite_state_dir.mkdir(parents=True, exist_ok=True)
+
+    def email_delivery_preflight(self) -> dict[str, Any]:
+        provider = str(self._settings.web_preview_email_provider or "").strip()
+        sender = (self._settings.web_preview_email_from or "").strip()
+        endpoint = (self._settings.web_preview_email_endpoint or "").strip()
+        token = (self._settings.web_preview_email_api_token or "").strip()
+        timeout = self._settings.web_preview_smtp_timeout_seconds
+        checks: dict[str, dict[str, Any]] = {}
+        errors: list[str] = []
+
+        provider_supported = provider in SUPPORTED_WEB_PREVIEW_EMAIL_PROVIDERS
+        checks["provider"] = {
+            "ok": provider_supported,
+            "value": provider or None,
+        }
+        if not provider_supported:
+            errors.append(f"Unsupported web preview email provider: {provider or '<empty>'}")
+
+        timeout_ok = timeout > 0
+        checks["timeout"] = {"ok": timeout_ok, "seconds": timeout}
+        if not timeout_ok:
+            errors.append("WEB_PREVIEW_SMTP_TIMEOUT_SECONDS must be positive.")
+
+        if provider in {"disabled", "manual"}:
+            return {
+                "kind": "codex.webPreviewInviteEmailPreflight",
+                "version": 1,
+                "provider": provider,
+                "status": "manual_fallback",
+                "ready": False,
+                "manual_delivery_required": True,
+                "checks": checks,
+                "errors": errors,
+            }
+
+        if provider == "smtp":
+            sender_ok = _is_valid_email_address(sender)
+            host = (self._settings.web_preview_smtp_host or "").strip()
+            checks["from_address"] = {"ok": sender_ok, "value": sender or None}
+            checks["smtp_host"] = {"ok": bool(host), "configured": bool(host)}
+            if not sender_ok:
+                errors.append("WEB_PREVIEW_EMAIL_FROM must be a valid email address.")
+            if not host:
+                errors.append("WEB_PREVIEW_SMTP_HOST is required.")
+            status = "ready" if not errors else "manual_fallback"
+            return {
+                "kind": "codex.webPreviewInviteEmailPreflight",
+                "version": 1,
+                "provider": provider,
+                "status": status,
+                "ready": status == "ready",
+                "manual_delivery_required": status != "ready",
+                "checks": checks,
+                "errors": errors,
+            }
+
+        if provider == "cloudflare_email":
+            sender_ok = _is_valid_email_address(sender)
+            endpoint_ok = _is_valid_http_endpoint(endpoint)
+            checks["from_address"] = {"ok": sender_ok, "value": sender or None}
+            checks["endpoint"] = {
+                "ok": endpoint_ok,
+                "configured": bool(endpoint),
+                "value": _redact_url(endpoint) if endpoint else None,
+            }
+            checks["api_token"] = {"ok": bool(token), "configured": bool(token)}
+            if not sender:
+                errors.append("WEB_PREVIEW_EMAIL_FROM is required.")
+            elif not sender_ok:
+                errors.append("WEB_PREVIEW_EMAIL_FROM must be a valid email address.")
+            if not endpoint:
+                errors.append("WEB_PREVIEW_EMAIL_ENDPOINT is required.")
+            elif not endpoint_ok:
+                errors.append("WEB_PREVIEW_EMAIL_ENDPOINT must be an http(s) URL.")
+            if not token:
+                errors.append("WEB_PREVIEW_EMAIL_API_TOKEN is required.")
+            if sender and endpoint and token and (not sender_ok or not endpoint_ok or not timeout_ok):
+                status = "misconfigured"
+            else:
+                status = "ready" if not errors else "manual_fallback"
+            return {
+                "kind": "codex.webPreviewInviteEmailPreflight",
+                "version": 1,
+                "provider": provider,
+                "status": status,
+                "ready": status == "ready",
+                "manual_delivery_required": status != "ready",
+                "checks": checks,
+                "errors": errors,
+            }
+
+        return {
+            "kind": "codex.webPreviewInviteEmailPreflight",
+            "version": 1,
+            "provider": provider,
+            "status": "misconfigured",
+            "ready": False,
+            "manual_delivery_required": True,
+            "checks": checks,
+            "errors": errors,
+        }
 
     def create_invite(self, request: WebPreviewInviteCreateInput) -> dict[str, Any]:
         secret = self._require_secret()
@@ -118,8 +231,10 @@ class WebPreviewInviteService:
             "resend_count": 0,
             "last_sent_at": None,
             "email_provider": self._settings.web_preview_email_provider,
+            "email_delivery_preflight": self.email_delivery_preflight(),
             "email_delivery_status": "not_requested" if email is None else "pending",
             "email_delivery_error": None,
+            "email_provider_message_id": None,
             "manual_delivery_required": email is None,
             "sync_status": "not_deployed",
             "synced_at": None,
@@ -382,12 +497,15 @@ class WebPreviewInviteService:
         return updated
 
     def _deliver_and_persist(self, payload: dict[str, Any]) -> dict[str, Any]:
+        preflight = self.email_delivery_preflight()
         delivery = self._deliver_invite_email(payload)
         updated = {
             **payload,
+            "email_delivery_preflight": preflight,
             "email_provider": delivery.provider,
             "email_delivery_status": delivery.status,
             "email_delivery_error": delivery.error,
+            "email_provider_message_id": delivery.provider_message_id,
             "manual_delivery_required": delivery.manual_delivery_required,
             "last_sent_at": delivery.delivered_at or payload.get("last_sent_at"),
         }
@@ -405,6 +523,7 @@ class WebPreviewInviteService:
     ) -> WebPreviewInviteDeliveryResult:
         email = str(invite.get("email") or "").strip()
         provider = self._settings.web_preview_email_provider
+        preflight = self.email_delivery_preflight()
         if not email:
             return WebPreviewInviteDeliveryResult(
                 status="manual_link_required",
@@ -418,7 +537,30 @@ class WebPreviewInviteService:
                 manual_delivery_required=True,
             )
         if provider == "smtp":
+            if preflight["status"] != "ready":
+                return WebPreviewInviteDeliveryResult(
+                    status="manual_link_required",
+                    provider=provider,
+                    error="; ".join(preflight.get("errors") or []),
+                    manual_delivery_required=True,
+                )
             return self._send_smtp_invite(invite, email=email)
+        if provider == "cloudflare_email":
+            if preflight["status"] == "manual_fallback":
+                return WebPreviewInviteDeliveryResult(
+                    status="manual_link_required",
+                    provider=provider,
+                    error="; ".join(preflight.get("errors") or []),
+                    manual_delivery_required=True,
+                )
+            if preflight["status"] != "ready":
+                return WebPreviewInviteDeliveryResult(
+                    status="blocked_provider",
+                    provider=provider,
+                    error="; ".join(preflight.get("errors") or []),
+                    manual_delivery_required=True,
+                )
+            return self._send_cloudflare_email_invite(invite, email=email)
         return WebPreviewInviteDeliveryResult(
             status="blocked_provider",
             provider=provider,
@@ -444,19 +586,27 @@ class WebPreviewInviteService:
         message = EmailMessage()
         message["From"] = sender
         message["To"] = email
-        message["Subject"] = "Your web preview invite"
+        message["Subject"] = _invite_email_subject(invite)
         message.set_content(
-            "Open this preview invite link:\n\n"
-            f"{invite.get('invite_url')}\n\n"
-            "This link may expire or be single-use."
+            _invite_email_body(invite),
+        )
+        message.add_alternative(
+            _invite_email_html_body(invite),
+            subtype="html",
         )
         try:
-            with smtplib.SMTP(
+            smtp_port = self._settings.web_preview_smtp_port
+            smtp_class = (
+                smtplib.SMTP_SSL
+                if self._settings.web_preview_smtp_implicit_tls or smtp_port == 465
+                else smtplib.SMTP
+            )
+            with smtp_class(
                 host,
-                self._settings.web_preview_smtp_port,
+                smtp_port,
                 timeout=self._settings.web_preview_smtp_timeout_seconds,
             ) as smtp:
-                if self._settings.web_preview_smtp_use_tls:
+                if smtp_class is smtplib.SMTP and self._settings.web_preview_smtp_use_tls:
                     smtp.starttls()
                 username = self._settings.web_preview_smtp_username
                 password = self._settings.web_preview_smtp_password
@@ -474,6 +624,78 @@ class WebPreviewInviteService:
             status="sent",
             provider="smtp",
             delivered_at=_iso(datetime.now(UTC)),
+        )
+
+    def _send_cloudflare_email_invite(
+        self,
+        invite: dict[str, Any],
+        *,
+        email: str,
+    ) -> WebPreviewInviteDeliveryResult:
+        sender = (self._settings.web_preview_email_from or "").strip()
+        endpoint = (self._settings.web_preview_email_endpoint or "").strip()
+        token = (self._settings.web_preview_email_api_token or "").strip()
+        if not sender or not endpoint or not token:
+            return WebPreviewInviteDeliveryResult(
+                status="manual_link_required",
+                provider="cloudflare_email",
+                error=(
+                    "WEB_PREVIEW_EMAIL_FROM, WEB_PREVIEW_EMAIL_ENDPOINT, and "
+                    "WEB_PREVIEW_EMAIL_API_TOKEN are required."
+                ),
+                manual_delivery_required=True,
+            )
+        payload = {
+            "from": sender,
+            "to": email,
+            "subject": _invite_email_subject(invite),
+            "text": _invite_email_body(invite),
+            "html": _invite_email_html_body(invite),
+            "metadata": {
+                "preview_id": invite.get("preview_id"),
+                "invite_id": invite.get("invite_id"),
+                "source_app": invite.get("source_app"),
+            },
+        }
+        request = urllib.request.Request(
+            endpoint,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "authorization": f"Bearer {token}",
+                "content-type": "application/json",
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(
+                request,
+                timeout=self._settings.web_preview_smtp_timeout_seconds,
+            ) as response:
+                raw = response.read().decode("utf-8")
+        except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError) as exc:
+            return WebPreviewInviteDeliveryResult(
+                status="failed",
+                provider="cloudflare_email",
+                error=_safe_email_error(str(exc), token),
+                manual_delivery_required=True,
+            )
+        provider_message_id = None
+        try:
+            body = json.loads(raw) if raw else {}
+        except json.JSONDecodeError:
+            body = {}
+        if isinstance(body, dict):
+            provider_message_id = str(
+                body.get("id")
+                or body.get("message_id")
+                or body.get("messageId")
+                or ""
+            ) or None
+        return WebPreviewInviteDeliveryResult(
+            status="sent",
+            provider="cloudflare_email",
+            delivered_at=_iso(datetime.now(UTC)),
+            provider_message_id=provider_message_id,
         )
 
 
@@ -597,6 +819,43 @@ def _normalize_email(value: str | None) -> str | None:
     return email
 
 
+def _is_valid_email_address(value: str) -> bool:
+    try:
+        return _normalize_email(value) is not None
+    except WebPreviewInviteError:
+        return False
+
+
+def _is_valid_http_endpoint(value: str) -> bool:
+    if not value:
+        return False
+    parsed = urlsplit(value)
+    return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
+
+
+def _redact_url(value: str) -> str:
+    if not value:
+        return value
+    parsed = urlsplit(value)
+    netloc = parsed.netloc
+    if "@" in netloc:
+        netloc = f"[redacted]@{netloc.rsplit('@', 1)[1]}"
+    redacted_query = urlencode(
+        [
+            (
+                key,
+                "[redacted]"
+                if any(marker in key.lower() for marker in ("token", "secret", "key"))
+                else query_value,
+            )
+            for key, query_value in parse_qsl(parsed.query, keep_blank_values=True)
+        ]
+    )
+    return urlunsplit(
+        (parsed.scheme, netloc, parsed.path, redacted_query, parsed.fragment)
+    )
+
+
 def _normalize_role(value: str | None) -> str:
     role = (value or "admin").strip().lower()
     allowed = {"owner", "admin", "manager", "staff"}
@@ -614,6 +873,56 @@ def _safe_email_error(message: str, *secrets_to_redact: str | None) -> str:
         if secret:
             safe = safe.replace(secret, "[redacted]")
     return safe
+
+
+def _invite_email_subject(invite: dict[str, Any]) -> str:
+    source_app = str(invite.get("source_app") or "preview").replace("-", " ").title()
+    return f"Invitacion al Preview de {source_app}"
+
+
+def _invite_email_body(invite: dict[str, Any]) -> str:
+    expires_at = str(invite.get("expires_at") or "the configured expiration time")
+    return (
+        "Recibiste una invitacion para acceder al Preview.\n\n"
+        "Usa el boton principal del email HTML para aceptar la invitacion y crear tu contrasena.\n\n"
+        f"La invitacion vence: {expires_at}\n"
+        "Este Preview es una version inicial, no una version de produccion.\n"
+        "Si necesitas un enlace manual, solicitalo al operador del Preview."
+    )
+
+
+def _invite_email_html_body(invite: dict[str, Any]) -> str:
+    source_app = str(invite.get("source_app") or "preview").replace("-", " ").title()
+    invite_url = str(invite.get("invite_url") or "")
+    expires_at = str(invite.get("expires_at") or "the configured expiration time")
+    safe_app = escape(source_app)
+    safe_url = escape(invite_url, quote=True)
+    safe_expires = escape(expires_at)
+    return f"""<!doctype html>
+<html lang="es">
+  <body style="margin:0;background:#f6f7f9;color:#1f2937;font-family:Arial,sans-serif;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f6f7f9;padding:24px 0;">
+      <tr>
+        <td align="center">
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:560px;background:#ffffff;border:1px solid #e5e7eb;border-radius:8px;">
+            <tr>
+              <td style="padding:28px;">
+                <h1 style="margin:0 0 12px;font-size:22px;line-height:1.3;color:#111827;">Invitacion al Preview de {safe_app}</h1>
+                <p style="margin:0 0 20px;font-size:15px;line-height:1.6;color:#374151;">Recibiste una invitacion para revisar una version inicial de Preview. Crea tu contrasena para ingresar.</p>
+                <p style="margin:0 0 24px;">
+                  <a href="{safe_url}" style="display:inline-block;background:#111827;color:#ffffff;text-decoration:none;font-size:15px;font-weight:700;padding:12px 18px;border-radius:6px;">Aceptar invitación</a>
+                </p>
+                <p style="margin:0 0 12px;font-size:13px;line-height:1.5;color:#6b7280;">La invitacion vence: {safe_expires}</p>
+                <p style="margin:0 0 16px;font-size:13px;line-height:1.5;color:#6b7280;">Este Preview es una version inicial, no una version de produccion.</p>
+                <p style="margin:0;font-size:12px;line-height:1.5;color:#6b7280;">Si el boton no funciona, pedi un enlace manual al operador del Preview.</p>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>"""
 
 
 def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:

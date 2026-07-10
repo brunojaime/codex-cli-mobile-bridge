@@ -47,3 +47,10 @@
 - [x] T045 Add strict final preflight for preview admin, Bridge, app tags, runtime, API URL, and D1 env.
 - [x] T046 Generate stable Android preview signing workflow, local signing policy, and apksigner verification.
 - [x] T047 Generate final readiness audit checks for stale TODO/blocker/mock/generic-endpoint/release-tag/commit language.
+- [x] T048 Restore generated Flutter preview/dev Bridge overlays with CODEX DEV, SDD entrypoint, feedback, updater, and Workbench URL separation.
+- [x] T049 Keep generated app updater integration present but controlled by CODEX_APP_UPDATER_ENABLED without false banners when disabled or unconfigured.
+- [x] T050 Replace generated Flutter/FastAPI/Worker/smoke/tests stale `/admin/domains` and `/domain/smoke_records` contract with business-record preview endpoints.
+- [x] T051 Forbid debug preview signing for installable Initial Preview Release artifacts and keep signing validation explicit.
+- [x] T052 Send default preview invitation email in Spanish without visible raw invite URLs or token text.
+- [x] T053 Generate visual validation reports without TODOs when no assets are attached and record asset metadata/mapping when assets exist.
+- [x] T054 Validate generated Android INTERNET permission as part of preview release profile checks.

@@ -860,7 +860,7 @@ async def plan_web_preview(
         )
     except WebPreviewError as exc:
         raise _web_preview_http_error(exc) from exc
-    return WebPreviewResponse(**payload)
+    return await _web_preview_response(payload, container)
 
 
 @router.post("/web-previews/deploy", response_model=WebPreviewResponse)
@@ -881,7 +881,7 @@ async def deploy_web_preview(
         )
     except WebPreviewError as exc:
         raise _web_preview_http_error(exc) from exc
-    return WebPreviewResponse(**payload)
+    return await _web_preview_response(payload, container)
 
 
 @router.get("/web-previews", response_model=WebPreviewListResponse)
@@ -893,8 +893,25 @@ async def list_web_previews(
         container.web_preview_deploy_service.list_previews,
         limit=limit,
     )
+    email_preflight = await run_in_threadpool(
+        container.web_preview_invite_service.email_delivery_preflight,
+    )
     return WebPreviewListResponse(
-        previews=[WebPreviewResponse(**preview) for preview in previews],
+        previews=[
+            WebPreviewResponse(
+                **{**preview, "invite_email_delivery": email_preflight}
+            )
+            for preview in previews
+        ],
+    )
+
+
+@router.get("/web-previews/invite-email-preflight")
+async def web_preview_invite_email_preflight(
+    container: AppContainer = Depends(get_container),
+) -> dict[str, Any]:
+    return await run_in_threadpool(
+        container.web_preview_invite_service.email_delivery_preflight,
     )
 
 
@@ -909,7 +926,7 @@ async def get_web_preview(
     )
     if preview is None:
         raise HTTPException(status_code=404, detail={"code": "web_preview_not_found"})
-    return WebPreviewResponse(**preview)
+    return await _web_preview_response(preview, container)
 
 
 @router.post("/web-previews/{preview_id}/disable", response_model=WebPreviewResponse)
@@ -930,7 +947,7 @@ async def disable_web_preview(
         )
     except WebPreviewError as exc:
         raise _web_preview_http_error(exc) from exc
-    return WebPreviewResponse(**payload)
+    return await _web_preview_response(payload, container)
 
 
 @router.post("/web-previews/{preview_id}/expire", response_model=WebPreviewResponse)
@@ -951,7 +968,7 @@ async def expire_web_preview(
         )
     except WebPreviewError as exc:
         raise _web_preview_http_error(exc) from exc
-    return WebPreviewResponse(**payload)
+    return await _web_preview_response(payload, container)
 
 
 @router.post("/web-previews/{preview_id}/extend", response_model=WebPreviewResponse)
@@ -973,7 +990,7 @@ async def extend_web_preview(
         )
     except WebPreviewError as exc:
         raise _web_preview_http_error(exc) from exc
-    return WebPreviewResponse(**payload)
+    return await _web_preview_response(payload, container)
 
 
 @router.post(
@@ -5173,6 +5190,18 @@ def _web_preview_invite_http_error(exc: WebPreviewInviteError) -> HTTPException:
             "code": exc.code,
             "message": exc.message,
         },
+    )
+
+
+async def _web_preview_response(
+    payload: dict[str, Any],
+    container: AppContainer,
+) -> WebPreviewResponse:
+    email_preflight = await run_in_threadpool(
+        container.web_preview_invite_service.email_delivery_preflight,
+    )
+    return WebPreviewResponse(
+        **{**payload, "invite_email_delivery": email_preflight}
     )
 
 

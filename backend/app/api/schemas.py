@@ -403,6 +403,7 @@ class WebPreviewResponse(BaseModel):
     planned_resources: list[dict[str, Any]]
     applied_resources: list[dict[str, Any]]
     invite_sync_summary: dict[str, Any] | None = None
+    invite_email_delivery: dict[str, Any] | None = None
     error: str | None = None
     logs: list[dict[str, Any]] = Field(default_factory=list)
     created_at: str
@@ -456,6 +457,7 @@ class WebPreviewInviteResponse(BaseModel):
     resend_count: int = 0
     last_sent_at: str | None = None
     email_provider: str | None = None
+    email_delivery_preflight: dict[str, Any] | None = None
     email_delivery_status: str = "not_requested"
     email_delivery_error: str | None = None
     manual_delivery_required: bool = False

@@ -114,13 +114,21 @@ class Settings(BaseSettings):
     web_preview_invite_secret: str | None = None
     web_preview_invite_default_ttl_seconds: int = 7 * 24 * 60 * 60
     web_preview_invite_max_ttl_seconds: int = 7 * 24 * 60 * 60
-    web_preview_email_provider: Literal["disabled", "manual", "smtp"] = "manual"
+    web_preview_email_provider: Literal[
+        "disabled",
+        "manual",
+        "smtp",
+        "cloudflare_email",
+    ] = "manual"
     web_preview_email_from: str | None = None
+    web_preview_email_endpoint: str | None = None
+    web_preview_email_api_token: str | None = None
     web_preview_smtp_host: str | None = None
     web_preview_smtp_port: int = 587
     web_preview_smtp_username: str | None = None
     web_preview_smtp_password: str | None = None
     web_preview_smtp_use_tls: bool = True
+    web_preview_smtp_implicit_tls: bool = False
     web_preview_smtp_timeout_seconds: float = 10.0
     sdd_file_max_bytes: int = 256_000
     openai_api_key: str | None = None

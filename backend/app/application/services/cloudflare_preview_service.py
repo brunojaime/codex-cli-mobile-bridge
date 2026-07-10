@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Protocol
+import json
+from typing import Any, Literal, Protocol
 from urllib.parse import urlencode
 
 import httpx
@@ -67,6 +68,7 @@ class CloudflareClient(Protocol):
         account_id: str,
         script_name: str,
         script_content: str,
+        worker_format: Literal["classic", "module"] = "module",
     ) -> CloudflareLookupResult:
         ...
 
@@ -256,7 +258,30 @@ class HttpCloudflareClient:
         account_id: str,
         script_name: str,
         script_content: str,
+        worker_format: Literal["classic", "module"] = "module",
     ) -> CloudflareLookupResult:
+        if worker_format == "module":
+            return self._request(
+                "PUT",
+                f"/accounts/{account_id}/workers/scripts/{script_name}",
+                files={
+                    "metadata": (
+                        None,
+                        json.dumps({"main_module": "index.js"}),
+                        "application/json",
+                    ),
+                    "index.js": (
+                        "index.js",
+                        script_content.encode("utf-8"),
+                        "application/javascript+module",
+                    ),
+                },
+            )
+        if worker_format != "classic":
+            return CloudflareLookupResult(
+                ok=False,
+                error=f"Unsupported Worker format: {worker_format}",
+            )
         return self._request(
             "PUT",
             f"/accounts/{account_id}/workers/scripts/{script_name}",
@@ -331,20 +356,24 @@ class HttpCloudflareClient:
         json: dict[str, Any] | None = None,
         content: bytes | None = None,
         content_type: str = "application/json",
+        files: dict[str, tuple[str | None, bytes | str, str]] | None = None,
         use_dns_token: bool = False,
     ) -> CloudflareLookupResult:
         token = self._dns_api_token if use_dns_token else self._api_token
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/json",
+        }
+        if files is None:
+            headers["Content-Type"] = content_type
         try:
             response = httpx.request(
                 method,
                 f"{self._base_url}{path}",
-                headers={
-                    "Authorization": f"Bearer {token}",
-                    "Accept": "application/json",
-                    "Content-Type": content_type,
-                },
+                headers=headers,
                 json=json,
                 content=content,
+                files=files,
                 timeout=self._timeout_seconds,
             )
         except httpx.HTTPError as exc:
@@ -354,7 +383,10 @@ class HttpCloudflareClient:
             parsed = response.json()
             payload = parsed if isinstance(parsed, (dict, list)) else None
         except ValueError:
-            payload = None
+            payload = {
+                "raw": response.text,
+                "content_type": response.headers.get("content-type"),
+            }
         if response.status_code >= 400:
             return CloudflareLookupResult(
                 ok=False,

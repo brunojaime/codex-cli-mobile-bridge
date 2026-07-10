@@ -124,6 +124,8 @@ def test_generator_writes_foundation_and_rolls_no_secrets(tmp_path: Path) -> Non
     session = (
         project / "apps/mobile/lib/src/session_controller.dart"
     ).read_text(encoding="utf-8")
+    main = (project / "apps/mobile/lib/main.dart").read_text(encoding="utf-8")
+    pubspec = (project / "apps/mobile/pubspec.yaml").read_text(encoding="utf-8")
     assert "acceptPreviewInvite" in api_client
     assert "'/invites/accept'" in api_client
     assert "Activate preview account" in screens
@@ -131,6 +133,16 @@ def test_generator_writes_foundation_and_rolls_no_secrets(tmp_path: Path) -> Non
     assert "Activate account" in screens
     assert "Repeat password" in screens
     assert "label: 'Workbench'" not in screens
+    assert "CodexBridgeDevModeWrapper" in main
+    assert "DeveloperFeedbackTemplate" in main
+    assert "CODEX DEV" not in screens
+    assert "CODEX_BRIDGE_WORKBENCH_URL" in main
+    assert "CODEX_APP_UPDATER_ENABLED" in main
+    assert "CODEX_APP_UPDATER_BRIDGE_URL" in main
+    assert "workbenchBridgeUrl: apiBaseUrl" not in main
+    assert "codex_developer_feedback_template:" in pubspec
+    assert "codex_app_updater:" in pubspec
+    assert "codex_bridge_workbench:" in pubspec
     assert "isPreviewRuntime" in session
     manifest = (project / ".codex/project.yaml").read_text(encoding="utf-8")
     assert "runtime_profiles:" in manifest
@@ -249,7 +261,7 @@ def test_generator_writes_executable_e2e_validation_script(tmp_path: Path) -> No
     assert "/auth/login" in content
     assert "/auth/me" in content
     assert "/admin/roles" in content
-    assert "/admin/domains" in content
+    assert "/admin/business-records" in content
     assert "/notifications" in content
     assert "flutter test --dart-define=API_BASE_URL=" in content
     assert "validate_release_profiles.sh" in content
@@ -609,7 +621,7 @@ def test_generator_writes_executable_publish_script(tmp_path: Path) -> None:
     preview_profile_content = preview_profile_script.read_text(encoding="utf-8")
     assert "release/preview-runtime.json" in preview_profile_content
     assert "release/preview-signing-policy.json" in preview_profile_content
-    assert "DEBUG_PREVIEW_SIGNING_ACKNOWLEDGED" in preview_profile_content
+    assert "debug preview signing is forbidden" in preview_profile_content
     assert "deploy/web-preview/web-preview-manifest.yaml" in preview_profile_content
     assert "scripts/validate_release_profiles.sh" in preview_profile_content
 
@@ -1456,10 +1468,10 @@ def test_generated_preview_signing_policy_blocks_debug_without_metadata(
         check=False,
     )
     assert blocked.returncode != 0
-    assert "debugPreview.enabled=true" in blocked.stderr
+    assert "debug preview signing is forbidden" in blocked.stderr
 
 
-def test_generated_preview_signing_policy_allows_explicit_debug_preview(
+def test_generated_preview_signing_policy_rejects_explicit_debug_preview(
     tmp_path: Path,
 ) -> None:
     manifest_plan = ProjectFactoryManifestService(
@@ -1479,7 +1491,7 @@ def test_generated_preview_signing_policy_allows_explicit_debug_preview(
     policy["debugPreview"]["enabled"] = True
     policy_path.write_text(json.dumps(policy, indent=2), encoding="utf-8")
 
-    accepted = subprocess.run(
+    rejected = subprocess.run(
         ["scripts/validate_preview_release_profiles.sh"],
         cwd=project,
         env={
@@ -1493,7 +1505,8 @@ def test_generated_preview_signing_policy_allows_explicit_debug_preview(
         capture_output=True,
         check=False,
     )
-    assert accepted.returncode == 0, accepted.stdout + accepted.stderr
+    assert rejected.returncode != 0
+    assert "debug preview signing is forbidden" in rejected.stderr
 
     wrong_tag = subprocess.run(
         ["scripts/validate_preview_release_profiles.sh"],
@@ -1510,7 +1523,7 @@ def test_generated_preview_signing_policy_allows_explicit_debug_preview(
         check=False,
     )
     assert wrong_tag.returncode != 0
-    assert "android-preview-v* tags" in wrong_tag.stderr
+    assert "debug preview signing is forbidden" in wrong_tag.stderr
 
 
 def test_generated_project_registers_installable_app_contract(
@@ -1780,10 +1793,17 @@ def test_generator_writes_flutter_mobile_v1_template(tmp_path: Path) -> None:
     pubspec = (mobile / "pubspec.yaml").read_text(encoding="utf-8")
     assert "name: clinica_norte" in pubspec
     assert "http: ^1.2.2" in pubspec
+    assert "codex_developer_feedback_template:" in pubspec
+    assert "codex_app_updater:" in pubspec
+    assert "codex_bridge_workbench:" in pubspec
     readme = (mobile / "README.md").read_text(encoding="utf-8")
     assert "--dart-define=API_BASE_URL=" in readme
     main = (mobile / "lib/main.dart").read_text(encoding="utf-8")
     assert "String.fromEnvironment('API_BASE_URL')" in main
+    assert "CODEX_BRIDGE_WORKBENCH_URL" in main
+    assert "CODEX_APP_UPDATER_ENABLED" in main
+    assert "CodexBridgeDevModeWrapper" in main
+    assert "DeveloperFeedbackTemplate" in main
     assert "APP_RUNTIME_PROFILE" in main
     assert "MockProjectApiClient" in main
     api_client = (mobile / "lib/src/api_client.dart").read_text(encoding="utf-8")
@@ -1794,7 +1814,7 @@ def test_generator_writes_flutter_mobile_v1_template(tmp_path: Path) -> None:
     assert "/auth/logout" in api_client
     assert "/admin/users" in api_client
     assert "/admin/roles" in api_client
-    assert "/admin/domains" in api_client
+    assert "/admin/business-records" in api_client
     assert "/notifications" in api_client
     screens = (mobile / "lib/src/screens.dart").read_text(encoding="utf-8")
     assert "user.canAccessAdmin" in screens
@@ -1833,7 +1853,8 @@ def test_generator_writes_visual_reference_contract(tmp_path: Path) -> None:
     report = (project / "design/visual-validation-report.md").read_text(
         encoding="utf-8",
     )
-    assert "screenshots/previews" in report
+    assert "Preview screenshots" in report
+    assert "No visual reference assets were attached" in report
     tokens = (project / "design/tokens.yaml").read_text(encoding="utf-8")
     assert "derived_from_visual_references" in tokens
 
@@ -1872,7 +1893,8 @@ def test_generated_web_preview_bundle_is_validable_locally(tmp_path: Path) -> No
     assert "invite_password_setup" in worker_text
     assert "/api/admin/bootstrap" in worker_text
     assert "/api/app-updates/current" in worker_text
-    assert "/api/domain/" in worker_text
+    assert "/api/business/records" in worker_text
+    assert "/api/domain/" not in worker_text
     assert "/api/notifications" in worker_text
     assert "ASSETS.fetch" in worker_text
     assert "WEB_PREVIEW_INVITE_SECRET" in worker_text

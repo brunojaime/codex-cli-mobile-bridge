@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 import json
 from pathlib import Path
+import urllib.error
 
 from fastapi.testclient import TestClient
 import pytest
@@ -342,6 +343,244 @@ def test_web_preview_invite_smtp_provider_sends_email(
     assert invite["manual_delivery_required"] is False
     assert invite["last_sent_at"]
     assert sent
+    message = sent[0]
+    assert message.is_multipart()
+    plain = message.get_body(
+        preferencelist=("plain",)
+    ).get_content()
+    assert "Recibiste una invitacion" in plain
+    assert invite["invite_url"] not in plain
+    html = message.get_body(preferencelist=("html",)).get_content()
+    assert "Aceptar invitación" in html
+    assert html.count("<a ") == 1
+    assert invite["invite_url"] not in html.replace(
+        f'href="{invite["invite_url"]}"',
+        "",
+    )
+    assert "version inicial" in html
+
+
+def test_web_preview_invite_smtp_465_uses_ssl_client(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sent: list[object] = []
+
+    class FakeSmtpSsl:
+        def __init__(self, host: str, port: int, timeout: float) -> None:
+            assert host == "smtp.example.com"
+            assert port == 465
+            assert timeout == 10.0
+
+        def __enter__(self) -> "FakeSmtpSsl":
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def login(self, username: str, password: str) -> None:
+            assert username == "smtp-user"
+            assert password == "smtp-password"
+
+        def send_message(self, message: object) -> None:
+            sent.append(message)
+
+    monkeypatch.setattr("smtplib.SMTP_SSL", FakeSmtpSsl)
+    deploy_service = _planned_preview(tmp_path)
+    service = WebPreviewInviteService(
+        settings=_settings(
+            tmp_path,
+            email_provider="smtp",
+            email_from="preview@example.com",
+            smtp_host="smtp.example.com",
+            smtp_port=465,
+            smtp_username="smtp-user",
+            smtp_password="smtp-password",
+            smtp_implicit_tls=True,
+        ),
+        preview_service=deploy_service,
+    )
+
+    invite = service.create_invite(
+        WebPreviewInviteCreateInput(
+            preview_id="wp-clinica-norte",
+            email="admin@example.com",
+        )
+    )
+
+    assert invite["email_delivery_status"] == "sent"
+    assert invite["manual_delivery_required"] is False
+    assert sent
+
+
+def test_web_preview_invite_cloudflare_email_provider_sends_email(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    requests: list[object] = []
+
+    class FakeResponse:
+        def __enter__(self) -> "FakeResponse":
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return b'{"id":"msg-123"}'
+
+    def fake_urlopen(request: object, timeout: float) -> FakeResponse:
+        requests.append(request)
+        assert timeout == 10.0
+        return FakeResponse()
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    deploy_service = _planned_preview(tmp_path)
+    service = WebPreviewInviteService(
+        settings=_settings(
+            tmp_path,
+            email_provider="cloudflare_email",
+            email_from="preview@nienfos.com",
+            email_endpoint="https://api.cloudflare.example/email/send",
+            email_api_token="secret-cloudflare-email-token",
+        ),
+        preview_service=deploy_service,
+    )
+
+    invite = service.create_invite(
+        WebPreviewInviteCreateInput(
+            preview_id="wp-clinica-norte",
+            email="admin@example.com",
+        )
+    )
+
+    assert invite["email_delivery_status"] == "sent"
+    assert invite["email_provider"] == "cloudflare_email"
+    assert invite["email_provider_message_id"] == "msg-123"
+    assert invite["manual_delivery_required"] is False
+    assert invite["email_delivery_preflight"]["status"] == "ready"
+    assert requests
+    payload = json.loads(requests[0].data.decode("utf-8"))
+    assert "Recibiste una invitacion" in payload["text"]
+    assert invite["invite_url"] not in payload["text"]
+    assert "Aceptar invitación" in payload["html"]
+    assert payload["html"].count("<a ") == 1
+    assert invite["invite_url"] not in payload["html"].replace(
+        f'href="{invite["invite_url"]}"',
+        "",
+    )
+    assert payload["html"].startswith("<!doctype html>")
+
+
+def test_web_preview_invite_cloudflare_email_preflight_ready(tmp_path: Path) -> None:
+    service = WebPreviewInviteService(
+        settings=_settings(
+            tmp_path,
+            email_provider="cloudflare_email",
+            email_from="preview@nienfos.com",
+            email_endpoint="https://user:secret@example.cloudflare/send?api_token=abc",
+            email_api_token="secret-cloudflare-email-token",
+        ),
+        preview_service=_planned_preview(tmp_path),
+    )
+
+    preflight = service.email_delivery_preflight()
+
+    assert preflight["status"] == "ready"
+    assert preflight["ready"] is True
+    assert preflight["manual_delivery_required"] is False
+    assert "secret-cloudflare-email-token" not in json.dumps(preflight)
+    assert "api_token=abc" not in json.dumps(preflight)
+    assert "[redacted]" in preflight["checks"]["endpoint"]["value"]
+
+
+def test_web_preview_invite_cloudflare_email_missing_config_keeps_manual_fallback(
+    tmp_path: Path,
+) -> None:
+    deploy_service = _planned_preview(tmp_path)
+    service = WebPreviewInviteService(
+        settings=_settings(
+            tmp_path,
+            email_provider="cloudflare_email",
+            email_from="preview@nienfos.com",
+        ),
+        preview_service=deploy_service,
+    )
+
+    invite = service.create_invite(
+        WebPreviewInviteCreateInput(
+            preview_id="wp-clinica-norte",
+            email="admin@example.com",
+        )
+    )
+
+    assert invite["email_delivery_status"] == "manual_link_required"
+    assert invite["manual_delivery_required"] is True
+    assert invite["email_delivery_preflight"]["status"] == "manual_fallback"
+    assert "WEB_PREVIEW_EMAIL_ENDPOINT" in invite["email_delivery_error"]
+    assert "WEB_PREVIEW_EMAIL_API_TOKEN" in invite["email_delivery_error"]
+
+
+def test_web_preview_invite_cloudflare_email_invalid_config_never_reports_sent(
+    tmp_path: Path,
+) -> None:
+    service = WebPreviewInviteService(
+        settings=_settings(
+            tmp_path,
+            email_provider="cloudflare_email",
+            email_from="preview@nienfos.com",
+            email_endpoint="ftp://cloudflare.example/send",
+            email_api_token="secret-cloudflare-email-token",
+        ),
+        preview_service=_planned_preview(tmp_path),
+    )
+
+    preflight = service.email_delivery_preflight()
+    invite = service.create_invite(
+        WebPreviewInviteCreateInput(
+            preview_id="wp-clinica-norte",
+            email="admin@example.com",
+        )
+    )
+
+    assert preflight["status"] == "misconfigured"
+    assert invite["email_delivery_status"] == "blocked_provider"
+    assert invite["manual_delivery_required"] is True
+    assert invite["email_delivery_status"] != "sent"
+
+
+def test_web_preview_invite_cloudflare_email_send_errors_redact_token(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    token = "secret-cloudflare-email-token"
+
+    def fake_urlopen(_request: object, timeout: float) -> object:
+        assert timeout == 10.0
+        raise urllib.error.URLError(f"{token} refused")
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    service = WebPreviewInviteService(
+        settings=_settings(
+            tmp_path,
+            email_provider="cloudflare_email",
+            email_from="preview@nienfos.com",
+            email_endpoint="https://api.cloudflare.example/email/send",
+            email_api_token=token,
+        ),
+        preview_service=_planned_preview(tmp_path),
+    )
+
+    invite = service.create_invite(
+        WebPreviewInviteCreateInput(
+            preview_id="wp-clinica-norte",
+            email="admin@example.com",
+        )
+    )
+
+    assert invite["email_delivery_status"] == "failed"
+    assert token not in invite["email_delivery_error"]
+    assert "[redacted]" in invite["email_delivery_error"]
 
 
 def test_web_preview_invite_revoke_marks_metadata_without_plain_token(
@@ -404,6 +643,7 @@ def test_web_preview_invite_api_create_and_list(tmp_path: Path) -> None:
     assert payload["email"] == "admin@example.com"
     assert payload["role"] == "admin"
     assert payload["email_delivery_status"] == "manual_link_required"
+    assert payload["email_delivery_preflight"]["status"] == "manual_fallback"
     assert payload["used_at"] is None
     assert payload["revoked_at"] is None
     assert payload["sync_status"] == "not_deployed"
@@ -415,6 +655,12 @@ def test_web_preview_invite_api_create_and_list(tmp_path: Path) -> None:
     assert listed_payload["token"] is None
     assert listed_payload["invite_url"] is None
     assert listed_payload["sync_status"] == "not_deployed"
+    preview_status = client.get(f"/web-previews/{plan.json()['preview_id']}")
+    assert preview_status.status_code == 200
+    assert preview_status.json()["invite_email_delivery"]["status"] == "manual_fallback"
+    email_preflight = client.get("/web-previews/invite-email-preflight")
+    assert email_preflight.status_code == 200
+    assert email_preflight.json()["status"] == "manual_fallback"
     retry = client.post(
         f"/web-previews/{plan.json()['preview_id']}/invites/{payload['invite_id']}/sync",
     )
@@ -504,10 +750,13 @@ def _settings(
     secret: str | None = SECRET,
     email_provider: str = "manual",
     email_from: str | None = None,
+    email_endpoint: str | None = None,
+    email_api_token: str | None = None,
     smtp_host: str | None = None,
     smtp_port: int = 587,
     smtp_username: str | None = None,
     smtp_password: str | None = None,
+    smtp_implicit_tls: bool = False,
     smtp_timeout: float = 10.0,
 ) -> Settings:
     return Settings(
@@ -519,10 +768,13 @@ def _settings(
         web_preview_invite_max_ttl_seconds=604800,
         web_preview_email_provider=email_provider,
         web_preview_email_from=email_from,
+        web_preview_email_endpoint=email_endpoint,
+        web_preview_email_api_token=email_api_token,
         web_preview_smtp_host=smtp_host,
         web_preview_smtp_port=smtp_port,
         web_preview_smtp_username=smtp_username,
         web_preview_smtp_password=smtp_password,
+        web_preview_smtp_implicit_tls=smtp_implicit_tls,
         web_preview_smtp_timeout_seconds=smtp_timeout,
         cloudflare_api_token=None,
         cloudflare_dns_api_token=None,

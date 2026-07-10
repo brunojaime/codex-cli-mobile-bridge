@@ -37,7 +37,7 @@ FRONTEND_STRATEGIES: dict[str, dict[str, Any]] = {
         "api_runtime_env": "API_RUNTIME",
         "supports_android_preview_apk": True,
         "supports_bridge_installable_app": True,
-        "supports_workbench_apk_entry": True,
+        "supports_workbench_apk_entry": False,
         "cloudflare_preview_required": True,
         "d1_preview_required": True,
         "release_channel": "prerelease",
@@ -562,9 +562,12 @@ def _build_manifest(
         "codex": {
             "feedback_bridge": True,
             "dev_workbench": True,
+            "workbench_launch_owner": "codex_mobile_bridge",
+            "product_workbench_navigation_allowed": False,
             "workbench_visibility": {
-                "mock": "visible",
-                "staging": "internal",
+                "mock": "bridge_owned",
+                "preview": "bridge_owned",
+                "staging": "bridge_owned_or_external_overlay",
                 "real": "hidden",
             },
             "auto_update": True,

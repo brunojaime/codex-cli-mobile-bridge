@@ -205,6 +205,7 @@ def test_http_cloudflare_client_uses_expected_paths_and_tokens(monkeypatch) -> N
                 "url": url,
                 "headers": dict(kwargs.get("headers") or {}),
                 "json": kwargs.get("json"),
+                "files": kwargs.get("files"),
             },
         )
         return httpx.Response(
@@ -235,7 +236,8 @@ def test_http_cloudflare_client_uses_expected_paths_and_tokens(monkeypatch) -> N
     client.deploy_worker_script(
         account_id="acct-1",
         script_name="preview-worker",
-        script_content="addEventListener('fetch', event => event.respondWith(new Response('ok')));",
+        script_content="export default { fetch() { return new Response('ok'); } };",
+        worker_format="module",
     )
     client.list_worker_routes(zone_id="zone-1", pattern="preview.nienfos.com/*")
     client.create_worker_route(
@@ -273,7 +275,9 @@ def test_http_cloudflare_client_uses_expected_paths_and_tokens(monkeypatch) -> N
     assert calls[4]["url"].endswith(
         "/accounts/acct-1/workers/scripts/preview-worker",
     )
-    assert calls[4]["headers"]["Content-Type"] == "application/javascript"
+    assert "Content-Type" not in calls[4]["headers"]
+    assert calls[4]["files"]["metadata"][2] == "application/json"
+    assert calls[4]["files"]["index.js"][2] == "application/javascript+module"
     assert calls[5]["method"] == "GET"
     assert calls[5]["url"].endswith(
         "/zones/zone-1/workers/routes?pattern=preview.nienfos.com%2F%2A",
@@ -388,8 +392,11 @@ class _FakeCloudflareClient:
         account_id: str,
         script_name: str,
         script_content: str,
+        worker_format: str = "module",
     ) -> CloudflareLookupResult:
-        self.calls.append(f"deploy_worker_script:{account_id}:{script_name}")
+        self.calls.append(
+            f"deploy_worker_script:{account_id}:{script_name}:{worker_format}"
+        )
         return CloudflareLookupResult(
             ok=True,
             payload={"result": {"id": script_name, "size": len(script_content)}},

@@ -307,7 +307,9 @@ def _project_files(manifest: dict[str, Any]) -> dict[str, str]:
                 },
             }
         ),
-        "design/visual-validation-report.md": _visual_validation_report_template(),
+        "design/visual-validation-report.md": _visual_validation_report_template(
+            project_assets
+        ),
         "infra/aws/recommended-architecture.md": _placeholder_doc(
             "AWS Recommended Architecture",
             "AWS deployment recommendations will be generated here.",
@@ -823,7 +825,7 @@ def _web_preview_manifest_payload(
             f"/{slug}/api/auth/login",
             f"/{slug}/api/auth/me",
             f"/{slug}/api/app-updates/current",
-            f"/{slug}/api/domain/{{entity}}",
+            f"/{slug}/api/business/records",
             f"/{slug}/api/notifications",
             f"/{slug}/apps/{slug}/config",
             f"/{slug}/dashboard",
@@ -835,7 +837,7 @@ def _web_preview_manifest_payload(
             "auth": ["/api/auth/login", "/api/auth/logout", "/api/auth/me"],
             "admin": ["/api/admin/bootstrap", "/api/admin/users", "/api/admin/roles"],
             "notifications": ["/api/notifications", "/api/notifications/{id}"],
-            "domain_crud": "/api/domain/{entity}",
+            "business_records": "/api/business/records",
             "app_updates": "/api/app-updates/current",
         },
     }
@@ -1979,13 +1981,13 @@ async function handlePreviewAdmin(request, env, assetPath) {
       .all();
     return json((rows.results || []).map(publicUser));
   }
-  if (assetPath === '/api/admin/domains') {
+  if (assetPath === '/api/admin/business-records') {
     if (request.method === 'GET') {
       const rows = await env.PREVIEW_DB
         .prepare(
           `SELECT record_id, payload_json, created_at, updated_at
            FROM preview_domain_records
-           WHERE source_app = ?1 AND app_slug = ?2 AND entity = 'domains'
+           WHERE source_app = ?1 AND app_slug = ?2 AND entity = 'business_records'
            ORDER BY created_at DESC`,
         )
         .bind(SOURCE_APP, SOURCE_APP)
@@ -1994,7 +1996,7 @@ async function handlePreviewAdmin(request, env, assetPath) {
         const payload = JSON.parse(row.payload_json || '{}');
         return {
           id: row.record_id,
-          name: payload.name || 'domain',
+          name: payload.name || 'business record',
           is_active: payload.is_active !== false,
           created_at: row.created_at,
           updated_at: row.updated_at,
@@ -2009,7 +2011,7 @@ async function handlePreviewAdmin(request, env, assetPath) {
         .prepare(
           `INSERT INTO preview_domain_records
            (record_id, source_app, app_slug, entity, payload_json, created_at, updated_at)
-           VALUES (?1, ?2, ?3, 'domains', ?4, ?5, ?6)`,
+           VALUES (?1, ?2, ?3, 'business_records', ?4, ?5, ?6)`,
         )
         .bind(
           recordId,
@@ -2071,7 +2073,7 @@ async function handlePreviewDomain(request, env, entity) {
   const session = await requireApiSession(env, request);
   if (!session.ok) return session.response;
   if (!/^[A-Za-z][A-Za-z0-9_-]{0,63}$/.test(entity || '')) {
-    return apiError('invalid_entity', 'Domain entity must be a stable identifier.', 400);
+    return apiError('invalid_entity', 'Business entity must be a stable identifier.', 400);
   }
   if (request.method === 'GET') {
     const rows = await env.PREVIEW_DB
@@ -2151,7 +2153,6 @@ async function handlePreviewNotifications(request, env) {
 }
 
 async function handlePreviewApi(request, env, assetPath) {
-  // Preview domain CRUD route: /api/domain/{entity}
   if (request.method === 'GET' && assetPath === '/api/health') {
     return handlePreviewHealth(env);
   }
@@ -2170,18 +2171,17 @@ async function handlePreviewApi(request, env, assetPath) {
   if (request.method === 'POST' && assetPath === '/api/auth/logout') {
     return handlePreviewLogout(request, env);
   }
-  if (assetPath === '/api/admin/users' || assetPath === '/api/admin/roles' || assetPath === '/api/admin/domains') {
+  if (assetPath === '/api/admin/users' || assetPath === '/api/admin/roles' || assetPath === '/api/admin/business-records') {
     return handlePreviewAdmin(request, env, assetPath);
+  }
+  if (assetPath === '/api/business/records') {
+    return handlePreviewDomain(request, env, 'business_records');
   }
   if (request.method === 'GET' && assetPath === '/api/app-updates/current') {
     return handlePreviewAppUpdate(env);
   }
   if (request.method === 'GET' && assetPath === '/api/notifications') {
     return handlePreviewNotifications(request, env);
-  }
-  const domainMatch = assetPath.match(/^\/api\/domain\/([^/]+)\/?$/);
-  if (domainMatch) {
-    return handlePreviewDomain(request, env, domainMatch[1]);
   }
   return apiError('preview_api_route_not_found', `Preview API route not found: ${assetPath}`, 404);
 }
@@ -2555,7 +2555,7 @@ for (const row of [
 }
 const previewUsers = new Map();
 const previewSessions = new Map();
-const previewDomainRecords = [];
+const previewBusinessRecords = [];
 const previewNotifications = [
   {
     notification_id: 'ntf-local',
@@ -2664,12 +2664,12 @@ function fakeD1() {
               }
               if (normalized.startsWith('insert into preview_domain_records')) {
                 const [recordId, sourceApp, appSlug] = args;
-                const usesLiteralDomainEntity = normalized.includes("'domains'");
-                const entity = usesLiteralDomainEntity ? 'domains' : args[3];
+                const usesLiteralDomainEntity = normalized.includes("'business_records'");
+                const entity = usesLiteralDomainEntity ? 'business_records' : args[3];
                 const payloadJson = usesLiteralDomainEntity ? args[3] : args[4];
                 const createdAt = usesLiteralDomainEntity ? args[4] : args[5];
                 const updatedAt = usesLiteralDomainEntity ? args[5] : args[6];
-                previewDomainRecords.push({
+                previewBusinessRecords.push({
                   record_id: recordId,
                   source_app: sourceApp,
                   app_slug: appSlug,
@@ -2691,9 +2691,9 @@ function fakeD1() {
               }
               if (normalized.includes('from preview_domain_records')) {
                 const [sourceApp, appSlug] = args;
-                const entity = normalized.includes("'domains'") ? 'domains' : args[2];
+                const entity = normalized.includes("'business_records'") ? 'business_records' : args[2];
                 return {
-                  results: previewDomainRecords.filter((row) => row.source_app === sourceApp && row.app_slug === appSlug && row.entity === entity),
+                  results: previewBusinessRecords.filter((row) => row.source_app === sourceApp && row.app_slug === appSlug && row.entity === entity),
                 };
               }
               if (normalized.includes('from preview_notifications')) {
@@ -2831,7 +2831,7 @@ const users = await fetchJson('/__SOURCE_APP__/api/admin/users', { headers: apiA
 assert.equal(users.status, 200);
 assert.equal((await users.json()).length, 2);
 
-const createdRecord = await fetchJson('/__SOURCE_APP__/api/domain/customers', {
+const createdRecord = await fetchJson('/__SOURCE_APP__/api/business/records', {
   method: 'POST',
   headers: apiAuth,
   body: { name: 'Ada Lovelace', status: 'lead' },
@@ -2839,14 +2839,14 @@ const createdRecord = await fetchJson('/__SOURCE_APP__/api/domain/customers', {
 assert.equal(createdRecord.status, 201);
 assert.equal((await createdRecord.json()).sourceApp, '__SOURCE_APP__');
 
-const records = await fetchJson('/__SOURCE_APP__/api/domain/customers', { headers: apiAuth });
+const records = await fetchJson('/__SOURCE_APP__/api/business/records', { headers: apiAuth });
 assert.equal(records.status, 200);
 const recordsBody = await records.json();
 assert.equal(recordsBody.sourceApp, '__SOURCE_APP__');
 assert.equal(recordsBody.records.length, 1);
 assert.equal(recordsBody.records[0].payload.name, 'Ada Lovelace');
 
-const adminDomain = await fetchJson('/__SOURCE_APP__/api/admin/domains', {
+const adminDomain = await fetchJson('/__SOURCE_APP__/api/admin/business-records', {
   method: 'POST',
   headers: apiAuth,
   body: { name: 'Primary workspace' },
@@ -2854,11 +2854,12 @@ const adminDomain = await fetchJson('/__SOURCE_APP__/api/admin/domains', {
 assert.equal(adminDomain.status, 200);
 assert.equal((await adminDomain.json()).name, 'Primary workspace');
 
-const adminDomains = await fetchJson('/__SOURCE_APP__/api/admin/domains', { headers: apiAuth });
+const adminDomains = await fetchJson('/__SOURCE_APP__/api/admin/business-records', { headers: apiAuth });
 assert.equal(adminDomains.status, 200);
 const adminDomainsBody = await adminDomains.json();
-assert.equal(adminDomainsBody.length, 1);
-assert.equal(adminDomainsBody[0].name, 'Primary workspace');
+assert.equal(adminDomainsBody.length, 2);
+assert.ok(adminDomainsBody.some((row) => row.name === 'Primary workspace'));
+assert.ok(adminDomainsBody.some((row) => row.name === 'Ada Lovelace'));
 
 const notifications = await fetchJson('/__SOURCE_APP__/api/notifications', { headers: apiAuth });
 assert.equal(notifications.status, 200);
@@ -3024,6 +3025,12 @@ flutter build web --release \\
   --dart-define=API_RUNTIME="$API_RUNTIME" \\
   --dart-define=API_BASE_URL="$API_BASE_URL" \\
   --dart-define=APP_SLUG="$APP_SLUG" \\
+  --dart-define=CODEX_FEEDBACK_ENABLED="${{CODEX_FEEDBACK_ENABLED:-true}}" \\
+  --dart-define=CODEX_FEEDBACK_BRIDGE_URL="${{CODEX_FEEDBACK_BRIDGE_URL:-}}" \\
+  --dart-define=CODEX_BRIDGE_DEV_MODE="${{CODEX_BRIDGE_DEV_MODE:-true}}" \\
+  --dart-define=CODEX_BRIDGE_WORKBENCH_URL="${{CODEX_BRIDGE_WORKBENCH_URL:-}}" \\
+  --dart-define=CODEX_APP_UPDATER_ENABLED="${{CODEX_APP_UPDATER_ENABLED:-false}}" \\
+  --dart-define=CODEX_APP_UPDATER_BRIDGE_URL="${{CODEX_APP_UPDATER_BRIDGE_URL:-}}" \\
   --output "$WEB_PREVIEW_BUILD_DIR"
 
 printf 'web preview build completed: %s\\n' "$WEB_PREVIEW_BUILD_DIR"
@@ -3221,8 +3228,8 @@ grep -q 'async fetch(request, env, ctx)' "$WORKER" || fail "worker module fetch 
 grep -q '/__preview/health' "$WORKER" || fail "worker health route missing"
 grep -q '/api/health' "$WORKER" || fail "worker Preview API health route missing"
 grep -q '/api/auth/login' "$WORKER" || fail "worker Preview API auth route missing"
-grep -q '/api/domain/' "$WORKER" || fail "worker Preview API domain route missing"
-grep -q '/api/admin/domains' "$WORKER" || fail "worker generated Flutter admin domain route missing"
+grep -q '/api/business/records' "$WORKER" || fail "worker Preview API business records route missing"
+grep -q '/api/admin/business-records' "$WORKER" || fail "worker generated Flutter admin domain route missing"
 grep -q 'ASSETS' "$WORKER" || fail "worker asset binding missing"
 grep -q 'asset_not_found' "$WORKER" || fail "worker asset 404 missing"
 grep -q 'content-security-policy' "$WORKER" || fail "worker security headers missing"
@@ -3433,14 +3440,14 @@ me = request("GET", "/auth/me", token=token)
 assert "owner" in me["roles"], me
 roles = request("GET", "/admin/roles", token=token)
 assert "owner" in roles and "customer" in roles, roles
-domains = request("GET", "/admin/domains", token=token)
-assert isinstance(domains, list), domains
+business_records = request("GET", "/admin/business-records", token=token)
+assert isinstance(business_records, list), business_records
 domain_name = "validation-domain-" + token[:8].lower().replace("_", "x").replace("-", "x")
-created = request("POST", "/admin/domains", {"name": domain_name}, token=token)
+created = request("POST", "/admin/business-records", {"name": domain_name}, token=token)
 assert created["name"] == domain_name, created
 notifications = request("GET", "/notifications", token=token)
 assert isinstance(notifications, list), notifications
-print("contract ok: auth/me/admin/domains/notifications")
+print("contract ok: auth/me/admin/business-records/notifications")
 PY
 
 cd "$ROOT_DIR"
@@ -3971,7 +3978,9 @@ fi
 forbidden_patterns=(
   'D1 blocked'
   'domains endpoint'
-  '/domains'
+  '/api/domain/'
+  '/admin/domains'
+  '/domain/smoke_records'
   'android-mock-v'
   'android-local-v'
   'mock_or_demo: true'
@@ -4279,15 +4288,15 @@ status, me = request("GET", "/auth/me", token=token)
 if status != 200 or me.get("sourceApp") != source_app:
     raise SystemExit(f"me failed: {{status}} {{me}}")
 
-status, created = request("POST", "/domain/smoke_records", {{"name": "preview-smoke"}}, token=token)
+status, created = request("POST", "/business/records", {{"name": "preview-smoke"}}, token=token)
 if status != 201 or created.get("sourceApp") != source_app:
-    raise SystemExit(f"domain create failed: {{status}} {{created}}")
+    raise SystemExit(f"business record create failed: {{status}} {{created}}")
 
-status, listed = request("GET", "/domain/smoke_records", token=token)
+status, listed = request("GET", "/business/records", token=token)
 if status != 200 or not listed.get("records"):
-    raise SystemExit(f"domain list failed: {{status}} {{listed}}")
+    raise SystemExit(f"business record list failed: {{status}} {{listed}}")
 if any(row.get("sourceApp") != source_app or row.get("appSlug") != source_app for row in listed["records"]):
-    raise SystemExit("domain list returned cross-app records")
+    raise SystemExit("business record list returned cross-app records")
 
 status, notifications = request("GET", "/notifications", token=token)
 if status != 200 or "notifications" not in notifications:
@@ -4511,6 +4520,10 @@ deadline=$((SECONDS + timeout))
 while (( SECONDS <= deadline )); do
   assets="$(gh release view "$tag" --repo "$repo_ref" --json assets --jq '.assets[].name' 2>/dev/null || true)"
   if printf '%s\\n' "$assets" | grep -Fx "${{SOURCE_APP}}.apk" >/dev/null; then
+    bridge_env_require BRIDGE_URL INSTALLABLE_APPS_REGISTRATION_TOKEN
+    APP_RELEASE_TAG="$tag" \\
+    BRIDGE_REGISTRATION_TOKEN="$INSTALLABLE_APPS_REGISTRATION_TOKEN" \\
+    scripts/register_installable_app.sh
     printf 'android preview release completed: %s\\n' "$tag"
     printf '%s\\n' "$assets"
     exit 0
@@ -4736,6 +4749,7 @@ PROJECT_MANIFEST="$ROOT_DIR/.codex/project.yaml"
 RELEASE_CONTRACTS="$ROOT_DIR/release/release-contracts.yaml"
 BACKEND_CONFIG="$ROOT_DIR/backend/app/config.py"
 FLUTTER_CONFIG="$ROOT_DIR/apps/mobile/lib/src/config.dart"
+ANDROID_MANIFEST="$ROOT_DIR/apps/mobile/android/app/src/main/AndroidManifest.xml"
 ANDROID_PREVIEW_WORKFLOW="$ROOT_DIR/.github/workflows/android-preview-release.yml"
 [[ -f "$RUNTIME_CONTRACT" ]] || fail "missing release/preview-runtime.json"
 [[ -f "$WEB_PREVIEW_MANIFEST" ]] || fail "missing deploy/web-preview/web-preview-manifest.yaml"
@@ -4745,6 +4759,7 @@ ANDROID_PREVIEW_WORKFLOW="$ROOT_DIR/.github/workflows/android-preview-release.ym
 [[ -f "$BACKEND_CONFIG" ]] || fail "missing backend/app/config.py"
 if [[ "$FRONTEND_STRATEGY" == "flutter" ]]; then
   [[ -f "$FLUTTER_CONFIG" ]] || fail "missing apps/mobile/lib/src/config.dart"
+  [[ -f "$ANDROID_MANIFEST" ]] || fail "missing apps/mobile/android/app/src/main/AndroidManifest.xml"
   [[ -f "$ANDROID_PREVIEW_WORKFLOW" ]] || fail "missing .github/workflows/android-preview-release.yml"
 else
   [[ -f "$ROOT_DIR/apps/web/package.json" ]] || fail "missing apps/web/package.json"
@@ -4849,6 +4864,7 @@ PY
 grep -q '"preview"' "$BACKEND_CONFIG" || fail "backend config must allow preview runtime profile"
 if [[ "$FRONTEND_STRATEGY" == "flutter" ]]; then
   grep -q "runtimeProfile != 'preview'" "$FLUTTER_CONFIG" || fail "Flutter config must validate preview runtime profile"
+  grep -q 'android.permission.INTERNET' "$ANDROID_MANIFEST" || fail "Android preview manifest must include android.permission.INTERNET"
   grep -q 'APP_RUNTIME_PROFILE: preview' "$ANDROID_PREVIEW_WORKFLOW" || fail "Android preview workflow must set APP_RUNTIME_PROFILE=preview"
   grep -q 'API_RUNTIME: cloudflare_preview' "$ANDROID_PREVIEW_WORKFLOW" || fail "Android preview workflow must set API_RUNTIME=cloudflare_preview"
 else
@@ -4888,19 +4904,8 @@ debug = policy.get("debugPreview")
 if not isinstance(debug, dict):
     raise SystemExit("debugPreview signing policy is required")
 debug_requested = os.environ.get("DEBUG_PREVIEW_SIGNING", "").lower() == "true"
-if not debug_requested:
-    if debug.get("enabled") is True:
-        raise SystemExit("debugPreview.enabled requires DEBUG_PREVIEW_SIGNING=true")
-    raise SystemExit(0)
-if debug.get("enabled") is not True:
-    raise SystemExit("DEBUG_PREVIEW_SIGNING=true requires debugPreview.enabled=true")
-if os.environ.get("DEBUG_PREVIEW_SIGNING_ACKNOWLEDGED", "").lower() != "true":
-    raise SystemExit("debug preview signing requires DEBUG_PREVIEW_SIGNING_ACKNOWLEDGED=true")
-if not os.environ.get("DEBUG_PREVIEW_SIGNING_REASON", "").strip():
-    raise SystemExit("debug preview signing requires DEBUG_PREVIEW_SIGNING_REASON")
-tag = os.environ.get("APP_RELEASE_TAG", "")
-if tag and not tag.startswith("android-preview-v"):
-    raise SystemExit("debug preview signing can only use android-preview-v* tags")
+if debug_requested or debug.get("enabled") is True:
+    raise SystemExit("debug preview signing is forbidden for installable Initial Preview Release")
 PY
 
 if [[ "$FRONTEND_STRATEGY" == "flutter" ]]; then
@@ -4948,9 +4953,7 @@ APP_ANDROID_PREVIEW_RELEASE_TAG="${{APP_ANDROID_PREVIEW_RELEASE_TAG:-${{APP_RELE
 bridge_env_require APP_RUNTIME_PROFILE API_RUNTIME API_BASE_URL BRIDGE_URL PREVIEW_ADMIN_PASSWORD
 bridge_env_require_any "preview D1 database" PREVIEW_D1_DATABASE CLOUDFLARE_D1_DATABASE
 if [[ "$FRONTEND_STRATEGY" == "flutter" ]]; then
-  bridge_env_require_any "installable apps registration token" INSTALLABLE_APPS_REGISTRATION_TOKEN BRIDGE_REGISTRATION_TOKEN
-  [[ -n "${{APP_RELEASE_TAG:-}}" || -n "${{APP_ANDROID_PREVIEW_RELEASE_TAG:-}}" ]] || \\
-    fail "APP_RELEASE_TAG or APP_ANDROID_PREVIEW_RELEASE_TAG is required"
+  bridge_env_require INSTALLABLE_APPS_REGISTRATION_TOKEN APP_RELEASE_TAG APP_ANDROID_PREVIEW_RELEASE_TAG
 fi
 if grep -q "PREVIEW_ADMIN_BOOTSTRAP_TOKEN" deploy/web-preview/worker/src/index.js 2>/dev/null; then
   bridge_env_require PREVIEW_ADMIN_BOOTSTRAP_TOKEN
@@ -5407,6 +5410,10 @@ jobs:
           fi
           args+=(--dart-define=CODEX_FEEDBACK_BRIDGE_URL="${{{{ vars.CODEX_FEEDBACK_BRIDGE_URL }}}}")
           args+=(--dart-define=CODEX_FEEDBACK_ENABLED="${{{{ vars.CODEX_FEEDBACK_ENABLED || 'false' }}}}")
+          args+=(--dart-define=CODEX_BRIDGE_DEV_MODE="${{{{ vars.CODEX_BRIDGE_DEV_MODE || 'false' }}}}")
+          args+=(--dart-define=CODEX_BRIDGE_WORKBENCH_URL="${{{{ vars.CODEX_BRIDGE_WORKBENCH_URL }}}}")
+          args+=(--dart-define=CODEX_APP_UPDATER_ENABLED="${{{{ vars.CODEX_APP_UPDATER_ENABLED || 'false' }}}}")
+          args+=(--dart-define=CODEX_APP_UPDATER_BRIDGE_URL="${{{{ vars.CODEX_APP_UPDATER_BRIDGE_URL }}}}")
           flutter build apk --release "${{args[@]}}"
           cp build/app/outputs/flutter-apk/app-release.apk build/app/outputs/flutter-apk/{slug}.apk
 
@@ -5507,7 +5514,11 @@ jobs:
             --dart-define=API_BASE_URL="$API_BASE_URL" \\
             --dart-define=APP_SLUG="$APP_SLUG" \\
             --dart-define=CODEX_FEEDBACK_BRIDGE_URL="${{{{ vars.CODEX_FEEDBACK_BRIDGE_URL }}}}" \\
-            --dart-define=CODEX_FEEDBACK_ENABLED="${{{{ vars.CODEX_FEEDBACK_ENABLED || 'false' }}}}"
+            --dart-define=CODEX_FEEDBACK_ENABLED="${{{{ vars.CODEX_FEEDBACK_ENABLED || 'true' }}}}" \\
+            --dart-define=CODEX_BRIDGE_DEV_MODE="${{{{ vars.CODEX_BRIDGE_DEV_MODE || 'true' }}}}" \\
+            --dart-define=CODEX_BRIDGE_WORKBENCH_URL="${{{{ vars.CODEX_BRIDGE_WORKBENCH_URL }}}}" \\
+            --dart-define=CODEX_APP_UPDATER_ENABLED="${{{{ vars.CODEX_APP_UPDATER_ENABLED || 'false' }}}}" \\
+            --dart-define=CODEX_APP_UPDATER_BRIDGE_URL="${{{{ vars.CODEX_APP_UPDATER_BRIDGE_URL }}}}"
           cp build/app/outputs/flutter-apk/app-release.apk build/app/outputs/flutter-apk/{slug}.apk
 
       - name: Verify Android preview APK signing
@@ -8144,6 +8155,21 @@ dependencies:
   flutter:
     sdk: flutter
   http: ^1.2.2
+  codex_developer_feedback_template:
+    git:
+      url: https://github.com/brunojaime/codex-cli-mobile-bridge.git
+      path: packages/codex_developer_feedback_template
+      ref: codex-developer-feedback-template-v0.2.1
+  codex_app_updater:
+    git:
+      url: https://github.com/brunojaime/codex-cli-mobile-bridge.git
+      path: packages/codex_app_updater
+      ref: main
+  codex_bridge_workbench:
+    git:
+      url: https://github.com/brunojaime/codex-cli-mobile-bridge.git
+      path: packages/codex_bridge_workbench
+      ref: main
 
 dev_dependencies:
   flutter_test:
@@ -8249,6 +8275,9 @@ def _mobile_web_manifest_json(name: str) -> str:
 
 def _mobile_main_dart(name: str) -> str:
     return f"""import 'package:flutter/material.dart';
+import 'package:codex_app_updater/codex_app_updater.dart';
+import 'package:codex_bridge_workbench/codex_bridge_workbench.dart';
+import 'package:codex_developer_feedback_template/developer_feedback_template.dart';
 import 'package:http/http.dart' as http;
 
 import 'src/api_client.dart';
@@ -8269,15 +8298,31 @@ void main() {{
   );
   const appSlug = String.fromEnvironment('APP_SLUG');
   const developerWorkbenchEnabled = bool.fromEnvironment(
-    'DEVELOPER_WORKBENCH_ENABLED',
+    'CODEX_BRIDGE_DEV_MODE',
     defaultValue: false,
   );
+  const feedbackEnabled = bool.fromEnvironment(
+    'CODEX_FEEDBACK_ENABLED',
+    defaultValue: true,
+  );
+  const appUpdaterEnabled = bool.fromEnvironment(
+    'CODEX_APP_UPDATER_ENABLED',
+    defaultValue: false,
+  );
+  const feedbackBridgeUrl = String.fromEnvironment('CODEX_FEEDBACK_BRIDGE_URL');
+  const workbenchBridgeUrl = String.fromEnvironment('CODEX_BRIDGE_WORKBENCH_URL');
+  const updaterBridgeUrl = String.fromEnvironment('CODEX_APP_UPDATER_BRIDGE_URL');
   final config = AppConfig.fromEnvironment(
     apiBaseUrl: apiBaseUrl,
     runtimeProfile: runtimeProfile,
     apiRuntime: apiRuntime,
     appSlug: appSlug,
     developerWorkbenchEnabled: developerWorkbenchEnabled,
+    feedbackEnabled: feedbackEnabled,
+    appUpdaterEnabled: appUpdaterEnabled,
+    feedbackBridgeUrl: feedbackBridgeUrl,
+    workbenchBridgeUrl: workbenchBridgeUrl,
+    updaterBridgeUrl: updaterBridgeUrl,
   );
   runApp(ProjectApp(config: config));
 }}
@@ -8301,18 +8346,55 @@ class ProjectApp extends StatelessWidget {{
             baseUrl: config.apiBaseUrl!,
             client: http.Client(),
           );
+    final homeContent = ProjectHome(
+      projectName: '{name}',
+      runtimeProfile: config.runtimeProfile,
+      developerWorkbenchEnabled: config.developerWorkbenchEnabled,
+      controller: SessionController(
+        api: api,
+        runtimeProfile: config.runtimeProfile,
+      ),
+    );
+    final workbenchWrapped = CodexBridgeDevModeWrapper(
+      enabled: config.developerWorkbenchEnabled &&
+          config.workbenchBridgeUrl != null &&
+          config.workbenchBridgeUrl!.isNotEmpty,
+      bridgeUrl: config.workbenchBridgeUrl ?? '',
+      workspacePath: config.appSlug,
+      child: homeContent,
+    );
+    final updaterWrapped = CodexAppUpdater(
+      config: CodexAppUpdaterConfig(
+        enabled: config.appUpdaterEnabled &&
+            config.updaterBridgeUrl != null &&
+            config.updaterBridgeUrl!.isNotEmpty,
+        sourceApp: config.appSlug ?? 'generated-project',
+        bridgeUrl: config.updaterBridgeUrl ?? '',
+        currentVersion: '0.1.0',
+        currentBuild: 1,
+        channel: 'prerelease',
+      ),
+      checkOnStart: config.appUpdaterEnabled &&
+          config.updaterBridgeUrl != null &&
+          config.updaterBridgeUrl!.isNotEmpty,
+      checkOnResume: config.appUpdaterEnabled &&
+          config.updaterBridgeUrl != null &&
+          config.updaterBridgeUrl!.isNotEmpty,
+      child: workbenchWrapped,
+    );
+    final feedbackWrapped = DeveloperFeedbackTemplate(
+      enabled: config.feedbackEnabled &&
+          config.feedbackBridgeUrl != null &&
+          config.feedbackBridgeUrl!.isNotEmpty,
+      sourceApp: config.appSlug ?? 'generated-project',
+      sourceDisplayName: '{name}',
+      bridgeUrl: config.feedbackBridgeUrl ?? '',
+      child: updaterWrapped,
+    );
     return MaterialApp(
       title: '{name}',
       theme: ThemeData(useMaterial3: true, colorSchemeSeed: Colors.teal),
-      home: ProjectHome(
-        projectName: '{name}',
-        runtimeProfile: config.runtimeProfile,
-        developerWorkbenchEnabled: config.developerWorkbenchEnabled,
-        controller: SessionController(
-          api: api,
-          runtimeProfile: config.runtimeProfile,
-        ),
-      ),
+      home: feedbackWrapped,
     );
   }}
 }}
@@ -8327,6 +8409,11 @@ def _mobile_config_dart() -> str:
     required this.apiRuntime,
     required this.appSlug,
     required this.developerWorkbenchEnabled,
+    required this.feedbackEnabled,
+    required this.appUpdaterEnabled,
+    required this.feedbackBridgeUrl,
+    required this.workbenchBridgeUrl,
+    required this.updaterBridgeUrl,
   });
 
   final String? apiBaseUrl;
@@ -8334,6 +8421,11 @@ def _mobile_config_dart() -> str:
   final String apiRuntime;
   final String? appSlug;
   final bool developerWorkbenchEnabled;
+  final bool feedbackEnabled;
+  final bool appUpdaterEnabled;
+  final String? feedbackBridgeUrl;
+  final String? workbenchBridgeUrl;
+  final String? updaterBridgeUrl;
 
   bool get isMock => runtimeProfile == 'mock';
   bool get isPreview => apiRuntime == 'cloudflare_preview';
@@ -8363,6 +8455,11 @@ def _mobile_config_dart() -> str:
     String apiRuntime = 'fastapi',
     String appSlug = '',
     bool developerWorkbenchEnabled = false,
+    bool feedbackEnabled = true,
+    bool appUpdaterEnabled = false,
+    String feedbackBridgeUrl = '',
+    String workbenchBridgeUrl = '',
+    String updaterBridgeUrl = '',
   }) {
     final trimmed = apiBaseUrl.trim().replaceAll(RegExp(r'/$'), '');
     final normalizedProfile = runtimeProfile.trim().toLowerCase();
@@ -8374,8 +8471,18 @@ def _mobile_config_dart() -> str:
       apiRuntime: normalizedApiRuntime.isEmpty ? 'fastapi' : normalizedApiRuntime,
       appSlug: trimmedSlug.isEmpty ? null : trimmedSlug,
       developerWorkbenchEnabled: developerWorkbenchEnabled,
+      feedbackEnabled: feedbackEnabled,
+      appUpdaterEnabled: appUpdaterEnabled,
+      feedbackBridgeUrl: _emptyToNull(feedbackBridgeUrl),
+      workbenchBridgeUrl: _emptyToNull(workbenchBridgeUrl),
+      updaterBridgeUrl: _emptyToNull(updaterBridgeUrl),
     );
   }
+}
+
+String? _emptyToNull(String value) {
+  final trimmed = value.trim().replaceAll(RegExp(r'/$'), '');
+  return trimmed.isEmpty ? null : trimmed;
 }
 """
 
@@ -8438,14 +8545,14 @@ class AdminUser {
   }
 }
 
-class DomainRecord {
-  const DomainRecord({required this.id, required this.name, required this.isActive});
+class BusinessRecord {
+  const BusinessRecord({required this.id, required this.name, required this.isActive});
   final String id;
   final String name;
   final bool isActive;
 
-  factory DomainRecord.fromJson(Map<String, dynamic> json) {
-    return DomainRecord(
+  factory BusinessRecord.fromJson(Map<String, dynamic> json) {
+    return BusinessRecord(
       id: json['id'].toString(),
       name: json['name'] as String,
       isActive: json['is_active'] as bool? ?? true,
@@ -8564,20 +8671,20 @@ class ProjectApiClient {
     return (jsonDecode(response.body) as List<dynamic>).whereType<String>().toList();
   }
 
-  Future<List<DomainRecord>> domains(String token) async {
-    final response = await _client.get(_uri('/admin/domains'), headers: _authHeaders(token));
+  Future<List<BusinessRecord>> businessRecords(String token) async {
+    final response = await _client.get(_uri('/admin/business-records'), headers: _authHeaders(token));
     if (response.statusCode != 200) {
       throw ApiException('Domains failed', response.statusCode, response.body);
     }
-    return _list(response).map(DomainRecord.fromJson).toList(growable: false);
+    return _list(response).map(BusinessRecord.fromJson).toList(growable: false);
   }
 
-  Future<DomainRecord> createDomain(String token, String name) async {
-    final response = await _postJson('/admin/domains', {'name': name}, token: token);
+  Future<BusinessRecord> createBusinessRecord(String token, String name) async {
+    final response = await _postJson('/admin/business-records', {'name': name}, token: token);
     if (response.statusCode != 200) {
-      throw ApiException('Create domain failed', response.statusCode, response.body);
+      throw ApiException('Create business record failed', response.statusCode, response.body);
     }
-    return DomainRecord.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+    return BusinessRecord.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
   }
 
   Future<List<AppNotification>> notifications(String token) async {
@@ -8639,8 +8746,8 @@ class MockProjectApiClient extends ProjectApiClient {
 
   final Map<String, AppUser> _sessions = <String, AppUser>{};
   final List<AdminUser> _users = <AdminUser>[];
-  final List<DomainRecord> _domains = <DomainRecord>[
-    DomainRecord(id: '1', name: 'Demo workspace', isActive: true),
+  final List<BusinessRecord> _businessRecords = <BusinessRecord>[
+    BusinessRecord(id: '1', name: 'Demo workspace', isActive: true),
   ];
   final List<AppNotification> _notifications = <AppNotification>[
     AppNotification(
@@ -8708,12 +8815,12 @@ class MockProjectApiClient extends ProjectApiClient {
   Future<List<String>> adminRoles(String token) async => seedRoles;
 
   @override
-  Future<List<DomainRecord>> domains(String token) async => List<DomainRecord>.from(_domains);
+  Future<List<BusinessRecord>> businessRecords(String token) async => List<BusinessRecord>.from(_businessRecords);
 
   @override
-  Future<DomainRecord> createDomain(String token, String name) async {
-    final domain = DomainRecord(id: '${_domains.length + 1}', name: name, isActive: true);
-    _domains.add(domain);
+  Future<BusinessRecord> createBusinessRecord(String token, String name) async {
+    final domain = BusinessRecord(id: '${_businessRecords.length + 1}', name: name, isActive: true);
+    _businessRecords.add(domain);
     return domain;
   }
 
@@ -9080,7 +9187,7 @@ class _AdminScreenState extends State<AdminScreen> {{
   late Future<void> _load;
   List<AdminUser> _users = <AdminUser>[];
   List<String> _roles = <String>[];
-  List<DomainRecord> _domains = <DomainRecord>[];
+  List<BusinessRecord> _businessRecords = <BusinessRecord>[];
   final _domain = TextEditingController();
 
   @override
@@ -9098,7 +9205,7 @@ class _AdminScreenState extends State<AdminScreen> {{
   Future<void> _refresh() async {{
     _users = await widget.api.adminUsers(widget.token);
     _roles = await widget.api.adminRoles(widget.token);
-    _domains = await widget.api.domains(widget.token);
+    _businessRecords = await widget.api.businessRecords(widget.token);
   }}
 
   @override
@@ -9121,20 +9228,20 @@ class _AdminScreenState extends State<AdminScreen> {{
             const Divider(),
             Text('Roles: ${{_roles.join(', ')}}'),
             const Divider(),
-            TextField(controller: _domain, decoration: const InputDecoration(labelText: 'New domain')),
-            FilledButton(onPressed: _createDomain, child: const Text('Create domain')),
-            if (_domains.isEmpty) const Text('No domains'),
-            ..._domains.map((domain) => ListTile(title: Text(domain.name))),
+            TextField(controller: _domain, decoration: const InputDecoration(labelText: 'New business record')),
+            FilledButton(onPressed: _createBusinessRecord, child: const Text('Create business record')),
+            if (_businessRecords.isEmpty) const Text('No business records'),
+            ..._businessRecords.map((domain) => ListTile(title: Text(domain.name))),
           ],
         );
       }},
     );
   }}
 
-  Future<void> _createDomain() async {{
+  Future<void> _createBusinessRecord() async {{
     final name = _domain.text.trim();
     if (name.isEmpty) return;
-    await widget.api.createDomain(widget.token, name);
+    await widget.api.createBusinessRecord(widget.token, name);
     _domain.clear();
     setState(() => _load = _refresh());
   }}
@@ -9244,8 +9351,8 @@ void main() {{
         if (request.url.path == '/auth/me') return http.Response('{{"id":1,"email":"a@example.com","roles":["owner"]}}', 200);
         if (request.url.path == '/admin/users') return http.Response('[{{"id":1,"email":"a@example.com","is_active":true}}]', 200);
         if (request.url.path == '/admin/roles') return http.Response('["owner","customer"]', 200);
-        if (request.url.path == '/admin/domains' && request.method == 'GET') return http.Response('[{{"id":1,"name":"primary","is_active":true}}]', 200);
-        if (request.url.path == '/admin/domains' && request.method == 'POST') return http.Response('{{"id":2,"name":"new","is_active":true}}', 200);
+        if (request.url.path == '/admin/business-records' && request.method == 'GET') return http.Response('[{{"id":1,"name":"primary","is_active":true}}]', 200);
+        if (request.url.path == '/admin/business-records' && request.method == 'POST') return http.Response('{{"id":2,"name":"new","is_active":true}}', 200);
         if (request.url.path == '/notifications' && request.method == 'GET') return http.Response('[{{"id":1,"title":"Welcome","body":"Hi","read_at":null,"created_at":"now"}}]', 200);
         if (request.url.path == '/notifications/1/read') return http.Response('{{"status":"read"}}', 200);
         return http.Response('missing', 404);
@@ -9264,8 +9371,8 @@ void main() {{
     expect((await api.me('t')).canAccessAdmin, isTrue);
     expect(await api.adminUsers('t'), hasLength(1));
     expect(await api.adminRoles('t'), contains('owner'));
-    expect(await api.domains('t'), hasLength(1));
-    expect((await api.createDomain('t', 'new')).name, 'new');
+    expect(await api.businessRecords('t'), hasLength(1));
+    expect((await api.createBusinessRecord('t', 'new')).name, 'new');
     expect(await api.notifications('t'), hasLength(1));
     await api.markNotificationRead('t', '1');
     expect(calls, contains('GET /health'));
@@ -9364,7 +9471,9 @@ class _FakeApi extends ProjectApiClient {{
 def _mobile_workbench_visibility_test_dart(package_name: str) -> str:
     return f"""import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:{package_name}/main.dart';
 import 'package:{package_name}/src/api_client.dart';
+import 'package:{package_name}/src/config.dart';
 import 'package:{package_name}/src/models.dart';
 import 'package:{package_name}/src/screens.dart';
 import 'package:{package_name}/src/session_controller.dart';
@@ -9439,6 +9548,25 @@ void main() {{
       developerWorkbenchEnabled: true,
     ));
     expect(find.text('Workbench'), findsNothing);
+  }});
+
+  testWidgets('preview dev mode shows CODEX DEV SDD entry outside product navigation', (tester) async {{
+    const config = AppConfig(
+      apiBaseUrl: 'https://preview.nienfos.com/generated/api',
+      runtimeProfile: 'preview',
+      apiRuntime: 'cloudflare_preview',
+      appSlug: 'generated',
+      developerWorkbenchEnabled: true,
+      feedbackEnabled: false,
+      appUpdaterEnabled: false,
+      feedbackBridgeUrl: null,
+      workbenchBridgeUrl: 'http://machine.tail000.ts.net',
+      updaterBridgeUrl: null,
+    );
+    await tester.pumpWidget(const ProjectApp(config: config));
+    expect(find.text('SDD'), findsOneWidget);
+    expect(find.byTooltip('Open SDD Explorer'), findsOneWidget);
+    expect(config.workbenchBridgeUrl, isNot(config.apiBaseUrl));
   }});
 }}
 
@@ -9675,7 +9803,7 @@ def init_db() -> None:
                 role_name TEXT NOT NULL,
                 UNIQUE(user_id, role_name)
             );
-            CREATE TABLE IF NOT EXISTS domains (
+            CREATE TABLE IF NOT EXISTS business_records (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT UNIQUE NOT NULL,
                 is_active INTEGER NOT NULL DEFAULT 1
@@ -9942,7 +10070,7 @@ from ..security import require_roles
 router = APIRouter(prefix="/admin", tags=["admin"])
 
 
-class DomainCreate(BaseModel):
+class BusinessRecordCreate(BaseModel):
     name: str
 
 
@@ -9960,18 +10088,18 @@ def list_roles(_user=Depends(require_roles("admin"))):
     return [row["name"] for row in rows]
 
 
-@router.get("/domains")
-def list_domains(_user=Depends(require_roles("admin", "manager"))):
+@router.get("/business-records")
+def list_business_records(_user=Depends(require_roles("admin", "manager"))):
     with connect() as conn:
-        rows = conn.execute("SELECT id, name, is_active FROM domains ORDER BY id").fetchall()
+        rows = conn.execute("SELECT id, name, is_active FROM business_records ORDER BY id").fetchall()
     return [{"id": int(row["id"]), "name": row["name"], "is_active": bool(row["is_active"])} for row in rows]
 
 
-@router.post("/domains")
-def create_domain(payload: DomainCreate, _user=Depends(require_roles("admin"))):
+@router.post("/business-records")
+def create_business_record(payload: BusinessRecordCreate, _user=Depends(require_roles("admin"))):
     with connect() as conn:
         cursor = conn.execute(
-            "INSERT INTO domains(name, is_active) VALUES (?, 1)",
+            "INSERT INTO business_records(name, is_active) VALUES (?, 1)",
             (payload.name,),
         )
     return {"id": int(cursor.lastrowid), "name": payload.name, "is_active": True}
@@ -10113,7 +10241,7 @@ def test_health_auth_rbac_and_notifications(monkeypatch, tmp_path):
         assert client.get("/auth/me", headers=headers).json()["roles"] == ["owner"]
         assert client.get("/admin/users", headers=headers).status_code == 200
         assert client.post(
-            "/admin/domains",
+            "/admin/business-records",
             json={"name": "primary"},
             headers=headers,
         ).status_code == 200
@@ -10301,7 +10429,7 @@ def _classes_diagram(name: str) -> str:
       +string name
       +string[] permissions
     }}
-    class DomainRecord {{
+    class BusinessRecord {{
       +string id
       +string name
       +string status
@@ -10322,9 +10450,9 @@ def _classes_diagram(name: str) -> str:
 
     AppUser "*" --> "*" Role
     AppUser "1" --> "*" Notification
-    AppUser "1" --> "*" DomainRecord
+    AppUser "1" --> "*" BusinessRecord
     {app_class}App --> AppUser
-    {app_class}App --> DomainRecord
+    {app_class}App --> BusinessRecord
 """
 
 
@@ -11057,39 +11185,88 @@ shadows, typography, and icon sizes.
 """
 
 
-def _visual_validation_report_template() -> str:
-    return """# Visual Validation Report
+def _visual_validation_report_template(project_assets: object = None) -> str:
+    assets = project_assets if isinstance(project_assets, list) else []
+    if not assets:
+        return """# Visual Validation Report
 
 ## References Used
 
-- TODO: list asset IDs, filenames, roles, and SHA256 values.
+- No visual reference assets were attached to this Project Factory intake.
 
 ## Derived Screens
 
-- TODO: map each reference to generated screens.
+- No reference-to-screen mapping is required because no assets were provided.
 
 ## Logo And Icon
 
-- TODO: logo path.
-- TODO: app icon source path.
-- TODO: whether logo and icon share the same source.
+- No logo/app icon reference asset was provided.
 
 ## Preview Screenshots
 
-- TODO: list generated screenshots/previews.
+- Preview screenshots are produced by the release validation lane when a web or APK preview is built.
 
 ## What Was Preserved
 
-- TODO: layout, navigation, components, typography, spacing, visual rhythm.
+- No exact visual-reference bytes were provided.
 
 ## Intentional Differences
 
-- TODO: palette changes, domain adaptations, accessibility changes.
+- The generated baseline uses the default Project Factory design system until references are attached.
 
 ## Result
 
 Generation must fail if the UI remains generic while visual references exist.
 """
+    lines = [
+        "# Visual Validation Report",
+        "",
+        "## References Used",
+        "",
+    ]
+    for item in assets:
+        if not isinstance(item, dict):
+            continue
+        lines.append(
+            "- asset_id: {asset_id}; filename: {filename}; role: {role}; sha256: {sha256}".format(
+                asset_id=item.get("asset_id") or item.get("id") or "unknown",
+                filename=item.get("filename") or item.get("name") or "unknown",
+                role=item.get("role") or "visual_reference",
+                sha256=item.get("sha256") or "unknown",
+            )
+        )
+    lines.extend(
+        [
+            "",
+            "## Derived Screens",
+            "",
+            "- login/auth: logo/app_icon/exact_asset references when present.",
+            "- home/admin: product reference imagery and visual rhythm when present.",
+            "- web/APK icon surfaces: app_icon references when present.",
+            "",
+            "## Logo And Icon",
+            "",
+            "- logo/app_icon/exact_asset bytes are preserved under generated asset paths when supplied.",
+            "",
+            "## Preview Screenshots",
+            "",
+            "- Preview screenshots are produced by the release validation lane.",
+            "",
+            "## What Was Preserved",
+            "",
+            "- Exact bytes for logo, app_icon, and exact_asset roles.",
+            "",
+            "## Intentional Differences",
+            "",
+            "- Accessibility and responsive layout changes may adapt spacing without replacing exact assets.",
+            "",
+            "## Result",
+            "",
+            "Generation must fail if the UI remains generic while visual references exist.",
+            "",
+        ]
+    )
+    return "\n".join(lines)
 
 
 def _gitignore() -> str:
