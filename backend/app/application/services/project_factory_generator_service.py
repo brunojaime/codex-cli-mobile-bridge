@@ -5344,8 +5344,15 @@ if [[ "$FRONTEND_STRATEGY" == "flutter" ]]; then
   [[ -f "$ROOT_DIR/apps/mobile/lib/src/screens.dart" ]] || fail "Flutter screens.dart missing"
   ! grep -q "label: 'Workbench'" "$ROOT_DIR/apps/mobile/lib/src/screens.dart" || fail "generated product app must not expose a Workbench navigation tab"
   ! grep -q "Invite token or link" "$ROOT_DIR/apps/mobile/lib/src/screens.dart" || fail "URL invite flow must not ask users to paste invite tokens"
-  grep -q "Activate account" "$ROOT_DIR/apps/mobile/lib/src/screens.dart" || fail "invite activation action missing"
-  grep -q "Repeat password" "$ROOT_DIR/apps/mobile/lib/src/screens.dart" || fail "password confirmation field missing"
+  grep -q "Crear contraseña" "$ROOT_DIR/apps/mobile/lib/src/screens.dart" || fail "invite activation password label missing"
+  grep -q "Repetir contraseña" "$ROOT_DIR/apps/mobile/lib/src/screens.dart" || fail "invite activation password confirmation label missing"
+  grep -q "Aceptar invitación" "$ROOT_DIR/apps/mobile/lib/src/screens.dart" || fail "invite activation action missing"
+  english_create_label="Create"" password"
+  english_repeat_label="Repeat"" password"
+  english_activate_action="Activate"" account"
+  ! grep -q "$english_create_label" "$ROOT_DIR/apps/mobile/lib/src/screens.dart" || fail "invite activation must not use English create-password label"
+  ! grep -q "$english_repeat_label" "$ROOT_DIR/apps/mobile/lib/src/screens.dart" || fail "invite activation must not use English repeat-password label"
+  ! grep -q "$english_activate_action" "$ROOT_DIR/apps/mobile/lib/src/screens.dart" || fail "invite activation must not use English activate-account action"
 fi
 
 if [[ "$FRONTEND_STRATEGY" == "svelte" ]]; then
@@ -9485,10 +9492,10 @@ class _AuthScreenState extends State<AuthScreen> {{
                   decoration: InputDecoration(labelText: 'Email', helperText: _emailBound ? 'Fixed by invite' : null),
                 ),
                 const SizedBox(height: 12),
-                TextField(controller: _password, decoration: InputDecoration(labelText: _isInviteActivation ? 'Create password' : 'Password'), obscureText: true),
+                TextField(controller: _password, decoration: InputDecoration(labelText: _isInviteActivation ? 'Crear contraseña' : 'Contraseña'), obscureText: true),
                 if (_isInviteActivation) ...[
                   const SizedBox(height: 12),
-                  TextField(controller: _passwordConfirmation, decoration: const InputDecoration(labelText: 'Repeat password'), obscureText: true),
+                  TextField(controller: _passwordConfirmation, decoration: const InputDecoration(labelText: 'Repetir contraseña'), obscureText: true),
                 ],
                 const SizedBox(height: 16),
                 if (widget.controller.isMockRuntime) ...[
@@ -9519,7 +9526,7 @@ class _AuthScreenState extends State<AuthScreen> {{
                 if (!widget.controller.isPreviewRuntime)
                   TextButton(
                     onPressed: () => setState(() => _register = !_register),
-                    child: Text(_register ? 'Use login' : 'Create account'),
+                    child: Text(_register ? 'Usar inicio de sesión' : 'Crear cuenta'),
                   ),
               ],
             ),
@@ -9535,19 +9542,19 @@ class _AuthScreenState extends State<AuthScreen> {{
       _inviteState != 'login';
 
   String get _title {{
-    if (_isInviteActivation) return 'Activate preview account';
-    return widget.controller.isPreviewRuntime ? 'Preview login' : (_register ? 'Create account' : 'Login');
+    if (_isInviteActivation) return 'Aceptar invitación al Preview';
+    return widget.controller.isPreviewRuntime ? 'Ingreso Preview' : (_register ? 'Crear cuenta' : 'Iniciar sesión');
   }}
 
   String get _primaryAction {{
-    if (_isInviteActivation) return 'Activate account';
-    return _register && !widget.controller.isPreviewRuntime ? 'Register' : 'Login';
+    if (_isInviteActivation) return 'Aceptar invitación';
+    return _register && !widget.controller.isPreviewRuntime ? 'Crear cuenta' : 'Iniciar sesión';
   }}
 
   Future<void> _submit() async {{
     if (_isInviteActivation) {{
       if (_password.text != _passwordConfirmation.text) {{
-        setState(() => widget.controller.error = 'Password confirmation must match.');
+        setState(() => widget.controller.error = 'Las contraseñas deben coincidir.');
         return;
       }}
       await widget.controller.acceptPreviewInvite(
@@ -9901,13 +9908,18 @@ void main() {{
       ),
     ));
 
-    expect(find.text('Activate preview account'), findsOneWidget);
-    expect(find.text('Activate account'), findsOneWidget);
+    expect(find.text('Aceptar invitación al Preview'), findsOneWidget);
+    expect(find.text('Crear contraseña'), findsOneWidget);
+    expect(find.text('Repetir contraseña'), findsOneWidget);
+    expect(find.text('Aceptar invitación'), findsOneWidget);
+    expect(find.text('Create' ' password'), findsNothing);
+    expect(find.text('Repeat' ' password'), findsNothing);
+    expect(find.text('Activate' ' account'), findsNothing);
     expect(find.text('Invite token or link'), findsNothing);
 
     await tester.enterText(find.byType(TextField).at(1), 'secret-password');
     await tester.enterText(find.byType(TextField).at(2), 'secret-password');
-    await tester.tap(find.text('Activate account'));
+    await tester.tap(find.text('Aceptar invitación'));
     await tester.pumpAndSettle();
 
     expect(controller.isAuthenticated, isTrue);
@@ -9924,11 +9936,14 @@ void main() {{
       ),
     ));
 
-    expect(find.text('Preview login'), findsOneWidget);
+    expect(find.text('Ingreso Preview'), findsOneWidget);
+    expect(find.text('Iniciar sesión'), findsOneWidget);
+    expect(find.text('Crear contraseña'), findsNothing);
+    expect(find.text('Repetir contraseña'), findsNothing);
     expect(find.text('Invite token or link'), findsNothing);
     await tester.enterText(find.byType(TextField).at(0), 'admin@example.com');
     await tester.enterText(find.byType(TextField).at(1), 'secret-password');
-    await tester.tap(find.text('Login'));
+    await tester.tap(find.text('Iniciar sesión'));
     await tester.pumpAndSettle();
 
     expect(controller.isAuthenticated, isTrue);

@@ -128,10 +128,14 @@ def test_generator_writes_foundation_and_rolls_no_secrets(tmp_path: Path) -> Non
     pubspec = (project / "apps/mobile/pubspec.yaml").read_text(encoding="utf-8")
     assert "acceptPreviewInvite" in api_client
     assert "'/invites/accept'" in api_client
-    assert "Activate preview account" in screens
     assert "Invite token or link" not in screens
-    assert "Activate account" in screens
-    assert "Repeat password" in screens
+    assert "Aceptar invitación al Preview" in screens
+    assert "Crear contraseña" in screens
+    assert "Repetir contraseña" in screens
+    assert "Aceptar invitación" in screens
+    assert "Create password" not in screens
+    assert "Repeat password" not in screens
+    assert "Activate account" not in screens
     assert "label: 'Workbench'" not in screens
     assert "CodexBridgeDevModeWrapper" in main
     assert "DeveloperFeedbackTemplate" in main
