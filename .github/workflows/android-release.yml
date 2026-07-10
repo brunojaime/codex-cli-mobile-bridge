@@ -66,6 +66,12 @@ jobs:
         working-directory: frontend/mobile_app
         run: flutter pub get
 
+      - name: Validate Android release networking
+        env:
+          API_BASE_URL: ${{ vars.API_BASE_URL }}
+          CODEX_APP_UPDATER_BRIDGE_URL: ${{ vars.CODEX_APP_UPDATER_BRIDGE_URL }}
+        run: python3 scripts/validate_android_release_network.py
+
       - name: Build Android APK
         working-directory: frontend/mobile_app
         env:
