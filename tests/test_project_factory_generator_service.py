@@ -833,6 +833,186 @@ def test_generated_android_preview_release_blocks_wrong_api_before_git_or_networ
     assert not _git(["tag"], project).stdout.strip()
 
 
+def test_generated_initial_preview_validation_flutter_has_no_optional_bypasses(
+    tmp_path: Path,
+) -> None:
+    manifest_plan = ProjectFactoryManifestService(
+        projects_root=tmp_path,
+    ).plan_manifest(
+        ProjectFactoryManifestInput(
+            name="Clinica Norte",
+            business_type="medical",
+            primary_goal="Reservar turnos",
+        )
+    )
+    ProjectFactoryGeneratorService().generate(manifest_plan)
+
+    script = (
+        tmp_path / "clinica-norte/scripts/validate_initial_preview_release.sh"
+    ).read_text(encoding="utf-8")
+    forbidden_bypasses = [
+        "RUN_BACKEND_TESTS",
+        "RUN_FLUTTER_ANALYZE",
+        "RUN_FLUTTER_TESTS",
+        "RUN_LOCAL_APK_BUILD",
+        "RUN_APKSIGNER_VERIFY",
+        "RUN_INVITE_E2E",
+        "SKIP_GITHUB_WORKFLOW_CHECK",
+    ]
+    for bypass in forbidden_bypasses:
+        assert bypass not in script
+    assert "release/initial-preview-validation-report.json" in script
+
+
+def test_generated_initial_preview_validation_runs_all_flutter_checks(
+    tmp_path: Path,
+) -> None:
+    manifest_plan = ProjectFactoryManifestService(
+        projects_root=tmp_path,
+    ).plan_manifest(
+        ProjectFactoryManifestInput(
+            name="Clinica Norte",
+            business_type="medical",
+            primary_goal="Reservar turnos",
+        )
+    )
+    ProjectFactoryGeneratorService().generate(manifest_plan)
+
+    project = tmp_path / "clinica-norte"
+    _git(["remote", "add", "origin", "https://github.com/acme/clinica-norte.git"], project)
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    command_log, bridge_root = _write_initial_preview_gate_fakes(
+        project,
+        fake_bin,
+        tmp_path,
+    )
+    _git(["add", "scripts/smoke_preview_api.sh"], project)
+    _git(["add", "scripts/smoke_web_preview.sh"], project)
+    _git(["add", "scripts/final_readiness_audit.sh"], project)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.email=test@example.test",
+            "-c",
+            "user.name=Test",
+            "commit",
+            "-m",
+            "Install fake validation hooks",
+        ],
+        cwd=project,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+
+    completed = subprocess.run(
+        ["scripts/validate_initial_preview_release.sh"],
+        cwd=project,
+        env=_initial_preview_env(
+            {
+                "PATH": f"{fake_bin}:{os.environ['PATH']}",
+                "COMMAND_LOG": str(command_log),
+                "CODEX_MOBILE_BRIDGE_ROOT": str(bridge_root),
+            }
+        ),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    report = json.loads(
+        (project / "release/initial-preview-validation-report.json").read_text(
+            encoding="utf-8",
+        )
+    )
+    statuses = {item["name"]: item["status"] for item in report["checks"]}
+    mandatory = [
+        "backend tests",
+        "Flutter analyze",
+        "Flutter tests",
+        "APK local build",
+        "apksigner verify",
+        "D1 migration apply",
+        "Cloudflare preview health",
+        "web preview smoke",
+        "API preview smoke",
+        "Factory invite validation",
+        "GitHub Android release workflow",
+        "GitHub release asset exists",
+        "Bridge registration real",
+        "APK SHA256",
+        "final readiness audit",
+        "clean git status",
+        "validate_initial_preview_release.sh",
+    ]
+    for check_name in mandatory:
+        assert statuses[check_name] == "passed"
+    assert "skipped_with_reason" not in statuses.values()
+    log = command_log.read_text(encoding="utf-8")
+    assert "backend tests" in log
+    assert "flutter analyze" in log
+    assert "flutter test" in log
+    assert "flutter build apk" in log
+    assert "apksigner verify" in log
+    assert "wrangler" in log
+    assert "invite e2e" in log
+
+
+def test_generated_initial_preview_validation_reports_failed_flutter_check(
+    tmp_path: Path,
+) -> None:
+    manifest_plan = ProjectFactoryManifestService(
+        projects_root=tmp_path,
+    ).plan_manifest(
+        ProjectFactoryManifestInput(
+            name="Clinica Norte",
+            business_type="medical",
+            primary_goal="Reservar turnos",
+        )
+    )
+    ProjectFactoryGeneratorService().generate(manifest_plan)
+
+    project = tmp_path / "clinica-norte"
+    _git(["remote", "add", "origin", "https://github.com/acme/clinica-norte.git"], project)
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    command_log, bridge_root = _write_initial_preview_gate_fakes(
+        project,
+        fake_bin,
+        tmp_path,
+    )
+
+    completed = subprocess.run(
+        ["scripts/validate_initial_preview_release.sh"],
+        cwd=project,
+        env=_initial_preview_env(
+            {
+                "PATH": f"{fake_bin}:{os.environ['PATH']}",
+                "COMMAND_LOG": str(command_log),
+                "CODEX_MOBILE_BRIDGE_ROOT": str(bridge_root),
+                "FAIL_FLUTTER_ANALYZE": "true",
+            }
+        ),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode != 0
+    report = json.loads(
+        (project / "release/initial-preview-validation-report.json").read_text(
+            encoding="utf-8",
+        )
+    )
+    statuses = {item["name"]: item["status"] for item in report["checks"]}
+    assert statuses["Flutter analyze"] == "failed"
+    assert statuses["validate_initial_preview_release.sh"] == "failed"
+    assert "one or more required checks failed" in completed.stdout + completed.stderr
+
+
 def test_generated_initial_preview_validation_rejects_bad_bridge_registration(
     tmp_path: Path,
 ) -> None:
@@ -849,20 +1029,14 @@ def test_generated_initial_preview_validation_rejects_bad_bridge_registration(
 
     project = tmp_path / "clinica-norte"
     _git(["remote", "add", "origin", "https://github.com/acme/clinica-norte.git"], project)
-    (project / "scripts/smoke_preview_api.sh").write_text(
-        "#!/usr/bin/env bash\nexit 0\n",
-        encoding="utf-8",
-    )
-    (project / "scripts/smoke_preview_api.sh").chmod(0o755)
-    (project / "scripts/smoke_web_preview.sh").write_text(
-        "#!/usr/bin/env bash\nexit 0\n",
-        encoding="utf-8",
-    )
-    (project / "scripts/smoke_web_preview.sh").chmod(0o755)
 
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
-    _write_fake_github_access_tools(fake_bin)
+    command_log, bridge_root = _write_initial_preview_gate_fakes(
+        project,
+        fake_bin,
+        tmp_path,
+    )
     fake_curl = fake_bin / "curl"
     cases = [
         (
@@ -934,7 +1108,9 @@ def test_generated_initial_preview_validation_rejects_bad_bridge_registration(
             cwd=project,
             env=_initial_preview_env(
                 {
-                "PATH": f"{fake_bin}:{os.environ['PATH']}",
+                    "PATH": f"{fake_bin}:{os.environ['PATH']}",
+                    "COMMAND_LOG": str(command_log),
+                    "CODEX_MOBILE_BRIDGE_ROOT": str(bridge_root),
                 }
             ),
             text=True,
@@ -962,20 +1138,14 @@ def test_generated_initial_preview_validation_checks_expected_apk_sha256(
 
     project = tmp_path / "clinica-norte"
     _git(["remote", "add", "origin", "https://github.com/acme/clinica-norte.git"], project)
-    (project / "scripts/smoke_preview_api.sh").write_text(
-        "#!/usr/bin/env bash\nexit 0\n",
-        encoding="utf-8",
-    )
-    (project / "scripts/smoke_preview_api.sh").chmod(0o755)
-    (project / "scripts/smoke_web_preview.sh").write_text(
-        "#!/usr/bin/env bash\nexit 0\n",
-        encoding="utf-8",
-    )
-    (project / "scripts/smoke_web_preview.sh").chmod(0o755)
 
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
-    _write_fake_github_access_tools(fake_bin)
+    command_log, bridge_root = _write_initial_preview_gate_fakes(
+        project,
+        fake_bin,
+        tmp_path,
+    )
     fake_curl = fake_bin / "curl"
     fake_curl.write_text(
         "#!/usr/bin/env bash\n"
@@ -1006,8 +1176,10 @@ def test_generated_initial_preview_validation_checks_expected_apk_sha256(
         cwd=project,
         env=_initial_preview_env(
             {
-            "PATH": f"{fake_bin}:{os.environ['PATH']}",
-            "EXPECTED_SHA256": "0" * 64,
+                "PATH": f"{fake_bin}:{os.environ['PATH']}",
+                "COMMAND_LOG": str(command_log),
+                "CODEX_MOBILE_BRIDGE_ROOT": str(bridge_root),
+                "EXPECTED_SHA256": "0" * 64,
             }
         ),
         text=True,
@@ -2064,9 +2236,8 @@ def _initial_preview_env(extra: dict[str, str] | None = None) -> dict[str, str]:
         "PREVIEW_ADMIN_BOOTSTRAP_TOKEN": "bootstrap-token",
         "PREVIEW_D1_DATABASE": "nienfos-preview",
         "CLOUDFLARE_D1_DATABASE": "nienfos-preview",
-        "RUN_D1_MIGRATION_APPLY": "false",
-        "SKIP_GITHUB_WORKFLOW_CHECK": "true",
         "CODEX_MOBILE_BRIDGE_ROOT": "/tmp/project-factory-test-no-env",
+        "WRANGLER_AUTH_READY": "true",
     }
     if extra:
         env.update(extra)
@@ -2100,6 +2271,143 @@ def _write_fake_github_access_tools(
         encoding="utf-8",
     )
     fake_git.chmod(0o755)
+
+
+def _write_initial_preview_gate_fakes(
+    project: Path,
+    fake_bin: Path,
+    tmp_path: Path,
+) -> tuple[Path, Path]:
+    command_log = tmp_path / "initial-preview-commands.log"
+    bridge_root = tmp_path / "bridge-root"
+    secrets = bridge_root / "secrets"
+    secrets.mkdir(parents=True, exist_ok=True)
+    (secrets / "clinica-norte-preview-upload-keystore.jks").write_bytes(
+        b"existing-preview-keystore"
+    )
+    (secrets / "clinica-norte-preview-signing.env").write_text(
+        "\n".join(
+            [
+                "ANDROID_KEY_ALIAS=preview",
+                "ANDROID_STORE_PASSWORD=store-password",
+                "ANDROID_KEY_PASSWORD=key-password",
+                "ANDROID_STORE_TYPE=JKS",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    _write_fake_github_access_tools(fake_bin)
+    real_python = sys.executable
+    fake_python = fake_bin / "python3"
+    fake_python.write_text(
+        "#!/usr/bin/env bash\n"
+        "if [[ \"$1 $2 $3 $4\" == '-m pytest tests -q' ]]; then\n"
+        "  printf 'backend tests\\n' >> \"$COMMAND_LOG\"\n"
+        "  exit 0\n"
+        "fi\n"
+        "if [[ \"$1\" == '-' && \"${2:-}\" == 'https://bridge.test' ]]; then\n"
+        "  printf 'invite e2e\\n' >> \"$COMMAND_LOG\"\n"
+        "  cat >/dev/null\n"
+        "  exit 0\n"
+        "fi\n"
+        f"exec {real_python} \"$@\"\n",
+        encoding="utf-8",
+    )
+    fake_python.chmod(0o755)
+
+    fake_flutter = fake_bin / "flutter"
+    fake_flutter.write_text(
+        "#!/usr/bin/env bash\n"
+        "printf 'flutter %s\\n' \"$*\" >> \"$COMMAND_LOG\"\n"
+        "if [[ \"$1\" == 'analyze' && \"${FAIL_FLUTTER_ANALYZE:-false}\" == 'true' ]]; then\n"
+        "  printf 'flutter analyze failed by test\\n' >&2\n"
+        "  exit 7\n"
+        "fi\n"
+        "if [[ \"$1 $2\" == 'build apk' ]]; then\n"
+        "  mkdir -p build/app/outputs/flutter-apk\n"
+        "  printf 'preview-apk' > build/app/outputs/flutter-apk/app-release.apk\n"
+        "fi\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    fake_flutter.chmod(0o755)
+
+    fake_apksigner = fake_bin / "apksigner"
+    fake_apksigner.write_text(
+        "#!/usr/bin/env bash\n"
+        "printf 'apksigner %s\\n' \"$*\" >> \"$COMMAND_LOG\"\n"
+        "if [[ \"${FAIL_APKSIGNER:-false}\" == 'true' ]]; then\n"
+        "  printf 'apksigner failed by test\\n' >&2\n"
+        "  exit 9\n"
+        "fi\n"
+        "cat <<'OUT'\n"
+        "Verifies\n"
+        "Verified using v1 scheme (JAR signing): true\n"
+        "Signer #1 certificate SHA-256 digest: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\n"
+        "Signer #1 certificate DN: CN=Clinica Norte Preview Upload\n"
+        "OUT\n",
+        encoding="utf-8",
+    )
+    fake_apksigner.chmod(0o755)
+
+    fake_wrangler = fake_bin / "wrangler"
+    fake_wrangler.write_text(
+        "#!/usr/bin/env bash\n"
+        "printf 'wrangler %s\\n' \"$*\" >> \"$COMMAND_LOG\"\n"
+        "if [[ \"$*\" == *'PRAGMA table_info'* ]]; then\n"
+        "  cat <<'JSON'\n"
+        '{"result":[{"results":[{"name":"id"},{"name":"email"},{"name":"role"},{"name":"sha256"},{"name":"used_at"}]}]}\n'
+        "JSON\n"
+        "fi\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    fake_wrangler.chmod(0o755)
+
+    fake_curl = fake_bin / "curl"
+    fake_curl.write_text(
+        "#!/usr/bin/env bash\n"
+        "printf 'curl %s\\n' \"$*\" >> \"$COMMAND_LOG\"\n"
+        "if [[ \"$*\" == *'https://bridge.test/apk'* ]]; then\n"
+        "  out=/tmp/project-factory-preview.apk\n"
+        "  while [[ $# -gt 0 ]]; do\n"
+        "    if [[ \"$1\" == '-o' ]]; then out=\"$2\"; shift 2; else shift; fi\n"
+        "  done\n"
+        "  printf 'preview-apk' > \"$out\"\n"
+        "  exit 0\n"
+        "fi\n"
+        "cat <<'JSON'\n"
+        '{"sourceApp":"clinica-norte","releaseChannel":"prerelease",'
+        '"releaseTagPattern":"android-preview-v*",'
+        '"releaseTag":"android-preview-v0.1.0-build.1","available":true,'
+        '"previewUrl":"https://preview.nienfos.com/clinica-norte",'
+        '"runtimeProfile":"preview","productionReady":false,'
+        '"mockOrDemo":false,"apkUrl":"https://bridge.test/apk",'
+        '"sha256":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",'
+        '"latestBuild":{"releaseTag":"android-preview-v0.1.0-build.1"},'
+        '"releaseMetadata":{"initialPreviewRelease":true,'
+        '"releaseTagPattern":"android-preview-v*"}}\n'
+        "JSON\n",
+        encoding="utf-8",
+    )
+    fake_curl.chmod(0o755)
+
+    for script_name in [
+        "scripts/smoke_preview_api.sh",
+        "scripts/smoke_web_preview.sh",
+        "scripts/final_readiness_audit.sh",
+    ]:
+        script = project / script_name
+        script.write_text(
+            "#!/usr/bin/env bash\n"
+            f"printf '{script_name}\\n' >> \"$COMMAND_LOG\"\n"
+            "exit 0\n",
+            encoding="utf-8",
+        )
+        script.chmod(0o755)
+
+    return command_log, bridge_root
 
 
 def _read_all_text(project: Path) -> str:

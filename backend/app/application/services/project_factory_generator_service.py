@@ -5012,36 +5012,79 @@ fail() {{
 }}
 
 CHECK_REPORT="${{CHECK_REPORT:-/tmp/project-factory-initial-preview-checks.tsv}}"
+CHECK_REPORT_JSON="${{CHECK_REPORT_JSON:-release/initial-preview-validation-report.json}}"
 : > "$CHECK_REPORT"
 
 record_check() {{
   local name="$1"
   local status="$2"
-  local reason="${{3:-}}"
-  printf '%s\\t%s\\t%s\\n' "$name" "$status" "$reason" >> "$CHECK_REPORT"
+  local command="${{3:-}}"
+  local detail="${{4:-}}"
+  local timestamp
+  timestamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  printf '%s\\t%s\\t%s\\t%s\\t%s\\n' "$name" "$status" "$command" "$detail" "$timestamp" >> "$CHECK_REPORT"
 }}
 
 run_check() {{
   local name="$1"
   shift
-  if "$@"; then
-    record_check "$name" "passed"
+  local command="$*"
+  if ( "$@" ); then
+    record_check "$name" "passed" "$command"
   else
     local code=$?
-    record_check "$name" "failed" "exit_code=$code"
+    record_check "$name" "failed" "$command" "exit_code=$code"
     return 0
   fi
 }}
 
 skip_check() {{
-  record_check "$1" "skipped_with_reason" "$2"
+  record_check "$1" "skipped_with_reason" "" "$2"
 }}
 
 finish_checks() {{
-  record_check "validate_initial_preview_release.sh" "passed"
-  printf 'initial preview release checks:\\n'
-  awk -F '\\t' '{{ printf "- %s: %s%s\\n", $1, $2, ($3 ? " (" $3 ")" : "") }}' "$CHECK_REPORT"
+  local validator_status="passed"
   if awk -F '\\t' '$2 == "failed" {{ found=1 }} END {{ exit found ? 0 : 1 }}' "$CHECK_REPORT"; then
+    validator_status="failed"
+  fi
+  record_check "validate_initial_preview_release.sh" "$validator_status" "scripts/validate_initial_preview_release.sh"
+  mkdir -p "$(dirname "$CHECK_REPORT_JSON")"
+  python3 - "$CHECK_REPORT" "$CHECK_REPORT_JSON" "$SOURCE_APP" "$FRONTEND_STRATEGY" <<'PY'
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+
+tsv_path, json_path, source_app, frontend_strategy = sys.argv[1:5]
+checks = []
+for line in Path(tsv_path).read_text(encoding="utf-8").splitlines():
+    name, status, command, detail, timestamp = (line.split("\t") + ["", "", "", "", ""])[:5]
+    checks.append({{
+        "name": name,
+        "status": status,
+        "command": command,
+        "detail": detail,
+        "timestamp": timestamp,
+    }})
+payload = {{
+    "kind": "codex.initialPreviewValidationReport",
+    "version": 1,
+    "sourceApp": source_app,
+    "frontendStrategy": frontend_strategy,
+    "checks": checks,
+    "summary": {{
+        "passed": sum(1 for item in checks if item["status"] == "passed"),
+        "failed": sum(1 for item in checks if item["status"] == "failed"),
+        "skipped": sum(1 for item in checks if item["status"] == "skipped_with_reason"),
+    }},
+}}
+Path(json_path).write_text(json.dumps(payload, indent=2, sort_keys=True) + "\\n", encoding="utf-8")
+PY
+  printf 'initial preview release checks:\\n'
+  awk -F '\\t' '{{ printf "- %s: %s%s\\n", $1, $2, ($4 ? " (" $4 ")" : "") }}' "$CHECK_REPORT"
+  printf 'validation report: %s\\n' "$CHECK_REPORT_JSON"
+  if [[ "$validator_status" == "failed" ]]; then
     fail "one or more required checks failed"
   fi
 }}
@@ -5071,47 +5114,81 @@ fi
   fail "Preview API must be https://preview.nienfos.com/$SOURCE_APP/api"
 [[ "${{API_BASE_URL%/}}" == "$PREVIEW_API_BASE_URL" ]] || fail "API_BASE_URL must match Preview API"
 
-if [[ "${{RUN_BACKEND_TESTS:-false}}" == "true" ]]; then
-  run_check "backend tests" python3 -m pytest tests -q
-else
-  skip_check "backend tests" "set RUN_BACKEND_TESTS=true to execute repository backend tests in this gate"
-fi
+run_backend_tests() {{
+  cd "$ROOT_DIR/backend"
+  python3 -m pytest tests -q
+}}
 
-if [[ "$FRONTEND_STRATEGY" == "flutter" && "${{RUN_FLUTTER_ANALYZE:-false}}" == "true" ]]; then
-  run_check "Flutter analyze" bash -lc 'cd apps/mobile && flutter analyze'
-else
-  skip_check "Flutter analyze" "set RUN_FLUTTER_ANALYZE=true to run flutter analyze"
-fi
+run_flutter_analyze() {{
+  cd "$ROOT_DIR/apps/mobile"
+  flutter analyze
+}}
 
-if [[ "$FRONTEND_STRATEGY" == "flutter" && "${{RUN_FLUTTER_TESTS:-false}}" == "true" ]]; then
-  run_check "Flutter tests" bash -lc 'cd apps/mobile && flutter test'
-else
-  skip_check "Flutter tests" "set RUN_FLUTTER_TESTS=true to run flutter test"
-fi
+run_flutter_tests() {{
+  cd "$ROOT_DIR/apps/mobile"
+  flutter test \\
+    --dart-define=APP_RUNTIME_PROFILE=preview \\
+    --dart-define=API_RUNTIME=cloudflare_preview \\
+    --dart-define=API_BASE_URL="$PREVIEW_API_BASE_URL" \\
+    --dart-define=APP_SLUG="$SOURCE_APP"
+}}
 
-if [[ "$FRONTEND_STRATEGY" == "flutter" && "${{RUN_LOCAL_APK_BUILD:-false}}" == "true" ]]; then
-  run_check "APK local build" bash -lc 'cd apps/mobile && flutter build apk --release'
-else
-  skip_check "APK local build" "set RUN_LOCAL_APK_BUILD=true after local Android signing files are configured"
-fi
+configure_preview_signing() {{
+  bridge_env_load_preview_signing
+  cp "$ANDROID_KEYSTORE_PATH" "$ROOT_DIR/apps/mobile/android/upload-keystore.jks"
+  cat > "$ROOT_DIR/apps/mobile/android/key.properties" <<EOF
+storeFile=upload-keystore.jks
+storePassword=$ANDROID_STORE_PASSWORD
+keyPassword=$ANDROID_KEY_PASSWORD
+keyAlias=$ANDROID_KEY_ALIAS
+storeType=${{ANDROID_STORE_TYPE:-JKS}}
+EOF
+}}
 
-if [[ "$FRONTEND_STRATEGY" == "flutter" && "${{RUN_APKSIGNER_VERIFY:-false}}" == "true" ]]; then
-  run_check "apksigner verify" bash -lc 'apksigner verify --verbose --print-certs apps/mobile/build/app/outputs/flutter-apk/app-release.apk'
-else
-  skip_check "apksigner verify" "set RUN_APKSIGNER_VERIFY=true after APK local build"
-fi
+run_local_apk_build() {{
+  configure_preview_signing
+  cd "$ROOT_DIR/apps/mobile"
+  flutter build apk --release \\
+    --dart-define=APP_RUNTIME_PROFILE=preview \\
+    --dart-define=API_RUNTIME=cloudflare_preview \\
+    --dart-define=API_BASE_URL="$PREVIEW_API_BASE_URL" \\
+    --dart-define=APP_SLUG="$SOURCE_APP"
+}}
 
-if [[ "${{RUN_D1_MIGRATION_APPLY:-true}}" == "true" ]]; then
-  run_check "D1 migration apply" scripts/apply_preview_d1_migrations.sh
-else
-  skip_check "D1 migration apply" "RUN_D1_MIGRATION_APPLY=false"
-fi
+run_apksigner_verify() {{
+  local apk="$ROOT_DIR/apps/mobile/build/app/outputs/flutter-apk/app-release.apk"
+  [[ -f "$apk" ]] || apk="$ROOT_DIR/apps/mobile/build/app/outputs/flutter-apk/$SOURCE_APP.apk"
+  [[ -f "$apk" ]] || {{
+    printf 'APK not found after local build\\n' >&2
+    return 2
+  }}
+  local apksigner_bin="${{APKSIGNER:-}}"
+  if [[ -z "$apksigner_bin" ]]; then
+    apksigner_bin="$(command -v apksigner || true)"
+  fi
+  if [[ -z "$apksigner_bin" && -n "${{ANDROID_HOME:-}}" ]]; then
+    apksigner_bin="$(find "$ANDROID_HOME/build-tools" -name apksigner -type f 2>/dev/null | sort -V | tail -n 1)"
+  fi
+  [[ -n "$apksigner_bin" ]] || {{
+    printf 'apksigner is required\\n' >&2
+    return 2
+  }}
+  "$apksigner_bin" verify --verbose --print-certs "$apk" | tee /tmp/project-factory-apksigner.txt
+  grep -q "Verified using" /tmp/project-factory-apksigner.txt
+  if grep -Eqi 'CN=Android Debug|Android Debug' /tmp/project-factory-apksigner.txt; then
+    printf 'Preview APK must not be signed with Android debug certificate.\\n' >&2
+    return 2
+  fi
+  signer_sha256="$(awk -F': ' '/certificate SHA-256 digest/ {{ print $2; exit }}' /tmp/project-factory-apksigner.txt | tr -d '[:space:]')"
+  [[ "$signer_sha256" =~ ^[A-Fa-f0-9]{{64}}$ ]] || {{
+    printf 'Could not parse signer certificate SHA256 from apksigner output.\\n' >&2
+    return 2
+  }}
+  record_check "apksigner signer SHA256" "passed" "$apksigner_bin verify --print-certs" "$signer_sha256"
+}}
 
-run_check "Cloudflare preview health" scripts/smoke_web_preview.sh
-record_check "web preview smoke" "passed" "covered by scripts/smoke_web_preview.sh"
-run_check "API preview smoke" scripts/smoke_preview_api.sh
-if [[ "${{RUN_INVITE_E2E:-false}}" == "true" ]]; then
-  run_check "Factory invite validation" python3 - "$BRIDGE_URL" "$SOURCE_APP" "$PREVIEW_ADMIN_PASSWORD" <<'PY'
+run_invite_e2e() {{
+  python3 - "$BRIDGE_URL" "$SOURCE_APP" "$PREVIEW_ADMIN_PASSWORD" <<'PY'
 from __future__ import annotations
 
 import json
@@ -5199,8 +5276,28 @@ with urllib.request.urlopen(login, timeout=30) as response:
     if response.status != 200:
         raise SystemExit("login after invite activation failed: " + str(response.status))
 PY
+}}
+
+run_check "backend tests" run_backend_tests
+if [[ "$FRONTEND_STRATEGY" == "flutter" ]]; then
+  run_check "Flutter analyze" run_flutter_analyze
+  run_check "Flutter tests" run_flutter_tests
+  run_check "APK local build" run_local_apk_build
+  run_check "apksigner verify" run_apksigner_verify
 else
-  skip_check "Factory invite validation" "set RUN_INVITE_E2E=true with real Bridge and Preview deployed"
+  skip_check "Flutter analyze" "frontend_strategy=$FRONTEND_STRATEGY"
+  skip_check "Flutter tests" "frontend_strategy=$FRONTEND_STRATEGY"
+  skip_check "APK local build" "frontend_strategy=$FRONTEND_STRATEGY"
+  skip_check "apksigner verify" "frontend_strategy=$FRONTEND_STRATEGY"
+fi
+run_check "D1 migration apply" scripts/apply_preview_d1_migrations.sh
+run_check "Cloudflare preview health" scripts/smoke_web_preview.sh
+run_check "web preview smoke" scripts/smoke_web_preview.sh
+run_check "API preview smoke" scripts/smoke_preview_api.sh
+if [[ "$FRONTEND_STRATEGY" == "flutter" ]]; then
+  run_check "Factory invite validation" run_invite_e2e
+else
+  skip_check "Factory invite validation" "frontend_strategy=$FRONTEND_STRATEGY"
 fi
 
 if [[ "$FRONTEND_STRATEGY" == "flutter" ]]; then
@@ -5311,29 +5408,38 @@ expected_tag="android-preview-v${{version//+/-build.}}"
 [[ "$APP_RELEASE_TAG" == "$expected_tag" ]] || fail "APP_RELEASE_TAG must be $expected_tag"
 [[ "$APP_ANDROID_PREVIEW_RELEASE_TAG" == "$expected_tag" ]] || fail "APP_ANDROID_PREVIEW_RELEASE_TAG must be $expected_tag"
 
-if ! command -v gh >/dev/null 2>&1; then
-  fail "gh is required to verify Android preview APK release assets"
-fi
-if [[ "${{SKIP_GITHUB_WORKFLOW_CHECK:-false}}" == "true" ]]; then
-  skip_check "GitHub Android release workflow" "SKIP_GITHUB_WORKFLOW_CHECK=true"
-else
-  run_check "GitHub Android release workflow" gh workflow view android-preview-release.yml --repo "$repo_ref"
-fi
-assets="$(gh release view "$expected_tag" --repo "$repo_ref" --json assets --jq '.assets[].name' 2>/dev/null || true)"
-[[ -n "$assets" ]] || fail "GitHub release $expected_tag is missing or has no assets"
-printf '%s\\n' "$assets" | grep -Fx "$SOURCE_APP.apk" >/dev/null || fail "GitHub release $expected_tag has no $SOURCE_APP.apk asset"
-record_check "GitHub release asset exists" "passed" "$SOURCE_APP.apk"
+run_github_release_asset_exists() {{
+  command -v gh >/dev/null 2>&1 || {{
+    printf 'gh is required to verify Android preview APK release assets\\n' >&2
+    return 2
+  }}
+  local assets
+  assets="$(gh release view "$expected_tag" --repo "$repo_ref" --json assets --jq '.assets[].name' 2>/dev/null || true)"
+  [[ -n "$assets" ]] || {{
+    printf 'GitHub release %s is missing or has no assets\\n' "$expected_tag" >&2
+    return 2
+  }}
+  printf '%s\\n' "$assets" | grep -Fx "$SOURCE_APP.apk" >/dev/null || {{
+    printf 'GitHub release %s has no %s.apk asset\\n' "$expected_tag" "$SOURCE_APP" >&2
+    return 2
+  }}
+}}
 
-scripts/smoke_preview_api.sh
-
-[[ -n "${{BRIDGE_URL:-}}" ]] || fail "BRIDGE_URL is required to verify Codex Mobile Apps registration"
-detail="$(curl -fsS "${{BRIDGE_URL%/}}/installable-apps/$SOURCE_APP")" || fail "Bridge registration lookup failed"
-printf '%s\\n' "$detail" > /tmp/project-factory-installable-app-detail.json
-python3 - "$SOURCE_APP" "$expected_tag" "$ROOT_DIR/release/preview-runtime.json" "$ROOT_DIR/deploy/web-preview/web-preview-manifest.yaml" <<'PY'
+run_bridge_registration_validation() {{
+  [[ -n "${{BRIDGE_URL:-}}" ]] || {{
+    printf 'BRIDGE_URL is required to verify Codex Mobile Apps registration\\n' >&2
+    return 2
+  }}
+  local detail
+  detail="$(curl -fsS "${{BRIDGE_URL%/}}/installable-apps/$SOURCE_APP")" || {{
+    printf 'Bridge registration lookup failed\\n' >&2
+    return 2
+  }}
+  printf '%s\\n' "$detail" > /tmp/project-factory-installable-app-detail.json
+  python3 - "$SOURCE_APP" "$expected_tag" "$ROOT_DIR/release/preview-runtime.json" "$ROOT_DIR/deploy/web-preview/web-preview-manifest.yaml" <<'PY'
 from __future__ import annotations
 
 import json
-import os
 import re
 import sys
 from pathlib import Path
@@ -5393,20 +5499,33 @@ if isinstance(metadata, dict):
         raise SystemExit("Bridge registration releaseMetadata.initialPreviewRelease must be true")
     if metadata.get("releaseTagPattern") != runtime.get("releaseTagPattern"):
         raise SystemExit("Bridge registration release metadata tag pattern mismatch")
+print(f"initial preview release ready: {{source_app}} {{expected_tag}}")
+PY
+}}
+
+run_apk_sha256_validation() {{
+  python3 - <<'PY'
+from __future__ import annotations
+
+import json
+import os
+import re
+from pathlib import Path
+
+detail = json.loads(Path("/tmp/project-factory-installable-app-detail.json").read_text())
+detail_sha = str(detail.get("sha256") or "")
+if not re.fullmatch(r"[a-fA-F0-9]{{64}}", detail_sha):
+    raise SystemExit("Bridge registration sha256 must be present and 64 hex characters")
 expected_sha = os.environ.get("EXPECTED_SHA256", "").strip().lower()
 if expected_sha:
     if not re.fullmatch(r"[a-fA-F0-9]{{64}}", expected_sha):
         raise SystemExit("EXPECTED_SHA256 must be 64 hex characters")
     if detail_sha.lower() != expected_sha:
         raise SystemExit("Bridge registration sha256 does not match EXPECTED_SHA256")
-    print(detail["apkUrl"])
-print(f"initial preview release ready: {{source_app}} {{expected_tag}}")
 PY
-record_check "Bridge registration real" "passed" "latestBuild/apkUrl/sha256/runtime flags verified"
-record_check "APK SHA256" "passed" "Bridge registration sha256 is present"
-
-if [[ -n "${{EXPECTED_SHA256:-}}" ]]; then
-  apk_url="$(python3 - <<'PY'
+  if [[ -n "${{EXPECTED_SHA256:-}}" ]]; then
+    local apk_url
+    apk_url="$(python3 - <<'PY'
 import json
 from pathlib import Path
 
@@ -5414,11 +5533,25 @@ detail = json.loads(Path("/tmp/project-factory-installable-app-detail.json").rea
 print(detail["apkUrl"])
 PY
 )"
-  printf 'verifying preview APK bytes with EXPECTED_SHA256 via download: %s\\n' "$apk_url"
-  curl -fsSL "$apk_url" -o /tmp/project-factory-preview.apk
-  actual_sha="$(sha256sum /tmp/project-factory-preview.apk | awk '{{ print $1 }}')"
-  [[ "${{actual_sha,,}}" == "${{EXPECTED_SHA256,,}}" ]] || fail "Preview APK checksum does not match EXPECTED_SHA256"
-  printf 'preview APK checksum verified: %s\\n' "$actual_sha"
+    printf 'verifying preview APK bytes with EXPECTED_SHA256 via download: %s\\n' "$apk_url"
+    curl -fsSL "$apk_url" -o /tmp/project-factory-preview.apk
+    local actual_sha
+    actual_sha="$(sha256sum /tmp/project-factory-preview.apk | awk '{{ print $1 }}')"
+    [[ "${{actual_sha,,}}" == "${{EXPECTED_SHA256,,}}" ]] || {{
+      printf 'Preview APK checksum does not match EXPECTED_SHA256\\n' >&2
+      return 2
+    }}
+    printf 'preview APK checksum verified: %s\\n' "$actual_sha"
+  fi
+}}
+
+run_check "GitHub Android release workflow" gh workflow view android-preview-release.yml --repo "$repo_ref"
+run_check "GitHub release asset exists" run_github_release_asset_exists
+
+run_check "Bridge registration real" run_bridge_registration_validation
+run_check "APK SHA256" run_apk_sha256_validation
+if awk -F '\\t' '$2 == "failed" {{ found=1 }} END {{ exit found ? 0 : 1 }}' "$CHECK_REPORT"; then
+  finish_checks
 fi
 
 release_url="$(gh release view "$expected_tag" --repo "$repo_ref" --json url --jq '.url' 2>/dev/null || true)"
