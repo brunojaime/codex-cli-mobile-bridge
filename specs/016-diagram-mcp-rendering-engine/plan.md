@@ -54,7 +54,7 @@ Tasks: 6
 
 File: plans/07-frontend-diagram-viewer/plan.md
 
-Status: pending
+Status: completed
 
 Tasks: 5
 
@@ -62,6 +62,6 @@ Tasks: 5
 
 File: plans/08-mcp-diagram-workflow-and-mobile-release/plan.md
 
-Status: pending
+Status: completed
 
 Tasks: 4

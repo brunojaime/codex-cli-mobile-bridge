@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from backend.app.application.services.sdd_standard_service import (
     SddStandardError,
@@ -12,7 +15,9 @@ from backend.app.application.services.sdd_standard_service import (
 
 
 ALLOWED_SDD_EXTENSIONS = frozenset({".md", ".mmd", ".yaml", ".yml", ".json"})
+ALLOWED_RENDERED_DIAGRAM_EXTENSIONS = frozenset({".svg"})
 DEFAULT_SDD_FILE_MAX_BYTES = 256_000
+DEFAULT_SDD_SVG_MAX_BYTES = 512_000
 ARCHIVED_SPEC_DIR_NAMES = frozenset({"archive", "archives", "_archive", ".archive"})
 
 
@@ -46,6 +51,36 @@ class SddDiagram:
     diagram_type: str
     scope: str
     error: str | None = None
+    spec_id: str | None = None
+    diagram_id: str | None = None
+    source_format: str = "mermaid"
+    rendered_format: str | None = None
+    content_type: str = "text/plain; charset=utf-8"
+    digest: str | None = None
+    updated_at: str | None = None
+    metadata_path: str | None = None
+    renderer: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class SddDiagramAsset:
+    path: str
+    content: str
+    content_type: str
+    digest: str
+    updated_at: str
+
+
+@dataclass(frozen=True, slots=True)
+class SddRenderedDiagramExport:
+    workspace_path: str
+    spec_id: str
+    diagram_id: str
+    title: str | None
+    diagram_type: str
+    svg: str
+    renderer: str | None = None
+    diagram_spec_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -243,6 +278,76 @@ class SddProjectService:
                     )
                 )
         return _unique_diagrams(tuple(diagrams))
+
+    def get_diagram_asset(
+        self,
+        workspace_path: str,
+        diagram_path: str,
+    ) -> SddDiagramAsset:
+        workspace = self._validate_workspace_path(workspace_path)
+        resolved = self._resolve_rendered_diagram_path(workspace, diagram_path)
+        stat = resolved.stat()
+        if stat.st_size > DEFAULT_SDD_SVG_MAX_BYTES:
+            raise SddProjectError("Rendered diagram is too large.")
+        content = resolved.read_text(encoding="utf-8", errors="replace")
+        if not _is_safe_svg_content(content):
+            raise SddProjectError("Rendered diagram is not a safe SVG artifact.")
+        return SddDiagramAsset(
+            path=resolved.relative_to(workspace).as_posix(),
+            content=content,
+            content_type="image/svg+xml; charset=utf-8",
+            digest=_file_digest(resolved),
+            updated_at=_file_updated_at(stat),
+        )
+
+    def persist_rendered_diagram(
+        self,
+        export: SddRenderedDiagramExport,
+    ) -> SddDiagram:
+        workspace = self._validate_workspace_path(export.workspace_path)
+        specs_root = self._specs_root(workspace)
+        if specs_root is None:
+            raise SddSpecNotFoundError("No specs directory found.")
+        spec_dir = self._resolve_spec_dir(workspace, specs_root, export.spec_id)
+        diagrams_dir = spec_dir / "diagrams"
+        diagrams_dir.mkdir(parents=True, exist_ok=True)
+        if not _is_relative_to(diagrams_dir.resolve(), workspace):
+            raise SddWorkspacePathError("Diagram export path escaped workspace.")
+
+        diagram_id = _safe_diagram_id(export.diagram_id)
+        svg_path = diagrams_dir / f"{diagram_id}.svg"
+        metadata_path = diagrams_dir / f"{diagram_id}.yaml"
+        svg_content = export.svg.strip()
+        if not _is_safe_svg_content(svg_content):
+            raise SddProjectError("Rendered diagram export must be safe SVG.")
+        svg_path.write_text(svg_content + "\n", encoding="utf-8")
+
+        title = (export.title or diagram_id.replace("-", " ").title()).strip()
+        renderer = (export.renderer or "diagram-mcp-rendering-engine").strip()
+        metadata_lines = [
+            f"diagram_id: {diagram_id}",
+            f"diagram_type: {export.diagram_type.strip() or 'uml-component-svg'}",
+            f"title: {title}",
+            "source_format: svg",
+            "rendered_format: svg",
+            f"renderer: {renderer}",
+            f"source: {svg_path.relative_to(workspace).as_posix()}",
+        ]
+        if export.diagram_spec_id:
+            metadata_lines.append(f"diagram_spec_id: {export.diagram_spec_id.strip()}")
+        metadata_path.write_text("\n".join(metadata_lines) + "\n", encoding="utf-8")
+
+        rel_dir = spec_dir.relative_to(workspace).as_posix()
+        diagram = self._read_svg_diagram(
+            workspace=workspace,
+            path=svg_path,
+            scope=spec_dir.name,
+            spec_id=spec_dir.name,
+            metadata_path=metadata_path,
+        )
+        if diagram is None:
+            raise SddProjectError("Rendered diagram export could not be read back.")
+        return diagram
 
     def _validate_workspace_path(self, workspace_path: str) -> Path:
         raw_path = workspace_path.strip()
@@ -1160,11 +1265,14 @@ class SddProjectService:
         ):
             return ()
         diagrams: list[SddDiagram] = []
+        spec_id = scope if relative_dir.startswith("specs/") else None
         for path in sorted(directory.glob("*.mmd"), key=lambda item: item.name):
             rel_path = path.relative_to(workspace).as_posix()
             file_value = self._read_optional_file(workspace, rel_path)
             if file_value is None:
                 continue
+            resolved = _safe_resolve(path)
+            stat = resolved.stat() if resolved is not None and resolved.exists() else None
             diagrams.append(
                 SddDiagram(
                     path=file_value.path,
@@ -1174,9 +1282,123 @@ class SddProjectService:
                     diagram_type=_diagram_type(file_value.content),
                     scope=scope,
                     error=file_value.error,
+                    spec_id=spec_id,
+                    diagram_id=Path(file_value.path).stem,
+                    source_format="mermaid",
+                    rendered_format=None,
+                    content_type="text/plain; charset=utf-8",
+                    digest=_file_digest(resolved) if resolved is not None else None,
+                    updated_at=_file_updated_at(stat) if stat is not None else None,
                 )
             )
+        for path in sorted(directory.glob("*.svg"), key=lambda item: item.name):
+            metadata_path = self._svg_metadata_path(path)
+            if metadata_path is None:
+                continue
+            diagram = self._read_svg_diagram(
+                workspace=workspace,
+                path=path,
+                scope=scope,
+                spec_id=spec_id,
+                metadata_path=metadata_path,
+            )
+            if diagram is not None:
+                diagrams.append(diagram)
         return tuple(diagrams)
+
+    def _read_svg_diagram(
+        self,
+        *,
+        workspace: Path,
+        path: Path,
+        scope: str,
+        spec_id: str | None,
+        metadata_path: Path,
+    ) -> SddDiagram | None:
+        resolved = _safe_resolve(path)
+        metadata_resolved = _safe_resolve(metadata_path)
+        if (
+            resolved is None
+            or metadata_resolved is None
+            or not _is_relative_to(resolved, workspace)
+            or not _is_relative_to(metadata_resolved, workspace)
+            or not _safe_is_file(resolved)
+            or not _safe_is_file(metadata_resolved)
+        ):
+            return None
+        if resolved.suffix.lower() not in ALLOWED_RENDERED_DIAGRAM_EXTENSIONS:
+            return None
+        try:
+            metadata = parse_simple_yaml(
+                metadata_resolved.read_text(encoding="utf-8", errors="replace")
+            )
+        except SddStandardError:
+            return None
+        if not isinstance(metadata, dict):
+            return None
+        if not _metadata_describes_svg(metadata):
+            return None
+        stat = resolved.stat()
+        rel_path = resolved.relative_to(workspace).as_posix()
+        metadata_rel = metadata_resolved.relative_to(workspace).as_posix()
+        error: str | None = None
+        content: str | None = None
+        if stat.st_size > DEFAULT_SDD_SVG_MAX_BYTES:
+            error = "file_too_large"
+        else:
+            content = resolved.read_text(encoding="utf-8", errors="replace")
+            if not _is_safe_svg_content(content):
+                error = "unsafe_svg"
+                content = None
+        return SddDiagram(
+            path=rel_path,
+            title=_optional_metadata_string(metadata, "title")
+            or _optional_metadata_string(metadata, "name"),
+            size_bytes=stat.st_size,
+            content=content,
+            diagram_type=_optional_metadata_string(metadata, "diagram_type")
+            or "uml-component-svg",
+            scope=scope,
+            error=error,
+            spec_id=spec_id,
+            diagram_id=_optional_metadata_string(metadata, "diagram_id")
+            or resolved.stem,
+            source_format=_optional_metadata_string(metadata, "source_format") or "svg",
+            rendered_format=_optional_metadata_string(metadata, "rendered_format")
+            or "svg",
+            content_type="image/svg+xml; charset=utf-8",
+            digest=_file_digest(resolved),
+            updated_at=_file_updated_at(stat),
+            metadata_path=metadata_rel,
+            renderer=_optional_metadata_string(metadata, "renderer"),
+        )
+
+    def _svg_metadata_path(self, path: Path) -> Path | None:
+        for suffix in (".yaml", ".yml"):
+            candidate = path.with_suffix(suffix)
+            if _safe_is_file(candidate):
+                return candidate
+        return None
+
+    def _resolve_rendered_diagram_path(self, workspace: Path, diagram_path: str) -> Path:
+        raw_path = diagram_path.strip()
+        if not raw_path:
+            raise SddProjectError("diagram_path is required.")
+        candidate = _safe_resolve(workspace / raw_path)
+        if (
+            candidate is None
+            or not _is_relative_to(candidate, workspace)
+            or not _safe_is_file(candidate)
+            or candidate.suffix.lower() != ".svg"
+        ):
+            raise SddProjectError("Rendered diagram not found.")
+        metadata_path = self._svg_metadata_path(candidate)
+        if metadata_path is None:
+            raise SddProjectError("Rendered diagram metadata not found.")
+        rel_parts = candidate.relative_to(workspace).parts
+        if not _is_allowed_diagram_artifact_location(rel_parts):
+            raise SddProjectError("Rendered diagram path is not an SDD diagram artifact.")
+        return candidate
 
     def _read_optional_file(
         self, workspace: Path, relative_path: str
@@ -1520,6 +1742,72 @@ def _diagram_type(content: str | None) -> str:
     if first_line.startswith("gantt"):
         return "gantt"
     return "mermaid"
+
+
+def _metadata_describes_svg(metadata: dict[str, Any]) -> bool:
+    source_format = _optional_metadata_string(metadata, "source_format")
+    rendered_format = _optional_metadata_string(metadata, "rendered_format")
+    source = _optional_metadata_string(metadata, "source")
+    renderer = _optional_metadata_string(metadata, "renderer")
+    return (
+        source_format == "svg"
+        or rendered_format == "svg"
+        or (source is not None and source.lower().endswith(".svg"))
+        or renderer == "diagram-mcp-rendering-engine"
+    )
+
+
+def _optional_metadata_string(metadata: dict[str, Any], key: str) -> str | None:
+    value = metadata.get(key)
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _is_safe_svg_content(content: str) -> bool:
+    lowered = content[:4096].lower()
+    stripped = content.lstrip()
+    if not stripped.startswith("<svg") and "<svg" not in lowered:
+        return False
+    forbidden = (
+        "<script",
+        "<foreignobject",
+        "javascript:",
+        "data:text/html",
+        "onload=",
+        "onclick=",
+        "onerror=",
+    )
+    return not any(token in content.lower() for token in forbidden)
+
+
+def _file_digest(path: Path | None) -> str | None:
+    if path is None or not _safe_is_file(path):
+        return None
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _file_updated_at(stat: object) -> str:
+    mtime = getattr(stat, "st_mtime", None)
+    if not isinstance(mtime, (int, float)):
+        return datetime.now(UTC).isoformat()
+    return datetime.fromtimestamp(mtime, tz=UTC).isoformat()
+
+
+def _safe_diagram_id(value: str) -> str:
+    normalized = re.sub(r"[^a-zA-Z0-9_.-]+", "-", value.strip()).strip("-._")
+    if not normalized or normalized in {".", ".."}:
+        raise SddProjectError("diagram_id must contain a safe filename token.")
+    if "/" in normalized or "\\" in normalized:
+        raise SddProjectError("diagram_id must not contain path separators.")
+    return normalized[:96]
+
+
+def _is_allowed_diagram_artifact_location(parts: tuple[str, ...]) -> bool:
+    if len(parts) >= 2 and parts[0] == "architecture":
+        return True
+    return len(parts) >= 4 and parts[0] == "specs" and parts[2] == "diagrams"
 
 
 def _with_primary(

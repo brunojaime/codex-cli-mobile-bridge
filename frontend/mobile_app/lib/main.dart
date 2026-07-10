@@ -5,6 +5,7 @@ import 'package:codex_bridge_workbench/codex_bridge_workbench.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
 import 'src/screens/chat_screen.dart';
+import 'src/models/codex_tooling.dart';
 import 'src/services/chat_notification_service.dart';
 import 'src/services/api_client.dart';
 
@@ -226,10 +227,27 @@ Future<SddCodexActionSubmissionResult> _submitBridgeSddCodexAction(
   final accepted = await ApiClient(baseUrl: bridgeUrl).sendMessage(
     draft.prompt,
     workspacePath: draft.executionWorkspacePath,
+    codexRunOptions: codexRunOptionsForSddAction(draft),
   );
   return SddCodexActionSubmissionResult(
     jobId: accepted.jobId,
     sessionId: accepted.sessionId,
     status: accepted.status,
   );
+}
+
+@visibleForTesting
+CodexRunOptions? codexRunOptionsForSddAction(SddCodexActionDraft draft) {
+  final metadata = draft.request.target.diagramSelectionMetadata;
+  final renderer = metadata['renderer']?.toString();
+  final renderedFormat = metadata['renderedFormat']?.toString();
+  final sourceFormat = metadata['sourceFormat']?.toString();
+  if (renderer == 'diagram-mcp-rendering-engine' ||
+      renderedFormat == 'svg' ||
+      sourceFormat == 'svg') {
+    return const CodexRunOptions(
+      mcpServerIds: <String>['diagram-mcp-rendering-engine'],
+    );
+  }
+  return null;
 }

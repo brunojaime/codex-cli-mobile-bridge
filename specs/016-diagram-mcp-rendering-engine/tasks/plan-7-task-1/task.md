@@ -4,9 +4,9 @@ Spec: 016-diagram-mcp-rendering-engine
 
 Plan: Frontend Diagram Viewer
 
-Status: pending
+Status: completed
 
-- [ ] T033 Extend SDD diagram read model for rendered SVG artifacts.
+- [x] T033 Extend SDD diagram read model for rendered SVG artifacts.
 
 ## Acceptance Notes
 

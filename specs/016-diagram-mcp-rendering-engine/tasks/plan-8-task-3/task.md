@@ -4,9 +4,9 @@ Spec: 016-diagram-mcp-rendering-engine
 
 Plan: MCP Diagram Workflow And Mobile Release
 
-Status: pending
+Status: completed
 
-- [ ] T040 Add backend and Flutter tests for diagram viewing.
+- [x] T040 Add backend and Flutter tests for diagram viewing.
 
 ## Acceptance Notes
 

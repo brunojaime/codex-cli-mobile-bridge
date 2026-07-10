@@ -4,9 +4,9 @@ Spec: 016-diagram-mcp-rendering-engine
 
 Plan: MCP Diagram Workflow And Mobile Release
 
-Status: pending
+Status: completed
 
-- [ ] T039 Persist MCP exports into spec diagram folders.
+- [x] T039 Persist MCP exports into spec diagram folders.
 
 ## Acceptance Notes
 

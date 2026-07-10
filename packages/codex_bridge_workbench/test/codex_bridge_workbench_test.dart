@@ -126,6 +126,96 @@ void main() {
     expect(project.workspaceName, 'Codex Bridge');
   });
 
+  test('SDD diagram model parses rendered SVG metadata', () {
+    final diagram = SddDiagram.fromJson(<String, dynamic>{
+      'path': 'specs/016/diagrams/browser-gateway.svg',
+      'title': 'Browser Gateway',
+      'size_bytes': 512,
+      'content': '<svg data-node-id="browser"></svg>',
+      'diagram_type': 'uml-component-svg',
+      'scope': '016',
+      'spec_id': '016',
+      'diagram_id': 'browser-gateway',
+      'source_format': 'svg',
+      'rendered_format': 'svg',
+      'content_type': 'image/svg+xml; charset=utf-8',
+      'digest': 'abc123',
+      'updated_at': '2026-07-10T12:00:00Z',
+      'metadata_path': 'specs/016/diagrams/browser-gateway.yaml',
+      'renderer': 'diagram-mcp-rendering-engine',
+    });
+
+    expect(diagram.isRenderedSvg, isTrue);
+    expect(diagram.diagramId, 'browser-gateway');
+    expect(diagram.renderer, 'diagram-mcp-rendering-engine');
+  });
+
+  test('SVG preview HTML strips risky markup and preserves SVG IDs', () {
+    final html = buildSvgPreviewHtml(
+      diagramPath: 'specs/016/diagrams/browser-gateway.svg',
+      svg:
+          '<svg xmlns="http://www.w3.org/2000/svg" onload="x()">'
+          '<script>alert(1)</script>'
+          '<g id="node-browser" data-node-id="browser"></g>'
+          '</svg>',
+    );
+
+    expect(html, contains('Rendered SVG diagram'));
+    expect(html, contains('data-node-id="browser"'));
+    expect(html, isNot(contains('<script')));
+    expect(html, isNot(contains('onload=')));
+  });
+
+  test('SDD client persists rendered SVG diagram exports', () async {
+    late Map<String, dynamic> requestJson;
+    final client = SddExplorerClient(
+      baseUrl: 'http://bridge.test',
+      client: MockClient((request) async {
+        expect(request.url.path, '/sdd/project/diagrams/rendered-export');
+        requestJson = jsonDecode(request.body) as Map<String, dynamic>;
+        return http.Response(
+          jsonEncode(<String, dynamic>{
+            'kind': 'codex.sddRenderedDiagramExport',
+            'version': 1,
+            'workspace_path': '/workspace/demo',
+            'diagram': <String, dynamic>{
+              'path': 'specs/016/diagrams/browser-gateway.svg',
+              'title': 'Browser Gateway',
+              'size_bytes': 256,
+              'content': '<svg></svg>',
+              'diagram_type': 'uml-component-svg',
+              'scope': '016',
+              'spec_id': '016',
+              'diagram_id': 'browser-gateway',
+              'source_format': 'svg',
+              'rendered_format': 'svg',
+              'content_type': 'image/svg+xml; charset=utf-8',
+              'renderer': 'diagram-mcp-rendering-engine',
+            },
+          }),
+          200,
+        );
+      }),
+    );
+
+    final diagram = await client.persistRenderedDiagramExport(
+      workspacePath: '/workspace/demo',
+      specId: '016',
+      diagramId: 'browser gateway',
+      title: 'Browser Gateway',
+      svg: '<svg></svg>',
+      diagramSpecId: 'diagram_123',
+    );
+
+    expect(requestJson['workspace_path'], '/workspace/demo');
+    expect(requestJson['spec_id'], '016');
+    expect(requestJson['diagram_id'], 'browser gateway');
+    expect(requestJson['renderer'], 'diagram-mcp-rendering-engine');
+    expect(requestJson['diagram_spec_id'], 'diagram_123');
+    expect(diagram.isRenderedSvg, isTrue);
+    expect(diagram.diagramId, 'browser-gateway');
+  });
+
   test('SDD client loads lazy project summary and spec detail', () async {
     final paths = <String>[];
     final client = SddExplorerClient(
@@ -519,6 +609,74 @@ void main() {
     expect(find.text('Feedback groups'), findsOneWidget);
     expect(find.text('diagram architecture: 1'), findsOneWidget);
     expect(find.text('diagram: 1'), findsOneWidget);
+  });
+
+  testWidgets('Diagrams tab lists rendered SVG metadata and semantic feedback', (
+    tester,
+  ) async {
+    final project = _projectJson();
+    final spec =
+        (project['specs']! as List<dynamic>).first as Map<String, dynamic>;
+    (spec['diagrams'] as List<dynamic>).add(<String, dynamic>{
+      'path':
+          'specs/016-diagram-mcp-rendering-engine/diagrams/browser-gateway-example.svg',
+      'title': 'Browser Gateway Example',
+      'size_bytes': 512,
+      'content':
+          '<svg xmlns="http://www.w3.org/2000/svg">'
+          '<g id="node-browser" data-node-id="browser"></g>'
+          '<path id="connector-browser_gateway" data-connection-id="browser_gateway"/>'
+          '</svg>',
+      'diagram_type': 'uml-component-svg',
+      'scope': '016-diagram-mcp-rendering-engine',
+      'spec_id': '016-diagram-mcp-rendering-engine',
+      'diagram_id': 'browser-gateway-example',
+      'source_format': 'svg',
+      'rendered_format': 'svg',
+      'content_type': 'image/svg+xml; charset=utf-8',
+      'digest': 'abc123',
+      'metadata_path':
+          'specs/016-diagram-mcp-rendering-engine/diagrams/browser-gateway-example.yaml',
+      'renderer': 'diagram-mcp-rendering-engine',
+    });
+    SddFeedbackDraft? feedback;
+    await _pumpWorkbench(
+      tester,
+      loader: (_) async => SddProject.fromJson(project),
+      diagramRenderer: _FakeMermaidRenderer.success(),
+      feedbackSubmitter: (_, draft) async {
+        feedback = draft;
+        return const SddFeedbackSubmissionResult(id: 'feedback-svg-1');
+      },
+    );
+    _openWorkbench(tester);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Diagrams').last);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Browser Gateway Example'), findsOneWidget);
+    expect(find.text('SVG'), findsWidgets);
+    expect(find.text('diagram-mcp-rendering-engine'), findsOneWidget);
+    expect(find.text('browser-gateway-example'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('Select diagram target').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Node: browser'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.widgetWithText(TextField, 'Feedback'),
+      'Move browser left.',
+    );
+    await tester.tap(find.text('Submit feedback'));
+    await tester.pumpAndSettle();
+
+    expect(feedback, isNotNull);
+    expect(feedback!.target.diagramSelectionType, 'node');
+    expect(feedback!.target.diagramSelectionMetadata['nodeId'], 'browser');
+    expect(
+      feedback!.target.diagramSelectionMetadata['renderer'],
+      'diagram-mcp-rendering-engine',
+    );
   });
 
   testWidgets('workbench requires project selection before dashboard', (

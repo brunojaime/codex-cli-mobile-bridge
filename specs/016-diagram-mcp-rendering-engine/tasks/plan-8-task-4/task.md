@@ -4,9 +4,9 @@ Spec: 016-diagram-mcp-rendering-engine
 
 Plan: MCP Diagram Workflow And Mobile Release
 
-Status: pending
+Status: completed
 
-- [ ] T041 Prepare and publish frontend release.
+- [x] T041 Prepare and publish frontend release.
 
 ## Acceptance Notes
 
@@ -18,4 +18,3 @@ Status: pending
 
 - Follow the codex-cli-mobile-bridge release policy: no mock/demo backend for a user-installable release unless explicitly requested.
 - Verify the backend endpoint and mobile build before publishing.
-

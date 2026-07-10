@@ -80,22 +80,22 @@ This file is the legacy task index. Task numbering is local to each plan in tree
 
 ## Plan 7: Frontend Diagram Viewer
 
-- [ ] T033 Extend SDD diagram read model for rendered SVG artifacts. (Task 1)
+- [x] T033 Extend SDD diagram read model for rendered SVG artifacts. (Task 1)
 
-- [ ] T034 Add diagram artifact metadata contract. (Task 2)
+- [x] T034 Add diagram artifact metadata contract. (Task 2)
 
-- [ ] T035 Add Diagrams section gallery for rendered artifacts. (Task 3)
+- [x] T035 Add Diagrams section gallery for rendered artifacts. (Task 3)
 
-- [ ] T036 Render SVG diagrams in Flutter with viewport controls. (Task 4)
+- [x] T036 Render SVG diagrams in Flutter with viewport controls. (Task 4)
 
-- [ ] T037 Preserve semantic SVG IDs for feedback and future edits. (Task 5)
+- [x] T037 Preserve semantic SVG IDs for feedback and future edits. (Task 5)
 
 ## Plan 8: MCP Diagram Workflow And Mobile Release
 
-- [ ] T038 Wire frontend runs to the Diagram MCP server. (Task 1)
+- [x] T038 Wire frontend runs to the Diagram MCP server. (Task 1)
 
-- [ ] T039 Persist MCP exports into spec diagram folders. (Task 2)
+- [x] T039 Persist MCP exports into spec diagram folders. (Task 2)
 
-- [ ] T040 Add backend and Flutter tests for diagram viewing. (Task 3)
+- [x] T040 Add backend and Flutter tests for diagram viewing. (Task 3)
 
-- [ ] T041 Prepare and publish frontend release. (Task 4)
+- [x] T041 Prepare and publish frontend release. (Task 4)

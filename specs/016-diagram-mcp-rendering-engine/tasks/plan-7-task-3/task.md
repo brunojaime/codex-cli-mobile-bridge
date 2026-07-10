@@ -4,9 +4,9 @@ Spec: 016-diagram-mcp-rendering-engine
 
 Plan: Frontend Diagram Viewer
 
-Status: pending
+Status: completed
 
-- [ ] T035 Add Diagrams section gallery for rendered artifacts.
+- [x] T035 Add Diagrams section gallery for rendered artifacts.
 
 ## Acceptance Notes
 

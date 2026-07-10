@@ -116,6 +116,8 @@ from backend.app.api.schemas import (
     SddDiagramResponse,
     SddDoctorResponse,
     SddFileResponse,
+    SddRenderedDiagramExportRequest,
+    SddRenderedDiagramExportResponse,
     SddMediaCleanupRequest,
     SddMediaDeleteRequest,
     SddMediaLifecycleResponse,
@@ -192,7 +194,9 @@ from backend.app.application.services.sdd_project_service import (
     SddFile,
     SddPlanNode,
     SddProject,
+    SddProjectError,
     SddProjectSummary,
+    SddRenderedDiagramExport,
     SddSpec,
     SddSpecNotFoundError,
     SddSpecTree,
@@ -1191,6 +1195,67 @@ async def get_sdd_project_diagrams(
     )
 
 
+@router.get("/sdd/project/diagrams/asset")
+async def get_sdd_project_diagram_asset(
+    workspace_path: str = Query(...),
+    diagram_path: str = Query(...),
+    container: AppContainer = Depends(get_container),
+) -> Response:
+    try:
+        asset = await run_in_threadpool(
+            container.sdd_project_service.get_diagram_asset,
+            workspace_path,
+            diagram_path,
+        )
+    except SddWorkspacePathError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except SddProjectError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return Response(
+        content=asset.content,
+        media_type=asset.content_type,
+        headers={
+            "ETag": asset.digest,
+            "Last-Modified": asset.updated_at,
+            "X-SDD-Diagram-Path": asset.path,
+        },
+    )
+
+
+@router.post(
+    "/sdd/project/diagrams/rendered-export",
+    response_model=SddRenderedDiagramExportResponse,
+)
+async def persist_sdd_rendered_diagram_export(
+    request: SddRenderedDiagramExportRequest,
+    container: AppContainer = Depends(get_container),
+) -> SddRenderedDiagramExportResponse:
+    try:
+        diagram = await run_in_threadpool(
+            container.sdd_project_service.persist_rendered_diagram,
+            SddRenderedDiagramExport(
+                workspace_path=request.workspace_path,
+                spec_id=request.spec_id,
+                diagram_id=request.diagram_id,
+                title=request.title,
+                diagram_type=request.diagram_type,
+                svg=request.svg,
+                renderer=request.renderer,
+                diagram_spec_id=request.diagram_spec_id,
+            ),
+        )
+    except SddWorkspacePathError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except SddSpecNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except SddProjectError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return SddRenderedDiagramExportResponse(
+        workspace_path=request.workspace_path,
+        diagram=_sdd_diagram_response(diagram),
+    )
+
+
 @router.get("/sdd/doctor", response_model=SddDoctorResponse)
 async def run_sdd_doctor(
     workspace_path: str = Query(...),
@@ -1952,6 +2017,15 @@ def _sdd_diagram_response(diagram: SddDiagram) -> SddDiagramResponse:
         error=diagram.error,
         diagram_type=diagram.diagram_type,
         scope=diagram.scope,
+        spec_id=diagram.spec_id,
+        diagram_id=diagram.diagram_id,
+        source_format=diagram.source_format,
+        rendered_format=diagram.rendered_format,
+        content_type=diagram.content_type,
+        digest=diagram.digest,
+        updated_at=diagram.updated_at,
+        metadata_path=diagram.metadata_path,
+        renderer=diagram.renderer,
     )
 
 

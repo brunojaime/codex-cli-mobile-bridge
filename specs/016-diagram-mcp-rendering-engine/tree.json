@@ -323,7 +323,7 @@
       "id": "plan-7",
       "number": 7,
       "title": "Frontend Diagram Viewer",
-      "status": "pending",
+      "status": "completed",
       "description": "Expose MCP-rendered SVG diagrams through the bridge read model and render them in the Codex Mobile Diagrams section.",
       "file": "plans/07-frontend-diagram-viewer/plan.md",
       "tasks": [
@@ -331,7 +331,7 @@
           "id": "plan-7-task-1",
           "number": 1,
           "title": "T033 Extend SDD diagram read model for rendered SVG artifacts",
-          "status": "pending",
+          "status": "completed",
           "description": "Include MCP-rendered SVG artifacts in the SDD diagram read model while preserving Mermaid support.",
           "file": "tasks/plan-7-task-1/task.md"
         },
@@ -339,7 +339,7 @@
           "id": "plan-7-task-2",
           "number": 2,
           "title": "T034 Add diagram artifact metadata contract",
-          "status": "pending",
+          "status": "completed",
           "description": "Define metadata required to classify generated SVG diagrams and connect them to source DiagramSpec artifacts.",
           "file": "tasks/plan-7-task-2/task.md"
         },
@@ -347,7 +347,7 @@
           "id": "plan-7-task-3",
           "number": 3,
           "title": "T035 Add Diagrams section gallery for rendered artifacts",
-          "status": "pending",
+          "status": "completed",
           "description": "Add a frontend gallery/list surface for Mermaid and MCP-rendered SVG diagrams.",
           "file": "tasks/plan-7-task-3/task.md"
         },
@@ -355,7 +355,7 @@
           "id": "plan-7-task-4",
           "number": 4,
           "title": "T036 Render SVG diagrams in Flutter with viewport controls",
-          "status": "pending",
+          "status": "completed",
           "description": "Render self-contained SVG diagrams with pan, zoom, reset, and controlled error handling.",
           "file": "tasks/plan-7-task-4/task.md"
         },
@@ -363,7 +363,7 @@
           "id": "plan-7-task-5",
           "number": 5,
           "title": "T037 Preserve semantic SVG IDs for feedback and future edits",
-          "status": "pending",
+          "status": "completed",
           "description": "Preserve diagram path and semantic SVG element metadata for feedback and future edit operations.",
           "file": "tasks/plan-7-task-5/task.md"
         }
@@ -373,7 +373,7 @@
       "id": "plan-8",
       "number": 8,
       "title": "MCP Diagram Workflow And Mobile Release",
-      "status": "pending",
+      "status": "completed",
       "description": "Connect frontend diagram actions to the local Diagram MCP server, persist exports, test the flow, and ship the mobile release.",
       "file": "plans/08-mcp-diagram-workflow-and-mobile-release/plan.md",
       "tasks": [
@@ -381,7 +381,7 @@
           "id": "plan-8-task-1",
           "number": 1,
           "title": "T038 Wire frontend runs to the Diagram MCP server",
-          "status": "pending",
+          "status": "completed",
           "description": "Allow diagram generation and update runs to select the local Diagram MCP server from frontend options.",
           "file": "tasks/plan-8-task-1/task.md"
         },
@@ -389,7 +389,7 @@
           "id": "plan-8-task-2",
           "number": 2,
           "title": "T039 Persist MCP exports into spec diagram folders",
-          "status": "pending",
+          "status": "completed",
           "description": "Save generated SVG artifacts and metadata into stable spec diagram paths.",
           "file": "tasks/plan-8-task-2/task.md"
         },
@@ -397,7 +397,7 @@
           "id": "plan-8-task-3",
           "number": 3,
           "title": "T040 Add backend and Flutter tests for diagram viewing",
-          "status": "pending",
+          "status": "completed",
           "description": "Cover SVG discovery, gallery rendering, detail rendering, and malformed content handling.",
           "file": "tasks/plan-8-task-3/task.md"
         },
@@ -405,7 +405,7 @@
           "id": "plan-8-task-4",
           "number": 4,
           "title": "T041 Prepare and publish frontend release",
-          "status": "pending",
+          "status": "completed",
           "description": "Bump and publish the mobile app through the real-backend Android release workflow after implementation.",
           "file": "tasks/plan-8-task-4/task.md"
         }

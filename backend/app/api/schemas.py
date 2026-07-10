@@ -1506,6 +1506,33 @@ class SddFileResponse(BaseModel):
 class SddDiagramResponse(SddFileResponse):
     diagram_type: str
     scope: str
+    spec_id: str | None = None
+    diagram_id: str | None = None
+    source_format: str = "mermaid"
+    rendered_format: str | None = None
+    content_type: str = "text/plain; charset=utf-8"
+    digest: str | None = None
+    updated_at: str | None = None
+    metadata_path: str | None = None
+    renderer: str | None = None
+
+
+class SddRenderedDiagramExportRequest(BaseModel):
+    workspace_path: str
+    spec_id: str
+    diagram_id: str
+    title: str | None = None
+    diagram_type: str = "uml-component-svg"
+    svg: str
+    renderer: str | None = "diagram-mcp-rendering-engine"
+    diagram_spec_id: str | None = None
+
+
+class SddRenderedDiagramExportResponse(BaseModel):
+    kind: str = "codex.sddRenderedDiagramExport"
+    version: int = 1
+    workspace_path: str
+    diagram: SddDiagramResponse
 
 
 class SddTaskNodeResponse(BaseModel):

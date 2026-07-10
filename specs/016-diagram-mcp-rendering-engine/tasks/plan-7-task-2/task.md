@@ -4,9 +4,9 @@ Spec: 016-diagram-mcp-rendering-engine
 
 Plan: Frontend Diagram Viewer
 
-Status: pending
+Status: completed
 
-- [ ] T034 Add diagram artifact metadata contract.
+- [x] T034 Add diagram artifact metadata contract.
 
 ## Acceptance Notes
 

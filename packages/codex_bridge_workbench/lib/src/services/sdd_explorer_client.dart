@@ -93,6 +93,46 @@ class SddExplorerClient {
         .toList(growable: false);
   }
 
+  Future<SddDiagram> persistRenderedDiagramExport({
+    required String workspacePath,
+    required String specId,
+    required String diagramId,
+    required String svg,
+    String? title,
+    String diagramType = 'uml-component-svg',
+    String renderer = 'diagram-mcp-rendering-engine',
+    String? diagramSpecId,
+  }) async {
+    final response = await _client.post(
+      Uri.parse('$baseUrl/sdd/project/diagrams/rendered-export'),
+      headers: const <String, String>{'Content-Type': 'application/json'},
+      body: jsonEncode(<String, Object?>{
+        'workspace_path': workspacePath,
+        'spec_id': specId,
+        'diagram_id': diagramId,
+        if (title != null && title.trim().isNotEmpty) 'title': title.trim(),
+        'diagram_type': diagramType,
+        'svg': svg,
+        'renderer': renderer,
+        if (diagramSpecId != null && diagramSpecId.trim().isNotEmpty)
+          'diagram_spec_id': diagramSpecId.trim(),
+      }),
+    );
+    if (response.statusCode != 200) {
+      throw Exception(
+        'Failed to persist rendered diagram export: ${response.body}',
+      );
+    }
+    final payload = jsonDecode(response.body) as Map<String, dynamic>;
+    final diagram = payload['diagram'];
+    if (diagram is! Map<String, dynamic>) {
+      throw Exception(
+        'Failed to persist rendered diagram export: malformed response',
+      );
+    }
+    return SddDiagram.fromJson(diagram);
+  }
+
   Future<SddDoctorReport> runDoctor(String workspacePath) async {
     final uri = Uri.parse('$baseUrl/sdd/doctor').replace(
       queryParameters: <String, String>{'workspace_path': workspacePath},

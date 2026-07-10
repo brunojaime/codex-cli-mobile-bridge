@@ -549,6 +549,154 @@ def test_sdd_project_handles_whitespace_only_mermaid_diagrams(
     assert projects.json()["projects"][0]["diagram_count"] == 2
 
 
+def test_sdd_project_discovers_rendered_svg_diagrams_with_metadata(
+    tmp_path: Path,
+) -> None:
+    projects_root = tmp_path / "projects"
+    project = projects_root / "demo"
+    _write_sdd_project(project)
+    svg_path = project / "specs/001-demo/diagrams/browser-gateway.svg"
+    svg_path.write_text(
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 40">'
+        '<g id="node-browser" data-node-id="browser"></g>'
+        '<path id="connector-browser_gateway" '
+        'data-connection-id="browser_gateway" d="M0 0 L10 10"/>'
+        "</svg>\n"
+    )
+    (project / "specs/001-demo/diagrams/browser-gateway.yaml").write_text(
+        "\n".join(
+            [
+                "diagram_id: browser-gateway",
+                "diagram_type: uml-component-svg",
+                "title: Browser Gateway",
+                "source_format: svg",
+                "rendered_format: svg",
+                "renderer: diagram-mcp-rendering-engine",
+                "source: specs/001-demo/diagrams/browser-gateway.svg",
+            ]
+        )
+        + "\n"
+    )
+    (project / "specs/001-demo/diagrams/arbitrary.svg").write_text(
+        '<svg xmlns="http://www.w3.org/2000/svg"></svg>\n'
+    )
+    client = _client(projects_root)
+
+    response = client.get("/sdd/project/diagrams", params={"workspace_path": str(project)})
+
+    assert response.status_code == 200
+    diagrams = response.json()["diagrams"]
+    svg = next(
+        item
+        for item in diagrams
+        if item["path"] == "specs/001-demo/diagrams/browser-gateway.svg"
+    )
+    assert svg["title"] == "Browser Gateway"
+    assert svg["diagram_id"] == "browser-gateway"
+    assert svg["spec_id"] == "001-demo"
+    assert svg["source_format"] == "svg"
+    assert svg["rendered_format"] == "svg"
+    assert svg["content_type"].startswith("image/svg+xml")
+    assert svg["digest"]
+    assert svg["updated_at"]
+    assert svg["metadata_path"] == "specs/001-demo/diagrams/browser-gateway.yaml"
+    assert svg["renderer"] == "diagram-mcp-rendering-engine"
+    assert "data-node-id=\"browser\"" in svg["content"]
+    assert "specs/001-demo/diagrams/arbitrary.svg" not in {
+        item["path"] for item in diagrams
+    }
+
+
+def test_sdd_project_serves_only_safe_rendered_svg_assets(tmp_path: Path) -> None:
+    projects_root = tmp_path / "projects"
+    project = projects_root / "demo"
+    _write_sdd_project(project)
+    svg_path = project / "specs/001-demo/diagrams/component.svg"
+    svg_path.write_text('<svg xmlns="http://www.w3.org/2000/svg"></svg>\n')
+    (project / "specs/001-demo/diagrams/component.yaml").write_text(
+        "diagram_id: component\nsource_format: svg\nrendered_format: svg\n"
+    )
+    unsafe_path = project / "specs/001-demo/diagrams/unsafe.svg"
+    unsafe_path.write_text(
+        '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>\n'
+    )
+    (project / "specs/001-demo/diagrams/unsafe.yaml").write_text(
+        "diagram_id: unsafe\nsource_format: svg\nrendered_format: svg\n"
+    )
+    client = _client(projects_root)
+
+    ok = client.get(
+        "/sdd/project/diagrams/asset",
+        params={
+            "workspace_path": str(project),
+            "diagram_path": "specs/001-demo/diagrams/component.svg",
+        },
+    )
+    traversal = client.get(
+        "/sdd/project/diagrams/asset",
+        params={
+            "workspace_path": str(project),
+            "diagram_path": "../outside.svg",
+        },
+    )
+    unsafe = client.get(
+        "/sdd/project/diagrams/asset",
+        params={
+            "workspace_path": str(project),
+            "diagram_path": "specs/001-demo/diagrams/unsafe.svg",
+        },
+    )
+
+    assert ok.status_code == 200
+    assert ok.headers["content-type"].startswith("image/svg+xml")
+    assert ok.headers["etag"]
+    assert ok.text.startswith("<svg")
+    assert traversal.status_code == 404
+    assert unsafe.status_code == 404
+
+
+def test_sdd_project_persists_rendered_diagram_exports(tmp_path: Path) -> None:
+    projects_root = tmp_path / "projects"
+    project = projects_root / "demo"
+    _write_sdd_project(project)
+    client = _client(projects_root)
+
+    response = client.post(
+        "/sdd/project/diagrams/rendered-export",
+        json={
+            "workspace_path": str(project),
+            "spec_id": "001-demo",
+            "diagram_id": "browser gateway",
+            "title": "Browser Gateway",
+            "diagram_type": "uml-component-svg",
+            "svg": '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"></svg>',
+            "renderer": "diagram-mcp-rendering-engine",
+            "diagram_spec_id": "diagram_123",
+        },
+    )
+    unsafe = client.post(
+        "/sdd/project/diagrams/rendered-export",
+        json={
+            "workspace_path": str(project),
+            "spec_id": "001-demo",
+            "diagram_id": "../escape",
+            "diagram_type": "uml-component-svg",
+            "svg": '<svg xmlns="http://www.w3.org/2000/svg"><script>x</script></svg>',
+        },
+    )
+
+    assert response.status_code == 200
+    diagram = response.json()["diagram"]
+    assert diagram["path"] == "specs/001-demo/diagrams/browser-gateway.svg"
+    assert diagram["metadata_path"] == "specs/001-demo/diagrams/browser-gateway.yaml"
+    assert diagram["renderer"] == "diagram-mcp-rendering-engine"
+    assert (project / "specs/001-demo/diagrams/browser-gateway.svg").is_file()
+    assert "diagram_spec_id: diagram_123" in (
+        project / "specs/001-demo/diagrams/browser-gateway.yaml"
+    ).read_text()
+    assert unsafe.status_code == 400
+
+
 def test_sdd_project_reports_oversized_allowed_files_without_content(
     tmp_path: Path,
 ) -> None:

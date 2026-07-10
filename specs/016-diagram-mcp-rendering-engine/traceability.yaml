@@ -1,6 +1,6 @@
 spec_id: 016-diagram-mcp-rendering-engine
 title: Diagram MCP Rendering Engine
-status: in_progress
+status: implemented
 
 requirements:
   FR-001:
@@ -140,33 +140,39 @@ diagrams:
 planned_acceptance_criteria:
   FV-AC-001:
     description: Backend SDD diagram endpoints expose MCP-rendered SVG artifacts from workspace diagram folders.
-    planned_tests:
-      - backend test for SVG discovery and metadata classification
+    tests:
+      - tests/test_sdd_project.py::test_sdd_project_discovers_rendered_svg_diagrams_with_metadata
+      - tests/test_sdd_project.py::test_sdd_project_serves_only_safe_rendered_svg_assets
   FV-AC-002:
     description: SVG metadata identifies renderer, format, scope, title, and stable artifact path without absolute runtime paths.
-    planned_tests:
-      - backend metadata parsing test
+    tests:
+      - tests/test_sdd_project.py::test_sdd_project_discovers_rendered_svg_diagrams_with_metadata
+      - packages/codex_bridge_workbench/test/codex_bridge_workbench_test.dart::SDD diagram model parses rendered SVG metadata
   FV-AC-003:
     description: The frontend Diagrams section lists Mermaid and SVG diagrams together with clear loading, empty, and error states.
-    planned_tests:
-      - Flutter gallery widget test
+    tests:
+      - packages/codex_bridge_workbench/test/codex_bridge_workbench_test.dart::Diagrams tab lists rendered SVG metadata and semantic feedback
+      - packages/codex_bridge_workbench/test/codex_bridge_workbench_test.dart::workbench shows loading, error, empty, and project states
   FV-AC-004:
     description: SVG diagram detail renders self-contained MCP SVG with pan, zoom, reset, and safe malformed-SVG handling.
-    planned_tests:
-      - Flutter SVG detail widget test
+    tests:
+      - packages/codex_bridge_workbench/test/codex_bridge_workbench_test.dart::SVG preview HTML strips risky markup and preserves SVG IDs
+      - packages/codex_bridge_workbench/test/codex_bridge_workbench_test.dart::Diagrams tab lists rendered SVG metadata and semantic feedback
   FV-AC-005:
     description: Diagram feedback preserves diagram path and optional semantic element metadata.
-    planned_tests:
-      - Flutter feedback submission test
+    tests:
+      - packages/codex_bridge_workbench/test/codex_bridge_workbench_test.dart::Diagrams tab lists rendered SVG metadata and semantic feedback
   FV-AC-006:
     description: Diagram update prompts can select the local Diagram MCP server and carry workspace diagram context.
-    planned_tests:
-      - frontend chat options/controller test
+    tests:
+      - frontend/mobile_app/test/sdd_diagram_mcp_options_test.dart::SDD SVG diagram actions select the diagram MCP server
   FV-AC-007:
     description: MCP exports persist into spec diagram folders with stable names and adjacent metadata.
-    planned_tests:
-      - backend/service persistence test
+    tests:
+      - tests/test_sdd_project.py::test_sdd_project_persists_rendered_diagram_exports
+      - packages/codex_bridge_workbench/test/codex_bridge_workbench_test.dart::SDD client persists rendered SVG diagram exports
   FV-AC-008:
     description: A real-backend Android release is prepared after frontend diagram viewing is implemented and tested.
-    planned_tests:
-      - release script dry-run or documented command verification
+    tests:
+      - flutter build apk --release with real API_BASE_URL/updater dart-defines
+      - scripts/publish_android_release.sh --push

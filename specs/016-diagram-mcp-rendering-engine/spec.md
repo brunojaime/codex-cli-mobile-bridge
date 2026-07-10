@@ -1,7 +1,7 @@
 ---
 id: 016-diagram-mcp-rendering-engine
 title: Diagram MCP Rendering Engine
-status: in_progress
+status: implemented
 type: feature
 domains:
   - diagramming

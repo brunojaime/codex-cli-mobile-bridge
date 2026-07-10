@@ -56,6 +56,22 @@ class WebViewMermaidDiagramRenderer implements MermaidDiagramRenderer {
     if (source == null || source.isEmpty) {
       return MermaidRenderResult.failure('Diagram source is empty.');
     }
+    if (diagram.isRenderedSvg) {
+      if (!_looksLikeSvg(source)) {
+        return MermaidRenderResult.failure(
+          'Rendered diagram is not valid SVG.',
+        );
+      }
+      return MermaidRenderResult.success(
+        kind: 'svg',
+        preview: SvgWebViewPreview(
+          svg: source,
+          diagramPath: diagram.path,
+          width: previewWidth,
+          height: previewHeight,
+        ),
+      );
+    }
 
     try {
       final mermaidJs = await (assetBundle ?? rootBundle)
@@ -78,6 +94,81 @@ class WebViewMermaidDiagramRenderer implements MermaidDiagramRenderer {
         'Could not load bundled Mermaid renderer: $error',
       );
     }
+  }
+}
+
+class SvgWebViewPreview extends StatefulWidget {
+  const SvgWebViewPreview({
+    super.key,
+    required this.svg,
+    required this.diagramPath,
+    this.width = 720,
+    this.height = 300,
+  });
+
+  final String svg;
+  final String diagramPath;
+  final double width;
+  final double height;
+
+  @override
+  State<SvgWebViewPreview> createState() => _SvgWebViewPreviewState();
+}
+
+class _SvgWebViewPreviewState extends State<SvgWebViewPreview> {
+  late final WebViewController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = WebViewController()
+      ..setJavaScriptMode(JavaScriptMode.disabled)
+      ..setBackgroundColor(const Color(0x00000000))
+      ..setNavigationDelegate(
+        NavigationDelegate(
+          onNavigationRequest: (request) {
+            final url = request.url;
+            if (url == 'about:blank' || url.startsWith('data:text/html')) {
+              return NavigationDecision.navigate;
+            }
+            return NavigationDecision.prevent;
+          },
+        ),
+      )
+      ..enableZoom(true);
+    _hardenPlatformController(_controller);
+    _loadHtml();
+  }
+
+  @override
+  void didUpdateWidget(SvgWebViewPreview oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.svg != widget.svg ||
+        oldWidget.diagramPath != widget.diagramPath ||
+        oldWidget.width != widget.width ||
+        oldWidget.height != widget.height) {
+      _loadHtml();
+    }
+  }
+
+  void _loadHtml() {
+    _controller.loadHtmlString(
+      buildSvgPreviewHtml(svg: widget.svg, diagramPath: widget.diagramPath),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final screenWidth = MediaQuery.sizeOf(context).width;
+    final maxScreenWidth = math.max(280.0, screenWidth - 48);
+    final effectiveWidth = widget.width.isFinite
+        ? math.min(widget.width, maxScreenWidth)
+        : maxScreenWidth;
+    return SizedBox(
+      width: effectiveWidth,
+      height: widget.height,
+      child: WebViewWidget(controller: _controller),
+    );
   }
 }
 
@@ -1001,4 +1092,75 @@ $mermaidJs
 </body>
 </html>
 ''';
+}
+
+@visibleForTesting
+String buildSvgPreviewHtml({required String svg, String diagramPath = ''}) {
+  final safeSvg = _stripSvgRiskyMarkup(svg);
+  final encodedDiagramPath = const HtmlEscape().convert(diagramPath);
+  return '''
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:; connect-src 'none'; script-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none';">
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      min-height: 100%;
+      background: #0b1426;
+      overflow: auto;
+    }
+    #diagram {
+      width: 100%;
+      min-height: 240px;
+      padding: 12px;
+      box-sizing: border-box;
+    }
+    #diagram svg {
+      max-width: 100%;
+      width: 100%;
+      height: auto;
+      display: block;
+      background: #f8fbff;
+    }
+  </style>
+</head>
+<body>
+  <main id="diagram" aria-label="Rendered SVG diagram" data-diagram-path="$encodedDiagramPath">
+$safeSvg
+  </main>
+</body>
+</html>
+''';
+}
+
+bool _looksLikeSvg(String source) {
+  final trimmed = source.trimLeft().toLowerCase();
+  return trimmed.startsWith('<svg') || trimmed.contains('<svg');
+}
+
+String _stripSvgRiskyMarkup(String svg) {
+  return svg
+      .replaceAll(
+        RegExp(
+          r'<script\b[^>]*>.*?</script>',
+          caseSensitive: false,
+          dotAll: true,
+        ),
+        '',
+      )
+      .replaceAll(
+        RegExp(
+          r'<foreignObject\b[^>]*>.*?</foreignObject>',
+          caseSensitive: false,
+          dotAll: true,
+        ),
+        '',
+      )
+      .replaceAll(RegExp(r'\son[a-z]+\s*=\s*"[^"]*"', caseSensitive: false), '')
+      .replaceAll(RegExp(r"\son[a-z]+\s*=\s*'[^']*'", caseSensitive: false), '')
+      .replaceAll(RegExp(r'javascript:', caseSensitive: false), '');
 }

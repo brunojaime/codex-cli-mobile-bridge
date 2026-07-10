@@ -4,9 +4,9 @@ Spec: 016-diagram-mcp-rendering-engine
 
 Plan: Frontend Diagram Viewer
 
-Status: pending
+Status: completed
 
-- [ ] T037 Preserve semantic SVG IDs for feedback and future edits.
+- [x] T037 Preserve semantic SVG IDs for feedback and future edits.
 
 ## Acceptance Notes
 

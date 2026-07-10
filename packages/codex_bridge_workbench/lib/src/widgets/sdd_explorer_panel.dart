@@ -281,6 +281,12 @@ String buildSddCodexActionPrompt(SddCodexActionRequest request) {
   if (target.diagramScope != null) {
     buffer.writeln('diagram_scope: ${target.diagramScope}');
   }
+  if (target.diagramSelectionMetadata.isNotEmpty) {
+    buffer.writeln('diagram_metadata:');
+    for (final entry in target.diagramSelectionMetadata.entries) {
+      buffer.writeln('  ${entry.key}: ${entry.value}');
+    }
+  }
   if (request.linkedFeedbackIds.isNotEmpty) {
     buffer
       ..writeln('linked_feedback_ids:')
@@ -295,6 +301,21 @@ String buildSddCodexActionPrompt(SddCodexActionRequest request) {
       ..writeln('```text')
       ..writeln(target.sourceExcerpt)
       ..writeln('```')
+      ..writeln();
+  }
+  if (target.diagramSelectionMetadata['renderer'] ==
+          'diagram-mcp-rendering-engine' ||
+      target.diagramSelectionMetadata['renderedFormat'] == 'svg' ||
+      target.diagramSelectionMetadata['sourceFormat'] == 'svg') {
+    buffer
+      ..writeln(
+        'This is an MCP-rendered SVG diagram. Prefer the '
+        '`diagram-mcp-rendering-engine` MCP server for updates.',
+      )
+      ..writeln(
+        'Persist updated rendered SVG artifacts through the bridge rendered '
+        'diagram export flow so they remain under specs/<id>/diagrams/.',
+      )
       ..writeln();
   }
   buffer.writeln(
@@ -414,7 +435,10 @@ class _SddExplorerPanelState extends State<SddExplorerPanel> {
             child: SafeArea(
               child: Column(
                 children: <Widget>[
-                  _SddExplorerHeader(onClose: widget.onClose),
+                  _SddExplorerHeader(
+                    onClose: widget.onClose,
+                    onRefresh: _retry,
+                  ),
                   Expanded(
                     child: FutureBuilder<Object?>(
                       future: _workbenchFuture,
@@ -789,9 +813,10 @@ ThemeData _workbenchTheme(BuildContext context) {
 }
 
 class _SddExplorerHeader extends StatelessWidget {
-  const _SddExplorerHeader({required this.onClose});
+  const _SddExplorerHeader({required this.onClose, required this.onRefresh});
 
   final VoidCallback onClose;
+  final VoidCallback onRefresh;
 
   @override
   Widget build(BuildContext context) {
@@ -815,6 +840,14 @@ class _SddExplorerHeader extends StatelessWidget {
               overflow: TextOverflow.ellipsis,
               style: TextStyle(fontWeight: FontWeight.w800, fontSize: 14),
             ),
+          ),
+          IconButton(
+            tooltip: 'Refresh SDD Explorer',
+            onPressed: onRefresh,
+            visualDensity: VisualDensity.compact,
+            constraints: const BoxConstraints.tightFor(width: 38, height: 34),
+            padding: EdgeInsets.zero,
+            icon: const Icon(Icons.refresh_rounded),
           ),
           IconButton(
             tooltip: 'Close SDD Explorer',
@@ -7788,6 +7821,35 @@ class _DiagramListTile extends StatelessWidget {
                         fontSize: 11,
                       ),
                     ),
+                    const SizedBox(height: 5),
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 4,
+                      children: <Widget>[
+                        _TinyMetaChip(
+                          icon: diagram.isRenderedSvg
+                              ? Icons.image_outlined
+                              : Icons.code_rounded,
+                          label: diagram.isRenderedSvg
+                              ? 'SVG'
+                              : _diagramTypeLabel(
+                                  diagram.diagramType,
+                                  path: diagram.path,
+                                  content: diagram.content,
+                                ),
+                        ),
+                        if (diagram.renderer != null)
+                          _TinyMetaChip(
+                            icon: Icons.memory_rounded,
+                            label: diagram.renderer!,
+                          ),
+                        if (diagram.diagramId != null)
+                          _TinyMetaChip(
+                            icon: Icons.tag_rounded,
+                            label: diagram.diagramId!,
+                          ),
+                      ],
+                    ),
                   ],
                 ),
               ),
@@ -9049,6 +9111,13 @@ bool _matchesDiagramSearch(_DiagramListItem item, String query) {
     diagram.title ?? '',
     diagram.diagramType,
     diagram.scope,
+    diagram.sourceFormat,
+    diagram.renderedFormat ?? '',
+    diagram.contentType,
+    diagram.diagramId ?? '',
+    diagram.renderer ?? '',
+    diagram.metadataPath ?? '',
+    diagram.digest ?? '',
     diagram.content ?? '',
     item.spec?.id ?? '',
     item.spec?.title ?? '',
@@ -9493,6 +9562,7 @@ SddFeedbackTarget _diagramFeedbackTarget({
     specTitle: spec?.title,
     diagramType: diagram.diagramType,
     diagramScope: diagram.scope,
+    diagramSelectionMetadata: _diagramIdentityMetadata(diagram),
   );
 }
 
@@ -9515,8 +9585,25 @@ SddFeedbackTarget _diagramSelectionFeedbackTarget({
     diagramScope: diagram.scope,
     diagramSelectionType: selection.type,
     diagramSelectionLabel: selection.label,
-    diagramSelectionMetadata: selection.metadata,
+    diagramSelectionMetadata: <String, Object?>{
+      ..._diagramIdentityMetadata(diagram),
+      ...selection.metadata,
+    },
   );
+}
+
+Map<String, Object?> _diagramIdentityMetadata(SddDiagram diagram) {
+  return <String, Object?>{
+    if (diagram.specId != null) 'specId': diagram.specId,
+    if (diagram.diagramId != null) 'diagramId': diagram.diagramId,
+    'sourceFormat': diagram.sourceFormat,
+    if (diagram.renderedFormat != null)
+      'renderedFormat': diagram.renderedFormat,
+    'contentType': diagram.contentType,
+    if (diagram.digest != null) 'digest': diagram.digest,
+    if (diagram.metadataPath != null) 'metadataPath': diagram.metadataPath,
+    if (diagram.renderer != null) 'renderer': diagram.renderer,
+  };
 }
 
 List<_DiagramSelection> _diagramSelections(SddDiagram diagram) {
@@ -9532,6 +9619,11 @@ List<_DiagramSelection> _diagramSelections(SddDiagram diagram) {
     ),
   ];
   final content = diagram.content ?? '';
+  if (diagram.isRenderedSvg) {
+    final semanticSelections = _svgDiagramSelections(content);
+    selections.addAll(semanticSelections);
+    return selections;
+  }
   final nodes = <String>{};
   final edges = <_DiagramSelection>[];
   final edgePattern = RegExp(
@@ -9582,6 +9674,55 @@ List<_DiagramSelection> _diagramSelections(SddDiagram diagram) {
   return selections;
 }
 
+List<_DiagramSelection> _svgDiagramSelections(String svg) {
+  final selections = <_DiagramSelection>[];
+  final nodeIds = <String>{};
+  final connectorIds = <String>{};
+  for (final match in RegExp(
+    r'data-node-id="([^"]+)"',
+  ).allMatches(svg).take(8)) {
+    nodeIds.add(match.group(1)!);
+  }
+  for (final match in RegExp(r'id="node-([^"]+)"').allMatches(svg).take(8)) {
+    nodeIds.add(match.group(1)!);
+  }
+  for (final match in RegExp(
+    r'data-connection-id="([^"]+)"',
+  ).allMatches(svg).take(8)) {
+    connectorIds.add(match.group(1)!);
+  }
+  for (final match in RegExp(
+    r'id="connector-([^"]+)"',
+  ).allMatches(svg).take(8)) {
+    connectorIds.add(match.group(1)!);
+  }
+  selections.addAll(
+    nodeIds
+        .take(8)
+        .map(
+          (nodeId) => _DiagramSelection(
+            type: 'node',
+            label: nodeId,
+            sourceExcerpt: 'SVG semantic node: $nodeId',
+            metadata: <String, Object?>{'nodeId': nodeId},
+          ),
+        ),
+  );
+  selections.addAll(
+    connectorIds
+        .take(8)
+        .map(
+          (connectionId) => _DiagramSelection(
+            type: 'edge',
+            label: connectionId,
+            sourceExcerpt: 'SVG semantic connector: $connectionId',
+            metadata: <String, Object?>{'connectionId': connectionId},
+          ),
+        ),
+  );
+  return selections;
+}
+
 T? _fileAt<T>(List<T> files, int index) {
   if (index < 0 || index >= files.length) return null;
   return files[index];
@@ -9610,6 +9751,11 @@ String _diagramTypeLabel(String rawType, {String? path, String? content}) {
   final normalized = type.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '');
   final source = (content ?? '').trimLeft().toLowerCase();
   final lowerPath = (path ?? '').toLowerCase();
+  if (normalized == 'svg' ||
+      normalized.contains('svg') ||
+      lowerPath.endsWith('.svg')) {
+    return 'SVG';
+  }
   if (source.startsWith('classdiagram') || normalized == 'classdiagram') {
     return 'UML class';
   }
@@ -9651,6 +9797,7 @@ IconData _diagramIcon(SddDiagram diagram) {
   if (label.contains('sequence')) return Icons.swap_horiz_rounded;
   if (label.contains('class')) return Icons.schema_outlined;
   if (label.contains('state')) return Icons.sync_alt_rounded;
+  if (diagram.isRenderedSvg) return Icons.image_outlined;
   if (label.contains('component') || label.contains('architecture')) {
     return Icons.account_tree_outlined;
   }
@@ -9664,8 +9811,9 @@ String _diagramHeaderSubtitle(SddDiagram diagram) {
     content: diagram.content,
   );
   final scope = diagram.scope.trim();
-  if (scope.isEmpty) return type;
-  return '$scope · $type';
+  final format = diagram.isRenderedSvg ? 'SVG' : 'Mermaid';
+  if (scope.isEmpty) return '$type · $format';
+  return '$scope · $type · $format';
 }
 
 String _safeMetadataPath(String path) {

@@ -4,9 +4,9 @@ Spec: 016-diagram-mcp-rendering-engine
 
 Plan: Frontend Diagram Viewer
 
-Status: pending
+Status: completed
 
-- [ ] T036 Render SVG diagrams in Flutter with viewport controls.
+- [x] T036 Render SVG diagrams in Flutter with viewport controls.
 
 ## Acceptance Notes
 

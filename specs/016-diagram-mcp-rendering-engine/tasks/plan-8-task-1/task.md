@@ -4,9 +4,9 @@ Spec: 016-diagram-mcp-rendering-engine
 
 Plan: MCP Diagram Workflow And Mobile Release
 
-Status: pending
+Status: completed
 
-- [ ] T038 Wire frontend runs to the Diagram MCP server.
+- [x] T038 Wire frontend runs to the Diagram MCP server.
 
 ## Acceptance Notes
 

@@ -399,6 +399,15 @@ class SddDiagram extends SddFile {
     required super.sizeBytes,
     required this.diagramType,
     required this.scope,
+    this.specId,
+    this.diagramId,
+    this.sourceFormat = 'mermaid',
+    this.renderedFormat,
+    this.contentType = 'text/plain; charset=utf-8',
+    this.digest,
+    this.updatedAt,
+    this.metadataPath,
+    this.renderer,
     super.title,
     super.content,
     super.error,
@@ -406,6 +415,21 @@ class SddDiagram extends SddFile {
 
   final String diagramType;
   final String scope;
+  final String? specId;
+  final String? diagramId;
+  final String sourceFormat;
+  final String? renderedFormat;
+  final String contentType;
+  final String? digest;
+  final String? updatedAt;
+  final String? metadataPath;
+  final String? renderer;
+
+  bool get isRenderedSvg =>
+      sourceFormat.toLowerCase() == 'svg' ||
+      renderedFormat?.toLowerCase() == 'svg' ||
+      contentType.toLowerCase().contains('image/svg+xml') ||
+      path.toLowerCase().endsWith('.svg');
 
   factory SddDiagram.fromJson(Map<String, dynamic> json) {
     return SddDiagram(
@@ -416,6 +440,23 @@ class SddDiagram extends SddFile {
       error: _trimmedString(json['error']),
       diagramType: json['diagram_type'] as String? ?? 'unknown',
       scope: json['scope'] as String? ?? '',
+      specId: _trimmedString(json['spec_id'] ?? json['specId']),
+      diagramId: _trimmedString(json['diagram_id'] ?? json['diagramId']),
+      sourceFormat:
+          _trimmedString(json['source_format'] ?? json['sourceFormat']) ??
+          'mermaid',
+      renderedFormat: _trimmedString(
+        json['rendered_format'] ?? json['renderedFormat'],
+      ),
+      contentType:
+          _trimmedString(json['content_type'] ?? json['contentType']) ??
+          'text/plain; charset=utf-8',
+      digest: _trimmedString(json['digest']),
+      updatedAt: _trimmedString(json['updated_at'] ?? json['updatedAt']),
+      metadataPath: _trimmedString(
+        json['metadata_path'] ?? json['metadataPath'],
+      ),
+      renderer: _trimmedString(json['renderer']),
     );
   }
 }
