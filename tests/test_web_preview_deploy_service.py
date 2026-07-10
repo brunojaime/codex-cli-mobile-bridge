@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import json
+import re
 from typing import Any
 
 from fastapi.testclient import TestClient
@@ -278,6 +279,33 @@ def test_web_preview_deploy_applies_resources_with_fake_cloudflare(
     assert invite["token_sha256"] in insert_calls[-1]["params"]
 
 
+def test_web_preview_deploy_fails_when_public_health_missing_bindings(
+    tmp_path: Path,
+) -> None:
+    project = _generated_project(tmp_path)
+    _write_web_build_output(project)
+    fake = _FakeCloudflareClient(health_assets_bound=False)
+    service = _service(tmp_path, apply_enabled=True, fake=fake)
+    plan = service.plan(WebPreviewPlanInput(project_path=str(project)))
+
+    with pytest.raises(WebPreviewError) as exc:
+        service.deploy(
+            WebPreviewDeployInput(
+                project_path=str(project),
+                confirm_apply=True,
+                expected_plan_hash=plan["plan_hash"],
+            )
+        )
+
+    assert exc.value.code == "deploy_failed"
+    assert "preview_health_bindings_failed" in exc.value.message
+    assert "assets_bound=true" in exc.value.message
+    state = _read_preview(tmp_path, plan["preview_id"])
+    assert state["status"] == "failed"
+    assert "preview_health_bindings_failed" in state["error"]
+    assert any(call.startswith("fetch_url:https://preview.nienfos.com/clinica-norte/") for call in fake.calls)
+
+
 def test_web_preview_deploy_is_idempotent_when_resources_exist(
     tmp_path: Path,
 ) -> None:
@@ -312,6 +340,59 @@ def test_web_preview_deploy_is_idempotent_when_resources_exist(
     assert not any(call.startswith("create_d1_database") for call in fake.calls)
     assert not any(call.startswith("create_pages_project") for call in fake.calls)
     assert "execute_d1_sql:acct-1:d1-1" in fake.calls
+
+
+def test_web_preview_deploy_reapplies_d1_schema_evolution_without_duplicate_column(
+    tmp_path: Path,
+) -> None:
+    project = _generated_project(tmp_path)
+    _write_web_build_output(project)
+    fake = _FakeCloudflareClient(resources_exist=True)
+    service = _service(tmp_path, apply_enabled=True, fake=fake)
+    plan = service.plan(WebPreviewPlanInput(project_path=str(project)))
+
+    first = service.deploy(
+        WebPreviewDeployInput(
+            project_path=str(project),
+            confirm_apply=True,
+            expected_plan_hash=plan["plan_hash"],
+        )
+    )
+    first_alters = [
+        call["sql"]
+        for call in fake.sql_calls
+        if call["sql"].strip().upper().startswith("ALTER TABLE")
+    ]
+    assert any("preview_invites ADD COLUMN email" in sql for sql in first_alters)
+    assert any("UPDATE preview_invites SET role" in call["sql"] for call in fake.sql_calls)
+
+    # Force a second apply with the same fake D1 state. If PRAGMA is ignored, the
+    # fake returns a duplicate column error for repeated ALTER TABLE.
+    stored = _read_preview(tmp_path, plan["preview_id"])
+    stored["status"] = "failed"
+    (tmp_path / "state/previews" / f"{plan['preview_id']}.json").write_text(
+        json.dumps(stored),
+        encoding="utf-8",
+    )
+    fake.sql_calls.clear()
+    second_plan = service.plan(WebPreviewPlanInput(project_path=str(project)))
+    second = service.deploy(
+        WebPreviewDeployInput(
+            project_path=str(project),
+            confirm_apply=True,
+            expected_plan_hash=second_plan["plan_hash"],
+        )
+    )
+
+    assert first["status"] == "active"
+    assert second["status"] == "active"
+    second_alters = [
+        call["sql"]
+        for call in fake.sql_calls
+        if call["sql"].strip().upper().startswith("ALTER TABLE")
+    ]
+    assert second_alters == []
+    assert any("UPDATE preview_invites SET role" in call["sql"] for call in fake.sql_calls)
 
 
 def test_web_preview_deploy_fails_when_worker_remote_verification_mismatches(
@@ -367,7 +448,10 @@ def test_web_preview_deploy_recovers_existing_active_without_duplicate_apply(
     assert first["status"] == "active"
     assert recovered["status"] == "active"
     assert recovered["recovery_status"] == "existing_active_verified"
-    assert not fake.calls
+    assert fake.calls == [
+        "fetch_url:https://preview.nienfos.com/clinica-norte/__preview/health",
+        "fetch_url:https://preview.nienfos.com/clinica-norte/api/health",
+    ]
     assert recovered["audit_events"][-1]["event_type"] == "preview_recovery_verified"
 
 
@@ -778,6 +862,8 @@ class _FakeCloudflareClient:
         fail_worker: bool = False,
         worker_verify_mismatch: bool = False,
         fail_invite_sync: bool = False,
+        health_d1_bound: bool = True,
+        health_assets_bound: bool = True,
     ) -> None:
         self.calls: list[str] = []
         self.sql_calls: list[dict[str, Any]] = []
@@ -785,7 +871,13 @@ class _FakeCloudflareClient:
         self.fail_worker = fail_worker
         self.worker_verify_mismatch = worker_verify_mismatch
         self.fail_invite_sync = fail_invite_sync
+        self.health_d1_bound = health_d1_bound
+        self.health_assets_bound = health_assets_bound
         self.worker_scripts: dict[str, str] = {}
+        self.d1_columns: dict[str, set[str]] = {
+            "preview_invites": {"invite_id", "token_sha256", "source_app", "app_slug", "single_use", "created_at", "expires_at", "used_at", "revoked_at"},
+            "preview_app_updates": {"source_app", "release_tag", "apk_url", "created_at"},
+        }
 
     def get_account(self, account_id: str) -> CloudflareLookupResult:
         self.calls.append(f"get_account:{account_id}")
@@ -949,6 +1041,34 @@ class _FakeCloudflareClient:
     ) -> CloudflareLookupResult:
         self.calls.append(f"execute_d1_sql:{account_id}:{database_id}")
         self.sql_calls.append({"sql": sql, "params": params or []})
+        pragma = re.fullmatch(r"\s*PRAGMA\s+table_info\(([^)]+)\)\s*", sql, re.I)
+        if pragma:
+            table = pragma.group(1)
+            return CloudflareLookupResult(
+                ok=True,
+                payload={
+                    "result": [
+                        {"name": column}
+                        for column in sorted(self.d1_columns.get(table, set()))
+                    ]
+                },
+            )
+        alter = re.fullmatch(
+            r"\s*ALTER\s+TABLE\s+(\w+)\s+ADD\s+COLUMN\s+(\w+)\s+.+",
+            sql,
+            re.I | re.S,
+        )
+        if alter:
+            table, column = alter.groups()
+            columns = self.d1_columns.setdefault(table, set())
+            if column in columns:
+                return CloudflareLookupResult(
+                    ok=False,
+                    status_code=500,
+                    error=f"duplicate column name: {column}",
+                )
+            columns.add(column)
+            return CloudflareLookupResult(ok=True, payload={"result": [{"success": True}]})
         if self.fail_invite_sync and "INSERT INTO preview_invites" in sql:
             return CloudflareLookupResult(
                 ok=False,
@@ -990,3 +1110,21 @@ class _FakeCloudflareClient:
     def list_r2_buckets(self, account_id: str) -> CloudflareLookupResult:
         self.calls.append(f"list_r2_buckets:{account_id}")
         return CloudflareLookupResult(ok=True, payload={"result": []})
+
+    def fetch_url(
+        self,
+        url: str,
+        *,
+        headers: dict[str, str] | None = None,
+    ) -> CloudflareLookupResult:
+        self.calls.append(f"fetch_url:{url}")
+        assert headers and headers["User-Agent"] == "CodexProjectFactoryPreviewSmoke/1.0"
+        return CloudflareLookupResult(
+            ok=True,
+            status_code=200,
+            payload={
+                "ok": True,
+                "d1_bound": self.health_d1_bound,
+                "assets_bound": self.health_assets_bound,
+            },
+        )

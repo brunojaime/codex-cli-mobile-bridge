@@ -54,3 +54,10 @@
 - [x] T052 Send default preview invitation email in Spanish without visible raw invite URLs or token text.
 - [x] T053 Generate visual validation reports without TODOs when no assets are attached and record asset metadata/mapping when assets exist.
 - [x] T054 Validate generated Android INTERNET permission as part of preview release profile checks.
+- [x] T055 Block WebPreviewDeployService active status until public `__preview/health` and `api/health` confirm D1 and ASSETS bindings.
+- [x] T056 Convert generated Initial Preview validator to a pass/fail/skipped check report with strict separate release tags.
+- [x] T057 Require Bridge registration latestBuild, APK proxy URL, mandatory SHA256, preview runtime, and non-production/non-mock flags.
+- [x] T058 Add generated GitHub private repo access helper using authenticated `gh repo view` and `git ls-remote HEAD`.
+- [x] T059 Remove generated DEBUG_PREVIEW_SIGNING preview-installable contract and report signer certificate SHA256 from apksigner.
+- [x] T060 Add generated invite E2E validation hook for create/sync/activate/used_at/login flow.
+- [x] T061 Test D1 schema evolution replay with PRAGMA-backed existing columns and duplicate-column failure protection.

@@ -583,9 +583,10 @@ def test_generator_writes_executable_publish_script(tmp_path: Path) -> None:
     assert "android-preview-v${version//+/-build.}" in android_preview_content
     assert "scripts/smoke_preview_api.sh" in android_preview_content
     assert "scripts/load_bridge_env.sh" in android_preview_content
+    assert "scripts/github_repo_access.sh" in android_preview_content
     assert "bridge_env_load_preview_signing" in android_preview_content
     assert "APP_RUNTIME_PROFILE=preview" in android_preview_content
-    assert "DEBUG_PREVIEW_SIGNING" in android_preview_content
+    assert "DEBUG_PREVIEW_SIGNING" not in android_preview_content
     assert "https://preview.nienfos.com/$SOURCE_APP/api" in android_preview_content
     assert "git push origin \"$tag\"" in android_preview_content
 
@@ -621,7 +622,7 @@ def test_generator_writes_executable_publish_script(tmp_path: Path) -> None:
     preview_profile_content = preview_profile_script.read_text(encoding="utf-8")
     assert "release/preview-runtime.json" in preview_profile_content
     assert "release/preview-signing-policy.json" in preview_profile_content
-    assert "debug preview signing is forbidden" in preview_profile_content
+    assert "debugPreview signing policy is forbidden" in preview_profile_content
     assert "deploy/web-preview/web-preview-manifest.yaml" in preview_profile_content
     assert "scripts/validate_release_profiles.sh" in preview_profile_content
 
@@ -861,17 +862,7 @@ def test_generated_initial_preview_validation_rejects_bad_bridge_registration(
 
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
-    fake_gh = fake_bin / "gh"
-    fake_gh.write_text(
-        "#!/usr/bin/env bash\n"
-        "if [[ \"$1 $2\" == \"release view\" ]]; then\n"
-        "  printf 'clinica-norte.apk\\n'\n"
-        "  exit 0\n"
-        "fi\n"
-        "exit 2\n",
-        encoding="utf-8",
-    )
-    fake_gh.chmod(0o755)
+    _write_fake_github_access_tools(fake_bin)
     fake_curl = fake_bin / "curl"
     cases = [
         (
@@ -925,6 +916,8 @@ def test_generated_initial_preview_validation_rejects_bad_bridge_registration(
             "available": True,
             "releaseTag": "android-preview-v0.1.0-build.1",
             "apkUrl": "https://bridge/apk",
+            "sha256": "0" * 64,
+            "latestBuild": {"releaseTag": "android-preview-v0.1.0-build.1"},
             **payload,
         }
         fake_curl.write_text(
@@ -982,17 +975,7 @@ def test_generated_initial_preview_validation_checks_expected_apk_sha256(
 
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
-    fake_gh = fake_bin / "gh"
-    fake_gh.write_text(
-        "#!/usr/bin/env bash\n"
-        "if [[ \"$1 $2\" == \"release view\" ]]; then\n"
-        "  printf 'clinica-norte.apk\\n'\n"
-        "  exit 0\n"
-        "fi\n"
-        "exit 2\n",
-        encoding="utf-8",
-    )
-    fake_gh.chmod(0o755)
+    _write_fake_github_access_tools(fake_bin)
     fake_curl = fake_bin / "curl"
     fake_curl.write_text(
         "#!/usr/bin/env bash\n"
@@ -1011,7 +994,8 @@ def test_generated_initial_preview_validation_checks_expected_apk_sha256(
         '"releaseTag":"android-preview-v0.1.0-build.1","available":true,'
         '"previewUrl":"https://preview.nienfos.com/clinica-norte",'
         '"runtimeProfile":"preview","productionReady":false,'
-        '"mockOrDemo":false,"apkUrl":"https://bridge.test/apk"}\n'
+        '"mockOrDemo":false,"apkUrl":"https://bridge.test/apk",'
+        '"sha256":"' + ("0" * 64) + '","latestBuild":{"releaseTag":"android-preview-v0.1.0-build.1"}}\n'
         "JSON\n",
         encoding="utf-8",
     )
@@ -1217,7 +1201,7 @@ def test_generated_contract_docs_have_coherent_minimum_content(
     assert cost_posture["paidResourcesAllowed"] is False
     assert all(item["paid"] is False for item in cost_posture["resources"])
     assert signing_policy["defaultSigningMode"] == "preview"
-    assert signing_policy["debugPreview"]["enabled"] is False
+    assert "debugPreview" not in signing_policy
     assert signing_policy["productionReady"] is False
     assert signing_policy["mockOrDemo"] is False
     assert "APP_RUNTIME_PROFILE=real" in runtime_doc
@@ -1231,7 +1215,7 @@ def test_generated_contract_docs_have_coherent_minimum_content(
     assert "Never reuse preview or mock APKs for production" in promotion_doc
     assert "productionReady=false" in signing_doc
     assert "release/preview-signing-policy.json" in signing_doc
-    assert "DEBUG_PREVIEW_SIGNING_ACKNOWLEDGED=true" in signing_doc
+    assert "Debug signing is forbidden" in signing_doc
     assert "scripts/validate_cloudflare_cost_posture.sh" in operations_doc
     assert "aws route53domains get-domain-detail" in aws_doc
     assert "AutoRenew" in aws_doc
@@ -1451,24 +1435,25 @@ def test_generated_preview_signing_policy_blocks_debug_without_metadata(
         )
     )
     assert policy["defaultSigningMode"] == "preview"
-    assert policy["debugPreview"]["enabled"] is False
+    assert "debugPreview" not in policy
 
-    blocked = subprocess.run(
+    validator = (project / "scripts/validate_preview_release_profiles.sh").read_text(
+        encoding="utf-8"
+    )
+    assert "DEBUG_PREVIEW_SIGNING" not in validator
+
+    accepted = subprocess.run(
         ["scripts/validate_preview_release_profiles.sh"],
         cwd=project,
         env={
             **os.environ,
-            "DEBUG_PREVIEW_SIGNING": "true",
-            "DEBUG_PREVIEW_SIGNING_ACKNOWLEDGED": "true",
-            "DEBUG_PREVIEW_SIGNING_REASON": "temporary QA build",
             "APP_RELEASE_TAG": "android-preview-v0.1.0-build.1",
         },
         text=True,
         capture_output=True,
         check=False,
     )
-    assert blocked.returncode != 0
-    assert "debug preview signing is forbidden" in blocked.stderr
+    assert accepted.returncode == 0, accepted.stdout + accepted.stderr
 
 
 def test_generated_preview_signing_policy_rejects_explicit_debug_preview(
@@ -1488,7 +1473,7 @@ def test_generated_preview_signing_policy_rejects_explicit_debug_preview(
     project = tmp_path / "clinica-norte"
     policy_path = project / "release/preview-signing-policy.json"
     policy = json.loads(policy_path.read_text(encoding="utf-8"))
-    policy["debugPreview"]["enabled"] = True
+    policy["debugPreview"] = {"enabled": True}
     policy_path.write_text(json.dumps(policy, indent=2), encoding="utf-8")
 
     rejected = subprocess.run(
@@ -1496,9 +1481,6 @@ def test_generated_preview_signing_policy_rejects_explicit_debug_preview(
         cwd=project,
         env={
             **os.environ,
-            "DEBUG_PREVIEW_SIGNING": "true",
-            "DEBUG_PREVIEW_SIGNING_ACKNOWLEDGED": "true",
-            "DEBUG_PREVIEW_SIGNING_REASON": "temporary QA build",
             "APP_RELEASE_TAG": "android-preview-v0.1.0-build.1",
         },
         text=True,
@@ -1506,16 +1488,13 @@ def test_generated_preview_signing_policy_rejects_explicit_debug_preview(
         check=False,
     )
     assert rejected.returncode != 0
-    assert "debug preview signing is forbidden" in rejected.stderr
+    assert "debugPreview signing policy is forbidden" in rejected.stderr
 
     wrong_tag = subprocess.run(
         ["scripts/validate_preview_release_profiles.sh"],
         cwd=project,
         env={
             **os.environ,
-            "DEBUG_PREVIEW_SIGNING": "true",
-            "DEBUG_PREVIEW_SIGNING_ACKNOWLEDGED": "true",
-            "DEBUG_PREVIEW_SIGNING_REASON": "temporary QA build",
             "APP_RELEASE_TAG": "android-v0.1.0-build.1",
         },
         text=True,
@@ -1523,7 +1502,7 @@ def test_generated_preview_signing_policy_rejects_explicit_debug_preview(
         check=False,
     )
     assert wrong_tag.returncode != 0
-    assert "debug preview signing is forbidden" in wrong_tag.stderr
+    assert "debugPreview signing policy is forbidden" in wrong_tag.stderr
 
 
 def test_generated_project_registers_installable_app_contract(
@@ -1605,17 +1584,7 @@ def test_generated_register_installable_app_script_dry_run_uses_release_asset(
     project = tmp_path / "clinica-norte"
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
-    fake_gh = fake_bin / "gh"
-    fake_gh.write_text(
-        "#!/usr/bin/env bash\n"
-        "if [[ \"$1 $2 $3\" == \"release view android-preview-v0.1.0-build.1\" ]]; then\n"
-        "  printf 'clinica-norte.apk\\n'\n"
-        "  exit 0\n"
-        "fi\n"
-        "exit 2\n",
-        encoding="utf-8",
-    )
-    fake_gh.chmod(0o755)
+    _write_fake_github_access_tools(fake_bin)
 
     completed = subprocess.run(
         ["scripts/register_installable_app.sh", "--dry-run"],
@@ -1664,17 +1633,7 @@ def test_generated_register_installable_app_script_posts_preview_metadata(
     project = tmp_path / "clinica-norte"
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
-    fake_gh = fake_bin / "gh"
-    fake_gh.write_text(
-        "#!/usr/bin/env bash\n"
-        "if [[ \"$1 $2 $3\" == \"release view android-preview-v0.1.0-build.1\" ]]; then\n"
-        "  printf 'clinica-norte.apk\\n'\n"
-        "  exit 0\n"
-        "fi\n"
-        "exit 2\n",
-        encoding="utf-8",
-    )
-    fake_gh.chmod(0o755)
+    _write_fake_github_access_tools(fake_bin)
     fake_curl = fake_bin / "curl"
     fake_curl.write_text(
         "#!/usr/bin/env bash\n"
@@ -1689,6 +1648,7 @@ def test_generated_register_installable_app_script_posts_preview_metadata(
         '"previewUrl":"https://preview.nienfos.com/clinica-norte",'
         '"runtimeProfile":"preview","productionReady":false,'
         '"mockOrDemo":false,"apkUrl":"https://bridge.test/apk",'
+        '"sha256":"' + ("0" * 64) + '","latestBuild":{"releaseTag":"android-preview-v0.1.0-build.1"},'
         '"installStatusHint":"available"}\n'
         "JSON\n"
         "  exit 0\n"
@@ -2104,11 +2064,42 @@ def _initial_preview_env(extra: dict[str, str] | None = None) -> dict[str, str]:
         "PREVIEW_ADMIN_BOOTSTRAP_TOKEN": "bootstrap-token",
         "PREVIEW_D1_DATABASE": "nienfos-preview",
         "CLOUDFLARE_D1_DATABASE": "nienfos-preview",
+        "RUN_D1_MIGRATION_APPLY": "false",
+        "SKIP_GITHUB_WORKFLOW_CHECK": "true",
         "CODEX_MOBILE_BRIDGE_ROOT": "/tmp/project-factory-test-no-env",
     }
     if extra:
         env.update(extra)
     return env
+
+
+def _write_fake_github_access_tools(
+    fake_bin: Path,
+    *,
+    release_asset: str = "clinica-norte.apk",
+) -> None:
+    fake_gh = fake_bin / "gh"
+    fake_gh.write_text(
+        "#!/usr/bin/env bash\n"
+        "if [[ \"$1 $2\" == \"repo view\" ]]; then exit 0; fi\n"
+        "if [[ \"$1 $2\" == \"workflow view\" ]]; then exit 0; fi\n"
+        "if [[ \"$1 $2\" == \"release view\" ]]; then\n"
+        f"  printf '{release_asset}\\n'\n"
+        "  exit 0\n"
+        "fi\n"
+        "exit 2\n",
+        encoding="utf-8",
+    )
+    fake_gh.chmod(0o755)
+    real_git = shutil.which("git") or "/usr/bin/git"
+    fake_git = fake_bin / "git"
+    fake_git.write_text(
+        "#!/usr/bin/env bash\n"
+        "if [[ \"$1\" == \"ls-remote\" ]]; then printf 'abc123\\tHEAD\\n'; exit 0; fi\n"
+        f"exec {real_git} \"$@\"\n",
+        encoding="utf-8",
+    )
+    fake_git.chmod(0o755)
 
 
 def _read_all_text(project: Path) -> str:

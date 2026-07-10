@@ -11,6 +11,7 @@ from pathlib import Path
 import re
 import subprocess
 from tempfile import NamedTemporaryFile
+import time
 from typing import Any
 
 import yaml
@@ -207,9 +208,45 @@ class WebPreviewDeployService:
             and previous.get("plan_hash") == planned["plan_hash"]
             and previous.get("applied_resources")
         ):
+            try:
+                health_verification = self._verify_preview_health(planned)
+            except Exception as exc:
+                error = _safe_error(
+                    exc,
+                    secrets=(
+                        self._settings.cloudflare_api_token,
+                        self._settings.cloudflare_dns_api_token,
+                    ),
+                )
+                failed = {
+                    **previous,
+                    "status": "failed",
+                    "error": error,
+                    "completed_at": _now_iso(),
+                    "updated_at": _now_iso(),
+                    "logs": [
+                        *(previous.get("logs") or []),
+                        {
+                            "level": "error",
+                            "message": error,
+                        },
+                    ],
+                }
+                failed = self._with_audit_event(
+                    failed,
+                    event_type="preview_publish_failed",
+                    details={"error": error, "phase": "preview_health_recovery"},
+                )
+                self._persist_preview(failed)
+                raise WebPreviewError(
+                    code="deploy_failed",
+                    message=error,
+                    status_code=500,
+                ) from exc
             recovered = {
                 **previous,
                 "recovery_status": "existing_active_verified",
+                "health_verification": health_verification,
                 "updated_at": _now_iso(),
                 "logs": [
                     *(previous.get("logs") or []),
@@ -276,10 +313,12 @@ class WebPreviewDeployService:
                 manifest=manifest,
                 project_path=project_path,
             )
+            health_verification = self._verify_preview_health(planned)
             state = {
                 **state,
                 "status": "active",
                 "applied_resources": applied,
+                "health_verification": health_verification,
                 "worker_script_verification_status": _worker_verification_status(applied),
                 "completed_at": _now_iso(),
                 "updated_at": _now_iso(),
@@ -352,6 +391,54 @@ class WebPreviewDeployService:
                 status_code=500,
             )
         return state
+
+    def _verify_preview_health(self, planned: dict[str, Any]) -> dict[str, Any]:
+        preview_url = str(planned.get("preview_url") or "").rstrip("/")
+        if not preview_url:
+            raise RuntimeError("preview_health_url_missing")
+        endpoints = [
+            ("web", f"{preview_url}/__preview/health"),
+            ("api", f"{preview_url}/api/health"),
+        ]
+        headers = {"User-Agent": "CodexProjectFactoryPreviewSmoke/1.0"}
+        attempts: list[dict[str, Any]] = []
+        client = self._cloudflare_client()
+        for attempt in range(1, 4):
+            current: list[dict[str, Any]] = []
+            all_ok = True
+            for name, url in endpoints:
+                result = client.fetch_url(url, headers=headers)
+                payload = result.payload if isinstance(result.payload, dict) else {}
+                d1_bound = payload.get("d1_bound") is True
+                assets_bound = payload.get("assets_bound") is True
+                ok = bool(result.ok and d1_bound and assets_bound)
+                all_ok = all_ok and ok
+                current.append(
+                    {
+                        "name": name,
+                        "url": url,
+                        "ok": ok,
+                        "status_code": result.status_code,
+                        "d1_bound": payload.get("d1_bound"),
+                        "assets_bound": payload.get("assets_bound"),
+                        "error": result.error,
+                    }
+                )
+            attempts.append({"attempt": attempt, "checks": current})
+            if all_ok:
+                return {
+                    "status": "passed",
+                    "attempts": attempts,
+                    "required": {"d1_bound": True, "assets_bound": True},
+                }
+            if attempt < 3:
+                time.sleep(0.5 * attempt)
+        latest = attempts[-1]["checks"] if attempts else []
+        raise RuntimeError(
+            "preview_health_bindings_failed: expected d1_bound=true and "
+            f"assets_bound=true from {preview_url}/__preview/health and "
+            f"{preview_url}/api/health; latest={latest}"
+        )
 
     def sync_invite(self, invite: dict[str, Any]) -> dict[str, Any]:
         preview = self.get_preview(str(invite.get("preview_id") or ""))

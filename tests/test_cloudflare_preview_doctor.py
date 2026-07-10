@@ -482,3 +482,16 @@ class _FakeCloudflareClient:
     def list_r2_buckets(self, account_id: str) -> CloudflareLookupResult:
         self.calls.append(f"list_r2_buckets:{account_id}")
         return self._r2_result
+
+    def fetch_url(
+        self,
+        url: str,
+        *,
+        headers: dict[str, str] | None = None,
+    ) -> CloudflareLookupResult:
+        self.calls.append(f"fetch_url:{url}")
+        return CloudflareLookupResult(
+            ok=True,
+            status_code=200,
+            payload={"ok": True, "d1_bound": True, "assets_bound": True},
+        )

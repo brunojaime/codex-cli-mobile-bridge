@@ -184,6 +184,7 @@ def _project_files(manifest: dict[str, Any]) -> dict[str, str]:
         "AGENTS.md": _agents(name),
         "scripts/finalize_local_commit.sh": _finalize_local_commit_script(),
         "scripts/load_bridge_env.sh": _bridge_env_loader_script(),
+        "scripts/github_repo_access.sh": _github_repo_access_helper_script(),
         "scripts/publish_project.sh": _publish_script(),
         "scripts/apply_cloudflare_preview.sh": _apply_cloudflare_preview_script(slug),
         "scripts/apply_preview_d1_migrations.sh": _apply_preview_d1_migrations_script(),
@@ -3050,6 +3051,7 @@ ROOT_DIR="$(cd "$(dirname "${{BASH_SOURCE[0]}}")/.." && pwd)"
 cd "$ROOT_DIR"
 # shellcheck disable=SC1091
 source "$ROOT_DIR/scripts/load_bridge_env.sh"
+source "$ROOT_DIR/scripts/github_repo_access.sh"
 bridge_env_require BRIDGE_URL
 BRIDGE_URL="${{BRIDGE_URL}}"
 BRIDGE_URL="${{BRIDGE_URL%/}}"
@@ -3551,7 +3553,8 @@ fi
 git branch -M "$BRANCH"
 
 REPO="$OWNER/$PROJECT_SLUG"
-if ! gh repo view "$REPO" >/dev/null 2>&1; then
+source "$ROOT_DIR/scripts/github_repo_access.sh"
+if ! github_repo_accessible "$REPO"; then
   gh repo create "$REPO" "--$VISIBILITY" --source . --remote origin --push
 else
   if ! git remote get-url origin >/dev/null 2>&1; then
@@ -3579,6 +3582,7 @@ ROOT_DIR="$(cd "$(dirname "${{BASH_SOURCE[0]}}")/.." && pwd)"
 cd "$ROOT_DIR"
 # shellcheck disable=SC1091
 source "$ROOT_DIR/scripts/load_bridge_env.sh"
+source "$ROOT_DIR/scripts/github_repo_access.sh"
 DRY_RUN=false
 BRIDGE_URL="${{BRIDGE_URL:-}}"
 SOURCE_APP="${{SOURCE_APP:-}}"
@@ -3684,6 +3688,7 @@ if [[ -z "$GITHUB_REPO" || "$GITHUB_REPO" != */* ]]; then
   echo "Set GITHUB_REPO=owner/repo or configure git origin before registering." >&2
   exit 2
 fi
+github_require_repo_access "$GITHUB_REPO"
 export SOURCE_APP DISPLAY_NAME GITHUB_REPO RELEASE_TAG_PATTERN APK_ASSET_PATTERN
 export LATEST_ASSET_NAME RELEASE_CHANNEL ENABLED EXPECTED_PACKAGE_ID EXPECTED_SHA256
 export PREVIEW_URL RUNTIME_PROFILE PRODUCTION_READY MOCK_OR_DEMO APP_RELEASE_TAG
@@ -3787,6 +3792,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from pathlib import Path
 
 registered = json.loads(Path("/tmp/project-factory-register-installable-app.json").read_text())
@@ -3794,9 +3800,22 @@ detail = json.loads(Path("/tmp/project-factory-installable-app-detail.json").rea
 print(f"registered installable app: {{registered['sourceApp']}} -> {{registered['displayName']}}")
 print(f"install status: {{detail.get('installStatusHint')}}")
 print(f"apk url: {{detail.get('apkUrl')}}")
-expected_sha = os.environ.get("EXPECTED_SHA256", "").strip().lower()
+if not detail.get("latestBuild"):
+    raise SystemExit("Bridge registration must expose latestBuild.")
+apk_url = str(detail.get("apkUrl") or "")
+if not apk_url.startswith(("http://", "https://")):
+    raise SystemExit("Bridge registration must expose an HTTP(S) APK proxy URL.")
 actual_sha = str(detail.get("sha256") or "").lower()
-if expected_sha and actual_sha and expected_sha != actual_sha:
+if not re.fullmatch(r"[a-f0-9]{{64}}", actual_sha):
+    raise SystemExit("Bridge registration must expose a 64 hex APK sha256.")
+if detail.get("runtimeProfile") != "preview":
+    raise SystemExit("Bridge registration runtimeProfile must be preview.")
+if detail.get("productionReady") is not False:
+    raise SystemExit("Bridge registration productionReady must be false.")
+if detail.get("mockOrDemo") is not False:
+    raise SystemExit("Bridge registration mockOrDemo must be false.")
+expected_sha = os.environ.get("EXPECTED_SHA256", "").strip().lower()
+if expected_sha and expected_sha != actual_sha:
     raise SystemExit("Registered APK checksum does not match EXPECTED_SHA256.")
 if os.environ.get("REQUIRE_INSTALLABLE_APK", "true").lower() == "true" and not detail.get("apkUrl"):
     raise SystemExit(
@@ -3939,6 +3958,56 @@ bridge_env_load
 '''
 
 
+def _github_repo_access_helper_script() -> str:
+    return r'''#!/usr/bin/env bash
+# Reusable GitHub repository access checks for private repos. GitHub may return
+# 404 for unauthenticated API/web requests; these helpers force authenticated
+# host checks before any script concludes that a repo/release/variable is
+# missing.
+
+github_repo_from_origin() {
+  local origin_url
+  origin_url="$(git remote get-url origin 2>/dev/null || true)"
+  origin_url="${origin_url#https://github.com/}"
+  origin_url="${origin_url#git@github.com:}"
+  origin_url="${origin_url%.git}"
+  printf '%s\n' "$origin_url"
+}
+
+github_repo_accessible() {
+  local repo="$1"
+  [[ "$repo" == */* ]] || return 2
+  command -v gh >/dev/null 2>&1 || return 3
+  command -v git >/dev/null 2>&1 || return 4
+  gh repo view "$repo" >/tmp/project-factory-gh-repo-view.out 2>/tmp/project-factory-gh-repo-view.err || return 5
+  git ls-remote "https://github.com/$repo.git" HEAD >/tmp/project-factory-git-ls-remote.out 2>/tmp/project-factory-git-ls-remote.err || return 6
+}
+
+github_require_repo_access() {
+  local repo="$1"
+  if github_repo_accessible "$repo"; then
+    return 0
+  fi
+  local status=$?
+  case "$status" in
+    2) printf 'GitHub repo reference must be OWNER/REPO: %s\n' "$repo" >&2 ;;
+    3) printf 'gh is required to inspect private GitHub repository access.\n' >&2 ;;
+    4) printf 'git is required to verify private GitHub repository HEAD.\n' >&2 ;;
+    5)
+      printf 'Authenticated GitHub repo view failed for %s. Do not trust unauthenticated 404/missing results.\n' "$repo" >&2
+      [[ -s /tmp/project-factory-gh-repo-view.err ]] && cat /tmp/project-factory-gh-repo-view.err >&2
+      ;;
+    6)
+      printf 'git ls-remote HEAD failed for https://github.com/%s.git. Repository may be private, missing, or inaccessible with current credentials.\n' "$repo" >&2
+      [[ -s /tmp/project-factory-git-ls-remote.err ]] && cat /tmp/project-factory-git-ls-remote.err >&2
+      ;;
+    *) printf 'GitHub repository access check failed for %s.\n' "$repo" >&2 ;;
+  esac
+  return "$status"
+}
+'''
+
+
 def _final_readiness_audit_script() -> str:
     return r'''#!/usr/bin/env bash
 set -euo pipefail
@@ -4021,6 +4090,7 @@ ROOT_DIR="$(cd "$(dirname "${{BASH_SOURCE[0]}}")/.." && pwd)"
 cd "$ROOT_DIR"
 # shellcheck disable=SC1091
 source "$ROOT_DIR/scripts/load_bridge_env.sh"
+source "$ROOT_DIR/scripts/github_repo_access.sh"
 
 [[ -f deploy/web-preview/web-preview-manifest.yaml ]] || fail "missing deploy/web-preview/web-preview-manifest.yaml"
 [[ -f deploy/web-preview/worker/src/index.js ]] || fail "missing Preview API Worker"
@@ -4403,6 +4473,7 @@ ROOT_DIR="$(cd "$(dirname "${{BASH_SOURCE[0]}}")/.." && pwd)"
 cd "$ROOT_DIR"
 # shellcheck disable=SC1091
 source "$ROOT_DIR/scripts/load_bridge_env.sh"
+source "$ROOT_DIR/scripts/github_repo_access.sh"
 
 fail_blocked() {{
   printf 'android preview release blocked: %s\\n' "$*" >&2
@@ -4431,10 +4502,6 @@ done
 SOURCE_APP="${{SOURCE_APP:-{slug}}}"
 PREVIEW_API_BASE_URL="${{PREVIEW_API_BASE_URL:-${{API_BASE_URL:-https://preview.nienfos.com/$SOURCE_APP/api}}}}"
 PREVIEW_API_BASE_URL="${{PREVIEW_API_BASE_URL%/}}"
-DEBUG_PREVIEW_SIGNING="${{DEBUG_PREVIEW_SIGNING:-false}}"
-DEBUG_PREVIEW_SIGNING_ACKNOWLEDGED="${{DEBUG_PREVIEW_SIGNING_ACKNOWLEDGED:-false}}"
-DEBUG_PREVIEW_SIGNING_REASON="${{DEBUG_PREVIEW_SIGNING_REASON:-}}"
-export DEBUG_PREVIEW_SIGNING DEBUG_PREVIEW_SIGNING_ACKNOWLEDGED DEBUG_PREVIEW_SIGNING_REASON
 
 [[ -f apps/mobile/pubspec.yaml ]] || fail_blocked "apps/mobile/pubspec.yaml is required"
 [[ -d apps/mobile/android ]] || fail_blocked "apps/mobile/android is required; run 'cd apps/mobile && flutter create --platforms=android .'"
@@ -4470,6 +4537,7 @@ repo_ref="${{repo_ref#https://github.com/}}"
 repo_ref="${{repo_ref#git@github.com:}}"
 repo_ref="${{repo_ref%.git}}"
 [[ "$repo_ref" == */* ]] || fail_blocked "origin remote must point to a GitHub owner/repo"
+github_require_repo_access "$repo_ref" || fail_blocked "GitHub repository is not accessible with authenticated tools"
 
 if command -v gh >/dev/null 2>&1 && [[ "${{SKIP_GITHUB_API_BASE_URL_VAR_CHECK:-false}}" != "true" ]]; then
   workflow_api_base_url="$(
@@ -4541,6 +4609,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
+source "$ROOT_DIR/scripts/github_repo_access.sh"
 
 fail_blocked() {
   printf 'android release blocked: %s\n' "$*" >&2
@@ -4588,6 +4657,7 @@ repo_ref="${repo_ref#https://github.com/}"
 repo_ref="${repo_ref#git@github.com:}"
 repo_ref="${repo_ref%.git}"
 [[ "$repo_ref" == */* ]] || fail_blocked "origin remote must point to a GitHub owner/repo"
+github_require_repo_access "$repo_ref" || fail_blocked "GitHub repository is not accessible with authenticated tools"
 
 if command -v gh >/dev/null 2>&1 && [[ "${SKIP_GITHUB_API_BASE_URL_VAR_CHECK:-false}" != "true" ]]; then
   workflow_api_base_url="$(
@@ -4660,6 +4730,8 @@ fail() {
 }
 
 mode="${PUBLICATION_VALIDATION_MODE:-remote}"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$ROOT_DIR/scripts/github_repo_access.sh"
 
 git rev-parse --is-inside-work-tree >/dev/null 2>&1 || fail "not inside a git repository"
 git rev-parse --verify HEAD >/dev/null 2>&1 || fail "no git commit exists"
@@ -4682,6 +4754,7 @@ repo_ref="$origin_url"
 repo_ref="${repo_ref#https://github.com/}"
 repo_ref="${repo_ref#git@github.com:}"
 repo_ref="${repo_ref%.git}"
+github_require_repo_access "$repo_ref" || fail "GitHub repository is not accessible with authenticated tools"
 
 branch="$(git symbolic-ref --short HEAD 2>/dev/null || true)"
 [[ -n "$branch" ]] || fail "HEAD is detached; publish from a named branch"
@@ -4900,12 +4973,8 @@ if policy.get("defaultSigningMode") != "preview":
     raise SystemExit("defaultSigningMode must remain preview")
 if policy.get("productionReady") is not False or policy.get("mockOrDemo") is not False:
     raise SystemExit("preview signing policy must not be production or mock/demo")
-debug = policy.get("debugPreview")
-if not isinstance(debug, dict):
-    raise SystemExit("debugPreview signing policy is required")
-debug_requested = os.environ.get("DEBUG_PREVIEW_SIGNING", "").lower() == "true"
-if debug_requested or debug.get("enabled") is True:
-    raise SystemExit("debug preview signing is forbidden for installable Initial Preview Release")
+if "debugPreview" in policy:
+    raise SystemExit("debugPreview signing policy is forbidden for installable Initial Preview Release")
 PY
 
 if [[ "$FRONTEND_STRATEGY" == "flutter" ]]; then
@@ -4936,19 +5005,57 @@ set -euo pipefail
 
 fail() {{
   printf 'initial preview release validation failed: %s\\n' "$*" >&2
+  if [[ -n "${{CHECK_REPORT:-}}" && -f "${{CHECK_REPORT:-}}" ]]; then
+    cat "$CHECK_REPORT" >&2
+  fi
   exit 1
+}}
+
+CHECK_REPORT="${{CHECK_REPORT:-/tmp/project-factory-initial-preview-checks.tsv}}"
+: > "$CHECK_REPORT"
+
+record_check() {{
+  local name="$1"
+  local status="$2"
+  local reason="${{3:-}}"
+  printf '%s\\t%s\\t%s\\n' "$name" "$status" "$reason" >> "$CHECK_REPORT"
+}}
+
+run_check() {{
+  local name="$1"
+  shift
+  if "$@"; then
+    record_check "$name" "passed"
+  else
+    local code=$?
+    record_check "$name" "failed" "exit_code=$code"
+    return 0
+  fi
+}}
+
+skip_check() {{
+  record_check "$1" "skipped_with_reason" "$2"
+}}
+
+finish_checks() {{
+  record_check "validate_initial_preview_release.sh" "passed"
+  printf 'initial preview release checks:\\n'
+  awk -F '\\t' '{{ printf "- %s: %s%s\\n", $1, $2, ($3 ? " (" $3 ")" : "") }}' "$CHECK_REPORT"
+  if awk -F '\\t' '$2 == "failed" {{ found=1 }} END {{ exit found ? 0 : 1 }}' "$CHECK_REPORT"; then
+    fail "one or more required checks failed"
+  fi
 }}
 
 ROOT_DIR="$(cd "$(dirname "${{BASH_SOURCE[0]}}")/.." && pwd)"
 cd "$ROOT_DIR"
 # shellcheck disable=SC1091
 source "$ROOT_DIR/scripts/load_bridge_env.sh"
+source "$ROOT_DIR/scripts/github_repo_access.sh"
 FRONTEND_STRATEGY="{frontend_strategy}"
 
 SOURCE_APP="${{SOURCE_APP:-{slug}}}"
 PREVIEW_API_BASE_URL="${{PREVIEW_API_BASE_URL:-${{API_BASE_URL:-https://preview.nienfos.com/$SOURCE_APP/api}}}}"
 PREVIEW_API_BASE_URL="${{PREVIEW_API_BASE_URL%/}}"
-APP_ANDROID_PREVIEW_RELEASE_TAG="${{APP_ANDROID_PREVIEW_RELEASE_TAG:-${{APP_RELEASE_TAG:-}}}}"
 
 bridge_env_require APP_RUNTIME_PROFILE API_RUNTIME API_BASE_URL BRIDGE_URL PREVIEW_ADMIN_PASSWORD
 bridge_env_require_any "preview D1 database" PREVIEW_D1_DATABASE CLOUDFLARE_D1_DATABASE
@@ -4964,8 +5071,137 @@ fi
   fail "Preview API must be https://preview.nienfos.com/$SOURCE_APP/api"
 [[ "${{API_BASE_URL%/}}" == "$PREVIEW_API_BASE_URL" ]] || fail "API_BASE_URL must match Preview API"
 
-scripts/validate_preview_release_profiles.sh
-scripts/smoke_web_preview.sh
+if [[ "${{RUN_BACKEND_TESTS:-false}}" == "true" ]]; then
+  run_check "backend tests" python3 -m pytest tests -q
+else
+  skip_check "backend tests" "set RUN_BACKEND_TESTS=true to execute repository backend tests in this gate"
+fi
+
+if [[ "$FRONTEND_STRATEGY" == "flutter" && "${{RUN_FLUTTER_ANALYZE:-false}}" == "true" ]]; then
+  run_check "Flutter analyze" bash -lc 'cd apps/mobile && flutter analyze'
+else
+  skip_check "Flutter analyze" "set RUN_FLUTTER_ANALYZE=true to run flutter analyze"
+fi
+
+if [[ "$FRONTEND_STRATEGY" == "flutter" && "${{RUN_FLUTTER_TESTS:-false}}" == "true" ]]; then
+  run_check "Flutter tests" bash -lc 'cd apps/mobile && flutter test'
+else
+  skip_check "Flutter tests" "set RUN_FLUTTER_TESTS=true to run flutter test"
+fi
+
+if [[ "$FRONTEND_STRATEGY" == "flutter" && "${{RUN_LOCAL_APK_BUILD:-false}}" == "true" ]]; then
+  run_check "APK local build" bash -lc 'cd apps/mobile && flutter build apk --release'
+else
+  skip_check "APK local build" "set RUN_LOCAL_APK_BUILD=true after local Android signing files are configured"
+fi
+
+if [[ "$FRONTEND_STRATEGY" == "flutter" && "${{RUN_APKSIGNER_VERIFY:-false}}" == "true" ]]; then
+  run_check "apksigner verify" bash -lc 'apksigner verify --verbose --print-certs apps/mobile/build/app/outputs/flutter-apk/app-release.apk'
+else
+  skip_check "apksigner verify" "set RUN_APKSIGNER_VERIFY=true after APK local build"
+fi
+
+if [[ "${{RUN_D1_MIGRATION_APPLY:-true}}" == "true" ]]; then
+  run_check "D1 migration apply" scripts/apply_preview_d1_migrations.sh
+else
+  skip_check "D1 migration apply" "RUN_D1_MIGRATION_APPLY=false"
+fi
+
+run_check "Cloudflare preview health" scripts/smoke_web_preview.sh
+record_check "web preview smoke" "passed" "covered by scripts/smoke_web_preview.sh"
+run_check "API preview smoke" scripts/smoke_preview_api.sh
+if [[ "${{RUN_INVITE_E2E:-false}}" == "true" ]]; then
+  run_check "Factory invite validation" python3 - "$BRIDGE_URL" "$SOURCE_APP" "$PREVIEW_ADMIN_PASSWORD" <<'PY'
+from __future__ import annotations
+
+import json
+import sys
+import time
+import urllib.error
+import urllib.request
+
+bridge_url, source_app, password = sys.argv[1:4]
+bridge_url = bridge_url.rstrip("/")
+preview_id = "wp-" + source_app
+email = "preview-admin-" + str(int(time.time())) + "@example.test"
+
+def request(method: str, path: str, body: dict | None = None) -> tuple[int, dict]:
+    data = None if body is None else json.dumps(body).encode()
+    headers = dict()
+    headers["accept"] = "application/json"
+    headers["content-type"] = "application/json"
+    headers["user-agent"] = "CodexProjectFactoryPreviewSmoke/1.0"
+    req = urllib.request.Request(
+        bridge_url + path,
+        data=data,
+        method=method,
+        headers=headers,
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30) as response:
+            raw = response.read().decode()
+            return response.status, json.loads(raw) if raw else dict()
+    except urllib.error.HTTPError as exc:
+        raw = exc.read().decode()
+        try:
+            payload = json.loads(raw)
+        except Exception:
+            payload = dict(raw=raw)
+        return exc.code, payload
+
+status, invite = request("POST", "/web-previews/" + preview_id + "/invites", dict(email=email, role="admin"))
+if status >= 400:
+    raise SystemExit("invite create failed: " + str(status) + " " + repr(invite))
+if invite.get("email_delivery_status") not in ("sent", "manual_link_required"):
+    raise SystemExit("unexpected invite delivery status: " + repr(invite))
+if invite.get("sync_status") != "synced":
+    raise SystemExit("invite sync_status must be synced: " + repr(invite))
+if not invite.get("expires_at"):
+    raise SystemExit("invite expires_at is required")
+if invite.get("used_at") is not None:
+    raise SystemExit("invite used_at must be empty before activation")
+invite_url = str(invite.get("invite_url") or "")
+token = invite_url.split("token=", 1)[-1] if "token=" in invite_url else ""
+if not token:
+    raise SystemExit("invite_url token missing for E2E activation")
+api_base = "https://preview.nienfos.com/" + source_app + "/api"
+api_headers = dict()
+api_headers["content-type"] = "application/json"
+api_headers["accept"] = "application/json"
+api_headers["user-agent"] = "CodexProjectFactoryPreviewSmoke/1.0"
+activate = urllib.request.Request(
+    api_base + "/invites/accept",
+    data=json.dumps(dict(
+        inviteToken=token,
+        email=email,
+        password=password,
+        passwordConfirmation=password,
+    )).encode(),
+    method="POST",
+    headers=api_headers,
+)
+with urllib.request.urlopen(activate, timeout=30) as response:
+    if response.status >= 400:
+        raise SystemExit("invite activation failed: " + str(response.status))
+status, listed = request("GET", "/web-previews/" + preview_id + "/invites")
+if status >= 400:
+    raise SystemExit("invite list failed after activation: " + str(status) + " " + repr(listed))
+matches = [row for row in listed.get("invites", listed if isinstance(listed, list) else []) if row.get("invite_id") == invite.get("invite_id")]
+if not matches or not matches[0].get("used_at"):
+    raise SystemExit("invite used_at was not marked after activation")
+login = urllib.request.Request(
+    api_base + "/auth/login",
+    data=json.dumps(dict(email=email, password=password)).encode(),
+    method="POST",
+    headers=api_headers,
+)
+with urllib.request.urlopen(login, timeout=30) as response:
+    if response.status != 200:
+        raise SystemExit("login after invite activation failed: " + str(response.status))
+PY
+else
+  skip_check "Factory invite validation" "set RUN_INVITE_E2E=true with real Bridge and Preview deployed"
+fi
 
 if [[ "$FRONTEND_STRATEGY" == "flutter" ]]; then
   [[ -f "$ROOT_DIR/apps/mobile/lib/src/screens.dart" ]] || fail "Flutter screens.dart missing"
@@ -4976,7 +5212,15 @@ if [[ "$FRONTEND_STRATEGY" == "flutter" ]]; then
 fi
 
 if [[ "$FRONTEND_STRATEGY" == "svelte" ]]; then
-  scripts/smoke_preview_api.sh
+  record_check "GitHub Android release workflow" "skipped_with_reason" "svelte frontend has no Android preview workflow"
+  record_check "GitHub release asset exists" "skipped_with_reason" "svelte frontend has no APK asset"
+  record_check "APK SHA256" "skipped_with_reason" "svelte frontend has no APK"
+  record_check "Bridge registration real" "skipped_with_reason" "svelte frontend has no installable Android registration"
+  if [[ -z "$(git status --porcelain)" ]]; then
+    record_check "clean git status" "passed"
+  else
+    record_check "clean git status" "failed" "working tree has uncommitted or untracked files"
+  fi
   local_head="$(git rev-parse HEAD 2>/dev/null || echo unavailable)"
   branch="$(git symbolic-ref --short HEAD 2>/dev/null || true)"
   push_state="unknown"
@@ -5047,6 +5291,7 @@ PY
   grep -q "installable_android: false" "$ROOT_DIR/release/release-output-template.md" || fail "Svelte release output must not claim installable Android"
   grep -q "bridge_installable_url: not_applicable_web_only" "$ROOT_DIR/release/release-output-template.md" || fail "Svelte release output must not claim Bridge installability"
   scripts/final_readiness_audit.sh
+  finish_checks
   printf 'initial svelte preview release ready: %s\\n' "$SOURCE_APP"
   exit 0
 fi
@@ -5058,17 +5303,26 @@ repo_ref="${{repo_ref#https://github.com/}}"
 repo_ref="${{repo_ref#git@github.com:}}"
 repo_ref="${{repo_ref%.git}}"
 [[ "$repo_ref" == */* ]] || fail "origin remote must point to a GitHub owner/repo"
+github_require_repo_access "$repo_ref" || fail "GitHub repository is not accessible with authenticated tools"
 
 version="$(awk '/^version:/ {{ print $2; exit }}' apps/mobile/pubspec.yaml)"
 [[ -n "$version" ]] || fail "apps/mobile/pubspec.yaml has no version"
-expected_tag="${{APP_ANDROID_PREVIEW_RELEASE_TAG:-android-preview-v${{version//+/-build.}}}}"
+expected_tag="android-preview-v${{version//+/-build.}}"
+[[ "$APP_RELEASE_TAG" == "$expected_tag" ]] || fail "APP_RELEASE_TAG must be $expected_tag"
+[[ "$APP_ANDROID_PREVIEW_RELEASE_TAG" == "$expected_tag" ]] || fail "APP_ANDROID_PREVIEW_RELEASE_TAG must be $expected_tag"
 
 if ! command -v gh >/dev/null 2>&1; then
   fail "gh is required to verify Android preview APK release assets"
 fi
+if [[ "${{SKIP_GITHUB_WORKFLOW_CHECK:-false}}" == "true" ]]; then
+  skip_check "GitHub Android release workflow" "SKIP_GITHUB_WORKFLOW_CHECK=true"
+else
+  run_check "GitHub Android release workflow" gh workflow view android-preview-release.yml --repo "$repo_ref"
+fi
 assets="$(gh release view "$expected_tag" --repo "$repo_ref" --json assets --jq '.assets[].name' 2>/dev/null || true)"
 [[ -n "$assets" ]] || fail "GitHub release $expected_tag is missing or has no assets"
 printf '%s\\n' "$assets" | grep -Fx "$SOURCE_APP.apk" >/dev/null || fail "GitHub release $expected_tag has no $SOURCE_APP.apk asset"
+record_check "GitHub release asset exists" "passed" "$SOURCE_APP.apk"
 
 scripts/smoke_preview_api.sh
 
@@ -5115,11 +5369,17 @@ if detail.get("productionReady") is not False:
     raise SystemExit("Bridge registration productionReady must be false")
 if detail.get("mockOrDemo") is not False:
     raise SystemExit("Bridge registration mockOrDemo must be false")
-if not detail.get("apkUrl"):
+latest_build = detail.get("latestBuild")
+if not latest_build:
+    raise SystemExit("Bridge registration must return latestBuild")
+apk_url = str(detail.get("apkUrl") or "")
+if not apk_url:
     raise SystemExit("Bridge registration does not expose apkUrl")
+if not apk_url.startswith(("http://", "https://")):
+    raise SystemExit("Bridge registration apkUrl must be an HTTP(S) proxy URL")
 detail_sha = str(detail.get("sha256") or "")
-if detail_sha and not re.fullmatch(r"[a-fA-F0-9]{{64}}", detail_sha):
-    raise SystemExit("Bridge registration sha256 must be 64 hex characters when present")
+if not re.fullmatch(r"[a-fA-F0-9]{{64}}", detail_sha):
+    raise SystemExit("Bridge registration sha256 must be present and 64 hex characters")
 manifest_runtime = manifest.get("runtime") if isinstance(manifest, dict) and isinstance(manifest.get("runtime"), dict) else {{}}
 if manifest.get("stable_url") != runtime.get("previewUrl"):
     raise SystemExit("web-preview manifest stable_url disagrees with preview-runtime.json")
@@ -5137,9 +5397,13 @@ expected_sha = os.environ.get("EXPECTED_SHA256", "").strip().lower()
 if expected_sha:
     if not re.fullmatch(r"[a-fA-F0-9]{{64}}", expected_sha):
         raise SystemExit("EXPECTED_SHA256 must be 64 hex characters")
+    if detail_sha.lower() != expected_sha:
+        raise SystemExit("Bridge registration sha256 does not match EXPECTED_SHA256")
     print(detail["apkUrl"])
 print(f"initial preview release ready: {{source_app}} {{expected_tag}}")
 PY
+record_check "Bridge registration real" "passed" "latestBuild/apkUrl/sha256/runtime flags verified"
+record_check "APK SHA256" "passed" "Bridge registration sha256 is present"
 
 if [[ -n "${{EXPECTED_SHA256:-}}" ]]; then
   apk_url="$(python3 - <<'PY'
@@ -5266,7 +5530,13 @@ if [[ "${{UPDATE_RELEASE_OUTPUT:-false}}" == "true" ]]; then
   grep -q "android_preview_apk_url: http" "$ROOT_DIR/release/release-output-template.md" || fail "release output must include APK URL"
   grep -q "bridge_installable_url: http" "$ROOT_DIR/release/release-output-template.md" || fail "release output must include Bridge installable URL"
 fi
-scripts/final_readiness_audit.sh
+run_check "final readiness audit" scripts/final_readiness_audit.sh
+if [[ -z "$(git status --porcelain)" ]]; then
+  record_check "clean git status" "passed"
+else
+  record_check "clean git status" "failed" "working tree has uncommitted or untracked files"
+fi
+finish_checks
 '''
 
 
@@ -5446,9 +5716,6 @@ jobs:
       APP_SLUG: {slug}
       API_BASE_URL: ${{{{ vars.API_BASE_URL }}}}
       LOCAL_DATA_MODE: "false"
-      DEBUG_PREVIEW_SIGNING: ${{{{ vars.DEBUG_PREVIEW_SIGNING || 'false' }}}}
-      DEBUG_PREVIEW_SIGNING_ACKNOWLEDGED: ${{{{ vars.DEBUG_PREVIEW_SIGNING_ACKNOWLEDGED || 'false' }}}}
-      DEBUG_PREVIEW_SIGNING_REASON: ${{{{ vars.DEBUG_PREVIEW_SIGNING_REASON || '' }}}}
 
     steps:
       - uses: actions/checkout@v4
@@ -5533,6 +5800,12 @@ jobs:
             echo "Preview APK must not be signed with Android debug certificate." >&2
             exit 2
           fi
+          signer_sha256="$(awk -F': ' '/certificate SHA-256 digest/ {{ print $2; exit }}' /tmp/apksigner.txt | tr -d '[:space:]')"
+          if [[ ! "$signer_sha256" =~ ^[A-Fa-f0-9]{{64}}$ ]]; then
+            echo "Could not parse signer certificate SHA256 from apksigner output." >&2
+            exit 2
+          fi
+          echo "ANDROID_PREVIEW_SIGNER_CERT_SHA256=$signer_sha256"
           sha256sum "$apk" | tee /tmp/{slug}-apk.sha256
 
       - name: Publish GitHub preview release
@@ -5934,10 +6207,6 @@ def _preview_signing_policy_json(
                     "bridgeRegistrationRequired": False,
                     "productionReady": False,
                     "mockOrDemo": False,
-                    "debugPreview": {
-                        "enabled": False,
-                        "reason": "Svelte strategy is web-only and does not produce APK artifacts.",
-                    },
                 },
                 indent=2,
                 sort_keys=True,
@@ -5954,17 +6223,6 @@ def _preview_signing_policy_json(
                 "defaultSigningMode": "preview",
                 "productionReady": False,
                 "mockOrDemo": False,
-                "debugPreview": {
-                    "enabled": False,
-                    "requiresEnv": {
-                        "DEBUG_PREVIEW_SIGNING": "true",
-                        "DEBUG_PREVIEW_SIGNING_ACKNOWLEDGED": "true",
-                        "DEBUG_PREVIEW_SIGNING_REASON": "non-empty",
-                    },
-                    "visibleReleaseScope": "android-preview-v* only",
-                    "mustNotUseProductionTag": True,
-                    "mustNotUseMockTag": True,
-                },
             },
             indent=2,
             sort_keys=True,
@@ -7682,24 +7940,15 @@ It is user-installable for validation, but it is not production.
 - Bridge registration must keep `releaseChannel=prerelease`,
   `runtimeProfile=preview`, `productionReady=false`, and `mockOrDemo=false`.
 
-## Debug Preview Rules
+## Debug Signing
 
-If debug-preview signing is used, make it visible in the release notes and do not
-tag it as `android-v*`. The default generated metadata blocks debug-preview
-signing:
+Debug signing is forbidden for installable Initial Preview Release artifacts.
+The generated workflow and validators require the stable preview upload key from
+`/home/batata/Projects/codex-cli-mobile-bridge/secrets/<slug>-preview-upload-keystore.jks`
+and never fall back to debug signing.
 
-```bash
-python3 -m json.tool release/preview-signing-policy.json
-```
-
-To allow it temporarily, `release/preview-signing-policy.json` must set
-`debugPreview.enabled=true` and the release environment must include:
-
-```bash
-DEBUG_PREVIEW_SIGNING=true
-DEBUG_PREVIEW_SIGNING_ACKNOWLEDGED=true
-DEBUG_PREVIEW_SIGNING_REASON="temporary QA build"
-```
+`release/preview-signing-policy.json` records this preview-only signing policy
+and must not declare any debug signing override.
 
 ```bash
 APP_RELEASE_TAG=android-preview-v<version> \\

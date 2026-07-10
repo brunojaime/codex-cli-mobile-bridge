@@ -138,6 +138,14 @@ class CloudflareClient(Protocol):
     def list_r2_buckets(self, account_id: str) -> CloudflareLookupResult:
         ...
 
+    def fetch_url(
+        self,
+        url: str,
+        *,
+        headers: dict[str, str] | None = None,
+    ) -> CloudflareLookupResult:
+        ...
+
 
 class HttpCloudflareClient:
     def __init__(
@@ -347,6 +355,39 @@ class HttpCloudflareClient:
 
     def list_r2_buckets(self, account_id: str) -> CloudflareLookupResult:
         return self._request("GET", f"/accounts/{account_id}/r2/buckets")
+
+    def fetch_url(
+        self,
+        url: str,
+        *,
+        headers: dict[str, str] | None = None,
+    ) -> CloudflareLookupResult:
+        try:
+            response = httpx.get(
+                url,
+                headers={
+                    "Accept": "application/json",
+                    **(headers or {}),
+                },
+                timeout=self._timeout_seconds,
+            )
+        except httpx.HTTPError as exc:
+            return CloudflareLookupResult(ok=False, error=str(exc))
+        payload: dict[str, Any] | list[Any] | None
+        try:
+            parsed = response.json()
+            payload = parsed if isinstance(parsed, (dict, list)) else None
+        except ValueError:
+            payload = {
+                "raw": response.text,
+                "content_type": response.headers.get("content-type"),
+            }
+        return CloudflareLookupResult(
+            ok=response.status_code < 400,
+            status_code=response.status_code,
+            payload=payload,
+            error=None if response.status_code < 400 else response.reason_phrase,
+        )
 
     def _request(
         self,
