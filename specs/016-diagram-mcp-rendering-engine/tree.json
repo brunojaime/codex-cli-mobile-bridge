@@ -1,0 +1,323 @@
+{
+  "spec": {
+    "file": "spec.md"
+  },
+  "plans": [
+    {
+      "id": "plan-1",
+      "number": 1,
+      "title": "Diagram Domain And Schema Contract",
+      "status": "pending",
+      "description": "Define the canonical DiagramSpec, semantic model, templates, layout metadata, and validation contract.",
+      "file": "plans/01-diagram-domain-and-schema-contract/plan.md",
+      "tasks": [
+        {
+          "id": "plan-1-task-1",
+          "number": 1,
+          "title": "T001 Define DiagramSpec JSON schema",
+          "status": "pending",
+          "description": "T001 Define DiagramSpec JSON schema",
+          "file": "tasks/plan-1-task-1/task.md"
+        },
+        {
+          "id": "plan-1-task-2",
+          "number": 2,
+          "title": "T002 Define component and connection semantic model",
+          "status": "pending",
+          "description": "T002 Define component and connection semantic model",
+          "file": "tasks/plan-1-task-2/task.md"
+        },
+        {
+          "id": "plan-1-task-3",
+          "number": 3,
+          "title": "T003 Define template registry contract",
+          "status": "pending",
+          "description": "T003 Define template registry contract",
+          "file": "tasks/plan-1-task-3/task.md"
+        },
+        {
+          "id": "plan-1-task-4",
+          "number": 4,
+          "title": "T004 Define position, pinning, and layout metadata",
+          "status": "pending",
+          "description": "T004 Define position, pinning, and layout metadata",
+          "file": "tasks/plan-1-task-4/task.md"
+        },
+        {
+          "id": "plan-1-task-5",
+          "number": 5,
+          "title": "T005 Define validation errors and warnings",
+          "status": "pending",
+          "description": "T005 Define validation errors and warnings",
+          "file": "tasks/plan-1-task-5/task.md"
+        }
+      ]
+    },
+    {
+      "id": "plan-2",
+      "number": 2,
+      "title": "MCP Local HTTPS Server Contract",
+      "status": "pending",
+      "description": "Define the localhost HTTPS MCP server, its tools, lifecycle, security, and operation boundaries.",
+      "file": "plans/02-mcp-local-https-server-contract/plan.md",
+      "tasks": [
+        {
+          "id": "plan-2-task-1",
+          "number": 1,
+          "title": "T006 Define local HTTPS server configuration",
+          "status": "pending",
+          "description": "T006 Define local HTTPS server configuration",
+          "file": "tasks/plan-2-task-1/task.md"
+        },
+        {
+          "id": "plan-2-task-2",
+          "number": 2,
+          "title": "T007 Define MCP tool manifest and lifecycle",
+          "status": "pending",
+          "description": "T007 Define MCP tool manifest and lifecycle",
+          "file": "tasks/plan-2-task-2/task.md"
+        },
+        {
+          "id": "plan-2-task-3",
+          "number": 3,
+          "title": "T008 Define create and update diagram tools",
+          "status": "pending",
+          "description": "T008 Define create and update diagram tools",
+          "file": "tasks/plan-2-task-3/task.md"
+        },
+        {
+          "id": "plan-2-task-4",
+          "number": 4,
+          "title": "T009 Define render and export tools",
+          "status": "pending",
+          "description": "T009 Define render and export tools",
+          "file": "tasks/plan-2-task-4/task.md"
+        },
+        {
+          "id": "plan-2-task-5",
+          "number": 5,
+          "title": "T010 Define security, auth, and origin controls",
+          "status": "pending",
+          "description": "T010 Define security, auth, and origin controls",
+          "file": "tasks/plan-2-task-5/task.md"
+        }
+      ]
+    },
+    {
+      "id": "plan-3",
+      "number": 3,
+      "title": "Layout Anchors And Routing Engine",
+      "status": "pending",
+      "description": "Define how semantic diagrams become positioned nodes, anchors, ports, and routed connections.",
+      "file": "plans/03-layout-anchors-and-routing-engine/plan.md",
+      "tasks": [
+        {
+          "id": "plan-3-task-1",
+          "number": 1,
+          "title": "T011 Define semantic connection normalization",
+          "status": "pending",
+          "description": "T011 Define semantic connection normalization",
+          "file": "tasks/plan-3-task-1/task.md"
+        },
+        {
+          "id": "plan-3-task-2",
+          "number": 2,
+          "title": "T012 Define automatic LR layout phases",
+          "status": "pending",
+          "description": "T012 Define automatic LR layout phases",
+          "file": "tasks/plan-3-task-2/task.md"
+        },
+        {
+          "id": "plan-3-task-3",
+          "number": 3,
+          "title": "T013 Define anchor and dynamic port allocation rules",
+          "status": "pending",
+          "description": "T013 Define anchor and dynamic port allocation rules",
+          "file": "tasks/plan-3-task-3/task.md"
+        },
+        {
+          "id": "plan-3-task-4",
+          "number": 4,
+          "title": "T014 Define orthogonal routing strategy",
+          "status": "pending",
+          "description": "T014 Define orthogonal routing strategy",
+          "file": "tasks/plan-3-task-4/task.md"
+        },
+        {
+          "id": "plan-3-task-5",
+          "number": 5,
+          "title": "T015 Define collision and overlap handling",
+          "status": "pending",
+          "description": "T015 Define collision and overlap handling",
+          "file": "tasks/plan-3-task-5/task.md"
+        },
+        {
+          "id": "plan-3-task-6",
+          "number": 6,
+          "title": "T016 Define incremental layout behavior for pinned nodes",
+          "status": "pending",
+          "description": "T016 Define incremental layout behavior for pinned nodes",
+          "file": "tasks/plan-3-task-6/task.md"
+        }
+      ]
+    },
+    {
+      "id": "plan-4",
+      "number": 4,
+      "title": "SVG Templates And Renderer",
+      "status": "pending",
+      "description": "Define deterministic SVG output, official UML templates, connector rendering, theme, and scaling rules.",
+      "file": "plans/04-svg-templates-and-renderer/plan.md",
+      "tasks": [
+        {
+          "id": "plan-4-task-1",
+          "number": 1,
+          "title": "T017 Define SVG document contract",
+          "status": "pending",
+          "description": "T017 Define SVG document contract",
+          "file": "tasks/plan-4-task-1/task.md"
+        },
+        {
+          "id": "plan-4-task-2",
+          "number": 2,
+          "title": "T018 Define uml_component SVG template",
+          "status": "pending",
+          "description": "T018 Define uml_component SVG template",
+          "file": "tasks/plan-4-task-2/task.md"
+        },
+        {
+          "id": "plan-4-task-3",
+          "number": 3,
+          "title": "T019 Define provided_required_interface SVG template",
+          "status": "pending",
+          "description": "T019 Define provided_required_interface SVG template",
+          "file": "tasks/plan-4-task-3/task.md"
+        },
+        {
+          "id": "plan-4-task-4",
+          "number": 4,
+          "title": "T020 Define connector rendering and interface labels",
+          "status": "pending",
+          "description": "T020 Define connector rendering and interface labels",
+          "file": "tasks/plan-4-task-4/task.md"
+        },
+        {
+          "id": "plan-4-task-5",
+          "number": 5,
+          "title": "T021 Define theme, scaling, and viewBox behavior",
+          "status": "pending",
+          "description": "T021 Define theme, scaling, and viewBox behavior",
+          "file": "tasks/plan-4-task-5/task.md"
+        }
+      ]
+    },
+    {
+      "id": "plan-5",
+      "number": 5,
+      "title": "Interactive Editor Integration",
+      "status": "pending",
+      "description": "Define how the visual editor displays SVG, maps selections, handles drag, stores positions, and synchronizes diagram state.",
+      "file": "plans/05-interactive-editor-integration/plan.md",
+      "tasks": [
+        {
+          "id": "plan-5-task-1",
+          "number": 1,
+          "title": "T022 Define editor canvas contract",
+          "status": "pending",
+          "description": "T022 Define editor canvas contract",
+          "file": "tasks/plan-5-task-1/task.md"
+        },
+        {
+          "id": "plan-5-task-2",
+          "number": 2,
+          "title": "T023 Define drag, snap, and pin behavior",
+          "status": "pending",
+          "description": "T023 Define drag, snap, and pin behavior",
+          "file": "tasks/plan-5-task-2/task.md"
+        },
+        {
+          "id": "plan-5-task-3",
+          "number": 3,
+          "title": "T024 Define selected element and inspector model",
+          "status": "pending",
+          "description": "T024 Define selected element and inspector model",
+          "file": "tasks/plan-5-task-3/task.md"
+        },
+        {
+          "id": "plan-5-task-4",
+          "number": 4,
+          "title": "T025 Define diagram state synchronization",
+          "status": "pending",
+          "description": "T025 Define diagram state synchronization",
+          "file": "tasks/plan-5-task-4/task.md"
+        },
+        {
+          "id": "plan-5-task-5",
+          "number": 5,
+          "title": "T026 Define undo redo and change history",
+          "status": "pending",
+          "description": "T026 Define undo redo and change history",
+          "file": "tasks/plan-5-task-5/task.md"
+        }
+      ]
+    },
+    {
+      "id": "plan-6",
+      "number": 6,
+      "title": "Quality Observability And Export",
+      "status": "pending",
+      "description": "Define persistence, deterministic tests, MCP integration tests, diagnostics, export checks, and rollout documentation.",
+      "file": "plans/06-quality-observability-and-export/plan.md",
+      "tasks": [
+        {
+          "id": "plan-6-task-1",
+          "number": 1,
+          "title": "T027 Define persistence and diagram IDs",
+          "status": "pending",
+          "description": "T027 Define persistence and diagram IDs",
+          "file": "tasks/plan-6-task-1/task.md"
+        },
+        {
+          "id": "plan-6-task-2",
+          "number": 2,
+          "title": "T028 Define deterministic snapshot tests",
+          "status": "pending",
+          "description": "T028 Define deterministic snapshot tests",
+          "file": "tasks/plan-6-task-2/task.md"
+        },
+        {
+          "id": "plan-6-task-3",
+          "number": 3,
+          "title": "T029 Define MCP tool integration tests",
+          "status": "pending",
+          "description": "T029 Define MCP tool integration tests",
+          "file": "tasks/plan-6-task-3/task.md"
+        },
+        {
+          "id": "plan-6-task-4",
+          "number": 4,
+          "title": "T030 Define observability and diagnostics",
+          "status": "pending",
+          "description": "T030 Define observability and diagnostics",
+          "file": "tasks/plan-6-task-4/task.md"
+        },
+        {
+          "id": "plan-6-task-5",
+          "number": 5,
+          "title": "T031 Define export acceptance tests",
+          "status": "pending",
+          "description": "T031 Define export acceptance tests",
+          "file": "tasks/plan-6-task-5/task.md"
+        },
+        {
+          "id": "plan-6-task-6",
+          "number": 6,
+          "title": "T032 Define rollout and documentation package",
+          "status": "pending",
+          "description": "T032 Define rollout and documentation package",
+          "file": "tasks/plan-6-task-6/task.md"
+        }
+      ]
+    }
+  ]
+}

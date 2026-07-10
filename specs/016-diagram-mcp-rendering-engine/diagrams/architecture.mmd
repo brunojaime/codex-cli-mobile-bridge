@@ -1,0 +1,23 @@
+flowchart LR
+  User[User]
+  Agent[LLM Agent]
+  MCP[MCP Server HTTPS localhost]
+  Engine[Diagram Engine]
+  Validator[Validator]
+  Layout[Layout Engine]
+  Templates[Template Registry]
+  Renderer[SVG Renderer]
+  Editor[Interactive Editor]
+  Store[DiagramSpec Store]
+
+  User --> Agent
+  Agent --> MCP
+  MCP --> Engine
+  Engine --> Validator
+  Engine --> Layout
+  Engine --> Templates
+  Engine --> Renderer
+  Renderer --> Editor
+  Editor --> MCP
+  MCP --> Store
+  Store --> MCP

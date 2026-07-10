@@ -1,0 +1,55 @@
+classDiagram
+  class DiagramSpec {
+    string diagramType
+    string version
+    LayoutConfig layout
+    Component[] components
+    Connection[] connections
+  }
+
+  class LayoutConfig {
+    string direction
+    string mode
+  }
+
+  class Component {
+    string id
+    string type
+    string label
+    Position position
+    boolean pinned
+  }
+
+  class Connection {
+    string id
+    string from
+    string interface
+    string to
+  }
+
+  class Template {
+    string id
+    number width
+    number height
+    Anchor[] anchors
+  }
+
+  class Anchor {
+    string name
+    string side
+    string mode
+  }
+
+  class RenderedDiagram {
+    string diagramId
+    DiagramSpec spec
+    string svg
+    Warning[] warnings
+  }
+
+  DiagramSpec --> LayoutConfig
+  DiagramSpec --> Component
+  DiagramSpec --> Connection
+  Component --> Template
+  Template --> Anchor
+  RenderedDiagram --> DiagramSpec

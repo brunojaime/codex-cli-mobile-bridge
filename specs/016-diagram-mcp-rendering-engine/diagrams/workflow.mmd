@@ -1,0 +1,20 @@
+sequenceDiagram
+  participant U as User
+  participant A as Agent
+  participant M as MCP Server
+  participant E as Diagram Engine
+  participant F as Frontend Editor
+
+  U->>A: Describe architecture
+  A->>M: create_component_diagram
+  M->>E: validate spec
+  E-->>M: validation result
+  M->>E: auto layout and render SVG
+  E-->>M: DiagramSpec plus SVG
+  M-->>A: diagram result
+  A-->>F: show generated diagram
+  U->>F: drag node
+  F->>M: move_node
+  M->>E: reroute and render SVG
+  E-->>M: updated SVG
+  M-->>F: updated diagram

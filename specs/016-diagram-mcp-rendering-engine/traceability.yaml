@@ -1,0 +1,104 @@
+spec_id: 016-diagram-mcp-rendering-engine
+title: Diagram MCP Rendering Engine
+status: draft
+
+requirements:
+  FR-001:
+    name: DiagramSpec contract
+    acceptance_criteria: [AC-001, AC-002]
+    tasks: [T001, T002, T004, T005]
+    phase: 1
+  FR-002:
+    name: Template registry and visual primitives
+    acceptance_criteria: [AC-004, AC-005]
+    tasks: [T003, T018, T019]
+    phase: 1
+  FR-003:
+    name: Local HTTPS MCP server
+    acceptance_criteria: [AC-010]
+    tasks: [T006, T007, T010]
+    phase: 2
+  FR-004:
+    name: MCP diagram manipulation tools
+    acceptance_criteria: [AC-001, AC-002, AC-008]
+    tasks: [T008, T009, T029]
+    phase: 2
+  FR-005:
+    name: Automatic layout engine
+    acceptance_criteria: [AC-006]
+    tasks: [T011, T012, T016]
+    phase: 3
+  FR-006:
+    name: Anchors, ports, and routing
+    acceptance_criteria: [AC-005, AC-007, AC-009]
+    tasks: [T013, T014, T015]
+    phase: 3
+  FR-007:
+    name: Deterministic SVG rendering
+    acceptance_criteria: [AC-003, AC-004, AC-011, AC-012]
+    tasks: [T017, T018, T019, T020, T021, T028]
+    phase: 4
+  FR-008:
+    name: Interactive editor integration
+    acceptance_criteria: [AC-008, AC-009, AC-012]
+    tasks: [T022, T023, T024, T025, T026]
+    phase: 5
+  FR-009:
+    name: Persistence and export readiness
+    acceptance_criteria: [AC-011]
+    tasks: [T027, T031]
+    phase: 6
+  FR-010:
+    name: Quality, diagnostics, and rollout
+    acceptance_criteria: [AC-001, AC-003, AC-010, AC-011]
+    tasks: [T030, T032]
+    phase: 6
+
+acceptance_criteria:
+  AC-001:
+    tests:
+      - tests/diagram_spec/test_validate_diagram_spec.py::test_valid_component_diagram_passes
+  AC-002:
+    tests:
+      - tests/diagram_spec/test_validate_diagram_spec.py::test_connection_to_missing_component_fails
+  AC-003:
+    tests:
+      - tests/rendering/test_svg_renderer.py::test_render_diagram_svg_is_deterministic
+  AC-004:
+    tests:
+      - tests/rendering/test_provided_required_interface.py::test_socket_is_on_consumer_side_and_lollipop_on_provider_side
+  AC-005:
+    tests:
+      - tests/layout/test_anchors_and_ports.py::test_all_connector_endpoints_resolve_to_declared_anchors
+  AC-006:
+    tests:
+      - tests/layout/test_lr_layout.py::test_browser_gateway_database_and_api_server_layout_left_to_right
+  AC-007:
+    tests:
+      - tests/layout/test_anchors_and_ports.py::test_multiple_outputs_use_distinct_dynamic_ports
+  AC-008:
+    tests:
+      - tests/mcp_tools/test_move_node.py::test_move_node_persists_position_and_pins_node
+  AC-009:
+    tests:
+      - tests/mcp_tools/test_move_node.py::test_move_node_reroutes_connections_without_changing_semantics
+  AC-010:
+    tests:
+      - tests/mcp_server/test_https_loopback.py::test_server_requires_https_loopback_configuration
+  AC-011:
+    tests:
+      - tests/export/test_export_diagram.py::test_export_diagram_returns_self_contained_svg
+  AC-012:
+    tests:
+      - tests/rendering/test_svg_renderer.py::test_svg_can_be_consumed_without_frontend_uml_logic
+
+diagrams:
+  architecture:
+    file: diagrams/architecture.mmd
+    related_requirements: [FR-003, FR-004, FR-005, FR-007, FR-008]
+  workflow:
+    file: diagrams/workflow.mmd
+    related_requirements: [FR-001, FR-003, FR-004, FR-007]
+  data-model:
+    file: diagrams/data-model.mmd
+    related_requirements: [FR-001, FR-002, FR-006, FR-008, FR-009]

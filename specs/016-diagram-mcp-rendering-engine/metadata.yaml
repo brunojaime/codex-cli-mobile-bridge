@@ -1,0 +1,41 @@
+id: 016-diagram-mcp-rendering-engine
+slug: 016-diagram-mcp-rendering-engine
+title: Diagram MCP Rendering Engine
+description: MCP based local HTTPS diagram engine for deterministic UML component diagram generation, rendering, editing, and export.
+status: draft
+last_run_state: planned
+generated:
+  title: false
+  description: false
+  user_pinned_title: true
+  user_pinned_description: true
+tasks:
+  total: 32
+  completed: 0
+  pending: 32
+diagrams:
+  total: 3
+  items:
+    diagrams-architecture-mmd:
+      path: diagrams/architecture.mmd
+      diagram_type: component-impact
+      metadata_path: diagrams/architecture.yaml
+    diagrams-data-model-mmd:
+      path: diagrams/data-model.mmd
+      diagram_type: data-impact
+      metadata_path: diagrams/data-model.yaml
+    diagrams-workflow-mmd:
+      path: diagrams/workflow.mmd
+      diagram_type: sequence
+      metadata_path: diagrams/workflow.yaml
+source_digests:
+  diagrams/architecture.mmd: c39f16ee939cd4ce1f9c61d88b2585d49629c212f117de3dbeb0a1669c67cc2f
+  diagrams/architecture.yaml: cbd609667d0394a7c9700935223fe6fefab4f882de1b01c0f856e949f7c92802
+  diagrams/data-model.mmd: f172c25ede11b0b6484c4d1d2045b0abcb2439c9961550788351758691d60dd2
+  diagrams/data-model.yaml: 63a309133c167039514282aac8633d05bbb29e0acb775f7e516515ce4995b390
+  diagrams/workflow.mmd: dc26e48574999823e0e590d195cd8e630abb000fd05f95dc8625f048236aa948
+  diagrams/workflow.yaml: 3cf087d744625818237e890c8d85159f06c8bfbed6c16e0202c9fc839fe98b33
+  plan.md: 6118117d927c8420b50aeacdab799bc1b0290854fc1fea2feed54f5c1a7d94f7
+  spec.md: b72cfd6dcaf88a3157004db80bf157fb175725ef20448b958a21440ef865d32d
+  tasks.md: a6a8a83edbfe304bacf4158b7c83c372e349927212ea4aa441c9b17b0eb76d48
+  traceability.yaml: 164c2ffc2d4bd139c3edd72a73df70bc9865c07932e2594fd6e35af83be32de2

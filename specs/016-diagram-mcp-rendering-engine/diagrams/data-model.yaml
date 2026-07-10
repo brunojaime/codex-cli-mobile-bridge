@@ -1,0 +1,8 @@
+diagram_id: data-model
+diagram_type: data-impact
+scope: feature
+status: draft
+owner: project
+source: specs/016-diagram-mcp-rendering-engine/diagrams/data-model.mmd
+related_specs: []
+baseline_impact: none
