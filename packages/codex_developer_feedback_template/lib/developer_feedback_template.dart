@@ -94,6 +94,7 @@ const developerFeedbackReleaseWhenCompleteKey = Key(
   'developer-feedback-release-when-complete',
 );
 const developerFeedbackSendBatchKey = Key('developer-feedback-send-batch');
+const developerFeedbackWorkbenchKey = Key('developer-feedback-workbench');
 const developerFeedbackSddTargetDropdownKey = Key(
   'developer-feedback-sdd-target-dropdown',
 );
@@ -833,6 +834,7 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
                   }),
                   onExpandedChanged: _setToolbarExpanded,
                   onOpenPending: _items.isEmpty ? null : _openPendingDialog,
+                  onOpenWorkbench: _openPendingDialog,
                   onOpenRuns: _submittedBatches.isEmpty
                       ? null
                       : _openRunsDialog,
@@ -4365,6 +4367,7 @@ class _Toolbar extends StatelessWidget {
     required this.onExecutionTargetChanged,
     required this.onExpandedChanged,
     required this.onOpenPending,
+    required this.onOpenWorkbench,
     required this.onOpenRuns,
     required this.onOpenHistory,
     required this.onOpenNotifications,
@@ -4392,6 +4395,7 @@ class _Toolbar extends StatelessWidget {
   final ValueChanged<bool> onExecutionTargetChanged;
   final ValueChanged<bool> onExpandedChanged;
   final VoidCallback? onOpenPending;
+  final VoidCallback onOpenWorkbench;
   final VoidCallback? onOpenRuns;
   final VoidCallback? onOpenHistory;
   final VoidCallback? onOpenNotifications;
@@ -4546,6 +4550,15 @@ class _Toolbar extends StatelessWidget {
                     ),
                   ),
                 ],
+                SizedBox(width: itemSpacing),
+                IconButton(
+                  key: developerFeedbackWorkbenchKey,
+                  constraints: buttonConstraints,
+                  padding: buttonPadding,
+                  tooltip: toolbarTooltip('Workbench SDD'),
+                  onPressed: onOpenWorkbench,
+                  icon: const Icon(Icons.account_tree_outlined),
+                ),
                 if (pendingCount > 0) ...<Widget>[
                   SizedBox(width: itemSpacing),
                   IconButton(

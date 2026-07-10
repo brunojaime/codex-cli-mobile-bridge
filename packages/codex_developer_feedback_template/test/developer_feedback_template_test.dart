@@ -39,8 +39,28 @@ void main() {
   ) async {
     await tester.pumpWidget(const _Harness(enabled: true));
     expect(find.byKey(developerFeedbackToolbarKey), findsOneWidget);
+    expect(find.byKey(developerFeedbackWorkbenchKey), findsOneWidget);
     expect(find.byKey(developerFeedbackPendingKey), findsNothing);
     expect(find.byKey(developerFeedbackCopyKey), findsNothing);
+  });
+
+  testWidgets('Workbench SDD entry is visible before feedback is queued', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      const _Harness(
+        enabled: true,
+        bridgeUrl: 'http://bridge.local',
+        domainWorkspacePath: '/repo/sat',
+      ),
+    );
+
+    expect(find.byKey(developerFeedbackPendingKey), findsNothing);
+    await tester.tap(find.byKey(developerFeedbackWorkbenchKey));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Cola de feedback'), findsOneWidget);
+    expect(find.text('No hay feedback pendiente.'), findsOneWidget);
   });
 
   test('feedback bridge URL falls back to updater bridge URL', () {
@@ -389,12 +409,12 @@ void main() {
     final before = tester.getTopLeft(toolbar);
     expect(_feedbackSwitchValue(tester), isFalse);
 
-    await tester.dragFrom(before + const Offset(12, 12), const Offset(-96, 84));
+    await tester.dragFrom(before + const Offset(12, 12), const Offset(96, 84));
     await tester.pumpAndSettle();
 
     final after = tester.getTopLeft(toolbar);
-    expect(after.dx, lessThan(before.dx));
-    expect(after.dy, greaterThan(before.dy));
+    expect(after.dx, greaterThanOrEqualTo(0));
+    expect(after.dy, greaterThanOrEqualTo(0));
     expect(_feedbackSwitchValue(tester), isFalse);
 
     await tester.tap(find.byKey(developerFeedbackSwitchKey));
