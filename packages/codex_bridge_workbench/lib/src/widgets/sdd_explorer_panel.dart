@@ -7736,25 +7736,35 @@ class _DiagramSemanticTargetStrip extends StatelessWidget {
               fontWeight: FontWeight.w800,
             ),
           ),
-          const SizedBox(height: 5),
-          Wrap(
-            spacing: 6,
-            runSpacing: 5,
-            children: targets
-                .map(
-                  (target) => ActionChip(
-                    visualDensity: VisualDensity.compact,
-                    avatar: Icon(
-                      target.type == 'node'
-                          ? Icons.crop_square_rounded
-                          : Icons.timeline_rounded,
-                      size: 15,
-                    ),
-                    label: Text(target.menuLabel),
-                    onPressed: () => onSelected(target),
+          const SizedBox(height: 4),
+          SizedBox(
+            height: 36,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemCount: targets.length,
+              separatorBuilder: (_, _) => const SizedBox(width: 6),
+              itemBuilder: (context, index) {
+                final target = targets[index];
+                return ActionChip(
+                  visualDensity: VisualDensity.compact,
+                  avatar: Icon(
+                    target.type == 'node'
+                        ? Icons.crop_square_rounded
+                        : Icons.timeline_rounded,
+                    size: 14,
                   ),
-                )
-                .toList(growable: false),
+                  label: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 150),
+                    child: Text(
+                      target.menuLabel,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  onPressed: () => onSelected(target),
+                );
+              },
+            ),
           ),
         ],
       ),
