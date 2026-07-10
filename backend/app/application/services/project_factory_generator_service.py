@@ -274,7 +274,7 @@ def _project_files(manifest: dict[str, Any]) -> dict[str, str]:
         "docs/research/visual-reference-analysis.md": _visual_reference_analysis_doc(),
         "docs/research/feature-map.md": _placeholder_doc(
             "Feature Map",
-            "Domain features and suggested MVP scope will be tracked here.",
+            "Business workflow features and suggested MVP scope will be tracked here.",
         ),
         "docs/workbench.md": _workbench_doc(slug, name, frontend_strategy),
         "design/app-style-guide.md": _placeholder_doc(
@@ -2815,20 +2815,20 @@ assert.equal(recordsBody.sourceApp, '__SOURCE_APP__');
 assert.equal(recordsBody.records.length, 1);
 assert.equal(recordsBody.records[0].payload.name, 'Ada Lovelace');
 
-const adminDomain = await fetchJson('/__SOURCE_APP__/api/admin/business-records', {
+const adminBusinessRecord = await fetchJson('/__SOURCE_APP__/api/admin/business-records', {
   method: 'POST',
   headers: apiAuth,
   body: { name: 'Primary workspace' },
 });
-assert.equal(adminDomain.status, 200);
-assert.equal((await adminDomain.json()).name, 'Primary workspace');
+assert.equal(adminBusinessRecord.status, 200);
+assert.equal((await adminBusinessRecord.json()).name, 'Primary workspace');
 
-const adminDomains = await fetchJson('/__SOURCE_APP__/api/admin/business-records', { headers: apiAuth });
-assert.equal(adminDomains.status, 200);
-const adminDomainsBody = await adminDomains.json();
-assert.equal(adminDomainsBody.length, 2);
-assert.ok(adminDomainsBody.some((row) => row.name === 'Primary workspace'));
-assert.ok(adminDomainsBody.some((row) => row.name === 'Ada Lovelace'));
+const adminBusinessRecords = await fetchJson('/__SOURCE_APP__/api/admin/business-records', { headers: apiAuth });
+assert.equal(adminBusinessRecords.status, 200);
+const adminBusinessRecordsBody = await adminBusinessRecords.json();
+assert.equal(adminBusinessRecordsBody.length, 2);
+assert.ok(adminBusinessRecordsBody.some((row) => row.name === 'Primary workspace'));
+assert.ok(adminBusinessRecordsBody.some((row) => row.name === 'Ada Lovelace'));
 
 const notifications = await fetchJson('/__SOURCE_APP__/api/notifications', { headers: apiAuth });
 assert.equal(notifications.status, 200);
@@ -3411,9 +3411,9 @@ roles = request("GET", "/admin/roles", token=token)
 assert "owner" in roles and "customer" in roles, roles
 business_records = request("GET", "/admin/business-records", token=token)
 assert isinstance(business_records, list), business_records
-domain_name = "validation-domain-" + token[:8].lower().replace("_", "x").replace("-", "x")
-created = request("POST", "/admin/business-records", {"name": domain_name}, token=token)
-assert created["name"] == domain_name, created
+business_record_name = "validation-business-record-" + token[:8].lower().replace("_", "x").replace("-", "x")
+created = request("POST", "/admin/business-records", {"name": business_record_name}, token=token)
+assert created["name"] == business_record_name, created
 notifications = request("GET", "/notifications", token=token)
 assert isinstance(notifications, list), notifications
 print("contract ok: auth/me/admin/business-records/notifications")
@@ -4022,6 +4022,10 @@ forbidden_patterns=(
   'domain ''CRUD'
   'domain-''management'
   'domain ''management'
+  'domain ''UX'
+  'domain-''specific resources'
+  'domain-''specific workflows'
+  'Domain ''features'
   'preview_''domain_'
   'handlePreview''Domain'
   '0002_''domain_entities'
@@ -4034,7 +4038,7 @@ forbidden_patterns=(
 )
 
 for pattern in "${forbidden_patterns[@]}"; do
-  if grep -In "$pattern" "${files[@]}" >/tmp/project-factory-readiness-match.txt; then
+  if grep -Ini "$pattern" "${files[@]}" >/tmp/project-factory-readiness-match.txt; then
     cat /tmp/project-factory-readiness-match.txt >&2
     fail "stale or forbidden readiness text found: $pattern"
   fi
@@ -10793,7 +10797,7 @@ def _components_diagram(frontend_strategy: str = "flutter") -> str:
     web[Flutter Web App]
     api[FastAPI Backend]
     auth[Auth and RBAC]
-    domain[Domain Management]
+    businessRecords[Business Records]
     notifications[Notification Outbox]
     db[(Application Database)]
     workbench[Codex Dev Workbench]
@@ -11251,9 +11255,9 @@ def _initial_plan(name: str, frontend_strategy: str = "flutter") -> str:
 Create the foundation for `{name}` in incremental validated slices:
 
 1. Complete business research and visual direction.
-2. Extend the generated Svelte/Vite web app with domain UX.
+2. Extend the generated Svelte/Vite web app with business records UX.
 3. Extend FastAPI backend v1 beyond the generated auth/RBAC/admin/notification base.
-4. Add domain-specific resources and workflows.
+4. Add business workflow resources and workflows.
 5. Wire Workbench/feedback metadata for web preview.
 6. Validate local run, Cloudflare Preview API/D1 readiness, and web release readiness.
 """
@@ -11262,9 +11266,9 @@ Create the foundation for `{name}` in incremental validated slices:
 Create the foundation for `{name}` in incremental validated slices:
 
 1. Complete business research and visual direction.
-2. Extend the generated Flutter auth/admin/notification app with domain UX.
+2. Extend the generated Flutter auth/admin/notification app with business records UX.
 3. Extend FastAPI backend v1 beyond the generated auth/RBAC/admin/notification base.
-4. Add domain-specific resources and workflows.
+4. Add business workflow resources and workflows.
 5. Wire Feedback Bridge, updater, and Workbench.
 6. Validate local run and release readiness.
 """
@@ -11276,7 +11280,7 @@ def _initial_task_items(frontend_strategy: str = "flutter") -> tuple[dict[str, s
             {
                 "title": "Complete business research.",
                 "status": "planned",
-                "description": "Research users, operational constraints, risks, and domain-specific workflows.",
+                "description": "Research users, operational constraints, risks, and business workflow patterns.",
             },
             {
                 "title": "Complete visual reference analysis.",
@@ -11333,7 +11337,7 @@ def _initial_task_items(frontend_strategy: str = "flutter") -> tuple[dict[str, s
         {
             "title": "Complete business research.",
             "status": "planned",
-            "description": "Research users, operational constraints, risks, and domain-specific workflows.",
+            "description": "Research users, operational constraints, risks, and business workflow patterns.",
         },
         {
             "title": "Complete visual reference analysis.",

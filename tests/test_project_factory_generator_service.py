@@ -1657,6 +1657,14 @@ def test_generated_project_has_no_stale_domain_contract(
         "/api/domain",
         "/admin/domains",
         "/domains",
+        "domain_name",
+        "adminDomain",
+        "adminDomains",
+        "Domain Management",
+        "Domain features",
+        "domain UX",
+        "domain-specific resources",
+        "domain-specific workflows",
     ]
     for pattern in stale_patterns:
         assert pattern not in generated_text
