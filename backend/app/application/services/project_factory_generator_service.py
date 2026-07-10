@@ -4026,6 +4026,9 @@ forbidden_patterns=(
   'domain-''specific resources'
   'domain-''specific workflows'
   'Domain ''features'
+  'api --> ''domain'
+  'domain --> ''db'
+  'domain''['
   'preview_''domain_'
   'handlePreview''Domain'
   '0002_''domain_entities'
@@ -10810,10 +10813,10 @@ def _components_diagram(frontend_strategy: str = "flutter") -> str:
     mobile --> api
     web --> api
     api --> auth
-    api --> domain
+    api --> businessRecords
     api --> notifications
     auth --> db
-    domain --> db
+    businessRecords --> db
     notifications --> db
     workbench --> specs
     specs --> api

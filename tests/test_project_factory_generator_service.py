@@ -1665,12 +1665,21 @@ def test_generated_project_has_no_stale_domain_contract(
         "domain UX",
         "domain-specific resources",
         "domain-specific workflows",
+        "api --> domain",
+        "domain --> db",
+        "domain[",
     ]
     for pattern in stale_patterns:
         assert pattern not in generated_text
     assert "preview_business_records" in generated_text
     assert "business_records" in generated_text
     assert "business-records" in generated_text
+    components = (project / "architecture/components.mmd").read_text(
+        encoding="utf-8"
+    )
+    assert "businessRecords[Business Records]" in components
+    assert "api --> businessRecords" in components
+    assert "businessRecords --> db" in components
 
 
 def test_generated_apply_preview_d1_migrations_blocks_and_reapplies_safely(
