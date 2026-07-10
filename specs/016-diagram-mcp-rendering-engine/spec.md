@@ -93,6 +93,8 @@ El alcance pendiente para convertir el engine en una experiencia usable dentro d
 
 El SVG de ejemplo `diagrams/browser-gateway-example.svg` queda dentro de este spec para servir como fixture visual. La implementación frontend debe hacerlo aparecer en la sección Diagrams cuando el soporte SVG esté listo.
 
+Para feedback sobre SVG, la UI debe extraer targets semánticos de `data-node-id`, `data-connection-id`, `node-*` y `connector-*` y mostrarlos como selección explícita de nodo/conector. El SVG se renderiza dentro de WebView, por lo que el alcance actual no promete hit-testing geométrico exacto sobre el elemento dibujado; el fallback de región visible sigue disponible.
+
 ## DiagramSpec Contract
 
 `DiagramSpec` es la fuente de verdad persistible y versionable.

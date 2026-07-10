@@ -7697,10 +7697,69 @@ class _DiagramSelection {
 
   String get menuLabel => switch (type) {
     'node' => 'Node: $label',
-    'edge' => 'Edge: $label',
+    'edge' =>
+      metadata.containsKey('connectionId')
+          ? 'Connector: $label'
+          : 'Edge: $label',
     'region' => 'Region: $label',
     _ => label,
   };
+}
+
+class _DiagramSemanticTargetStrip extends StatelessWidget {
+  const _DiagramSemanticTargetStrip({
+    required this.diagram,
+    required this.onSelected,
+  });
+
+  final SddDiagram diagram;
+  final ValueChanged<_DiagramSelection> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!diagram.isRenderedSvg) return const SizedBox.shrink();
+    final targets = _svgDiagramSelections(diagram.content ?? '');
+    if (targets.isEmpty) return const SizedBox.shrink();
+
+    // SVG previews render in a WebView, so Flutter cannot reliably hit-test
+    // rendered SVG elements. Expose semantic IDs as explicit selectable targets.
+    return Padding(
+      padding: const EdgeInsets.only(top: 7),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          const Text(
+            'Selectable SVG targets',
+            style: TextStyle(
+              color: _WorkbenchColors.secondaryText,
+              fontSize: 11,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 5),
+          Wrap(
+            spacing: 6,
+            runSpacing: 5,
+            children: targets
+                .map(
+                  (target) => ActionChip(
+                    visualDensity: VisualDensity.compact,
+                    avatar: Icon(
+                      target.type == 'node'
+                          ? Icons.crop_square_rounded
+                          : Icons.timeline_rounded,
+                      size: 15,
+                    ),
+                    label: Text(target.menuLabel),
+                    onPressed: () => onSelected(target),
+                  ),
+                )
+                .toList(growable: false),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class _DiagramListGroup extends StatelessWidget {
@@ -7849,6 +7908,17 @@ class _DiagramListTile extends StatelessWidget {
                             label: diagram.diagramId!,
                           ),
                       ],
+                    ),
+                    _DiagramSemanticTargetStrip(
+                      diagram: diagram,
+                      onSelected: (selection) => onFeedback(
+                        _diagramSelectionFeedbackTarget(
+                          project: project,
+                          spec: item.spec,
+                          diagram: diagram,
+                          selection: selection,
+                        ),
+                      ),
                     ),
                   ],
                 ),

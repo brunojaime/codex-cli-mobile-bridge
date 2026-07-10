@@ -639,13 +639,13 @@ void main() {
           'specs/016-diagram-mcp-rendering-engine/diagrams/browser-gateway-example.yaml',
       'renderer': 'diagram-mcp-rendering-engine',
     });
-    SddFeedbackDraft? feedback;
+    final feedbacks = <SddFeedbackDraft>[];
     await _pumpWorkbench(
       tester,
       loader: (_) async => SddProject.fromJson(project),
       diagramRenderer: _FakeMermaidRenderer.success(),
       feedbackSubmitter: (_, draft) async {
-        feedback = draft;
+        feedbacks.add(draft);
         return const SddFeedbackSubmissionResult(id: 'feedback-svg-1');
       },
     );
@@ -658,10 +658,17 @@ void main() {
     expect(find.text('SVG'), findsWidgets);
     expect(find.text('diagram-mcp-rendering-engine'), findsOneWidget);
     expect(find.text('browser-gateway-example'), findsOneWidget);
+    expect(find.text('Selectable SVG targets'), findsOneWidget);
+    expect(find.widgetWithText(ActionChip, 'Node: browser'), findsOneWidget);
+    expect(
+      find.widgetWithText(ActionChip, 'Connector: browser_gateway'),
+      findsOneWidget,
+    );
 
-    await tester.tap(find.byTooltip('Select diagram target').last);
+    final nodeChip = find.widgetWithText(ActionChip, 'Node: browser');
+    await tester.ensureVisible(nodeChip);
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Node: browser'));
+    await tester.tap(nodeChip);
     await tester.pumpAndSettle();
     await tester.enterText(
       find.widgetWithText(TextField, 'Feedback'),
@@ -670,12 +677,36 @@ void main() {
     await tester.tap(find.text('Submit feedback'));
     await tester.pumpAndSettle();
 
-    expect(feedback, isNotNull);
-    expect(feedback!.target.diagramSelectionType, 'node');
-    expect(feedback!.target.diagramSelectionMetadata['nodeId'], 'browser');
+    expect(feedbacks, hasLength(1));
+    expect(feedbacks.last.target.diagramSelectionType, 'node');
+    expect(feedbacks.last.target.diagramSelectionMetadata['nodeId'], 'browser');
     expect(
-      feedback!.target.diagramSelectionMetadata['renderer'],
+      feedbacks.last.target.diagramSelectionMetadata['renderer'],
       'diagram-mcp-rendering-engine',
+    );
+
+    await tester.tap(find.text('Close'));
+    await tester.pumpAndSettle();
+    final connectorChip = find.widgetWithText(
+      ActionChip,
+      'Connector: browser_gateway',
+    );
+    await tester.ensureVisible(connectorChip);
+    await tester.pumpAndSettle();
+    await tester.tap(connectorChip);
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.widgetWithText(TextField, 'Feedback'),
+      'Move connector route.',
+    );
+    await tester.tap(find.text('Submit feedback'));
+    await tester.pumpAndSettle();
+
+    expect(feedbacks, hasLength(2));
+    expect(feedbacks.last.target.diagramSelectionType, 'edge');
+    expect(
+      feedbacks.last.target.diagramSelectionMetadata['connectionId'],
+      'browser_gateway',
     );
   });
 
