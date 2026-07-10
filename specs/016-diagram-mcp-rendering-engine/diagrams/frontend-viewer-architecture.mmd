@@ -1,0 +1,11 @@
+flowchart LR
+    Codex["Codex run with Diagram MCP"] --> MCP["diagram-mcp-rendering-engine"]
+    MCP --> Store["Local MCP store"]
+    MCP --> Export["SVG export artifact"]
+    Export --> Workspace["specs/*/diagrams/*.svg"]
+    Workspace --> Bridge["Bridge SDD diagram endpoint"]
+    Bridge --> Mobile["Codex Mobile Diagrams section"]
+    Mobile --> Viewer["SVG preview and detail viewer"]
+    Viewer --> Feedback["Diagram feedback or update request"]
+    Feedback --> Codex
+

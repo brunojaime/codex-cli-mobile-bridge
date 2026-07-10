@@ -1,13 +1,14 @@
 ---
 id: 016-diagram-mcp-rendering-engine
 title: Diagram MCP Rendering Engine
-status: implemented
+status: in_progress
 type: feature
 domains:
   - diagramming
   - mcp
   - rendering
   - editor
+  - frontend
 ---
 
 # Diagram MCP Rendering Engine
@@ -44,6 +45,8 @@ Incluye:
 11. Validaciones semánticas y estructurales antes del render.
 12. Exportación inicial a SVG.
 13. Preparación para exportación posterior a PNG y PDF.
+14. Integración del frontend Codex Mobile/Bridge para descubrir y renderizar SVG generados por el MCP dentro de la sección Diagrams.
+15. Flujo de release móvil cuando el visor frontend esté implementado y validado.
 
 ## Non-Goals
 
@@ -70,12 +73,28 @@ El sistema debe operar con esta separación de responsabilidades:
 4. El Renderer produce SVG final.
 5. El editor visual muestra SVG y mantiene interacciones de usuario.
 6. El frontend no implementa lógica UML de dibujo. Solo muestra SVG y reporta operaciones de edición.
+7. El Bridge expone artefactos SVG generados por el MCP en su modelo SDD de diagramas.
+8. Codex Mobile muestra esos SVG en una sección Diagrams con lista, detalle, pan, zoom, error states y acciones de feedback/update.
 
 El agente no debe decidir geometría interna de componentes, sockets, lollipops, íconos o conectores. Esa responsabilidad pertenece al Diagram Engine y a su Template Registry.
+
+## Frontend Diagram Viewer Extension
+
+El alcance pendiente para convertir el engine en una experiencia usable dentro del frontend es:
+
+1. Extender el backend SDD para descubrir diagramas renderizados `.svg` junto a los `.mmd` existentes.
+2. Mantener metadata junto al SVG para clasificar diagramas MCP sin depender de rutas absolutas o cache runtime.
+3. Agregar una sección Diagrams en Codex Mobile/Bridge que liste diagramas por título, tipo, scope y formato.
+4. Renderizar SVG self-contained con viewport estable, pan, zoom, reset, loading, empty y error states.
+5. Preservar IDs semánticos del SVG para feedback y futuras operaciones de edición.
+6. Permitir iniciar una corrida Codex desde un diagrama con el MCP `diagram-mcp-rendering-engine` seleccionado.
+7. Persistir exports MCP dentro de `specs/<spec-id>/diagrams/` con nombres estables.
+8. Publicar un release móvil real, con backend real y configuración de updater real, después de implementar y testear el visor.
+
+El SVG de ejemplo `diagrams/browser-gateway-example.svg` queda dentro de este spec para servir como fixture visual. La implementación frontend debe hacerlo aparecer en la sección Diagrams cuando el soporte SVG esté listo.
 
 ## DiagramSpec Contract
 
 `DiagramSpec` es la fuente de verdad persistible y versionable.
 
 Estructura mínima:
-

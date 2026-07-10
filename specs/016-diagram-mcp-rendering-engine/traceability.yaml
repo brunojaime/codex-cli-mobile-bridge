@@ -1,6 +1,6 @@
 spec_id: 016-diagram-mcp-rendering-engine
 title: Diagram MCP Rendering Engine
-status: implemented
+status: in_progress
 
 requirements:
   FR-001:
@@ -53,6 +53,24 @@ requirements:
     acceptance_criteria: [AC-001, AC-003, AC-010, AC-011]
     tasks: [T030, T032]
     phase: 6
+  FR-011:
+    name: Frontend diagram discovery and gallery
+    acceptance_criteria: []
+    planned_acceptance_criteria: [FV-AC-001, FV-AC-002, FV-AC-003]
+    tasks: [T033, T034, T035]
+    phase: 7
+  FR-012:
+    name: Flutter SVG rendering and diagram feedback
+    acceptance_criteria: []
+    planned_acceptance_criteria: [FV-AC-004, FV-AC-005]
+    tasks: [T036, T037]
+    phase: 7
+  FR-013:
+    name: MCP generation workflow and mobile release
+    acceptance_criteria: []
+    planned_acceptance_criteria: [FV-AC-006, FV-AC-007, FV-AC-008]
+    tasks: [T038, T039, T040, T041]
+    phase: 8
 
 acceptance_criteria:
   AC-001:
@@ -108,3 +126,47 @@ diagrams:
   data-model:
     file: diagrams/data-model.mmd
     related_requirements: [FR-001, FR-002, FR-006, FR-008, FR-009]
+  frontend-viewer-architecture:
+    file: diagrams/frontend-viewer-architecture.mmd
+    related_requirements: [FR-011, FR-012, FR-013]
+  frontend-rendering-flow:
+    file: diagrams/frontend-rendering-flow.mmd
+    related_requirements: [FR-011, FR-012, FR-013]
+  browser-gateway-example:
+    file: diagrams/browser-gateway-example.svg
+    metadata_file: diagrams/browser-gateway-example.yaml
+    related_requirements: [FR-011, FR-012]
+
+planned_acceptance_criteria:
+  FV-AC-001:
+    description: Backend SDD diagram endpoints expose MCP-rendered SVG artifacts from workspace diagram folders.
+    planned_tests:
+      - backend test for SVG discovery and metadata classification
+  FV-AC-002:
+    description: SVG metadata identifies renderer, format, scope, title, and stable artifact path without absolute runtime paths.
+    planned_tests:
+      - backend metadata parsing test
+  FV-AC-003:
+    description: The frontend Diagrams section lists Mermaid and SVG diagrams together with clear loading, empty, and error states.
+    planned_tests:
+      - Flutter gallery widget test
+  FV-AC-004:
+    description: SVG diagram detail renders self-contained MCP SVG with pan, zoom, reset, and safe malformed-SVG handling.
+    planned_tests:
+      - Flutter SVG detail widget test
+  FV-AC-005:
+    description: Diagram feedback preserves diagram path and optional semantic element metadata.
+    planned_tests:
+      - Flutter feedback submission test
+  FV-AC-006:
+    description: Diagram update prompts can select the local Diagram MCP server and carry workspace diagram context.
+    planned_tests:
+      - frontend chat options/controller test
+  FV-AC-007:
+    description: MCP exports persist into spec diagram folders with stable names and adjacent metadata.
+    planned_tests:
+      - backend/service persistence test
+  FV-AC-008:
+    description: A real-backend Android release is prepared after frontend diagram viewing is implemented and tested.
+    planned_tests:
+      - release script dry-run or documented command verification

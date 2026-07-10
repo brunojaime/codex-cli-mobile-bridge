@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" role="img" viewBox="-40 -40 1260 210" width="1260" height="210" data-renderer="diagram-mcp-rendering-engine">
+<style>.component{fill:#f8fafc;stroke:#334155;stroke-width:1.5}.component-icon{fill:#e2e8f0;stroke:#334155;stroke-width:1}.interface-line,.connector{fill:none;stroke:#475569;stroke-width:1.6}.socket{fill:none;stroke:#475569;stroke-width:1.6}.lollipop{fill:#fff;stroke:#475569;stroke-width:1.6}.label{font-family:Inter,Arial,sans-serif;font-size:13px;fill:#0f172a}.small-label{font-family:Inter,Arial,sans-serif;font-size:11px;fill:#64748b}</style>
+<g id="diagram-connectors" data-layer="connectors">
+<path id="connector-api_database_sql_required" class="connector" data-connection-id="api_database_sql" data-from-node="api_server" data-to-node="interface_api_database_sql" data-role="consumer_to_required" d="M 860 85 L 866 85"/>
+<path id="connector-api_database_sql_provided" class="connector" data-connection-id="api_database_sql" data-from-node="interface_api_database_sql" data-to-node="database" data-role="provided_to_provider" d="M 994 85 L 1000 85"/>
+<path id="connector-browser_gateway_https_required" class="connector" data-connection-id="browser_gateway_https" data-from-node="browser" data-to-node="interface_browser_gateway_https" data-role="consumer_to_required" d="M 220 85 L 226 85"/>
+<path id="connector-browser_gateway_https_provided" class="connector" data-connection-id="browser_gateway_https" data-from-node="interface_browser_gateway_https" data-to-node="api_gateway" data-role="provided_to_provider" d="M 354 85 L 360 85"/>
+<path id="connector-gateway_api_json_required" class="connector" data-connection-id="gateway_api_json" data-from-node="api_gateway" data-to-node="interface_gateway_api_json" data-role="consumer_to_required" d="M 540 85 L 546 85"/>
+<path id="connector-gateway_api_json_provided" class="connector" data-connection-id="gateway_api_json" data-from-node="interface_gateway_api_json" data-to-node="api_server" data-role="provided_to_provider" d="M 674 85 L 680 85"/>
+</g>
+<g id="diagram-nodes" data-layer="nodes">
+<g id="node-browser" data-node-id="browser" data-node-type="uml_component" transform="translate(40 40)">
+<rect class="component" width="180" height="90" rx="4"/>
+<rect class="component-icon" x="140" y="14" width="22" height="18" rx="2"/>
+<rect class="component-icon" x="132" y="18" width="12" height="4" rx="1"/>
+<rect class="component-icon" x="132" y="28" width="12" height="4" rx="1"/>
+<text class="label" x="16" y="44">Browser</text>
+</g>
+<g id="node-api_gateway" data-node-id="api_gateway" data-node-type="uml_component" transform="translate(360 40)">
+<rect class="component" width="180" height="90" rx="4"/>
+<rect class="component-icon" x="140" y="14" width="22" height="18" rx="2"/>
+<rect class="component-icon" x="132" y="18" width="12" height="4" rx="1"/>
+<rect class="component-icon" x="132" y="28" width="12" height="4" rx="1"/>
+<text class="label" x="16" y="44">API Gateway</text>
+</g>
+<g id="node-api_server" data-node-id="api_server" data-node-type="uml_component" transform="translate(680 40)">
+<rect class="component" width="180" height="90" rx="4"/>
+<rect class="component-icon" x="140" y="14" width="22" height="18" rx="2"/>
+<rect class="component-icon" x="132" y="18" width="12" height="4" rx="1"/>
+<rect class="component-icon" x="132" y="28" width="12" height="4" rx="1"/>
+<text class="label" x="16" y="44">API Server</text>
+</g>
+<g id="node-database" data-node-id="database" data-node-type="uml_component" transform="translate(1000 40)">
+<rect class="component" width="180" height="90" rx="4"/>
+<rect class="component-icon" x="140" y="14" width="22" height="18" rx="2"/>
+<rect class="component-icon" x="132" y="18" width="12" height="4" rx="1"/>
+<rect class="component-icon" x="132" y="28" width="12" height="4" rx="1"/>
+<text class="label" x="16" y="44">Database</text>
+</g>
+<g id="node-interface_api_database_sql" data-node-id="interface_api_database_sql" data-node-type="provided_required_interface" data-connection-id="api_database_sql" transform="translate(866 53)">
+<text class="small-label" text-anchor="middle" x="64" y="10">SQL</text>
+<path class="interface-line" d="M 16 32 L 112 32"/>
+<path id="interface_api_database_sql-socket" class="socket" data-anchor="required" d="M 16 20 A 12 12 0 0 1 16 44"/>
+<circle id="interface_api_database_sql-lollipop" class="lollipop" data-anchor="provided" cx="112" cy="32" r="10"/>
+</g>
+<g id="node-interface_browser_gateway_https" data-node-id="interface_browser_gateway_https" data-node-type="provided_required_interface" data-connection-id="browser_gateway_https" transform="translate(226 53)">
+<text class="small-label" text-anchor="middle" x="64" y="10">HTTPS</text>
+<path class="interface-line" d="M 16 32 L 112 32"/>
+<path id="interface_browser_gateway_https-socket" class="socket" data-anchor="required" d="M 16 20 A 12 12 0 0 1 16 44"/>
+<circle id="interface_browser_gateway_https-lollipop" class="lollipop" data-anchor="provided" cx="112" cy="32" r="10"/>
+</g>
+<g id="node-interface_gateway_api_json" data-node-id="interface_gateway_api_json" data-node-type="provided_required_interface" data-connection-id="gateway_api_json" transform="translate(546 53)">
+<text class="small-label" text-anchor="middle" x="64" y="10">JSON API</text>
+<path class="interface-line" d="M 16 32 L 112 32"/>
+<path id="interface_gateway_api_json-socket" class="socket" data-anchor="required" d="M 16 20 A 12 12 0 0 1 16 44"/>
+<circle id="interface_gateway_api_json-lollipop" class="lollipop" data-anchor="provided" cx="112" cy="32" r="10"/>
+</g>
+</g>
+</svg>

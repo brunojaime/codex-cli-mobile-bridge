@@ -2,28 +2,40 @@ id: 016-diagram-mcp-rendering-engine
 slug: 016-diagram-mcp-rendering-engine
 title: Diagram MCP Rendering Engine
 description: MCP based local HTTPS diagram engine for deterministic UML component diagram generation, rendering, editing, and export.
-status: implemented
-last_run_state: completed
+status: in_progress
+last_run_state: pending_frontend_viewer
 generated:
   title: false
   description: false
   user_pinned_title: true
   user_pinned_description: true
 tasks:
-  total: 32
+  total: 41
   completed: 32
-  pending: 0
+  pending: 9
 diagrams:
-  total: 3
+  total: 6
   items:
     diagrams-architecture-mmd:
       path: diagrams/architecture.mmd
       diagram_type: component-impact
       metadata_path: diagrams/architecture.yaml
+    diagrams-browser-gateway-example-svg:
+      path: diagrams/browser-gateway-example.svg
+      diagram_type: uml-component-svg
+      metadata_path: diagrams/browser-gateway-example.yaml
     diagrams-data-model-mmd:
       path: diagrams/data-model.mmd
       diagram_type: data-impact
       metadata_path: diagrams/data-model.yaml
+    diagrams-frontend-rendering-flow-mmd:
+      path: diagrams/frontend-rendering-flow.mmd
+      diagram_type: sequence
+      metadata_path: diagrams/frontend-rendering-flow.yaml
+    diagrams-frontend-viewer-architecture-mmd:
+      path: diagrams/frontend-viewer-architecture.mmd
+      diagram_type: component-impact
+      metadata_path: diagrams/frontend-viewer-architecture.yaml
     diagrams-workflow-mmd:
       path: diagrams/workflow.mmd
       diagram_type: sequence
@@ -31,11 +43,17 @@ diagrams:
 source_digests:
   diagrams/architecture.mmd: c39f16ee939cd4ce1f9c61d88b2585d49629c212f117de3dbeb0a1669c67cc2f
   diagrams/architecture.yaml: cbd609667d0394a7c9700935223fe6fefab4f882de1b01c0f856e949f7c92802
+  diagrams/browser-gateway-example.svg: 34fa4f94040d01533d093b0f58cc6afb719319943bce1693390a05f220fa717d
+  diagrams/browser-gateway-example.yaml: 69bbd697e213eb3031b1ee0512f88a1540fdbb77e4e94c069b24f287b4bed7c3
   diagrams/data-model.mmd: f172c25ede11b0b6484c4d1d2045b0abcb2439c9961550788351758691d60dd2
   diagrams/data-model.yaml: 63a309133c167039514282aac8633d05bbb29e0acb775f7e516515ce4995b390
+  diagrams/frontend-rendering-flow.mmd: aafb5b65b2669db66508f9ad75b4b87c8f6e875c6cd251de78a5a4a0e64532b5
+  diagrams/frontend-rendering-flow.yaml: 7620bffca7fbdeaf3acc7cc4bd0e35f33185e154296da580bf904a440dd8d5d4
+  diagrams/frontend-viewer-architecture.mmd: 77b8ced8bed2b5b35076282fd460c863aadf0601007511e5528e6d707008f7cb
+  diagrams/frontend-viewer-architecture.yaml: f43cd9026f38c8fa379e3389c3127fc084a4b5145f8cf769ea760105c0be465a
   diagrams/workflow.mmd: dc26e48574999823e0e590d195cd8e630abb000fd05f95dc8625f048236aa948
   diagrams/workflow.yaml: 3cf087d744625818237e890c8d85159f06c8bfbed6c16e0202c9fc839fe98b33
-  plan.md: d8c8236b4df58ade14a40c3837acc38abedc8cb1da1aaff12aea821353033a24
-  spec.md: 71586a4fdec992cb86730b81b931153a4da84d05020020670634524289062490
-  tasks.md: 590566863b39409f8489f0e00b973bda816482ff098940c1f6148ec44d33464d
-  traceability.yaml: a4ae20958559fb68aa352e2dfa434259ef907405376c4eaae4ef053887b7e4b6
+  plan.md: b334c8b63a0d9cd826a9bbe21b7348f0be0670b64880e111e69fae3eedcf98ec
+  spec.md: a9ee5a95a3ab5bb5ab7837296a346bdc27f7595482f0f2c821a31d735f7fe582
+  tasks.md: 868cc0e0bb837b85e72f918579164d4e954f6d1e980cbedf9b13b2337833d025
+  traceability.yaml: 5c2d2de77de5560fe1bd308ad188e68ce69858ce3116868712db8d552559bac9

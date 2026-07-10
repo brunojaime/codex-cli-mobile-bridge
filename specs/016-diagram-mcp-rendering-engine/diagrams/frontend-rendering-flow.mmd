@@ -1,0 +1,19 @@
+sequenceDiagram
+    participant User
+    participant Mobile as Codex Mobile
+    participant Bridge as Bridge API
+    participant Files as Workspace Files
+    participant MCP as Diagram MCP
+
+    User->>Mobile: Open Diagrams section
+    Mobile->>Bridge: GET /sdd/project/diagrams
+    Bridge->>Files: Read Mermaid and SVG diagram artifacts
+    Files-->>Bridge: Diagram content and metadata
+    Bridge-->>Mobile: Diagram list
+    User->>Mobile: Open SVG diagram
+    Mobile->>Mobile: Render SVG with pan and zoom
+    User->>Mobile: Request update
+    Mobile->>Bridge: Start Codex run with MCP server selected
+    Bridge->>MCP: Generate or update DiagramSpec/SVG
+    MCP->>Files: Persist rendered artifact and metadata
+

@@ -1,0 +1,8 @@
+diagram_id: frontend-rendering-flow
+diagram_type: sequence
+title: Frontend Rendering Flow
+source: specs/016-diagram-mcp-rendering-engine/diagrams/frontend-rendering-flow.mmd
+related_plans:
+  - plan-7
+  - plan-8
+

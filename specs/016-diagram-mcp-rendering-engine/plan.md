@@ -49,3 +49,19 @@ File: plans/06-quality-observability-and-export/plan.md
 Status: completed
 
 Tasks: 6
+
+## Plan 7: Frontend Diagram Viewer
+
+File: plans/07-frontend-diagram-viewer/plan.md
+
+Status: pending
+
+Tasks: 5
+
+## Plan 8: MCP Diagram Workflow And Mobile Release
+
+File: plans/08-mcp-diagram-workflow-and-mobile-release/plan.md
+
+Status: pending
+
+Tasks: 4
