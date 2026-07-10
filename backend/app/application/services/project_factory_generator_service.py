@@ -4023,6 +4023,7 @@ cd "$ROOT_DIR"
 files=()
 for path in \
   design/visual-validation-report.md \
+  release/initial-preview-validation-report.json \
   release/release-output-template.md \
   docs/workbench.md
 do
@@ -5014,6 +5015,10 @@ fail() {{
 CHECK_REPORT="${{CHECK_REPORT:-/tmp/project-factory-initial-preview-checks.tsv}}"
 CHECK_REPORT_JSON="${{CHECK_REPORT_JSON:-release/initial-preview-validation-report.json}}"
 : > "$CHECK_REPORT"
+if [[ -z "${{CHECK_TIMESTAMP:-}}" ]]; then
+  CHECK_TIMESTAMP="$(git log --reverse --format=%cI --max-count=1 2>/dev/null || date -u +%Y-%m-%dT%H:%M:%SZ)"
+  export CHECK_TIMESTAMP
+fi
 
 record_check() {{
   local name="$1"
@@ -5021,7 +5026,7 @@ record_check() {{
   local command="${{3:-}}"
   local detail="${{4:-}}"
   local timestamp
-  timestamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  timestamp="${{CHECK_TIMESTAMP:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}}"
   printf '%s\\t%s\\t%s\\t%s\\t%s\\n' "$name" "$status" "$command" "$detail" "$timestamp" >> "$CHECK_REPORT"
 }}
 
@@ -5042,14 +5047,10 @@ skip_check() {{
   record_check "$1" "skipped_with_reason" "" "$2"
 }}
 
-finish_checks() {{
-  local validator_status="passed"
-  if awk -F '\\t' '$2 == "failed" {{ found=1 }} END {{ exit found ? 0 : 1 }}' "$CHECK_REPORT"; then
-    validator_status="failed"
-  fi
-  record_check "validate_initial_preview_release.sh" "$validator_status" "scripts/validate_initial_preview_release.sh"
+write_check_report_json() {{
+  local source_tsv="$1"
   mkdir -p "$(dirname "$CHECK_REPORT_JSON")"
-  python3 - "$CHECK_REPORT" "$CHECK_REPORT_JSON" "$SOURCE_APP" "$FRONTEND_STRATEGY" <<'PY'
+  python3 - "$source_tsv" "$CHECK_REPORT_JSON" "$SOURCE_APP" "$FRONTEND_STRATEGY" <<'PY'
 from __future__ import annotations
 
 import json
@@ -5081,6 +5082,45 @@ payload = {{
 }}
 Path(json_path).write_text(json.dumps(payload, indent=2, sort_keys=True) + "\\n", encoding="utf-8")
 PY
+}}
+
+finish_checks() {{
+  if [[ -z "${{CHECK_TIMESTAMP:-}}" ]]; then
+    CHECK_TIMESTAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    export CHECK_TIMESTAMP
+  fi
+  local base_report="${{CHECK_REPORT}}.base"
+  local candidate_report="${{CHECK_REPORT}}.candidate"
+  cp "$CHECK_REPORT" "$base_report"
+  local pre_clean_status="passed"
+  if awk -F '\\t' '$2 == "failed" {{ found=1 }} END {{ exit found ? 0 : 1 }}' "$base_report"; then
+    pre_clean_status="failed"
+  fi
+  local candidate_validator_status="$pre_clean_status"
+  cp "$base_report" "$candidate_report"
+  printf '%s\\t%s\\t%s\\t%s\\t%s\\n' \\
+    "clean git status" "passed" "git status --porcelain after validation report" "" "$CHECK_TIMESTAMP" >> "$candidate_report"
+  printf '%s\\t%s\\t%s\\t%s\\t%s\\n' \\
+    "validate_initial_preview_release.sh" "$candidate_validator_status" "scripts/validate_initial_preview_release.sh" "" "$CHECK_TIMESTAMP" >> "$candidate_report"
+  write_check_report_json "$candidate_report"
+
+  local git_status
+  git_status="$(git status --porcelain)"
+  local clean_status="passed"
+  local clean_detail=""
+  if [[ -n "$git_status" ]]; then
+    clean_status="failed"
+    clean_detail="$(printf '%s' "$git_status" | tr '\\n\\t' '; ' | sed 's/[; ]*$//')"
+  fi
+  local validator_status="$pre_clean_status"
+  if [[ "$clean_status" == "failed" ]]; then
+    validator_status="failed"
+  fi
+
+  cp "$base_report" "$CHECK_REPORT"
+  record_check "clean git status" "$clean_status" "git status --porcelain after validation report" "$clean_detail"
+  record_check "validate_initial_preview_release.sh" "$validator_status" "scripts/validate_initial_preview_release.sh"
+  write_check_report_json "$CHECK_REPORT"
   printf 'initial preview release checks:\\n'
   awk -F '\\t' '{{ printf "- %s: %s%s\\n", $1, $2, ($4 ? " (" $4 ")" : "") }}' "$CHECK_REPORT"
   printf 'validation report: %s\\n' "$CHECK_REPORT_JSON"
@@ -5313,11 +5353,6 @@ if [[ "$FRONTEND_STRATEGY" == "svelte" ]]; then
   record_check "GitHub release asset exists" "skipped_with_reason" "svelte frontend has no APK asset"
   record_check "APK SHA256" "skipped_with_reason" "svelte frontend has no APK"
   record_check "Bridge registration real" "skipped_with_reason" "svelte frontend has no installable Android registration"
-  if [[ -z "$(git status --porcelain)" ]]; then
-    record_check "clean git status" "passed"
-  else
-    record_check "clean git status" "failed" "working tree has uncommitted or untracked files"
-  fi
   local_head="$(git rev-parse HEAD 2>/dev/null || echo unavailable)"
   branch="$(git symbolic-ref --short HEAD 2>/dev/null || true)"
   push_state="unknown"
@@ -5664,11 +5699,6 @@ if [[ "${{UPDATE_RELEASE_OUTPUT:-false}}" == "true" ]]; then
   grep -q "bridge_installable_url: http" "$ROOT_DIR/release/release-output-template.md" || fail "release output must include Bridge installable URL"
 fi
 run_check "final readiness audit" scripts/final_readiness_audit.sh
-if [[ -z "$(git status --porcelain)" ]]; then
-  record_check "clean git status" "passed"
-else
-  record_check "clean git status" "failed" "working tree has uncommitted or untracked files"
-fi
 finish_checks
 '''
 

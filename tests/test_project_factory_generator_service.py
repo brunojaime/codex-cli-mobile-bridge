@@ -907,6 +907,47 @@ def test_generated_initial_preview_validation_runs_all_flutter_checks(
         check=True,
     )
 
+    fixed_timestamp = "2026-07-10T00:00:00Z"
+    seed_report = tmp_path / "seed-initial-preview-validation-report.json"
+    seed = subprocess.run(
+        ["scripts/validate_initial_preview_release.sh"],
+        cwd=project,
+        env=_initial_preview_env(
+            {
+                "PATH": f"{fake_bin}:{os.environ['PATH']}",
+                "COMMAND_LOG": str(command_log),
+                "CODEX_MOBILE_BRIDGE_ROOT": str(bridge_root),
+                "CHECK_TIMESTAMP": fixed_timestamp,
+                "CHECK_REPORT_JSON": str(seed_report),
+            }
+        ),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert seed.returncode == 0, seed.stdout + seed.stderr
+    shutil.copyfile(
+        seed_report,
+        project / "release/initial-preview-validation-report.json",
+    )
+    _git(["add", "release/initial-preview-validation-report.json"], project)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.email=test@example.test",
+            "-c",
+            "user.name=Test",
+            "commit",
+            "-m",
+            "Commit initial preview validation report",
+        ],
+        cwd=project,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+
     completed = subprocess.run(
         ["scripts/validate_initial_preview_release.sh"],
         cwd=project,
@@ -915,6 +956,7 @@ def test_generated_initial_preview_validation_runs_all_flutter_checks(
                 "PATH": f"{fake_bin}:{os.environ['PATH']}",
                 "COMMAND_LOG": str(command_log),
                 "CODEX_MOBILE_BRIDGE_ROOT": str(bridge_root),
+                "CHECK_TIMESTAMP": fixed_timestamp,
             }
         ),
         text=True,
@@ -951,6 +993,7 @@ def test_generated_initial_preview_validation_runs_all_flutter_checks(
     for check_name in mandatory:
         assert statuses[check_name] == "passed"
     assert "skipped_with_reason" not in statuses.values()
+    assert _git(["status", "--porcelain"], project).stdout == ""
     log = command_log.read_text(encoding="utf-8")
     assert "backend tests" in log
     assert "flutter analyze" in log
@@ -959,6 +1002,79 @@ def test_generated_initial_preview_validation_runs_all_flutter_checks(
     assert "apksigner verify" in log
     assert "wrangler" in log
     assert "invite e2e" in log
+
+
+def test_generated_initial_preview_validation_fails_when_report_dirties_git(
+    tmp_path: Path,
+) -> None:
+    manifest_plan = ProjectFactoryManifestService(
+        projects_root=tmp_path,
+    ).plan_manifest(
+        ProjectFactoryManifestInput(
+            name="Clinica Norte",
+            business_type="medical",
+            primary_goal="Reservar turnos",
+        )
+    )
+    ProjectFactoryGeneratorService().generate(manifest_plan)
+
+    project = tmp_path / "clinica-norte"
+    _git(["remote", "add", "origin", "https://github.com/acme/clinica-norte.git"], project)
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    command_log, bridge_root = _write_initial_preview_gate_fakes(
+        project,
+        fake_bin,
+        tmp_path,
+    )
+    _git(["add", "scripts/smoke_preview_api.sh"], project)
+    _git(["add", "scripts/smoke_web_preview.sh"], project)
+    _git(["add", "scripts/final_readiness_audit.sh"], project)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.email=test@example.test",
+            "-c",
+            "user.name=Test",
+            "commit",
+            "-m",
+            "Install fake validation hooks",
+        ],
+        cwd=project,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+
+    completed = subprocess.run(
+        ["scripts/validate_initial_preview_release.sh"],
+        cwd=project,
+        env=_initial_preview_env(
+            {
+                "PATH": f"{fake_bin}:{os.environ['PATH']}",
+                "COMMAND_LOG": str(command_log),
+                "CODEX_MOBILE_BRIDGE_ROOT": str(bridge_root),
+                "CHECK_TIMESTAMP": "2026-07-10T00:00:00Z",
+            }
+        ),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode != 0
+    report_path = project / "release/initial-preview-validation-report.json"
+    assert report_path.is_file()
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    statuses = {item["name"]: item["status"] for item in report["checks"]}
+    assert statuses["clean git status"] == "failed"
+    assert statuses["validate_initial_preview_release.sh"] == "failed"
+    assert "?? release/initial-preview-validation-report.json" in _git(
+        ["status", "--porcelain"],
+        project,
+    ).stdout
+    assert "one or more required checks failed" in completed.stdout + completed.stderr
 
 
 def test_generated_initial_preview_validation_reports_failed_flutter_check(
