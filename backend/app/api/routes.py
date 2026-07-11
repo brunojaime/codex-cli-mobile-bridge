@@ -11,6 +11,7 @@ import sys
 from collections.abc import Iterator
 from functools import lru_cache
 from pathlib import Path
+from threading import Thread
 from tempfile import NamedTemporaryFile
 from typing import Any
 
@@ -675,15 +676,26 @@ async def start_project_factory_deterministic_init(
     )
     if draft is None:
         raise HTTPException(status_code=404, detail="Project factory draft not found.")
+    project_slug = draft.request.slug or _project_factory_slug(
+        draft.request.name or draft_id,
+    )
     job = await run_in_threadpool(
         container.project_factory_init_service.start_or_resume,
         draft_id=draft_id,
         chat_session_id=request.chat_session_id,
-        workspace_path=request.workspace_path,
+        workspace_path=str(
+            (Path(container.settings.projects_root) / project_slug).resolve()
+        ),
         project_name=draft.request.name,
-        slug=draft.request.slug,
+        slug=project_slug,
         frontend_strategy=draft.request.frontend_strategy,
     )
+    if container.settings.project_factory_async_jobs:
+        Thread(
+            target=container.project_factory_init_service.run_pipeline,
+            args=(job.id,),
+            daemon=True,
+        ).start()
     return ProjectFactoryInitJobResponse(
         **container.project_factory_init_service.to_response_payload(job)
     )
@@ -5425,6 +5437,11 @@ async def _store_uploaded_files(
 def _cleanup_stored_uploads(stored_uploads: list[_StoredUpload]) -> None:
     for stored in stored_uploads:
         stored.path.unlink(missing_ok=True)
+
+
+def _project_factory_slug(value: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", value.strip().lower()).strip("-")
+    return slug or "new-project"
 
 
 def _parse_codex_options_json(raw_json: str | None):

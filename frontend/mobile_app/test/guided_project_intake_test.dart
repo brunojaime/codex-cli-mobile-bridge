@@ -180,6 +180,7 @@ void main() {
 
     expect(apiClient.createDraftCalls, 1);
     expect(apiClient.startInitCalls, 1);
+    expect(apiClient.lastInitWorkspacePath, isNull);
     expect(apiClient.sendMessageCalls, 0);
     expect(apiClient.lastDraftRequest?.guidedIntakeEnabled, isTrue);
     expect(find.text('Deterministic baseline init'), findsOneWidget);
@@ -220,6 +221,7 @@ class _GuidedProjectApiClient extends ApiClient {
   static final DateTime _timestamp = DateTime.utc(2026, 7, 9);
 
   ProjectFactoryDraftRequest? lastDraftRequest;
+  String? lastInitWorkspacePath;
   int createDraftCalls = 0;
   int answerCalls = 0;
   int previewCalls = 0;
@@ -400,6 +402,7 @@ class _GuidedProjectApiClient extends ApiClient {
     String? workspacePath,
   }) async {
     startInitCalls += 1;
+    lastInitWorkspacePath = workspacePath;
     return ProjectFactoryInitJob(
       initJobId: 'pf-init-1',
       draftId: draftId,

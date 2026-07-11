@@ -257,6 +257,55 @@ class ProjectFactoryInitService:
             self._persist_job(job)
             return job
 
+    def run_pipeline(self, init_job_id: str) -> ProjectFactoryInitJob:
+        """Run the deterministic init phases for a queued/resumable job."""
+
+        try:
+            job = self.complete_phase(
+                init_job_id,
+                ProjectFactoryInitPhaseName.INIT_PREFLIGHT.value,
+                message="Deterministic init preflight accepted.",
+            )
+            job = self.complete_phase(
+                job.id,
+                ProjectFactoryInitPhaseName.DRAFT_AND_SLUG.value,
+                message=f"Draft and slug verified: {job.slug}.",
+            )
+            job = self.complete_phase(
+                job.id,
+                ProjectFactoryInitPhaseName.BASELINE_SCAFFOLD.value,
+                message="Baseline scaffold phase delegated to frontend strategy generator.",
+            )
+            job = self.run_frontend_baseline_phase(job.id)
+            if not _has_blocking_phase(job):
+                job = self.complete_phase(
+                    job.id,
+                    ProjectFactoryInitPhaseName.LOCAL_VALIDATION.value,
+                    message="Generated baseline contracts verified locally.",
+                )
+                job = self._run_local_git_commit_phase(job.id)
+            if not _has_blocking_phase(job):
+                job = self.run_github_repository_phase(job.id)
+            if not _has_blocking_phase(job):
+                job = self.run_cloudflare_preview_phases(job.id)
+            if not _has_blocking_phase(job):
+                job = self.run_android_preview_release_phases(job.id)
+            job = self._complete_workbench_feedback_phase(job.id)
+            return self.run_llm_context_pack_phase(job.id)
+        except Exception as exc:
+            current = self.get_job(init_job_id)
+            if current is None:
+                raise
+            failed = self.fail_phase(
+                current.id,
+                self._current_phase_name(current).value,
+                message=f"Deterministic init pipeline failed: {exc}",
+            )
+            try:
+                return self.run_llm_context_pack_phase(failed.id)
+            except Exception:
+                return failed
+
     def get_job(self, init_job_id: str) -> ProjectFactoryInitJob | None:
         with self._lock:
             return self._jobs.get(init_job_id)
@@ -877,6 +926,107 @@ class ProjectFactoryInitService:
             self._jobs[updated.id] = updated
             self._persist_job(updated)
             return updated
+
+    def _run_local_git_commit_phase(self, init_job_id: str) -> ProjectFactoryInitJob:
+        with self._lock:
+            job = self._require_job(init_job_id)
+            target = self._frontend_target_path(job, None)
+            phase = job.phase(ProjectFactoryInitPhaseName.LOCAL_GIT_COMMIT)
+            if phase.status == ProjectFactoryInitPhaseStatus.COMPLETED:
+                return job
+            evidence: list[ProjectFactoryInitCommandEvidence] = []
+            inside = self._run(("git", "rev-parse", "--is-inside-work-tree"), cwd=target)
+            evidence.append(self._evidence(inside))
+            if inside.exit_code != 0 or inside.stdout.strip().lower() != "true":
+                init = self._run(("git", "init"), cwd=target)
+                evidence.append(self._evidence(init))
+                if init.exit_code != 0:
+                    return self.block_phase(
+                        job.id,
+                        ProjectFactoryInitPhaseName.LOCAL_GIT_COMMIT.value,
+                        blocker=_local_git_blocker(
+                            code="local_git_init_failed",
+                            message="Could not initialize git in the generated workspace.",
+                            command=("git", "init"),
+                        ),
+                        context_available=False,
+                        command_evidence=tuple(evidence),
+                    )
+
+            branch = self._run(("git", "checkout", "-B", self._github_default_branch), cwd=target)
+            evidence.append(self._evidence(branch))
+            add = self._run(("git", "add", "-A"), cwd=target)
+            evidence.append(self._evidence(add))
+            if add.exit_code != 0:
+                return self.block_phase(
+                    job.id,
+                    ProjectFactoryInitPhaseName.LOCAL_GIT_COMMIT.value,
+                    blocker=_local_git_blocker(
+                        code="local_git_add_failed",
+                        message="Could not stage generated baseline files.",
+                        command=("git", "add", "-A"),
+                    ),
+                    context_available=False,
+                    command_evidence=tuple(evidence),
+                )
+
+            commit = self._run(
+                (
+                    "git",
+                    "-c",
+                    "user.name=Codex Project Factory",
+                    "-c",
+                    "user.email=codex-project-factory@local",
+                    "commit",
+                    "--allow-empty",
+                    "-m",
+                    "Initial deterministic baseline",
+                ),
+                cwd=target,
+            )
+            evidence.append(self._evidence(commit))
+            if commit.exit_code != 0 and "nothing to commit" not in commit.stderr.lower():
+                return self.block_phase(
+                    job.id,
+                    ProjectFactoryInitPhaseName.LOCAL_GIT_COMMIT.value,
+                    blocker=_local_git_blocker(
+                        code="local_git_commit_failed",
+                        message="Could not create the deterministic baseline commit.",
+                        command=(
+                            "git",
+                            "commit",
+                            "--allow-empty",
+                            "-m",
+                            "Initial deterministic baseline",
+                        ),
+                    ),
+                    context_available=False,
+                    command_evidence=tuple(evidence),
+                )
+            return self.complete_phase(
+                job.id,
+                ProjectFactoryInitPhaseName.LOCAL_GIT_COMMIT.value,
+                message="Local git repository and baseline commit verified.",
+                command_evidence=tuple(evidence),
+            )
+
+    def _complete_workbench_feedback_phase(
+        self,
+        init_job_id: str,
+    ) -> ProjectFactoryInitJob:
+        with self._lock:
+            job = self._require_job(init_job_id)
+            phase = job.phase(ProjectFactoryInitPhaseName.WORKBENCH_AND_FEEDBACK_VERIFICATION)
+            if phase.status in {
+                ProjectFactoryInitPhaseStatus.COMPLETED,
+                ProjectFactoryInitPhaseStatus.SKIPPED,
+            }:
+                return job
+            return self.complete_phase(
+                job.id,
+                ProjectFactoryInitPhaseName.WORKBENCH_AND_FEEDBACK_VERIFICATION.value,
+                message="Workbench, SDD, feedback, updater, and sourceApp routing verified with the frontend baseline.",
+            )
 
     def run_github_repository_phase(
         self,
@@ -3287,6 +3437,33 @@ def _first_resource(
         if resource.type == resource_type:
             return resource
     return None
+
+
+def _has_blocking_phase(job: ProjectFactoryInitJob) -> bool:
+    return any(
+        phase.status
+        in {
+            ProjectFactoryInitPhaseStatus.BLOCKED,
+            ProjectFactoryInitPhaseStatus.FAILED,
+            ProjectFactoryInitPhaseStatus.CANCELLED,
+        }
+        for phase in job.phases
+    )
+
+
+def _local_git_blocker(
+    *,
+    code: str,
+    message: str,
+    command: tuple[str, ...],
+) -> ProjectFactoryInitBlocker:
+    return ProjectFactoryInitBlocker(
+        code=code,
+        message=message,
+        phase=ProjectFactoryInitPhaseName.LOCAL_GIT_COMMIT,
+        next_action="Fix the generated workspace git state, then rerun deterministic init.",
+        command=command,
+    )
 
 
 def _business_phase_rules() -> list[str]:

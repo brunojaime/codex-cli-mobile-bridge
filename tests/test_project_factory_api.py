@@ -330,6 +330,7 @@ def test_project_factory_deterministic_init_starts_resumes_and_persists(
     assert payload["kind"] == "codex.projectFactoryInitJob"
     assert payload["draftId"] == draft_id
     assert payload["chatSessionId"] == "chat-1"
+    assert payload["generatedWorkspacePath"] == str(tmp_path / "clinica-norte")
     assert payload["status"] == "queued"
     assert payload["currentPhase"] == "init_preflight"
     assert payload["readyForBusinessLlm"] is False

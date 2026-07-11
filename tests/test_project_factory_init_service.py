@@ -14,11 +14,13 @@ from backend.app.domain.entities.project_factory_init import (
     ProjectFactoryInitBlocker,
     ProjectFactoryInitCommandEvidence,
     ProjectFactoryInitContextPack,
+    ProjectFactoryInitCompletionState,
     ProjectFactoryInitPhaseName,
     ProjectFactoryInitPhaseStatus,
     ProjectFactoryInitRemoteResource,
     ProjectFactoryInitRemoteResourceType,
 )
+from backend.app.infrastructure.config.settings import Settings
 
 
 def test_init_service_creates_idempotent_draft_chat_job(tmp_path: Path) -> None:
@@ -98,6 +100,48 @@ def test_init_service_phase_completion_is_idempotent_and_persisted(
     assert loaded is not None
     assert reloaded.to_response_payload(loaded)["currentPhase"] == "draft_and_slug"
     assert loaded.phases[0].command_evidence[0].argv == ("gh", "auth", "status")
+
+
+def test_init_service_run_pipeline_generates_workspace_and_blocked_context(
+    tmp_path: Path,
+) -> None:
+    service = ProjectFactoryInitService(
+        state_root=tmp_path / ".state",
+        settings=Settings(
+            projects_root=str(tmp_path),
+            project_factory_state_dir=str(tmp_path / ".state"),
+            chat_store_backend="memory",
+            audio_transcription_backend="disabled",
+            speech_synthesis_backend="disabled",
+        ),
+    )
+    job = service.start_or_resume(
+        draft_id="draft-1",
+        chat_session_id="chat-1",
+        project_name="Clinica Norte",
+        slug="clinica-norte",
+        frontend_strategy="flutter",
+    )
+
+    completed = service.run_pipeline(job.id)
+
+    workspace = tmp_path / "clinica-norte"
+    assert completed.relationships.generated_workspace_path == str(workspace)
+    assert (workspace / ".codex/factory/init-result.json").is_file()
+    assert (workspace / ".codex/factory/llm-start-context.md").is_file()
+    assert completed.phase(
+        ProjectFactoryInitPhaseName.FLUTTER_OR_STRATEGY_BASELINE
+    ).status == ProjectFactoryInitPhaseStatus.COMPLETED
+    assert completed.phase(
+        ProjectFactoryInitPhaseName.LOCAL_GIT_COMMIT
+    ).status == ProjectFactoryInitPhaseStatus.COMPLETED
+    assert completed.phase(
+        ProjectFactoryInitPhaseName.GITHUB_REPOSITORY
+    ).status == ProjectFactoryInitPhaseStatus.BLOCKED
+    assert completed.phase(
+        ProjectFactoryInitPhaseName.LLM_CONTEXT_PACK
+    ).status == ProjectFactoryInitPhaseStatus.COMPLETED
+    assert completed.completion_state == ProjectFactoryInitCompletionState.BLOCKED_WITH_CONTEXT
 
 
 def test_init_service_blocked_with_context_and_remote_context_payload(

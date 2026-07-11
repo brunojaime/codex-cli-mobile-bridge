@@ -1907,7 +1907,6 @@ When you create the Project Factory draft, link each asset with POST /project-fa
       final initJob = await client.startProjectFactoryInit(
         draftId: draft.draftId,
         chatSessionId: session.id,
-        workspacePath: session.workspacePath,
       );
       if (!mounted) {
         return initJob;
