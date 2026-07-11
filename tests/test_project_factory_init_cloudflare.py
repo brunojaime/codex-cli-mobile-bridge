@@ -4,7 +4,7 @@ from dataclasses import dataclass
 import json
 from pathlib import Path
 import re
-from typing import Any
+from typing import Any, Callable
 
 from backend.app.application.services.cloudflare_preview_service import (
     CloudflareLookupResult,
@@ -36,8 +36,18 @@ class _FakeCommand:
 
 
 class _FakeRunner:
-    def __init__(self, response: _FakeCommand = _FakeCommand()) -> None:
+    def __init__(
+        self,
+        response: _FakeCommand = _FakeCommand(),
+        *,
+        on_run: Callable[
+            [tuple[str, ...], str | Path | None, dict[str, str] | None],
+            ProjectFactoryInitCommandResult | None,
+        ]
+        | None = None,
+    ) -> None:
         self.response = response
+        self.on_run = on_run
         self.calls: list[tuple[str, ...]] = []
 
     def run(
@@ -50,6 +60,10 @@ class _FakeRunner:
     ) -> ProjectFactoryInitCommandResult:
         del timeout_seconds
         self.calls.append(argv)
+        if self.on_run is not None:
+            result = self.on_run(argv, cwd, env)
+            if result is not None:
+                return result
         return ProjectFactoryInitCommandResult(
             argv=argv,
             cwd=str(cwd) if cwd is not None else None,
@@ -156,6 +170,55 @@ def test_cloudflare_init_existing_resources_urls_deploy_and_smoke_success(
     assert smoke_artifact.metadata["checks"][0]["status_code"] == 200
     assert smoke_artifact.metadata["checks"][0]["d1_bound"] is True
     assert smoke_artifact.metadata["checks"][0]["assets_bound"] is True
+
+
+def test_cloudflare_init_builds_web_preview_before_deploy(
+    tmp_path: Path,
+) -> None:
+    project_ref: dict[str, Path] = {}
+
+    def on_run(
+        argv: tuple[str, ...],
+        cwd: str | Path | None,
+        env: dict[str, str] | None,
+    ) -> ProjectFactoryInitCommandResult | None:
+        if argv == ("bash", "scripts/build_web_preview.sh"):
+            project = Path(cwd or project_ref["project"])
+            _write_web_build_output(project)
+            return ProjectFactoryInitCommandResult(
+                argv=argv,
+                cwd=str(cwd) if cwd is not None else None,
+                exit_code=0,
+                stdout="web preview build completed\n",
+                env=env,
+            )
+        return None
+
+    runner = _FakeRunner(on_run=on_run)
+    service = _service(
+        tmp_path,
+        runner=runner,
+        cloudflare_client=_FakeCloudflareClient(resources_exist=True),
+    )
+    project = _generated_project(tmp_path, write_build_output=False)
+    project_ref["project"] = project
+    job = _job(service, project)
+
+    completed = service.run_cloudflare_preview_phases(job.id)
+
+    assert ("wrangler", "--version") in runner.calls
+    assert ("bash", "scripts/build_web_preview.sh") in runner.calls
+    assert completed.phase(
+        ProjectFactoryInitPhaseName.CLOUDFLARE_PREVIEW_PROVISION
+    ).status == ProjectFactoryInitPhaseStatus.COMPLETED
+    provision = completed.phase(
+        ProjectFactoryInitPhaseName.CLOUDFLARE_PREVIEW_PROVISION
+    )
+    evidence_argv = [item.argv for item in provision.command_evidence]
+    assert ("bash", "scripts/build_web_preview.sh") in evidence_argv
+    assert (
+        project / "build/web-preview/clinica-norte/index.html"
+    ).exists()
 
 
 def test_cloudflare_init_create_path_and_d1_migrations_are_persisted(
@@ -294,7 +357,7 @@ def _job(service: ProjectFactoryInitService, project: Path):
     )
 
 
-def _generated_project(tmp_path: Path) -> Path:
+def _generated_project(tmp_path: Path, *, write_build_output: bool = True) -> Path:
     projects_root = tmp_path / "projects"
     projects_root.mkdir(parents=True, exist_ok=True)
     manifest_plan = ProjectFactoryManifestService(
@@ -308,7 +371,8 @@ def _generated_project(tmp_path: Path) -> Path:
     )
     ProjectFactoryGeneratorService().generate(manifest_plan)
     project = projects_root / "clinica-norte"
-    _write_web_build_output(project)
+    if write_build_output:
+        _write_web_build_output(project)
     return project
 
 

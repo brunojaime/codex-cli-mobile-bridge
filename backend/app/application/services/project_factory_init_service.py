@@ -1365,6 +1365,39 @@ class ProjectFactoryInitService:
                     evidence=(doctor_evidence, wrangler_evidence),
                 )
 
+            build_env = {
+                "APP_SLUG": job.slug,
+                "SOURCE_APP": job.slug,
+                "APP_RUNTIME_PROFILE": "preview",
+                "API_RUNTIME": "cloudflare_preview",
+                "API_BASE_URL": api_base_url,
+                "WEB_PREVIEW_BUILD_DIR": str(
+                    workdir / "build" / "web-preview" / job.slug
+                ),
+            }
+            build = self._run_env(
+                ("bash", "scripts/build_web_preview.sh"),
+                cwd=workdir,
+                env=build_env,
+            )
+            build_evidence = self._evidence(build)
+            if build.exit_code != 0:
+                return self._block_cloudflare(
+                    job,
+                    phase_name=_CLOUDFLARE_PROVISION_PHASE,
+                    blocker=_cloudflare_blocker(
+                        phase=_CLOUDFLARE_PROVISION_PHASE,
+                        code="cloudflare_web_preview_build_failed",
+                        message="Web preview artifact build failed before Cloudflare deploy.",
+                        next_action=(
+                            "Fix the generated frontend web build, then rerun "
+                            "deterministic init."
+                        ),
+                        command=("bash", "scripts/build_web_preview.sh"),
+                    ),
+                    evidence=(doctor_evidence, wrangler_evidence, build_evidence),
+                )
+
             deploy_service = self._web_preview_service(settings)
             try:
                 plan = deploy_service.plan(
@@ -1391,6 +1424,7 @@ class ProjectFactoryInitService:
                 evidence = (
                     doctor_evidence,
                     wrangler_evidence,
+                    build_evidence,
                     *(() if "plan_evidence" not in locals() else (plan_evidence,)),
                 )
                 return self._block_cloudflare_exception(
@@ -1411,7 +1445,12 @@ class ProjectFactoryInitService:
                 api_base_url=api_base_url,
                 plan=plan,
                 deployed=deployed,
-                evidence=(doctor_evidence, wrangler_evidence, plan_evidence),
+                evidence=(
+                    doctor_evidence,
+                    wrangler_evidence,
+                    build_evidence,
+                    plan_evidence,
+                ),
             )
             deploy_completed = self._complete_cloudflare_deploy(
                 provision_completed,
