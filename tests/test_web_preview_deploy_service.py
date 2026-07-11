@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 import json
 import re
@@ -33,6 +34,43 @@ from backend.app.application.services.web_preview_invite_service import (
 )
 from backend.app.infrastructure.config.settings import Settings
 from backend.app.main import create_app
+
+
+@dataclass(frozen=True, slots=True)
+class _FakeCommandResult:
+    argv: tuple[str, ...]
+    cwd: str | None
+    exit_code: int = 0
+    stdout: str = "deployed\n"
+    stderr: str = ""
+    env: dict[str, str] | None = None
+
+
+class _FakeCommandRunner:
+    def __init__(self, *, exit_code: int = 0, stderr: str = "") -> None:
+        self.exit_code = exit_code
+        self.stderr = stderr
+        self.calls: list[tuple[str, ...]] = []
+        self.envs: list[dict[str, str] | None] = []
+
+    def run(
+        self,
+        argv: tuple[str, ...],
+        *,
+        cwd: str | Path | None = None,
+        env: dict[str, str] | None = None,
+        timeout_seconds: float = 0,
+    ) -> _FakeCommandResult:
+        del timeout_seconds
+        self.calls.append(argv)
+        self.envs.append(env)
+        return _FakeCommandResult(
+            argv=argv,
+            cwd=str(cwd) if cwd is not None else None,
+            exit_code=self.exit_code,
+            stderr=self.stderr,
+            env=env,
+        )
 
 
 def test_web_preview_plan_is_stable_and_persisted(tmp_path: Path) -> None:
@@ -589,6 +627,7 @@ def test_web_preview_deploy_api_success_with_fake_cloudflare(tmp_path: Path) -> 
     container.web_preview_deploy_service = WebPreviewDeployService(
         settings=container.settings,
         client=_FakeCloudflareClient(),
+        command_runner=_FakeCommandRunner(),
     )
     client = TestClient(app)
     plan = client.post(
@@ -851,6 +890,7 @@ def _service(
             configured=configured,
         ),
         client=fake,
+        command_runner=_FakeCommandRunner(),
     )
 
 
@@ -994,7 +1034,9 @@ class _FakeCloudflareClient:
         script_name: str,
         script_content: str,
         worker_format: str = "module",
+        metadata: dict[str, Any] | None = None,
     ) -> CloudflareLookupResult:
+        del metadata
         self.calls.append(
             f"deploy_worker_script:{account_id}:{script_name}:{worker_format}"
         )

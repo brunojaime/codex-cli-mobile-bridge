@@ -393,7 +393,9 @@ class _FakeCloudflareClient:
         script_name: str,
         script_content: str,
         worker_format: str = "module",
+        metadata: dict[str, Any] | None = None,
     ) -> CloudflareLookupResult:
+        del metadata
         self.calls.append(
             f"deploy_worker_script:{account_id}:{script_name}:{worker_format}"
         )

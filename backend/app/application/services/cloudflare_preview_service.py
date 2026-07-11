@@ -69,6 +69,7 @@ class CloudflareClient(Protocol):
         script_name: str,
         script_content: str,
         worker_format: Literal["classic", "module"] = "module",
+        metadata: dict[str, Any] | None = None,
     ) -> CloudflareLookupResult:
         ...
 
@@ -267,15 +268,17 @@ class HttpCloudflareClient:
         script_name: str,
         script_content: str,
         worker_format: Literal["classic", "module"] = "module",
+        metadata: dict[str, Any] | None = None,
     ) -> CloudflareLookupResult:
         if worker_format == "module":
+            worker_metadata = {"main_module": "index.js", **(metadata or {})}
             return self._request(
                 "PUT",
                 f"/accounts/{account_id}/workers/scripts/{script_name}",
                 files={
                     "metadata": (
                         None,
-                        json.dumps({"main_module": "index.js"}),
+                        json.dumps(worker_metadata),
                         "application/json",
                     ),
                     "index.js": (

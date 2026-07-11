@@ -12,7 +12,7 @@ import re
 import subprocess
 from tempfile import NamedTemporaryFile
 import time
-from typing import Any
+from typing import Any, Protocol
 
 import yaml
 
@@ -82,15 +82,84 @@ class WebPreviewLifecycleInput:
     reason: str | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class WebPreviewCommandResult:
+    argv: tuple[str, ...]
+    cwd: str | None
+    exit_code: int
+    stdout: str = ""
+    stderr: str = ""
+    env: dict[str, str] | None = None
+
+
+class WebPreviewCommandRunner(Protocol):
+    def run(
+        self,
+        argv: tuple[str, ...],
+        *,
+        cwd: str | Path | None = None,
+        env: dict[str, str] | None = None,
+        timeout_seconds: float = 0,
+    ) -> Any: ...
+
+
+class SubprocessWebPreviewCommandRunner:
+    def run(
+        self,
+        argv: tuple[str, ...],
+        *,
+        cwd: str | Path | None = None,
+        env: dict[str, str] | None = None,
+        timeout_seconds: float = 0,
+    ) -> WebPreviewCommandResult:
+        try:
+            completed = subprocess.run(
+                list(argv),
+                cwd=str(cwd) if cwd is not None else None,
+                env={**os.environ, **env} if env else None,
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=timeout_seconds if timeout_seconds > 0 else None,
+            )
+            return WebPreviewCommandResult(
+                argv=argv,
+                cwd=str(cwd) if cwd is not None else None,
+                exit_code=completed.returncode,
+                stdout=completed.stdout,
+                stderr=completed.stderr,
+                env=env,
+            )
+        except FileNotFoundError as exc:
+            return WebPreviewCommandResult(
+                argv=argv,
+                cwd=str(cwd) if cwd is not None else None,
+                exit_code=127,
+                stderr=str(exc),
+                env=env,
+            )
+        except subprocess.TimeoutExpired as exc:
+            return WebPreviewCommandResult(
+                argv=argv,
+                cwd=str(cwd) if cwd is not None else None,
+                exit_code=124,
+                stdout=str(exc.stdout or ""),
+                stderr=str(exc.stderr or "Command timed out."),
+                env=env,
+            )
+
+
 class WebPreviewDeployService:
     def __init__(
         self,
         *,
         settings: Settings,
         client: CloudflareClient | None = None,
+        command_runner: WebPreviewCommandRunner | None = None,
     ) -> None:
         self._settings = settings
         self._client = client
+        self._command_runner = command_runner or SubprocessWebPreviewCommandRunner()
         self._state_root = Path(settings.web_preview_state_dir).expanduser().resolve()
         self._preview_state_dir = self._state_root / "previews"
         self._invite_state_dir = self._state_root / "invites"
@@ -309,6 +378,7 @@ class WebPreviewDeployService:
             applied = CloudflarePreviewProvisioner(
                 settings=self._settings,
                 client=self._cloudflare_client(),
+                command_runner=self._command_runner,
             ).apply(
                 manifest=manifest,
                 project_path=project_path,
@@ -823,9 +893,16 @@ class WebPreviewDeployService:
 
 
 class CloudflarePreviewProvisioner:
-    def __init__(self, *, settings: Settings, client: CloudflareClient) -> None:
+    def __init__(
+        self,
+        *,
+        settings: Settings,
+        client: CloudflareClient,
+        command_runner: WebPreviewCommandRunner | None = None,
+    ) -> None:
         self._settings = settings
         self._client = client
+        self._command_runner = command_runner or SubprocessWebPreviewCommandRunner()
 
     def apply(self, *, manifest: dict[str, Any], project_path: Path) -> list[dict[str, Any]]:
         cloudflare = _expect_mapping(manifest, "cloudflare")
@@ -841,25 +918,15 @@ class CloudflarePreviewProvisioner:
         r2_bucket = resources.get("r2_bucket")
         access = manifest.get("access") if isinstance(manifest.get("access"), dict) else {}
         migrations_dir = str(access.get("migrations_dir") or "")
+        d1_resource = self._ensure_d1(account_id=account_id, database_name=d1_database)
         applied = [
             self._ensure_dns_record(
                 zone_id=zone_id,
                 name=f"{base_domain}",
                 target=self._settings.cloudflare_zone_name,
             ),
-            self._ensure_worker(
-                account_id=account_id,
-                worker_name=worker_name,
-                script_path=project_path / "deploy/web-preview/worker/src/index.js",
-            ),
-            self._ensure_worker_route(
-                zone_id=zone_id,
-                pattern=worker_route,
-                worker_name=worker_name,
-            ),
+            d1_resource,
         ]
-        d1_resource = self._ensure_d1(account_id=account_id, database_name=d1_database)
-        applied.append(d1_resource)
         if migrations_dir:
             applied.extend(
                 self._apply_d1_migrations(
@@ -869,6 +936,26 @@ class CloudflarePreviewProvisioner:
                     migrations_dir=project_path / migrations_dir,
                 )
             )
+        applied.extend(
+            [
+                self._ensure_worker(
+                    account_id=account_id,
+                    worker_name=worker_name,
+                    script_path=project_path / "deploy/web-preview/worker/src/index.js",
+                    project_path=project_path,
+                    source_app=source_app,
+                    base_domain=base_domain,
+                    worker_route=worker_route,
+                    d1_database_name=d1_database,
+                    d1_database_id=str(d1_resource.get("database_id") or ""),
+                ),
+                self._ensure_worker_route(
+                    zone_id=zone_id,
+                    pattern=worker_route,
+                    worker_name=worker_name,
+                ),
+            ]
+        )
         applied.extend(
             [
                 self._ensure_pages_project(account_id=account_id, name=pages_project),
@@ -947,22 +1034,45 @@ class CloudflarePreviewProvisioner:
         account_id: str,
         worker_name: str,
         script_path: Path,
+        project_path: Path,
+        source_app: str,
+        base_domain: str,
+        worker_route: str,
+        d1_database_name: str,
+        d1_database_id: str,
     ) -> dict[str, Any]:
         existing = self._client.get_worker_script(
             account_id=account_id,
             script_name=worker_name,
         )
+        if not script_path.is_file():
+            raise RuntimeError("worker script source is missing")
+        script_content = script_path.read_text(encoding="utf-8")
+        worker_metadata = _worker_upload_metadata(
+            database_id=d1_database_id,
+            api_base_url=f"https://{base_domain}/{source_app}/api",
+            source_app=source_app,
+        )
         if existing.ok:
-            if not script_path.is_file():
-                raise RuntimeError("worker script source is missing")
-            script_content = script_path.read_text(encoding="utf-8")
             deployed = self._client.deploy_worker_script(
                 account_id=account_id,
                 script_name=worker_name,
                 script_content=script_content,
                 worker_format="module",
+                metadata=worker_metadata,
             )
             _raise_if_failed(deployed, "worker_update_failed")
+            wrangler_deploy = self._deploy_worker_with_wrangler(
+                account_id=account_id,
+                worker_name=worker_name,
+                script_path=script_path,
+                project_path=project_path,
+                source_app=source_app,
+                base_domain=base_domain,
+                worker_route=worker_route,
+                d1_database_name=d1_database_name,
+                d1_database_id=d1_database_id,
+            )
             verification = self._verify_worker_script(
                 account_id=account_id,
                 worker_name=worker_name,
@@ -974,20 +1084,31 @@ class CloudflarePreviewProvisioner:
                 "status": "updated",
                 "sha256": hashlib.sha256(script_content.encode("utf-8")).hexdigest(),
                 "worker_format": "module",
+                "bindings": sorted({*_worker_binding_names(worker_metadata), "ASSETS"}),
+                "wrangler_deploy": wrangler_deploy,
                 **verification,
             }
         if existing.status_code not in (404, None):
             _raise_if_failed(existing, "worker_lookup_failed")
-        if not script_path.is_file():
-            raise RuntimeError("worker script source is missing")
-        script_content = script_path.read_text(encoding="utf-8")
         deployed = self._client.deploy_worker_script(
             account_id=account_id,
             script_name=worker_name,
             script_content=script_content,
             worker_format="module",
+            metadata=worker_metadata,
         )
         _raise_if_failed(deployed, "worker_deploy_failed")
+        wrangler_deploy = self._deploy_worker_with_wrangler(
+            account_id=account_id,
+            worker_name=worker_name,
+            script_path=script_path,
+            project_path=project_path,
+            source_app=source_app,
+            base_domain=base_domain,
+            worker_route=worker_route,
+            d1_database_name=d1_database_name,
+            d1_database_id=d1_database_id,
+        )
         verification = self._verify_worker_script(
             account_id=account_id,
             worker_name=worker_name,
@@ -999,6 +1120,8 @@ class CloudflarePreviewProvisioner:
             "status": "created",
             "sha256": hashlib.sha256(script_content.encode("utf-8")).hexdigest(),
             "worker_format": "module",
+            "bindings": sorted({*_worker_binding_names(worker_metadata), "ASSETS"}),
+            "wrangler_deploy": wrangler_deploy,
             **verification,
         }
 
@@ -1028,6 +1151,86 @@ class CloudflarePreviewProvisioner:
             "verified": True,
             "verification_status": "verified",
             "remote_sha256": remote_sha,
+        }
+
+    def _deploy_worker_with_wrangler(
+        self,
+        *,
+        account_id: str,
+        worker_name: str,
+        script_path: Path,
+        project_path: Path,
+        source_app: str,
+        base_domain: str,
+        worker_route: str,
+        d1_database_name: str,
+        d1_database_id: str,
+    ) -> dict[str, Any]:
+        if not d1_database_id:
+            raise RuntimeError("d1_database_id_missing")
+        assets_dir = project_path / "build" / "web-preview" / source_app
+        if not assets_dir.is_dir():
+            raise RuntimeError("worker_assets_build_missing")
+        config_path = _write_generated_wrangler_config(
+            project_path=project_path,
+            account_id=account_id,
+            worker_name=worker_name,
+            script_path=script_path,
+            assets_dir=assets_dir,
+            source_app=source_app,
+            base_domain=base_domain,
+            worker_route=worker_route,
+            zone_name=self._settings.cloudflare_zone_name,
+            d1_database_name=d1_database_name,
+            d1_database_id=d1_database_id,
+        )
+        env = {
+            "CLOUDFLARE_API_TOKEN": self._settings.cloudflare_api_token or "",
+            "CLOUDFLARE_ACCOUNT_ID": account_id,
+        }
+        result = self._command_runner.run(
+            ("wrangler", "deploy", "--config", str(config_path)),
+            cwd=project_path,
+            env={key: value for key, value in env.items() if value},
+            timeout_seconds=300,
+        )
+        exit_code = int(getattr(result, "exit_code", 1))
+        if exit_code != 0:
+            stderr = _summarize_text(
+                _safe_error_text(
+                    str(getattr(result, "stderr", "")),
+                    secrets=(self._settings.cloudflare_api_token,),
+                )
+            )
+            stdout = _summarize_text(
+                _safe_error_text(
+                    str(getattr(result, "stdout", "")),
+                    secrets=(self._settings.cloudflare_api_token,),
+                )
+            )
+            raise RuntimeError(
+                "worker_wrangler_deploy_failed: "
+                f"exit_code={exit_code} stdout={stdout} stderr={stderr}"
+            )
+        return {
+            "status": "applied",
+            "argv": list(getattr(result, "argv", ())),
+            "cwd": str(getattr(result, "cwd", str(project_path)) or project_path),
+            "exit_code": exit_code,
+            "stdout_summary": _summarize_text(
+                _safe_error_text(
+                    str(getattr(result, "stdout", "")),
+                    secrets=(self._settings.cloudflare_api_token,),
+                )
+            ),
+            "stderr_summary": _summarize_text(
+                _safe_error_text(
+                    str(getattr(result, "stderr", "")),
+                    secrets=(self._settings.cloudflare_api_token,),
+                )
+            ),
+            "env_keys": sorted((getattr(result, "env", None) or {}).keys()),
+            "config_path": str(config_path),
         }
 
     def _ensure_worker_route(
@@ -1314,6 +1517,125 @@ def _worker_verification_status(applied: list[dict[str, Any]]) -> str | None:
         if item.get("kind") == "worker_script":
             return str(item.get("verification_status") or "unverified")
     return None
+
+
+def _worker_upload_metadata(
+    *,
+    database_id: str,
+    api_base_url: str,
+    source_app: str,
+) -> dict[str, Any]:
+    bindings: list[dict[str, Any]] = [
+        {
+            "type": "d1",
+            "name": "PREVIEW_DB",
+            "id": database_id,
+        },
+        {
+            "type": "plain_text",
+            "name": "APP_RUNTIME_PROFILE",
+            "text": "preview",
+        },
+        {
+            "type": "plain_text",
+            "name": "API_RUNTIME",
+            "text": "cloudflare_preview",
+        },
+        {
+            "type": "plain_text",
+            "name": "API_BASE_URL",
+            "text": api_base_url,
+        },
+        {
+            "type": "plain_text",
+            "name": "APP_SLUG",
+            "text": source_app,
+        },
+    ]
+    return {
+        "compatibility_date": "2026-07-01",
+        "bindings": bindings,
+    }
+
+
+def _worker_binding_names(metadata: dict[str, Any]) -> list[str]:
+    bindings = metadata.get("bindings")
+    if not isinstance(bindings, list):
+        return []
+    return sorted(
+        str(item.get("name"))
+        for item in bindings
+        if isinstance(item, dict) and item.get("name")
+    )
+
+
+def _write_generated_wrangler_config(
+    *,
+    project_path: Path,
+    account_id: str,
+    worker_name: str,
+    script_path: Path,
+    assets_dir: Path,
+    source_app: str,
+    base_domain: str,
+    worker_route: str,
+    zone_name: str,
+    d1_database_name: str,
+    d1_database_id: str,
+) -> Path:
+    config_path = project_path / ".codex" / "factory" / "cloudflare" / "wrangler.toml"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    content = "\n".join(
+        [
+            "# Generated by deterministic Project Factory init. Do not put secrets here.",
+            f'name = "{_toml_escape(worker_name)}"',
+            f'account_id = "{_toml_escape(account_id)}"',
+            f'main = "{_toml_escape(str(script_path.resolve()))}"',
+            'compatibility_date = "2026-07-01"',
+            "workers_dev = false",
+            "",
+            "routes = [",
+            (
+                f'  {{ pattern = "{_toml_escape(worker_route)}", '
+                f'zone_name = "{_toml_escape(zone_name)}" }}'
+            ),
+            "]",
+            "",
+            "[[d1_databases]]",
+            'binding = "PREVIEW_DB"',
+            f'database_name = "{_toml_escape(d1_database_name)}"',
+            f'database_id = "{_toml_escape(d1_database_id)}"',
+            "",
+            "[assets]",
+            'binding = "ASSETS"',
+            f'directory = "{_toml_escape(str(assets_dir.resolve()))}"',
+            "run_worker_first = true",
+            "",
+            "[vars]",
+            'PREVIEW_ACCESS_MODE = "invite_token"',
+            'APP_RUNTIME_PROFILE = "preview"',
+            'API_RUNTIME = "cloudflare_preview"',
+            f'APP_SLUG = "{_toml_escape(source_app)}"',
+            (
+                'API_BASE_URL = '
+                f'"{_toml_escape(f"https://{base_domain}/{source_app}/api")}"'
+            ),
+            "",
+        ]
+    )
+    config_path.write_text(content, encoding="utf-8")
+    return config_path
+
+
+def _toml_escape(value: str) -> str:
+    return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def _summarize_text(value: str, *, limit: int = 600) -> str:
+    normalized = " ".join(value.split())
+    if len(normalized) <= limit:
+        return normalized
+    return f"{normalized[:limit]}..."
 
 
 def _d1_sql_without_directives(sql: str) -> str:

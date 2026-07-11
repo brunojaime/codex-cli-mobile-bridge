@@ -1723,6 +1723,7 @@ class ProjectFactoryInitService:
         return self._web_preview_deploy_service or WebPreviewDeployService(
             settings=settings,
             client=self._cloudflare_client,
+            command_runner=self._command_runner,
         )
 
     def _record_cloudflare_url_resources(

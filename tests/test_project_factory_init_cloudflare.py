@@ -165,6 +165,17 @@ def test_cloudflare_init_existing_resources_urls_deploy_and_smoke_success(
     assert worker.status == "updated"
     assert route.status == "existing"
     assert d1.status == "existing"
+    metadata = fake.worker_metadata["nienfos-preview-runtime"]
+    assert {"type": "d1", "name": "PREVIEW_DB", "id": "d1-1"} in metadata["bindings"]
+    assert fake.calls.index("list_d1_databases:acct-1") < fake.calls.index(
+        "deploy_worker_script:acct-1:nienfos-preview-runtime:module"
+    )
+    generated_wrangler = project / ".codex/factory/cloudflare/wrangler.toml"
+    assert any(
+        call == ("wrangler", "deploy", "--config", str(generated_wrangler))
+        for call in service._command_runner.calls
+    )
+    assert 'binding = "ASSETS"' in generated_wrangler.read_text()
     assert any(call.startswith("fetch_url:https://preview.nienfos.com/clinica-norte") for call in fake.calls)
     smoke_artifact = smoke.artifacts[0]
     assert smoke_artifact.metadata["checks"][0]["status_code"] == 200
@@ -491,6 +502,7 @@ class _FakeCloudflareClient:
         self.health_d1_bound = health_d1_bound
         self.health_assets_bound = health_assets_bound
         self.worker_scripts: dict[str, str] = {}
+        self.worker_metadata: dict[str, dict[str, Any]] = {}
         self.d1_columns: dict[str, set[str]] = {
             "preview_invites": {
                 "invite_id",
@@ -589,10 +601,12 @@ class _FakeCloudflareClient:
         script_name: str,
         script_content: str,
         worker_format: str = "module",
+        metadata: dict[str, Any] | None = None,
     ) -> CloudflareLookupResult:
         self.calls.append(
             f"deploy_worker_script:{account_id}:{script_name}:{worker_format}"
         )
+        self.worker_metadata[script_name] = metadata or {}
         if self.fail_worker:
             return CloudflareLookupResult(
                 ok=False,
