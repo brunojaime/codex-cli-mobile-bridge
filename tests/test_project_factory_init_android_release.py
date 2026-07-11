@@ -43,6 +43,17 @@ class _FakeRunner:
         del timeout_seconds
         self.calls.append(argv)
         self.envs.append(env)
+        if argv == ("flutter", "create", "--platforms=android", "."):
+            _write_android_build_gradle(Path(cwd or ""))
+            return ProjectFactoryInitCommandResult(
+                argv=argv,
+                cwd=str(cwd) if cwd is not None else None,
+                exit_code=0,
+                stdout="created android\n",
+                started_at="2026-07-11T00:00:00+00:00",
+                completed_at="2026-07-11T00:00:01+00:00",
+                env=env,
+            )
         assert self.responses, f"Unexpected command: {argv}"
         expected, response = self.responses.pop(0)
         if not _argv_matches(argv, expected) and _is_auto_github_actions_config_cmd(argv):
@@ -503,7 +514,8 @@ def test_android_release_blocks_mock_or_local_runtime_contract(
     blocked = service.run_android_preview_release_phases(job.id)
 
     phase = blocked.phase(ProjectFactoryInitPhaseName.ANDROID_PREVIEW_RELEASE)
-    assert runner.calls == []
+    assert _publish_cmd() not in runner.calls
+    assert not any(call[:2] == ("gh", "release") for call in runner.calls)
     assert phase.status == ProjectFactoryInitPhaseStatus.BLOCKED
     assert phase.blockers[0].code in {
         "android_preview_runtime_contract_invalid",
@@ -633,6 +645,33 @@ def _write_generated_keystore(bridge_root: Path) -> None:
     keystore = bridge_root / "secrets/clinica-norte-preview-upload-keystore.jks"
     keystore.parent.mkdir(parents=True, exist_ok=True)
     keystore.write_bytes(b"generated-keystore")
+
+
+def _write_android_build_gradle(mobile: Path) -> None:
+    build_gradle = mobile / "android/app/build.gradle.kts"
+    build_gradle.parent.mkdir(parents=True, exist_ok=True)
+    build_gradle.write_text(
+        "\n".join(
+            [
+                "plugins {",
+                '    id("com.android.application")',
+                '    id("kotlin-android")',
+                '    id("dev.flutter.flutter-gradle-plugin")',
+                "}",
+                "",
+                "android {",
+                '    namespace = "com.example.clinica_norte"',
+                "    buildTypes {",
+                "        release {",
+                '            signingConfig = signingConfigs.getByName("debug")',
+                "        }",
+                "    }",
+                "}",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
 
 
 def _release(

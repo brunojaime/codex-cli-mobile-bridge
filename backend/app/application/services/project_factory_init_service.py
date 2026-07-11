@@ -571,6 +571,18 @@ class ProjectFactoryInitService:
                     )
                 )
 
+            android_evidence, android_blocker = self._ensure_flutter_android_project(
+                target=target,
+                strategy=strategy,
+            )
+            evidence.extend(android_evidence)
+            if android_blocker is not None:
+                return self._block_frontend_baseline(
+                    job,
+                    blocker=android_blocker,
+                    evidence=tuple(evidence),
+                )
+
             verification = _verify_frontend_baseline(
                 target=target,
                 slug=job.slug,
@@ -1895,6 +1907,44 @@ class ProjectFactoryInitService:
             or os.environ.get("CODEX_MOBILE_BRIDGE_ROOT")
         )
         return Path(configured).expanduser().resolve() if configured else Path.cwd()
+
+    def _ensure_flutter_android_project(
+        self,
+        *,
+        target: Path,
+        strategy: str,
+    ) -> tuple[
+        tuple[ProjectFactoryInitCommandEvidence, ...],
+        ProjectFactoryInitBlocker | None,
+    ]:
+        if strategy != "flutter":
+            return (), None
+        mobile = target / "apps/mobile"
+        build_gradle = mobile / "android/app/build.gradle.kts"
+        evidence: list[ProjectFactoryInitCommandEvidence] = []
+        if not build_gradle.is_file():
+            create = self._run(("flutter", "create", "--platforms=android", "."), cwd=mobile)
+            evidence.append(self._evidence(create))
+            if create.exit_code != 0:
+                return (
+                    tuple(evidence),
+                    _frontend_blocker(
+                        code="frontend_flutter_android_create_failed",
+                        message="Flutter Android project creation failed.",
+                        next_action=(
+                            "Install or repair Flutter Android tooling, then rerun "
+                            "deterministic init."
+                        ),
+                    ),
+                )
+            widget_test = mobile / "test/widget_test.dart"
+            if widget_test.is_file() and "MyApp" in widget_test.read_text(
+                encoding="utf-8"
+            ):
+                widget_test.unlink()
+        if build_gradle.is_file():
+            _patch_flutter_android_release_signing(build_gradle)
+        return tuple(evidence), None
 
     def _ensure_android_github_actions_config(
         self,
@@ -4114,6 +4164,55 @@ def _read_preview_signing_files(bridge_root: Path, slug: str) -> dict[str, objec
         values[key] = shlex.split(value)[0] if value else ""
     values["keystore_bytes"] = keystore.read_bytes()
     return values
+
+
+def _patch_flutter_android_release_signing(build_gradle: Path) -> None:
+    text = build_gradle.read_text(encoding="utf-8")
+    if "keystoreProperties" not in text:
+        text = text.replace(
+            "plugins {\n",
+            "import java.util.Properties\n\nplugins {\n",
+            1,
+        )
+        marker = "\nandroid {\n"
+        text = text.replace(
+            marker,
+            (
+                "\nval keystoreProperties = Properties()\n"
+                'val keystorePropertiesFile = rootProject.file("key.properties")\n'
+                "if (keystorePropertiesFile.exists()) {\n"
+                "    keystorePropertiesFile.inputStream().use { "
+                "keystoreProperties.load(it) }\n"
+                "}\n"
+                "\nandroid {\n"
+            ),
+            1,
+        )
+    if 'create("release")' not in text:
+        text = text.replace(
+            "    buildTypes {\n",
+            (
+                "    signingConfigs {\n"
+                '        create("release") {\n'
+                '            keyAlias = keystoreProperties["keyAlias"] as String?\n'
+                '            keyPassword = keystoreProperties["keyPassword"] as String?\n'
+                '            storeFile = keystoreProperties["storeFile"]?.let { '
+                "rootProject.file(it) }\n"
+                '            storePassword = keystoreProperties["storePassword"] as String?\n'
+                '            storeType = (keystoreProperties["storeType"] as String?) '
+                '?: "JKS"\n'
+                "        }\n"
+                "    }\n"
+                "\n"
+                "    buildTypes {\n"
+            ),
+            1,
+        )
+    text = text.replace(
+        'signingConfig = signingConfigs.getByName("debug")',
+        'signingConfig = signingConfigs.getByName("release")',
+    )
+    build_gradle.write_text(text, encoding="utf-8")
 
 
 def _android_blocker(
