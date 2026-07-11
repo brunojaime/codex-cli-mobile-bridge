@@ -221,6 +221,63 @@ def test_cloudflare_init_builds_web_preview_before_deploy(
     ).exists()
 
 
+def test_cloudflare_init_resets_blocked_phase_for_retry(
+    tmp_path: Path,
+) -> None:
+    build_attempts = 0
+
+    def on_run(
+        argv: tuple[str, ...],
+        cwd: str | Path | None,
+        env: dict[str, str] | None,
+    ) -> ProjectFactoryInitCommandResult | None:
+        nonlocal build_attempts
+        if argv != ("bash", "scripts/build_web_preview.sh"):
+            return None
+        build_attempts += 1
+        if build_attempts == 1:
+            return ProjectFactoryInitCommandResult(
+                argv=argv,
+                cwd=str(cwd) if cwd is not None else None,
+                exit_code=1,
+                stderr="flutter build failed\n",
+                env=env,
+            )
+        project = Path(cwd or "")
+        _write_web_build_output(project)
+        return ProjectFactoryInitCommandResult(
+            argv=argv,
+            cwd=str(cwd) if cwd is not None else None,
+            exit_code=0,
+            stdout="web preview build completed\n",
+            env=env,
+        )
+
+    service = _service(
+        tmp_path,
+        runner=_FakeRunner(on_run=on_run),
+        cloudflare_client=_FakeCloudflareClient(resources_exist=True),
+    )
+    project = _generated_project(tmp_path, write_build_output=False)
+    job = _job(service, project)
+
+    blocked = service.run_cloudflare_preview_phases(job.id)
+
+    blocked_phase = blocked.phase(
+        ProjectFactoryInitPhaseName.CLOUDFLARE_PREVIEW_PROVISION
+    )
+    assert blocked_phase.status == ProjectFactoryInitPhaseStatus.BLOCKED
+    assert blocked_phase.blockers[0].code == "cloudflare_web_preview_build_failed"
+
+    service._reset_blocked_phase_for_retry(job.id)
+    completed = service.run_cloudflare_preview_phases(job.id)
+
+    assert build_attempts == 2
+    assert completed.phase(
+        ProjectFactoryInitPhaseName.CLOUDFLARE_PREVIEW_PROVISION
+    ).status == ProjectFactoryInitPhaseStatus.COMPLETED
+
+
 def test_cloudflare_init_create_path_and_d1_migrations_are_persisted(
     tmp_path: Path,
 ) -> None:

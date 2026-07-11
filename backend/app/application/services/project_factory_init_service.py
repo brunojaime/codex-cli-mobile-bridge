@@ -261,6 +261,7 @@ class ProjectFactoryInitService:
         """Run the deterministic init phases for a queued/resumable job."""
 
         try:
+            self._reset_blocked_phase_for_retry(init_job_id)
             job = self.complete_phase(
                 init_job_id,
                 ProjectFactoryInitPhaseName.INIT_PREFLIGHT.value,
@@ -305,6 +306,27 @@ class ProjectFactoryInitService:
                 return self.run_llm_context_pack_phase(failed.id)
             except Exception:
                 return failed
+
+    def _reset_blocked_phase_for_retry(self, init_job_id: str) -> ProjectFactoryInitJob:
+        with self._lock:
+            job = self._require_job(init_job_id)
+            for phase_name in INIT_PHASE_ORDER:
+                phase = job.phase(phase_name)
+                if phase.status != ProjectFactoryInitPhaseStatus.BLOCKED:
+                    continue
+                retry_phase = replace(
+                    phase,
+                    status=ProjectFactoryInitPhaseStatus.QUEUED,
+                    message="",
+                    started_at=None,
+                    completed_at=None,
+                    blockers=(),
+                )
+                updated = job.with_phase(retry_phase).with_derived_completion_state()
+                self._jobs[updated.id] = updated
+                self._persist_job(updated)
+                return updated
+            return job
 
     def get_job(self, init_job_id: str) -> ProjectFactoryInitJob | None:
         with self._lock:
