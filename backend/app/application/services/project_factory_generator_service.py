@@ -11686,11 +11686,18 @@ def _gitignore() -> str:
 !.env.example
 .dart_tool/
 build/
+apps/mobile/.dart_tool/
+apps/mobile/.flutter-plugins-dependencies
+apps/mobile/android/app/src/main/java/io/flutter/plugins/GeneratedPluginRegistrant.java
+apps/mobile/android/local.properties
+apps/mobile/build/
+apps/mobile/pubspec.lock
 apps/mobile/android/upload-keystore.jks
 apps/mobile/android/key.properties
 __pycache__/
 *.pyc
 .codex-bridge/
+.codex/factory/
 """
 
 

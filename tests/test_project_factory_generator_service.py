@@ -597,6 +597,12 @@ def test_generator_writes_executable_publish_script(tmp_path: Path) -> None:
         tmp_path / "clinica-norte/scripts/load_bridge_env.sh"
     ).read_text(encoding="utf-8")
     assert '[[ -n "${!key+x}" ]]' in env_loader_content
+    gitignore_content = (tmp_path / "clinica-norte/.gitignore").read_text(
+        encoding="utf-8"
+    )
+    assert "apps/mobile/.flutter-plugins-dependencies" in gitignore_content
+    assert "apps/mobile/android/local.properties" in gitignore_content
+    assert ".codex/factory/" in gitignore_content
 
     android_release_script = tmp_path / "clinica-norte/scripts/publish_android_release.sh"
     assert android_release_script.is_file()
