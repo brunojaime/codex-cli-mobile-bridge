@@ -9484,7 +9484,7 @@ class _AuthScreenState extends State<AuthScreen> {{
                 const SizedBox(height: 16),
                 if (widget.controller.isMockRuntime) ...[
                   DropdownButtonFormField<String>(
-                    value: _seedRole,
+                    initialValue: _seedRole,
                     decoration: const InputDecoration(labelText: 'Demo role'),
                     items: widget.controller.seedRoles
                         .map((role) => DropdownMenuItem(value: role, child: Text(role)))
