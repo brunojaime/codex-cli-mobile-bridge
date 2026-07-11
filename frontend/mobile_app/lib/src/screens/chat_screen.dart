@@ -1719,6 +1719,11 @@ When you create the Project Factory draft, link each asset with POST /project-fa
           existingDraftId,
           showResumeMessage: true,
         );
+        await _startOrResumeProjectFactoryInitForDraft(
+          client: client,
+          draftId: existingDraftId,
+          sessionId: currentSession.id,
+        );
         return;
       }
       final reusableDraft = await _findReusableProjectFactoryGuidedDraft(
@@ -1892,28 +1897,45 @@ When you create the Project Factory draft, link each asset with POST /project-fa
       draft.draftId,
       showResumeMessage: showResumeMessage,
     );
+    await _startOrResumeProjectFactoryInitForDraft(
+      client: _projectFactoryClient(),
+      draftId: draft.draftId,
+      sessionId: sessionId,
+    );
   }
 
   Future<ProjectFactoryInitJob?> _startOrResumeProjectFactoryInit({
     required ApiClient client,
     required ProjectFactoryDraft draft,
     required SessionDetail session,
+  }) {
+    return _startOrResumeProjectFactoryInitForDraft(
+      client: client,
+      draftId: draft.draftId,
+      sessionId: session.id,
+    );
+  }
+
+  Future<ProjectFactoryInitJob?> _startOrResumeProjectFactoryInitForDraft({
+    required ApiClient client,
+    required String draftId,
+    required String sessionId,
   }) async {
     setState(() {
-      _loadingProjectFactoryInitSessions.add(session.id);
+      _loadingProjectFactoryInitSessions.add(sessionId);
       _projectFactoryInitErrorText = null;
     });
     try {
       final initJob = await client.startProjectFactoryInit(
-        draftId: draft.draftId,
-        chatSessionId: session.id,
+        draftId: draftId,
+        chatSessionId: sessionId,
       );
       if (!mounted) {
         return initJob;
       }
       setState(() {
-        _projectFactoryInitBySession[session.id] = initJob;
-        _loadingProjectFactoryInitSessions.remove(session.id);
+        _projectFactoryInitBySession[sessionId] = initJob;
+        _loadingProjectFactoryInitSessions.remove(sessionId);
       });
       return initJob;
     } catch (error) {
@@ -1921,7 +1943,7 @@ When you create the Project Factory draft, link each asset with POST /project-fa
         return null;
       }
       setState(() {
-        _loadingProjectFactoryInitSessions.remove(session.id);
+        _loadingProjectFactoryInitSessions.remove(sessionId);
         _projectFactoryInitErrorText =
             'Could not start deterministic init. $error';
       });

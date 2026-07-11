@@ -209,7 +209,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(apiClient.createDraftCalls, 1);
-    expect(apiClient.startInitCalls, 1);
+    expect(apiClient.startInitCalls, 2);
     expect(apiClient.sendMessageCalls, 0);
     expect(apiClient.getIntakeCalls, greaterThanOrEqualTo(1));
   });
