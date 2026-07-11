@@ -487,6 +487,69 @@ def test_kanban_preserves_project_factory_history_when_workspace_appears(
     assert before_update_id in history_ids
 
 
+def test_kanban_generated_workspace_context_pack_matches_factory_scope(
+    tmp_path: Path,
+) -> None:
+    projects_root = tmp_path / "projects"
+    project_path = projects_root / "demo"
+    _write_kanban_project(project_path)
+    factory_dir = project_path / ".codex/factory"
+    factory_dir.mkdir(parents=True)
+    (factory_dir / "init-result.json").write_text(
+        json.dumps(
+            {
+                "kind": "codex.projectFactoryInitResult",
+                "draftId": "draft-1",
+                "initJobId": "job-1",
+                "sourceApp": "demo",
+                "workspacePath": str(project_path),
+                "workbenchScopeId": f"workspace:{project_path}",
+                "blockedWithContext": True,
+                "resources": {
+                    "cloudflarePreview": {
+                        "previewUrl": "https://preview.nienfos.com/demo",
+                        "apiBaseUrl": "https://preview.nienfos.com/demo/api",
+                    }
+                },
+            },
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+    (factory_dir / "llm-start-context.md").write_text(
+        "# Deterministic Init Context\n",
+        encoding="utf-8",
+    )
+    project_service = SddProjectService(projects_root=str(projects_root))
+    service = SddWorkbenchKanbanService(
+        projects_root=projects_root,
+        project_factory_service=_FakeProjectFactoryService(target_path=project_path),
+    )
+
+    payload = service.build_board(
+        workspace=project_path,
+        project=project_service.get_project(str(project_path)),
+        draft_id="draft-1",
+        job_id="job-1",
+    ).payload
+
+    cards = {card["id"]: card for card in payload["board"]["cards"]}
+    assert payload["scope"]["workspacePath"] == str(project_path.resolve())
+    assert cards["spec-task:001-demo:T002"]["column"] == "ready"
+    phase_card = cards["project-factory:job:job-1:phase:android_preview_release"]
+    assert phase_card["column"] == "blocked"
+    assert phase_card["manualCommands"] == [
+        "bash",
+        "scripts/publish_android_preview_release.sh",
+    ]
+    assert {
+        "fromScope": "project-factory:job:job-1",
+        "toScope": f"workspace:{project_path}",
+        "status": "mapped",
+        "marker": "generated_repository_exists",
+    } in payload["continuity"]
+
+
 class _FakeProjectFactoryService:
     def __init__(
         self,

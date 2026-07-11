@@ -547,6 +547,123 @@ class InitialPreviewRelease {
   String get mockDemoLabel => mockOrDemo ? 'Mock/demo' : 'Real preview data';
 }
 
+class ProjectFactoryInitPhase {
+  const ProjectFactoryInitPhase({
+    required this.name,
+    required this.status,
+    required this.message,
+    required this.blockers,
+    required this.commandEvidence,
+    required this.artifacts,
+    this.startedAt,
+    this.completedAt,
+  });
+
+  final String name;
+  final String status;
+  final String message;
+  final String? startedAt;
+  final String? completedAt;
+  final List<Map<String, dynamic>> blockers;
+  final List<Map<String, dynamic>> commandEvidence;
+  final List<Map<String, dynamic>> artifacts;
+
+  factory ProjectFactoryInitPhase.fromJson(Map<String, dynamic> json) {
+    return ProjectFactoryInitPhase(
+      name: json['name'] as String? ?? '',
+      status: json['status'] as String? ?? 'pending',
+      message: json['message'] as String? ?? '',
+      startedAt: json['startedAt'] as String? ?? json['started_at'] as String?,
+      completedAt:
+          json['completedAt'] as String? ?? json['completed_at'] as String?,
+      blockers: _mapList(json['blockers']),
+      commandEvidence:
+          _mapList(json['commandEvidence'] ?? json['command_evidence']),
+      artifacts: _mapList(json['artifacts']),
+    );
+  }
+}
+
+class ProjectFactoryInitJob {
+  const ProjectFactoryInitJob({
+    required this.initJobId,
+    required this.draftId,
+    required this.createdAt,
+    required this.updatedAt,
+    required this.status,
+    required this.currentPhase,
+    required this.phases,
+    required this.remoteResources,
+    required this.blockers,
+    required this.readyForBusinessLlm,
+    required this.canContinueWithBlockedContext,
+    this.chatSessionId,
+    this.projectPath,
+    this.workspacePath,
+    this.generatedWorkspacePath,
+    this.contextPack,
+  });
+
+  final String initJobId;
+  final String draftId;
+  final String? chatSessionId;
+  final String createdAt;
+  final String updatedAt;
+  final String status;
+  final String currentPhase;
+  final String? projectPath;
+  final String? workspacePath;
+  final String? generatedWorkspacePath;
+  final List<ProjectFactoryInitPhase> phases;
+  final List<Map<String, dynamic>> remoteResources;
+  final Map<String, dynamic>? contextPack;
+  final List<Map<String, dynamic>> blockers;
+  final bool readyForBusinessLlm;
+  final bool canContinueWithBlockedContext;
+
+  bool get isReady => status == 'ready';
+  bool get isBlockedWithContext => status == 'blocked_with_context';
+
+  factory ProjectFactoryInitJob.fromJson(Map<String, dynamic> json) {
+    return ProjectFactoryInitJob(
+      initJobId:
+          json['initJobId'] as String? ?? json['init_job_id'] as String? ?? '',
+      draftId: json['draftId'] as String? ?? json['draft_id'] as String? ?? '',
+      chatSessionId: json['chatSessionId'] as String? ??
+          json['chat_session_id'] as String?,
+      createdAt:
+          json['createdAt'] as String? ?? json['created_at'] as String? ?? '',
+      updatedAt:
+          json['updatedAt'] as String? ?? json['updated_at'] as String? ?? '',
+      status: json['status'] as String? ?? 'queued',
+      currentPhase: json['currentPhase'] as String? ??
+          json['current_phase'] as String? ??
+          '',
+      projectPath:
+          json['projectPath'] as String? ?? json['project_path'] as String?,
+      workspacePath:
+          json['workspacePath'] as String? ?? json['workspace_path'] as String?,
+      generatedWorkspacePath: json['generatedWorkspacePath'] as String? ??
+          json['generated_workspace_path'] as String?,
+      phases: _mapList(json['phases'])
+          .map(ProjectFactoryInitPhase.fromJson)
+          .toList(growable: false),
+      remoteResources:
+          _mapList(json['remoteResources'] ?? json['remote_resources']),
+      contextPack:
+          _nullableMapFromJson(json['contextPack'] ?? json['context_pack']),
+      blockers: _mapList(json['blockers']),
+      readyForBusinessLlm: json['readyForBusinessLlm'] as bool? ??
+          json['ready_for_business_llm'] as bool? ??
+          false,
+      canContinueWithBlockedContext:
+          json['canContinueWithBlockedContext'] as bool? ??
+              json['can_continue_with_blocked_context'] as bool? ??
+              false,
+    );
+  }
+}
+
 class ProjectFactoryJob {
   const ProjectFactoryJob({
     required this.jobId,

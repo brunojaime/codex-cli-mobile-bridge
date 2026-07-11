@@ -1,0 +1,24 @@
+id: 017-new-project-deterministic-init-pipeline
+slug: 017-new-project-deterministic-init-pipeline
+title: New Project Deterministic Init Pipeline
+description: Change New Project so the button first runs a deterministic baseline init pipeline that creates the repo, preview infrastructure, app baseline, release wiring, Workbench, feedback, and first-chat LLM context before business work starts.
+status: completed
+last_run_state: plan_8_completed
+generated:
+  title: false
+  description: false
+  user_pinned_title: true
+  user_pinned_description: true
+tasks:
+  total: 41
+  completed: 41
+  pending: 0
+diagrams:
+  total: 0
+  items: {}
+available_files:
+  - spec.md
+  - plan.md
+  - tasks.md
+  - tree.json
+  - traceability.yaml

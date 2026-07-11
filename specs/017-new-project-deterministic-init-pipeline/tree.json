@@ -1,0 +1,415 @@
+{
+  "spec": {
+    "file": "spec.md"
+  },
+  "plans": [
+    {
+      "id": "plan-1",
+      "number": 1,
+      "title": "Deterministic Init Contract And Idempotent State Machine",
+      "status": "completed",
+      "description": "Define the deterministic init domain model, stable phases, idempotency, remote resource identities, and completion states.",
+      "file": "plans/01-deterministic-init-contract-and-idempotent-state-machine/plan.md",
+      "tasks": [
+        {
+          "id": "plan-1-task-1",
+          "number": 1,
+          "title": "T001 Define persisted init job, phase, command evidence, blocker, artifact, and context-pack schemas",
+          "status": "done",
+          "description": "Create stable backend payloads and persistence records for deterministic init.",
+          "file": "tasks/plan-1-task-1/task.md"
+        },
+        {
+          "id": "plan-1-task-2",
+          "number": 2,
+          "title": "T002 Define stable deterministic init phase names and idempotency rules",
+          "status": "done",
+          "description": "Make each init phase resumable and safe to retry.",
+          "file": "tasks/plan-1-task-2/task.md"
+        },
+        {
+          "id": "plan-1-task-3",
+          "number": 3,
+          "title": "T003 Define draft, chat, init job, generated workspace, and Workbench scope relationships",
+          "status": "done",
+          "description": "Preserve continuity from button press through generated workspace.",
+          "file": "tasks/plan-1-task-3/task.md"
+        },
+        {
+          "id": "plan-1-task-4",
+          "number": 4,
+          "title": "T004 Define remote-resource identity model for GitHub repo, Cloudflare Worker, route, D1, release, and installable app",
+          "status": "done",
+          "description": "Persist the external resource identities created or verified by init.",
+          "file": "tasks/plan-1-task-4/task.md"
+        },
+        {
+          "id": "plan-1-task-5",
+          "number": 5,
+          "title": "T005 Define init completion states: `ready`, `blocked_with_context`, `failed`, `cancelled`, and `resumable`",
+          "status": "done",
+          "description": "Distinguish success, external blockers, failure, cancellation, and retryable state.",
+          "file": "tasks/plan-1-task-5/task.md"
+        }
+      ]
+    },
+    {
+      "id": "plan-2",
+      "number": 2,
+      "title": "Deterministic New Project Button Creates Baseline And First Chat",
+      "status": "completed",
+      "description": "Change the New Project button to open the first chat, start or resume init, show progress, and gate business LLM work.",
+      "file": "plans/02-deterministic-new-project-button-creates-baseline-and-first-chat/plan.md",
+      "tasks": [
+        {
+          "id": "plan-2-task-1",
+          "number": 1,
+          "title": "T006 Change New Project button flow to create or focus the first New Project chat before business LLM work",
+          "status": "done",
+          "description": "Make chat creation the primary surface for init and later business work.",
+          "file": "tasks/plan-2-task-1/task.md"
+        },
+        {
+          "id": "plan-2-task-2",
+          "number": 2,
+          "title": "T007 Start or resume deterministic init from the New Project button and link it to the draft/chat",
+          "status": "done",
+          "description": "Connect button, draft, chat, and init runner.",
+          "file": "tasks/plan-2-task-2/task.md"
+        },
+        {
+          "id": "plan-2-task-3",
+          "number": 3,
+          "title": "T008 Render init phase progress, blockers, commands, and retry actions in the chat timeline",
+          "status": "done",
+          "description": "Expose deterministic init progress where the user starts New Project.",
+          "file": "tasks/plan-2-task-3/task.md"
+        },
+        {
+          "id": "plan-2-task-4",
+          "number": 4,
+          "title": "T009 Block business LLM actions until init is `ready` or explicitly continued with blocked context",
+          "status": "done",
+          "description": "Prevent product prompts from starting before baseline context exists.",
+          "file": "tasks/plan-2-task-4/task.md"
+        },
+        {
+          "id": "plan-2-task-5",
+          "number": 5,
+          "title": "T010 Preserve New Project chat, draft, init job, and workspace continuity across app restarts",
+          "status": "done",
+          "description": "Recover live and completed init state without losing the first chat.",
+          "file": "tasks/plan-2-task-5/task.md"
+        }
+      ]
+    },
+    {
+      "id": "plan-3",
+      "number": 3,
+      "title": "Deterministic GitHub Repository Creation And Baseline Push",
+      "status": "completed",
+      "description": "Move repository creation, origin setup, baseline commit, push, and recovery payloads into deterministic init.",
+      "file": "plans/03-deterministic-github-repository-creation-and-baseline-push/plan.md",
+      "tasks": [
+        {
+          "id": "plan-3-task-1",
+          "number": 1,
+          "title": "T011 Add GitHub preflight for `gh` auth, owner/repo availability, permissions, branch policy, and push capability",
+          "status": "done",
+          "description": "Detect GitHub readiness before remote effects.",
+          "file": "tasks/plan-3-task-1/task.md"
+        },
+        {
+          "id": "plan-3-task-2",
+          "number": 2,
+          "title": "T012 Implement deterministic GitHub repo create-or-verify behavior with no duplicate repos",
+          "status": "done",
+          "description": "Create or verify the repo idempotently.",
+          "file": "tasks/plan-3-task-2/task.md"
+        },
+        {
+          "id": "plan-3-task-3",
+          "number": 3,
+          "title": "T013 Implement origin setup and baseline branch push as an init phase",
+          "status": "done",
+          "description": "Push the generated baseline before business LLM work.",
+          "file": "tasks/plan-3-task-3/task.md"
+        },
+        {
+          "id": "plan-3-task-4",
+          "number": 4,
+          "title": "T014 Persist GitHub repo URL, branch, remote status, and command evidence",
+          "status": "done",
+          "description": "Expose exact repository state to UI and LLM context.",
+          "file": "tasks/plan-3-task-4/task.md"
+        },
+        {
+          "id": "plan-3-task-5",
+          "number": 5,
+          "title": "T015 Add blocked GitHub recovery payloads with exact commands and missing configuration",
+          "status": "done",
+          "description": "Make GitHub failures recoverable without hiding remote gaps.",
+          "file": "tasks/plan-3-task-5/task.md"
+        }
+      ]
+    },
+    {
+      "id": "plan-4",
+      "number": 4,
+      "title": "Deterministic Cloudflare Preview URL Worker D1 Migrations And Smoke Tests",
+      "status": "completed",
+      "description": "Move preview URL calculation, Worker, route, D1, migrations, deploy, and smoke verification into deterministic init.",
+      "file": "plans/04-deterministic-cloudflare-preview-url-worker-d1-migrations-and-smoke-tests/plan.md",
+      "tasks": [
+        {
+          "id": "plan-4-task-1",
+          "number": 1,
+          "title": "T016 Add Cloudflare preflight for wrangler, account, zone, route, Worker, D1, and required secrets",
+          "status": "done",
+          "description": "Detect Cloudflare readiness before remote effects.",
+          "file": "tasks/plan-4-task-1/task.md"
+        },
+        {
+          "id": "plan-4-task-2",
+          "number": 2,
+          "title": "T017 Implement deterministic preview URL and API URL calculation for `preview.nienfos.com/{slug}`",
+          "status": "done",
+          "description": "Make preview URLs a default structured init output.",
+          "file": "tasks/plan-4-task-2/task.md"
+        },
+        {
+          "id": "plan-4-task-3",
+          "number": 3,
+          "title": "T018 Implement Cloudflare Worker, route, assets, and non-secret env create-or-verify behavior",
+          "status": "done",
+          "description": "Provision Cloudflare preview resources idempotently.",
+          "file": "tasks/plan-4-task-3/task.md"
+        },
+        {
+          "id": "plan-4-task-4",
+          "number": 4,
+          "title": "T019 Implement D1 database create-or-verify and baseline migration application",
+          "status": "done",
+          "description": "Provision the real preview data path before business LLM work.",
+          "file": "tasks/plan-4-task-4/task.md"
+        },
+        {
+          "id": "plan-4-task-5",
+          "number": 5,
+          "title": "T020 Implement Cloudflare preview deploy verification for Worker updates, protected routes, static assets, cache headers, and MIME types",
+          "status": "done",
+          "description": "Verify deployed preview behavior after apply.",
+          "file": "tasks/plan-4-task-5/task.md"
+        },
+        {
+          "id": "plan-4-task-6",
+          "number": 6,
+          "title": "T021 Implement web preview and Preview API smoke phases with persisted public evidence",
+          "status": "done",
+          "description": "Persist smoke evidence for UI and LLM context.",
+          "file": "tasks/plan-4-task-6/task.md"
+        }
+      ]
+    },
+    {
+      "id": "plan-5",
+      "number": 5,
+      "title": "Deterministic Flutter Workbench Feedback Updater And Runtime Baseline",
+      "status": "completed",
+      "description": "Move Flutter baseline creation, Workbench, feedback, updater, runtime profile, and strategy limits into deterministic init.",
+      "file": "plans/05-deterministic-flutter-workbench-feedback-updater-and-runtime-baseline/plan.md",
+      "tasks": [
+        {
+          "id": "plan-5-task-1",
+          "number": 1,
+          "title": "T022 Generate or verify Flutter baseline app, Android project, web target, and runtime profile wiring before business LLM work",
+          "status": "done",
+          "description": "Make Flutter app structure a deterministic init output.",
+          "file": "tasks/plan-5-task-1/task.md"
+        },
+        {
+          "id": "plan-5-task-2",
+          "number": 2,
+          "title": "T023 Wire Workbench/SDD metadata and Bridge-owned Workbench discovery during init",
+          "status": "done",
+          "description": "Make Workbench visibility available before product work.",
+          "file": "tasks/plan-5-task-2/task.md"
+        },
+        {
+          "id": "plan-5-task-3",
+          "number": 3,
+          "title": "T024 Wire Codex developer feedback template, source app identity, updater Bridge URL, and feedback queue routing during init",
+          "status": "done",
+          "description": "Make feedback capture and routing baseline infrastructure.",
+          "file": "tasks/plan-5-task-3/task.md"
+        },
+        {
+          "id": "plan-5-task-4",
+          "number": 4,
+          "title": "T025 Validate that preview runtime uses real Cloudflare Preview API/D1 and does not use mock/demo or placeholder URLs",
+          "status": "done",
+          "description": "Enforce real preview data paths during init.",
+          "file": "tasks/plan-5-task-4/task.md"
+        },
+        {
+          "id": "plan-5-task-5",
+          "number": 5,
+          "title": "T026 Enforce frontend strategy capability limits before Android/installable phases",
+          "status": "done",
+          "description": "Avoid claiming unsupported deliverables for non-installable strategies.",
+          "file": "tasks/plan-5-task-5/task.md"
+        }
+      ]
+    },
+    {
+      "id": "plan-6",
+      "number": 6,
+      "title": "Deterministic Android Preview Release And Bridge Installable Registration",
+      "status": "completed",
+      "description": "Move Android preview APK, GitHub prerelease, updater metadata, and Bridge installable registration into deterministic init.",
+      "file": "plans/06-deterministic-android-preview-release-and-bridge-installable-registration/plan.md",
+      "tasks": [
+        {
+          "id": "plan-6-task-1",
+          "number": 1,
+          "title": "T027 Build Android preview APK for Flutter/installable strategies against the real preview API",
+          "status": "done",
+          "description": "Build installable preview artifacts from deterministic init state.",
+          "file": "tasks/plan-6-task-1/task.md"
+        },
+        {
+          "id": "plan-6-task-2",
+          "number": 2,
+          "title": "T028 Create or verify GitHub prerelease `android-preview-v*` with APK and updater metadata",
+          "status": "done",
+          "description": "Publish the Initial Preview Baseline release artifact.",
+          "file": "tasks/plan-6-task-2/task.md"
+        },
+        {
+          "id": "plan-6-task-3",
+          "number": 3,
+          "title": "T029 Register or update Bridge installable app entry for supported strategies",
+          "status": "done",
+          "description": "Make the generated baseline discoverable in Bridge.",
+          "file": "tasks/plan-6-task-3/task.md"
+        },
+        {
+          "id": "plan-6-task-4",
+          "number": 4,
+          "title": "T030 Validate APK metadata, release metadata, Bridge installable discovery, and no mock/demo flags",
+          "status": "done",
+          "description": "Verify preview release truthfulness and real backend config.",
+          "file": "tasks/plan-6-task-4/task.md"
+        },
+        {
+          "id": "plan-6-task-5",
+          "number": 5,
+          "title": "T031 Persist Android release and installable-app blockers with exact retry commands",
+          "status": "done",
+          "description": "Report release blockers without claiming installability.",
+          "file": "tasks/plan-6-task-5/task.md"
+        }
+      ]
+    },
+    {
+      "id": "plan-7",
+      "number": 7,
+      "title": "Deterministic LLM Context Pack For The First Project Chat",
+      "status": "completed",
+      "description": "Write init-result and LLM start context from structured init state, attach it to the first chat, and feed it to business prompts.",
+      "file": "plans/07-deterministic-llm-context-pack-for-the-first-project-chat/plan.md",
+      "tasks": [
+        {
+          "id": "plan-7-task-1",
+          "number": 1,
+          "title": "T032 Write `.codex/factory/init-result.json` from structured init state",
+          "status": "done",
+          "description": "Persist machine-readable init output in the generated project.",
+          "file": "tasks/plan-7-task-1/task.md"
+        },
+        {
+          "id": "plan-7-task-2",
+          "number": 2,
+          "title": "T033 Write `.codex/factory/llm-start-context.md` with deterministic project context and LLM business-phase rules",
+          "status": "done",
+          "description": "Create the default starting context for product work.",
+          "file": "tasks/plan-7-task-2/task.md"
+        },
+        {
+          "id": "plan-7-task-3",
+          "number": 3,
+          "title": "T034 Attach the LLM context pack to the first New Project chat/session",
+          "status": "done",
+          "description": "Make the first chat ready to continue with business work.",
+          "file": "tasks/plan-7-task-3/task.md"
+        },
+        {
+          "id": "plan-7-task-4",
+          "number": 4,
+          "title": "T035 Ensure business generator/reviewer prompts consume init result instead of repeating deterministic setup work",
+          "status": "done",
+          "description": "Prevent LLM prompts from duplicating init responsibilities.",
+          "file": "tasks/plan-7-task-4/task.md"
+        },
+        {
+          "id": "plan-7-task-5",
+          "number": 5,
+          "title": "T038 Add backend tests for context pack contents, hashes, chat linking, and workspace mapping",
+          "status": "done",
+          "description": "Verify context pack determinism and continuity.",
+          "file": "tasks/plan-7-task-5/task.md"
+        }
+      ]
+    },
+    {
+      "id": "plan-8",
+      "number": 8,
+      "title": "Deterministic Init Observability Recovery Tests And Guardrails",
+      "status": "completed",
+      "description": "Add test coverage, recovery behavior, UI verification, Workbench continuity, and release guardrails for deterministic init.",
+      "file": "plans/08-deterministic-init-observability-recovery-tests-and-guardrails/plan.md",
+      "tasks": [
+        {
+          "id": "plan-8-task-1",
+          "number": 1,
+          "title": "T036 Add backend tests for init state transitions, idempotency, recovery, and phase ordering",
+          "status": "done",
+          "description": "Verify deterministic init service behavior.",
+          "file": "tasks/plan-8-task-1/task.md"
+        },
+        {
+          "id": "plan-8-task-2",
+          "number": 2,
+          "title": "T037 Add backend tests for GitHub and Cloudflare command construction, blocked recovery, and secret redaction",
+          "status": "done",
+          "description": "Protect remote command safety and logs.",
+          "file": "tasks/plan-8-task-2/task.md"
+        },
+        {
+          "id": "plan-8-task-3",
+          "number": 3,
+          "title": "T039 Add Flutter tests for New Project button behavior, init progress UI, blocked states, retry, and first-chat continuity",
+          "status": "done",
+          "description": "Verify the mobile New Project experience.",
+          "file": "tasks/plan-8-task-3/task.md"
+        },
+        {
+          "id": "plan-8-task-4",
+          "number": 4,
+          "title": "T040 Add release guardrail tests for preview real-data policy, no mock/demo defaults, Android prerelease tags, and Bridge installable registration",
+          "status": "done",
+          "description": "Enforce release data policy during init.",
+          "file": "tasks/plan-8-task-4/task.md"
+        },
+        {
+          "id": "plan-8-task-5",
+          "number": 5,
+          "title": "T041 Add Workbench/Kanban continuity tests for draft/init/job scope moving into the generated workspace",
+          "status": "done",
+          "description": "Verify Workbench continuity from init through generated project.",
+          "file": "tasks/plan-8-task-5/task.md"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,129 @@
+spec_id: 017-new-project-deterministic-init-pipeline
+title: New Project Deterministic Init Pipeline
+status: in_progress
+evidence:
+  - plan: Deterministic Init Contract And Idempotent State Machine
+    status: completed
+    files:
+      - backend/app/application/services/project_factory_init_service.py
+      - tests/test_project_factory_init_service.py
+    tests:
+      - .venv/bin/python -m pytest tests/test_project_factory_init_service.py -q
+      - .venv/bin/python -m ruff check backend/app/application/services/project_factory_init_service.py tests/test_project_factory_init_service.py
+  - plan: Deterministic New Project Button Creates Baseline And First Chat
+    status: completed
+    files:
+      - backend/app/container.py
+      - backend/app/api/routes.py
+      - backend/app/api/schemas.py
+      - frontend/mobile_app/lib/src/models/project_factory.dart
+      - frontend/mobile_app/lib/src/services/api_client.dart
+      - frontend/mobile_app/lib/src/screens/chat_screen.dart
+      - tests/test_project_factory_api.py
+      - frontend/mobile_app/test/api_client_test.dart
+      - frontend/mobile_app/test/guided_project_intake_test.dart
+    tests:
+      - .venv/bin/python -m pytest tests/test_project_factory_init_service.py tests/test_project_factory_api.py::test_project_factory_deterministic_init_starts_resumes_and_persists -q
+      - .venv/bin/python -m ruff check backend/app/application/services/project_factory_init_service.py backend/app/container.py backend/app/api/routes.py backend/app/api/schemas.py tests/test_project_factory_init_service.py tests/test_project_factory_api.py
+      - flutter test test/guided_project_intake_test.dart --plain-name "New Project opens persisted guided intake and live answers"
+      - flutter test test/api_client_test.dart --plain-name "project factory init API starts and fetches deterministic init job"
+      - dart analyze lib/src/models/project_factory.dart lib/src/services/api_client.dart lib/src/screens/chat_screen.dart test/api_client_test.dart test/guided_project_intake_test.dart
+  - plan: Deterministic GitHub Repository Creation And Baseline Push
+    status: completed
+    files:
+      - backend/app/domain/entities/project_factory_init.py
+      - backend/app/application/services/project_factory_init_service.py
+      - backend/app/infrastructure/config/settings.py
+      - backend/app/container.py
+      - backend/app/api/routes.py
+      - tests/test_project_factory_init_contract.py
+      - tests/test_project_factory_init_service.py
+      - tests/test_project_factory_init_github.py
+      - tests/test_project_factory_api.py
+    tests:
+      - .venv/bin/python -m pytest tests/test_project_factory_init_contract.py tests/test_project_factory_init_service.py tests/test_project_factory_init_github.py tests/test_project_factory_api.py::test_project_factory_deterministic_init_starts_resumes_and_persists -q
+      - .venv/bin/python -m ruff check backend/app/application/services/project_factory_init_service.py backend/app/infrastructure/config/settings.py backend/app/container.py backend/app/api/routes.py tests/test_project_factory_init_service.py tests/test_project_factory_init_github.py tests/test_project_factory_init_contract.py
+      - git diff --check
+  - plan: Deterministic Cloudflare Preview URL Worker D1 Migrations And Smoke Tests
+    status: completed
+    files:
+      - backend/app/application/services/project_factory_init_service.py
+      - backend/app/container.py
+      - tests/test_project_factory_init_cloudflare.py
+      - specs/017-new-project-deterministic-init-pipeline/tasks.md
+      - specs/017-new-project-deterministic-init-pipeline/plan.md
+      - specs/017-new-project-deterministic-init-pipeline/tree.json
+      - specs/017-new-project-deterministic-init-pipeline/metadata.yaml
+      - specs/017-new-project-deterministic-init-pipeline/traceability.yaml
+    tests:
+      - .venv/bin/python -m pytest tests/test_project_factory_init_contract.py tests/test_project_factory_init_service.py tests/test_project_factory_init_github.py tests/test_project_factory_init_cloudflare.py tests/test_project_factory_api.py::test_project_factory_deterministic_init_starts_resumes_and_persists tests/test_cloudflare_preview_doctor.py tests/test_web_preview_deploy_service.py -q
+      - .venv/bin/python -m ruff check backend/app/domain/entities/project_factory_init.py backend/app/application/services/project_factory_init_service.py backend/app/infrastructure/config/settings.py backend/app/container.py backend/app/api/routes.py backend/app/api/schemas.py tests/test_project_factory_init_contract.py tests/test_project_factory_init_service.py tests/test_project_factory_init_github.py tests/test_project_factory_init_cloudflare.py tests/test_project_factory_api.py tests/test_cloudflare_preview_doctor.py tests/test_web_preview_deploy_service.py
+      - git diff --check
+  - plan: Deterministic Flutter Workbench Feedback Updater And Runtime Baseline
+    status: completed
+    files:
+      - backend/app/application/services/project_factory_init_service.py
+      - tests/test_project_factory_init_baseline.py
+      - specs/017-new-project-deterministic-init-pipeline/tasks.md
+      - specs/017-new-project-deterministic-init-pipeline/plan.md
+      - specs/017-new-project-deterministic-init-pipeline/tree.json
+      - specs/017-new-project-deterministic-init-pipeline/metadata.yaml
+      - specs/017-new-project-deterministic-init-pipeline/traceability.yaml
+    tests:
+      - .venv/bin/python -m pytest tests/test_project_factory_init_contract.py tests/test_project_factory_init_service.py tests/test_project_factory_init_github.py tests/test_project_factory_init_cloudflare.py tests/test_project_factory_init_baseline.py tests/test_project_factory_api.py::test_project_factory_deterministic_init_starts_resumes_and_persists tests/test_project_factory_generator_service.py tests/test_sdd_workbench_kanban.py tests/test_sdd_workbench_view.py tests/test_developer_feedback_integration.py -q
+      - .venv/bin/python -m ruff check backend/app/domain/entities/project_factory_init.py backend/app/application/services/project_factory_init_service.py backend/app/infrastructure/config/settings.py backend/app/container.py backend/app/api/routes.py backend/app/api/schemas.py tests/test_project_factory_init_contract.py tests/test_project_factory_init_service.py tests/test_project_factory_init_github.py tests/test_project_factory_init_cloudflare.py tests/test_project_factory_init_baseline.py tests/test_project_factory_api.py tests/test_project_factory_generator_service.py tests/test_sdd_workbench_kanban.py tests/test_sdd_workbench_view.py tests/test_developer_feedback_integration.py
+      - git diff --check
+  - plan: Deterministic Android Preview Release And Bridge Installable Registration
+    status: completed
+    files:
+      - backend/app/application/services/project_factory_init_service.py
+      - tests/test_project_factory_init_android_release.py
+      - specs/017-new-project-deterministic-init-pipeline/tasks.md
+      - specs/017-new-project-deterministic-init-pipeline/plan.md
+      - specs/017-new-project-deterministic-init-pipeline/tree.json
+      - specs/017-new-project-deterministic-init-pipeline/metadata.yaml
+      - specs/017-new-project-deterministic-init-pipeline/traceability.yaml
+    tests:
+      - .venv/bin/python -m pytest tests/test_project_factory_init_android_release.py -q
+      - .venv/bin/python -m pytest tests/test_project_factory_init_contract.py tests/test_project_factory_init_service.py tests/test_project_factory_init_github.py tests/test_project_factory_init_cloudflare.py tests/test_project_factory_init_baseline.py tests/test_project_factory_init_android_release.py tests/test_app_updates.py tests/test_project_factory_job_runner.py tests/test_project_factory_api.py::test_project_factory_deterministic_init_starts_resumes_and_persists -q
+      - .venv/bin/python -m pytest tests/test_project_factory_generator_service.py -k "android_preview or installable_app_contract or preview_release or register_installable_app" -q
+      - .venv/bin/python -m ruff check backend/app/application/services/project_factory_init_service.py tests/test_project_factory_init_android_release.py
+      - git diff --check
+  - plan: Deterministic LLM Context Pack For The First Project Chat
+    status: completed
+    files:
+      - backend/app/application/services/project_factory_init_service.py
+      - backend/app/application/services/project_factory_job_runner.py
+      - backend/app/container.py
+      - tests/test_project_factory_init_context_pack.py
+      - specs/017-new-project-deterministic-init-pipeline/tasks.md
+      - specs/017-new-project-deterministic-init-pipeline/plan.md
+      - specs/017-new-project-deterministic-init-pipeline/tree.json
+      - specs/017-new-project-deterministic-init-pipeline/metadata.yaml
+      - specs/017-new-project-deterministic-init-pipeline/traceability.yaml
+    tests:
+      - .venv/bin/python -m pytest tests/test_project_factory_init_context_pack.py -q
+      - .venv/bin/python -m pytest tests/test_project_factory_init_contract.py tests/test_project_factory_init_service.py tests/test_project_factory_init_context_pack.py tests/test_project_factory_api.py::test_project_factory_deterministic_init_starts_resumes_and_persists tests/test_project_factory_job_runner.py -q
+      - .venv/bin/python -m pytest tests/test_project_factory_init_contract.py tests/test_project_factory_init_service.py tests/test_project_factory_init_github.py tests/test_project_factory_init_cloudflare.py tests/test_project_factory_init_baseline.py tests/test_project_factory_init_android_release.py tests/test_project_factory_init_context_pack.py tests/test_project_factory_api.py::test_project_factory_deterministic_init_starts_resumes_and_persists tests/test_project_factory_job_runner.py -q
+      - .venv/bin/python -m ruff check backend/app/application/services/project_factory_init_service.py backend/app/application/services/project_factory_job_runner.py backend/app/container.py tests/test_project_factory_init_context_pack.py
+      - git diff --check
+  - plan: Deterministic Init Observability Recovery Tests And Guardrails
+    status: completed
+    files:
+      - tests/test_project_factory_init_observability_guardrails.py
+      - tests/test_sdd_workbench_kanban.py
+      - frontend/mobile_app/test/guided_project_intake_test.dart
+      - specs/017-new-project-deterministic-init-pipeline/tasks.md
+      - specs/017-new-project-deterministic-init-pipeline/plan.md
+      - specs/017-new-project-deterministic-init-pipeline/tree.json
+      - specs/017-new-project-deterministic-init-pipeline/metadata.yaml
+      - specs/017-new-project-deterministic-init-pipeline/traceability.yaml
+    tests:
+      - .venv/bin/python -m pytest tests/test_project_factory_init_observability_guardrails.py tests/test_sdd_workbench_kanban.py -q
+      - .venv/bin/python -m pytest tests/test_project_factory_init_contract.py tests/test_project_factory_init_service.py tests/test_project_factory_init_github.py tests/test_project_factory_init_cloudflare.py tests/test_project_factory_init_baseline.py tests/test_project_factory_init_android_release.py tests/test_project_factory_init_context_pack.py tests/test_project_factory_init_observability_guardrails.py tests/test_project_factory_api.py::test_project_factory_deterministic_init_starts_resumes_and_persists tests/test_project_factory_job_runner.py tests/test_project_factory_generator_service.py tests/test_app_updates.py tests/test_sdd_workbench_kanban.py tests/test_sdd_workbench_view.py -q
+      - .venv/bin/python -m ruff check backend/app/domain/entities/project_factory_init.py backend/app/application/services/project_factory_init_service.py backend/app/application/services/project_factory_job_runner.py backend/app/container.py tests/test_project_factory_init_contract.py tests/test_project_factory_init_service.py tests/test_project_factory_init_github.py tests/test_project_factory_init_cloudflare.py tests/test_project_factory_init_baseline.py tests/test_project_factory_init_android_release.py tests/test_project_factory_init_context_pack.py tests/test_project_factory_init_observability_guardrails.py tests/test_project_factory_api.py tests/test_project_factory_job_runner.py tests/test_project_factory_generator_service.py tests/test_app_updates.py tests/test_sdd_workbench_kanban.py tests/test_sdd_workbench_view.py
+      - flutter test test/guided_project_intake_test.dart test/api_client_test.dart test/new_project_factory_dialog_test.dart
+      - dart analyze lib/src/models/project_factory.dart lib/src/services/api_client.dart lib/src/screens/chat_screen.dart test/guided_project_intake_test.dart test/api_client_test.dart test/new_project_factory_dialog_test.dart
+      - git diff --check
+open_items:
+  - None.

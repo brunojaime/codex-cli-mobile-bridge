@@ -381,6 +381,75 @@ void main() {
     ]);
   });
 
+  test('project factory init API starts and fetches deterministic init job',
+      () async {
+    final calls = <String>[];
+    final client = ApiClient(
+      baseUrl: 'http://localhost:8000',
+      client: MockClient((request) async {
+        calls.add('${request.method} ${request.url.path}');
+        if (request.method == 'POST') {
+          expect(request.body, contains('"chatSessionId":"chat-1"'));
+          expect(request.body, contains('"workspacePath":"/projects"'));
+        }
+        return http.Response(
+          '''
+          {
+            "kind": "codex.projectFactoryInitJob",
+            "version": 1,
+            "initJobId": "pf-init-1",
+            "draftId": "pf-draft-1",
+            "chatSessionId": "chat-1",
+            "createdAt": "2026-07-11T00:00:00Z",
+            "updatedAt": "2026-07-11T00:00:00Z",
+            "status": "queued",
+            "currentPhase": "init_preflight",
+            "projectPath": null,
+            "workspacePath": "/projects",
+            "generatedWorkspacePath": null,
+            "phases": [
+              {
+                "name": "init_preflight",
+                "status": "pending",
+                "message": "",
+                "startedAt": null,
+                "completedAt": null,
+                "commandEvidence": [],
+                "blockers": [],
+                "artifacts": []
+              }
+            ],
+            "remoteResources": [],
+            "contextPack": null,
+            "blockers": [],
+            "readyForBusinessLlm": false,
+            "canContinueWithBlockedContext": false
+          }
+          ''',
+          200,
+          headers: <String, String>{'content-type': 'application/json'},
+        );
+      }),
+    );
+
+    final started = await client.startProjectFactoryInit(
+      draftId: 'pf-draft-1',
+      chatSessionId: 'chat-1',
+      workspacePath: '/projects',
+    );
+    final loaded = await client.getProjectFactoryInitJob(started.initJobId);
+
+    expect(started.initJobId, 'pf-init-1');
+    expect(started.currentPhase, 'init_preflight');
+    expect(started.phases.single.name, 'init_preflight');
+    expect(started.readyForBusinessLlm, isFalse);
+    expect(loaded.initJobId, 'pf-init-1');
+    expect(calls, <String>[
+      'POST /project-factory/drafts/pf-draft-1/init',
+      'GET /project-factory/init-jobs/pf-init-1',
+    ]);
+  });
+
   test('project factory options 404 reports backend update action', () async {
     final client = ApiClient(
       baseUrl: 'http://localhost:8000',

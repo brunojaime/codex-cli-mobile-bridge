@@ -179,7 +179,12 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(apiClient.createDraftCalls, 1);
+    expect(apiClient.startInitCalls, 1);
+    expect(apiClient.sendMessageCalls, 0);
     expect(apiClient.lastDraftRequest?.guidedIntakeEnabled, isTrue);
+    expect(find.text('Deterministic baseline init'), findsOneWidget);
+    expect(
+        find.textContaining('Current phase: Init preflight'), findsOneWidget);
     expect(find.text('Initial admin emails'), findsOneWidget);
     expect(find.textContaining('Cloudflare doctor pending'), findsOneWidget);
 
@@ -203,6 +208,8 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(apiClient.createDraftCalls, 1);
+    expect(apiClient.startInitCalls, 1);
+    expect(apiClient.sendMessageCalls, 0);
     expect(apiClient.getIntakeCalls, greaterThanOrEqualTo(1));
   });
 }
@@ -218,6 +225,8 @@ class _GuidedProjectApiClient extends ApiClient {
   int previewCalls = 0;
   int confirmCalls = 0;
   int getIntakeCalls = 0;
+  int startInitCalls = 0;
+  int sendMessageCalls = 0;
   final Map<String, SessionDetail> _sessions = <String, SessionDetail>{};
   ProjectFactoryGuidedIntake _intake = _intakeFromJson(
     status: 'collecting',
@@ -385,6 +394,39 @@ class _GuidedProjectApiClient extends ApiClient {
   }
 
   @override
+  Future<ProjectFactoryInitJob> startProjectFactoryInit({
+    required String draftId,
+    String? chatSessionId,
+    String? workspacePath,
+  }) async {
+    startInitCalls += 1;
+    return ProjectFactoryInitJob(
+      initJobId: 'pf-init-1',
+      draftId: draftId,
+      chatSessionId: chatSessionId,
+      createdAt: _timestamp.toIso8601String(),
+      updatedAt: _timestamp.toIso8601String(),
+      status: 'queued',
+      currentPhase: 'init_preflight',
+      workspacePath: workspacePath,
+      phases: const <ProjectFactoryInitPhase>[
+        ProjectFactoryInitPhase(
+          name: 'init_preflight',
+          status: 'pending',
+          message: '',
+          blockers: <Map<String, dynamic>>[],
+          commandEvidence: <Map<String, dynamic>>[],
+          artifacts: <Map<String, dynamic>>[],
+        ),
+      ],
+      remoteResources: const <Map<String, dynamic>>[],
+      blockers: const <Map<String, dynamic>>[],
+      readyForBusinessLlm: false,
+      canContinueWithBlockedContext: false,
+    );
+  }
+
+  @override
   Future<SessionDetail> createSession({
     String? title,
     String? workspacePath,
@@ -457,6 +499,7 @@ class _GuidedProjectApiClient extends ApiClient {
     String? language,
     CodexRunOptions? codexRunOptions,
   }) async {
+    sendMessageCalls += 1;
     return JobStatusResponse(
       jobId: 'job-${DateTime.now().microsecondsSinceEpoch}',
       sessionId: sessionId ?? 'created-session',

@@ -269,6 +269,41 @@ class ProjectFactoryJobSummaryResponse(BaseModel):
     )
 
 
+class ProjectFactoryInitStartRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    chat_session_id: str | None = Field(default=None, alias="chatSessionId")
+    workspace_path: str | None = Field(default=None, alias="workspacePath")
+
+
+class ProjectFactoryInitJobResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    kind: str
+    version: int
+    init_job_id: str = Field(alias="initJobId")
+    draft_id: str = Field(alias="draftId")
+    chat_session_id: str | None = Field(default=None, alias="chatSessionId")
+    created_at: str = Field(alias="createdAt")
+    updated_at: str = Field(alias="updatedAt")
+    status: str
+    current_phase: str = Field(alias="currentPhase")
+    project_path: str | None = Field(default=None, alias="projectPath")
+    workspace_path: str | None = Field(default=None, alias="workspacePath")
+    generated_workspace_path: str | None = Field(
+        default=None,
+        alias="generatedWorkspacePath",
+    )
+    phases: list[dict[str, Any]]
+    remote_resources: list[dict[str, Any]] = Field(alias="remoteResources")
+    context_pack: dict[str, Any] | None = Field(default=None, alias="contextPack")
+    blockers: list[dict[str, Any]]
+    ready_for_business_llm: bool = Field(alias="readyForBusinessLlm")
+    can_continue_with_blocked_context: bool = Field(
+        alias="canContinueWithBlockedContext",
+    )
+
+
 class ProjectFactoryJobsResponse(BaseModel):
     kind: str = "codex.projectFactoryJobs"
     version: int = 1

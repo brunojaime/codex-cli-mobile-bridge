@@ -316,6 +316,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       <String, ProjectFactoryGuidedIntake>{};
   final Set<String> _loadingProjectFactoryIntakeSessions = <String>{};
   String? _projectFactoryGuidedIntakeErrorText;
+  final Map<String, ProjectFactoryInitJob> _projectFactoryInitBySession =
+      <String, ProjectFactoryInitJob>{};
+  final Set<String> _loadingProjectFactoryInitSessions = <String>{};
+  String? _projectFactoryInitErrorText;
   final Map<String, Set<String>> _collapsedMessageIdsBySession =
       <String, Set<String>>{};
   bool _isUpdatingFilteredMessagesView = false;
@@ -1217,12 +1221,21 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   Widget _buildProjectFactoryIntakeCard(SessionDetail currentSession) {
     final draftId = _projectFactoryDraftIdBySession[currentSession.id];
     final intake = _projectFactoryGuidedIntakeBySession[currentSession.id];
+    final initJob = _projectFactoryInitBySession[currentSession.id];
+    final isInitLoading =
+        _loadingProjectFactoryInitSessions.contains(currentSession.id);
     final isLoading =
         _loadingProjectFactoryIntakeSessions.contains(currentSession.id);
     if (intake != null && draftId != null) {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: <Widget>[
+          ProjectFactoryInitCard(
+            initJob: initJob,
+            isLoading: isInitLoading,
+            errorText: _projectFactoryInitErrorText,
+          ),
+          const SizedBox(height: 10),
           ProjectFactoryGuidedIntakeCard(
             intake: intake,
             onAnswer: (questionId, value) => _answerProjectFactoryGuidedIntake(
@@ -1778,22 +1791,30 @@ When you create the Project Factory draft, link each asset with POST /project-fa
       _projectFactoryGuidedIntakeErrorText = null;
     });
 
-    final didSend = await _chatController.sendMessage(
-      _projectFactoryKickoffPrompt(options),
+    final initJob = await _startOrResumeProjectFactoryInit(
+      client: _projectFactoryClient(),
+      draft: draft,
+      session: session,
     );
     if (!mounted) {
       return;
     }
-    if (!didSend) {
+    if (initJob == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            _chatController.errorText ??
-                'Could not send the New project kickoff message.',
+            _projectFactoryInitErrorText ??
+                'Could not start deterministic project init.',
           ),
         ),
       );
+      return;
     }
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('New Project baseline init started.'),
+      ),
+    );
   }
 
   ApiClient _projectFactoryClient() {
@@ -1871,6 +1892,42 @@ When you create the Project Factory draft, link each asset with POST /project-fa
       draft.draftId,
       showResumeMessage: showResumeMessage,
     );
+  }
+
+  Future<ProjectFactoryInitJob?> _startOrResumeProjectFactoryInit({
+    required ApiClient client,
+    required ProjectFactoryDraft draft,
+    required SessionDetail session,
+  }) async {
+    setState(() {
+      _loadingProjectFactoryInitSessions.add(session.id);
+      _projectFactoryInitErrorText = null;
+    });
+    try {
+      final initJob = await client.startProjectFactoryInit(
+        draftId: draft.draftId,
+        chatSessionId: session.id,
+        workspacePath: session.workspacePath,
+      );
+      if (!mounted) {
+        return initJob;
+      }
+      setState(() {
+        _projectFactoryInitBySession[session.id] = initJob;
+        _loadingProjectFactoryInitSessions.remove(session.id);
+      });
+      return initJob;
+    } catch (error) {
+      if (!mounted) {
+        return null;
+      }
+      setState(() {
+        _loadingProjectFactoryInitSessions.remove(session.id);
+        _projectFactoryInitErrorText =
+            'Could not start deterministic init. $error';
+      });
+      return null;
+    }
   }
 
   Future<void> _loadProjectFactoryGuidedIntake(
@@ -2102,6 +2159,8 @@ When you create the Project Factory draft, link each asset with POST /project-fa
     return didConfigure;
   }
 
+  // Legacy kickoff prompt kept until Plan 7 replaces it with init context packs.
+  // ignore: unused_element
   String _projectFactoryKickoffPrompt(ProjectFactoryOptions options) {
     final workflow = options.creationWorkflow;
     final generatorRuns = workflow['generator_runs'] ?? 20;
@@ -4986,6 +5045,96 @@ class _GuidedProjectIntakeCard extends StatelessWidget {
                 ),
               ],
             ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class ProjectFactoryInitCard extends StatelessWidget {
+  const ProjectFactoryInitCard({
+    super.key,
+    required this.initJob,
+    required this.isLoading,
+    this.errorText,
+  });
+
+  final ProjectFactoryInitJob? initJob;
+  final bool isLoading;
+  final String? errorText;
+
+  @override
+  Widget build(BuildContext context) {
+    final job = initJob;
+    final status = job?.status ?? (isLoading ? 'running' : 'queued');
+    final currentPhase = job?.currentPhase ?? 'init_preflight';
+    final blockers = job?.blockers ?? const <Map<String, dynamic>>[];
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: const Color(0xFF0E1A22),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: const Color(0xFF214557)),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Row(
+              children: <Widget>[
+                const Icon(Icons.account_tree_rounded,
+                    color: Color(0xFF65D6FF)),
+                const SizedBox(width: 10),
+                const Expanded(
+                  child: Text(
+                    'Deterministic baseline init',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+                _StatusPill(
+                  label: _initStatusLabel(status),
+                  backgroundColor: _initStatusBackground(status),
+                  foregroundColor: _initStatusForeground(status),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Text(
+              'Current phase: ${_humanizeInitPhase(currentPhase)}',
+              style: const TextStyle(color: Color(0xFFB8C8EA), height: 1.35),
+            ),
+            const SizedBox(height: 6),
+            const Text(
+              'Preparing repo, preview infrastructure, runtime profile, Workbench, feedback, release wiring, and first-chat context before business work starts.',
+              style: TextStyle(color: Color(0xFF8EA6C7), height: 1.35),
+            ),
+            if (isLoading) ...<Widget>[
+              const SizedBox(height: 10),
+              const LinearProgressIndicator(minHeight: 2),
+            ],
+            if (blockers.isNotEmpty) ...<Widget>[
+              const SizedBox(height: 10),
+              ...blockers.take(2).map(
+                    (blocker) => Text(
+                      blocker['message'] as String? ?? 'Init blocker',
+                      style: const TextStyle(
+                        color: Color(0xFFFFD7A8),
+                        height: 1.35,
+                      ),
+                    ),
+                  ),
+            ],
+            if (errorText != null) ...<Widget>[
+              const SizedBox(height: 10),
+              Text(
+                errorText!,
+                style: const TextStyle(color: Color(0xFFFFB4B4), height: 1.35),
+              ),
+            ],
           ],
         ),
       ),
@@ -8871,6 +9020,50 @@ class _ProjectFactoryHistoryTile extends StatelessWidget {
       onTap: job.isReady && onOpen != null ? onOpen : onWatch,
     );
   }
+}
+
+String _initStatusLabel(String status) {
+  return switch (status) {
+    'ready' => 'Ready',
+    'blocked_with_context' => 'Blocked',
+    'failed' => 'Failed',
+    'cancelled' => 'Cancelled',
+    'resumable' => 'Resumable',
+    'running' => 'Running',
+    _ => 'Queued',
+  };
+}
+
+Color _initStatusBackground(String status) {
+  return switch (status) {
+    'ready' => const Color(0xFF0B3D25),
+    'blocked_with_context' => const Color(0xFF3A2714),
+    'failed' => const Color(0xFF431B27),
+    'cancelled' => const Color(0xFF2B364D),
+    'resumable' => const Color(0xFF2A2440),
+    'running' => const Color(0xFF133954),
+    _ => const Color(0xFF26324A),
+  };
+}
+
+Color _initStatusForeground(String status) {
+  return switch (status) {
+    'ready' => const Color(0xFFB7F5CF),
+    'blocked_with_context' => const Color(0xFFFFD9A3),
+    'failed' => const Color(0xFFFFC4CB),
+    'cancelled' => const Color(0xFFB8C3DA),
+    'resumable' => const Color(0xFFD9CCFF),
+    'running' => const Color(0xFFBFE8FF),
+    _ => const Color(0xFFDCE5FF),
+  };
+}
+
+String _humanizeInitPhase(String phase) {
+  final normalized = phase.replaceAll('_', ' ').trim();
+  if (normalized.isEmpty) {
+    return 'Init preflight';
+  }
+  return normalized[0].toUpperCase() + normalized.substring(1);
 }
 
 class _InitialPreviewReleasePanel extends StatelessWidget {

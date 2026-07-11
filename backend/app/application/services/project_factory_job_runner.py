@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import shlex
 import subprocess
@@ -704,15 +705,10 @@ class ProjectFactoryJobRunner:
             f"role={getattr(asset, 'role', '')} sha256={getattr(asset, 'sha256', '')}"
             for asset in context.project_assets
         ] or ["- No promoted project assets."]
-        base = f"""# Project Factory Context
-
-Project path: `{project_path}`
-Draft id: `{context.draft_id}`
-Name: `{manifest.get("name")}`
-Business type: `{manifest.get("business_type")}`
-Primary goal: {manifest.get("primary_goal")}
-
-Required defaults:
+        init_context = _project_factory_init_context_section(project_path)
+        default_rules = (
+            init_context
+            or f"""Required defaults:
 - Frontend strategy: `{frontend_strategy}`.
 - Frontend source root: `{source_root}`.
 - Flutter keeps iOS/Android/Web, APK preview, Bridge installability, and
@@ -727,6 +723,17 @@ Required defaults:
 - Initial git commit, GitHub publish/push status, and release readiness must be
   explicit. Do not report the project complete if files are only untracked local
   changes.
+"""
+        )
+        base = f"""# Project Factory Context
+
+Project path: `{project_path}`
+Draft id: `{context.draft_id}`
+Name: `{manifest.get("name")}`
+Business type: `{manifest.get("business_type")}`
+Primary goal: {manifest.get("primary_goal")}
+
+{default_rules}
 
 Reference assets:
 {chr(10).join(reference_lines)}
@@ -783,6 +790,55 @@ def _supports_android_installable(manifest_plan: ProjectFactoryManifestPlan) -> 
             and capabilities.get("supports_bridge_installable_app") is True
         )
     return str(manifest.get("frontend_strategy") or "flutter") == "flutter"
+
+
+def _project_factory_init_context_section(project_path: Path) -> str:
+    factory_dir = project_path / ".codex/factory"
+    init_result_path = factory_dir / "init-result.json"
+    llm_context_path = factory_dir / "llm-start-context.md"
+    if not init_result_path.is_file() or not llm_context_path.is_file():
+        return ""
+    try:
+        init_result = json.loads(init_result_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return ""
+    if not isinstance(init_result, dict):
+        return ""
+    context_text = llm_context_path.read_text(encoding="utf-8")
+    context_excerpt = context_text[:4000]
+    return f"""Initialized deterministic baseline:
+- Init result: `.codex/factory/init-result.json`
+- LLM start context: `.codex/factory/llm-start-context.md`
+- Init job id: `{init_result.get("initJobId")}`
+- Source app: `{init_result.get("sourceApp")}`
+- Preview API: `{_init_context_preview_api(init_result)}`
+- Ready for business LLM: `{init_result.get("readyForBusinessLlm")}`
+- Blocked with context: `{init_result.get("blockedWithContext")}`
+
+Business generator/reviewer rules:
+- Consume the initialized baseline from the context pack before making changes.
+- Do not recreate GitHub, Cloudflare Worker/route/D1, Android prerelease,
+  Bridge installable, feedback, updater, or Workbench plumbing manually.
+- Keep preview runtime real; do not switch to mock/demo/local/placeholder URLs
+  unless the user explicitly asks for a demo/mock build.
+- Implement product/business work only on top of the initialized baseline.
+- Update specs, tasks, tests, and release evidence as product work changes.
+
+Context pack excerpt:
+```md
+{context_excerpt}
+```
+"""
+
+
+def _init_context_preview_api(init_result: dict[str, object]) -> object:
+    resources = init_result.get("resources")
+    if not isinstance(resources, dict):
+        return None
+    preview = resources.get("cloudflarePreview")
+    if not isinstance(preview, dict):
+        return None
+    return preview.get("apiBaseUrl")
 
 
 def _preflight_blockers(payload: Mapping[str, object]) -> list[str]:

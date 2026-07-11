@@ -95,6 +95,8 @@ from backend.app.api.schemas import (
     ProjectFactoryDryRunResponse,
     ProjectFactoryGuidedIntakeAnswerRequest,
     ProjectFactoryGuidedIntakeResponse,
+    ProjectFactoryInitJobResponse,
+    ProjectFactoryInitStartRequest,
     ProjectFactoryJobResponse,
     ProjectFactoryJobsResponse,
     ProjectFactoryOptionsResponse,
@@ -656,6 +658,57 @@ async def confirm_project_factory_guided_intake_contract(
     if payload is None:
         raise HTTPException(status_code=404, detail="Project factory draft not found.")
     return ProjectFactoryGuidedIntakeResponse(**payload)
+
+
+@router.post(
+    "/project-factory/drafts/{draft_id}/init",
+    response_model=ProjectFactoryInitJobResponse,
+)
+async def start_project_factory_deterministic_init(
+    draft_id: str,
+    request: ProjectFactoryInitStartRequest,
+    container: AppContainer = Depends(get_container),
+) -> ProjectFactoryInitJobResponse:
+    draft = await run_in_threadpool(
+        container.project_factory_service.get_draft,
+        draft_id,
+    )
+    if draft is None:
+        raise HTTPException(status_code=404, detail="Project factory draft not found.")
+    job = await run_in_threadpool(
+        container.project_factory_init_service.start_or_resume,
+        draft_id=draft_id,
+        chat_session_id=request.chat_session_id,
+        workspace_path=request.workspace_path,
+        project_name=draft.request.name,
+        slug=draft.request.slug,
+        frontend_strategy=draft.request.frontend_strategy,
+    )
+    return ProjectFactoryInitJobResponse(
+        **container.project_factory_init_service.to_response_payload(job)
+    )
+
+
+@router.get(
+    "/project-factory/init-jobs/{init_job_id}",
+    response_model=ProjectFactoryInitJobResponse,
+)
+async def get_project_factory_deterministic_init(
+    init_job_id: str,
+    container: AppContainer = Depends(get_container),
+) -> ProjectFactoryInitJobResponse:
+    job = await run_in_threadpool(
+        container.project_factory_init_service.get_job,
+        init_job_id,
+    )
+    if job is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Project factory init job not found.",
+        )
+    return ProjectFactoryInitJobResponse(
+        **container.project_factory_init_service.to_response_payload(job)
+    )
 
 
 @router.post(

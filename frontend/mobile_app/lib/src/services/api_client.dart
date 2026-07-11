@@ -316,6 +316,44 @@ class ApiClient {
     );
   }
 
+  Future<ProjectFactoryInitJob> startProjectFactoryInit({
+    required String draftId,
+    String? chatSessionId,
+    String? workspacePath,
+  }) async {
+    final response = await _client.post(
+      Uri.parse('$baseUrl/project-factory/drafts/$draftId/init'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode(<String, dynamic>{
+        if (chatSessionId != null) 'chatSessionId': chatSessionId,
+        if (workspacePath != null) 'workspacePath': workspacePath,
+      }),
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception('Failed to start project init: ${response.body}');
+    }
+
+    return ProjectFactoryInitJob.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<ProjectFactoryInitJob> getProjectFactoryInitJob(
+      String initJobId) async {
+    final response = await _client.get(
+      Uri.parse('$baseUrl/project-factory/init-jobs/$initJobId'),
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception('Failed to fetch project init: ${response.body}');
+    }
+
+    return ProjectFactoryInitJob.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
   Future<List<ProjectFactoryJobSummary>> listProjectFactoryJobs({
     String? status,
     String? draftId,

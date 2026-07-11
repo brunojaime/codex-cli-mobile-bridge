@@ -301,6 +301,68 @@ def test_project_factory_guided_intake_blocks_until_confirmed(
     assert started.json()["guidedIntake"]["status"] == "build_started"
 
 
+def test_project_factory_deterministic_init_starts_resumes_and_persists(
+    tmp_path: Path,
+) -> None:
+    client = _client(tmp_path)
+    draft_response = client.post(
+        "/project-factory/drafts",
+        json={
+            "name": "Clinica Norte",
+            "businessType": "medical",
+            "primaryGoal": "Reservar turnos",
+            "guidedIntakeEnabled": True,
+        },
+    )
+    draft_id = draft_response.json()["draft_id"]
+
+    started = client.post(
+        f"/project-factory/drafts/{draft_id}/init",
+        json={
+            "chatSessionId": "chat-1",
+            "workspacePath": str(tmp_path),
+        },
+    )
+
+    assert started.status_code == 200
+    payload = started.json()
+    assert payload["kind"] == "codex.projectFactoryInitJob"
+    assert payload["draftId"] == draft_id
+    assert payload["chatSessionId"] == "chat-1"
+    assert payload["status"] == "queued"
+    assert payload["currentPhase"] == "init_preflight"
+    assert payload["readyForBusinessLlm"] is False
+    assert [phase["name"] for phase in payload["phases"]][:3] == [
+        "init_preflight",
+        "draft_and_slug",
+        "baseline_scaffold",
+    ]
+
+    resumed = client.post(
+        f"/project-factory/drafts/{draft_id}/init",
+        json={"chatSessionId": "chat-1"},
+    )
+
+    assert resumed.status_code == 200
+    assert resumed.json()["initJobId"] == payload["initJobId"]
+
+    restarted_client = _client(tmp_path)
+    loaded = restarted_client.get(
+        f"/project-factory/init-jobs/{payload['initJobId']}",
+    )
+
+    assert loaded.status_code == 200
+    assert loaded.json()["draftId"] == draft_id
+    assert loaded.json()["chatSessionId"] == "chat-1"
+    assert restarted_client.post(
+        "/project-factory/drafts/missing/init",
+        json={},
+    ).status_code == 404
+    assert restarted_client.get(
+        "/project-factory/init-jobs/missing",
+    ).status_code == 404
+
+
 def test_project_factory_guided_intake_stays_confirmed_when_workflow_invalid(
     tmp_path: Path,
 ) -> None:
