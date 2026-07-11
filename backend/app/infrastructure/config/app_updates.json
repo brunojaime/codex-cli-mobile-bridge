@@ -1,104 +1,134 @@
 {
   "ambientando-calendar": {
-    "displayName": "Ambientando Calendar",
-    "repo": "brunojaime/ambientando-calendar",
-    "releaseTagPattern": "android-*-feedback-v*",
     "apkAssetPattern": "ambientando-calendar-*.apk",
-    "latestAssetName": "ambientando-calendar.apk",
+    "displayName": "Ambientando Calendar",
+    "enabled": true,
     "expectedPackageId": "com.ambientando.calendar",
+    "latestAssetName": "ambientando-calendar.apk",
+    "releaseTagPattern": "android-*-feedback-v*",
+    "repo": "brunojaime/ambientando-calendar",
+    "requiredMinimumBuild": null,
     "verifiedPackageIds": {
       "android-local-demo-feedback-v*": "com.ambientando.calendar",
       "android-prod-feedback-v*": "com.ambientando.calendar"
-    },
-    "requiredMinimumBuild": null,
-    "enabled": true
+    }
   },
   "codex-mobile": {
-    "displayName": "Codex Mobile Bridge",
-    "repo": "brunojaime/codex-cli-mobile-bridge",
-    "releaseTagPattern": "android-v*",
     "apkAssetPattern": "codex-mobile-*.apk",
+    "displayName": "Codex Mobile Bridge",
+    "enabled": true,
     "latestAssetName": "codex-mobile.apk",
-    "requiredMinimumBuild": null,
-    "enabled": true
+    "releaseTagPattern": "android-v*",
+    "repo": "brunojaime/codex-cli-mobile-bridge",
+    "requiredMinimumBuild": null
   },
   "gestion-ludmilo": {
-    "displayName": "Gestion Ludmilo",
-    "repo": "brunojaime/Gestion_ludmilo",
-    "releaseTagPattern": "android-v*",
     "apkAssetPattern": "gestion-ludmilo-*.apk",
-    "latestAssetName": "gestion-ludmilo.apk",
+    "displayName": "Gestion Ludmilo",
+    "enabled": true,
     "expectedPackageId": "com.ludmilo.gestion",
+    "latestAssetName": "gestion-ludmilo.apk",
+    "releaseChannel": "private-install",
+    "releaseTagPattern": "android-v*",
+    "repo": "brunojaime/Gestion_ludmilo",
+    "requiredMinimumBuild": null,
     "verifiedPackageIds": {
       "android-v1.0.0-build.14": "com.ludmilo.gestion"
-    },
-    "requiredMinimumBuild": null,
-    "releaseChannel": "private-install",
-    "enabled": true
+    }
   },
   "sat-catalogo-ropa": {
-    "displayName": "SAT Catalogo Ropa",
-    "repo": "brunojaime/sat-catalogo-ropa",
-    "releaseTagPattern": "android-feedback*-v*",
     "apkAssetPattern": "sat-catalogo-ropa*.apk",
-    "latestAssetName": "sat-catalogo-ropa.apk",
+    "displayName": "SAT Catalogo Ropa",
+    "enabled": true,
     "expectedPackageId": "com.sat.sat_catalogo_ropa",
+    "latestAssetName": "sat-catalogo-ropa.apk",
+    "releaseTagPattern": "android-feedback*-v*",
+    "repo": "brunojaime/sat-catalogo-ropa",
+    "requiredMinimumBuild": null,
     "verifiedPackageIds": {
       "android-feedback*-v*": "com.sat.sat_catalogo_ropa"
-    },
-    "requiredMinimumBuild": null,
-    "enabled": true
+    }
   },
-  "xr18-mobile-control": {
-    "displayName": "XR18 Mobile Control",
-    "repo": "brunojaime/xr18-mobile-control",
-    "releaseTagPattern": "android-v*",
-    "apkAssetPattern": "xr18-mobile-control-*.apk",
-    "latestAssetName": "xr18-mobile-control.apk",
-    "expectedPackageId": "com.xr18mobilecontrol.xr18_mobile_control",
+  "sat-showroom": {
+    "apkAssetPattern": "sat-showroom*.apk",
+    "displayName": "SAT Showroom Preview",
+    "enabled": true,
+    "expectedPackageId": "com.nienfos.satshowroom",
+    "latestAssetName": "sat-showroom.apk",
+    "mockOrDemo": false,
+    "previewUrl": "https://preview.nienfos.com/sat-showroom",
+    "productionReady": false,
+    "releaseChannel": "prerelease",
+    "releaseMetadata": {
+      "android_tag_commit": "d7d719069737a97633deb4e64209491c1d89cab8",
+      "appUpdater": "codex_app_updater-v0.1.3",
+      "feedbackBridge": "codex_developer_feedback_template-v0.4.7",
+      "initialPreviewRelease": true,
+      "latestAssetName": "sat-showroom.apk",
+      "mockOrDemo": false,
+      "releaseTag": "android-preview-v0.1.0-build.2",
+      "releaseTagPattern": "android-preview-v*",
+      "report_generated_from_commit": "d7d719069737a97633deb4e64209491c1d89cab8",
+      "validated_source_commit": "d7d719069737a97633deb4e64209491c1d89cab8"
+    },
+    "releaseTagPattern": "android-preview-v*",
+    "repo": "brunojaime/sat-showroom",
+    "requiredMinimumBuild": null,
+    "runtimeProfile": "preview",
     "verifiedPackageIds": {
-      "android-v1.0.0-build.20": "com.xr18mobilecontrol.xr18_mobile_control"
-    },
-    "requiredMinimumBuild": null,
-    "releaseChannel": "private-install",
-    "enabled": true
-  },
-  "smart-nienfos-moldegon": {
-    "displayName": "Moldegon",
-    "repo": "brunojaime/smart_nienfos",
-    "releaseTagPattern": "moldegon-android-v*",
-    "apkAssetPattern": "smart-nienfos-moldegon-*.apk",
-    "latestAssetName": "smart-nienfos-moldegon.apk",
-    "expectedPackageId": "com.smartnienfos.molding.molding_operator_app",
-    "verifiedPackageIds": {
-      "moldegon-android-v1.0.0-build.8": "com.smartnienfos.molding.molding_operator_app"
-    },
-    "requiredMinimumBuild": null,
-    "releaseChannel": "private-install",
-    "enabled": true
-  },
-  "smart-nienfos-smart-house": {
-    "displayName": "Smart Nienfos Smart House",
-    "repo": "brunojaime/smart_nienfos",
-    "releaseTagPattern": "smart-house-android-v*",
-    "apkAssetPattern": "smart-nienfos-smart-house-*.apk",
-    "latestAssetName": "smart-nienfos-smart-house.apk",
-    "requiredMinimumBuild": null,
-    "enabled": false
+      "android-preview-v*": "com.nienfos.satshowroom"
+    }
   },
   "smart-nienfos": {
-    "displayName": "Smart Nienfos Admin",
-    "repo": "brunojaime/smart-nienfos-flutter-app",
-    "releaseTagPattern": "android-smart-nienfos-v*",
     "apkAssetPattern": "smart-nienfos-*.apk",
-    "latestAssetName": "smart-nienfos.apk",
+    "displayName": "Smart Nienfos Admin",
+    "enabled": true,
     "expectedPackageId": "com.example.client",
-    "verifiedPackageIds": {
-      "smart-nienfos-admin-android-v1.0.0-build.12": "com.smartnienfos.admin",
-      "smart-nienfos-admin-android-v1.0.0-build.13": "com.example.client",
-      "android-smart-nienfos-v*": "com.example.client"
-    },
+    "latestAssetName": "smart-nienfos.apk",
+    "releaseTagPattern": "android-smart-nienfos-v*",
+    "repo": "brunojaime/smart-nienfos-flutter-app",
     "requiredMinimumBuild": null,
-    "enabled": true
+    "verifiedPackageIds": {
+      "android-smart-nienfos-v*": "com.example.client",
+      "smart-nienfos-admin-android-v1.0.0-build.12": "com.smartnienfos.admin",
+      "smart-nienfos-admin-android-v1.0.0-build.13": "com.example.client"
+    }
+  },
+  "smart-nienfos-moldegon": {
+    "apkAssetPattern": "smart-nienfos-moldegon-*.apk",
+    "displayName": "Moldegon",
+    "enabled": true,
+    "expectedPackageId": "com.smartnienfos.molding.molding_operator_app",
+    "latestAssetName": "smart-nienfos-moldegon.apk",
+    "releaseChannel": "private-install",
+    "releaseTagPattern": "moldegon-android-v*",
+    "repo": "brunojaime/smart_nienfos",
+    "requiredMinimumBuild": null,
+    "verifiedPackageIds": {
+      "moldegon-android-v1.0.0-build.8": "com.smartnienfos.molding.molding_operator_app"
+    }
+  },
+  "smart-nienfos-smart-house": {
+    "apkAssetPattern": "smart-nienfos-smart-house-*.apk",
+    "displayName": "Smart Nienfos Smart House",
+    "enabled": false,
+    "latestAssetName": "smart-nienfos-smart-house.apk",
+    "releaseTagPattern": "smart-house-android-v*",
+    "repo": "brunojaime/smart_nienfos",
+    "requiredMinimumBuild": null
+  },
+  "xr18-mobile-control": {
+    "apkAssetPattern": "xr18-mobile-control-*.apk",
+    "displayName": "XR18 Mobile Control",
+    "enabled": true,
+    "expectedPackageId": "com.xr18mobilecontrol.xr18_mobile_control",
+    "latestAssetName": "xr18-mobile-control.apk",
+    "releaseChannel": "private-install",
+    "releaseTagPattern": "android-v*",
+    "repo": "brunojaime/xr18-mobile-control",
+    "requiredMinimumBuild": null,
+    "verifiedPackageIds": {
+      "android-v1.0.0-build.20": "com.xr18mobilecontrol.xr18_mobile_control"
+    }
   }
 }
