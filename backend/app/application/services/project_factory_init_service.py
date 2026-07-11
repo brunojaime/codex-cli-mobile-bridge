@@ -1942,6 +1942,11 @@ class ProjectFactoryInitService:
                 encoding="utf-8"
             ):
                 widget_test.unlink()
+            analysis_options = mobile / "analysis_options.yaml"
+            if analysis_options.is_file() and "flutter_lints/flutter.yaml" in (
+                analysis_options.read_text(encoding="utf-8")
+            ):
+                analysis_options.unlink()
         if build_gradle.is_file():
             _patch_flutter_android_release_signing(build_gradle)
         return tuple(evidence), None
