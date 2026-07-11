@@ -1967,43 +1967,47 @@ class ProjectFactoryInitService:
         }
         temp_paths: list[Path] = []
         try:
-            for name, value in secret_values.items():
-                temp_path = (
-                    self._bridge_root_for_generated_scripts()
-                    / "secrets"
-                    / f".{slug}-{name.lower()}.tmp"
-                )
-                temp_path.write_text(str(value), encoding="utf-8")
-                os.chmod(temp_path, 0o600)
-                temp_paths.append(temp_path)
-                secret = self._run(
-                    (
-                        "gh",
-                        "secret",
-                        "set",
-                        name,
-                        "--body-file",
-                        str(temp_path),
-                        "--repo",
-                        repo_ref,
-                    ),
-                    cwd=cwd,
-                )
-                evidence.append(self._evidence(secret))
-                if secret.exit_code != 0:
-                    return (
-                        tuple(evidence),
-                        _android_blocker(
-                            phase=ProjectFactoryInitPhaseName.ANDROID_PREVIEW_RELEASE,
-                            code="android_preview_github_secret_failed",
-                            message="Could not configure GitHub Actions signing secrets.",
-                            next_action=(
-                                "Fix GitHub secret permissions, then rerun "
-                                "deterministic init."
-                            ),
-                            command=("gh", "secret", "set", name, "--repo", repo_ref),
+            env_file = (
+                self._bridge_root_for_generated_scripts()
+                / "secrets"
+                / f".{slug}-android-preview-secrets.env"
+            )
+            env_file.write_text(
+                "".join(
+                    f"{name}={shlex.quote(str(value))}\n"
+                    for name, value in secret_values.items()
+                ),
+                encoding="utf-8",
+            )
+            os.chmod(env_file, 0o600)
+            temp_paths.append(env_file)
+            secret = self._run(
+                (
+                    "gh",
+                    "secret",
+                    "set",
+                    "--env-file",
+                    str(env_file),
+                    "--repo",
+                    repo_ref,
+                ),
+                cwd=cwd,
+            )
+            evidence.append(self._evidence(secret))
+            if secret.exit_code != 0:
+                return (
+                    tuple(evidence),
+                    _android_blocker(
+                        phase=ProjectFactoryInitPhaseName.ANDROID_PREVIEW_RELEASE,
+                        code="android_preview_github_secret_failed",
+                        message="Could not configure GitHub Actions signing secrets.",
+                        next_action=(
+                            "Fix GitHub secret permissions, then rerun "
+                            "deterministic init."
                         ),
-                    )
+                        command=("gh", "secret", "set", "--repo", repo_ref),
+                    ),
+                )
         finally:
             for temp_path in temp_paths:
                 if temp_path.exists():
