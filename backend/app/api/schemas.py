@@ -460,6 +460,7 @@ class WebPreviewInviteResponse(BaseModel):
     email_delivery_preflight: dict[str, Any] | None = None
     email_delivery_status: str = "not_requested"
     email_delivery_error: str | None = None
+    email_provider_message_id: str | None = None
     manual_delivery_required: bool = False
     sync_status: str = "not_deployed"
     synced_at: str | None = None

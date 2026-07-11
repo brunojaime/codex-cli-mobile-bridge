@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 import base64
 from email.message import EmailMessage
+from email.utils import formatdate, make_msgid
 from html import escape
 import hashlib
 import hmac
@@ -584,9 +585,12 @@ class WebPreviewInviteService:
                 manual_delivery_required=True,
             )
         message = EmailMessage()
+        message_id = make_msgid(domain="codex-mobile-bridge.local")
         message["From"] = sender
         message["To"] = email
         message["Subject"] = _invite_email_subject(invite)
+        message["Date"] = formatdate(localtime=False, usegmt=True)
+        message["Message-ID"] = message_id
         message.set_content(
             _invite_email_body(invite),
         )
@@ -612,18 +616,29 @@ class WebPreviewInviteService:
                 password = self._settings.web_preview_smtp_password
                 if username and password:
                     smtp.login(username, password)
-                smtp.send_message(message)
+                refused = smtp.send_message(message)
+                if refused:
+                    refused_recipients = ", ".join(sorted(str(key) for key in refused))
+                    return WebPreviewInviteDeliveryResult(
+                        status="failed",
+                        provider="smtp",
+                        error=f"SMTP refused recipients: {refused_recipients}",
+                        manual_delivery_required=True,
+                        provider_message_id=message_id,
+                    )
         except Exception as exc:
             return WebPreviewInviteDeliveryResult(
                 status="failed",
                 provider="smtp",
                 error=_safe_email_error(str(exc), self._settings.web_preview_smtp_password),
                 manual_delivery_required=True,
+                provider_message_id=message_id,
             )
         return WebPreviewInviteDeliveryResult(
             status="sent",
             provider="smtp",
             delivered_at=_iso(datetime.now(UTC)),
+            provider_message_id=message_id,
         )
 
     def _send_cloudflare_email_invite(

@@ -313,8 +313,9 @@ def test_web_preview_invite_smtp_provider_sends_email(
             assert username == "smtp-user"
             assert password == "smtp-password"
 
-        def send_message(self, message: object) -> None:
+        def send_message(self, message: object) -> dict[str, object]:
             sent.append(message)
+            return {}
 
     monkeypatch.setattr("smtplib.SMTP", FakeSmtp)
     deploy_service = _planned_preview(tmp_path)
@@ -340,10 +341,13 @@ def test_web_preview_invite_smtp_provider_sends_email(
     )
 
     assert invite["email_delivery_status"] == "sent"
+    assert invite["email_provider_message_id"]
     assert invite["manual_delivery_required"] is False
     assert invite["last_sent_at"]
     assert sent
     message = sent[0]
+    assert message["Date"]
+    assert message["Message-ID"] == invite["email_provider_message_id"]
     assert message.is_multipart()
     plain = message.get_body(
         preferencelist=("plain",)
@@ -358,6 +362,61 @@ def test_web_preview_invite_smtp_provider_sends_email(
         "",
     )
     assert "version inicial" in html
+
+
+def test_web_preview_invite_smtp_refused_recipient_never_reports_sent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeSmtp:
+        def __init__(self, host: str, port: int, timeout: float) -> None:
+            assert host == "smtp.example.com"
+            assert port == 2525
+            assert timeout == 3.0
+
+        def __enter__(self) -> "FakeSmtp":
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def starttls(self) -> None:
+            return None
+
+        def login(self, username: str, password: str) -> None:
+            assert username == "smtp-user"
+            assert password == "smtp-password"
+
+        def send_message(self, _message: object) -> dict[str, object]:
+            return {"admin@example.com": (550, b"mailbox unavailable")}
+
+    monkeypatch.setattr("smtplib.SMTP", FakeSmtp)
+    deploy_service = _planned_preview(tmp_path)
+    service = WebPreviewInviteService(
+        settings=_settings(
+            tmp_path,
+            email_provider="smtp",
+            email_from="preview@example.com",
+            smtp_host="smtp.example.com",
+            smtp_port=2525,
+            smtp_username="smtp-user",
+            smtp_password="smtp-password",
+            smtp_timeout=3.0,
+        ),
+        preview_service=deploy_service,
+    )
+
+    invite = service.create_invite(
+        WebPreviewInviteCreateInput(
+            preview_id="wp-clinica-norte",
+            email="admin@example.com",
+        )
+    )
+
+    assert invite["email_delivery_status"] == "failed"
+    assert invite["email_provider_message_id"]
+    assert invite["manual_delivery_required"] is True
+    assert "SMTP refused recipients" in invite["email_delivery_error"]
 
 
 def test_web_preview_invite_smtp_465_uses_ssl_client(
@@ -382,8 +441,9 @@ def test_web_preview_invite_smtp_465_uses_ssl_client(
             assert username == "smtp-user"
             assert password == "smtp-password"
 
-        def send_message(self, message: object) -> None:
+        def send_message(self, message: object) -> dict[str, object]:
             sent.append(message)
+            return {}
 
     monkeypatch.setattr("smtplib.SMTP_SSL", FakeSmtpSsl)
     deploy_service = _planned_preview(tmp_path)
