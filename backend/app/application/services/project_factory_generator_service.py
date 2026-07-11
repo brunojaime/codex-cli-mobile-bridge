@@ -5946,8 +5946,11 @@ jobs:
         working-directory: apps/mobile
         run: |
           apk="build/app/outputs/flutter-apk/{slug}.apk"
-          sdkmanager "build-tools;35.0.0"
-          apksigner="$ANDROID_HOME/build-tools/35.0.0/apksigner"
+          apksigner="$(find "$ANDROID_HOME/build-tools" -name apksigner -type f 2>/dev/null | sort -V | tail -n 1)"
+          if [[ -z "$apksigner" ]]; then
+            echo "apksigner is required in ANDROID_HOME/build-tools." >&2
+            exit 2
+          fi
           "$apksigner" verify --verbose --print-certs "$apk" | tee /tmp/apksigner.txt
           grep -q "Verified using" /tmp/apksigner.txt
           if grep -Eqi 'CN=Android Debug|Android Debug' /tmp/apksigner.txt; then
