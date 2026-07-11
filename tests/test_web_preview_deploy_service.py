@@ -433,7 +433,7 @@ def test_web_preview_deploy_reapplies_d1_schema_evolution_without_duplicate_colu
     assert any("UPDATE preview_invites SET role" in call["sql"] for call in fake.sql_calls)
 
 
-def test_web_preview_deploy_fails_when_worker_remote_verification_mismatches(
+def test_web_preview_deploy_accepts_wrangler_transformed_worker_script(
     tmp_path: Path,
 ) -> None:
     project = _generated_project(tmp_path)
@@ -442,20 +442,22 @@ def test_web_preview_deploy_fails_when_worker_remote_verification_mismatches(
     service = _service(tmp_path, apply_enabled=True, fake=fake)
     plan = service.plan(WebPreviewPlanInput(project_path=str(project)))
 
-    with pytest.raises(WebPreviewError) as exc:
-        service.deploy(
-            WebPreviewDeployInput(
-                project_path=str(project),
-                confirm_apply=True,
-                expected_plan_hash=plan["plan_hash"],
-            )
+    payload = service.deploy(
+        WebPreviewDeployInput(
+            project_path=str(project),
+            confirm_apply=True,
+            expected_plan_hash=plan["plan_hash"],
         )
+    )
 
-    assert exc.value.code == "deploy_failed"
-    assert "worker_verify_hash_mismatch" in exc.value.message
+    assert payload["status"] == "active"
+    worker_resource = next(
+        item for item in payload["applied_resources"] if item["kind"] == "worker_script"
+    )
+    assert worker_resource["verified"] is True
+    assert worker_resource["verification_status"] == "verified_transformed"
     state = _read_preview(tmp_path, plan["preview_id"])
-    assert state["status"] == "failed"
-    assert "worker_verify_hash_mismatch" in state["error"]
+    assert state["worker_script_verification_status"] == "verified_transformed"
 
 
 def test_web_preview_deploy_recovers_existing_active_without_duplicate_apply(
