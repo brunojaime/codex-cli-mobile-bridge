@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 from backend.app.application.services.project_factory_manifest_service import (
@@ -750,7 +751,26 @@ def test_project_factory_generate_creates_local_project_foundation(tmp_path: Pat
 
 def test_ready_job_without_remote_publication_is_audited_to_blocked(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    bridge_root = tmp_path / ".bridge-empty"
+    bridge_root.mkdir()
+    monkeypatch.setenv("CODEX_MOBILE_BRIDGE_ROOT", str(bridge_root))
+    monkeypatch.setenv("APP_RUNTIME_PROFILE", "preview")
+    monkeypatch.setenv("API_RUNTIME", "cloudflare_preview")
+    monkeypatch.setenv("APP_SLUG", "catalogo-autos")
+    monkeypatch.setenv("SOURCE_APP", "catalogo-autos")
+    monkeypatch.setenv("API_BASE_URL", "https://preview.nienfos.com/catalogo-autos/api")
+    monkeypatch.setenv(
+        "PREVIEW_API_BASE_URL", "https://preview.nienfos.com/catalogo-autos/api"
+    )
+    monkeypatch.setenv("BRIDGE_URL", "https://bridge.example.test")
+    monkeypatch.setenv("APP_RELEASE_TAG", "android-preview-v1")
+    monkeypatch.setenv("APP_ANDROID_PREVIEW_RELEASE_TAG", "android-preview-v1")
+    monkeypatch.setenv("PREVIEW_ADMIN_PASSWORD", "preview-password")
+    monkeypatch.setenv("PREVIEW_ADMIN_BOOTSTRAP_TOKEN", "bootstrap-token")
+    monkeypatch.setenv("PREVIEW_D1_DATABASE", "catalogo-autos-preview")
+    monkeypatch.setenv("INSTALLABLE_APPS_REGISTRATION_TOKEN", "registration-token")
     client = _client(tmp_path, publication_validation_mode="local")
     draft_response = client.post(
         "/project-factory/drafts",
