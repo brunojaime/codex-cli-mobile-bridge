@@ -20,7 +20,7 @@
     "latestAssetName": "codex-mobile.apk",
     "releaseTagPattern": "android-v*",
     "repo": "brunojaime/codex-cli-mobile-bridge",
-    "requiredMinimumBuild": null
+    "requiredMinimumBuild": 98
   },
   "gestion-ludmilo": {
     "apkAssetPattern": "gestion-ludmilo-*.apk",
