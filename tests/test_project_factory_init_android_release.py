@@ -9,6 +9,7 @@ from backend.app.application.services.project_factory_init_service import (
     ProjectFactoryInitCommandResult,
     ProjectFactoryInitService,
 )
+from backend.app.application.services import project_factory_init_service as init_module
 from backend.app.domain.entities.project_factory_init import (
     ProjectFactoryInitPhaseName,
     ProjectFactoryInitPhaseStatus,
@@ -44,7 +45,11 @@ class _FakeRunner:
         self.envs.append(env)
         assert self.responses, f"Unexpected command: {argv}"
         expected, response = self.responses.pop(0)
-        assert argv == expected
+        assert len(argv) == len(expected)
+        assert all(
+            expected_part == "__ANY__" or actual_part == expected_part
+            for actual_part, expected_part in zip(argv, expected, strict=True)
+        )
         cwd_path = Path(cwd) if cwd is not None else Path()
         if response.on_run is not None:
             response.on_run(cwd_path)
@@ -132,6 +137,64 @@ def test_android_release_creates_prerelease_registers_bridge_and_persists(
         ProjectFactoryInitPhaseName.BRIDGE_INSTALLABLE_REGISTRATION
     ).command_evidence
     assert "secret-token" not in json.dumps(persisted.to_payload())
+
+
+def test_android_release_generates_preview_signing_when_missing(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    release_tag = "android-preview-v0.1.0-build.1"
+    keytool = tmp_path / "bin/keytool"
+    keytool.parent.mkdir(parents=True)
+    keytool.write_text("#!/bin/sh\n", encoding="utf-8")
+    monkeypatch.setattr(init_module.shutil, "which", lambda name: str(keytool) if name == "keytool" else None)
+
+    runner = _FakeRunner(
+        [
+            (
+                _keytool_cmd(keytool, tmp_path),
+                _FakeResponse(on_run=lambda _project: _write_generated_keystore(tmp_path)),
+            ),
+            (_release_view_cmd(release_tag), _FakeResponse(exit_code=1, stderr="not found")),
+            (
+                _publish_cmd(),
+                _FakeResponse(stdout="built", on_run=_write_apk),
+            ),
+            (
+                _release_view_cmd(release_tag),
+                _FakeResponse(stdout=json.dumps(_release(release_tag))),
+            ),
+            (_lookup_cmd(), _FakeResponse(exit_code=22, stderr="not found")),
+            (_register_cmd(), _FakeResponse(stdout="registered")),
+            (
+                _lookup_cmd(),
+                _FakeResponse(stdout=json.dumps(_installable(release_tag))),
+            ),
+        ]
+    )
+    service = _service(tmp_path, runner, create_signing=False)
+    job = _generated_job(service, create_signing=False)
+
+    completed = service.run_android_preview_release_phases(job.id)
+
+    assert completed.phase(
+        ProjectFactoryInitPhaseName.ANDROID_PREVIEW_RELEASE
+    ).status == ProjectFactoryInitPhaseStatus.COMPLETED
+    assert (tmp_path / "secrets/clinica-norte-preview-signing.env").is_file()
+    assert (tmp_path / "secrets/clinica-norte-preview-upload-keystore.jks").is_file()
+    evidence = completed.phase(
+        ProjectFactoryInitPhaseName.ANDROID_PREVIEW_RELEASE
+    ).command_evidence[0]
+    assert evidence.argv[0] == str(keytool)
+    assert "ANDROID_STORE_PASSWORD" in evidence.redacted_env_keys
+    assert "ANDROID_KEY_PASSWORD" in evidence.redacted_env_keys
+    payload = json.dumps(completed.to_payload())
+    signing_env = (
+        tmp_path / "secrets/clinica-norte-preview-signing.env"
+    ).read_text(encoding="utf-8")
+    for line in signing_env.splitlines():
+        if "_PASSWORD=" in line:
+            assert line.split("=", 1)[1] not in payload
 
 
 def test_android_release_verifies_existing_prerelease_and_installable_without_publish(
@@ -426,11 +489,14 @@ def _service(
     *,
     registration_token: str | None = "secret-token",
     command_env: dict[str, str] | None = None,
+    create_signing: bool = True,
 ) -> ProjectFactoryInitService:
+    del create_signing
+    env = {"CODEX_MOBILE_BRIDGE_ROOT": str(tmp_path), **(command_env or {})}
     return ProjectFactoryInitService(
         state_root=tmp_path / "state",
         command_runner=runner,
-        command_env=command_env,
+        command_env=env,
         settings=_settings(tmp_path, registration_token=registration_token),
     )
 
@@ -449,14 +515,17 @@ def _settings(
     )
 
 
-def _generated_job(service: ProjectFactoryInitService):
+def _generated_job(service: ProjectFactoryInitService, *, create_signing: bool = True):
     job = service.start_or_resume(
         draft_id="draft-flutter",
         project_name="Clinica Norte",
         slug="clinica-norte",
         frontend_strategy="flutter",
     )
-    return service.run_frontend_baseline_phase(job.id)
+    completed = service.run_frontend_baseline_phase(job.id)
+    if create_signing:
+        _write_existing_signing(Path(service._command_env["CODEX_MOBILE_BRIDGE_ROOT"]))
+    return completed
 
 
 def _release_view_cmd(release_tag: str) -> tuple[str, ...]:
@@ -474,6 +543,32 @@ def _publish_cmd() -> tuple[str, ...]:
     return ("bash", "scripts/publish_android_preview_release.sh", "--push", "--watch")
 
 
+def _keytool_cmd(keytool: Path, tmp_path: Path) -> tuple[str, ...]:
+    return (
+        str(keytool),
+        "-genkeypair",
+        "-v",
+        "-keystore",
+        str(tmp_path / "secrets/clinica-norte-preview-upload-keystore.jks"),
+        "-storetype",
+        "JKS",
+        "-keyalg",
+        "RSA",
+        "-keysize",
+        "2048",
+        "-validity",
+        "10000",
+        "-alias",
+        "preview",
+        "-storepass:env",
+        "ANDROID_STORE_PASSWORD",
+        "-keypass:env",
+        "ANDROID_KEY_PASSWORD",
+        "-dname",
+        "CN=clinica-norte Preview,O=Codex Project Factory,C=US",
+    )
+
+
 def _register_cmd() -> tuple[str, ...]:
     return ("bash", "scripts/register_installable_app.sh")
 
@@ -486,6 +581,30 @@ def _write_apk(project: Path) -> None:
     apk = project / "apps/mobile/build/app/outputs/flutter-apk/clinica-norte.apk"
     apk.parent.mkdir(parents=True, exist_ok=True)
     apk.write_bytes(b"preview-apk")
+
+
+def _write_existing_signing(bridge_root: Path) -> None:
+    secrets = bridge_root / "secrets"
+    secrets.mkdir(parents=True, exist_ok=True)
+    (secrets / "clinica-norte-preview-upload-keystore.jks").write_bytes(b"keystore")
+    (secrets / "clinica-norte-preview-signing.env").write_text(
+        "\n".join(
+            [
+                "ANDROID_KEY_ALIAS=preview",
+                "ANDROID_STORE_PASSWORD=store-password",
+                "ANDROID_KEY_PASSWORD=key-password",
+                "ANDROID_STORE_TYPE=JKS",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+
+def _write_generated_keystore(bridge_root: Path) -> None:
+    keystore = bridge_root / "secrets/clinica-norte-preview-upload-keystore.jks"
+    keystore.parent.mkdir(parents=True, exist_ok=True)
+    keystore.write_bytes(b"generated-keystore")
 
 
 def _release(
