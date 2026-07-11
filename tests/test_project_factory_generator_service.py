@@ -593,6 +593,10 @@ def test_generator_writes_executable_publish_script(tmp_path: Path) -> None:
     assert "DEBUG_PREVIEW_SIGNING" not in android_preview_content
     assert "https://preview.nienfos.com/$SOURCE_APP/api" in android_preview_content
     assert "git push origin \"$tag\"" in android_preview_content
+    env_loader_content = (
+        tmp_path / "clinica-norte/scripts/load_bridge_env.sh"
+    ).read_text(encoding="utf-8")
+    assert '[[ -n "${!key+x}" ]]' in env_loader_content
 
     android_release_script = tmp_path / "clinica-norte/scripts/publish_android_release.sh"
     assert android_release_script.is_file()
