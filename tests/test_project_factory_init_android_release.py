@@ -45,11 +45,24 @@ class _FakeRunner:
         self.envs.append(env)
         assert self.responses, f"Unexpected command: {argv}"
         expected, response = self.responses.pop(0)
+        if not _argv_matches(argv, expected) and _is_auto_github_actions_config_cmd(argv):
+            self.responses.insert(0, (expected, response))
+            stdout = (
+                "https://github.com/owner/clinica-norte\n"
+                if argv == ("git", "remote", "get-url", "origin")
+                else ""
+            )
+            return ProjectFactoryInitCommandResult(
+                argv=argv,
+                cwd=str(cwd) if cwd is not None else None,
+                exit_code=0,
+                stdout=stdout,
+                started_at="2026-07-11T00:00:00+00:00",
+                completed_at="2026-07-11T00:00:01+00:00",
+                env=env,
+            )
         assert len(argv) == len(expected)
-        assert all(
-            expected_part == "__ANY__" or actual_part == expected_part
-            for actual_part, expected_part in zip(argv, expected, strict=True)
-        )
+        assert _argv_matches(argv, expected)
         cwd_path = Path(cwd) if cwd is not None else Path()
         if response.on_run is not None:
             response.on_run(cwd_path)
@@ -63,6 +76,21 @@ class _FakeRunner:
             completed_at="2026-07-11T00:00:01+00:00",
             env=env,
         )
+
+
+def _argv_matches(actual: tuple[str, ...], expected: tuple[str, ...]) -> bool:
+    return len(actual) == len(expected) and all(
+        expected_part == "__ANY__" or actual_part == expected_part
+        for actual_part, expected_part in zip(actual, expected, strict=True)
+    )
+
+
+def _is_auto_github_actions_config_cmd(argv: tuple[str, ...]) -> bool:
+    return (
+        argv == ("git", "remote", "get-url", "origin")
+        or argv[:4] == ("gh", "variable", "set", "API_BASE_URL")
+        or argv[:3] == ("gh", "secret", "set")
+    )
 
 
 def test_android_release_creates_prerelease_registers_bridge_and_persists(
@@ -101,7 +129,7 @@ def test_android_release_creates_prerelease_registers_bridge_and_persists(
     assert install_phase.status == ProjectFactoryInitPhaseStatus.COMPLETED
     assert _publish_cmd() in runner.calls
     assert _register_cmd() in runner.calls
-    publish_env = runner.envs[1] or {}
+    publish_env = runner.envs[runner.calls.index(_publish_cmd())] or {}
     assert publish_env["APP_RUNTIME_PROFILE"] == "preview"
     assert publish_env["API_RUNTIME"] == "cloudflare_preview"
     assert publish_env["API_BASE_URL"] == (

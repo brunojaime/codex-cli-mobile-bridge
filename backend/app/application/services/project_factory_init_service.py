@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 import hashlib
@@ -703,6 +704,18 @@ class ProjectFactoryInitService:
                     blocker=signing_blocker,
                     evidence=signing_evidence,
                 )
+            actions_evidence, actions_blocker = self._ensure_android_github_actions_config(
+                job.slug,
+                cwd=target,
+                preview_api=preview_api,
+            )
+            if actions_blocker is not None:
+                return self._block_android_phase(
+                    job,
+                    phase_name=ProjectFactoryInitPhaseName.ANDROID_PREVIEW_RELEASE,
+                    blocker=actions_blocker,
+                    evidence=(*signing_evidence, *actions_evidence),
+                )
             release_view = self._run_env(
                 (
                     "gh",
@@ -715,7 +728,11 @@ class ProjectFactoryInitService:
                 cwd=target,
                 env=env,
             )
-            release_evidence = [*signing_evidence, self._evidence(release_view)]
+            release_evidence = [
+                *signing_evidence,
+                *actions_evidence,
+                self._evidence(release_view),
+            ]
             release_payload = _parse_json_object(release_view.stdout)
             release_valid = release_view.exit_code == 0 and _valid_android_release(
                 release_payload,
@@ -1878,6 +1895,120 @@ class ProjectFactoryInitService:
             or os.environ.get("CODEX_MOBILE_BRIDGE_ROOT")
         )
         return Path(configured).expanduser().resolve() if configured else Path.cwd()
+
+    def _ensure_android_github_actions_config(
+        self,
+        slug: str,
+        *,
+        cwd: Path,
+        preview_api: str,
+    ) -> tuple[
+        tuple[ProjectFactoryInitCommandEvidence, ...],
+        ProjectFactoryInitBlocker | None,
+    ]:
+        origin = self._run(("git", "remote", "get-url", "origin"), cwd=cwd)
+        evidence = [self._evidence(origin)]
+        repo_ref = _github_repo_ref_from_origin(origin.stdout.strip())
+        if origin.exit_code != 0 or not repo_ref:
+            return (
+                tuple(evidence),
+                _android_blocker(
+                    phase=ProjectFactoryInitPhaseName.ANDROID_PREVIEW_RELEASE,
+                    code="android_preview_github_origin_missing",
+                    message="GitHub origin is required before Android preview release.",
+                    next_action="Configure the GitHub origin, then rerun deterministic init.",
+                    command=("git", "remote", "get-url", "origin"),
+                ),
+            )
+        variable = self._run(
+            (
+                "gh",
+                "variable",
+                "set",
+                "API_BASE_URL",
+                "--body",
+                preview_api,
+                "--repo",
+                repo_ref,
+            ),
+            cwd=cwd,
+        )
+        evidence.append(self._evidence(variable))
+        if variable.exit_code != 0:
+            return (
+                tuple(evidence),
+                _android_blocker(
+                    phase=ProjectFactoryInitPhaseName.ANDROID_PREVIEW_RELEASE,
+                    code="android_preview_github_variable_failed",
+                    message="Could not configure GitHub Actions API_BASE_URL variable.",
+                    next_action="Fix GitHub variable permissions, then rerun deterministic init.",
+                    command=(
+                        "gh",
+                        "variable",
+                        "set",
+                        "API_BASE_URL",
+                        "--repo",
+                        repo_ref,
+                    ),
+                ),
+            )
+        signing = _read_preview_signing_files(
+            self._bridge_root_for_generated_scripts(),
+            slug,
+        )
+        secret_values = {
+            "ANDROID_KEYSTORE_BASE64": base64.b64encode(
+                signing["keystore_bytes"]
+            ).decode("ascii"),
+            "ANDROID_KEY_ALIAS": signing["ANDROID_KEY_ALIAS"],
+            "ANDROID_KEY_PASSWORD": signing["ANDROID_KEY_PASSWORD"],
+            "ANDROID_STORE_PASSWORD": signing["ANDROID_STORE_PASSWORD"],
+            "ANDROID_STORE_TYPE": signing.get("ANDROID_STORE_TYPE", "JKS"),
+        }
+        temp_paths: list[Path] = []
+        try:
+            for name, value in secret_values.items():
+                temp_path = (
+                    self._bridge_root_for_generated_scripts()
+                    / "secrets"
+                    / f".{slug}-{name.lower()}.tmp"
+                )
+                temp_path.write_text(str(value), encoding="utf-8")
+                os.chmod(temp_path, 0o600)
+                temp_paths.append(temp_path)
+                secret = self._run(
+                    (
+                        "gh",
+                        "secret",
+                        "set",
+                        name,
+                        "--body-file",
+                        str(temp_path),
+                        "--repo",
+                        repo_ref,
+                    ),
+                    cwd=cwd,
+                )
+                evidence.append(self._evidence(secret))
+                if secret.exit_code != 0:
+                    return (
+                        tuple(evidence),
+                        _android_blocker(
+                            phase=ProjectFactoryInitPhaseName.ANDROID_PREVIEW_RELEASE,
+                            code="android_preview_github_secret_failed",
+                            message="Could not configure GitHub Actions signing secrets.",
+                            next_action=(
+                                "Fix GitHub secret permissions, then rerun "
+                                "deterministic init."
+                            ),
+                            command=("gh", "secret", "set", name, "--repo", repo_ref),
+                        ),
+                    )
+        finally:
+            for temp_path in temp_paths:
+                if temp_path.exists():
+                    temp_path.unlink()
+        return tuple(evidence), None
 
     def _mark_cloudflare_running(
         self,
@@ -3953,6 +4084,32 @@ def _keytool_executable() -> str:
     if fallback.is_file():
         return str(fallback)
     return "keytool"
+
+
+def _github_repo_ref_from_origin(origin_url: str) -> str | None:
+    value = origin_url.strip().removesuffix(".git")
+    if value.startswith("https://github.com/"):
+        value = value.removeprefix("https://github.com/")
+    elif value.startswith("git@github.com:"):
+        value = value.removeprefix("git@github.com:")
+    else:
+        return None
+    return value if "/" in value else None
+
+
+def _read_preview_signing_files(bridge_root: Path, slug: str) -> dict[str, object]:
+    secrets_dir = bridge_root / "secrets"
+    signing_env = secrets_dir / f"{slug}-preview-signing.env"
+    keystore = secrets_dir / f"{slug}-preview-upload-keystore.jks"
+    values: dict[str, object] = {}
+    for line in signing_env.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        key, value = stripped.split("=", 1)
+        values[key] = shlex.split(value)[0] if value else ""
+    values["keystore_bytes"] = keystore.read_bytes()
+    return values
 
 
 def _android_blocker(
