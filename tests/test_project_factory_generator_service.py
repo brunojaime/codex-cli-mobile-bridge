@@ -603,6 +603,23 @@ def test_generator_writes_executable_publish_script(tmp_path: Path) -> None:
     assert "apps/mobile/.flutter-plugins-dependencies" in gitignore_content
     assert "apps/mobile/android/local.properties" in gitignore_content
     assert ".codex/factory/" in gitignore_content
+    assert ".generated-validation/" in gitignore_content
+    assert "backend/.venv/" in gitignore_content
+    assert "backend/*.egg-info/" in gitignore_content
+    initial_preview_validation = (
+        tmp_path / "clinica-norte/scripts/validate_initial_preview_release.sh"
+    ).read_text(encoding="utf-8")
+    workflow_content = (
+        tmp_path / "clinica-norte/.github/workflows/android-preview-release.yml"
+    ).read_text(encoding="utf-8")
+    assert "certificate SHA-256 digest/ { print $NF; exit }" in (
+        initial_preview_validation
+    )
+    assert "certificate SHA-256 digest/ { print $NF; exit }" in workflow_content
+    assert "certificate SHA-256 digest/ { print $2; exit }" not in (
+        initial_preview_validation
+    )
+    assert "certificate SHA-256 digest/ { print $2; exit }" not in workflow_content
 
     android_release_script = tmp_path / "clinica-norte/scripts/publish_android_release.sh"
     assert android_release_script.is_file()
@@ -893,7 +910,10 @@ def test_generated_initial_preview_validation_runs_all_flutter_checks(
     ProjectFactoryGeneratorService().generate(manifest_plan)
 
     project = tmp_path / "clinica-norte"
-    _git(["remote", "add", "origin", "https://github.com/acme/clinica-norte.git"], project)
+    _git(
+        ["remote", "add", "origin", "https://github.com/acme/clinica-norte.git"],
+        project,
+    )
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
     command_log, bridge_root = _write_initial_preview_gate_fakes(
@@ -1016,6 +1036,98 @@ def test_generated_initial_preview_validation_runs_all_flutter_checks(
     assert "apksigner verify" in log
     assert "wrangler" in log
     assert "invite e2e" in log
+
+
+@pytest.mark.parametrize(
+    "apksigner_certificate_output",
+    [
+        (
+            "Signer #1 certificate SHA-256 digest: "
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\n"
+            "Signer #1 certificate DN: CN=Clinica Norte Preview Upload"
+        ),
+        (
+            "V2 Signer: certificate SHA-256 digest: "
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\n"
+            "V2 Signer: certificate DN: CN=Clinica Norte Preview Upload"
+        ),
+    ],
+)
+def test_generated_initial_preview_validation_parses_apksigner_sha_formats(
+    tmp_path: Path,
+    apksigner_certificate_output: str,
+) -> None:
+    manifest_plan = ProjectFactoryManifestService(
+        projects_root=tmp_path,
+    ).plan_manifest(
+        ProjectFactoryManifestInput(
+            name="Clinica Norte",
+            business_type="medical",
+            primary_goal="Reservar turnos",
+        )
+    )
+    ProjectFactoryGeneratorService().generate(manifest_plan)
+
+    project = tmp_path / "clinica-norte"
+    _git(["remote", "add", "origin", "https://github.com/acme/clinica-norte.git"], project)
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    command_log, bridge_root = _write_initial_preview_gate_fakes(
+        project,
+        fake_bin,
+        tmp_path,
+        apksigner_certificate_output=apksigner_certificate_output,
+    )
+    _git(["add", "scripts/smoke_preview_api.sh"], project)
+    _git(["add", "scripts/smoke_web_preview.sh"], project)
+    _git(["add", "scripts/final_readiness_audit.sh"], project)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.email=test@example.test",
+            "-c",
+            "user.name=Test",
+            "commit",
+            "-m",
+            "Install fake validation hooks",
+        ],
+        cwd=project,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+
+    report_path = tmp_path / "apksigner-format-report.json"
+    completed = subprocess.run(
+        ["scripts/validate_initial_preview_release.sh"],
+        cwd=project,
+        env=_initial_preview_env(
+            {
+                "PATH": f"{fake_bin}:{os.environ['PATH']}",
+                "COMMAND_LOG": str(command_log),
+                "CODEX_MOBILE_BRIDGE_ROOT": str(bridge_root),
+                "CHECK_TIMESTAMP": "2026-07-10T00:00:00Z",
+                "CHECK_REPORT_JSON": str(report_path),
+            }
+        ),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    signer_check = next(
+        item
+        for item in report["checks"]
+        if item["name"] == "apksigner signer SHA256"
+    )
+    assert signer_check["status"] == "passed"
+    assert (
+        signer_check["detail"]
+        == "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    )
 
 
 def test_generated_initial_preview_validation_fails_when_report_dirties_git(
@@ -2465,6 +2577,8 @@ def _write_initial_preview_gate_fakes(
     project: Path,
     fake_bin: Path,
     tmp_path: Path,
+    *,
+    apksigner_certificate_output: str | None = None,
 ) -> tuple[Path, Path]:
     command_log = tmp_path / "initial-preview-commands.log"
     bridge_root = tmp_path / "bridge-root"
@@ -2521,6 +2635,12 @@ def _write_initial_preview_gate_fakes(
     )
     fake_flutter.chmod(0o755)
 
+    if apksigner_certificate_output is None:
+        apksigner_certificate_output = (
+            "V2 Signer: certificate SHA-256 digest: "
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\n"
+            "V2 Signer: certificate DN: CN=Clinica Norte Preview Upload"
+        )
     fake_apksigner = fake_bin / "apksigner"
     fake_apksigner.write_text(
         "#!/usr/bin/env bash\n"
@@ -2532,8 +2652,7 @@ def _write_initial_preview_gate_fakes(
         "cat <<'OUT'\n"
         "Verifies\n"
         "Verified using v1 scheme (JAR signing): true\n"
-        "Signer #1 certificate SHA-256 digest: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\n"
-        "Signer #1 certificate DN: CN=Clinica Norte Preview Upload\n"
+        f"{apksigner_certificate_output.rstrip()}\n"
         "OUT\n",
         encoding="utf-8",
     )

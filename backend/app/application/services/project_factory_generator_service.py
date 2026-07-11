@@ -5203,7 +5203,7 @@ run_apksigner_verify() {{
     printf 'Preview APK must not be signed with Android debug certificate.\\n' >&2
     return 2
   fi
-  signer_sha256="$(awk -F': ' '/certificate SHA-256 digest/ {{ print $2; exit }}' /tmp/project-factory-apksigner.txt | tr -d '[:space:]')"
+  signer_sha256="$(awk -F': ' '/certificate SHA-256 digest/ {{ print $NF; exit }}' /tmp/project-factory-apksigner.txt | tr -d '[:space:]')"
   [[ "$signer_sha256" =~ ^[A-Fa-f0-9]{{64}}$ ]] || {{
     printf 'Could not parse signer certificate SHA256 from apksigner output.\\n' >&2
     return 2
@@ -5957,7 +5957,7 @@ jobs:
             echo "Preview APK must not be signed with Android debug certificate." >&2
             exit 2
           fi
-          signer_sha256="$(awk -F': ' '/certificate SHA-256 digest/ {{ print $2; exit }}' /tmp/apksigner.txt | tr -d '[:space:]')"
+          signer_sha256="$(awk -F': ' '/certificate SHA-256 digest/ {{ print $NF; exit }}' /tmp/apksigner.txt | tr -d '[:space:]')"
           if [[ ! "$signer_sha256" =~ ^[A-Fa-f0-9]{{64}}$ ]]; then
             echo "Could not parse signer certificate SHA256 from apksigner output." >&2
             exit 2
@@ -11704,6 +11704,9 @@ __pycache__/
 .idea/
 .codex-bridge/
 .codex/factory/
+.generated-validation/
+backend/.venv/
+backend/*.egg-info/
 """
 
 
