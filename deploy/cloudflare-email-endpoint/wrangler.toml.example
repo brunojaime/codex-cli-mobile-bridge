@@ -1,0 +1,26 @@
+name = "codex-web-preview-email"
+main = "worker/src/index.js"
+compatibility_date = "2026-07-01"
+
+# Route or workers.dev endpoint is operator-owned. Example:
+# workers_dev = true
+# route = { pattern = "preview-email.example.com/send", custom_domain = true }
+
+[vars]
+EMAIL_PROVIDER = "brevo"
+EMAIL_FROM = "preview@nienfos.com"
+# Optional comma-separated allowlist.
+ALLOWED_RECIPIENTS = ""
+
+# Set with:
+# wrangler secret put EMAIL_ENDPOINT_TOKEN
+# wrangler secret put BREVO_API_KEY
+
+# Native Cloudflare Email Service outbound sending to arbitrary recipients
+# requires Workers Paid. If you enable it, set EMAIL_PROVIDER to
+# "cloudflare_email_service" and add:
+#
+# [[send_email]]
+# name = "EMAIL"
+# allowed_sender_addresses = ["preview@nienfos.com"]
+# allowed_destination_addresses = ["admin@example.com"]

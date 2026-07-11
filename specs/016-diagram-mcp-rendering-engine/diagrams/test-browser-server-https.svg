@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" role="img" viewBox="120 280 620 180" width="620" height="180" data-renderer="diagram-mcp-rendering-engine" data-source-format="drawio-style-svg">
+<style>.cell{fill:#f8fafc;stroke:#334155;stroke-width:1.5}.component-mark{fill:#e2e8f0;stroke:#334155;stroke-width:1.5}.line,.connector{fill:none;stroke:#334155;stroke-width:1.5;stroke-linecap:square}.label{font-family:Arial,Helvetica,sans-serif;font-size:13px;fill:#0f172a;font-weight:700}.small-label{font-family:Arial,Helvetica,sans-serif;font-size:12px;fill:#64748b}.interface{fill:none;stroke:#334155;stroke-width:1.5}</style>
+<g id="diagram-connectors" data-layer="connectors">
+<path id="connector-browser_server_https_consumer" class="connector" data-connection-id="browser_server_https" data-from-node="browser" data-to-node="interface_browser_server_https" data-role="consumer_to_required" d="M 340 365 L 394 365"/>
+<path id="connector-browser_server_https_interface" class="connector" data-connection-id="browser_server_https" data-from-node="interface_browser_server_https" data-to-node="interface_browser_server_https" data-role="interface_link" d="M 404 365 L 424 365"/>
+<path id="connector-browser_server_https_provider" class="connector" data-connection-id="browser_server_https" data-from-node="interface_browser_server_https" data-to-node="server" data-role="provided_to_provider" d="M 444 365 L 520 365"/>
+</g>
+<g id="diagram-nodes" data-layer="nodes">
+<g id="node-browser" data-node-id="browser" data-node-type="uml_component">
+<rect class="cell" x="160" y="320" width="180" height="90"/>
+<text class="label" text-anchor="middle" x="250" y="343">Browser</text>
+<path class="line" d="M 160 354 L 340 354"/>
+<g class="component-mark" data-node-id="browser_component_icon">
+<rect x="316" y="324" width="20" height="20" rx="1"/>
+<rect x="308" y="328" width="12" height="4" rx="1"/>
+<rect x="308" y="338" width="12" height="4" rx="1"/>
+</g>
+</g>
+<g id="node-interface_browser_server_https" data-node-id="interface_browser_server_https" data-node-type="provided_required_interface" data-connection-id="browser_server_https">
+<text class="small-label" text-anchor="middle" x="419" y="333">HTTPS</text>
+<path id="interface_browser_server_https-required" class="interface" data-anchor="required" d="M 394 355 A 10 10 0 0 1 394 375"/>
+<circle id="interface_browser_server_https-provided" class="interface" data-anchor="provided" cx="434" cy="365" r="10"/>
+</g>
+<g id="node-server" data-node-id="server" data-node-type="uml_component">
+<rect class="cell" x="520" y="320" width="180" height="90"/>
+<text class="label" text-anchor="middle" x="610" y="343">Server</text>
+<path class="line" d="M 520 354 L 700 354"/>
+<g class="component-mark" data-node-id="server_component_icon">
+<rect x="676" y="324" width="20" height="20" rx="1"/>
+<rect x="668" y="328" width="12" height="4" rx="1"/>
+<rect x="668" y="338" width="12" height="4" rx="1"/>
+</g>
+</g>
+</g>
+</svg>

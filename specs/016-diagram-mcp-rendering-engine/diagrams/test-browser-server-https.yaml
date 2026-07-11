@@ -1,0 +1,16 @@
+diagram_id: test-browser-server-https
+diagram_type: uml-component-svg
+title: Spec 016 Test Browser Server HTTPS
+source_format: svg
+rendered_format: svg
+renderer: diagram-mcp-rendering-engine
+mcp_diagram_id: diagram_ffe03a2b9d50
+source: specs/016-diagram-mcp-rendering-engine/diagrams/test-browser-server-https.svg
+drawio_source: specs/016-diagram-mcp-rendering-engine/diagrams/test-browser-server-https.drawio
+related_plans:
+  - plan-7
+  - plan-8
+notes:
+  - Test diagram generated from the Diagram MCP semantic model for spec 016.
+  - The SVG is styled to match the diagrams.net UML component shape expected for this fixture.
+  - The drawio_source keeps the mxfile version with component and providedRequiredInterface cells.
