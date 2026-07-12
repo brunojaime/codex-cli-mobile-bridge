@@ -145,8 +145,21 @@ def test_generator_writes_foundation_and_rolls_no_secrets(tmp_path: Path) -> Non
     assert "CODEX_APP_UPDATER_BRIDGE_URL" in main
     assert "workbenchBridgeUrl: apiBaseUrl" not in main
     assert "codex_developer_feedback_template:" in pubspec
+    assert "ref: codex-developer-feedback-template-v0.4.7" in pubspec
     assert "codex_app_updater:" in pubspec
+    assert "ref: 374f0e3180dc8d80214dcaa4374073d8e4ab1340" in pubspec
     assert "codex_bridge_workbench:" in pubspec
+    android_manifest = (
+        project / "apps/mobile/android/app/src/main/AndroidManifest.xml"
+    ).read_text(encoding="utf-8")
+    assert 'android:networkSecurityConfig="@xml/network_security_config"' in (
+        android_manifest
+    )
+    network_security = (
+        project / "apps/mobile/android/app/src/main/res/xml/network_security_config.xml"
+    ).read_text(encoding="utf-8")
+    assert 'cleartextTrafficPermitted="true"' in network_security
+    assert "tail0302c4.ts.net" in network_security
     assert "isPreviewRuntime" in session
     manifest = (project / ".codex/project.yaml").read_text(encoding="utf-8")
     assert "runtime_profiles:" in manifest
@@ -2265,8 +2278,17 @@ def test_generator_writes_flutter_mobile_v1_template(tmp_path: Path) -> None:
     assert "name: clinica_norte" in pubspec
     assert "http: ^1.2.2" in pubspec
     assert "codex_developer_feedback_template:" in pubspec
+    assert "ref: codex-developer-feedback-template-v0.4.7" in pubspec
     assert "codex_app_updater:" in pubspec
+    assert "ref: 374f0e3180dc8d80214dcaa4374073d8e4ab1340" in pubspec
     assert "codex_bridge_workbench:" in pubspec
+    android_manifest = (
+        mobile / "android/app/src/main/AndroidManifest.xml"
+    ).read_text(encoding="utf-8")
+    assert 'android:networkSecurityConfig="@xml/network_security_config"' in (
+        android_manifest
+    )
+    assert (mobile / "android/app/src/main/res/xml/network_security_config.xml").is_file()
     readme = (mobile / "README.md").read_text(encoding="utf-8")
     assert "--dart-define=API_BASE_URL=" in readme
     main = (mobile / "lib/main.dart").read_text(encoding="utf-8")

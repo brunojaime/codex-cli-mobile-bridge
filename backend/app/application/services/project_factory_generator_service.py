@@ -8581,6 +8581,9 @@ def _mobile_files(name: str, slug: str) -> dict[str, str]:
         "apps/mobile/android/app/src/main/AndroidManifest.xml": (
             _mobile_android_manifest()
         ),
+        "apps/mobile/android/app/src/main/res/xml/network_security_config.xml": (
+            _mobile_android_network_security_config()
+        ),
         "apps/mobile/test/config_test.dart": _mobile_config_test_dart(package_name),
         "apps/mobile/test/api_client_test.dart": _mobile_api_client_test_dart(
             package_name
@@ -8618,12 +8621,12 @@ dependencies:
     git:
       url: https://github.com/brunojaime/codex-cli-mobile-bridge.git
       path: packages/codex_developer_feedback_template
-      ref: codex-developer-feedback-template-v0.2.1
+      ref: codex-developer-feedback-template-v0.4.7
   codex_app_updater:
     git:
       url: https://github.com/brunojaime/codex-cli-mobile-bridge.git
       path: packages/codex_app_updater
-      ref: main
+      ref: 374f0e3180dc8d80214dcaa4374073d8e4ab1340
   codex_bridge_workbench:
     git:
       url: https://github.com/brunojaime/codex-cli-mobile-bridge.git
@@ -8679,7 +8682,8 @@ def _mobile_android_manifest() -> str:
     <application
         android:label="Generated Preview"
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher">
+        android:icon="@mipmap/ic_launcher"
+        android:networkSecurityConfig="@xml/network_security_config">
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -8698,6 +8702,16 @@ def _mobile_android_manifest() -> str:
             android:value="2" />
     </application>
 </manifest>
+"""
+
+
+def _mobile_android_network_security_config() -> str:
+    return """<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">tail0302c4.ts.net</domain>
+    </domain-config>
+</network-security-config>
 """
 
 

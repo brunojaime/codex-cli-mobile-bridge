@@ -161,6 +161,17 @@ def test_android_release_creates_prerelease_registers_bridge_and_persists(
     assert variable_sets["CODEX_FEEDBACK_ENABLED"] == "true"
     assert variable_sets["CODEX_FEEDBACK_BRIDGE_URL"] == "https://bridge.test"
     assert variable_sets["CODEX_APP_UPDATER_BRIDGE_URL"] == "https://bridge.test"
+    mobile = tmp_path / "projects/clinica-norte/apps/mobile"
+    android_manifest = (
+        mobile / "android/app/src/main/AndroidManifest.xml"
+    ).read_text(encoding="utf-8")
+    assert 'android:networkSecurityConfig="@xml/network_security_config"' in (
+        android_manifest
+    )
+    network_security = (
+        mobile / "android/app/src/main/res/xml/network_security_config.xml"
+    ).read_text(encoding="utf-8")
+    assert "tail0302c4.ts.net" in network_security
     assert "localhost" not in json.dumps(completed.to_payload())
     apk = next(
         artifact for artifact in release_phase.artifacts if artifact.kind == "android_preview_apk"
@@ -236,6 +247,53 @@ def test_android_release_uses_public_bridge_url_when_transport_is_local(
     assert register_env["BRIDGE_PUBLIC_URL"] == "https://bridge.test"
     assert "localhost" not in json.dumps(
         [resource.to_payload() for resource in completed.remote_resources]
+    )
+
+
+def test_android_github_variables_use_http_for_tailscale_bridge(
+    tmp_path: Path,
+) -> None:
+    runner = _FakeRunner(
+        [
+            (
+                ("git", "remote", "get-url", "origin"),
+                _FakeResponse(stdout="https://github.com/owner/clinica-norte\n"),
+            ),
+            *[(_any_variable_set_cmd(), _FakeResponse()) for _ in range(6)],
+            (_any_secret_set_cmd(), _FakeResponse()),
+        ]
+    )
+    service = _service(tmp_path, runner)
+    project = tmp_path / "projects/clinica-norte"
+    project.mkdir(parents=True)
+    _write_existing_signing(tmp_path)
+
+    evidence, blocker = service._ensure_android_github_actions_config(
+        "clinica-norte",
+        cwd=project,
+        preview_api="https://preview.nienfos.com/clinica-norte/api",
+        bridge_public_url="https://batata-default-string.tail0302c4.ts.net",
+    )
+
+    variable_sets = {
+        call[3]: call[5]
+        for call in runner.calls
+        if call[:3] == ("gh", "variable", "set")
+    }
+    assert blocker is None
+    assert evidence
+    assert variable_sets["API_BASE_URL"] == (
+        "https://preview.nienfos.com/clinica-norte/api"
+    )
+    assert variable_sets["CODEX_BRIDGE_DEV_MODE"] == "true"
+    assert variable_sets["CODEX_BRIDGE_WORKBENCH_URL"] == (
+        "http://batata-default-string.tail0302c4.ts.net"
+    )
+    assert variable_sets["CODEX_FEEDBACK_BRIDGE_URL"] == (
+        "http://batata-default-string.tail0302c4.ts.net"
+    )
+    assert variable_sets["CODEX_APP_UPDATER_BRIDGE_URL"] == (
+        "http://batata-default-string.tail0302c4.ts.net"
     )
 
 
@@ -799,6 +857,31 @@ def _keytool_cmd(keytool: Path, tmp_path: Path) -> tuple[str, ...]:
 
 def _register_cmd() -> tuple[str, ...]:
     return ("bash", "scripts/register_installable_app.sh")
+
+
+def _any_variable_set_cmd() -> tuple[str, ...]:
+    return (
+        "gh",
+        "variable",
+        "set",
+        "__ANY__",
+        "--body",
+        "__ANY__",
+        "--repo",
+        "owner/clinica-norte",
+    )
+
+
+def _any_secret_set_cmd() -> tuple[str, ...]:
+    return (
+        "gh",
+        "secret",
+        "set",
+        "--env-file",
+        "__ANY__",
+        "--repo",
+        "owner/clinica-norte",
+    )
 
 
 def _lookup_cmd() -> tuple[str, ...]:

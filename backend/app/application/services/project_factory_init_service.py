@@ -2094,6 +2094,7 @@ class ProjectFactoryInitService:
                 analysis_options.unlink()
         if build_gradle.is_file():
             _patch_flutter_android_release_signing(build_gradle)
+        _ensure_flutter_android_bridge_network_config(mobile)
         return tuple(evidence), None
 
     def _ensure_android_github_actions_config(
@@ -2140,13 +2141,14 @@ class ProjectFactoryInitService:
                 ),
             )
         bridge_public_url = bridge_public_url.rstrip("/")
+        android_bridge_url = _android_preview_bridge_url(bridge_public_url)
         variable_values = {
             "API_BASE_URL": preview_api,
             "CODEX_BRIDGE_DEV_MODE": "true",
-            "CODEX_BRIDGE_WORKBENCH_URL": bridge_public_url,
+            "CODEX_BRIDGE_WORKBENCH_URL": android_bridge_url,
             "CODEX_FEEDBACK_ENABLED": "true",
-            "CODEX_FEEDBACK_BRIDGE_URL": bridge_public_url,
-            "CODEX_APP_UPDATER_BRIDGE_URL": bridge_public_url,
+            "CODEX_FEEDBACK_BRIDGE_URL": android_bridge_url,
+            "CODEX_APP_UPDATER_BRIDGE_URL": android_bridge_url,
         }
         for variable_name, variable_value in variable_values.items():
             variable = self._run(
@@ -4957,6 +4959,40 @@ def _patch_flutter_android_release_signing(build_gradle: Path) -> None:
     build_gradle.write_text(text, encoding="utf-8")
 
 
+def _ensure_flutter_android_bridge_network_config(mobile: Path) -> None:
+    manifest = mobile / "android/app/src/main/AndroidManifest.xml"
+    if manifest.is_file():
+        text = manifest.read_text(encoding="utf-8")
+        if "android:networkSecurityConfig=" not in text:
+            text = text.replace(
+                'android:icon="@mipmap/ic_launcher"',
+                (
+                    'android:icon="@mipmap/ic_launcher"\n'
+                    '        android:networkSecurityConfig="@xml/network_security_config"'
+                ),
+                1,
+            )
+            manifest.write_text(text, encoding="utf-8")
+    network_config = (
+        mobile / "android/app/src/main/res/xml/network_security_config.xml"
+    )
+    network_config.parent.mkdir(parents=True, exist_ok=True)
+    network_config.write_text(
+        _android_bridge_network_security_config(),
+        encoding="utf-8",
+    )
+
+
+def _android_bridge_network_security_config() -> str:
+    return """<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">tail0302c4.ts.net</domain>
+    </domain-config>
+</network-security-config>
+"""
+
+
 def _android_blocker(
     *,
     phase: ProjectFactoryInitPhaseName,
@@ -5119,6 +5155,16 @@ def _non_local_http_url(value: str | None) -> str | None:
     parsed = urlparse(url)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         return None
+    return url
+
+
+def _android_preview_bridge_url(value: str) -> str:
+    url = value.strip().rstrip("/")
+    parsed = urlparse(url)
+    if parsed.scheme == "https" and (
+        parsed.hostname or ""
+    ).lower().endswith(".ts.net"):
+        return parsed._replace(scheme="http").geturl().rstrip("/")
     return url
 
 
