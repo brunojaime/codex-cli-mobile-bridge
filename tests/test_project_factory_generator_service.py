@@ -2340,6 +2340,7 @@ def test_generated_web_preview_bundle_is_validable_locally(tmp_path: Path) -> No
     assert build_script.stat().st_mode & stat.S_IXUSR
     assert validate_script.stat().st_mode & stat.S_IXUSR
     assert "flutter build web" in build_script.read_text(encoding="utf-8")
+    assert '--base-href "/$APP_SLUG/"' in build_script.read_text(encoding="utf-8")
     assert "APP_RUNTIME_PROFILE" in build_script.read_text(encoding="utf-8")
     worker_text = worker.read_text(encoding="utf-8")
     assert "/__preview/health" in worker_text
@@ -2370,6 +2371,10 @@ def test_generated_web_preview_bundle_is_validable_locally(tmp_path: Path) -> No
     assert "/__preview/access" in worker_text
     assert "asset_not_found" in worker_text
     assert "content-security-policy" in worker_text
+    assert (
+        "connect-src 'self' https://preview.nienfos.com https://www.gstatic.com "
+        "https://fonts.gstatic.com"
+    ) in worker_text
     assert "serveSpa" in worker_text
     assert worker_harness.is_file()
     assert "PREVIEW_DB" in wrangler.read_text(encoding="utf-8")

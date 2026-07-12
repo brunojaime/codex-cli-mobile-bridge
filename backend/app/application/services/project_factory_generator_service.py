@@ -1327,7 +1327,7 @@ function securityHeaders() {
     'x-content-type-options': 'nosniff',
     'referrer-policy': 'strict-origin-when-cross-origin',
     'permissions-policy': 'camera=(), microphone=(), geolocation=()',
-    'content-security-policy': "default-src 'self'; connect-src 'self' https://preview.nienfos.com; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; script-src 'self' 'wasm-unsafe-eval' https://www.gstatic.com; font-src 'self' data: https://fonts.gstatic.com; worker-src 'self' blob:;",
+    'content-security-policy': "default-src 'self'; connect-src 'self' https://preview.nienfos.com https://www.gstatic.com https://fonts.gstatic.com; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; script-src 'self' 'wasm-unsafe-eval' https://www.gstatic.com; font-src 'self' data: https://fonts.gstatic.com; worker-src 'self' blob:;",
   };
 }
 
@@ -3005,6 +3005,7 @@ fi
 cd "$MOBILE_DIR"
 flutter pub get
 flutter build web --release \\
+  --base-href "/$APP_SLUG/" \\
   --dart-define=APP_RUNTIME_PROFILE="$APP_RUNTIME_PROFILE" \\
   --dart-define=API_RUNTIME="$API_RUNTIME" \\
   --dart-define=API_BASE_URL="$API_BASE_URL" \\
