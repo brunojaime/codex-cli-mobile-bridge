@@ -1707,38 +1707,6 @@ When you create the Project Factory draft, link each asset with POST /project-fa
       return;
     }
 
-    final currentSession = _chatController.currentSession;
-    if (currentSession != null &&
-        isProjectFactoryIntakeConfiguration(
-            currentSession.agentConfiguration)) {
-      final existingDraftId =
-          _projectFactoryDraftIdBySession[currentSession.id];
-      if (existingDraftId != null) {
-        await _loadProjectFactoryGuidedIntake(
-          currentSession.id,
-          existingDraftId,
-          showResumeMessage: true,
-        );
-        await _startOrResumeProjectFactoryInitForDraft(
-          client: client,
-          draftId: existingDraftId,
-          sessionId: currentSession.id,
-        );
-        return;
-      }
-      final reusableDraft = await _findReusableProjectFactoryGuidedDraft(
-        client,
-      );
-      if (reusableDraft != null) {
-        await _attachProjectFactoryGuidedDraft(
-          currentSession.id,
-          reusableDraft,
-          showResumeMessage: true,
-        );
-        return;
-      }
-    }
-
     final draft = await _findOrCreateProjectFactoryGuidedDraft(
       client,
       options,
@@ -1831,10 +1799,6 @@ When you create the Project Factory draft, link each asset with POST /project-fa
     ApiClient client,
     ProjectFactoryOptions options,
   ) async {
-    final reusable = await _findReusableProjectFactoryGuidedDraft(client);
-    if (reusable != null) {
-      return reusable;
-    }
     try {
       return await client.createProjectFactoryDraft(
         ProjectFactoryDraftRequest(
@@ -1860,48 +1824,6 @@ When you create the Project Factory draft, link each asset with POST /project-fa
       }
       return null;
     }
-  }
-
-  Future<ProjectFactoryDraft?> _findReusableProjectFactoryGuidedDraft(
-    ApiClient client,
-  ) async {
-    try {
-      final drafts = await client.listProjectFactoryDrafts(limit: 25);
-      for (final draft in drafts) {
-        final intake = draft.guidedIntake;
-        if (!intake.enabled || intake.status == 'build_started') {
-          continue;
-        }
-        return await client.getProjectFactoryDraft(draft.draftId);
-      }
-    } catch (_) {
-      // Reuse is best-effort; creation still gives the user a working intake.
-    }
-    return null;
-  }
-
-  Future<void> _attachProjectFactoryGuidedDraft(
-    String sessionId,
-    ProjectFactoryDraft draft, {
-    bool showResumeMessage = false,
-  }) async {
-    _projectFactoryDraftIdBySession[sessionId] = draft.draftId;
-    _projectFactoryGuidedIntakeBySession[sessionId] = draft.guidedIntake;
-    if (mounted) {
-      setState(() {
-        _projectFactoryGuidedIntakeErrorText = null;
-      });
-    }
-    await _loadProjectFactoryGuidedIntake(
-      sessionId,
-      draft.draftId,
-      showResumeMessage: showResumeMessage,
-    );
-    await _startOrResumeProjectFactoryInitForDraft(
-      client: _projectFactoryClient(),
-      draftId: draft.draftId,
-      sessionId: sessionId,
-    );
   }
 
   Future<ProjectFactoryInitJob?> _startOrResumeProjectFactoryInit({
@@ -1948,45 +1870,6 @@ When you create the Project Factory draft, link each asset with POST /project-fa
             'Could not start deterministic init. $error';
       });
       return null;
-    }
-  }
-
-  Future<void> _loadProjectFactoryGuidedIntake(
-    String sessionId,
-    String draftId, {
-    bool showResumeMessage = false,
-  }) async {
-    setState(() {
-      _loadingProjectFactoryIntakeSessions.add(sessionId);
-      _projectFactoryGuidedIntakeErrorText = null;
-    });
-    try {
-      final intake =
-          await _projectFactoryClient().getProjectFactoryGuidedIntake(
-        draftId,
-      );
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _projectFactoryDraftIdBySession[sessionId] = draftId;
-        _projectFactoryGuidedIntakeBySession[sessionId] = intake;
-        _loadingProjectFactoryIntakeSessions.remove(sessionId);
-      });
-      if (showResumeMessage) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Resumed guided New Project intake.')),
-        );
-      }
-    } catch (error) {
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _loadingProjectFactoryIntakeSessions.remove(sessionId);
-        _projectFactoryGuidedIntakeErrorText =
-            'Could not load guided intake. $error';
-      });
     }
   }
 

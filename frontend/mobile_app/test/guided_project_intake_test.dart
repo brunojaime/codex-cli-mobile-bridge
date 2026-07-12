@@ -208,10 +208,9 @@ void main() {
     await tester.tap(find.byTooltip('New project'));
     await tester.pumpAndSettle();
 
-    expect(apiClient.createDraftCalls, 1);
+    expect(apiClient.createDraftCalls, 2);
     expect(apiClient.startInitCalls, 2);
     expect(apiClient.sendMessageCalls, 0);
-    expect(apiClient.getIntakeCalls, greaterThanOrEqualTo(1));
   });
 }
 
