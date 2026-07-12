@@ -319,10 +319,16 @@ def test_web_preview_deploy_applies_resources_with_fake_cloudflare(
 
 def test_web_preview_deploy_fails_when_public_health_missing_bindings(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     project = _generated_project(tmp_path)
     _write_web_build_output(project)
     fake = _FakeCloudflareClient(health_assets_bound=False)
+    sleep_calls: list[float] = []
+    monkeypatch.setattr(
+        "backend.app.application.services.web_preview_deploy_service.time.sleep",
+        sleep_calls.append,
+    )
     service = _service(tmp_path, apply_enabled=True, fake=fake)
     plan = service.plan(WebPreviewPlanInput(project_path=str(project)))
 
@@ -341,7 +347,42 @@ def test_web_preview_deploy_fails_when_public_health_missing_bindings(
     state = _read_preview(tmp_path, plan["preview_id"])
     assert state["status"] == "failed"
     assert "preview_health_bindings_failed" in state["error"]
+    fetch_calls = [call for call in fake.calls if call.startswith("fetch_url:")]
+    assert len(fetch_calls) == 40
+    assert len(sleep_calls) == 19
+    assert sleep_calls[-1] == 3.0
     assert any(call.startswith("fetch_url:https://preview.nienfos.com/clinica-norte/") for call in fake.calls)
+
+
+def test_web_preview_deploy_retries_pending_health_bindings(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = _generated_project(tmp_path)
+    _write_web_build_output(project)
+    fake = _FakeCloudflareClient(health_assets_bound_after_attempts=5)
+    sleep_calls: list[float] = []
+    monkeypatch.setattr(
+        "backend.app.application.services.web_preview_deploy_service.time.sleep",
+        sleep_calls.append,
+    )
+    service = _service(tmp_path, apply_enabled=True, fake=fake)
+    plan = service.plan(WebPreviewPlanInput(project_path=str(project)))
+
+    payload = service.deploy(
+        WebPreviewDeployInput(
+            project_path=str(project),
+            confirm_apply=True,
+            expected_plan_hash=plan["plan_hash"],
+        )
+    )
+
+    verification = payload["health_verification"]
+    assert verification["status"] == "passed"
+    assert len(verification["attempts"]) == 5
+    assert verification["attempts"][-2]["checks"][0]["assets_bound"] is False
+    assert verification["attempts"][-1]["checks"][0]["assets_bound"] is True
+    assert sleep_calls == [0.5, 1.0, 1.5, 2.0]
 
 
 def test_web_preview_deploy_is_idempotent_when_resources_exist(
@@ -906,6 +947,7 @@ class _FakeCloudflareClient:
         fail_invite_sync: bool = False,
         health_d1_bound: bool = True,
         health_assets_bound: bool = True,
+        health_assets_bound_after_attempts: int | None = None,
     ) -> None:
         self.calls: list[str] = []
         self.sql_calls: list[dict[str, Any]] = []
@@ -915,6 +957,8 @@ class _FakeCloudflareClient:
         self.fail_invite_sync = fail_invite_sync
         self.health_d1_bound = health_d1_bound
         self.health_assets_bound = health_assets_bound
+        self.health_assets_bound_after_attempts = health_assets_bound_after_attempts
+        self.health_fetch_count = 0
         self.worker_scripts: dict[str, str] = {}
         self.d1_columns: dict[str, set[str]] = {
             "preview_invites": {"invite_id", "token_sha256", "source_app", "app_slug", "single_use", "created_at", "expires_at", "used_at", "revoked_at"},
@@ -1163,12 +1207,17 @@ class _FakeCloudflareClient:
     ) -> CloudflareLookupResult:
         self.calls.append(f"fetch_url:{url}")
         assert headers and headers["User-Agent"] == "CodexProjectFactoryPreviewSmoke/1.0"
+        self.health_fetch_count += 1
+        health_attempt = (self.health_fetch_count + 1) // 2
+        assets_bound = self.health_assets_bound
+        if self.health_assets_bound_after_attempts is not None:
+            assets_bound = health_attempt >= self.health_assets_bound_after_attempts
         return CloudflareLookupResult(
             ok=True,
             status_code=200,
             payload={
                 "ok": True,
                 "d1_bound": self.health_d1_bound,
-                "assets_bound": self.health_assets_bound,
+                "assets_bound": assets_bound,
             },
         )

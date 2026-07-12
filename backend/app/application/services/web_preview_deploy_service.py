@@ -474,7 +474,7 @@ class WebPreviewDeployService:
         attempts: list[dict[str, Any]] = []
         client = self._cloudflare_client()
         base_attempts = 3
-        max_transient_attempts = 8
+        max_transient_attempts = 20
         for attempt in range(1, max_transient_attempts + 1):
             current: list[dict[str, Any]] = []
             all_ok = True
@@ -505,10 +505,13 @@ class WebPreviewDeployService:
                 }
             should_retry = attempt < base_attempts or (
                 attempt < max_transient_attempts
-                and _preview_health_has_transient_status(current)
+                and (
+                    _preview_health_has_transient_status(current)
+                    or _preview_health_has_pending_bindings(current)
+                )
             )
             if should_retry:
-                time.sleep(0.5 * attempt)
+                time.sleep(min(3.0, 0.5 * attempt))
             else:
                 break
         latest = attempts[-1]["checks"] if attempts else []
@@ -1799,6 +1802,13 @@ def _preview_health_has_transient_status(checks: list[dict[str, Any]]) -> bool:
     for check in checks:
         status_code = check.get("status_code")
         if isinstance(status_code, int) and status_code in transient_statuses:
+            return True
+    return False
+
+
+def _preview_health_has_pending_bindings(checks: list[dict[str, Any]]) -> bool:
+    for check in checks:
+        if check.get("d1_bound") is not True or check.get("assets_bound") is not True:
             return True
     return False
 
