@@ -2357,6 +2357,8 @@ def test_generated_web_preview_bundle_is_validable_locally(tmp_path: Path) -> No
     assert "preview_domain_" not in worker_text
     assert "/api/notifications" in worker_text
     assert "ASSETS.fetch" in worker_text
+    assert "pathname === '/index.html' ? '/' : pathname" in worker_text
+    assert "assetUrl.search = '';" in worker_text
     assert "WEB_PREVIEW_INVITE_SECRET" in worker_text
     assert "PREVIEW_DB" in worker_text
     assert "recordAuditEvent" in worker_text

@@ -2243,7 +2243,8 @@ async function fetchAsset(env, request, pathname) {
     return null;
   }
   const assetUrl = new URL(request.url);
-  assetUrl.pathname = pathname;
+  assetUrl.pathname = pathname === '/index.html' ? '/' : pathname;
+  assetUrl.search = '';
   return env.ASSETS.fetch(new Request(assetUrl.toString(), request));
 }
 
@@ -2681,6 +2682,7 @@ function fakeD1() {
 }
 
 const assets = new Map([
+  ['/', response('<!doctype html><div id="flt"></div>', {{ headers: {{ 'content-type': 'text/html' }} }})],
   ['/index.html', response('<!doctype html><div id="flt"></div>', {{ headers: {{ 'content-type': 'text/html' }} }})],
   ['/flutter_bootstrap.js', response('console.log("bootstrap");', {{ headers: {{ 'content-type': 'application/javascript' }} }})],
   ['/assets/AssetManifest.bin', response('asset-manifest')],
@@ -2700,6 +2702,9 @@ const env = {{
   ASSETS: {{
     async fetch(request) {{
       const url = new URL(request.url);
+      if (url.pathname === '/index.html') {
+        return response('', {{ status: 307, headers: {{ location: `/${{url.search}}` }} }});
+      }
       return assets.get(url.pathname) || response('missing', {{ status: 404 }});
     }},
   }},
@@ -2849,6 +2854,16 @@ assert.equal(access.status, 302);
 const cookie = access.headers.get('set-cookie') || '';
 assert.match(cookie, /codex_preview_access=/);
 assert.match(access.headers.get('location') || '', /invite_state=activate/);
+
+const activationLanding = await worker.fetch(
+  new Request(`https://preview.nienfos.com${access.headers.get('location') || '/__SOURCE_APP__/'}`, {
+    headers: { cookie },
+  }),
+  env,
+  {},
+);
+assert.equal(activationLanding.status, 200);
+assert.equal(activationLanding.headers.get('location'), null);
 
 const secondUse = await fetchPath(`/__SOURCE_APP__/__preview/access?token=${validToken}`);
 assert.equal(secondUse.status, 302);
