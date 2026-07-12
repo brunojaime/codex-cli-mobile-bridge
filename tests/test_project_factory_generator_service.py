@@ -2033,6 +2033,8 @@ def test_generated_project_registers_installable_app_contract(
     assert 'Authorization: Bearer $BRIDGE_REGISTRATION_TOKEN' in content
     assert 'installable-apps/$SOURCE_APP' in content
     assert "curl -fsSI" in content
+    assert 'local_apk_url="$BRIDGE_URL${apk_url#"$BRIDGE_PUBLIC_URL"}"' in content
+    assert "Bridge APK proxy verified through local bridge transport" in content
     assert "REQUIRE_INSTALLABLE_APK" in content
 
     readme = (project / "README.md").read_text(encoding="utf-8")
@@ -2115,6 +2117,13 @@ def test_generated_register_installable_app_script_posts_preview_metadata(
         "#!/usr/bin/env bash\n"
         "printf '%s\\n' \"$*\" >> \"$CURL_CALLS_FILE\"\n"
         "args=\"$*\"\n"
+        "if [[ \"$args\" == *'https://bridge.test/apk'* ]]; then\n"
+        "  echo 'Could not resolve host: bridge.test' >&2\n"
+        "  exit 6\n"
+        "fi\n"
+        "if [[ \"$args\" == *'http://localhost:8000/apk'* ]]; then\n"
+        "  exit 0\n"
+        "fi\n"
         "if [[ \"$args\" == *'-I'* ]]; then exit 0; fi\n"
         "if [[ \"$args\" == *'/installable-apps/clinica-norte'* ]]; then\n"
         "  cat <<'JSON'\n"
@@ -2161,9 +2170,15 @@ def test_generated_register_installable_app_script_posts_preview_metadata(
         completed.stdout
     )
     assert "apk url: https://bridge.test/apk" in completed.stdout
+    assert (
+        "Bridge APK proxy verified through local bridge transport for public APK URL: "
+        "https://bridge.test/apk"
+    ) in completed.stdout
     calls = curl_calls.read_text(encoding="utf-8")
     assert "Host: bridge.test" in calls
     assert "X-Forwarded-Proto: https" in calls
+    assert "https://bridge.test/apk" in calls
+    assert "http://localhost:8000/apk" in calls
 
 
 def test_generated_flutter_mock_seed_selector_is_mock_profile_only(

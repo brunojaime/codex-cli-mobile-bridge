@@ -3830,10 +3830,19 @@ print(detail.get("apkUrl") or "")
 PY
 )"
 if [[ -n "$apk_url" ]]; then
-  curl -fsSI "$apk_url" >/dev/null || {{
+  if curl -fsSI "$apk_url" >/dev/null; then
+    :
+  elif [[ "$BRIDGE_PUBLIC_URL" != "$BRIDGE_URL" && ( "$apk_url" == "$BRIDGE_PUBLIC_URL" || "$apk_url" == "$BRIDGE_PUBLIC_URL/"* ) ]]; then
+    local_apk_url="$BRIDGE_URL${{apk_url#"$BRIDGE_PUBLIC_URL"}}"
+    curl -fsSI "${{bridge_detail_headers[@]}}" "$local_apk_url" >/dev/null || {{
+      echo "Bridge APK proxy did not respond for $apk_url or local bridge fallback $local_apk_url" >&2
+      exit 2
+    }}
+    echo "Bridge APK proxy verified through local bridge transport for public APK URL: $apk_url"
+  else
     echo "Bridge APK proxy did not respond for $apk_url" >&2
     exit 2
-  }}
+  fi
 fi
 '''
 
