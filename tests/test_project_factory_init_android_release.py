@@ -282,6 +282,77 @@ def test_android_release_generates_preview_signing_when_missing(
             assert line.split("=", 1)[1] not in payload
 
 
+def test_android_release_commits_safe_generated_gitignore_repair_before_retry(
+    tmp_path: Path,
+) -> None:
+    release_tag = "android-preview-v0.1.0-build.1"
+    runner = _FakeRunner(
+        [
+            (_release_view_cmd(release_tag), _FakeResponse(exit_code=1, stderr="not found")),
+            (
+                _publish_cmd(),
+                _FakeResponse(
+                    exit_code=2,
+                    stderr=(
+                        "M .gitignore\n"
+                        "android preview release blocked: working tree must be "
+                        "clean before tagging the preview release\n"
+                    ),
+                ),
+            ),
+            (
+                ("git", "diff", "--", ".gitignore"),
+                _FakeResponse(
+                    stdout=(
+                        "diff --git a/.gitignore b/.gitignore\n"
+                        "@@\n"
+                        "+.generated-validation/\n"
+                        "+backend/.venv/\n"
+                        "+backend/*.egg-info/\n"
+                    ),
+                ),
+            ),
+            (("git", "add", ".gitignore"), _FakeResponse()),
+            (
+                (
+                    "git",
+                    "commit",
+                    "-m",
+                    "Ignore generated Project Factory artifacts",
+                ),
+                _FakeResponse(stdout="[main abc123] Ignore generated Project Factory artifacts"),
+            ),
+            (_publish_cmd(), _FakeResponse(stdout="built", on_run=_write_apk)),
+            (
+                _release_view_cmd(release_tag),
+                _FakeResponse(stdout=json.dumps(_release(release_tag))),
+            ),
+            (_lookup_cmd(), _FakeResponse(exit_code=22, stderr="not found")),
+            (_register_cmd(), _FakeResponse(stdout="registered")),
+            (
+                _lookup_cmd(),
+                _FakeResponse(stdout=json.dumps(_installable(release_tag))),
+            ),
+        ]
+    )
+    service = _service(tmp_path, runner)
+    job = _generated_job(service)
+
+    completed = service.run_android_preview_release_phases(job.id)
+
+    assert completed.phase(
+        ProjectFactoryInitPhaseName.ANDROID_PREVIEW_RELEASE
+    ).status == ProjectFactoryInitPhaseStatus.COMPLETED
+    assert runner.calls.count(_publish_cmd()) == 2
+    assert ("git", "add", ".gitignore") in runner.calls
+    assert (
+        "git",
+        "commit",
+        "-m",
+        "Ignore generated Project Factory artifacts",
+    ) in runner.calls
+
+
 def test_android_release_verifies_existing_prerelease_and_installable_without_publish(
     tmp_path: Path,
 ) -> None:

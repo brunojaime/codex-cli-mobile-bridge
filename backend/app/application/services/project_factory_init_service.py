@@ -784,6 +784,35 @@ class ProjectFactoryInitService:
                 )
                 release_evidence.append(self._evidence(publish))
                 if publish.exit_code != 0:
+                    if _release_failed_due_generated_gitignore_repair(publish):
+                        repair_evidence, repair_blocker = (
+                            self._commit_generated_artifact_ignore_repair(
+                                job=job,
+                                target=target,
+                                env=env,
+                            )
+                        )
+                        release_evidence.extend(repair_evidence)
+                        if repair_blocker is None:
+                            publish = self._run_env(
+                                (
+                                    "bash",
+                                    "scripts/publish_android_preview_release.sh",
+                                    "--push",
+                                    "--watch",
+                                ),
+                                cwd=target,
+                                env=env,
+                            )
+                            release_evidence.append(self._evidence(publish))
+                        else:
+                            return self._block_android_phase(
+                                job,
+                                phase_name=ProjectFactoryInitPhaseName.ANDROID_PREVIEW_RELEASE,
+                                blocker=repair_blocker,
+                                evidence=tuple(release_evidence),
+                            )
+                if publish.exit_code != 0:
                     return self._block_android_phase(
                         job,
                         phase_name=ProjectFactoryInitPhaseName.ANDROID_PREVIEW_RELEASE,
@@ -815,10 +844,13 @@ class ProjectFactoryInitService:
                 )
                 release_evidence.append(self._evidence(release_view))
                 release_payload = _parse_json_object(release_view.stdout)
-                release_valid = release_view.exit_code == 0 and _valid_android_release(
-                    release_payload,
-                    release_tag=release_tag,
-                    apk_name=apk_name,
+                release_valid = (
+                    release_view.exit_code == 0
+                    and _valid_android_release(
+                        release_payload,
+                        release_tag=release_tag,
+                        apk_name=apk_name,
+                    )
                 )
             if not release_valid:
                 return self._block_android_phase(
@@ -2697,6 +2729,84 @@ class ProjectFactoryInitService:
             timeout_seconds=self._command_timeout_seconds,
         )
 
+    def _commit_generated_artifact_ignore_repair(
+        self,
+        *,
+        job: ProjectFactoryInitJob,
+        target: Path,
+        env: dict[str, str],
+    ) -> tuple[
+        tuple[ProjectFactoryInitCommandEvidence, ...],
+        ProjectFactoryInitBlocker | None,
+    ]:
+        _ensure_generated_artifact_ignores(target)
+        evidence: list[ProjectFactoryInitCommandEvidence] = []
+        diff = self._run_env(("git", "diff", "--", ".gitignore"), cwd=target, env=env)
+        evidence.append(self._evidence(diff))
+        if diff.exit_code != 0:
+            return (
+                tuple(evidence),
+                _android_blocker_from_command(
+                    code="android_preview_gitignore_repair_failed",
+                    message="Generated artifact .gitignore repair could not be inspected.",
+                    phase=ProjectFactoryInitPhaseName.ANDROID_PREVIEW_RELEASE,
+                    result=diff,
+                    command=("git", "diff", "--", ".gitignore"),
+                ),
+            )
+        if not diff.stdout.strip():
+            return tuple(evidence), None
+        if not _gitignore_repair_diff_is_safe(diff.stdout):
+            return (
+                tuple(evidence),
+                _android_blocker(
+                    phase=ProjectFactoryInitPhaseName.ANDROID_PREVIEW_RELEASE,
+                    code="android_preview_gitignore_repair_unsafe",
+                    message="Generated artifact .gitignore repair is mixed with unrelated changes.",
+                    next_action=(
+                        "Review .gitignore manually, commit only the generated artifact "
+                        "ignore repair, then rerun deterministic init."
+                    ),
+                    command=("git", "diff", "--", ".gitignore"),
+                ),
+            )
+        add = self._run_env(("git", "add", ".gitignore"), cwd=target, env=env)
+        evidence.append(self._evidence(add))
+        if add.exit_code != 0:
+            return (
+                tuple(evidence),
+                _android_blocker_from_command(
+                    code="android_preview_gitignore_repair_failed",
+                    message="Generated artifact .gitignore repair could not be staged.",
+                    phase=ProjectFactoryInitPhaseName.ANDROID_PREVIEW_RELEASE,
+                    result=add,
+                    command=("git", "add", ".gitignore"),
+                ),
+            )
+        commit = self._run_env(
+            ("git", "commit", "-m", "Ignore generated Project Factory artifacts"),
+            cwd=target,
+            env=env,
+        )
+        evidence.append(self._evidence(commit))
+        if commit.exit_code != 0:
+            return (
+                tuple(evidence),
+                _android_blocker_from_command(
+                    code="android_preview_gitignore_repair_failed",
+                    message="Generated artifact .gitignore repair could not be committed.",
+                    phase=ProjectFactoryInitPhaseName.ANDROID_PREVIEW_RELEASE,
+                    result=commit,
+                    command=(
+                        "git",
+                        "commit",
+                        "-m",
+                        "Ignore generated Project Factory artifacts",
+                    ),
+                ),
+            )
+        return tuple(evidence), None
+
     def _view_repo(self, repo_ref: str, *, cwd: Path) -> ProjectFactoryInitCommandResult:
         return self._run(
             (
@@ -3100,6 +3210,34 @@ def _ensure_generated_artifact_ignores(target: Path) -> tuple[str, ...]:
         prefix += "\n"
     gitignore.write_text(prefix + "\n".join(missing) + "\n", encoding="utf-8")
     return missing
+
+
+def _release_failed_due_generated_gitignore_repair(
+    result: ProjectFactoryInitCommandResult,
+) -> bool:
+    output = f"{result.stdout}\n{result.stderr}"
+    return (
+        result.exit_code != 0
+        and "working tree must be clean before tagging the preview release" in output
+        and "M .gitignore" in output
+    )
+
+
+def _gitignore_repair_diff_is_safe(diff: str) -> bool:
+    added: list[str] = []
+    for line in diff.splitlines():
+        if line.startswith(("diff --git", "index ", "@@ ", "+++ ", "--- ")):
+            continue
+        if line.startswith("-"):
+            return False
+        if line.startswith("+"):
+            value = line[1:].strip()
+            if value:
+                added.append(value)
+            continue
+    return bool(added) and all(
+        value in _GENERATED_ARTIFACT_GITIGNORE_ENTRIES for value in added
+    )
 
 
 def _validate_no_mock_or_local_defaults(
