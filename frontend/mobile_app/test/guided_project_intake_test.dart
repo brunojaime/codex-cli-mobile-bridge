@@ -178,11 +178,26 @@ void main() {
     await tester.tap(find.byTooltip('New project'));
     await tester.pumpAndSettle();
 
+    expect(find.text('Project title'), findsOneWidget);
+    expect(apiClient.createDraftCalls, 0);
+
+    await tester.enterText(
+      find.descendant(
+        of: find.byType(AlertDialog),
+        matching: find.byType(TextField),
+      ),
+      'Clinica Norte',
+    );
+    await tester.tap(find.text('Start'));
+    await tester.pumpAndSettle();
+
     expect(apiClient.createDraftCalls, 1);
     expect(apiClient.startInitCalls, 1);
     expect(apiClient.lastInitWorkspacePath, isNull);
     expect(apiClient.sendMessageCalls, 0);
     expect(apiClient.lastDraftRequest?.guidedIntakeEnabled, isTrue);
+    expect(apiClient.lastDraftRequest?.name, 'Clinica Norte');
+    expect(apiClient.lastCreatedSessionTitle, 'Clinica Norte');
     expect(find.text('Deterministic baseline init'), findsOneWidget);
     expect(
         find.textContaining('Current phase: Init preflight'), findsOneWidget);
@@ -208,9 +223,21 @@ void main() {
     await tester.tap(find.byTooltip('New project'));
     await tester.pumpAndSettle();
 
+    await tester.enterText(
+      find.descendant(
+        of: find.byType(AlertDialog),
+        matching: find.byType(TextField),
+      ),
+      'Veterinaria Sur',
+    );
+    await tester.tap(find.text('Start'));
+    await tester.pumpAndSettle();
+
     expect(apiClient.createDraftCalls, 2);
     expect(apiClient.startInitCalls, 2);
     expect(apiClient.sendMessageCalls, 0);
+    expect(apiClient.createdDraftNames,
+        containsAllInOrder(<String>['Clinica Norte', 'Veterinaria Sur']));
   });
 }
 
@@ -220,6 +247,7 @@ class _GuidedProjectApiClient extends ApiClient {
   static final DateTime _timestamp = DateTime.utc(2026, 7, 9);
 
   ProjectFactoryDraftRequest? lastDraftRequest;
+  String? lastCreatedSessionTitle;
   String? lastInitWorkspacePath;
   int createDraftCalls = 0;
   int answerCalls = 0;
@@ -228,6 +256,7 @@ class _GuidedProjectApiClient extends ApiClient {
   int getIntakeCalls = 0;
   int startInitCalls = 0;
   int sendMessageCalls = 0;
+  final List<String> createdDraftNames = <String>[];
   final Map<String, SessionDetail> _sessions = <String, SessionDetail>{};
   ProjectFactoryGuidedIntake _intake = _intakeFromJson(
     status: 'collecting',
@@ -305,6 +334,7 @@ class _GuidedProjectApiClient extends ApiClient {
   ) async {
     createDraftCalls += 1;
     lastDraftRequest = request;
+    createdDraftNames.add(request.name);
     return _draft();
   }
 
@@ -435,6 +465,7 @@ class _GuidedProjectApiClient extends ApiClient {
     String? agentProfileId,
     bool turnSummariesEnabled = false,
   }) async {
+    lastCreatedSessionTitle = title;
     final session = SessionDetail(
       id: 'created-session',
       title: title ?? 'New project',

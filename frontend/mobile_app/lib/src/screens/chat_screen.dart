@@ -1707,24 +1707,42 @@ When you create the Project Factory draft, link each asset with POST /project-fa
       return;
     }
 
+    final projectTitle = await _promptNewProjectTitle();
+    if (projectTitle == null || !mounted) {
+      return;
+    }
+
     final draft = await _findOrCreateProjectFactoryGuidedDraft(
       client,
       options,
+      projectTitle: projectTitle,
     );
     if (draft == null || !mounted) {
       return;
     }
-    await _startNewProjectFactoryChat(options, draft: draft);
+    await _startNewProjectFactoryChat(
+      options,
+      draft: draft,
+      projectTitle: projectTitle,
+    );
+  }
+
+  Future<String?> _promptNewProjectTitle() async {
+    return showDialog<String>(
+      context: context,
+      builder: (context) => const _NewProjectTitleDialog(),
+    );
   }
 
   Future<void> _startNewProjectFactoryChat(
     ProjectFactoryOptions options, {
     required ProjectFactoryDraft draft,
+    required String projectTitle,
   }) async {
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('Starting a New project chat...')),
     );
-    await _chatController.createNewSession(title: 'New project');
+    await _chatController.createNewSession(title: projectTitle);
     if (!mounted) {
       return;
     }
@@ -1797,12 +1815,13 @@ When you create the Project Factory draft, link each asset with POST /project-fa
 
   Future<ProjectFactoryDraft?> _findOrCreateProjectFactoryGuidedDraft(
     ApiClient client,
-    ProjectFactoryOptions options,
-  ) async {
+    ProjectFactoryOptions options, {
+    required String projectTitle,
+  }) async {
     try {
       return await client.createProjectFactoryDraft(
         ProjectFactoryDraftRequest(
-          name: 'Untitled project',
+          name: projectTitle,
           businessType: options.businessTypes.isNotEmpty
               ? options.businessTypes.first
               : 'general',
@@ -7311,6 +7330,63 @@ class NewProjectFactoryDraft {
   final String logoMode;
   final List<String> visualReferencePaths;
   final List<XFile> referenceImages;
+}
+
+class _NewProjectTitleDialog extends StatefulWidget {
+  const _NewProjectTitleDialog();
+
+  @override
+  State<_NewProjectTitleDialog> createState() => _NewProjectTitleDialogState();
+}
+
+class _NewProjectTitleDialogState extends State<_NewProjectTitleDialog> {
+  final TextEditingController _controller = TextEditingController();
+  String? _errorText;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final title = _controller.text.trim();
+    if (title.isEmpty) {
+      setState(() {
+        _errorText = 'Project title is required.';
+      });
+      return;
+    }
+    Navigator.of(context).pop(title);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('New project'),
+      content: TextField(
+        controller: _controller,
+        autofocus: true,
+        maxLength: 80,
+        textInputAction: TextInputAction.done,
+        decoration: InputDecoration(
+          labelText: 'Project title',
+          errorText: _errorText,
+        ),
+        onSubmitted: (_) => _submit(),
+      ),
+      actions: <Widget>[
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: _submit,
+          child: const Text('Start'),
+        ),
+      ],
+    );
+  }
 }
 
 class ProjectFactoryGuidedIntakeCard extends StatefulWidget {
