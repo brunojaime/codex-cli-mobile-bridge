@@ -16,6 +16,8 @@ from typing import Protocol
 from urllib.parse import urlparse
 from uuid import uuid4
 
+import yaml
+
 from backend.app.application.services.cloudflare_preview_service import (
     CloudflareClient,
     CloudflarePreviewDoctorService,
@@ -34,6 +36,11 @@ from backend.app.application.services.web_preview_deploy_service import (
     WebPreviewDeployService,
     WebPreviewError,
     WebPreviewPlanInput,
+)
+from backend.app.application.services.web_preview_invite_service import (
+    WebPreviewInviteCreateInput,
+    WebPreviewInviteError,
+    WebPreviewInviteService,
 )
 from backend.app.domain.entities.project_factory_init import (
     INIT_PHASE_ORDER,
@@ -193,7 +200,9 @@ class ProjectFactoryInitService:
     ) -> None:
         self._state_root = Path(state_root).expanduser().resolve()
         self._init_state_dir = self._state_root / "init_jobs"
-        self._command_runner = command_runner or SubprocessProjectFactoryInitCommandRunner()
+        self._command_runner = (
+            command_runner or SubprocessProjectFactoryInitCommandRunner()
+        )
         self._github_owner = _optional_clean(github_owner)
         self._github_visibility = github_visibility or _DEFAULT_GITHUB_VISIBILITY
         self._github_default_branch = github_default_branch or _DEFAULT_GITHUB_BRANCH
@@ -225,8 +234,13 @@ class ProjectFactoryInitService:
                 updated = existing
                 relationships = existing.relationships
                 if chat_session_id and relationships.chat_session_id != chat_session_id:
-                    relationships = replace(relationships, chat_session_id=chat_session_id)
-                if workspace_path and relationships.generated_workspace_path != workspace_path:
+                    relationships = replace(
+                        relationships, chat_session_id=chat_session_id
+                    )
+                if (
+                    workspace_path
+                    and relationships.generated_workspace_path != workspace_path
+                ):
                     relationships = replace(
                         relationships,
                         generated_workspace_path=workspace_path,
@@ -540,7 +554,12 @@ class ProjectFactoryInitService:
                 generated = True
                 evidence.append(
                     ProjectFactoryInitCommandEvidence(
-                        argv=("project-factory-generator", "generate", strategy, job.slug),
+                        argv=(
+                            "project-factory-generator",
+                            "generate",
+                            strategy,
+                            job.slug,
+                        ),
                         cwd=str(target.parent),
                         exit_code=0,
                         stdout_summary=(
@@ -564,7 +583,12 @@ class ProjectFactoryInitService:
             else:
                 evidence.append(
                     ProjectFactoryInitCommandEvidence(
-                        argv=("project-factory-generator", "verify-existing", strategy, job.slug),
+                        argv=(
+                            "project-factory-generator",
+                            "verify-existing",
+                            strategy,
+                            job.slug,
+                        ),
                         cwd=str(target),
                         exit_code=0,
                         stdout_summary="existing workspace verification",
@@ -614,7 +638,12 @@ class ProjectFactoryInitService:
             )
             evidence.append(
                 ProjectFactoryInitCommandEvidence(
-                    argv=("project-factory-generator", "verify-contracts", strategy, job.slug),
+                    argv=(
+                        "project-factory-generator",
+                        "verify-contracts",
+                        strategy,
+                        job.slug,
+                    ),
                     cwd=str(target),
                     exit_code=0 if verification["ok"] else 1,
                     stdout_summary=json.dumps(
@@ -746,10 +775,12 @@ class ProjectFactoryInitService:
                     blocker=signing_blocker,
                     evidence=signing_evidence,
                 )
-            actions_evidence, actions_blocker = self._ensure_android_github_actions_config(
-                job.slug,
-                cwd=target,
-                preview_api=preview_api,
+            actions_evidence, actions_blocker = (
+                self._ensure_android_github_actions_config(
+                    job.slug,
+                    cwd=target,
+                    preview_api=preview_api,
+                )
             )
             if actions_blocker is not None:
                 return self._block_android_phase(
@@ -854,19 +885,18 @@ class ProjectFactoryInitService:
                 )
                 release_evidence.append(self._evidence(release_view))
                 release_payload = _parse_json_object(release_view.stdout)
-                release_valid = (
-                    release_view.exit_code == 0
-                    and _valid_android_release(
-                        release_payload,
-                        release_tag=release_tag,
-                        apk_name=apk_name,
-                    )
+                release_valid = release_view.exit_code == 0 and _valid_android_release(
+                    release_payload,
+                    release_tag=release_tag,
+                    apk_name=apk_name,
                 )
             if not release_valid:
                 return self._block_android_phase(
                     job,
                     phase_name=ProjectFactoryInitPhaseName.ANDROID_PREVIEW_RELEASE,
-                    blocker=_android_release_payload_blocker(release_payload, release_tag, apk_name),
+                    blocker=_android_release_payload_blocker(
+                        release_payload, release_tag, apk_name
+                    ),
                     evidence=tuple(release_evidence),
                 )
             apk_path = _find_apk(target, job.slug)
@@ -908,7 +938,10 @@ class ProjectFactoryInitService:
                             code="bridge_installable_registration_token_missing",
                             message="Bridge installable registration token is missing.",
                             next_action="Set INSTALLABLE_APPS_REGISTRATION_TOKEN on the bridge host, then rerun deterministic init.",
-                            command=("export", "INSTALLABLE_APPS_REGISTRATION_TOKEN=<token>"),
+                            command=(
+                                "export",
+                                "INSTALLABLE_APPS_REGISTRATION_TOKEN=<token>",
+                            ),
                         ),
                         evidence=tuple(installable_evidence),
                     )
@@ -942,17 +975,22 @@ class ProjectFactoryInitService:
                 )
                 installable_evidence.append(self._evidence(lookup))
                 installable_payload = _parse_json_object(lookup.stdout)
-                installable_valid = lookup.exit_code == 0 and _valid_installable_payload(
-                    installable_payload,
-                    slug=job.slug,
-                    release_tag=release_tag,
-                    preview_api=preview_api,
+                installable_valid = (
+                    lookup.exit_code == 0
+                    and _valid_installable_payload(
+                        installable_payload,
+                        slug=job.slug,
+                        release_tag=release_tag,
+                        preview_api=preview_api,
+                    )
                 )
             if not installable_valid:
                 return self._block_android_phase(
                     released,
                     phase_name=ProjectFactoryInitPhaseName.BRIDGE_INSTALLABLE_REGISTRATION,
-                    blocker=_installable_payload_blocker(installable_payload, release_tag),
+                    blocker=_installable_payload_blocker(
+                        installable_payload, release_tag
+                    ),
                     evidence=tuple(installable_evidence),
                 )
             return self._complete_bridge_installable(
@@ -1069,7 +1107,9 @@ class ProjectFactoryInitService:
             if phase.status == ProjectFactoryInitPhaseStatus.COMPLETED:
                 return job
             evidence: list[ProjectFactoryInitCommandEvidence] = []
-            inside = self._run(("git", "rev-parse", "--is-inside-work-tree"), cwd=target)
+            inside = self._run(
+                ("git", "rev-parse", "--is-inside-work-tree"), cwd=target
+            )
             evidence.append(self._evidence(inside))
             if inside.exit_code != 0 or inside.stdout.strip().lower() != "true":
                 init = self._run(("git", "init"), cwd=target)
@@ -1087,7 +1127,9 @@ class ProjectFactoryInitService:
                         command_evidence=tuple(evidence),
                     )
 
-            branch = self._run(("git", "checkout", "-B", self._github_default_branch), cwd=target)
+            branch = self._run(
+                ("git", "checkout", "-B", self._github_default_branch), cwd=target
+            )
             evidence.append(self._evidence(branch))
             add = self._run(("git", "add", "-A"), cwd=target)
             evidence.append(self._evidence(add))
@@ -1119,7 +1161,10 @@ class ProjectFactoryInitService:
                 cwd=target,
             )
             evidence.append(self._evidence(commit))
-            if commit.exit_code != 0 and "nothing to commit" not in commit.stderr.lower():
+            if (
+                commit.exit_code != 0
+                and "nothing to commit" not in commit.stderr.lower()
+            ):
                 return self.block_phase(
                     job.id,
                     ProjectFactoryInitPhaseName.LOCAL_GIT_COMMIT.value,
@@ -1150,7 +1195,9 @@ class ProjectFactoryInitService:
     ) -> ProjectFactoryInitJob:
         with self._lock:
             job = self._require_job(init_job_id)
-            phase = job.phase(ProjectFactoryInitPhaseName.WORKBENCH_AND_FEEDBACK_VERIFICATION)
+            phase = job.phase(
+                ProjectFactoryInitPhaseName.WORKBENCH_AND_FEEDBACK_VERIFICATION
+            )
             if phase.status in {
                 ProjectFactoryInitPhaseStatus.COMPLETED,
                 ProjectFactoryInitPhaseStatus.SKIPPED,
@@ -1206,7 +1253,9 @@ class ProjectFactoryInitService:
                 )
 
             evidence: list[ProjectFactoryInitCommandEvidence] = []
-            self._mark_github_running(job, "Checking GitHub CLI, auth, repository, and git remote.")
+            self._mark_github_running(
+                job, "Checking GitHub CLI, auth, repository, and git remote."
+            )
 
             gh_version = self._run(("gh", "--version"), cwd=workdir)
             evidence.append(self._evidence(gh_version))
@@ -1274,7 +1323,13 @@ class ProjectFactoryInitService:
                             code="github_repo_create_failed",
                             message=f"GitHub repository {repo_ref} could not be created.",
                             next_action="Fix GitHub owner permissions or choose an available repository name.",
-                            command=("gh", "repo", "create", repo_ref, f"--{repo_visibility}"),
+                            command=(
+                                "gh",
+                                "repo",
+                                "create",
+                                repo_ref,
+                                f"--{repo_visibility}",
+                            ),
                         ),
                         evidence=tuple(evidence),
                     )
@@ -1308,7 +1363,9 @@ class ProjectFactoryInitService:
             repo_default_branch = _repo_default_branch(repo_payload) or branch
             repo_visibility = _repo_visibility(repo_payload) or repo_visibility
 
-            inside = self._run(("git", "rev-parse", "--is-inside-work-tree"), cwd=workdir)
+            inside = self._run(
+                ("git", "rev-parse", "--is-inside-work-tree"), cwd=workdir
+            )
             evidence.append(self._evidence(inside))
             if inside.exit_code != 0 or inside.stdout.strip().lower() != "true":
                 return self._block_github(
@@ -1322,9 +1379,15 @@ class ProjectFactoryInitService:
                     evidence=tuple(evidence),
                 )
 
-            current_branch = self._run(("git", "rev-parse", "--abbrev-ref", "HEAD"), cwd=workdir)
+            current_branch = self._run(
+                ("git", "rev-parse", "--abbrev-ref", "HEAD"), cwd=workdir
+            )
             evidence.append(self._evidence(current_branch))
-            push_branch = current_branch.stdout.strip() if current_branch.exit_code == 0 else repo_default_branch
+            push_branch = (
+                current_branch.stdout.strip()
+                if current_branch.exit_code == 0
+                else repo_default_branch
+            )
             if not push_branch or push_branch == "HEAD":
                 push_branch = repo_default_branch
 
@@ -1337,7 +1400,13 @@ class ProjectFactoryInitService:
                         code="github_baseline_commit_missing",
                         message="Project workspace does not have a baseline commit to push.",
                         next_action="Create the baseline commit, then rerun deterministic init.",
-                        command=("git", "commit", "--allow-empty", "-m", "Initial deterministic baseline"),
+                        command=(
+                            "git",
+                            "commit",
+                            "--allow-empty",
+                            "-m",
+                            "Initial deterministic baseline",
+                        ),
                     ),
                     evidence=tuple(evidence),
                 )
@@ -1359,7 +1428,9 @@ class ProjectFactoryInitService:
                         evidence=tuple(evidence),
                     )
             else:
-                add_origin = self._run(("git", "remote", "add", "origin", repo_url), cwd=workdir)
+                add_origin = self._run(
+                    ("git", "remote", "add", "origin", repo_url), cwd=workdir
+                )
                 evidence.append(self._evidence(add_origin))
                 if add_origin.exit_code != 0:
                     return self._block_github(
@@ -1598,15 +1669,17 @@ class ProjectFactoryInitService:
                 deployed=deployed,
                 evidence=(deploy_evidence,),
             )
-            return smoke_completed
+            return self._complete_initial_admin_invites(
+                smoke_completed,
+                target=workdir,
+                deploy_service=deploy_service,
+            )
 
     def to_response_payload(self, job: ProjectFactoryInitJob) -> dict[str, object]:
         status = self._status_for_response(job)
         current_phase = self._current_phase_name(job).value
         blockers = [
-            blocker.to_payload()
-            for phase in job.phases
-            for blocker in phase.blockers
+            blocker.to_payload() for phase in job.phases for blocker in phase.blockers
         ]
         workspace_path = job.relationships.generated_workspace_path
         context_pack = job.context_pack.to_payload() if job.context_pack else None
@@ -1972,10 +2045,9 @@ class ProjectFactoryInitService:
         return (evidence,), None
 
     def _bridge_root_for_generated_scripts(self) -> Path:
-        configured = (
-            self._command_env.get("CODEX_MOBILE_BRIDGE_ROOT")
-            or os.environ.get("CODEX_MOBILE_BRIDGE_ROOT")
-        )
+        configured = self._command_env.get(
+            "CODEX_MOBILE_BRIDGE_ROOT"
+        ) or os.environ.get("CODEX_MOBILE_BRIDGE_ROOT")
         return Path(configured).expanduser().resolve() if configured else Path.cwd()
 
     def _ensure_flutter_android_project(
@@ -1993,7 +2065,9 @@ class ProjectFactoryInitService:
         build_gradle = mobile / "android/app/build.gradle.kts"
         evidence: list[ProjectFactoryInitCommandEvidence] = []
         if not build_gradle.is_file():
-            create = self._run(("flutter", "create", "--platforms=android", "."), cwd=mobile)
+            create = self._run(
+                ("flutter", "create", "--platforms=android", "."), cwd=mobile
+            )
             evidence.append(self._evidence(create))
             if create.exit_code != 0:
                 return (
@@ -2289,6 +2363,175 @@ class ProjectFactoryInitService:
         self._persist_job(updated)
         return updated
 
+    def _complete_initial_admin_invites(
+        self,
+        job: ProjectFactoryInitJob,
+        *,
+        target: Path,
+        deploy_service: WebPreviewDeployService,
+    ) -> ProjectFactoryInitJob:
+        config = self._initial_admin_invite_config(job=job, target=target)
+        emails = tuple(config["emails"])
+        if not emails:
+            return job
+        settings = self._settings
+        if settings is None:
+            return job
+
+        invite_service = WebPreviewInviteService(
+            settings=settings,
+            preview_service=deploy_service,
+        )
+        preview_id = f"wp-{job.slug}"
+        existing_invites = invite_service.list_invites(preview_id)
+        existing_active_emails = {
+            str(invite.get("email") or "").strip().lower()
+            for invite in existing_invites
+            if _is_active_invite(invite)
+        }
+        results: list[dict[str, object]] = []
+        failures: list[dict[str, object]] = []
+        for email in emails:
+            if email in existing_active_emails:
+                results.append(
+                    {
+                        "email": email,
+                        "status": "existing_active",
+                        "manualDeliveryRequired": False,
+                    }
+                )
+                continue
+            try:
+                invite = invite_service.create_invite(
+                    WebPreviewInviteCreateInput(
+                        preview_id=preview_id,
+                        email=email,
+                        role=str(config["role"]),
+                        single_use=True,
+                    )
+                )
+            except WebPreviewInviteError as exc:
+                if exc.code == "duplicate_admin_invite":
+                    results.append(
+                        {
+                            "email": email,
+                            "status": "existing_active",
+                            "manualDeliveryRequired": False,
+                        }
+                    )
+                    continue
+                failures.append(
+                    {
+                        "email": email,
+                        "code": exc.code,
+                        "message": exc.message,
+                    }
+                )
+                continue
+            results.append(_safe_invite_result(invite))
+
+        phase = job.phase(_PREVIEW_SMOKE_PHASE)
+        evidence = self._api_evidence(
+            ("web-preview", "initial-admin-invites", job.slug),
+            {
+                "preview_id": preview_id,
+                "emails": list(emails),
+                "role": str(config["role"]),
+                "source": str(config["source"]),
+                "results": results,
+                "failures": failures,
+            },
+            exit_code=0 if not failures else 1,
+            cwd=target,
+        )
+        artifact = ProjectFactoryInitArtifact(
+            kind="web_preview_initial_admin_invites",
+            metadata={
+                "previewId": preview_id,
+                "count": len(emails),
+                "source": str(config["source"]),
+                "results": results,
+                "failures": failures,
+            },
+        )
+        if failures:
+            return self._block_cloudflare(
+                job,
+                phase_name=_PREVIEW_SMOKE_PHASE,
+                blocker=_cloudflare_blocker(
+                    phase=_PREVIEW_SMOKE_PHASE,
+                    code="web_preview_initial_admin_invites_failed",
+                    message=(
+                        "Initial admin web preview invites could not be created."
+                    ),
+                    next_action=(
+                        "Fix Web Preview invite configuration, then rerun "
+                        "deterministic init."
+                    ),
+                ),
+                evidence=(*phase.command_evidence, evidence),
+                artifacts=(artifact,),
+            )
+        updated = job.with_phase(
+            replace(
+                phase,
+                command_evidence=(*phase.command_evidence, evidence),
+                artifacts=(*phase.artifacts, artifact),
+                message=(
+                    "Preview smoke passed and initial admin invites were created."
+                    if not failures
+                    else "Preview smoke passed but initial admin invite creation needs attention."
+                ),
+            )
+        )
+        self._jobs[updated.id] = updated
+        self._persist_job(updated)
+        return updated
+
+    def _initial_admin_invite_config(
+        self,
+        *,
+        job: ProjectFactoryInitJob,
+        target: Path,
+    ) -> dict[str, object]:
+        draft_config = self._initial_admin_invite_config_from_draft(job)
+        if draft_config["emails"]:
+            return draft_config
+        manifest_config = _initial_admin_invite_config_from_manifest(target)
+        if manifest_config["emails"]:
+            return manifest_config
+        return draft_config if draft_config["required"] else manifest_config
+
+    def _initial_admin_invite_config_from_draft(
+        self,
+        job: ProjectFactoryInitJob,
+    ) -> dict[str, object]:
+        path = self._state_root / "drafts" / f"{job.relationships.draft_id}.json"
+        try:
+            payload = _read_json(path)
+        except Exception:
+            return _empty_initial_admin_invite_config("missing")
+        request = payload.get("request")
+        manifest_plan = payload.get("manifest_plan")
+        manifest = (
+            manifest_plan.get("manifest") if isinstance(manifest_plan, dict) else None
+        )
+        admin = manifest.get("admin") if isinstance(manifest, dict) else None
+        initial_invites = (
+            admin.get("initial_invites") if isinstance(admin, dict) else None
+        )
+        emails = _normalize_invite_emails(
+            request.get("initial_admin_emails") if isinstance(request, dict) else None
+        )
+        if not emails and isinstance(initial_invites, dict):
+            emails = _normalize_invite_emails(initial_invites.get("emails"))
+        return {
+            "emails": emails,
+            "role": _invite_role(initial_invites),
+            "required": _invite_required(initial_invites),
+            "source": "draft",
+        }
+
     def _block_cloudflare_exception(
         self,
         job: ProjectFactoryInitJob,
@@ -2396,9 +2639,13 @@ class ProjectFactoryInitService:
         if project_path is not None:
             return Path(project_path).expanduser().resolve()
         if job.relationships.generated_workspace_path:
-            return Path(job.relationships.generated_workspace_path).expanduser().resolve()
+            return (
+                Path(job.relationships.generated_workspace_path).expanduser().resolve()
+            )
         if self._settings is not None:
-            return (Path(self._settings.projects_root).expanduser() / job.slug).resolve()
+            return (
+                Path(self._settings.projects_root).expanduser() / job.slug
+            ).resolve()
         return (self._state_root.parent / job.slug).resolve()
 
     def _generate_frontend_baseline(
@@ -2624,7 +2871,9 @@ class ProjectFactoryInitService:
         phase = job.phase(ProjectFactoryInitPhaseName.ANDROID_PREVIEW_RELEASE)
         now = _now_iso()
         asset = _release_asset(release_payload, f"{job.slug}.apk")
-        release_url = _optional_str(release_payload.get("url") or release_payload.get("htmlUrl"))
+        release_url = _optional_str(
+            release_payload.get("url") or release_payload.get("htmlUrl")
+        )
         artifacts = [
             ProjectFactoryInitArtifact(
                 kind="android_preview_release",
@@ -2718,7 +2967,9 @@ class ProjectFactoryInitService:
             ProjectFactoryInitRemoteResource(
                 type=ProjectFactoryInitRemoteResourceType.BRIDGE_INSTALLABLE_APP,
                 identifier=job.slug,
-                display_name=str(installable_payload.get("displayName") or job.project_name),
+                display_name=str(
+                    installable_payload.get("displayName") or job.project_name
+                ),
                 url=_optional_str(installable_payload.get("apkUrl")),
                 provider="codex-mobile-bridge",
                 status="available",
@@ -2760,7 +3011,10 @@ class ProjectFactoryInitService:
                 run_id=job.id,
             )
             reserved = self._chat_repository.reserve_message(message)
-            if reserved.content != content or reserved.status != ChatMessageStatus.COMPLETED:
+            if (
+                reserved.content != content
+                or reserved.status != ChatMessageStatus.COMPLETED
+            ):
                 reserved.sync(content=content, status=ChatMessageStatus.COMPLETED)
                 reserved.updated_at = datetime.now(UTC)
                 self._chat_repository.save_message(reserved)
@@ -2768,7 +3022,9 @@ class ProjectFactoryInitService:
         except Exception:
             return None
 
-    def _run(self, argv: tuple[str, ...], *, cwd: Path) -> ProjectFactoryInitCommandResult:
+    def _run(
+        self, argv: tuple[str, ...], *, cwd: Path
+    ) -> ProjectFactoryInitCommandResult:
         return self._command_runner.run(
             argv,
             cwd=cwd,
@@ -2783,7 +3039,10 @@ class ProjectFactoryInitService:
         cwd: Path,
         env: dict[str, str],
     ) -> ProjectFactoryInitCommandResult:
-        merged = {**self._command_env, **{key: value for key, value in env.items() if value}}
+        merged = {
+            **self._command_env,
+            **{key: value for key, value in env.items() if value},
+        }
         return self._command_runner.run(
             argv,
             cwd=cwd,
@@ -2869,7 +3128,9 @@ class ProjectFactoryInitService:
             )
         return tuple(evidence), None
 
-    def _view_repo(self, repo_ref: str, *, cwd: Path) -> ProjectFactoryInitCommandResult:
+    def _view_repo(
+        self, repo_ref: str, *, cwd: Path
+    ) -> ProjectFactoryInitCommandResult:
         return self._run(
             (
                 "gh",
@@ -2889,7 +3150,11 @@ class ProjectFactoryInitService:
         *,
         cwd: Path,
     ) -> ProjectFactoryInitCommandResult:
-        visibility_arg = f"--{visibility}" if visibility in {"private", "public", "internal"} else "--private"
+        visibility_arg = (
+            f"--{visibility}"
+            if visibility in {"private", "public", "internal"}
+            else "--private"
+        )
         return self._run(("gh", "repo", "create", repo_ref, visibility_arg), cwd=cwd)
 
     def _evidence(
@@ -2977,13 +3242,20 @@ class ProjectFactoryInitService:
         )
 
     def _status_for_response(self, job: ProjectFactoryInitJob) -> str:
-        if any(phase.status == ProjectFactoryInitPhaseStatus.RUNNING for phase in job.phases):
+        if any(
+            phase.status == ProjectFactoryInitPhaseStatus.RUNNING
+            for phase in job.phases
+        ):
             return "running"
-        if all(phase.status == ProjectFactoryInitPhaseStatus.QUEUED for phase in job.phases):
+        if all(
+            phase.status == ProjectFactoryInitPhaseStatus.QUEUED for phase in job.phases
+        ):
             return "queued"
         return job.completion_state.value
 
-    def _current_phase_name(self, job: ProjectFactoryInitJob) -> ProjectFactoryInitPhaseName:
+    def _current_phase_name(
+        self, job: ProjectFactoryInitJob
+    ) -> ProjectFactoryInitPhaseName:
         for phase in job.phases:
             if phase.status in {
                 ProjectFactoryInitPhaseStatus.RUNNING,
@@ -3084,9 +3356,17 @@ def _verify_frontend_baseline(
     runtime = _read_json_file(target / "release/preview-runtime.json")
     manifest_text = _read_text(target / "deploy/web-preview/web-preview-manifest.yaml")
     bridge_text = _read_text(target / "codex-bridge.yaml")
-    pubspec_text = _read_text(target / "apps/mobile/pubspec.yaml") if strategy == "flutter" else ""
-    main_text = _read_text(target / "apps/mobile/lib/main.dart") if strategy == "flutter" else ""
-    svelte_config = _read_text(target / "apps/web/src/config.ts") if strategy == "svelte" else ""
+    pubspec_text = (
+        _read_text(target / "apps/mobile/pubspec.yaml") if strategy == "flutter" else ""
+    )
+    main_text = (
+        _read_text(target / "apps/mobile/lib/main.dart")
+        if strategy == "flutter"
+        else ""
+    )
+    svelte_config = (
+        _read_text(target / "apps/web/src/config.ts") if strategy == "svelte" else ""
+    )
 
     _validate_preview_runtime_contract(
         blockers,
@@ -3111,7 +3391,9 @@ def _verify_frontend_baseline(
             }
         )
     if strategy == "flutter":
-        _validate_flutter_feedback_updater(blockers, pubspec_text=pubspec_text, main_text=main_text, slug=slug)
+        _validate_flutter_feedback_updater(
+            blockers, pubspec_text=pubspec_text, main_text=main_text, slug=slug
+        )
         if "APP_RUNTIME_PROFILE" not in main_text or "API_RUNTIME" not in main_text:
             blockers.append(
                 {
@@ -3122,7 +3404,10 @@ def _verify_frontend_baseline(
                 }
             )
     else:
-        if "VITE_API_BASE_URL" not in svelte_config or api_base_url not in svelte_config:
+        if (
+            "VITE_API_BASE_URL" not in svelte_config
+            or api_base_url not in svelte_config
+        ):
             blockers.append(
                 {
                     "code": "svelte_preview_api_wiring_missing",
@@ -3152,21 +3437,37 @@ def _verify_frontend_baseline(
         "strategy": strategy,
         "files": {"expected": files, "missing": missing},
         "runtime": {
-            "previewUrl": runtime.get("previewUrl") if isinstance(runtime, dict) else None,
-            "apiBaseUrl": runtime.get("apiBaseUrl") if isinstance(runtime, dict) else None,
-            "runtimeProfile": runtime.get("runtimeProfile") if isinstance(runtime, dict) else None,
-            "apiRuntime": runtime.get("apiRuntime") if isinstance(runtime, dict) else None,
-            "dataPersistence": runtime.get("dataPersistence") if isinstance(runtime, dict) else None,
-            "mockOrDemo": runtime.get("mockOrDemo") if isinstance(runtime, dict) else None,
+            "previewUrl": runtime.get("previewUrl")
+            if isinstance(runtime, dict)
+            else None,
+            "apiBaseUrl": runtime.get("apiBaseUrl")
+            if isinstance(runtime, dict)
+            else None,
+            "runtimeProfile": runtime.get("runtimeProfile")
+            if isinstance(runtime, dict)
+            else None,
+            "apiRuntime": runtime.get("apiRuntime")
+            if isinstance(runtime, dict)
+            else None,
+            "dataPersistence": runtime.get("dataPersistence")
+            if isinstance(runtime, dict)
+            else None,
+            "mockOrDemo": runtime.get("mockOrDemo")
+            if isinstance(runtime, dict)
+            else None,
         },
         "workbench": {
             "sourceApp": slug,
             "workspacePath": str(target),
             "workbenchScopeId": f"workspace:{target}",
-            "sddStandard": "workbench-sdd/v1" if "workbench-sdd/v1" in bridge_text else None,
+            "sddStandard": "workbench-sdd/v1"
+            if "workbench-sdd/v1" in bridge_text
+            else None,
             "bridgeOwnedWorkbench": True,
         },
-        "feedbackUpdater": _feedback_updater_evidence(strategy, pubspec_text, main_text),
+        "feedbackUpdater": _feedback_updater_evidence(
+            strategy, pubspec_text, main_text
+        ),
         "capabilities": capabilities,
         "blockers": blockers,
     }
@@ -3308,7 +3609,9 @@ def _validate_no_mock_or_local_defaults(
     runtime: object,
     manifest_text: str,
 ) -> None:
-    runtime_blob = json.dumps(runtime, sort_keys=True) if isinstance(runtime, dict) else ""
+    runtime_blob = (
+        json.dumps(runtime, sort_keys=True) if isinstance(runtime, dict) else ""
+    )
     combined = "\n".join([runtime_blob, manifest_text]).lower()
     forbidden = [
         "http://localhost",
@@ -3317,7 +3620,7 @@ def _validate_no_mock_or_local_defaults(
         "10.0.2.2",
         "example.com",
         "placeholder",
-        "mockordemo\": true",
+        'mockordemo": true',
         "mock_or_demo: true",
         "runtime_profile: mock",
         "app_runtime_profile=mock",
@@ -3412,7 +3715,9 @@ def _cloudflare_doctor_blocker(payload: dict[str, object]) -> ProjectFactoryInit
         {},
     )
     code = str(failed.get("code") or payload.get("status") or "cloudflare_blocked")
-    detail = str(failed.get("detail") or failed.get("message") or "Cloudflare is blocked.")
+    detail = str(
+        failed.get("detail") or failed.get("message") or "Cloudflare is blocked."
+    )
     return _cloudflare_blocker(
         phase=_CLOUDFLARE_PROVISION_PHASE,
         code=f"cloudflare_{code}",
@@ -3428,15 +3733,21 @@ def _cloudflare_doctor_next_action(code: str, detail: str) -> str:
     if "account_id" in code:
         return "Set CLOUDFLARE_ACCOUNT_ID on the bridge host, then rerun deterministic init."
     if "zone_id" in code:
-        return "Set CLOUDFLARE_ZONE_ID on the bridge host, then rerun deterministic init."
+        return (
+            "Set CLOUDFLARE_ZONE_ID on the bridge host, then rerun deterministic init."
+        )
     if code == "web_preview_apply_enabled":
         return "Set WEB_PREVIEW_APPLY_ENABLED=true after confirming Cloudflare apply is allowed."
     if code == "preview_dns_record":
-        return "Create or repair the preview CNAME record, then rerun deterministic init."
+        return (
+            "Create or repair the preview CNAME record, then rerun deterministic init."
+        )
     if "workers" in code or "worker" in code:
         return "Grant Cloudflare Workers and Routes permissions, then rerun deterministic init."
     if "d1" in code:
-        return "Grant Cloudflare D1 read/write permissions, then rerun deterministic init."
+        return (
+            "Grant Cloudflare D1 read/write permissions, then rerun deterministic init."
+        )
     return detail or "Fix the Cloudflare blocker, then rerun deterministic init."
 
 
@@ -3650,6 +3961,91 @@ def _safe_json_value(value: object) -> object:
     return str(value)
 
 
+def _empty_initial_admin_invite_config(source: str) -> dict[str, object]:
+    return {"emails": (), "role": "owner", "required": False, "source": source}
+
+
+def _initial_admin_invite_config_from_manifest(target: Path) -> dict[str, object]:
+    path = target / ".codex" / "project.yaml"
+    try:
+        payload = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError):
+        return _empty_initial_admin_invite_config("manifest")
+    if not isinstance(payload, dict):
+        return _empty_initial_admin_invite_config("manifest")
+    admin = payload.get("admin")
+    initial_invites = admin.get("initial_invites") if isinstance(admin, dict) else None
+    return {
+        "emails": _normalize_invite_emails(
+            initial_invites.get("emails") if isinstance(initial_invites, dict) else None
+        ),
+        "role": _invite_role(initial_invites),
+        "required": _invite_required(initial_invites),
+        "source": "manifest",
+    }
+
+
+def _normalize_invite_emails(value: object) -> tuple[str, ...]:
+    if not isinstance(value, list | tuple):
+        return ()
+    emails: list[str] = []
+    seen: set[str] = set()
+    for item in value:
+        email = str(item or "").strip().lower()
+        if not email or email in seen:
+            continue
+        seen.add(email)
+        emails.append(email)
+    return tuple(emails)
+
+
+def _invite_role(initial_invites: object) -> str:
+    if not isinstance(initial_invites, dict):
+        return "owner"
+    role = str(initial_invites.get("default_role") or "owner").strip().lower()
+    return role or "owner"
+
+
+def _invite_required(initial_invites: object) -> bool:
+    return (
+        isinstance(initial_invites, dict)
+        and initial_invites.get("required_for_web_preview") is True
+    )
+
+
+def _is_active_invite(invite: dict[str, object]) -> bool:
+    if invite.get("revoked_at") or invite.get("expired_at"):
+        return False
+    expires_at = _parse_optional_iso_datetime(invite.get("expires_at"))
+    return expires_at is None or expires_at > datetime.now(UTC)
+
+
+def _parse_optional_iso_datetime(value: object) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    text = value.strip().replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
+def _safe_invite_result(invite: dict[str, object]) -> dict[str, object]:
+    return {
+        "inviteId": str(invite.get("invite_id") or ""),
+        "email": str(invite.get("email") or ""),
+        "role": str(invite.get("role") or ""),
+        "status": str(invite.get("email_delivery_status") or ""),
+        "provider": str(invite.get("email_provider") or ""),
+        "manualDeliveryRequired": bool(invite.get("manual_delivery_required")),
+        "syncStatus": str(invite.get("sync_status") or ""),
+        "syncedAt": invite.get("synced_at"),
+    }
+
+
 def _expect_sequence(value: object) -> list[object]:
     return value if isinstance(value, list) else []
 
@@ -3732,7 +4128,9 @@ def _legacy_job_from_payload(payload: dict[str, object]) -> ProjectFactoryInitJo
             for item in payload.get("remoteResources", [])
             if isinstance(item, dict)
         ),
-        context_pack=_legacy_context_pack_from_payload(_expect_mapping(payload["contextPack"]))
+        context_pack=_legacy_context_pack_from_payload(
+            _expect_mapping(payload["contextPack"])
+        )
         if isinstance(payload.get("contextPack"), dict)
         else None,
     )
@@ -3753,23 +4151,43 @@ def _legacy_phase_from_payload(payload: dict[str, object]) -> ProjectFactoryInit
             ProjectFactoryInitCommandEvidence(
                 argv=tuple(str(part) for part in item.get("argv", [])),
                 cwd=_optional_str(item.get("cwd")),
-                exit_code=int(item["exitCode"]) if item.get("exitCode") is not None else None,
-                stdout_summary=str(item.get("stdoutSummary") or item.get("stdout") or ""),
-                stderr_summary=str(item.get("stderrSummary") or item.get("stderr") or ""),
+                exit_code=int(item["exitCode"])
+                if item.get("exitCode") is not None
+                else None,
+                stdout_summary=str(
+                    item.get("stdoutSummary") or item.get("stdout") or ""
+                ),
+                stderr_summary=str(
+                    item.get("stderrSummary") or item.get("stderr") or ""
+                ),
                 started_at=_optional_str(item.get("startedAt")),
                 completed_at=_optional_str(item.get("completedAt")),
             )
-            for item in (_expect_mapping(raw) for raw in payload.get("commandEvidence", []) if isinstance(raw, dict))
+            for item in (
+                _expect_mapping(raw)
+                for raw in payload.get("commandEvidence", [])
+                if isinstance(raw, dict)
+            )
         ),
         blockers=tuple(
             ProjectFactoryInitBlocker(
                 code=str(item["code"]),
                 message=str(item.get("message") or ""),
                 phase=ProjectFactoryInitPhaseName(str(payload["name"])),
-                next_action=str(item.get("nextAction") or " ".join(shlex.join(tuple(command)) for command in item.get("retryCommands", []))),
+                next_action=str(
+                    item.get("nextAction")
+                    or " ".join(
+                        shlex.join(tuple(command))
+                        for command in item.get("retryCommands", [])
+                    )
+                ),
                 command=tuple(str(part) for part in item.get("command", [])),
             )
-            for item in (_expect_mapping(raw) for raw in payload.get("blockers", []) if isinstance(raw, dict))
+            for item in (
+                _expect_mapping(raw)
+                for raw in payload.get("blockers", [])
+                if isinstance(raw, dict)
+            )
         ),
         artifacts=tuple(
             ProjectFactoryInitArtifact(
@@ -3778,7 +4196,11 @@ def _legacy_phase_from_payload(payload: dict[str, object]) -> ProjectFactoryInit
                 sha256=_optional_str(item.get("sha256")),
                 metadata={"description": str(item.get("description") or "")},
             )
-            for item in (_expect_mapping(raw) for raw in payload.get("artifacts", []) if isinstance(raw, dict))
+            for item in (
+                _expect_mapping(raw)
+                for raw in payload.get("artifacts", [])
+                if isinstance(raw, dict)
+            )
         ),
     )
 
@@ -3994,15 +4416,33 @@ def _context_ready_for_business_llm(job: ProjectFactoryInitJob) -> bool:
 
 def _context_resource_summary(job: ProjectFactoryInitJob) -> dict[str, object]:
     resources = job.remote_resources
-    github_repo = _first_resource(resources, ProjectFactoryInitRemoteResourceType.GITHUB_REPOSITORY)
-    github_branch = _first_resource(resources, ProjectFactoryInitRemoteResourceType.GITHUB_BRANCH)
-    preview_url = _first_resource(resources, ProjectFactoryInitRemoteResourceType.PREVIEW_URL)
-    api_base_url = _first_resource(resources, ProjectFactoryInitRemoteResourceType.API_BASE_URL)
-    worker = _first_resource(resources, ProjectFactoryInitRemoteResourceType.CLOUDFLARE_WORKER)
-    route = _first_resource(resources, ProjectFactoryInitRemoteResourceType.CLOUDFLARE_ROUTE)
-    d1 = _first_resource(resources, ProjectFactoryInitRemoteResourceType.CLOUDFLARE_D1_DATABASE)
-    release = _first_resource(resources, ProjectFactoryInitRemoteResourceType.GITHUB_RELEASE)
-    installable = _first_resource(resources, ProjectFactoryInitRemoteResourceType.BRIDGE_INSTALLABLE_APP)
+    github_repo = _first_resource(
+        resources, ProjectFactoryInitRemoteResourceType.GITHUB_REPOSITORY
+    )
+    github_branch = _first_resource(
+        resources, ProjectFactoryInitRemoteResourceType.GITHUB_BRANCH
+    )
+    preview_url = _first_resource(
+        resources, ProjectFactoryInitRemoteResourceType.PREVIEW_URL
+    )
+    api_base_url = _first_resource(
+        resources, ProjectFactoryInitRemoteResourceType.API_BASE_URL
+    )
+    worker = _first_resource(
+        resources, ProjectFactoryInitRemoteResourceType.CLOUDFLARE_WORKER
+    )
+    route = _first_resource(
+        resources, ProjectFactoryInitRemoteResourceType.CLOUDFLARE_ROUTE
+    )
+    d1 = _first_resource(
+        resources, ProjectFactoryInitRemoteResourceType.CLOUDFLARE_D1_DATABASE
+    )
+    release = _first_resource(
+        resources, ProjectFactoryInitRemoteResourceType.GITHUB_RELEASE
+    )
+    installable = _first_resource(
+        resources, ProjectFactoryInitRemoteResourceType.BRIDGE_INSTALLABLE_APP
+    )
     frontend_phase = job.phase(ProjectFactoryInitPhaseName.FLUTTER_OR_STRATEGY_BASELINE)
     artifacts = {artifact.kind: artifact for artifact in frontend_phase.artifacts}
     return {
@@ -4091,17 +4531,25 @@ def _business_phase_rules() -> list[str]:
 
 
 def _context_pack_markdown(payload: dict[str, object]) -> str:
-    resources = payload.get("resources") if isinstance(payload.get("resources"), dict) else {}
+    resources = (
+        payload.get("resources") if isinstance(payload.get("resources"), dict) else {}
+    )
     github = resources.get("github") if isinstance(resources, dict) else {}
     preview = resources.get("cloudflarePreview") if isinstance(resources, dict) else {}
-    android = resources.get("androidPreviewRelease") if isinstance(resources, dict) else {}
+    android = (
+        resources.get("androidPreviewRelease") if isinstance(resources, dict) else {}
+    )
     bridge = resources.get("bridgeInstallable") if isinstance(resources, dict) else {}
-    blockers = payload.get("blockers") if isinstance(payload.get("blockers"), list) else []
+    blockers = (
+        payload.get("blockers") if isinstance(payload.get("blockers"), list) else []
+    )
     blocker_lines = _markdown_blocker_lines(blockers)
     rules = payload.get("businessPhaseRules")
-    rule_lines = [
-        f"- {rule}" for rule in rules if isinstance(rule, str)
-    ] if isinstance(rules, list) else []
+    rule_lines = (
+        [f"- {rule}" for rule in rules if isinstance(rule, str)]
+        if isinstance(rules, list)
+        else []
+    )
     readiness = (
         "ready"
         if payload.get("readyForBusinessLlm") is True
@@ -4154,7 +4602,11 @@ def _markdown_blocker_lines(blockers: list[object]) -> list[str]:
         if not isinstance(blocker, dict):
             continue
         command = blocker.get("command")
-        command_text = shlex.join(tuple(str(part) for part in command)) if isinstance(command, list) else ""
+        command_text = (
+            shlex.join(tuple(str(part) for part in command))
+            if isinstance(command, list)
+            else ""
+        )
         suffix = f" Retry: `{command_text}`." if command_text else ""
         lines.append(
             f"- `{blocker.get('phase')}` / `{blocker.get('code')}`: "
@@ -4498,9 +4950,14 @@ def _android_blocker_from_command(
     output = f"{result.stdout}\n{result.stderr}".lower()
     resolved_code = code
     resolved_message = message
-    if any(marker in output for marker in ("flutter", "java", "jdk", "signing", "keystore", "apksigner")):
+    if any(
+        marker in output
+        for marker in ("flutter", "java", "jdk", "signing", "keystore", "apksigner")
+    ):
         resolved_code = "android_preview_tooling_or_signing_missing"
-        resolved_message = "Android preview release tooling or signing configuration is missing."
+        resolved_message = (
+            "Android preview release tooling or signing configuration is missing."
+        )
     elif "permission" in output or "protected" in output:
         resolved_code = "android_preview_release_permission_blocked"
         resolved_message = "Android preview release publish is blocked by GitHub permissions or policy."
@@ -4524,7 +4981,9 @@ def _android_release_payload_blocker(
         prerelease = payload.get("prerelease")
     if tag and not tag.startswith("android-preview-v"):
         code = "android_preview_release_bad_tag"
-        message = f"Android preview release tag must start with android-preview-v, got {tag}."
+        message = (
+            f"Android preview release tag must start with android-preview-v, got {tag}."
+        )
     elif tag != release_tag:
         code = "android_preview_release_missing"
         message = f"GitHub prerelease {release_tag} was not found after publish."
@@ -4539,7 +4998,12 @@ def _android_release_payload_blocker(
         code=code,
         message=message,
         next_action="Publish or repair the Android Initial Preview prerelease, then rerun deterministic init.",
-        command=("bash", "scripts/publish_android_preview_release.sh", "--push", "--watch"),
+        command=(
+            "bash",
+            "scripts/publish_android_preview_release.sh",
+            "--push",
+            "--watch",
+        ),
     )
 
 
@@ -4651,7 +5115,9 @@ def _installable_payload_blocker(
     if not payload:
         code = "bridge_installable_lookup_failed"
         message = "Bridge installable app lookup did not return a valid payload."
-    elif payload.get("mockOrDemo") is not False or _has_forbidden_runtime_marker(payload):
+    elif payload.get("mockOrDemo") is not False or _has_forbidden_runtime_marker(
+        payload
+    ):
         code = "bridge_installable_mock_or_local_blocked"
         message = "Bridge installable registration contains mock, demo, local, or placeholder runtime metadata."
     elif payload.get("releaseChannel") != "prerelease":
@@ -4707,14 +5173,20 @@ def _parse_repo_payload(stdout: str) -> dict[str, object]:
     return payload if isinstance(payload, dict) else {}
 
 
-def _repo_identity_matches(payload: dict[str, object], owner: str, repo_name: str) -> bool:
+def _repo_identity_matches(
+    payload: dict[str, object], owner: str, repo_name: str
+) -> bool:
     name = str(payload.get("name") or "")
     owner_payload = payload.get("owner")
     if isinstance(owner_payload, dict):
-        resolved_owner = str(owner_payload.get("login") or owner_payload.get("name") or "")
+        resolved_owner = str(
+            owner_payload.get("login") or owner_payload.get("name") or ""
+        )
     else:
         resolved_owner = str(owner_payload or "")
-    return name == repo_name and (not resolved_owner or resolved_owner.lower() == owner.lower())
+    return name == repo_name and (
+        not resolved_owner or resolved_owner.lower() == owner.lower()
+    )
 
 
 def _repo_url(payload: dict[str, object] | None, repo_ref: str) -> str:
@@ -4801,7 +5273,9 @@ def _optional_str(value: object) -> str | None:
 
 
 def _slug_from_name(name: str) -> str:
-    slug = "-".join("".join(char.lower() if char.isalnum() else " " for char in name).split())
+    slug = "-".join(
+        "".join(char.lower() if char.isalnum() else " " for char in name).split()
+    )
     return slug or "new-project"
 
 

@@ -138,12 +138,14 @@ def test_cloudflare_init_existing_resources_urls_deploy_and_smoke_success(
 
     completed = service.run_cloudflare_preview_phases(job.id)
 
-    assert completed.phase(
-        ProjectFactoryInitPhaseName.CLOUDFLARE_PREVIEW_PROVISION
-    ).status == ProjectFactoryInitPhaseStatus.COMPLETED
-    assert completed.phase(
-        ProjectFactoryInitPhaseName.CLOUDFLARE_PREVIEW_DEPLOY
-    ).status == ProjectFactoryInitPhaseStatus.COMPLETED
+    assert (
+        completed.phase(ProjectFactoryInitPhaseName.CLOUDFLARE_PREVIEW_PROVISION).status
+        == ProjectFactoryInitPhaseStatus.COMPLETED
+    )
+    assert (
+        completed.phase(ProjectFactoryInitPhaseName.CLOUDFLARE_PREVIEW_DEPLOY).status
+        == ProjectFactoryInitPhaseStatus.COMPLETED
+    )
     smoke = completed.phase(ProjectFactoryInitPhaseName.PREVIEW_SMOKE)
     assert smoke.status == ProjectFactoryInitPhaseStatus.COMPLETED
     preview = _resource(completed, ProjectFactoryInitRemoteResourceType.PREVIEW_URL)
@@ -176,11 +178,65 @@ def test_cloudflare_init_existing_resources_urls_deploy_and_smoke_success(
         for call in service._command_runner.calls
     )
     assert 'binding = "ASSETS"' in generated_wrangler.read_text()
-    assert any(call.startswith("fetch_url:https://preview.nienfos.com/clinica-norte") for call in fake.calls)
+    assert any(
+        call.startswith("fetch_url:https://preview.nienfos.com/clinica-norte")
+        for call in fake.calls
+    )
     smoke_artifact = smoke.artifacts[0]
     assert smoke_artifact.metadata["checks"][0]["status_code"] == 200
     assert smoke_artifact.metadata["checks"][0]["d1_bound"] is True
     assert smoke_artifact.metadata["checks"][0]["assets_bound"] is True
+
+
+def test_cloudflare_init_creates_initial_admin_invites_from_draft(
+    tmp_path: Path,
+) -> None:
+    fake = _FakeCloudflareClient(resources_exist=True)
+    service = _service(tmp_path, cloudflare_client=fake)
+    project = _generated_project(tmp_path)
+    job = _job(service, project)
+    _write_draft_with_initial_admins(
+        tmp_path,
+        emails=["ADMIN@example.com", "admin@example.com"],
+    )
+
+    completed = service.run_cloudflare_preview_phases(job.id)
+
+    invites = _stored_invites(tmp_path)
+    assert len(invites) == 1
+    invite = invites[0]
+    assert invite["preview_id"] == "wp-clinica-norte"
+    assert invite["email"] == "admin@example.com"
+    assert invite["role"] == "owner"
+    assert invite["sync_status"] == "synced"
+    assert invite["email_delivery_status"] == "manual_link_required"
+    assert "token" not in invite
+    assert "invite_url" not in invite
+    smoke = completed.phase(ProjectFactoryInitPhaseName.PREVIEW_SMOKE)
+    invite_artifact = next(
+        item
+        for item in smoke.artifacts
+        if item.kind == "web_preview_initial_admin_invites"
+    )
+    assert invite_artifact.metadata["count"] == 1
+    assert invite_artifact.metadata["source"] == "draft"
+    assert invite_artifact.metadata["results"][0]["email"] == "admin@example.com"
+    assert not invite_artifact.metadata["failures"]
+    assert "invite_url" not in json.dumps(invite_artifact.to_payload())
+    assert "test-web-preview-invite-secret-value-32" not in json.dumps(
+        completed.to_payload()
+    )
+
+    rerun = service.run_cloudflare_preview_phases(job.id)
+
+    assert len(_stored_invites(tmp_path)) == 1
+    rerun_smoke = rerun.phase(ProjectFactoryInitPhaseName.PREVIEW_SMOKE)
+    rerun_invite_artifact = next(
+        item
+        for item in reversed(rerun_smoke.artifacts)
+        if item.kind == "web_preview_initial_admin_invites"
+    )
+    assert rerun_invite_artifact.metadata["results"][0]["status"] == "existing_active"
 
 
 def test_cloudflare_init_retries_transient_preview_health_status(
@@ -243,17 +299,16 @@ def test_cloudflare_init_builds_web_preview_before_deploy(
 
     assert ("wrangler", "--version") in runner.calls
     assert ("bash", "scripts/build_web_preview.sh") in runner.calls
-    assert completed.phase(
-        ProjectFactoryInitPhaseName.CLOUDFLARE_PREVIEW_PROVISION
-    ).status == ProjectFactoryInitPhaseStatus.COMPLETED
+    assert (
+        completed.phase(ProjectFactoryInitPhaseName.CLOUDFLARE_PREVIEW_PROVISION).status
+        == ProjectFactoryInitPhaseStatus.COMPLETED
+    )
     provision = completed.phase(
         ProjectFactoryInitPhaseName.CLOUDFLARE_PREVIEW_PROVISION
     )
     evidence_argv = [item.argv for item in provision.command_evidence]
     assert ("bash", "scripts/build_web_preview.sh") in evidence_argv
-    assert (
-        project / "build/web-preview/clinica-norte/index.html"
-    ).exists()
+    assert (project / "build/web-preview/clinica-norte/index.html").exists()
 
 
 def test_cloudflare_init_resets_blocked_phase_for_retry(
@@ -308,9 +363,10 @@ def test_cloudflare_init_resets_blocked_phase_for_retry(
     completed = service.run_cloudflare_preview_phases(job.id)
 
     assert build_attempts == 2
-    assert completed.phase(
-        ProjectFactoryInitPhaseName.CLOUDFLARE_PREVIEW_PROVISION
-    ).status == ProjectFactoryInitPhaseStatus.COMPLETED
+    assert (
+        completed.phase(ProjectFactoryInitPhaseName.CLOUDFLARE_PREVIEW_PROVISION).status
+        == ProjectFactoryInitPhaseStatus.COMPLETED
+    )
 
 
 def test_cloudflare_init_create_path_and_d1_migrations_are_persisted(
@@ -328,7 +384,9 @@ def test_cloudflare_init_create_path_and_d1_migrations_are_persisted(
     completed = service.run_cloudflare_preview_phases(job.id)
 
     assert "create_dns_record:zone-1" in fake.calls
-    assert "create_worker_route:zone-1:preview.nienfos.com/clinica-norte/*" in fake.calls
+    assert (
+        "create_worker_route:zone-1:preview.nienfos.com/clinica-norte/*" in fake.calls
+    )
     assert "create_d1_database:acct-1:nienfos-preview" in fake.calls
     assert "create_pages_project:acct-1:nienfos-preview-web" in fake.calls
     assert any(call.startswith("execute_d1_sql:acct-1:d1-1") for call in fake.calls)
@@ -341,10 +399,13 @@ def test_cloudflare_init_create_path_and_d1_migrations_are_persisted(
         if artifact.kind == "cloudflare_d1_migration"
     ]
     assert migrations
-    assert _resource(
-        completed,
-        ProjectFactoryInitRemoteResourceType.CLOUDFLARE_D1_DATABASE,
-    ).metadata["database_id"] == "d1-1"
+    assert (
+        _resource(
+            completed,
+            ProjectFactoryInitRemoteResourceType.CLOUDFLARE_D1_DATABASE,
+        ).metadata["database_id"]
+        == "d1-1"
+    )
 
 
 def test_cloudflare_init_blocks_worker_route_d1_and_smoke_failures(
@@ -391,12 +452,18 @@ def test_cloudflare_init_blocks_worker_route_d1_and_smoke_failures(
         assert phase.blockers[0].code == expected_code
         assert phase.blockers[0].command
         if expected_phase == ProjectFactoryInitPhaseName.PREVIEW_SMOKE:
-            assert blocked.phase(
-                ProjectFactoryInitPhaseName.CLOUDFLARE_PREVIEW_PROVISION
-            ).status == ProjectFactoryInitPhaseStatus.COMPLETED
-            assert blocked.phase(
-                ProjectFactoryInitPhaseName.CLOUDFLARE_PREVIEW_DEPLOY
-            ).status == ProjectFactoryInitPhaseStatus.COMPLETED
+            assert (
+                blocked.phase(
+                    ProjectFactoryInitPhaseName.CLOUDFLARE_PREVIEW_PROVISION
+                ).status
+                == ProjectFactoryInitPhaseStatus.COMPLETED
+            )
+            assert (
+                blocked.phase(
+                    ProjectFactoryInitPhaseName.CLOUDFLARE_PREVIEW_DEPLOY
+                ).status
+                == ProjectFactoryInitPhaseStatus.COMPLETED
+            )
 
 
 def test_cloudflare_init_persists_after_reload_and_redacts_secrets(
@@ -413,7 +480,9 @@ def test_cloudflare_init_persists_after_reload_and_redacts_secrets(
     assert "secret-token" not in payload
     phase = blocked.phase(ProjectFactoryInitPhaseName.CLOUDFLARE_PREVIEW_PROVISION)
     assert "secret-token" not in phase.blockers[0].message
-    assert all("secret-token" not in item.stdout_summary for item in phase.command_evidence)
+    assert all(
+        "secret-token" not in item.stdout_summary for item in phase.command_evidence
+    )
 
     reloaded = ProjectFactoryInitService(
         state_root=tmp_path / "state",
@@ -425,9 +494,9 @@ def test_cloudflare_init_persists_after_reload_and_redacts_secrets(
         ProjectFactoryInitPhaseName.CLOUDFLARE_PREVIEW_PROVISION
     )
     assert persisted_phase.blockers[0].code == "cloudflare_worker_blocked"
-    assert _resource(persisted, ProjectFactoryInitRemoteResourceType.PREVIEW_URL).url == (
-        "https://preview.nienfos.com/clinica-norte"
-    )
+    assert _resource(
+        persisted, ProjectFactoryInitRemoteResourceType.PREVIEW_URL
+    ).url == ("https://preview.nienfos.com/clinica-norte")
 
 
 def _service(
@@ -485,6 +554,39 @@ def _write_web_build_output(project: Path) -> None:
     (assets_dir / "AssetManifest.bin").write_bytes(b"assets")
 
 
+def _write_draft_with_initial_admins(tmp_path: Path, *, emails: list[str]) -> None:
+    draft_path = tmp_path / "state/drafts/draft-1.json"
+    draft_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "kind": "codex.projectFactoryDraft.storage",
+        "version": 1,
+        "id": "draft-1",
+        "request": {
+            "initial_admin_emails": emails,
+        },
+        "manifest_plan": {
+            "manifest": {
+                "admin": {
+                    "initial_invites": {
+                        "required_for_web_preview": True,
+                        "emails": emails,
+                        "default_role": "owner",
+                    },
+                },
+            },
+        },
+    }
+    draft_path.write_text(json.dumps(payload), encoding="utf-8")
+
+
+def _stored_invites(tmp_path: Path) -> list[dict[str, Any]]:
+    invites_dir = tmp_path / "state/web_preview/invites"
+    return [
+        json.loads(path.read_text(encoding="utf-8"))
+        for path in sorted(invites_dir.glob("*.json"))
+    ]
+
+
 def _settings(tmp_path: Path, *, configured: bool = True) -> Settings:
     token = "secret-token" if configured else None
     return Settings(
@@ -503,6 +605,7 @@ def _settings(tmp_path: Path, *, configured: bool = True) -> Settings:
         preview_pages_project_name="nienfos-preview-web",
         preview_r2_bucket_name=None,
         web_preview_invite_secret="test-web-preview-invite-secret-value-32",
+        web_preview_email_provider="manual",
     )
 
 
@@ -573,15 +676,19 @@ class _FakeCloudflareClient:
         record_type: str | None = None,
     ) -> CloudflareLookupResult:
         self.calls.append(f"list_dns_records:{zone_id}:{name}:{record_type}")
-        records = [
-            {
-                "id": "dns-1",
-                "name": name,
-                "type": record_type or "CNAME",
-                "content": "nienfos.com",
-                "proxied": True,
-            }
-        ] if self.resources_exist else []
+        records = (
+            [
+                {
+                    "id": "dns-1",
+                    "name": name,
+                    "type": record_type or "CNAME",
+                    "content": "nienfos.com",
+                    "proxied": True,
+                }
+            ]
+            if self.resources_exist
+            else []
+        )
         return CloudflareLookupResult(ok=True, payload={"result": records})
 
     def create_dns_record(
@@ -663,13 +770,17 @@ class _FakeCloudflareClient:
                 status_code=403,
                 error="route permission denied",
             )
-        routes = [
-            {
-                "id": "route-1",
-                "pattern": pattern,
-                "script": "nienfos-preview-runtime",
-            }
-        ] if self.resources_exist else []
+        routes = (
+            [
+                {
+                    "id": "route-1",
+                    "pattern": pattern,
+                    "script": "nienfos-preview-runtime",
+                }
+            ]
+            if self.resources_exist
+            else []
+        )
         return CloudflareLookupResult(ok=True, payload={"result": routes})
 
     def create_worker_route(
@@ -699,7 +810,11 @@ class _FakeCloudflareClient:
                 status_code=403,
                 error="D1 permission denied",
             )
-        databases = [{"name": "nienfos-preview", "uuid": "d1-1"}] if self.resources_exist else []
+        databases = (
+            [{"name": "nienfos-preview", "uuid": "d1-1"}]
+            if self.resources_exist
+            else []
+        )
         return CloudflareLookupResult(ok=True, payload={"result": databases})
 
     def create_d1_database(
@@ -784,7 +899,9 @@ class _FakeCloudflareClient:
         headers: dict[str, str] | None = None,
     ) -> CloudflareLookupResult:
         self.calls.append(f"fetch_url:{url}")
-        assert headers and headers["User-Agent"] == "CodexProjectFactoryPreviewSmoke/1.0"
+        assert (
+            headers and headers["User-Agent"] == "CodexProjectFactoryPreviewSmoke/1.0"
+        )
         self.health_fetch_counts[url] = self.health_fetch_counts.get(url, 0) + 1
         if self.health_fetch_counts[url] <= self.transient_health_failures_per_url:
             return CloudflareLookupResult(
