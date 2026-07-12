@@ -178,6 +178,52 @@ def test_android_release_creates_prerelease_registers_bridge_and_persists(
     assert "secret-token" not in json.dumps(persisted.to_payload())
 
 
+def test_frontend_baseline_repairs_generated_artifact_gitignore_entries(
+    tmp_path: Path,
+) -> None:
+    runner = _FakeRunner([])
+    service = _service(tmp_path, runner)
+    job = service.start_or_resume(
+        draft_id="draft-flutter",
+        project_name="Clinica Norte",
+        slug="clinica-norte",
+        frontend_strategy="flutter",
+    )
+    service.run_frontend_baseline_phase(job.id)
+    project = tmp_path / "projects/clinica-norte"
+    gitignore = project / ".gitignore"
+    original = gitignore.read_text(encoding="utf-8")
+    stale = "\n".join(
+        line
+        for line in original.splitlines()
+        if line
+        not in {
+            ".generated-validation/",
+            "backend/.venv/",
+            "backend/*.egg-info/",
+        }
+    )
+    gitignore.write_text(stale + "\n", encoding="utf-8")
+
+    repaired = service.run_frontend_baseline_phase(job.id)
+
+    repaired_gitignore = gitignore.read_text(encoding="utf-8")
+    assert ".generated-validation/" in repaired_gitignore
+    assert "backend/.venv/" in repaired_gitignore
+    assert "backend/*.egg-info/" in repaired_gitignore
+    phase = repaired.phase(ProjectFactoryInitPhaseName.FLUTTER_OR_STRATEGY_BASELINE)
+    assert any(
+        evidence.argv
+        == (
+            "project-factory-generator",
+            "repair-gitignore",
+            "flutter",
+            "clinica-norte",
+        )
+        for evidence in phase.command_evidence
+    )
+
+
 def test_android_release_generates_preview_signing_when_missing(
     tmp_path: Path,
     monkeypatch,

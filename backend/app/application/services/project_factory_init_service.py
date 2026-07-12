@@ -582,6 +582,26 @@ class ProjectFactoryInitService:
                     blocker=android_blocker,
                     evidence=tuple(evidence),
                 )
+            repaired_ignores = _ensure_generated_artifact_ignores(target)
+            if repaired_ignores:
+                evidence.append(
+                    ProjectFactoryInitCommandEvidence(
+                        argv=(
+                            "project-factory-generator",
+                            "repair-gitignore",
+                            strategy,
+                            job.slug,
+                        ),
+                        cwd=str(target),
+                        exit_code=0,
+                        stdout_summary=(
+                            "added generated artifact ignores: "
+                            + ", ".join(repaired_ignores)
+                        ),
+                        started_at=_now_iso(),
+                        completed_at=_now_iso(),
+                    )
+                )
 
             verification = _verify_frontend_baseline(
                 target=target,
@@ -3051,6 +3071,35 @@ def _validate_preview_runtime_contract(
                 }
             )
             return
+
+
+_GENERATED_ARTIFACT_GITIGNORE_ENTRIES = (
+    ".generated-validation/",
+    "backend/.venv/",
+    "backend/*.egg-info/",
+)
+
+
+def _ensure_generated_artifact_ignores(target: Path) -> tuple[str, ...]:
+    gitignore = target / ".gitignore"
+    existing_text = gitignore.read_text(encoding="utf-8") if gitignore.exists() else ""
+    existing_entries = {
+        line.strip()
+        for line in existing_text.splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    }
+    missing = tuple(
+        entry
+        for entry in _GENERATED_ARTIFACT_GITIGNORE_ENTRIES
+        if entry not in existing_entries
+    )
+    if not missing:
+        return ()
+    prefix = existing_text
+    if prefix and not prefix.endswith("\n"):
+        prefix += "\n"
+    gitignore.write_text(prefix + "\n".join(missing) + "\n", encoding="utf-8")
+    return missing
 
 
 def _validate_no_mock_or_local_defaults(
