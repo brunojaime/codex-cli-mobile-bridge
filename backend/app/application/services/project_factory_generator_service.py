@@ -9151,7 +9151,9 @@ class ProjectApiClient {
     if (response.statusCode != 200) {
       throw ApiException('Notifications failed', response.statusCode, response.body);
     }
-    return _list(response).map(AppNotification.fromJson).toList(growable: false);
+    final decoded = jsonDecode(response.body);
+    final rows = decoded is Map<String, dynamic> ? decoded['notifications'] : decoded;
+    return (rows as List<dynamic>).cast<Map<String, dynamic>>().map(AppNotification.fromJson).toList(growable: false);
   }
 
   Future<void> markNotificationRead(String token, String id) async {
@@ -9812,7 +9814,7 @@ void main() {{
         if (request.url.path == '/admin/roles') return http.Response('["owner","customer"]', 200);
         if (request.url.path == '/admin/business-records' && request.method == 'GET') return http.Response('[{{"id":1,"name":"primary","is_active":true}}]', 200);
         if (request.url.path == '/admin/business-records' && request.method == 'POST') return http.Response('{{"id":2,"name":"new","is_active":true}}', 200);
-        if (request.url.path == '/notifications' && request.method == 'GET') return http.Response('[{{"id":1,"title":"Welcome","body":"Hi","read_at":null,"created_at":"now"}}]', 200);
+        if (request.url.path == '/notifications' && request.method == 'GET') return http.Response('{{"notifications":[{{"id":1,"title":"Welcome","body":"Hi","read_at":null,"created_at":"now"}}]}}', 200);
         if (request.url.path == '/notifications/1/read') return http.Response('{{"status":"read"}}', 200);
         return http.Response('missing', 404);
       }}),
