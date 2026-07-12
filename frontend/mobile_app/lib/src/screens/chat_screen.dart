@@ -1211,13 +1211,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     }
   }
 
-  void _stageProjectBuildConfirmation() {
-    _textController.text = 'Confirm the project contract and start the build.';
-    _textController.selection = TextSelection.collapsed(
-      offset: _textController.text.length,
-    );
-  }
-
   Widget _buildProjectFactoryIntakeCard(SessionDetail currentSession) {
     final draftId = _projectFactoryDraftIdBySession[currentSession.id];
     final intake = _projectFactoryGuidedIntakeBySession[currentSession.id];
@@ -1226,6 +1219,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         _loadingProjectFactoryInitSessions.contains(currentSession.id);
     final isLoading =
         _loadingProjectFactoryIntakeSessions.contains(currentSession.id);
+    final showLegacyGuidedIntake = initJob == null && !isInitLoading;
     if (intake != null && draftId != null) {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1235,21 +1229,21 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             isLoading: isInitLoading,
             errorText: _projectFactoryInitErrorText,
           ),
-          const SizedBox(height: 10),
-          ProjectFactoryGuidedIntakeCard(
-            intake: intake,
-            onAnswer: (questionId, value) => _answerProjectFactoryGuidedIntake(
-              currentSession.id,
-              questionId,
-              value,
+          if (showLegacyGuidedIntake) ...<Widget>[
+            const SizedBox(height: 10),
+            ProjectFactoryGuidedIntakeCard(
+              intake: intake,
+              onAnswer: (questionId, value) =>
+                  _answerProjectFactoryGuidedIntake(
+                currentSession.id,
+                questionId,
+                value,
+              ),
+              onPreview: () => _previewProjectFactoryGuidedIntake(
+                currentSession.id,
+              ),
             ),
-            onPreview: () => _previewProjectFactoryGuidedIntake(
-              currentSession.id,
-            ),
-            onConfirm: () => _confirmProjectFactoryGuidedIntake(
-              currentSession.id,
-            ),
-          ),
+          ],
           if (isLoading) ...<Widget>[
             const SizedBox(height: 8),
             const LinearProgressIndicator(minHeight: 2),
@@ -1278,7 +1272,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           offset: _textController.text.length,
         );
       },
-      onConfirmBuild: _stageProjectBuildConfirmation,
     );
   }
 
@@ -1969,42 +1962,6 @@ When you create the Project Factory draft, link each asset with POST /project-fa
         _loadingProjectFactoryIntakeSessions.remove(sessionId);
         _projectFactoryGuidedIntakeErrorText =
             'Could not preview guided intake contract. $error';
-      });
-    }
-  }
-
-  Future<void> _confirmProjectFactoryGuidedIntake(String sessionId) async {
-    final draftId = _projectFactoryDraftIdBySession[sessionId];
-    if (draftId == null) {
-      return;
-    }
-    setState(() {
-      _loadingProjectFactoryIntakeSessions.add(sessionId);
-      _projectFactoryGuidedIntakeErrorText = null;
-    });
-    try {
-      final intake =
-          await _projectFactoryClient().confirmProjectFactoryGuidedIntake(
-        draftId,
-      );
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _projectFactoryGuidedIntakeBySession[sessionId] = intake;
-        _loadingProjectFactoryIntakeSessions.remove(sessionId);
-      });
-      if (intake.buildAllowed) {
-        _stageProjectBuildConfirmation();
-      }
-    } catch (error) {
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _loadingProjectFactoryIntakeSessions.remove(sessionId);
-        _projectFactoryGuidedIntakeErrorText =
-            'Could not confirm guided intake contract. $error';
       });
     }
   }
@@ -4890,14 +4847,12 @@ class _GuidedProjectIntakeCard extends StatelessWidget {
   const _GuidedProjectIntakeCard({
     required this.readyForBuild,
     required this.onShowContract,
-    required this.onConfirmBuild,
     this.isLoading = false,
     this.errorText,
   });
 
   final bool readyForBuild;
   final VoidCallback onShowContract;
-  final VoidCallback onConfirmBuild;
   final bool isLoading;
   final String? errorText;
 
@@ -4963,11 +4918,6 @@ class _GuidedProjectIntakeCard extends StatelessWidget {
                   onPressed: onShowContract,
                   icon: const Icon(Icons.article_outlined),
                   label: const Text('Preview'),
-                ),
-                FilledButton.icon(
-                  onPressed: readyForBuild ? onConfirmBuild : null,
-                  icon: const Icon(Icons.play_arrow_rounded),
-                  label: const Text('Confirm'),
                 ),
               ],
             ),
@@ -7520,13 +7470,11 @@ class ProjectFactoryGuidedIntakeCard extends StatefulWidget {
     required this.intake,
     required this.onAnswer,
     required this.onPreview,
-    required this.onConfirm,
   });
 
   final ProjectFactoryGuidedIntake intake;
   final Future<void> Function(String questionId, Object? value) onAnswer;
   final Future<void> Function() onPreview;
-  final Future<void> Function() onConfirm;
 
   @override
   State<ProjectFactoryGuidedIntakeCard> createState() =>
@@ -7618,13 +7566,6 @@ class _ProjectFactoryGuidedIntakeCardState
                   onPressed: widget.onPreview,
                   icon: const Icon(Icons.fact_check_outlined),
                   label: const Text('Preview contract'),
-                ),
-                FilledButton.icon(
-                  onPressed: widget.intake.readyForConfirmation
-                      ? widget.onConfirm
-                      : null,
-                  icon: const Icon(Icons.check_circle_outline),
-                  label: const Text('Confirm build'),
                 ),
               ],
             ),

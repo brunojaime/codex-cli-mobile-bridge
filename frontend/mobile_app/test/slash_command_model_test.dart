@@ -48,7 +48,9 @@ void main() {
 
     expect(
         normal.map((command) => command.id), isNot(contains('project-build')));
-    expect(project.map((command) => command.id), contains('project-build'));
+    expect(
+        project.map((command) => command.id), isNot(contains('project-build')));
+    expect(project.map((command) => command.id), contains('project-contract'));
   });
 
   test('backend guarded panel commands expose disabled reasons', () {

@@ -84,7 +84,6 @@ void main() {
       (tester) async {
     final answers = <Object?>[];
     var previewed = 0;
-    var confirmed = 0;
     final intake = ProjectFactoryGuidedIntake.fromJson(
       const <String, dynamic>{
         'enabled': true,
@@ -135,7 +134,6 @@ void main() {
             intake: intake,
             onAnswer: (_, value) async => answers.add(value),
             onPreview: () async => previewed += 1,
-            onConfirm: () async => confirmed += 1,
           ),
         ),
       ),
@@ -147,12 +145,11 @@ void main() {
 
     await tester.tap(find.textContaining('Owner'));
     await tester.tap(find.text('Preview contract'));
-    await tester.tap(find.text('Confirm build'));
     await tester.pump();
 
     expect(answers.single, <String>['owner@example.com']);
     expect(previewed, 1);
-    expect(confirmed, 1);
+    expect(find.text('Confirm build'), findsNothing);
   });
 
   testWidgets('New Project opens persisted guided intake and live answers',
@@ -241,24 +238,13 @@ void main() {
     expect(find.text('Deterministic baseline init'), findsOneWidget);
     expect(
         find.textContaining('Current phase: Init preflight'), findsOneWidget);
-    expect(find.text('Initial admin emails'), findsOneWidget);
-    expect(find.textContaining('Cloudflare doctor pending'), findsOneWidget);
-
-    await tester.enterText(find.byType(TextField).last, 'owner@example.com');
-    await tester.tap(find.text('Save answer'));
-    await tester.pumpAndSettle();
-
-    expect(apiClient.answerCalls, 1);
-    expect(apiClient.previewCalls, 1);
-    expect(find.text('Contract preview'), findsOneWidget);
-    expect(find.textContaining('https://preview.nienfos.com'), findsOneWidget);
-
-    await tester.tap(find.text('Confirm build'));
-    await tester.pumpAndSettle();
-
-    expect(apiClient.confirmCalls, 1);
-    expect(find.text('Confirm the project contract and start the build.'),
-        findsOneWidget);
+    expect(find.text('Initial admin emails'), findsNothing);
+    expect(find.textContaining('Cloudflare doctor pending'), findsNothing);
+    expect(find.text('Preview contract'), findsNothing);
+    expect(find.text('Confirm build'), findsNothing);
+    expect(apiClient.answerCalls, 0);
+    expect(apiClient.previewCalls, 0);
+    expect(apiClient.confirmCalls, 0);
 
     await tester.tap(find.byTooltip('New project'));
     await tester.pumpAndSettle();

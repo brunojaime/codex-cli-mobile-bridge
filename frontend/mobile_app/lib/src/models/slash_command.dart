@@ -208,15 +208,6 @@ class NewProjectSlashCommandProvider extends SlashCommandProvider {
         payload:
             'Show the current New Project contract preview with assumptions, blockers, assets, release plan, Workbench/SDD, web preview, and Android plan.',
       ),
-      SlashCommand(
-        id: 'project-build',
-        slash: '/project-build',
-        title: 'Project Build',
-        description: 'Confirm build only after the contract is ready.',
-        scope: 'new_project',
-        actionKind: SlashCommandActionKind.insertText,
-        payload: 'Confirm the project contract and start the build.',
-      ),
     ];
   }
 }
