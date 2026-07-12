@@ -7368,6 +7368,9 @@ class _NewProjectBasicsDialogState extends State<_NewProjectBasicsDialog> {
 
   String _normalizedEmail(String value) => value.trim().toLowerCase();
 
+  bool get _canSubmit =>
+      _titleController.text.trim().isNotEmpty && _adminEmails.isNotEmpty;
+
   bool _looksLikeEmail(String value) {
     return RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(value);
   }
@@ -7437,6 +7440,13 @@ class _NewProjectBasicsDialogState extends State<_NewProjectBasicsDialog> {
               autofocus: true,
               maxLength: 80,
               textInputAction: TextInputAction.next,
+              onChanged: (_) {
+                setState(() {
+                  if (_errorText != null && _errorText!.contains('title')) {
+                    _errorText = null;
+                  }
+                });
+              },
               decoration: InputDecoration(
                 labelText: 'Project title',
                 errorText: _errorText != null && _errorText!.contains('title')
@@ -7496,7 +7506,7 @@ class _NewProjectBasicsDialogState extends State<_NewProjectBasicsDialog> {
           child: const Text('Cancel'),
         ),
         FilledButton(
-          onPressed: _submit,
+          onPressed: _canSubmit ? _submit : null,
           child: const Text('Start'),
         ),
       ],

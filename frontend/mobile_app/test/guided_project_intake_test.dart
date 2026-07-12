@@ -181,23 +181,51 @@ void main() {
     expect(find.text('Project title'), findsOneWidget);
     expect(apiClient.createDraftCalls, 0);
 
+    bool startIsEnabled() {
+      final Finder startButton = find.descendant(
+        of: find.byType(AlertDialog),
+        matching: find.widgetWithText(FilledButton, 'Start'),
+      );
+      return tester.widget<FilledButton>(startButton).onPressed != null;
+    }
+
     final firstDialogFields = find.descendant(
       of: find.byType(AlertDialog),
       matching: find.byType(TextField),
     );
+    expect(startIsEnabled(), isFalse);
+
     await tester.enterText(
       firstDialogFields.at(0),
       'Clinica Norte',
     );
-    await tester.tap(find.text('Start'));
     await tester.pumpAndSettle();
+    expect(startIsEnabled(), isFalse);
     expect(apiClient.createDraftCalls, 0);
-    expect(find.text('Add at least one admin email.'), findsOneWidget);
+
+    await tester.enterText(firstDialogFields.at(1), 'not-an-email');
+    await tester.tap(find.byTooltip('Add admin email'));
+    await tester.pumpAndSettle();
+    expect(startIsEnabled(), isFalse);
+    expect(find.text('Enter a valid admin email.'), findsOneWidget);
 
     await tester.enterText(firstDialogFields.at(1), 'OWNER@Example.COM');
     await tester.tap(find.byTooltip('Add admin email'));
     await tester.pumpAndSettle();
     expect(find.text('owner@example.com'), findsOneWidget);
+    expect(startIsEnabled(), isTrue);
+
+    await tester.tap(find.byTooltip('Delete'));
+    await tester.pumpAndSettle();
+    expect(find.text('owner@example.com'), findsNothing);
+    expect(startIsEnabled(), isFalse);
+
+    await tester.enterText(firstDialogFields.at(1), 'OWNER@Example.COM');
+    await tester.tap(find.byTooltip('Add admin email'));
+    await tester.pumpAndSettle();
+    expect(find.text('owner@example.com'), findsOneWidget);
+    expect(startIsEnabled(), isTrue);
+
     await tester.tap(find.text('Start'));
     await tester.pumpAndSettle();
 
