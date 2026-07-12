@@ -473,7 +473,9 @@ class WebPreviewDeployService:
         headers = {"User-Agent": "CodexProjectFactoryPreviewSmoke/1.0"}
         attempts: list[dict[str, Any]] = []
         client = self._cloudflare_client()
-        for attempt in range(1, 4):
+        base_attempts = 3
+        max_transient_attempts = 8
+        for attempt in range(1, max_transient_attempts + 1):
             current: list[dict[str, Any]] = []
             all_ok = True
             for name, url in endpoints:
@@ -501,8 +503,14 @@ class WebPreviewDeployService:
                     "attempts": attempts,
                     "required": {"d1_bound": True, "assets_bound": True},
                 }
-            if attempt < 3:
+            should_retry = attempt < base_attempts or (
+                attempt < max_transient_attempts
+                and _preview_health_has_transient_status(current)
+            )
+            if should_retry:
                 time.sleep(0.5 * attempt)
+            else:
+                break
         latest = attempts[-1]["checks"] if attempts else []
         raise RuntimeError(
             "preview_health_bindings_failed: expected d1_bound=true and "
@@ -1784,6 +1792,15 @@ def _invite_sync_params(invite: dict[str, Any]) -> list[Any]:
         str(invite.get("expires_at") or ""),
         invite.get("revoked_at"),
     ]
+
+
+def _preview_health_has_transient_status(checks: list[dict[str, Any]]) -> bool:
+    transient_statuses = {401, 403, 404, 409, 425, 429, 500, 502, 503, 504}
+    for check in checks:
+        status_code = check.get("status_code")
+        if isinstance(status_code, int) and status_code in transient_statuses:
+            return True
+    return False
 
 
 def _raise_if_failed(result: CloudflareLookupResult, code: str) -> None:

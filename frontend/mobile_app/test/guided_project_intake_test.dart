@@ -181,13 +181,23 @@ void main() {
     expect(find.text('Project title'), findsOneWidget);
     expect(apiClient.createDraftCalls, 0);
 
+    final firstDialogFields = find.descendant(
+      of: find.byType(AlertDialog),
+      matching: find.byType(TextField),
+    );
     await tester.enterText(
-      find.descendant(
-        of: find.byType(AlertDialog),
-        matching: find.byType(TextField),
-      ),
+      firstDialogFields.at(0),
       'Clinica Norte',
     );
+    await tester.tap(find.text('Start'));
+    await tester.pumpAndSettle();
+    expect(apiClient.createDraftCalls, 0);
+    expect(find.text('Add at least one admin email.'), findsOneWidget);
+
+    await tester.enterText(firstDialogFields.at(1), 'OWNER@Example.COM');
+    await tester.tap(find.byTooltip('Add admin email'));
+    await tester.pumpAndSettle();
+    expect(find.text('owner@example.com'), findsOneWidget);
     await tester.tap(find.text('Start'));
     await tester.pumpAndSettle();
 
@@ -197,6 +207,8 @@ void main() {
     expect(apiClient.sendMessageCalls, 0);
     expect(apiClient.lastDraftRequest?.guidedIntakeEnabled, isTrue);
     expect(apiClient.lastDraftRequest?.name, 'Clinica Norte');
+    expect(apiClient.lastDraftRequest?.initialAdminEmails,
+        <String>['owner@example.com']);
     expect(apiClient.lastCreatedSessionTitle, 'Clinica Norte');
     expect(find.text('Deterministic baseline init'), findsOneWidget);
     expect(
@@ -223,13 +235,17 @@ void main() {
     await tester.tap(find.byTooltip('New project'));
     await tester.pumpAndSettle();
 
+    final secondDialogFields = find.descendant(
+      of: find.byType(AlertDialog),
+      matching: find.byType(TextField),
+    );
     await tester.enterText(
-      find.descendant(
-        of: find.byType(AlertDialog),
-        matching: find.byType(TextField),
-      ),
+      secondDialogFields.at(0),
       'Veterinaria Sur',
     );
+    await tester.enterText(secondDialogFields.at(1), 'admin@vet.test');
+    await tester.tap(find.byTooltip('Add admin email'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Start'));
     await tester.pumpAndSettle();
 

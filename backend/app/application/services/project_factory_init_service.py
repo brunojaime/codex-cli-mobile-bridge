@@ -2309,6 +2309,11 @@ class ProjectFactoryInitService:
         artifacts: tuple[ProjectFactoryInitArtifact, ...] = (),
     ) -> ProjectFactoryInitJob:
         current = self._jobs.get(job.id, job)
+        if phase_name == _PREVIEW_SMOKE_PHASE:
+            current = self._settle_cloudflare_phases_before_smoke_block(
+                current,
+                evidence=evidence,
+            )
         phase = current.phase(phase_name)
         now = _now_iso()
         updated_phase = replace(
@@ -2324,6 +2329,45 @@ class ProjectFactoryInitService:
         updated = current.with_phase(updated_phase)
         self._jobs[updated.id] = updated
         self._persist_job(updated)
+        return updated
+
+    def _settle_cloudflare_phases_before_smoke_block(
+        self,
+        job: ProjectFactoryInitJob,
+        *,
+        evidence: tuple[ProjectFactoryInitCommandEvidence, ...],
+    ) -> ProjectFactoryInitJob:
+        now = _now_iso()
+        updated = job
+        for phase_name, message in (
+            (
+                _CLOUDFLARE_PROVISION_PHASE,
+                "Cloudflare preview provisioning reached smoke verification.",
+            ),
+            (
+                _CLOUDFLARE_DEPLOY_PHASE,
+                "Cloudflare preview deploy reached smoke verification.",
+            ),
+        ):
+            phase = updated.phase(phase_name)
+            if phase.status in {
+                ProjectFactoryInitPhaseStatus.COMPLETED,
+                ProjectFactoryInitPhaseStatus.BLOCKED,
+                ProjectFactoryInitPhaseStatus.FAILED,
+                ProjectFactoryInitPhaseStatus.CANCELLED,
+            }:
+                continue
+            updated = updated.with_phase(
+                replace(
+                    phase,
+                    status=ProjectFactoryInitPhaseStatus.COMPLETED,
+                    message=message,
+                    started_at=phase.started_at or now,
+                    completed_at=now,
+                    blockers=(),
+                    command_evidence=tuple(evidence),
+                )
+            )
         return updated
 
     def _frontend_target_path(

@@ -183,6 +183,30 @@ def test_cloudflare_init_existing_resources_urls_deploy_and_smoke_success(
     assert smoke_artifact.metadata["checks"][0]["assets_bound"] is True
 
 
+def test_cloudflare_init_retries_transient_preview_health_status(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        "backend.app.application.services.web_preview_deploy_service.time.sleep",
+        lambda _: None,
+    )
+    fake = _FakeCloudflareClient(
+        resources_exist=True,
+        transient_health_failures_per_url=4,
+    )
+    service = _service(tmp_path, cloudflare_client=fake)
+    project = _generated_project(tmp_path)
+    job = _job(service, project)
+
+    completed = service.run_cloudflare_preview_phases(job.id)
+
+    smoke = completed.phase(ProjectFactoryInitPhaseName.PREVIEW_SMOKE)
+    assert smoke.status == ProjectFactoryInitPhaseStatus.COMPLETED
+    assert len(smoke.artifacts[0].metadata["checks"]) == 2
+    assert sum(call.startswith("fetch_url:") for call in fake.calls) == 10
+
+
 def test_cloudflare_init_builds_web_preview_before_deploy(
     tmp_path: Path,
 ) -> None:
@@ -366,6 +390,13 @@ def test_cloudflare_init_blocks_worker_route_d1_and_smoke_failures(
         assert phase.status == ProjectFactoryInitPhaseStatus.BLOCKED
         assert phase.blockers[0].code == expected_code
         assert phase.blockers[0].command
+        if expected_phase == ProjectFactoryInitPhaseName.PREVIEW_SMOKE:
+            assert blocked.phase(
+                ProjectFactoryInitPhaseName.CLOUDFLARE_PREVIEW_PROVISION
+            ).status == ProjectFactoryInitPhaseStatus.COMPLETED
+            assert blocked.phase(
+                ProjectFactoryInitPhaseName.CLOUDFLARE_PREVIEW_DEPLOY
+            ).status == ProjectFactoryInitPhaseStatus.COMPLETED
 
 
 def test_cloudflare_init_persists_after_reload_and_redacts_secrets(
@@ -492,6 +523,7 @@ class _FakeCloudflareClient:
         fail_d1: bool = False,
         health_d1_bound: bool = True,
         health_assets_bound: bool = True,
+        transient_health_failures_per_url: int = 0,
     ) -> None:
         self.calls: list[str] = []
         self.sql_calls: list[dict[str, Any]] = []
@@ -501,6 +533,8 @@ class _FakeCloudflareClient:
         self.fail_d1 = fail_d1
         self.health_d1_bound = health_d1_bound
         self.health_assets_bound = health_assets_bound
+        self.transient_health_failures_per_url = transient_health_failures_per_url
+        self.health_fetch_counts: dict[str, int] = {}
         self.worker_scripts: dict[str, str] = {}
         self.worker_metadata: dict[str, dict[str, Any]] = {}
         self.d1_columns: dict[str, set[str]] = {
@@ -751,6 +785,13 @@ class _FakeCloudflareClient:
     ) -> CloudflareLookupResult:
         self.calls.append(f"fetch_url:{url}")
         assert headers and headers["User-Agent"] == "CodexProjectFactoryPreviewSmoke/1.0"
+        self.health_fetch_counts[url] = self.health_fetch_counts.get(url, 0) + 1
+        if self.health_fetch_counts[url] <= self.transient_health_failures_per_url:
+            return CloudflareLookupResult(
+                ok=False,
+                status_code=401,
+                error="Unauthorized",
+            )
         return CloudflareLookupResult(
             ok=True,
             status_code=200,

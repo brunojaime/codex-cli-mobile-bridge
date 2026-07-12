@@ -1707,15 +1707,16 @@ When you create the Project Factory draft, link each asset with POST /project-fa
       return;
     }
 
-    final projectTitle = await _promptNewProjectTitle();
-    if (projectTitle == null || !mounted) {
+    final projectBasics = await _promptNewProjectBasics();
+    if (projectBasics == null || !mounted) {
       return;
     }
 
     final draft = await _findOrCreateProjectFactoryGuidedDraft(
       client,
       options,
-      projectTitle: projectTitle,
+      projectTitle: projectBasics.title,
+      initialAdminEmails: projectBasics.adminEmails,
     );
     if (draft == null || !mounted) {
       return;
@@ -1723,14 +1724,14 @@ When you create the Project Factory draft, link each asset with POST /project-fa
     await _startNewProjectFactoryChat(
       options,
       draft: draft,
-      projectTitle: projectTitle,
+      projectTitle: projectBasics.title,
     );
   }
 
-  Future<String?> _promptNewProjectTitle() async {
-    return showDialog<String>(
+  Future<_NewProjectBasics?> _promptNewProjectBasics() async {
+    return showDialog<_NewProjectBasics>(
       context: context,
-      builder: (context) => const _NewProjectTitleDialog(),
+      builder: (context) => const _NewProjectBasicsDialog(),
     );
   }
 
@@ -1817,6 +1818,7 @@ When you create the Project Factory draft, link each asset with POST /project-fa
     ApiClient client,
     ProjectFactoryOptions options, {
     required String projectTitle,
+    required List<String> initialAdminEmails,
   }) async {
     try {
       return await client.createProjectFactoryDraft(
@@ -1832,6 +1834,7 @@ When you create the Project Factory draft, link each asset with POST /project-fa
           backend: options.defaultBackend,
           frontendStrategy: options.defaultFrontendStrategy,
           guidedIntakeEnabled: true,
+          initialAdminEmails: initialAdminEmails,
         ),
       );
     } catch (error) {
@@ -7332,48 +7335,160 @@ class NewProjectFactoryDraft {
   final List<XFile> referenceImages;
 }
 
-class _NewProjectTitleDialog extends StatefulWidget {
-  const _NewProjectTitleDialog();
+class _NewProjectBasics {
+  const _NewProjectBasics({
+    required this.title,
+    required this.adminEmails,
+  });
 
-  @override
-  State<_NewProjectTitleDialog> createState() => _NewProjectTitleDialogState();
+  final String title;
+  final List<String> adminEmails;
 }
 
-class _NewProjectTitleDialogState extends State<_NewProjectTitleDialog> {
-  final TextEditingController _controller = TextEditingController();
+class _NewProjectBasicsDialog extends StatefulWidget {
+  const _NewProjectBasicsDialog();
+
+  @override
+  State<_NewProjectBasicsDialog> createState() =>
+      _NewProjectBasicsDialogState();
+}
+
+class _NewProjectBasicsDialogState extends State<_NewProjectBasicsDialog> {
+  final TextEditingController _titleController = TextEditingController();
+  final TextEditingController _emailController = TextEditingController();
+  final List<String> _adminEmails = <String>[];
   String? _errorText;
 
   @override
   void dispose() {
-    _controller.dispose();
+    _titleController.dispose();
+    _emailController.dispose();
     super.dispose();
   }
 
+  String _normalizedEmail(String value) => value.trim().toLowerCase();
+
+  bool _looksLikeEmail(String value) {
+    return RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(value);
+  }
+
+  void _addEmail() {
+    final email = _normalizedEmail(_emailController.text);
+    if (!_looksLikeEmail(email)) {
+      setState(() {
+        _errorText = 'Enter a valid admin email.';
+      });
+      return;
+    }
+    if (_adminEmails.contains(email)) {
+      _emailController.clear();
+      setState(() {
+        _errorText = null;
+      });
+      return;
+    }
+    setState(() {
+      _adminEmails.add(email);
+      _emailController.clear();
+      _errorText = null;
+    });
+  }
+
   void _submit() {
-    final title = _controller.text.trim();
+    final pendingEmail = _emailController.text.trim();
+    if (pendingEmail.isNotEmpty) {
+      _addEmail();
+      if (_emailController.text.trim().isNotEmpty) {
+        return;
+      }
+    }
+    final title = _titleController.text.trim();
     if (title.isEmpty) {
       setState(() {
         _errorText = 'Project title is required.';
       });
       return;
     }
-    Navigator.of(context).pop(title);
+    if (_adminEmails.isEmpty) {
+      setState(() {
+        _errorText = 'Add at least one admin email.';
+      });
+      return;
+    }
+    Navigator.of(context).pop(
+      _NewProjectBasics(
+        title: title,
+        adminEmails: List<String>.unmodifiable(_adminEmails),
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
       title: const Text('New project'),
-      content: TextField(
-        controller: _controller,
-        autofocus: true,
-        maxLength: 80,
-        textInputAction: TextInputAction.done,
-        decoration: InputDecoration(
-          labelText: 'Project title',
-          errorText: _errorText,
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: <Widget>[
+            TextField(
+              controller: _titleController,
+              autofocus: true,
+              maxLength: 80,
+              textInputAction: TextInputAction.next,
+              decoration: InputDecoration(
+                labelText: 'Project title',
+                errorText: _errorText != null && _errorText!.contains('title')
+                    ? _errorText
+                    : null,
+              ),
+            ),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Expanded(
+                  child: TextField(
+                    controller: _emailController,
+                    keyboardType: TextInputType.emailAddress,
+                    textInputAction: TextInputAction.done,
+                    decoration: InputDecoration(
+                      labelText: 'Admin email',
+                      errorText:
+                          _errorText != null && !_errorText!.contains('title')
+                              ? _errorText
+                              : null,
+                    ),
+                    onSubmitted: (_) => _addEmail(),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                IconButton(
+                  onPressed: _addEmail,
+                  icon: const Icon(Icons.add),
+                  tooltip: 'Add admin email',
+                ),
+              ],
+            ),
+            if (_adminEmails.isNotEmpty) ...<Widget>[
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: _adminEmails.map((email) {
+                  return InputChip(
+                    label: Text(email),
+                    onDeleted: () {
+                      setState(() {
+                        _adminEmails.remove(email);
+                      });
+                    },
+                  );
+                }).toList(),
+              ),
+            ],
+          ],
         ),
-        onSubmitted: (_) => _submit(),
       ),
       actions: <Widget>[
         TextButton(
