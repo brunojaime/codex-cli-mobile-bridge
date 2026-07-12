@@ -5303,9 +5303,22 @@ def _app_update_apk_proxy_url(
     ).include_query_params(platform=platform, channel=channel)
     apk_url = _preserve_api_v1_prefix(request, str(generated_apk_url))
     public_base_url = (container.settings.app_update_public_base_url or "").strip()
-    if not public_base_url:
+    if not public_base_url or not _should_use_public_app_update_base(request):
         return apk_url
     return _replace_url_origin(apk_url, public_base_url)
+
+
+def _should_use_public_app_update_base(request: Request) -> bool:
+    host = (request.url.hostname or "").strip().lower()
+    return host in {
+        "",
+        "localhost",
+        "127.0.0.1",
+        "0.0.0.0",
+        "10.0.2.2",
+        "::1",
+        "testserver",
+    }
 
 
 def _replace_url_origin(url: str, public_base_url: str) -> str:

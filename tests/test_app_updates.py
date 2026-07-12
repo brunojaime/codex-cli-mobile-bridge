@@ -856,6 +856,35 @@ def test_installable_app_uses_public_base_url_for_apk_proxy(
     )
 
 
+def test_installable_app_prefers_request_host_for_nonlocal_clients(
+    tmp_path: Path,
+) -> None:
+    client = _build_app_update_client(
+        tmp_path,
+        app_update_public_base_url="https://bridge.example.test",
+        releases=[
+            _release(
+                "android-v1.0.0-build.40",
+                assets=[_apk_asset("ambientando-calendar.apk")],
+            ),
+        ],
+    )
+
+    response = client.get(
+        "/installable-apps/ambientando-calendar",
+        headers={"host": "100.122.233.6:8000"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["available"] is True
+    assert payload["apkUrl"] == (
+        "http://100.122.233.6:8000/app-updates/ambientando-calendar/apk/"
+        "android-v1.0.0-build.40/ambientando-calendar.apk"
+        "?platform=android&channel=stable"
+    )
+
+
 def test_installable_app_detail_returns_single_app(tmp_path: Path) -> None:
     client = _build_app_update_client(
         tmp_path,
