@@ -598,17 +598,6 @@ class ProjectFactoryInitService:
                     )
                 )
 
-            android_evidence, android_blocker = self._ensure_flutter_android_project(
-                target=target,
-                strategy=strategy,
-            )
-            evidence.extend(android_evidence)
-            if android_blocker is not None:
-                return self._block_frontend_baseline(
-                    job,
-                    blocker=android_blocker,
-                    evidence=tuple(evidence),
-                )
             repaired_ignores = _ensure_generated_artifact_ignores(target)
             if repaired_ignores:
                 evidence.append(
@@ -668,6 +657,17 @@ class ProjectFactoryInitService:
                             metadata=verification,
                         ),
                     ),
+                )
+            android_evidence, android_blocker = self._ensure_flutter_android_project(
+                target=target,
+                strategy=strategy,
+            )
+            evidence.extend(android_evidence)
+            if android_blocker is not None:
+                return self._block_frontend_baseline(
+                    job,
+                    blocker=android_blocker,
+                    evidence=tuple(evidence),
                 )
             completed = self._complete_frontend_baseline(
                 job,
