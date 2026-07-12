@@ -3012,7 +3012,7 @@ flutter build web --release \\
   --dart-define=APP_SLUG="$APP_SLUG" \\
   --dart-define=CODEX_FEEDBACK_ENABLED="${{CODEX_FEEDBACK_ENABLED:-true}}" \\
   --dart-define=CODEX_FEEDBACK_BRIDGE_URL="${{CODEX_FEEDBACK_BRIDGE_URL:-}}" \\
-  --dart-define=CODEX_BRIDGE_DEV_MODE="${{CODEX_BRIDGE_DEV_MODE:-true}}" \\
+  --dart-define=CODEX_BRIDGE_DEV_MODE="${{CODEX_BRIDGE_DEV_MODE:-false}}" \\
   --dart-define=CODEX_BRIDGE_WORKBENCH_URL="${{CODEX_BRIDGE_WORKBENCH_URL:-}}" \\
   --dart-define=CODEX_APP_UPDATER_ENABLED="${{CODEX_APP_UPDATER_ENABLED:-false}}" \\
   --dart-define=CODEX_APP_UPDATER_BRIDGE_URL="${{CODEX_APP_UPDATER_BRIDGE_URL:-}}" \\

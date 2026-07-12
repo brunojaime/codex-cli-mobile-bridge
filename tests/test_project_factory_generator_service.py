@@ -579,6 +579,20 @@ def test_generator_writes_executable_publish_script(tmp_path: Path) -> None:
         tmp_path / "clinica-norte/scripts/validate_initial_preview_release.sh"
     ).read_text(encoding="utf-8")
 
+    web_build = (tmp_path / "clinica-norte/scripts/build_web_preview.sh").read_text(
+        encoding="utf-8"
+    )
+    assert 'CODEX_BRIDGE_DEV_MODE="${CODEX_BRIDGE_DEV_MODE:-false}"' in web_build
+
+    android_preview = (
+        tmp_path / "clinica-norte/.github/workflows/android-preview-release.yml"
+    ).read_text(encoding="utf-8")
+    assert (
+        '--dart-define=CODEX_BRIDGE_DEV_MODE="${{ vars.CODEX_BRIDGE_DEV_MODE '
+        "|| 'true' }}\""
+    ) in android_preview
+    assert "--dart-define=CODEX_BRIDGE_WORKBENCH_URL=" in android_preview
+
     android_preview_script = tmp_path / "clinica-norte/scripts/publish_android_preview_release.sh"
     assert android_preview_script.is_file()
     assert android_preview_script.stat().st_mode & stat.S_IXUSR

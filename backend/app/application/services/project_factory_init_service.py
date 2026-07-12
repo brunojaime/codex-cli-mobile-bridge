@@ -780,6 +780,7 @@ class ProjectFactoryInitService:
                     job.slug,
                     cwd=target,
                     preview_api=preview_api,
+                    bridge_public_url=bridge_public_url,
                 )
             )
             if actions_blocker is not None:
@@ -2101,6 +2102,7 @@ class ProjectFactoryInitService:
         *,
         cwd: Path,
         preview_api: str,
+        bridge_public_url: str,
     ) -> tuple[
         tuple[ProjectFactoryInitCommandEvidence, ...],
         ProjectFactoryInitBlocker | None,
@@ -2119,38 +2121,72 @@ class ProjectFactoryInitService:
                     command=("git", "remote", "get-url", "origin"),
                 ),
             )
-        variable = self._run(
-            (
-                "gh",
-                "variable",
-                "set",
-                "API_BASE_URL",
-                "--body",
-                preview_api,
-                "--repo",
-                repo_ref,
-            ),
-            cwd=cwd,
-        )
-        evidence.append(self._evidence(variable))
-        if variable.exit_code != 0:
+        if not _non_local_http_url(bridge_public_url):
             return (
                 tuple(evidence),
                 _android_blocker(
                     phase=ProjectFactoryInitPhaseName.ANDROID_PREVIEW_RELEASE,
-                    code="android_preview_github_variable_failed",
-                    message="Could not configure GitHub Actions API_BASE_URL variable.",
-                    next_action="Fix GitHub variable permissions, then rerun deterministic init.",
-                    command=(
-                        "gh",
-                        "variable",
-                        "set",
-                        "API_BASE_URL",
-                        "--repo",
-                        repo_ref,
+                    code="android_preview_bridge_public_url_missing",
+                    message=(
+                        "A non-local Bridge public URL is required before "
+                        "building the Android preview APK with Workbench enabled."
                     ),
+                    next_action=(
+                        "Configure APP_UPDATE_PUBLIC_BASE_URL or BRIDGE_PUBLIC_URL "
+                        "with the reachable Codex Mobile Bridge URL, then rerun "
+                        "deterministic init."
+                    ),
+                    command=("gh", "variable", "set", "CODEX_BRIDGE_WORKBENCH_URL"),
                 ),
             )
+        bridge_public_url = bridge_public_url.rstrip("/")
+        variable_values = {
+            "API_BASE_URL": preview_api,
+            "CODEX_BRIDGE_DEV_MODE": "true",
+            "CODEX_BRIDGE_WORKBENCH_URL": bridge_public_url,
+            "CODEX_FEEDBACK_ENABLED": "true",
+            "CODEX_FEEDBACK_BRIDGE_URL": bridge_public_url,
+            "CODEX_APP_UPDATER_BRIDGE_URL": bridge_public_url,
+        }
+        for variable_name, variable_value in variable_values.items():
+            variable = self._run(
+                (
+                    "gh",
+                    "variable",
+                    "set",
+                    variable_name,
+                    "--body",
+                    variable_value,
+                    "--repo",
+                    repo_ref,
+                ),
+                cwd=cwd,
+            )
+            evidence.append(self._evidence(variable))
+            if variable.exit_code != 0:
+                return (
+                    tuple(evidence),
+                    _android_blocker(
+                        phase=ProjectFactoryInitPhaseName.ANDROID_PREVIEW_RELEASE,
+                        code="android_preview_github_variable_failed",
+                        message=(
+                            "Could not configure GitHub Actions "
+                            f"{variable_name} variable."
+                        ),
+                        next_action=(
+                            "Fix GitHub variable permissions, then rerun "
+                            "deterministic init."
+                        ),
+                        command=(
+                            "gh",
+                            "variable",
+                            "set",
+                            variable_name,
+                            "--repo",
+                            repo_ref,
+                        ),
+                    ),
+                )
         signing = _read_preview_signing_files(
             self._bridge_root_for_generated_scripts(),
             slug,

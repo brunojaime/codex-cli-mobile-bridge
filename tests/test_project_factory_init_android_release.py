@@ -99,7 +99,7 @@ def _argv_matches(actual: tuple[str, ...], expected: tuple[str, ...]) -> bool:
 def _is_auto_github_actions_config_cmd(argv: tuple[str, ...]) -> bool:
     return (
         argv == ("git", "remote", "get-url", "origin")
-        or argv[:4] == ("gh", "variable", "set", "API_BASE_URL")
+        or argv[:3] == ("gh", "variable", "set")
         or argv[:3] == ("gh", "secret", "set")
     )
 
@@ -148,6 +148,19 @@ def test_android_release_creates_prerelease_registers_bridge_and_persists(
     )
     assert publish_env["APP_RELEASE_TAG"] == release_tag
     assert publish_env["BRIDGE_REGISTRATION_TOKEN"] == "secret-token"
+    variable_sets = {
+        call[3]: call[5]
+        for call in runner.calls
+        if call[:3] == ("gh", "variable", "set")
+    }
+    assert variable_sets["API_BASE_URL"] == (
+        "https://preview.nienfos.com/clinica-norte/api"
+    )
+    assert variable_sets["CODEX_BRIDGE_DEV_MODE"] == "true"
+    assert variable_sets["CODEX_BRIDGE_WORKBENCH_URL"] == "https://bridge.test"
+    assert variable_sets["CODEX_FEEDBACK_ENABLED"] == "true"
+    assert variable_sets["CODEX_FEEDBACK_BRIDGE_URL"] == "https://bridge.test"
+    assert variable_sets["CODEX_APP_UPDATER_BRIDGE_URL"] == "https://bridge.test"
     assert "localhost" not in json.dumps(completed.to_payload())
     apk = next(
         artifact for artifact in release_phase.artifacts if artifact.kind == "android_preview_apk"
