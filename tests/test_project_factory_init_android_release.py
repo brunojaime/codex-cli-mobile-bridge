@@ -5,6 +5,8 @@ from dataclasses import dataclass
 import json
 from pathlib import Path
 
+import yaml
+
 from backend.app.application.services.project_factory_init_service import (
     ProjectFactoryInitCommandResult,
     ProjectFactoryInitService,
@@ -248,6 +250,85 @@ def test_android_release_uses_public_bridge_url_when_transport_is_local(
     assert "localhost" not in json.dumps(
         [resource.to_payload() for resource in completed.remote_resources]
     )
+
+
+def test_workbench_phase_aligns_verified_foundation_tasks_and_pushes(
+    tmp_path: Path,
+) -> None:
+    aligned_paths = (
+        "specs/001-product-foundation/tree.json",
+        "specs/001-product-foundation/tasks.md",
+        "specs/001-product-foundation/tasks/plan-1-task-10/task.md",
+        "specs/001-product-foundation/tasks/plan-1-task-11/task.md",
+        "specs/001-product-foundation/metadata.yaml",
+    )
+    runner = _FakeRunner(
+        [
+            (("git", "add", *aligned_paths), _FakeResponse()),
+            (
+                (
+                    "git",
+                    "-c",
+                    "user.name=Codex Project Factory",
+                    "-c",
+                    "user.email=codex-project-factory@local",
+                    "commit",
+                    "-m",
+                    "Align verified Project Factory task status",
+                ),
+                _FakeResponse(stdout="[main abc123] aligned\n"),
+            ),
+            (
+                ("git", "rev-parse", "--abbrev-ref", "HEAD"),
+                _FakeResponse(stdout="main\n"),
+            ),
+            (("git", "push", "origin", "main"), _FakeResponse()),
+        ]
+    )
+    service = _service(tmp_path, runner)
+    job = _generated_job(service, create_signing=False)
+    for phase_name in (
+        ProjectFactoryInitPhaseName.LOCAL_VALIDATION,
+        ProjectFactoryInitPhaseName.PREVIEW_SMOKE,
+        ProjectFactoryInitPhaseName.ANDROID_PREVIEW_RELEASE,
+        ProjectFactoryInitPhaseName.BRIDGE_INSTALLABLE_REGISTRATION,
+    ):
+        job = service.complete_phase(job.id, phase_name.value)
+
+    completed = service._complete_workbench_feedback_phase(job.id)
+
+    project = tmp_path / "projects/clinica-norte"
+    tree = json.loads(
+        (project / "specs/001-product-foundation/tree.json").read_text(
+            encoding="utf-8",
+        )
+    )
+    statuses = {
+        task["id"]: task["status"]
+        for task in tree["plans"][0]["tasks"]
+    }
+    assert statuses["plan-1-task-10"] == "done"
+    assert statuses["plan-1-task-11"] == "done"
+    tasks_md = (project / "specs/001-product-foundation/tasks.md").read_text(
+        encoding="utf-8"
+    )
+    assert "- [x] Wire Feedback Bridge and updater." in tasks_md
+    assert "- [x] Validate Workbench integration and release readiness." in tasks_md
+    metadata = yaml.safe_load(
+        (project / "specs/001-product-foundation/metadata.yaml").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert metadata["tasks"] == {"total": 11, "completed": 9, "pending": 2}
+    phase = completed.phase(
+        ProjectFactoryInitPhaseName.WORKBENCH_AND_FEEDBACK_VERIFICATION
+    )
+    assert phase.status == ProjectFactoryInitPhaseStatus.COMPLETED
+    assert any(
+        artifact.kind == "verified_foundation_task_alignment"
+        for artifact in phase.artifacts
+    )
+    assert ("git", "push", "origin", "main") in runner.calls
 
 
 def test_android_github_variables_use_http_for_tailscale_bridge(

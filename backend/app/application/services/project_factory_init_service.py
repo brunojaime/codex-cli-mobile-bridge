@@ -75,6 +75,7 @@ _TERMINAL_ACTIVE_STATES = {
     ProjectFactoryInitCompletionState.FAILED,
     ProjectFactoryInitCompletionState.CANCELLED,
 }
+_VERIFIED_FOUNDATION_TASK_IDS = frozenset({"plan-1-task-10", "plan-1-task-11"})
 _SENSITIVE_ENV_KEYS = frozenset(
     {
         "GH_TOKEN",
@@ -1204,11 +1205,111 @@ class ProjectFactoryInitService:
                 ProjectFactoryInitPhaseStatus.SKIPPED,
             }:
                 return job
+            target = self._frontend_target_path(job, None)
+            command_evidence: tuple[ProjectFactoryInitCommandEvidence, ...] = ()
+            artifacts: tuple[ProjectFactoryInitArtifact, ...] = ()
+            if _verified_foundation_tasks_ready(job):
+                changed_paths = _align_verified_foundation_tasks(target)
+                if changed_paths:
+                    command_evidence, blocker = self._commit_verified_task_alignment(
+                        job=job,
+                        target=target,
+                        changed_paths=changed_paths,
+                    )
+                    if blocker is not None:
+                        return self.block_phase(
+                            job.id,
+                            ProjectFactoryInitPhaseName.WORKBENCH_AND_FEEDBACK_VERIFICATION.value,
+                            blocker=blocker,
+                            context_available=False,
+                            command_evidence=command_evidence,
+                        )
+                    artifacts = (
+                        ProjectFactoryInitArtifact(
+                            kind="verified_foundation_task_alignment",
+                            path=str(target / "specs/001-product-foundation"),
+                            metadata={
+                                "taskIds": sorted(_VERIFIED_FOUNDATION_TASK_IDS),
+                                "changedPaths": [
+                                    str(path.relative_to(target))
+                                    for path in changed_paths
+                                ],
+                            },
+                        ),
+                    )
             return self.complete_phase(
                 job.id,
                 ProjectFactoryInitPhaseName.WORKBENCH_AND_FEEDBACK_VERIFICATION.value,
                 message="Workbench, SDD, feedback, updater, and sourceApp routing verified with the frontend baseline.",
+                artifacts=artifacts,
+                command_evidence=command_evidence,
             )
+
+    def _commit_verified_task_alignment(
+        self,
+        *,
+        job: ProjectFactoryInitJob,
+        target: Path,
+        changed_paths: tuple[Path, ...],
+    ) -> tuple[
+        tuple[ProjectFactoryInitCommandEvidence, ...],
+        ProjectFactoryInitBlocker | None,
+    ]:
+        del job
+        rel_paths = tuple(str(path.relative_to(target)) for path in changed_paths)
+        evidence: list[ProjectFactoryInitCommandEvidence] = []
+        add = self._run(("git", "add", *rel_paths), cwd=target)
+        evidence.append(self._evidence(add))
+        if add.exit_code != 0:
+            return tuple(evidence), _task_alignment_blocker(
+                code="verified_task_alignment_git_add_failed",
+                message="Could not stage verified Project Factory task status alignment.",
+                command=("git", "add", *rel_paths),
+            )
+        commit = self._run(
+            (
+                "git",
+                "-c",
+                "user.name=Codex Project Factory",
+                "-c",
+                "user.email=codex-project-factory@local",
+                "commit",
+                "-m",
+                "Align verified Project Factory task status",
+            ),
+            cwd=target,
+        )
+        evidence.append(self._evidence(commit))
+        nothing_to_commit = "nothing to commit" in commit.stderr.lower()
+        if commit.exit_code != 0 and not nothing_to_commit:
+            return tuple(evidence), _task_alignment_blocker(
+                code="verified_task_alignment_git_commit_failed",
+                message="Could not commit verified Project Factory task status alignment.",
+                command=(
+                    "git",
+                    "commit",
+                    "-m",
+                    "Align verified Project Factory task status",
+                ),
+            )
+        if nothing_to_commit:
+            return tuple(evidence), None
+        branch = self._run(("git", "rev-parse", "--abbrev-ref", "HEAD"), cwd=target)
+        evidence.append(self._evidence(branch))
+        push_branch = (
+            branch.stdout.strip()
+            if branch.exit_code == 0 and branch.stdout.strip() != "HEAD"
+            else self._github_default_branch
+        )
+        push = self._run(("git", "push", "origin", push_branch), cwd=target)
+        evidence.append(self._evidence(push))
+        if push.exit_code != 0:
+            return tuple(evidence), _task_alignment_blocker(
+                code="verified_task_alignment_git_push_failed",
+                message="Could not push verified Project Factory task status alignment.",
+                command=("git", "push", "origin", push_branch),
+            )
+        return tuple(evidence), None
 
     def run_github_repository_phase(
         self,
@@ -4540,6 +4641,143 @@ def _has_blocking_phase(job: ProjectFactoryInitJob) -> bool:
             ProjectFactoryInitPhaseStatus.CANCELLED,
         }
         for phase in job.phases
+    )
+
+
+def _verified_foundation_tasks_ready(job: ProjectFactoryInitJob) -> bool:
+    required = (
+        ProjectFactoryInitPhaseName.FLUTTER_OR_STRATEGY_BASELINE,
+        ProjectFactoryInitPhaseName.LOCAL_VALIDATION,
+        ProjectFactoryInitPhaseName.PREVIEW_SMOKE,
+        ProjectFactoryInitPhaseName.ANDROID_PREVIEW_RELEASE,
+        ProjectFactoryInitPhaseName.BRIDGE_INSTALLABLE_REGISTRATION,
+    )
+    ready_statuses = {
+        ProjectFactoryInitPhaseStatus.COMPLETED,
+        ProjectFactoryInitPhaseStatus.SKIPPED,
+    }
+    return all(
+        job.phase(phase_name).status in ready_statuses for phase_name in required
+    )
+
+
+def _align_verified_foundation_tasks(target: Path) -> tuple[Path, ...]:
+    spec_dir = target / "specs/001-product-foundation"
+    tree_path = spec_dir / "tree.json"
+    if not tree_path.is_file():
+        return ()
+    tree = _read_json_file(tree_path)
+    plans = tree.get("plans") if isinstance(tree, dict) else None
+    if not isinstance(plans, list):
+        return ()
+    changed_paths: list[Path] = []
+    changed_tree = False
+    for plan in plans:
+        if not isinstance(plan, dict):
+            continue
+        tasks = plan.get("tasks")
+        if not isinstance(tasks, list):
+            continue
+        for task in tasks:
+            if not isinstance(task, dict):
+                continue
+            if str(task.get("id") or "") in _VERIFIED_FOUNDATION_TASK_IDS:
+                if task.get("status") != "done":
+                    task["status"] = "done"
+                    changed_tree = True
+    if changed_tree:
+        _write_text_if_changed(tree_path, _json_dumps_stable(tree))
+        changed_paths.append(tree_path)
+    tasks = _foundation_tasks_from_tree(tree)
+    tasks_path = spec_dir / "tasks.md"
+    if tasks and tasks_path.is_file():
+        tasks_text = _foundation_tasks_markdown(tasks)
+        if tasks_path.read_text(encoding="utf-8") != tasks_text:
+            tasks_path.write_text(tasks_text, encoding="utf-8")
+            changed_paths.append(tasks_path)
+    for task in tasks:
+        task_path = spec_dir / str(task.get("file") or "")
+        if task_path.is_file():
+            text = task_path.read_text(encoding="utf-8")
+            updated = _replace_task_status_line(text, str(task.get("status") or ""))
+            if updated != text:
+                task_path.write_text(updated, encoding="utf-8")
+                changed_paths.append(task_path)
+    metadata_path = spec_dir / "metadata.yaml"
+    if metadata_path.is_file() and tasks:
+        metadata = yaml.safe_load(metadata_path.read_text(encoding="utf-8")) or {}
+        if isinstance(metadata, dict):
+            completed = sum(1 for task in tasks if task.get("status") == "done")
+            pending = len(tasks) - completed
+            task_counts = metadata.get("tasks")
+            if not isinstance(task_counts, dict):
+                task_counts = {}
+            task_counts.update(
+                {
+                    "total": len(tasks),
+                    "completed": completed,
+                    "pending": pending,
+                }
+            )
+            metadata["tasks"] = task_counts
+            metadata_text = yaml.safe_dump(
+                metadata,
+                sort_keys=False,
+                allow_unicode=True,
+            )
+            if metadata_path.read_text(encoding="utf-8") != metadata_text:
+                metadata_path.write_text(metadata_text, encoding="utf-8")
+                changed_paths.append(metadata_path)
+    return tuple(dict.fromkeys(changed_paths))
+
+
+def _foundation_tasks_from_tree(tree: dict[str, object]) -> list[dict[str, object]]:
+    tasks: list[dict[str, object]] = []
+    plans = tree.get("plans")
+    if not isinstance(plans, list):
+        return tasks
+    for plan in plans:
+        if not isinstance(plan, dict):
+            continue
+        plan_tasks = plan.get("tasks")
+        if isinstance(plan_tasks, list):
+            tasks.extend(task for task in plan_tasks if isinstance(task, dict))
+    return tasks
+
+
+def _foundation_tasks_markdown(tasks: list[dict[str, object]]) -> str:
+    lines = ["# Tasks", ""]
+    for task in tasks:
+        status = "x" if task.get("status") == "done" else " "
+        title = str(task.get("title") or "").strip()
+        if title and not title.endswith("."):
+            title = f"{title}."
+        lines.append(f"- [{status}] {title}")
+    return "\n".join(lines) + "\n"
+
+
+def _replace_task_status_line(text: str, status: str) -> str:
+    replacement = f"Status: {status}"
+    lines = text.splitlines()
+    for index, line in enumerate(lines):
+        if line.startswith("Status: "):
+            lines[index] = replacement
+            return "\n".join(lines) + ("\n" if text.endswith("\n") else "")
+    return text
+
+
+def _task_alignment_blocker(
+    *,
+    code: str,
+    message: str,
+    command: tuple[str, ...],
+) -> ProjectFactoryInitBlocker:
+    return ProjectFactoryInitBlocker(
+        code=code,
+        message=message,
+        phase=ProjectFactoryInitPhaseName.WORKBENCH_AND_FEEDBACK_VERIFICATION,
+        next_action="Fix git publish access for the generated workspace, then rerun deterministic init.",
+        command=command,
     )
 
 
