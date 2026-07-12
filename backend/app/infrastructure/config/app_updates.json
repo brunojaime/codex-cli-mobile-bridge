@@ -36,6 +36,28 @@
       "android-v1.0.0-build.14": "com.ludmilo.gestion"
     }
   },
+  "prueba-2": {
+    "apkAssetPattern": "prueba-2*.apk",
+    "displayName": "prueba-2 Preview",
+    "enabled": true,
+    "expectedPackageId": null,
+    "latestAssetName": "prueba-2.apk",
+    "mockOrDemo": false,
+    "previewUrl": "https://preview.nienfos.com/prueba-2",
+    "productionReady": false,
+    "releaseChannel": "prerelease",
+    "releaseMetadata": {
+      "initialPreviewRelease": true,
+      "latestAssetName": "prueba-2.apk",
+      "releaseTag": "android-preview-v0.1.0-build.1",
+      "releaseTagPattern": "android-preview-v*"
+    },
+    "releaseTagPattern": "android-preview-v*",
+    "repo": "brunojaime/prueba-2",
+    "requiredMinimumBuild": null,
+    "runtimeProfile": "preview",
+    "verifiedPackageIds": {}
+  },
   "sat-catalogo-ropa": {
     "apkAssetPattern": "sat-catalogo-ropa*.apk",
     "displayName": "SAT Catalogo Ropa",
