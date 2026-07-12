@@ -2001,6 +2001,13 @@ def test_generated_project_registers_installable_app_contract(
         in content
     )
     assert 'BRIDGE_URL="${BRIDGE_URL:-}"' in content
+    assert 'BRIDGE_PUBLIC_URL="${BRIDGE_PUBLIC_URL:-}"' in content
+    assert 'BRIDGE_PUBLIC_URL="${BRIDGE_PUBLIC_URL:-$BRIDGE_URL}"' in content
+    assert 'bridge_detail_headers+=(-H "Host: $public_host")' in content
+    assert (
+        'bridge_detail_headers+=(-H "X-Forwarded-Proto: $public_scheme")'
+        in content
+    )
     assert "BRIDGE_REGISTRATION_TOKEN" in content
     assert (
         'RELEASE_TAG_PATTERN="${RELEASE_TAG_PATTERN:-${RT_RELEASE_TAG_PATTERN:-android-preview-v*}}"'
@@ -2102,9 +2109,11 @@ def test_generated_register_installable_app_script_posts_preview_metadata(
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
     _write_fake_github_access_tools(fake_bin)
+    curl_calls = tmp_path / "curl-calls.txt"
     fake_curl = fake_bin / "curl"
     fake_curl.write_text(
         "#!/usr/bin/env bash\n"
+        "printf '%s\\n' \"$*\" >> \"$CURL_CALLS_FILE\"\n"
         "args=\"$*\"\n"
         "if [[ \"$args\" == *'-I'* ]]; then exit 0; fi\n"
         "if [[ \"$args\" == *'/installable-apps/clinica-norte'* ]]; then\n"
@@ -2134,11 +2143,13 @@ def test_generated_register_installable_app_script_posts_preview_metadata(
         env={
             **os.environ,
             "PATH": f"{fake_bin}:{os.environ['PATH']}",
-            "BRIDGE_URL": "https://bridge.test",
+            "BRIDGE_URL": "http://localhost:8000",
+                "BRIDGE_PUBLIC_URL": "https://bridge.test",
                 "BRIDGE_REGISTRATION_TOKEN": "token",
                 "GITHUB_REPO": "brunojaime/clinica-norte",
                 "APP_RELEASE_TAG": "android-preview-v0.1.0-build.1",
                 "CODEX_MOBILE_BRIDGE_ROOT": str(tmp_path / "empty-bridge-root"),
+                "CURL_CALLS_FILE": str(curl_calls),
             },
         text=True,
         capture_output=True,
@@ -2150,6 +2161,9 @@ def test_generated_register_installable_app_script_posts_preview_metadata(
         completed.stdout
     )
     assert "apk url: https://bridge.test/apk" in completed.stdout
+    calls = curl_calls.read_text(encoding="utf-8")
+    assert "Host: bridge.test" in calls
+    assert "X-Forwarded-Proto: https" in calls
 
 
 def test_generated_flutter_mock_seed_selector_is_mock_profile_only(

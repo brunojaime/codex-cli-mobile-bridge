@@ -178,6 +178,54 @@ def test_android_release_creates_prerelease_registers_bridge_and_persists(
     assert "secret-token" not in json.dumps(persisted.to_payload())
 
 
+def test_android_release_uses_public_bridge_url_when_transport_is_local(
+    tmp_path: Path,
+) -> None:
+    release_tag = "android-preview-v0.1.0-build.1"
+    public_lookup = (
+        "curl",
+        "-fsS",
+        "-H",
+        "Host: bridge.test",
+        "-H",
+        "X-Forwarded-Proto: https",
+        "http://localhost:8000/installable-apps/clinica-norte",
+    )
+    runner = _FakeRunner(
+        [
+            (
+                _release_view_cmd(release_tag),
+                _FakeResponse(stdout=json.dumps(_release(release_tag))),
+            ),
+            (public_lookup, _FakeResponse(exit_code=22, stderr="not found")),
+            (_register_cmd(), _FakeResponse(stdout="registered")),
+            (
+                public_lookup,
+                _FakeResponse(stdout=json.dumps(_installable(release_tag))),
+            ),
+        ]
+    )
+    service = _service(
+        tmp_path,
+        runner,
+        api_base_url="http://localhost:8000",
+        app_update_public_base_url="https://bridge.test",
+    )
+    job = _generated_job(service)
+
+    completed = service.run_android_preview_release_phases(job.id)
+
+    phase = completed.phase(ProjectFactoryInitPhaseName.BRIDGE_INSTALLABLE_REGISTRATION)
+    assert phase.status == ProjectFactoryInitPhaseStatus.COMPLETED
+    assert public_lookup in runner.calls
+    register_env = runner.envs[runner.calls.index(_register_cmd())] or {}
+    assert register_env["BRIDGE_URL"] == "http://localhost:8000"
+    assert register_env["BRIDGE_PUBLIC_URL"] == "https://bridge.test"
+    assert "localhost" not in json.dumps(
+        [resource.to_payload() for resource in completed.remote_resources]
+    )
+
+
 def test_frontend_baseline_repairs_generated_artifact_gitignore_entries(
     tmp_path: Path,
 ) -> None:
@@ -647,6 +695,8 @@ def _service(
     registration_token: str | None = "secret-token",
     command_env: dict[str, str] | None = None,
     create_signing: bool = True,
+    api_base_url: str = "https://bridge.test",
+    app_update_public_base_url: str | None = None,
 ) -> ProjectFactoryInitService:
     del create_signing
     env = {"CODEX_MOBILE_BRIDGE_ROOT": str(tmp_path), **(command_env or {})}
@@ -654,7 +704,12 @@ def _service(
         state_root=tmp_path / "state",
         command_runner=runner,
         command_env=env,
-        settings=_settings(tmp_path, registration_token=registration_token),
+        settings=_settings(
+            tmp_path,
+            registration_token=registration_token,
+            api_base_url=api_base_url,
+            app_update_public_base_url=app_update_public_base_url,
+        ),
     )
 
 
@@ -662,12 +717,15 @@ def _settings(
     tmp_path: Path,
     *,
     registration_token: str | None = "secret-token",
+    api_base_url: str = "https://bridge.test",
+    app_update_public_base_url: str | None = None,
 ) -> Settings:
     return Settings(
         projects_root=str(tmp_path / "projects"),
         project_factory_state_dir=str(tmp_path / "state"),
         preview_base_domain="preview.nienfos.com",
-        api_base_url="https://bridge.test",
+        api_base_url=api_base_url,
+        app_update_public_base_url=app_update_public_base_url,
         installable_apps_registration_token=registration_token,
     )
 

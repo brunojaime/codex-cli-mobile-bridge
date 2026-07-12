@@ -14,6 +14,7 @@ from pathlib import Path
 from threading import Thread
 from tempfile import NamedTemporaryFile
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 from fastapi import (
     APIRouter,
@@ -2461,13 +2462,15 @@ async def get_app_update(
     apk_url = None
     response_channel = result.release_channel or channel
     if result.available and result.release_tag and result.apk_asset_name:
-        generated_apk_url = request.url_for(
-            "download_app_update_apk",
+        apk_url = _app_update_apk_proxy_url(
+            request=request,
+            container=container,
             source_app=result.source_app,
             release_tag=result.release_tag,
             asset_name=result.apk_asset_name,
-        ).include_query_params(platform=platform, channel=response_channel)
-        apk_url = _preserve_api_v1_prefix(request, str(generated_apk_url))
+            platform=platform,
+            channel=response_channel,
+        )
     return _app_update_response(result, apk_url=apk_url)
 
 
@@ -5130,13 +5133,15 @@ async def _installable_app_for_config(
     install_status_hint = "available" if result.available else "no_release_available"
     response_channel = result.release_channel or channel
     if result.available and result.release_tag and result.apk_asset_name:
-        generated_apk_url = request.url_for(
-            "download_app_update_apk",
+        apk_url = _app_update_apk_proxy_url(
+            request=request,
+            container=container,
             source_app=result.source_app,
             release_tag=result.release_tag,
             asset_name=result.apk_asset_name,
-        ).include_query_params(platform=platform, channel=response_channel)
-        apk_url = _preserve_api_v1_prefix(request, str(generated_apk_url))
+            platform=platform,
+            channel=response_channel,
+        )
     elif result.release_tag and not result.apk_asset_name:
         install_status_hint = "missing_apk_asset"
 
@@ -5278,6 +5283,45 @@ def _preserve_api_v1_prefix(request: Request, url: str) -> str:
     if url.startswith(root_path):
         return f"{origin}/api/v1/app-updates/{url[len(root_path) :]}"
     return url
+
+
+def _app_update_apk_proxy_url(
+    *,
+    request: Request,
+    container: AppContainer,
+    source_app: str,
+    release_tag: str,
+    asset_name: str,
+    platform: str,
+    channel: str,
+) -> str:
+    generated_apk_url = request.url_for(
+        "download_app_update_apk",
+        source_app=source_app,
+        release_tag=release_tag,
+        asset_name=asset_name,
+    ).include_query_params(platform=platform, channel=channel)
+    apk_url = _preserve_api_v1_prefix(request, str(generated_apk_url))
+    public_base_url = (container.settings.app_update_public_base_url or "").strip()
+    if not public_base_url:
+        return apk_url
+    return _replace_url_origin(apk_url, public_base_url)
+
+
+def _replace_url_origin(url: str, public_base_url: str) -> str:
+    parsed_url = urlsplit(url)
+    parsed_base = urlsplit(public_base_url)
+    if not parsed_base.scheme or not parsed_base.netloc:
+        return url
+    return urlunsplit(
+        (
+            parsed_base.scheme,
+            parsed_base.netloc,
+            parsed_url.path,
+            parsed_url.query,
+            parsed_url.fragment,
+        )
+    )
 
 
 def _apk_download_headers(

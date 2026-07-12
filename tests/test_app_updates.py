@@ -830,6 +830,32 @@ def test_installable_apps_lists_available_app_with_bridge_apk_url(
     assert app["packageId"] == "com.ambientando.calendar"
 
 
+def test_installable_app_uses_public_base_url_for_apk_proxy(
+    tmp_path: Path,
+) -> None:
+    client = _build_app_update_client(
+        tmp_path,
+        app_update_public_base_url="https://bridge.example.test",
+        releases=[
+            _release(
+                "android-v1.0.0-build.40",
+                assets=[_apk_asset("ambientando-calendar.apk")],
+            ),
+        ],
+    )
+
+    response = client.get("/installable-apps/ambientando-calendar")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["available"] is True
+    assert payload["apkUrl"] == (
+        "https://bridge.example.test/app-updates/ambientando-calendar/apk/"
+        "android-v1.0.0-build.40/ambientando-calendar.apk"
+        "?platform=android&channel=stable"
+    )
+
+
 def test_installable_app_detail_returns_single_app(tmp_path: Path) -> None:
     client = _build_app_update_client(
         tmp_path,
@@ -1568,6 +1594,7 @@ def _build_app_update_client(
     expected_package_id: str | None = None,
     verified_package_ids: dict[str, str] | None = None,
     registration_token: str | None = "test-registration-token",
+    app_update_public_base_url: str | None = None,
 ) -> TestClient:
     tmp_path.mkdir(parents=True, exist_ok=True)
     registry_path = tmp_path / "app_updates.json"
@@ -1595,6 +1622,7 @@ def _build_app_update_client(
         audio_transcription_backend="disabled",
         app_update_registry_path=str(registry_path),
         installable_apps_registration_token=registration_token,
+        app_update_public_base_url=app_update_public_base_url,
     )
     app = create_app(settings)
     container = app.dependency_overrides[get_container]()

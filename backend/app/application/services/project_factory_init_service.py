@@ -13,6 +13,7 @@ import shutil
 import subprocess
 from threading import RLock
 from typing import Protocol
+from urllib.parse import urlparse
 from uuid import uuid4
 
 from backend.app.application.services.cloudflare_preview_service import (
@@ -57,6 +58,7 @@ from backend.app.domain.entities.chat_message import (
 )
 from backend.app.domain.repositories.chat_repository import ChatRepository
 from backend.app.infrastructure.config.settings import Settings
+from backend.app.infrastructure.network.tailscale import detect_tailscale_info
 
 INIT_PHASES: tuple[str, ...] = tuple(phase.value for phase in INIT_PHASE_ORDER)
 _GITHUB_PHASE = ProjectFactoryInitPhaseName.GITHUB_REPOSITORY
@@ -705,7 +707,14 @@ class ProjectFactoryInitService:
             release_tag = _android_preview_tag(version)
             apk_name = f"{job.slug}.apk"
             preview_api = f"https://preview.nienfos.com/{job.slug}/api"
-            bridge_base_url = (bridge_url or (self._settings.api_base_url if self._settings else "")).rstrip("/")
+            bridge_base_url = (
+                bridge_url or (self._settings.api_base_url if self._settings else "")
+            ).rstrip("/")
+            bridge_public_url = _resolve_bridge_public_url(
+                bridge_base_url,
+                settings=self._settings,
+                command_env=self._command_env,
+            )
             env = {
                 "APP_RUNTIME_PROFILE": "preview",
                 "API_RUNTIME": "cloudflare_preview",
@@ -716,6 +725,7 @@ class ProjectFactoryInitService:
                 "APP_RELEASE_TAG": release_tag,
                 "APP_ANDROID_PREVIEW_RELEASE_TAG": release_tag,
                 "BRIDGE_URL": bridge_base_url,
+                "BRIDGE_PUBLIC_URL": bridge_public_url,
             }
             if self._settings and self._settings.installable_apps_registration_token:
                 env["INSTALLABLE_APPS_REGISTRATION_TOKEN"] = (
@@ -872,7 +882,11 @@ class ProjectFactoryInitService:
             )
 
             lookup = self._run_env(
-                ("curl", "-fsS", f"{bridge_base_url}/installable-apps/{job.slug}"),
+                _bridge_installable_lookup_command(
+                    bridge_base_url,
+                    bridge_public_url,
+                    job.slug,
+                ),
                 cwd=target,
                 env=env,
             )
@@ -918,7 +932,11 @@ class ProjectFactoryInitService:
                         evidence=tuple(installable_evidence),
                     )
                 lookup = self._run_env(
-                    ("curl", "-fsS", f"{bridge_base_url}/installable-apps/{job.slug}"),
+                    _bridge_installable_lookup_command(
+                        bridge_base_url,
+                        bridge_public_url,
+                        job.slug,
+                    ),
                     cwd=target,
                     env=env,
                 )
@@ -4557,6 +4575,73 @@ def _valid_installable_payload(
         and not _has_forbidden_runtime_marker(payload)
         and (sha256 is None or _is_sha256(sha256))
     )
+
+
+_LOCAL_BRIDGE_HOSTS = {"localhost", "127.0.0.1", "0.0.0.0", "10.0.2.2"}
+
+
+def _resolve_bridge_public_url(
+    bridge_base_url: str,
+    *,
+    settings: Settings | None,
+    command_env: dict[str, str],
+) -> str:
+    candidates = (
+        getattr(settings, "app_update_public_base_url", None),
+        command_env.get("BRIDGE_PUBLIC_URL"),
+        command_env.get("CODEX_APP_UPDATER_BRIDGE_URL"),
+        command_env.get("API_BASE_URL"),
+        os.environ.get("BRIDGE_PUBLIC_URL"),
+        os.environ.get("CODEX_APP_UPDATER_BRIDGE_URL"),
+    )
+    for candidate in candidates:
+        public_url = _non_local_http_url(candidate)
+        if public_url:
+            return public_url
+    if not _is_local_bridge_url(bridge_base_url):
+        return bridge_base_url.rstrip("/")
+    if settings is not None:
+        tailscale = detect_tailscale_info(
+            settings.tailscale_socket,
+            api_port=settings.api_port,
+        )
+        for candidate in tailscale.public_base_urls:
+            public_url = _non_local_http_url(candidate)
+            if public_url:
+                return public_url
+    return bridge_base_url.rstrip("/")
+
+
+def _non_local_http_url(value: str | None) -> str | None:
+    url = (value or "").strip().rstrip("/")
+    if not url or _is_local_bridge_url(url):
+        return None
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return None
+    return url
+
+
+def _is_local_bridge_url(value: str | None) -> bool:
+    parsed = urlparse((value or "").strip())
+    host = (parsed.hostname or "").lower()
+    return host in _LOCAL_BRIDGE_HOSTS
+
+
+def _bridge_installable_lookup_command(
+    bridge_base_url: str,
+    bridge_public_url: str,
+    slug: str,
+) -> tuple[str, ...]:
+    command: list[str] = ["curl", "-fsS"]
+    if bridge_public_url.rstrip("/") != bridge_base_url.rstrip("/"):
+        parsed = urlparse(bridge_public_url)
+        if parsed.netloc:
+            command.extend(["-H", f"Host: {parsed.netloc}"])
+        if parsed.scheme:
+            command.extend(["-H", f"X-Forwarded-Proto: {parsed.scheme}"])
+    command.append(f"{bridge_base_url.rstrip('/')}/installable-apps/{slug}")
+    return tuple(command)
 
 
 def _installable_payload_blocker(

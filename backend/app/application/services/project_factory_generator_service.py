@@ -3552,6 +3552,7 @@ source "$ROOT_DIR/scripts/load_bridge_env.sh"
 source "$ROOT_DIR/scripts/github_repo_access.sh"
 DRY_RUN=false
 BRIDGE_URL="${{BRIDGE_URL:-}}"
+BRIDGE_PUBLIC_URL="${{BRIDGE_PUBLIC_URL:-}}"
 SOURCE_APP="${{SOURCE_APP:-}}"
 DISPLAY_NAME="${{DISPLAY_NAME:-}}"
 RELEASE_TAG_PATTERN="${{RELEASE_TAG_PATTERN:-}}"
@@ -3637,6 +3638,9 @@ if [[ -z "$BRIDGE_URL" ]]; then
   echo "BRIDGE_URL is required. Example: BRIDGE_URL=http://127.0.0.1:8000 $0" >&2
   exit 2
 fi
+BRIDGE_URL="${{BRIDGE_URL%/}}"
+BRIDGE_PUBLIC_URL="${{BRIDGE_PUBLIC_URL:-$BRIDGE_URL}}"
+BRIDGE_PUBLIC_URL="${{BRIDGE_PUBLIC_URL%/}}"
 if [[ -z "$BRIDGE_REGISTRATION_TOKEN" ]]; then
   echo "BRIDGE_REGISTRATION_TOKEN or INSTALLABLE_APPS_REGISTRATION_TOKEN is required." >&2
   exit 2
@@ -3751,7 +3755,31 @@ curl -fsS \\
   -H 'Content-Type: application/json' \\
   -d "$payload" >/tmp/project-factory-register-installable-app.json
 
-curl -fsS "$BRIDGE_URL/installable-apps/$SOURCE_APP" \\
+bridge_detail_headers=()
+if [[ "$BRIDGE_PUBLIC_URL" != "$BRIDGE_URL" ]]; then
+  public_host="$(python3 - "$BRIDGE_PUBLIC_URL" <<'PY'
+from __future__ import annotations
+
+import sys
+from urllib.parse import urlparse
+
+print(urlparse(sys.argv[1]).netloc)
+PY
+)"
+  public_scheme="$(python3 - "$BRIDGE_PUBLIC_URL" <<'PY'
+from __future__ import annotations
+
+import sys
+from urllib.parse import urlparse
+
+print(urlparse(sys.argv[1]).scheme)
+PY
+)"
+  [[ -n "$public_host" ]] && bridge_detail_headers+=(-H "Host: $public_host")
+  [[ -n "$public_scheme" ]] && bridge_detail_headers+=(-H "X-Forwarded-Proto: $public_scheme")
+fi
+
+curl -fsS "${{bridge_detail_headers[@]}}" "$BRIDGE_URL/installable-apps/$SOURCE_APP" \\
   >/tmp/project-factory-installable-app-detail.json
 
 python3 - <<'PY'
