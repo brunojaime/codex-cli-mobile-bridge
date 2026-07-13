@@ -57,6 +57,74 @@ def test_known_app_with_newer_release_returns_update(tmp_path: Path) -> None:
     assert payload["releaseNotes"] == "Cambios disponibles."
 
 
+def test_codex_prod_and_dev_update_channels_are_separate(tmp_path: Path) -> None:
+    prod_client = _build_app_update_client(
+        tmp_path / "prod",
+        source_app="codex-mobile",
+        display_name="Codex Mobile Bridge",
+        repo="brunojaime/codex-cli-mobile-bridge",
+        release_tag_pattern="android-v*",
+        apk_asset_pattern="codex-mobile-*.apk",
+        latest_asset_name="codex-mobile.apk",
+        release_channel="prod",
+        releases=[
+            _release(
+                "android-dev-v1.0.0-build.105",
+                prerelease=True,
+                assets=[_apk_asset("codex-mobile-dev.apk")],
+            ),
+            _release(
+                "android-v1.0.0-build.105",
+                assets=[_apk_asset("codex-mobile.apk")],
+            ),
+        ],
+    )
+
+    prod_response = prod_client.get(
+        "/app-updates/codex-mobile",
+        params={"currentVersion": "1.0.0", "currentBuild": 104, "channel": "prod"},
+    )
+
+    assert prod_response.status_code == 200
+    prod_payload = prod_response.json()
+    assert prod_payload["releaseTag"] == "android-v1.0.0-build.105"
+    assert prod_payload["releaseChannel"] == "prod"
+    assert prod_payload["apkAssetName"] == "codex-mobile.apk"
+
+    dev_client = _build_app_update_client(
+        tmp_path / "dev",
+        source_app="codex-mobile-dev",
+        display_name="Codex Mobile Bridge DEV",
+        repo="brunojaime/codex-cli-mobile-bridge",
+        release_tag_pattern="android-dev-v*",
+        apk_asset_pattern="codex-mobile-dev-*.apk",
+        latest_asset_name="codex-mobile-dev.apk",
+        release_channel="dev",
+        releases=[
+            _release(
+                "android-v1.0.0-build.105",
+                assets=[_apk_asset("codex-mobile.apk")],
+            ),
+            _release(
+                "android-dev-v1.0.0-build.105",
+                prerelease=True,
+                assets=[_apk_asset("codex-mobile-dev.apk")],
+            ),
+        ],
+    )
+
+    dev_response = dev_client.get(
+        "/app-updates/codex-mobile-dev",
+        params={"currentVersion": "1.0.0", "currentBuild": 104, "channel": "dev"},
+    )
+
+    assert dev_response.status_code == 200
+    dev_payload = dev_response.json()
+    assert dev_payload["releaseTag"] == "android-dev-v1.0.0-build.105"
+    assert dev_payload["releaseChannel"] == "dev"
+    assert dev_payload["apkAssetName"] == "codex-mobile-dev.apk"
+
+
 def test_api_v1_prefix_serves_health_update_and_apk_proxy(tmp_path: Path) -> None:
     asset = _apk_asset("ambientando-calendar-1.0.0-build.40.apk")
     github_client = _FakeGitHubReleaseClient(

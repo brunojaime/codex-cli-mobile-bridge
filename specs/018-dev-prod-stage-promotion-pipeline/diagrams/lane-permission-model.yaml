@@ -1,0 +1,6 @@
+diagram_id: lane-permission-model
+diagram_type: component-impact
+scope: feature
+status: draft
+owner: project
+source: specs/018-dev-prod-stage-promotion-pipeline/diagrams/lane-permission-model.mmd

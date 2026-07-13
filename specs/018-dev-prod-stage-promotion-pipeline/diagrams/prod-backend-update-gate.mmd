@@ -1,0 +1,29 @@
+stateDiagram-v2
+  [*] --> no_update
+  no_update --> update_available: backend artifact prepared
+  update_available --> checking_quiescence: detector poll
+  checking_quiescence --> waiting_for_idle: active or pending chain exists
+  waiting_for_idle --> checking_quiescence: job or follow-up state changes
+  checking_quiescence --> auto_update_eligible: no active or pending chain
+  auto_update_eligible --> updating: deterministic update starts
+  updating --> post_validation: backend restarted
+  post_validation --> updated_pending_ack: health and validation pass
+  post_validation --> failed: validation fails
+  updated_pending_ack --> acknowledged: user dismisses notice
+  acknowledged --> no_update: notice cleared
+
+  update_available --> force_requested: user confirms force
+  waiting_for_idle --> force_requested: user confirms force
+  force_requested --> updating: record interruptions
+
+  failed --> waiting_for_idle: retry waits for idle
+  failed --> force_requested: user confirms force retry
+
+  note right of waiting_for_idle
+    Not idle includes active CLI jobs,
+    active_agent_run_id, queued or reserved
+    agent turns, Generator -> Reviewer
+    follow-ups, Summary follow-ups,
+    SDD/Codex jobs, Project Factory jobs,
+    and pending background tasks.
+  end note

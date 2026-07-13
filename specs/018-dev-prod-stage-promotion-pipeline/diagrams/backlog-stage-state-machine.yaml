@@ -1,0 +1,7 @@
+diagram_id: backlog-stage-state-machine
+diagram_type: state
+scope: feature
+status: planned
+owner: project
+source: specs/018-dev-prod-stage-promotion-pipeline/diagrams/backlog-stage-state-machine.mmd
+description: State machine for DEV backlog items, stage execution, validation, integration, and promotion readiness.

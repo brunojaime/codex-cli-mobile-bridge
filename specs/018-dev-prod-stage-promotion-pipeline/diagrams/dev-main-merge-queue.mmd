@@ -1,0 +1,23 @@
+flowchart TD
+  Request[Stage requests integration] --> Queue[Serialized merge queue]
+  Queue --> Lock[Acquire single dev/main integration lock]
+  Lock --> Preflight{Preflight gates pass}
+
+  Preflight -->|no| Blocked[Blocked with exact failed gate]
+  Preflight -->|yes| FreshBase{Branch fresh against dev/main}
+  FreshBase -->|no| Rebase[Deterministic rebase or merge base refresh]
+  Rebase --> ConflictCheck{Conflicts}
+  FreshBase -->|yes| ConflictCheck
+  ConflictCheck -->|yes| ConflictBlocked[Blocked with conflict file list]
+  ConflictCheck -->|no| Merge[Integrate branch into dev/main]
+  Merge --> Validate[Run integration tests and SDD doctor]
+  Validate --> ValidationResult{Validation passes}
+  ValidationResult -->|no| RollBack[Abort integration and preserve evidence]
+  ValidationResult -->|yes| Record[Record merge commit, logs, tests, doctor output]
+  Record --> Ready[Mark ready for PROD promotion]
+
+  Blocked --> Remediate[Fix in original stage worktree]
+  ConflictBlocked --> Remediate
+  RollBack --> Remediate
+  Remediate --> Request
+

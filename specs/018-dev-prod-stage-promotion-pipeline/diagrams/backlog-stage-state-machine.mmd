@@ -1,0 +1,25 @@
+stateDiagram-v2
+  [*] --> queued
+  queued --> claimed: DEV worker lock
+  claimed --> materializing_spec
+  materializing_spec --> ready_for_stage: spec created/attached
+  materializing_spec --> blocked: invalid target or missing context
+  ready_for_stage --> stage_active: worktree/chat created
+  stage_active --> dev_done: Reviewer complete
+  stage_active --> blocked: run failed or guard blocked
+  stage_active --> cancelled
+  dev_done --> waiting_user_validation
+  waiting_user_validation --> approved_by_user: user approves
+  waiting_user_validation --> stage_active: user requests changes
+  approved_by_user --> ready_for_dev_main
+  ready_for_dev_main --> integrating: merge queue claims item
+  integrating --> merged_to_dev_main: validation passed
+  integrating --> blocked: conflict or validation failure
+  merged_to_dev_main --> ready_for_prod_promotion
+  ready_for_prod_promotion --> promoting
+  promoting --> promoted_to_prod
+  promoting --> blocked
+  blocked --> claimed: retry
+  cancelled --> [*]
+  failed --> [*]
+  promoted_to_prod --> [*]

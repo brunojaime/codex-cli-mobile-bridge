@@ -15,6 +15,7 @@ from backend.app.application.services.cloudflare_preview_service import (
 from backend.app.application.services.domain_factory_service import (
     DomainFactoryService,
 )
+from backend.app.application.services.dev_pipeline_service import DevPipelineService
 from backend.app.application.services.message_service import MessageService
 from backend.app.application.services.project_factory_service import (
     ProjectFactoryService,
@@ -97,6 +98,7 @@ class AppContainer:
     web_preview_deploy_service: WebPreviewDeployService
     web_preview_invite_service: WebPreviewInviteService
     domain_factory_service: DomainFactoryService
+    dev_pipeline_service: DevPipelineService
     job_stream_hub: JobStreamHub
     audio_transcriber: AudioTranscriber
     speech_synthesizer: SpeechSynthesizer
@@ -214,6 +216,33 @@ def build_container(settings: Settings | None = None) -> AppContainer:
         chat_repository=repository,
         app_update_registry_path=resolved_settings.app_update_registry_path,
     )
+    dev_pipeline_service = DevPipelineService(
+        state_path=resolved_settings.dev_pipeline_state_path,
+        runtime_root=resolved_settings.dev_pipeline_runtime_root,
+        repository_root=resolved_settings.codex_workdir,
+        environment=resolved_settings.bridge_environment,
+        backend_url=resolved_settings.api_base_url,
+        app_channel=resolved_settings.bridge_app_channel,
+        app_label=resolved_settings.bridge_app_label,
+        updater_channel=resolved_settings.bridge_updater_channel,
+        color=resolved_settings.bridge_environment_color,
+        stage_id=resolved_settings.bridge_stage_id,
+        spec_id=resolved_settings.bridge_spec_id,
+        branch=resolved_settings.bridge_stage_branch,
+        worktree_path=resolved_settings.bridge_stage_worktree_path,
+        dev_main_branch=resolved_settings.bridge_dev_main_branch,
+        enabled=resolved_settings.dev_pipeline_enabled,
+        prod_handoff_enabled=resolved_settings.dev_pipeline_prod_handoff_enabled,
+        promotion_enabled=resolved_settings.dev_pipeline_promotion_enabled,
+        app_update_registry_path=resolved_settings.app_update_registry_path,
+        app_update_public_base_url=resolved_settings.app_update_public_base_url,
+        app_update_github_token_present=bool(
+            resolved_settings.app_update_github_token
+        ),
+        prod_update_executor_enabled=(
+            resolved_settings.dev_pipeline_prod_update_executor_enabled
+        ),
+    )
     message_service.set_domain_factory_service(domain_factory_service)
     return AppContainer(
         settings=resolved_settings,
@@ -231,6 +260,7 @@ def build_container(settings: Settings | None = None) -> AppContainer:
         web_preview_deploy_service=web_preview_deploy_service,
         web_preview_invite_service=web_preview_invite_service,
         domain_factory_service=domain_factory_service,
+        dev_pipeline_service=dev_pipeline_service,
         job_stream_hub=job_stream_hub,
         audio_transcriber=audio_transcriber,
         speech_synthesizer=speech_synthesizer,

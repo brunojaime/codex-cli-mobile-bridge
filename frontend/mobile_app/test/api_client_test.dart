@@ -2,6 +2,7 @@ import 'dart:typed_data';
 
 import 'package:codex_mobile_frontend/src/models/chat_session_summary.dart';
 import 'package:codex_mobile_frontend/src/models/codex_tooling.dart';
+import 'package:codex_mobile_frontend/src/models/dev_pipeline_handoff.dart';
 import 'package:codex_mobile_frontend/src/models/domain_factory.dart';
 import 'package:codex_mobile_frontend/src/models/feedback_queue_item.dart';
 import 'package:codex_mobile_frontend/src/models/installable_app.dart';
@@ -515,6 +516,21 @@ void main() {
         'speech_synthesis_ready': false,
         'tailscale_installed': true,
         'tailscale_online': true,
+        'environment_identity': <String, dynamic>{
+          'environment': 'dev',
+          'mode': 'stage',
+          'stage_id': 'spec-018',
+          'spec_id': '018-dev-prod-stage-promotion-pipeline',
+          'branch': 'dev/spec-018-dev-prod-stage-promotion-pipeline',
+          'worktree_path': '/workspace/spec-018',
+          'backend_url': 'http://127.0.0.1:8118',
+          'app_channel': 'dev',
+          'app_label': 'Codex Mobile Bridge DEV',
+          'updater_channel': 'dev',
+          'color': '#F59E0B',
+          'allowed_capabilities': <String>['stage_backend_lifecycle'],
+          'denied_capabilities': <String>['restart_prod_backend'],
+        },
       },
     );
 
@@ -525,6 +541,113 @@ void main() {
     expect(capabilities.backendCommit, 'abc123');
     expect(health.features['project_factory'], isTrue);
     expect(health.backendVersion, 'bridge-local');
+    expect(
+      health.environmentIdentity?.displayLabel,
+      'DEV - spec-018 - dev/spec-018-dev-prod-stage-promotion-pipeline',
+    );
+    expect(
+      health.environmentIdentity?.allowedCapabilities,
+      contains('stage_backend_lifecycle'),
+    );
+    expect(health.environmentIdentity?.canEnqueueDevHandoff, isFalse);
+  });
+
+  test('api client enqueues dev handoff idempotently', () async {
+    var calls = 0;
+    final client = ApiClient(
+      baseUrl: 'http://localhost:8000',
+      client: MockClient((request) async {
+        calls += 1;
+        expect(request.method, 'POST');
+        expect(request.url.path, '/dev-pipeline/handoffs');
+        expect(request.headers['X-Idempotency-Key'], 'mobile-handoff-key');
+        expect(request.body, contains('"source_environment":"prod"'));
+        expect(request.body, contains('"target_environment":"dev"'));
+        expect(request.body, contains('"operation":"enqueue_only"'));
+        expect(request.body, contains('"selected_context"'));
+        return http.Response(
+          '''
+          {
+            "kind": "codex.devPipelineResponse",
+            "version": 1,
+            "data": {
+              "id": "handoff-1",
+              "status": "queued",
+              "title": "Fix PROD update",
+              "problem": "Update raced active work",
+              "idempotency_key": "mobile-handoff-key"
+            }
+          }
+          ''',
+          200,
+          headers: <String, String>{'content-type': 'application/json'},
+        );
+      }),
+    );
+    const request = DevPipelineHandoffRequest(
+      title: 'Fix PROD update',
+      problem: 'Update raced active work',
+      context: 'Session context',
+      acceptanceCriteria: 'No active work is interrupted.',
+      selectedContext: <String, dynamic>{'session_id': 'session-prod'},
+      evidence: <Map<String, dynamic>>[
+        <String, dynamic>{'kind': 'note', 'text': 'observed in prod'},
+      ],
+      createdFromSessionId: 'session-prod',
+    );
+
+    final first = await client.enqueueDevHandoff(
+      request,
+      idempotencyKey: 'mobile-handoff-key',
+    );
+    final second = await client.enqueueDevHandoff(
+      request,
+      idempotencyKey: 'mobile-handoff-key',
+    );
+
+    expect(calls, 2);
+    expect(first.id, 'handoff-1');
+    expect(second.id, first.id);
+    expect(first.status, 'queued');
+  });
+
+  test('api client surfaces disabled dev handoff errors', () async {
+    final client = ApiClient(
+      baseUrl: 'http://localhost:8000',
+      client: MockClient((request) async {
+        return http.Response(
+          '''
+          {
+            "detail": {
+              "code": "prod_handoff_disabled",
+              "message": "PROD handoff is disabled by rollout flag."
+            }
+          }
+          ''',
+          409,
+          headers: <String, String>{'content-type': 'application/json'},
+        );
+      }),
+    );
+
+    expect(
+      client.enqueueDevHandoff(
+        const DevPipelineHandoffRequest(
+          title: 'Fix PROD update',
+          problem: 'Update raced active work',
+          context: 'Session context',
+          acceptanceCriteria: 'No active work is interrupted.',
+        ),
+        idempotencyKey: 'mobile-handoff-key',
+      ),
+      throwsA(
+        isA<Exception>().having(
+          (error) => error.toString(),
+          'message',
+          contains('prod_handoff_disabled'),
+        ),
+      ),
+    );
   });
 
   test('api client starts domain factory on current session', () async {

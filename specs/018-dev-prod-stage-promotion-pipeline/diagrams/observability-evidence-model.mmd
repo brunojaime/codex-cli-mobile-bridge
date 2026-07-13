@@ -1,0 +1,79 @@
+erDiagram
+  HANDOFF {
+    string id
+    string source_environment
+    string target_environment
+    string source_session_id
+    string idempotency_key
+    string state
+    datetime created_at
+  }
+
+  STAGE {
+    string stage_id
+    string spec_id
+    string branch
+    string worktree_path
+    string backend_url
+    string app_channel
+    string status
+  }
+
+  STAGE_RUN {
+    string run_id
+    string stage_id
+    string chat_id
+    string reviewer_status
+    string final_summary
+    datetime completed_at
+  }
+
+  MERGE_RUN {
+    string merge_id
+    string stage_id
+    string source_branch
+    string target_branch
+    string merge_commit
+    string status
+  }
+
+  PROMOTION_RUN {
+    string promotion_id
+    string source_ref
+    string target_environment
+    string state
+    string release_scope
+    string rollback_hint
+  }
+
+  EVIDENCE {
+    string evidence_id
+    string owner_type
+    string owner_id
+    string kind
+    string uri
+    string digest
+    datetime captured_at
+  }
+
+  RELEASE_ARTIFACT {
+    string artifact_id
+    string promotion_id
+    string channel
+    string version
+    string tag
+    string url
+    string validation_status
+  }
+
+  HANDOFF ||--o| STAGE : materializes
+  STAGE ||--o{ STAGE_RUN : executes
+  STAGE ||--o{ MERGE_RUN : integrates
+  MERGE_RUN ||--o| PROMOTION_RUN : enables
+  PROMOTION_RUN ||--o{ RELEASE_ARTIFACT : publishes
+  HANDOFF ||--o{ EVIDENCE : records
+  STAGE_RUN ||--o{ EVIDENCE : records
+  MERGE_RUN ||--o{ EVIDENCE : records
+  PROMOTION_RUN ||--o{ EVIDENCE : records
+  RELEASE_ARTIFACT ||--o{ EVIDENCE : records
+

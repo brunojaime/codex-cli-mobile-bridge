@@ -12,7 +12,62 @@ ENV_FILE="${ROOT_DIR}/.env"
 # shellcheck source=scripts/backend_process_lib.sh
 source "${ROOT_DIR}/scripts/backend_process_lib.sh"
 
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --runtime-dir)
+      backend_require_arg_value "$1" "${2-}"
+      RUNTIME_DIR="${2:-}"
+      shift 2
+      ;;
+    --pid-file)
+      backend_require_arg_value "$1" "${2-}"
+      PID_FILE="${2:-}"
+      shift 2
+      ;;
+    --log-file)
+      backend_require_arg_value "$1" "${2-}"
+      LOG_FILE="${2:-}"
+      shift 2
+      ;;
+    --env-file)
+      backend_require_arg_value "$1" "${2-}"
+      ENV_FILE="${2:-}"
+      shift 2
+      ;;
+    *)
+      echo "Unknown argument: $1" >&2
+      exit 1
+      ;;
+  esac
+done
+
 mkdir -p "${RUNTIME_DIR}"
+mkdir -p "$(dirname "${PID_FILE}")" "$(dirname "${LOG_FILE}")"
+
+BACKEND_ENV_ALLOWED_KEYS=(
+  API_PORT
+  API_BASE_URL
+  CODEX_WORKDIR
+  PROJECTS_ROOT
+  CHAT_STORE_PATH
+  FEEDBACK_QUEUE_PATH
+  FEEDBACK_IMAGE_DIR
+  FEEDBACK_AUDIO_DIR
+  ASSET_DEPOT_DIR
+  PROJECT_FACTORY_STATE_DIR
+  BRIDGE_ENVIRONMENT
+  BRIDGE_STAGE_ID
+  BRIDGE_SPEC_ID
+  BRIDGE_STAGE_BRANCH
+  BRIDGE_STAGE_WORKTREE_PATH
+  BRIDGE_APP_CHANNEL
+  BRIDGE_UPDATER_CHANNEL
+  BRIDGE_APP_LABEL
+  BRIDGE_ENVIRONMENT_COLOR
+  DEV_PIPELINE_STATE_PATH
+  DEV_PIPELINE_RUNTIME_ROOT
+)
+backend_export_env_file_values "${ENV_FILE}" "${BACKEND_ENV_ALLOWED_KEYS[@]}"
 
 if [[ -f "${PID_FILE}" ]]; then
   EXISTING_PID="$(cat "${PID_FILE}")"

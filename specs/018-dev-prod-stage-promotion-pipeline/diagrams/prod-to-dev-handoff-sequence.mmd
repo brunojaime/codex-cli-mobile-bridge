@@ -1,0 +1,24 @@
+sequenceDiagram
+  autonumber
+  participant User
+  participant ProdApp as PROD App
+  participant ProdBackend as PROD Backend
+  participant Slash as Slash Handoff Mode
+  participant Queue as Control Plane Queue
+  participant DevWorker as DEV Worker
+  participant Stage as DEV Stage Worktree
+  participant DevChat as DEV Spec Chat
+
+  User->>ProdApp: Work normally in PROD
+  ProdApp->>ProdBackend: Chat/run real work
+  Note over ProdBackend: Normal PROD has no DEV/backlog context
+  User->>ProdApp: Invoke /dev-plan slash/action
+  ProdApp->>Slash: Load temporary handoff context
+  Slash->>ProdBackend: Submit handoff payload
+  ProdBackend->>Queue: enqueue_only immutable item
+  Queue-->>ProdBackend: item_id + queued status
+  ProdBackend-->>ProdApp: Confirmation only
+  Queue->>DevWorker: Claimed by DEV worker
+  DevWorker->>Stage: Materialize or attach spec in DEV worktree
+  DevWorker->>DevChat: Bind chat to stage/spec/branch
+  DevChat-->>User: DEV shows stage-specific work

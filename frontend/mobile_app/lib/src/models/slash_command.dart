@@ -46,12 +46,16 @@ class SlashCommandContext {
     this.hasActiveBackend = true,
     this.workbenchAvailable = true,
     this.appsAvailable = true,
+    this.isProdEnvironment = false,
+    this.devHandoffAvailable = false,
   });
 
   final bool isProjectFactoryIntake;
   final bool hasActiveBackend;
   final bool workbenchAvailable;
   final bool appsAvailable;
+  final bool isProdEnvironment;
+  final bool devHandoffAvailable;
 }
 
 abstract class SlashCommandProvider {
@@ -67,6 +71,11 @@ class GlobalSlashCommandProvider extends SlashCommandProvider {
   Iterable<SlashCommand> commands(SlashCommandContext context) {
     final backendDisabledReason =
         context.hasActiveBackend ? null : 'No active bridge server.';
+    final handoffDisabledReason = !context.hasActiveBackend
+        ? 'No active bridge server.'
+        : !context.isProdEnvironment
+            ? 'DEV handoff is only available from PROD.'
+            : 'PROD to DEV handoff is disabled by this backend.';
     return <SlashCommand>[
       const SlashCommand(
         id: 'new-project',
@@ -148,6 +157,18 @@ class GlobalSlashCommandProvider extends SlashCommandProvider {
             : SlashCommandActionKind.disabled,
         payload: 'apps',
         disabledReason: context.appsAvailable ? null : backendDisabledReason,
+      ),
+      SlashCommand(
+        id: 'dev-handoff',
+        slash: '/dev-handoff',
+        title: 'DEV Handoff',
+        description: 'Queue an explicit PROD to DEV handoff.',
+        scope: 'global',
+        actionKind: context.devHandoffAvailable
+            ? SlashCommandActionKind.callback
+            : SlashCommandActionKind.disabled,
+        disabledReason:
+            context.devHandoffAvailable ? null : handoffDisabledReason,
       ),
       const SlashCommand(
         id: 'plan',

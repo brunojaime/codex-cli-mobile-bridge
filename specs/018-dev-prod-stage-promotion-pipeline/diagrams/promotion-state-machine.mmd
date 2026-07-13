@@ -1,0 +1,28 @@
+stateDiagram-v2
+  [*] --> queued
+  queued --> preflight: promotion.run accepted
+  preflight --> blocked: dirty tree, stale branch, invalid target, or missing config
+  preflight --> validation: gates pass
+  validation --> blocked: tests or SDD doctor fail
+  validation --> release_preparation: validation passes
+  release_preparation --> blocked: missing tag, secrets, URLs, or updater config
+  release_preparation --> waiting_user_approval: release plan ready
+  waiting_user_approval --> blocked: approval denied or expired
+  waiting_user_approval --> drain_prod: user approves
+  drain_prod --> blocked: active PROD jobs do not drain
+  drain_prod --> deploy_backend: safe to restart
+  deploy_backend --> failed: backend deploy or restart fails
+  deploy_backend --> release_prod_app: backend healthy
+  release_prod_app --> failed: PROD APK release fails
+  release_prod_app --> release_dev_app: PROD app release recorded
+  release_dev_app --> failed: DEV APK release fails
+  release_dev_app --> post_validation: releases recorded
+  post_validation --> failed: health, network, updater, or app identity fails
+  post_validation --> notify: all validations pass
+  notify --> done: report stored
+  failed --> rolled_back: rollback step available and succeeds
+  failed --> blocked: rollback unavailable or needs operator action
+  blocked --> queued: operator remediates and retries
+  done --> [*]
+  rolled_back --> [*]
+

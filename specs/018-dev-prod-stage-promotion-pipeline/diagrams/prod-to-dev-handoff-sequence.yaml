@@ -1,0 +1,7 @@
+diagram_id: prod-to-dev-handoff-sequence
+diagram_type: sequence
+scope: feature
+status: planned
+owner: project
+source: specs/018-dev-prod-stage-promotion-pipeline/diagrams/prod-to-dev-handoff-sequence.mmd
+description: Sequence for temporary PROD slash handoff into DEV backlog and stage materialization.

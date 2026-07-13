@@ -16,7 +16,9 @@ import '../models/chat_turn_summary.dart';
 import '../models/agent_configuration.dart';
 import '../models/agent_profile.dart';
 import '../models/codex_tooling.dart';
+import '../models/dev_pipeline_handoff.dart';
 import '../models/project_factory.dart';
+import '../models/prod_update_status.dart';
 import '../models/server_capabilities.dart';
 import '../models/server_health.dart';
 import '../models/server_profile.dart';
@@ -276,6 +278,10 @@ class ChatScreen extends StatefulWidget {
     this.onActiveServerBaseUrlChanged,
     this.audioRecorderFactoryOverride,
     this.projectFactoryClientOverride,
+    this.devHandoffClientOverride,
+    this.initialServerHealthOverride,
+    this.initialProdUpdateStatusOverride,
+    this.prodUpdateClientOverride,
   });
 
   final String initialApiBaseUrl;
@@ -292,6 +298,12 @@ class ChatScreen extends StatefulWidget {
   final AudioNoteRecorder Function()? audioRecorderFactoryOverride;
   @visibleForTesting
   final ApiClient? projectFactoryClientOverride;
+  @visibleForTesting
+  final ApiClient? devHandoffClientOverride;
+  @visibleForTesting
+  final ServerHealth? initialServerHealthOverride;
+  final ProdUpdateStatus? initialProdUpdateStatusOverride;
+  final ApiClient? prodUpdateClientOverride;
   @override
   State<ChatScreen> createState() => _ChatScreenState();
 }
@@ -308,6 +320,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   final Map<String, int> _visibleSessionLimitsByGroup = <String, int>{};
   ServerProfile? _activeServer;
   ServerHealth? _activeServerHealth;
+  ProdUpdateStatus? _prodUpdateStatus;
   ServerCapabilities? _activeServerCapabilities;
   CodexToolingSnapshot? _activeCodexTooling;
   String? _serverErrorText;
@@ -354,6 +367,15 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     );
     _chatController =
         widget.controllerOverride ?? _buildController(widget.initialApiBaseUrl);
+    if (widget.initialServerHealthOverride != null) {
+      _activeServer = ServerProfile(
+        id: 'test-server',
+        name: widget.initialServerHealthOverride!.serverName,
+        baseUrl: widget.initialApiBaseUrl,
+      );
+      _activeServerHealth = widget.initialServerHealthOverride;
+    }
+    _prodUpdateStatus = widget.initialProdUpdateStatusOverride;
     if (widget.initialSidebarWorkspaces.isNotEmpty) {
       _sidebarWorkspaces = List<Workspace>.from(
         widget.initialSidebarWorkspaces,
@@ -584,6 +606,12 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             bottom: false,
             child: Column(
               children: <Widget>[
+                if (_prodUpdateStatus?.isVisible ?? false)
+                  _ProdUpdateStatusBanner(
+                    status: _prodUpdateStatus!,
+                    onAcknowledge: _acknowledgeProdUpdate,
+                    onForce: _forceProdUpdate,
+                  ),
                 Expanded(
                   child: _chatController.isLoading &&
                           _chatController.currentSession == null
@@ -1144,6 +1172,12 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                     hasActiveBackend: _activeServer != null,
                     workbenchAvailable: _activeServer != null,
                     appsAvailable: _activeServer != null,
+                    isProdEnvironment:
+                        _activeServerHealth?.environmentIdentity?.environment ==
+                            'prod',
+                    devHandoffAvailable: _activeServerHealth
+                            ?.environmentIdentity?.canEnqueueDevHandoff ??
+                        false,
                   ),
                   isProjectFactoryIntake: isProjectFactoryIntakeConfiguration(
                     _chatController.currentSession?.agentConfiguration,
@@ -1198,6 +1232,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       case 'new-project':
         await _openNewProjectFactory();
         return true;
+      case 'dev-handoff':
+        await _openDevHandoffDialog();
+        return true;
       case 'status':
       case 'review':
       case 'compact':
@@ -1222,6 +1259,136 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       default:
         return false;
     }
+  }
+
+  Future<void> _openDevHandoffDialog() async {
+    final identity = _activeServerHealth?.environmentIdentity;
+    if (!(identity?.canEnqueueDevHandoff ?? false)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('DEV handoff is not available here.')),
+      );
+      return;
+    }
+    final draft = await showDialog<_DevHandoffDraft>(
+      context: context,
+      builder: (context) => const _DevHandoffDialog(),
+    );
+    if (draft == null || !mounted) {
+      return;
+    }
+    final sessionId = _chatController.selectedSessionId;
+    final baseUrl = (_activeServer?.baseUrl ?? widget.initialApiBaseUrl)
+        .trim()
+        .replaceAll(RegExp(r'/$'), '');
+    final client =
+        widget.devHandoffClientOverride ?? ApiClient(baseUrl: baseUrl);
+    final request = DevPipelineHandoffRequest(
+      title: draft.title,
+      problem: draft.problem,
+      context: draft.context,
+      acceptanceCriteria: draft.acceptanceCriteria,
+      evidence: draft.evidence.trim().isEmpty
+          ? const <Map<String, dynamic>>[]
+          : <Map<String, dynamic>>[
+              <String, dynamic>{
+                'kind': 'note',
+                'text': draft.evidence.trim(),
+              },
+            ],
+      selectedContext: <String, dynamic>{
+        if (sessionId != null) 'session_id': sessionId,
+        'source': 'mobile_chat',
+        'context': draft.context,
+      },
+      createdFromSessionId: sessionId,
+    );
+    final idempotencyKey = _devHandoffIdempotencyKey(draft, sessionId);
+    try {
+      final handoff = await client.enqueueDevHandoff(
+        request,
+        idempotencyKey: idempotencyKey,
+      );
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('DEV handoff queued: ${handoff.id}')),
+      );
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('DEV handoff failed. $error')),
+      );
+    }
+  }
+
+  Future<void> _acknowledgeProdUpdate() async {
+    final baseUrl = (_activeServer?.baseUrl ?? widget.initialApiBaseUrl)
+        .trim()
+        .replaceAll(RegExp(r'/$'), '');
+    try {
+      final client = widget.prodUpdateClientOverride ?? ApiClient(baseUrl: baseUrl);
+      final status = await client.acknowledgeProdUpdate(
+        acknowledgedBy: 'mobile',
+      );
+      if (!mounted) return;
+      setState(() {
+        _prodUpdateStatus = status;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not acknowledge update. $error')),
+      );
+    }
+  }
+
+  Future<void> _forceProdUpdate() async {
+    final updateId = _prodUpdateStatus?.preparedUpdateId ?? 'update';
+    final confirmation = await showDialog<String>(
+      context: context,
+      builder: (context) => _ProdUpdateForceDialog(updateId: updateId),
+    );
+    if (confirmation == null || !mounted) {
+      return;
+    }
+    final baseUrl = (_activeServer?.baseUrl ?? widget.initialApiBaseUrl)
+        .trim()
+        .replaceAll(RegExp(r'/$'), '');
+    try {
+      final client = widget.prodUpdateClientOverride ?? ApiClient(baseUrl: baseUrl);
+      final status = await client.forceProdUpdate(
+        requestedBy: 'mobile',
+        strongConfirmation: confirmation,
+      );
+      if (!mounted) return;
+      setState(() {
+        _prodUpdateStatus = status;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not request force update. $error')),
+      );
+    }
+  }
+
+  String _devHandoffIdempotencyKey(
+    _DevHandoffDraft draft,
+    String? sessionId,
+  ) {
+    final raw = jsonEncode(<String, String?>{
+      'session_id': sessionId,
+      'title': draft.title,
+      'problem': draft.problem,
+      'context': draft.context,
+      'acceptance_criteria': draft.acceptanceCriteria,
+      'evidence': draft.evidence,
+    });
+    final encoded = base64Url.encode(utf8.encode(raw)).replaceAll('=', '');
+    return 'mobile-${encoded.substring(0, math.min(encoded.length, 120))}';
   }
 
   Widget _buildProjectFactoryIntakeCard(SessionDetail currentSession) {
@@ -2557,6 +2724,7 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
       _chatController = nextController;
       _activeServer = profile;
       _activeServerHealth = null;
+      _prodUpdateStatus = null;
       _activeServerCapabilities = null;
       _activeCodexTooling = null;
       _sidebarWorkspaces = sidebarWorkspaces;
@@ -2577,9 +2745,16 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
     try {
       final healthFuture = client.getHealth();
       final capabilitiesFuture = client.getCapabilities();
+      final prodUpdateFuture = client.getProdUpdateStatus();
       final initializeFuture = _chatController.initialize();
       final health = await healthFuture;
       final capabilities = await capabilitiesFuture;
+      ProdUpdateStatus? prodUpdateStatus;
+      try {
+        prodUpdateStatus = await prodUpdateFuture;
+      } catch (_) {
+        prodUpdateStatus = null;
+      }
       await initializeFuture;
       CodexToolingSnapshot? codexTooling;
       String? codexToolingErrorText;
@@ -2594,6 +2769,7 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
       if (mounted) {
         setState(() {
           _activeServerHealth = health;
+          _prodUpdateStatus = prodUpdateStatus;
           _activeServerCapabilities = capabilities;
           _activeCodexTooling = codexTooling;
           _codexToolingErrorText = codexToolingErrorText;
@@ -3028,6 +3204,12 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
           overflow: TextOverflow.ellipsis,
           style: const TextStyle(fontSize: 12, color: Color(0xFF8B97B5)),
         ),
+        if (_activeServerHealth?.environmentIdentity != null) ...[
+          const SizedBox(height: 6),
+          _EnvironmentIdentityBadge(
+            identity: _activeServerHealth!.environmentIdentity!,
+          ),
+        ],
         if (!isCompactAppBar && currentSession != null) ...[
           const SizedBox(height: 6),
           _AgentProfilePill(
@@ -3048,6 +3230,11 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
     final currentSession = _chatController.currentSession;
     if (currentSession != null) {
       segments.add(currentSession.workspaceName);
+      final identityLabel =
+          _activeServerHealth?.environmentIdentity?.displayLabel;
+      if (identityLabel != null && identityLabel.trim().isNotEmpty) {
+        segments.add(identityLabel);
+      }
       final statusLine = currentSession.conversationProduct?.statusLine.trim();
       if (statusLine != null && statusLine.isNotEmpty) {
         segments.add(statusLine);
@@ -5393,6 +5580,133 @@ String _filteredMessagesPlaceholderText(AgentDisplayMode displayMode) {
   };
 }
 
+class _DevHandoffDraft {
+  const _DevHandoffDraft({
+    required this.title,
+    required this.problem,
+    required this.context,
+    required this.acceptanceCriteria,
+    required this.evidence,
+  });
+
+  final String title;
+  final String problem;
+  final String context;
+  final String acceptanceCriteria;
+  final String evidence;
+}
+
+class _DevHandoffDialog extends StatefulWidget {
+  const _DevHandoffDialog();
+
+  @override
+  State<_DevHandoffDialog> createState() => _DevHandoffDialogState();
+}
+
+class _DevHandoffDialogState extends State<_DevHandoffDialog> {
+  final _formKey = GlobalKey<FormState>();
+  final _titleController = TextEditingController();
+  final _problemController = TextEditingController();
+  final _contextController = TextEditingController();
+  final _criteriaController = TextEditingController();
+  final _evidenceController = TextEditingController();
+
+  @override
+  void dispose() {
+    _titleController.dispose();
+    _problemController.dispose();
+    _contextController.dispose();
+    _criteriaController.dispose();
+    _evidenceController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('DEV Handoff'),
+      content: SizedBox(
+        width: 520,
+        child: Form(
+          key: _formKey,
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                _handoffField(_titleController, 'Title'),
+                const SizedBox(height: 12),
+                _handoffField(_problemController, 'Problem', maxLines: 3),
+                const SizedBox(height: 12),
+                _handoffField(_contextController, 'Context', maxLines: 4),
+                const SizedBox(height: 12),
+                _handoffField(
+                  _criteriaController,
+                  'Acceptance criteria',
+                  maxLines: 3,
+                ),
+                const SizedBox(height: 12),
+                TextFormField(
+                  controller: _evidenceController,
+                  minLines: 2,
+                  maxLines: 4,
+                  decoration: const InputDecoration(
+                    labelText: 'Evidence',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+      actions: <Widget>[
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        FilledButton.icon(
+          onPressed: _submit,
+          icon: const Icon(Icons.outbox_rounded),
+          label: const Text('Queue'),
+        ),
+      ],
+    );
+  }
+
+  TextFormField _handoffField(
+    TextEditingController controller,
+    String label, {
+    int maxLines = 1,
+  }) {
+    return TextFormField(
+      controller: controller,
+      minLines: maxLines == 1 ? 1 : 2,
+      maxLines: maxLines,
+      validator: (value) =>
+          (value ?? '').trim().isEmpty ? '$label is required.' : null,
+      decoration: InputDecoration(
+        labelText: label,
+        border: const OutlineInputBorder(),
+      ),
+    );
+  }
+
+  void _submit() {
+    if (!(_formKey.currentState?.validate() ?? false)) {
+      return;
+    }
+    Navigator.of(context).pop(
+      _DevHandoffDraft(
+        title: _titleController.text.trim(),
+        problem: _problemController.text.trim(),
+        context: _contextController.text.trim(),
+        acceptanceCriteria: _criteriaController.text.trim(),
+        evidence: _evidenceController.text.trim(),
+      ),
+    );
+  }
+}
+
 class _SlashCommandPalette extends StatelessWidget {
   const _SlashCommandPalette({
     required this.commands,
@@ -7335,6 +7649,238 @@ class _AgentProfilePill extends StatelessWidget {
   }
 }
 
+class _EnvironmentIdentityBadge extends StatelessWidget {
+  const _EnvironmentIdentityBadge({required this.identity});
+
+  final BridgeEnvironmentIdentity identity;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = _colorFromHex(identity.color);
+    final foreground = ThemeData.estimateBrightnessForColor(color) ==
+            Brightness.dark
+        ? Colors.white
+        : const Color(0xFF07131D);
+    final parts = <String>[
+      identity.environment.toUpperCase(),
+      identity.appChannel,
+      if (identity.stageId != null) identity.stageId!,
+      if (identity.branch != null) identity.branch!,
+      identity.backendUrl,
+    ];
+    final runtime = identity.stageRuntime;
+    final runtimeParts = <String>[
+      if (runtime?.health != null) 'health ${runtime!.health}',
+      if (runtime?.port != null) 'port ${runtime!.port}',
+      if (runtime?.lastRestartAt != null) 'restart ${runtime!.lastRestartAt}',
+      if (runtime?.lastHealthcheckAt != null)
+        'checked ${runtime!.lastHealthcheckAt}',
+      if (runtime?.url != null) 'source ${runtime!.url}',
+    ];
+    return Semantics(
+      label: 'Environment ${parts.join(' ')} ${runtimeParts.join(' ')}',
+      child: Container(
+        key: const ValueKey<String>('environment-identity-badge'),
+        constraints: const BoxConstraints(maxWidth: 720),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.18),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: color.withValues(alpha: 0.65)),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: color,
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Text(
+                    identity.environment.toUpperCase(),
+                    style: TextStyle(
+                      color: foreground,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Flexible(
+                  child: Text(
+                    parts.skip(1).join('  |  '),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            if (runtimeParts.isNotEmpty) ...[
+              const SizedBox(height: 3),
+              Text(
+                runtimeParts.join('  |  '),
+                key: const ValueKey<String>('stage-runtime-status'),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: Colors.white.withValues(alpha: 0.82),
+                  fontSize: 11,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ProdUpdateStatusBanner extends StatelessWidget {
+  const _ProdUpdateStatusBanner({
+    required this.status,
+    required this.onAcknowledge,
+    required this.onForce,
+  });
+
+  final ProdUpdateStatus status;
+  final VoidCallback onAcknowledge;
+  final VoidCallback onForce;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = switch (status.state) {
+      'failed' => const Color(0xFFFF6B6B),
+      'updated_pending_ack' => const Color(0xFF55D6BE),
+      'auto_update_eligible' => const Color(0xFFFFC857),
+      'updating' => const Color(0xFF8FEAFF),
+      _ => const Color(0xFFF59E0B),
+    };
+    return Container(
+      key: const ValueKey<String>('prod-update-status-banner'),
+      width: double.infinity,
+      margin: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Color.alphaBlend(
+          color.withValues(alpha: 0.18),
+          const Color(0xFF101931),
+        ),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: color.withValues(alpha: 0.55)),
+      ),
+      child: Wrap(
+        spacing: 10,
+        runSpacing: 8,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        children: <Widget>[
+          Icon(Icons.system_update_alt, color: color, size: 18),
+          Text(
+            _prodUpdateStatusLabel(status),
+            style: const TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          if (status.blockers.isNotEmpty)
+            Text(
+              status.blockers.join(', '),
+              style: const TextStyle(color: Color(0xFFDCE5FF), fontSize: 12),
+            ),
+          if (status.state == 'updated_pending_ack')
+            TextButton.icon(
+              onPressed: onAcknowledge,
+              icon: const Icon(Icons.check_circle_outline),
+              label: const Text('Acknowledge'),
+            ),
+          if (status.state == 'waiting_for_idle' || status.state == 'failed')
+            TextButton.icon(
+              onPressed: onForce,
+              icon: const Icon(Icons.warning_amber_outlined),
+              label: const Text('Force'),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+String _prodUpdateStatusLabel(ProdUpdateStatus status) {
+  final version = status.updateVersion ?? status.preparedUpdateId ?? 'update';
+  return switch (status.state) {
+    'waiting_for_idle' => 'PROD update waiting for idle: $version',
+    'auto_update_eligible' => 'PROD update ready: $version',
+    'updating' => 'PROD update running: $version',
+    'updated_pending_ack' => 'PROD update applied: $version',
+    'failed' => 'PROD update failed: $version',
+    _ => 'PROD update ${status.state}: $version',
+  };
+}
+
+class _ProdUpdateForceDialog extends StatefulWidget {
+  const _ProdUpdateForceDialog({required this.updateId});
+
+  final String updateId;
+
+  @override
+  State<_ProdUpdateForceDialog> createState() => _ProdUpdateForceDialogState();
+}
+
+class _ProdUpdateForceDialogState extends State<_ProdUpdateForceDialog> {
+  late final TextEditingController _controller = TextEditingController();
+
+  String get _expected => 'FORCE PROD UPDATE ${widget.updateId}';
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Force PROD Update'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Text(_expected),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _controller,
+            decoration: const InputDecoration(labelText: 'Confirmation'),
+            onChanged: (_) => setState(() {}),
+          ),
+        ],
+      ),
+      actions: <Widget>[
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: _controller.text == _expected
+              ? () => Navigator.of(context).pop(_controller.text)
+              : null,
+          child: const Text('Force'),
+        ),
+      ],
+    );
+  }
+}
+
 class NewProjectFactoryDraft {
   const NewProjectFactoryDraft({
     required this.name,
@@ -8504,13 +9050,11 @@ class _WebPreviewPanelDialogState extends State<WebPreviewPanelDialog> {
         itemBuilder: (context, index) => _WebPreviewCard(
           preview: _previews[index],
           onOpen: _previews[index].isActive
-              ? () => _openUrl(_previews[index].previewUrl)
+              ? () => unawaited(_openPreview(_previews[index]))
               : null,
           onCopy: _previews[index].previewUrl.isEmpty
               ? null
-              : () => unawaited(
-                    _copyPreviewText(context, _previews[index].previewUrl),
-                  ),
+              : () => unawaited(_copyPreviewAccessUrl(_previews[index])),
           onInvites: widget.listInvites == null
               ? null
               : () => _openInvites(_previews[index]),
@@ -8552,6 +9096,66 @@ class _WebPreviewPanelDialogState extends State<WebPreviewPanelDialog> {
       return;
     }
     await launchUrl(uri, mode: LaunchMode.externalApplication);
+  }
+
+  Future<void> _openPreview(WebPreview preview) async {
+    final url = await _previewAccessUrl(preview);
+    await _openUrl(url);
+  }
+
+  Future<void> _copyPreviewAccessUrl(WebPreview preview) async {
+    final url = await _previewAccessUrl(preview);
+    if (!mounted) {
+      return;
+    }
+    await _copyPreviewText(context, url);
+  }
+
+  Future<String> _previewAccessUrl(WebPreview preview) async {
+    final listInvites = widget.listInvites;
+    final createInvite = widget.createInvite;
+    final resendInvite = widget.resendInvite;
+    if (listInvites == null || (createInvite == null && resendInvite == null)) {
+      return preview.previewUrl;
+    }
+    try {
+      final invites = await listInvites(preview.previewId);
+      final reusableInvites = invites
+          .where((invite) => invite.canRefreshAccessUrl)
+          .toList(growable: false);
+      for (final invite in reusableInvites) {
+        if (invite.hasInviteUrl) {
+          return invite.inviteUrl!.trim();
+        }
+      }
+      if (resendInvite != null && reusableInvites.isNotEmpty) {
+        final invite = await resendInvite(
+          previewId: preview.previewId,
+          inviteId: reusableInvites.first.inviteId,
+        );
+        if (invite.hasInviteUrl) {
+          return invite.inviteUrl!.trim();
+        }
+      }
+      if (createInvite != null) {
+        final invite = await createInvite(
+          preview.previewId,
+          ttlSeconds: 7 * 24 * 60 * 60,
+          singleUse: false,
+          role: 'admin',
+        );
+        if (invite.hasInviteUrl) {
+          return invite.inviteUrl!.trim();
+        }
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Preview invite failed: $error')),
+        );
+      }
+    }
+    return preview.previewUrl;
   }
 
   Future<void> _openInvites(WebPreview preview) async {

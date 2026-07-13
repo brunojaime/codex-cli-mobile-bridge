@@ -1,0 +1,44 @@
+flowchart TB
+  subgraph Repo[Repository branches]
+    DevMain[dev/main]
+    Branch017[dev/spec-017-new-project-deterministic-init-pipeline]
+    Branch018[dev/spec-018-dev-prod-stage-promotion-pipeline]
+  end
+
+  subgraph Stage017[Stage spec-017]
+    Worktree017[Worktree path for spec-017]
+    Backend017[DEV backend port A]
+    Chat017[Chat bound to spec-017]
+    App017[DEV app stage selector spec-017]
+  end
+
+  subgraph Stage018[Stage spec-018]
+    Worktree018[Worktree path for spec-018]
+    Backend018[DEV backend port B]
+    Chat018[Chat bound to spec-018]
+    App018[DEV app stage selector spec-018]
+  end
+
+  subgraph Registry[Stage registry]
+    Registry017[Record spec-017 branch worktree backend chat]
+    Registry018[Record spec-018 branch worktree backend chat]
+  end
+
+  DevMain --> Branch017
+  DevMain --> Branch018
+  Branch017 --> Worktree017
+  Branch018 --> Worktree018
+  Registry017 --> Worktree017
+  Registry017 --> Backend017
+  Registry017 --> Chat017
+  Registry018 --> Worktree018
+  Registry018 --> Backend018
+  Registry018 --> Chat018
+  App017 --> Backend017
+  App018 --> Backend018
+  Chat017 --> Worktree017
+  Chat018 --> Worktree018
+
+  Chat017 -. denied by registry .-> Worktree018
+  Chat018 -. denied by registry .-> Worktree017
+

@@ -1,0 +1,104 @@
+erDiagram
+  ENVIRONMENT ||--o{ STAGE : owns
+  ENVIRONMENT ||--o{ HANDOFF : sources
+  HANDOFF ||--o| BACKLOG_ITEM : creates
+  BACKLOG_ITEM ||--o| SPEC_MATERIALIZATION : imports
+  SPEC_MATERIALIZATION ||--o| STAGE : creates
+  STAGE ||--o{ STAGE_RUN : executes
+  STAGE_RUN ||--o{ RUN_EVIDENCE : records
+  STAGE ||--o| MERGE_QUEUE_ITEM : requests
+  MERGE_QUEUE_ITEM ||--o{ VALIDATION_RESULT : records
+  MERGE_QUEUE_ITEM ||--o| PROMOTION_REQUEST : enables
+  PROMOTION_REQUEST ||--o{ PROMOTION_STEP : runs
+  PROMOTION_STEP ||--o{ VALIDATION_RESULT : records
+  PROMOTION_REQUEST ||--o{ RELEASE_ARTIFACT : produces
+
+  ENVIRONMENT {
+    string id
+    string kind
+    string backend_url
+    string app_channel
+    string capability_set
+  }
+  HANDOFF {
+    string id
+    string source_environment
+    string target_environment
+    string source_session_id
+    string idempotency_key
+    string immutable_payload_hash
+  }
+  BACKLOG_ITEM {
+    string id
+    string handoff_id
+    string state
+    string claimed_by
+    datetime claimed_at
+  }
+  SPEC_MATERIALIZATION {
+    string id
+    string backlog_item_id
+    string spec_id
+    string mode
+    string status
+  }
+  STAGE {
+    string id
+    string spec_id
+    string branch
+    string base_branch
+    string worktree_path
+    string backend_url
+    string status
+  }
+  STAGE_RUN {
+    string id
+    string stage_id
+    string session_id
+    string run_id
+    string state
+    int generator_turns
+    int reviewer_turns
+  }
+  RUN_EVIDENCE {
+    string id
+    string run_id
+    string evidence_type
+    string path_or_command
+    string digest
+  }
+  MERGE_QUEUE_ITEM {
+    string id
+    string stage_id
+    string target_branch
+    string state
+    string merge_commit
+  }
+  PROMOTION_REQUEST {
+    string id
+    string source_branch
+    string target_environment
+    string state
+    string approved_by
+  }
+  PROMOTION_STEP {
+    string id
+    string promotion_id
+    string step_name
+    string state
+    string log_digest
+  }
+  VALIDATION_RESULT {
+    string id
+    string owner_id
+    string validation_name
+    string status
+    string evidence_path
+  }
+  RELEASE_ARTIFACT {
+    string id
+    string promotion_id
+    string channel
+    string tag
+    string url
+  }

@@ -29,7 +29,18 @@ const _configuredCodexBridgeWorkspacePath = String.fromEnvironment(
   'CODEX_BRIDGE_WORKSPACE_PATH',
   defaultValue: 'codex-cli-mobile-bridge',
 );
-const _codexMobileSourceApp = 'codex-mobile';
+const _configuredBridgeSourceApp = String.fromEnvironment(
+  'BRIDGE_APP_SOURCE_APP',
+  defaultValue: 'codex-mobile',
+);
+const _configuredBridgeAppLabel = String.fromEnvironment(
+  'BRIDGE_APP_LABEL',
+  defaultValue: 'Codex Mobile Bridge',
+);
+const _configuredBridgeUpdaterChannel = String.fromEnvironment(
+  'BRIDGE_UPDATER_CHANNEL',
+  defaultValue: 'prod',
+);
 const _fallbackAppVersion = '1.0.0';
 const _fallbackAppBuild = 41;
 
@@ -140,7 +151,7 @@ class _CodexMobileAppState extends State<CodexMobileApp> {
     );
 
     return MaterialApp(
-      title: 'Codex Remote',
+      title: _configuredBridgeAppLabel,
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         useMaterial3: true,
@@ -181,10 +192,11 @@ class _CodexMobileAppState extends State<CodexMobileApp> {
           sddActionSubmitter: _submitBridgeSddCodexAction,
           child: CodexAppUpdater(
             config: CodexAppUpdaterConfig(
-              sourceApp: _codexMobileSourceApp,
+              sourceApp: _configuredBridgeSourceApp,
               bridgeUrl: _activeBridgeUrl,
               currentVersion: widget.currentVersion,
               currentBuild: widget.currentBuild,
+              channel: _configuredBridgeUpdaterChannel,
               enabled: widget.appUpdaterEnabled,
               autoInstallAvailableUpdates: _configuredAppUpdaterAutoInstall,
             ),
@@ -203,8 +215,8 @@ Future<SddFeedbackSubmissionResult> _submitBridgeSddFeedback(
   SddFeedbackDraft draft,
 ) async {
   final item = await ApiClient(baseUrl: bridgeUrl).createFeedbackQueueItem(
-    sourceApp: _codexMobileSourceApp,
-    sourceDisplayName: 'Codex Mobile',
+    sourceApp: _configuredBridgeSourceApp,
+    sourceDisplayName: _configuredBridgeAppLabel,
     comment: draft.comment,
     feedbackKind: draft.target.feedbackKind,
     contextMetadata: draft.target.toContextMetadata(),

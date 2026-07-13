@@ -1,0 +1,6 @@
+diagram_id: observability-evidence-model
+diagram_type: data-impact
+scope: feature
+status: draft
+owner: project
+source: specs/018-dev-prod-stage-promotion-pipeline/diagrams/observability-evidence-model.mmd

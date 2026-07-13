@@ -1,0 +1,48 @@
+flowchart LR
+  subgraph ProdChannel[PROD release channel]
+    ProdAPK[PROD APK]
+    ProdLabel[App label PROD]
+    ProdColor[PROD color token]
+    ProdUpdater[Production updater channel]
+    ProdAPI[PROD API base URL]
+    ProdIdentity[Backend identity environment=prod]
+  end
+
+  subgraph DevChannel[DEV release channel]
+    DevAPK[DEV APK]
+    DevLabel[App label DEV]
+    DevColor[DEV color token]
+    DevUpdater[DEV updater channel]
+    DevAPI[DEV API base URL]
+    DevIdentity[Backend identity environment=dev stage visible]
+  end
+
+  subgraph Validation[Release validation]
+    BuildDefines[Build defines and signing inputs]
+    VisualCheck[Badge, header, color, label check]
+    URLCheck[API URL and updater URL check]
+    HealthCheck[Backend health identity check]
+    NoMock[No mock or demo defaults]
+  end
+
+  BuildDefines --> ProdAPK
+  BuildDefines --> DevAPK
+  ProdAPK --> ProdLabel
+  ProdAPK --> ProdColor
+  ProdAPK --> ProdUpdater
+  ProdAPK --> ProdAPI
+  ProdAPI --> ProdIdentity
+  DevAPK --> DevLabel
+  DevAPK --> DevColor
+  DevAPK --> DevUpdater
+  DevAPK --> DevAPI
+  DevAPI --> DevIdentity
+  ProdAPK --> VisualCheck
+  DevAPK --> VisualCheck
+  ProdAPI --> URLCheck
+  DevAPI --> URLCheck
+  ProdIdentity --> HealthCheck
+  DevIdentity --> HealthCheck
+  ProdAPK --> NoMock
+  DevAPK --> NoMock
+

@@ -22,6 +22,7 @@ from backend.app.domain.entities.chat_message import (
     ChatMessageAuthorType,
     ChatMessage,
     ChatMessageReasonCode,
+    is_agent_follow_up,
     is_follow_up_terminal_failure,
     is_follow_up_waiting_status,
     orphaned_follow_up_resolution_status,
@@ -183,6 +184,12 @@ class BackendDrainStatus:
     active_jobs: list[Job]
     active_session_ids: list[str]
     in_flight_message_ids: list[str]
+    active_agent_run_ids: list[str] | None = None
+    pending_follow_up_message_ids: list[str] | None = None
+    sdd_codex_job_ids: list[str] | None = None
+    project_factory_job_ids: list[str] | None = None
+    domain_factory_job_ids: list[str] | None = None
+    unknown_blockers: list[str] | None = None
     requested_at: datetime | None = None
 
     @property
@@ -196,6 +203,9 @@ class BackendDrainStatus:
             and self.active_job_count == 0
             and not self.active_session_ids
             and not self.in_flight_message_ids
+            and not (self.active_agent_run_ids or [])
+            and not (self.pending_follow_up_message_ids or [])
+            and not (self.unknown_blockers or [])
         )
 
     @property
@@ -506,7 +516,17 @@ class MessageService:
         with self._maintenance_lock:
             requested = self._drain_requested
             requested_at = self._drain_requested_at
-            active_jobs, active_session_ids, in_flight_message_ids = (
+            (
+                active_jobs,
+                active_session_ids,
+                in_flight_message_ids,
+                active_agent_run_ids,
+                pending_follow_up_message_ids,
+                sdd_codex_job_ids,
+                project_factory_job_ids,
+                domain_factory_job_ids,
+                unknown_blockers,
+            ) = (
                 self._drain_blocking_work()
             )
         return BackendDrainStatus(
@@ -515,6 +535,12 @@ class MessageService:
             active_jobs=active_jobs,
             active_session_ids=active_session_ids,
             in_flight_message_ids=in_flight_message_ids,
+            active_agent_run_ids=active_agent_run_ids,
+            pending_follow_up_message_ids=pending_follow_up_message_ids,
+            sdd_codex_job_ids=sdd_codex_job_ids,
+            project_factory_job_ids=project_factory_job_ids,
+            domain_factory_job_ids=domain_factory_job_ids,
+            unknown_blockers=unknown_blockers,
         )
 
     def _ensure_accepting_new_jobs(self) -> None:
@@ -527,7 +553,9 @@ class MessageService:
                 "Backend drain is active; new Codex jobs are temporarily disabled."
             )
 
-    def _drain_blocking_work(self) -> tuple[list[Job], list[str], list[str]]:
+    def _drain_blocking_work(
+        self,
+    ) -> tuple[list[Job], list[str], list[str], list[str], list[str], list[str], list[str], list[str], list[str]]:
         self._reconcile_jobs_for_drain()
         sessions = self._repository.list_sessions()
         for session in sessions:
@@ -546,13 +574,52 @@ class MessageService:
             for session in refreshed_sessions
             if session.active_agent_run_id is not None
         ]
+        active_agent_run_ids = [
+            session.active_agent_run_id
+            for session in refreshed_sessions
+            if session.active_agent_run_id is not None
+        ]
         in_flight_message_ids: list[str] = []
+        pending_follow_up_message_ids: list[str] = []
         for session in refreshed_sessions:
             for message in self._repository.list_messages(session.id):
                 if message.status in _IN_FLIGHT_MESSAGE_STATUSES:
                     in_flight_message_ids.append(message.id)
+                if (
+                    is_agent_follow_up(message.agent_id)
+                    and is_follow_up_waiting_status(message.status)
+                ):
+                    pending_follow_up_message_ids.append(message.id)
 
-        return active_jobs, active_session_ids, in_flight_message_ids
+        sdd_codex_job_ids: list[str] = []
+        project_factory_job_ids: list[str] = []
+        domain_factory_job_ids: list[str] = []
+        for job in active_jobs:
+            descriptor = " ".join(
+                [
+                    job.message,
+                    job.execution_message or "",
+                    str(job.conversation_kind),
+                    str(job.agent_id),
+                ]
+            ).lower()
+            sdd_codex_job_ids.append(job.id)
+            if "project factory" in descriptor:
+                project_factory_job_ids.append(job.id)
+            if "domain factory" in descriptor:
+                domain_factory_job_ids.append(job.id)
+
+        return (
+            active_jobs,
+            active_session_ids,
+            in_flight_message_ids,
+            active_agent_run_ids,
+            pending_follow_up_message_ids,
+            sdd_codex_job_ids,
+            project_factory_job_ids,
+            domain_factory_job_ids,
+            [],
+        )
 
     def _reconcile_stale_active_agent_runs(self, sessions: list[ChatSession]) -> None:
         active_jobs = self._repository.list_jobs(statuses=_ACTIVE_JOB_STATUSES)

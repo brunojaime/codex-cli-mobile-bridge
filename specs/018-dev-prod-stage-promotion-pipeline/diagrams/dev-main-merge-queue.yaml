@@ -1,0 +1,6 @@
+diagram_id: dev-main-merge-queue
+diagram_type: component-impact
+scope: feature
+status: draft
+owner: project
+source: specs/018-dev-prod-stage-promotion-pipeline/diagrams/dev-main-merge-queue.mmd

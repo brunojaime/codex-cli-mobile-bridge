@@ -1,0 +1,6 @@
+diagram_id: prod-handoff-sequence
+diagram_type: sequence
+scope: feature
+status: draft
+owner: project
+source: specs/018-dev-prod-stage-promotion-pipeline/diagrams/prod-handoff-sequence.mmd

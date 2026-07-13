@@ -1,0 +1,7 @@
+diagram_id: stage-runtime-isolation
+diagram_type: component-impact
+scope: feature
+status: planned
+owner: project
+source: specs/018-dev-prod-stage-promotion-pipeline/diagrams/stage-runtime-isolation.mmd
+description: Deployment view showing one backend process, port, data dir, logs, PID, env file, and chat route per DEV stage.

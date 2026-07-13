@@ -1,0 +1,26 @@
+stateDiagram-v2
+  [*] --> queued
+  queued --> claimed: DEV worker lock
+  claimed --> materializing_spec: validate target and dedupe
+  materializing_spec --> ready_for_stage: spec created or attached
+  materializing_spec --> blocked: invalid target or missing context
+  ready_for_stage --> stage_active: stage registry entry created
+  stage_active --> dev_done: reviewer complete
+  stage_active --> failed: run failed after retries
+  dev_done --> waiting_user_validation: evidence published
+  waiting_user_validation --> approved_by_user: user approves
+  waiting_user_validation --> stage_active: user requests fixes
+  approved_by_user --> ready_for_dev_main: merge queue requested
+  ready_for_dev_main --> integrating: serialized merge lock acquired
+  integrating --> merged_to_dev_main: gates and integration pass
+  integrating --> blocked: conflict or failed validation
+  merged_to_dev_main --> ready_for_prod_promotion: release scope selected
+  ready_for_prod_promotion --> promoting: promotion.run accepted
+  promoting --> promoted_to_prod: promotion done
+  promoting --> blocked: approval, drain, validation, or config gate
+  promoting --> failed: deterministic step failed
+  blocked --> stage_active: remediation in stage
+  failed --> cancelled: operator closes item
+  promoted_to_prod --> [*]
+  cancelled --> [*]
+

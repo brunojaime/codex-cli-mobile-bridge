@@ -3177,6 +3177,12 @@ class BackendDrainStatusResponse(BaseModel):
     active_jobs: list[JobResponse]
     active_session_ids: list[str]
     in_flight_message_ids: list[str]
+    active_agent_run_ids: list[str] = Field(default_factory=list)
+    pending_follow_up_message_ids: list[str] = Field(default_factory=list)
+    sdd_codex_job_ids: list[str] = Field(default_factory=list)
+    project_factory_job_ids: list[str] = Field(default_factory=list)
+    domain_factory_job_ids: list[str] = Field(default_factory=list)
+    unknown_blockers: list[str] = Field(default_factory=list)
     requested_at: datetime | None = None
 
     @classmethod
@@ -3190,6 +3196,12 @@ class BackendDrainStatusResponse(BaseModel):
             active_jobs=[JobResponse.from_domain(job) for job in status.active_jobs],
             active_session_ids=status.active_session_ids,
             in_flight_message_ids=status.in_flight_message_ids,
+            active_agent_run_ids=status.active_agent_run_ids or [],
+            pending_follow_up_message_ids=status.pending_follow_up_message_ids or [],
+            sdd_codex_job_ids=status.sdd_codex_job_ids or [],
+            project_factory_job_ids=status.project_factory_job_ids or [],
+            domain_factory_job_ids=status.domain_factory_job_ids or [],
+            unknown_blockers=status.unknown_blockers or [],
             requested_at=status.requested_at,
         )
 
@@ -3223,6 +3235,184 @@ class HealthResponse(BaseModel):
     tailscale_suggested_url: str | None = None
     preferred_client_url: str | None = None
     public_base_urls: list[str] = Field(default_factory=list)
+    environment_identity: dict[str, Any] = Field(default_factory=dict)
+
+
+class DevPipelineHandoffRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    kind: str = "bridge.devHandoff"
+    version: int = 1
+    source_environment: Literal["prod"] = "prod"
+    target_environment: Literal["dev"] = "dev"
+    operation: Literal["enqueue_only"] = "enqueue_only"
+    title: str = Field(..., min_length=1, max_length=240)
+    problem: str = Field(..., min_length=1, max_length=5000)
+    context: str = Field(..., min_length=1, max_length=20000)
+    selected_context: dict[str, Any] = Field(default_factory=dict)
+    evidence: list[dict[str, Any]] = Field(default_factory=list)
+    proposed_spec: str | None = Field(default=None, max_length=120)
+    proposed_plan: str | None = Field(default=None, max_length=120)
+    proposed_tasks: list[str] = Field(default_factory=list)
+    acceptance_criteria: str = Field(..., min_length=1, max_length=10000)
+    regression_tests: list[str] = Field(default_factory=list)
+    risks: list[str] = Field(default_factory=list)
+    created_from_session_id: str | None = Field(default=None, max_length=120)
+    created_by_action: str = Field(default="prod_dev_handoff", max_length=120)
+    idempotency_key: str | None = Field(default=None, max_length=160)
+
+
+class DevPipelineClaimRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    worker_id: str = Field(..., min_length=1, max_length=160)
+
+
+class DevPipelineMaterializeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    worker_id: str = Field(..., min_length=1, max_length=160)
+
+
+class DevPipelineBackfillRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    dry_run: bool = True
+    spec_ids: list[str] = Field(default_factory=list)
+
+
+class DevPipelineStageRegisterRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    spec_id: str = Field(..., min_length=1, max_length=160)
+    stage_id: str | None = Field(default=None, max_length=80)
+    branch: str | None = Field(default=None, max_length=240)
+    worktree_path: str | None = Field(default=None, max_length=1000)
+    backend_url: str | None = Field(default=None, max_length=500)
+    owner: str | None = Field(default=None, max_length=160)
+
+
+class DevPipelineSessionBindRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    session_id: str = Field(..., min_length=1, max_length=160)
+    stage_id: str = Field(..., min_length=1, max_length=80)
+    workspace_path: str = Field(..., min_length=1, max_length=1000)
+    branch: str = Field(..., min_length=1, max_length=240)
+
+
+class DevPipelineStageSessionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    session_id: str | None = Field(default=None, max_length=160)
+    title: str | None = Field(default=None, max_length=240)
+
+
+class DevPipelineStageRunRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    session_id: str = Field(..., min_length=1, max_length=160)
+    requested_by: str = Field(default="dev-worker", max_length=160)
+    initial_prompt: str | None = Field(default=None, max_length=20000)
+
+
+class DevPipelineStageRunControlRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    requested_by: str = Field(default="dev-worker", max_length=160)
+
+
+class DevPipelineStageLifecycleRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    action: Literal["start", "stop", "restart", "status", "logs", "healthcheck"]
+    apply: bool = False
+
+
+class DevPipelineMergeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    stage_id: str = Field(..., min_length=1, max_length=80)
+    requested_by: str = Field(..., min_length=1, max_length=160)
+    approved: bool = False
+    evidence_validated: bool = False
+    validation_passed: bool | None = None
+    validation_log: str | None = Field(default=None, max_length=10000)
+    tests_executed: list[str] = Field(default_factory=list)
+
+
+class DevPipelineMergeApplyRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    requested_by: str = Field(default="dev-worker", min_length=1, max_length=160)
+    evidence_validated: bool = False
+    validation_passed: bool | None = None
+    validation_log: str | None = Field(default=None, max_length=10000)
+    tests_executed: list[str] = Field(default_factory=list)
+
+
+class DevPipelinePromotionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    requested_by: str = Field(..., min_length=1, max_length=160)
+    target: Literal["prod"] = "prod"
+    release_tag: str | None = Field(default=None, max_length=160)
+    user_approved: bool = False
+    dry_run: bool = True
+
+
+class DevPipelinePromotionAdvanceRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    requested_by: str = Field(default="control", min_length=1, max_length=160)
+    user_approved: bool = False
+    dry_run: bool = True
+
+
+class DevPipelineProdUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    prepared_update_id: str | None = Field(default=None, max_length=160)
+    update_version: str | None = Field(default=None, max_length=160)
+    force_requested: bool = False
+    acknowledged: bool = False
+    requested_by: str | None = Field(default=None, max_length=160)
+    strong_confirmation: str | None = Field(default=None, max_length=240)
+
+
+class DevPipelineProdUpdatePrepareRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    prepared_update_id: str = Field(..., min_length=1, max_length=160)
+    update_version: str | None = Field(default=None, max_length=160)
+    requested_by: str = Field(default="control", min_length=1, max_length=160)
+
+
+class DevPipelineProdUpdateAcknowledgeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    acknowledged_by: str = Field(default="operator", min_length=1, max_length=160)
+
+
+class DevPipelineProdUpdateForceRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    requested_by: str = Field(default="control", min_length=1, max_length=160)
+    strong_confirmation: str = Field(..., min_length=1, max_length=240)
+
+
+class DevPipelineReleaseChannelValidationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    configs: list[dict[str, Any]]
+
+
+class DevPipelineResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    kind: str
+    version: int = 1
+    data: dict[str, Any] | list[Any]
 
 
 class PersistenceIntegrityIssueResponse(BaseModel):

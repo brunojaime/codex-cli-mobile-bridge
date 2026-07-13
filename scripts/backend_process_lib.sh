@@ -16,6 +16,65 @@ backend_read_env_value() {
   printf '%s\n' "${line#*=}" | sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'$//"
 }
 
+backend_require_arg_value() {
+  local flag="$1"
+  local value="${2-}"
+  if [[ -z "${value}" ]]; then
+    echo "${flag} requires a non-empty value." >&2
+    exit 1
+  fi
+}
+
+backend_is_allowed_env_key() {
+  local key="$1"
+  shift
+  local allowed
+  for allowed in "$@"; do
+    if [[ "${key}" == "${allowed}" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+backend_export_env_file_values() {
+  local file="$1"
+  shift
+  if [[ ! -f "${file}" ]]; then
+    return 0
+  fi
+
+  local line key value first last
+  while IFS= read -r line || [[ -n "${line}" ]]; do
+    line="${line%$'\r'}"
+    line="${line#"${line%%[![:space:]]*}"}"
+    if [[ -z "${line}" || "${line}" == \#* ]]; then
+      continue
+    fi
+    if [[ "${line}" =~ ^export[[:space:]]+([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]]; then
+      key="${BASH_REMATCH[1]}"
+      value="${BASH_REMATCH[2]}"
+    elif [[ "${line}" =~ ^([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]]; then
+      key="${BASH_REMATCH[1]}"
+      value="${BASH_REMATCH[2]}"
+    else
+      continue
+    fi
+    if ! backend_is_allowed_env_key "${key}" "$@"; then
+      continue
+    fi
+    if [[ ${#value} -ge 2 ]]; then
+      first="${value:0:1}"
+      last="${value: -1}"
+      if [[ "${first}" == "${last}" && ( "${first}" == "\"" || "${first}" == "'" ) ]]; then
+        value="${value:1:${#value}-2}"
+      fi
+    fi
+    printf -v "${key}" '%s' "${value}"
+    export "${key}"
+  done < "${file}"
+}
+
 backend_is_expected_process() {
   local root_dir="$1"
   local pid="$2"

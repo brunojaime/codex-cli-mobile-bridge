@@ -1,0 +1,115 @@
+id: 018-dev-prod-stage-promotion-pipeline
+slug: 018-dev-prod-stage-promotion-pipeline
+title: Dev Prod Stage And Deterministic Promotion Pipeline
+description: Define isolated PROD and DEV operation lanes, DEV spec stages by worktree, deterministic handoff queues, merge gates, promotion tooling, and separate DEV/PROD app releases.
+status: planned
+generated:
+  title: false
+  description: false
+  user_pinned_title: true
+  user_pinned_description: true
+tasks:
+  total: 66
+  completed: 0
+  pending: 66
+diagrams:
+  total: 18
+  items:
+    system-context:
+      path: diagrams/system-context.mmd
+      diagram_type: system-context
+      metadata_path: diagrams/system-context.yaml
+    lane-permission-model:
+      path: diagrams/lane-permission-model.mmd
+      diagram_type: component-impact
+      metadata_path: diagrams/lane-permission-model.yaml
+    prod-handoff-sequence:
+      path: diagrams/prod-handoff-sequence.mmd
+      diagram_type: sequence
+      metadata_path: diagrams/prod-handoff-sequence.yaml
+    prod-to-dev-handoff-sequence:
+      path: diagrams/prod-to-dev-handoff-sequence.mmd
+      diagram_type: sequence
+      metadata_path: diagrams/prod-to-dev-handoff-sequence.yaml
+    backlog-stage-lifecycle:
+      path: diagrams/backlog-stage-lifecycle.mmd
+      diagram_type: state
+      metadata_path: diagrams/backlog-stage-lifecycle.yaml
+    backlog-stage-state-machine:
+      path: diagrams/backlog-stage-state-machine.mmd
+      diagram_type: state
+      metadata_path: diagrams/backlog-stage-state-machine.yaml
+    stage-worktree-topology:
+      path: diagrams/stage-worktree-topology.mmd
+      diagram_type: deployment
+      metadata_path: diagrams/stage-worktree-topology.yaml
+    worktree-topology:
+      path: diagrams/worktree-topology.mmd
+      diagram_type: deployment
+      metadata_path: diagrams/worktree-topology.yaml
+    dev-agent-review-loop:
+      path: diagrams/dev-agent-review-loop.mmd
+      diagram_type: sequence
+      metadata_path: diagrams/dev-agent-review-loop.yaml
+    dev-main-merge-queue:
+      path: diagrams/dev-main-merge-queue.mmd
+      diagram_type: component-impact
+      metadata_path: diagrams/dev-main-merge-queue.yaml
+    promotion-pipeline:
+      path: diagrams/promotion-pipeline.mmd
+      diagram_type: component-impact
+      metadata_path: diagrams/promotion-pipeline.yaml
+    promotion-state-machine:
+      path: diagrams/promotion-state-machine.mmd
+      diagram_type: state
+      metadata_path: diagrams/promotion-state-machine.yaml
+    prod-promotion-sequence:
+      path: diagrams/prod-promotion-sequence.mmd
+      diagram_type: sequence
+      metadata_path: diagrams/prod-promotion-sequence.yaml
+    release-channel-deployment:
+      path: diagrams/release-channel-deployment.mmd
+      diagram_type: deployment
+      metadata_path: diagrams/release-channel-deployment.yaml
+    control-plane-data-model:
+      path: diagrams/control-plane-data-model.mmd
+      diagram_type: data-impact
+      metadata_path: diagrams/control-plane-data-model.yaml
+    observability-evidence-model:
+      path: diagrams/observability-evidence-model.mmd
+      diagram_type: entity-relationship
+      metadata_path: diagrams/observability-evidence-model.yaml
+    stage-runtime-isolation:
+      path: diagrams/stage-runtime-isolation.mmd
+      diagram_type: deployment
+      metadata_path: diagrams/stage-runtime-isolation.yaml
+    prod-backend-update-gate:
+      path: diagrams/prod-backend-update-gate.mmd
+      diagram_type: state
+      metadata_path: diagrams/prod-backend-update-gate.yaml
+last_run_state: planned
+available_files:
+  - spec.md
+  - plan.md
+  - tasks.md
+  - tree.json
+  - traceability.yaml
+  - diagrams/index.md
+  - diagrams/system-context.mmd
+  - diagrams/lane-permission-model.mmd
+  - diagrams/prod-handoff-sequence.mmd
+  - diagrams/prod-to-dev-handoff-sequence.mmd
+  - diagrams/backlog-stage-lifecycle.mmd
+  - diagrams/backlog-stage-state-machine.mmd
+  - diagrams/stage-worktree-topology.mmd
+  - diagrams/worktree-topology.mmd
+  - diagrams/dev-agent-review-loop.mmd
+  - diagrams/dev-main-merge-queue.mmd
+  - diagrams/promotion-pipeline.mmd
+  - diagrams/promotion-state-machine.mmd
+  - diagrams/prod-promotion-sequence.mmd
+  - diagrams/release-channel-deployment.mmd
+  - diagrams/control-plane-data-model.mmd
+  - diagrams/observability-evidence-model.mmd
+  - diagrams/stage-runtime-isolation.mmd
+  - diagrams/prod-backend-update-gate.mmd

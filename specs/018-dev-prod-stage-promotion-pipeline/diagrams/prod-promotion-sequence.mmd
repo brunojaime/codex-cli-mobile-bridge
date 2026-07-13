@@ -1,0 +1,33 @@
+sequenceDiagram
+  autonumber
+  actor LLM as LLM requester
+  actor User
+  participant API as Promotion API
+  participant Orchestrator as Promotion orchestrator
+  participant Git as Repo and dev/main
+  participant Scripts as Existing deterministic scripts
+  participant Prod as PROD backend
+  participant Actions as GitHub Actions
+  participant Releases as Release and update registry
+  participant Evidence as Promotion evidence store
+
+  LLM->>API: promotion.run(source=dev/main,target=prod,release_android=true)
+  API->>Orchestrator: Validate parameters and create run
+  Orchestrator->>Git: Check branch, clean trees, tags, and merge evidence
+  Orchestrator->>Scripts: Run SDD doctor and release-network checks
+  Orchestrator->>Evidence: Store preflight and validation logs
+  Orchestrator-->>User: Request approval with exact release plan
+  User->>Orchestrator: Approve
+  Orchestrator->>Prod: Enable drain and wait for active jobs
+  Orchestrator->>Scripts: safe_restart_backend.sh
+  Scripts->>Prod: Restart and health check
+  Orchestrator->>Actions: Trigger Android release workflow
+  Actions->>Releases: Publish PROD and DEV channel APKs
+  Orchestrator->>Scripts: validate_backend_post_release.sh
+  Orchestrator->>Releases: Validate updater metadata and app identities
+  Orchestrator->>Evidence: Store tags, URLs, logs, validation, rollback hints
+  Orchestrator-->>API: done, blocked, or failed
+  API-->>LLM: Structured result only
+
+  Note over LLM,API: LLM never receives shell, git, restart, or deploy command execution.
+

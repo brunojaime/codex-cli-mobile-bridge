@@ -1143,7 +1143,7 @@ flowchart LR
     expect(uri.queryParameters['platform'], 'android');
     expect(uri.queryParameters['currentVersion'], '1.2.3');
     expect(uri.queryParameters['currentBuild'], '33');
-    expect(uri.queryParameters['channel'], 'stable');
+    expect(uri.queryParameters['channel'], 'prod');
     expect(controller.updateInfo?.apkUrl, startsWith('http://bridge.test/'));
     expect(
         controller.updateInfo?.apkUrl, contains('/app-updates/codex-mobile/'));

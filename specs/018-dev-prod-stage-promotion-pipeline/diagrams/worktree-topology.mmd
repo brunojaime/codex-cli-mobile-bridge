@@ -1,0 +1,36 @@
+flowchart TB
+  repo["GitHub public repo\ncodex-cli-mobile-bridge"]
+  devMain["dev/main\nDEV integration branch"]
+  prodStable["prod/stable or main\nPROD stable branch"]
+  spec17["dev/spec-017-...\nworktree: bridge-spec-017\nchat: spec-017"]
+  spec18["dev/spec-018-...\nworktree: bridge-spec-018\nchat: spec-018"]
+  spec19["dev/spec-019-...\nworktree: bridge-spec-019\nchat: spec-019"]
+  devBackend17["DEV backend instance\nport A / data A"]
+  devBackend18["DEV backend instance\nport B / data B"]
+  prodBackend["PROD backend instance\nstable port / stable data"]
+  mergeGate["Serialized merge gate\none branch at a time"]
+  promotionGate["Promotion gate\napproval + drain + validation"]
+
+  repo --> devMain
+  repo --> prodStable
+  devMain --> spec17
+  devMain --> spec18
+  devMain --> spec19
+  spec17 --> devBackend17
+  spec18 --> devBackend18
+  prodStable --> prodBackend
+  spec17 --> mergeGate
+  spec18 --> mergeGate
+  spec19 --> mergeGate
+  mergeGate --> devMain
+  devMain --> promotionGate
+  promotionGate --> prodStable
+
+  classDef branch fill:#26364d,stroke:#7aa7ff,color:#fff
+  classDef stage fill:#3d3010,stroke:#e8bd4f,color:#fff
+  classDef gate fill:#24372a,stroke:#8fd19e,color:#fff
+  classDef prod fill:#4b1d25,stroke:#ff8f9b,color:#fff
+  class repo,devMain branch
+  class spec17,spec18,spec19,devBackend17,devBackend18 stage
+  class mergeGate,promotionGate gate
+  class prodStable,prodBackend prod

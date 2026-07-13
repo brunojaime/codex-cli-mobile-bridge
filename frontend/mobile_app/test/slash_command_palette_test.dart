@@ -84,6 +84,30 @@ void main() {
     expect(executed, <String>['apps:apps', 'workbench:workbench']);
   });
 
+  testWidgets('dev handoff command dispatches only when enabled',
+      (tester) async {
+    final controller = TextEditingController();
+    final executed = <String>[];
+    await tester.pumpWidget(_harness(
+      controller: controller,
+      slashCommandContext: const SlashCommandContext(
+        isProdEnvironment: true,
+        devHandoffAvailable: true,
+      ),
+      onSlashCommand: (commandId, payload) async {
+        executed.add(commandId);
+        return true;
+      },
+    ));
+
+    await tester.enterText(find.byType(TextField), '/dev');
+    await tester.pump();
+    await tester.tap(find.text('/dev-handoff  DEV Handoff'));
+    await tester.pump();
+
+    expect(executed, <String>['dev-handoff']);
+  });
+
   testWidgets('backend guarded panel commands show unavailable state',
       (tester) async {
     final controller = TextEditingController();

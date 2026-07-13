@@ -1,0 +1,6 @@
+diagram_id: backlog-stage-lifecycle
+diagram_type: state
+scope: feature
+status: draft
+owner: project
+source: specs/018-dev-prod-stage-promotion-pipeline/diagrams/backlog-stage-lifecycle.mmd

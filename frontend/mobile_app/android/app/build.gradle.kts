@@ -10,6 +10,9 @@ plugins {
 val keystoreProperties = Properties()
 val keystorePropertiesFile = rootProject.file("key.properties")
 val hasReleaseKeystore = keystorePropertiesFile.exists()
+val allowDebugReleaseSigning =
+    providers.gradleProperty("codex.allowDebugReleaseSigning").orNull == "true" ||
+        System.getenv("CODEX_ALLOW_DEBUG_RELEASE_SIGNING") == "true"
 
 if (hasReleaseKeystore) {
     keystorePropertiesFile.inputStream().use(keystoreProperties::load)
@@ -26,15 +29,31 @@ android {
         isCoreLibraryDesugaringEnabled = true
     }
 
+    buildFeatures {
+        resValues = true
+    }
+
     defaultConfig {
-        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
         applicationId = "com.example.codex_mobile_frontend"
-        // You can update the following values to match your application needs.
-        // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+        resValue("string", "app_name", "Codex Mobile Bridge")
+    }
+
+    flavorDimensions += "environment"
+    productFlavors {
+        create("prod") {
+            dimension = "environment"
+            resValue("string", "app_name", "Codex Mobile Bridge")
+        }
+        create("dev") {
+            dimension = "environment"
+            applicationIdSuffix = ".dev"
+            versionNameSuffix = "-dev"
+            resValue("string", "app_name", "Codex Mobile Bridge DEV")
+        }
     }
 
     signingConfigs {
@@ -51,11 +70,16 @@ android {
 
     buildTypes {
         release {
-            // Fall back to the debug key until a dedicated release keystore is configured.
             signingConfig = if (hasReleaseKeystore) {
                 signingConfigs.getByName("release")
-            } else {
+            } else if (allowDebugReleaseSigning) {
                 signingConfigs.getByName("debug")
+            } else {
+                throw GradleException(
+                    "Release signing requires frontend/mobile_app/android/key.properties. " +
+                        "For local non-publishable builds only, pass " +
+                        "-Pcodex.allowDebugReleaseSigning=true.",
+                )
             }
         }
     }

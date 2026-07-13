@@ -1,0 +1,44 @@
+flowchart LR
+  devFrontend["Single DEV Frontend\nstage-aware chat UI"]
+  stageRegistry["Stage Registry\nchat -> stage -> runtime"]
+
+  subgraph stage17["Stage spec-017"]
+    chat17["Chat spec-017"]
+    wt17["Worktree\nbridge-spec-017"]
+    backend17["Backend process\n127.0.0.1:8117"]
+    data17["Data dir\n~/.codex-bridge/stages/spec-017/data"]
+    logs17["Logs/PID/env\n~/.codex-bridge/stages/spec-017/*"]
+  end
+
+  subgraph stage18["Stage spec-018"]
+    chat18["Chat spec-018"]
+    wt18["Worktree\nbridge-spec-018"]
+    backend18["Backend process\n127.0.0.1:8118"]
+    data18["Data dir\n~/.codex-bridge/stages/spec-018/data"]
+    logs18["Logs/PID/env\n~/.codex-bridge/stages/spec-018/*"]
+  end
+
+  devFrontend --> stageRegistry
+  stageRegistry --> chat17
+  stageRegistry --> chat18
+  chat17 --> backend17
+  chat18 --> backend18
+  backend17 --> wt17
+  backend18 --> wt18
+  backend17 --> data17
+  backend18 --> data18
+  backend17 --> logs17
+  backend18 --> logs18
+
+  restart18["Restart spec-018 backend"]
+  restart18 --> backend18
+  restart18 -. "no effect" .-> backend17
+
+  classDef ui fill:#24372a,stroke:#8fd19e,color:#fff
+  classDef s17 fill:#26364d,stroke:#7aa7ff,color:#fff
+  classDef s18 fill:#3d3010,stroke:#e8bd4f,color:#fff
+  classDef action fill:#4b1d25,stroke:#ff8f9b,color:#fff
+  class devFrontend,stageRegistry ui
+  class chat17,wt17,backend17,data17,logs17 s17
+  class chat18,wt18,backend18,data18,logs18 s18
+  class restart18 action

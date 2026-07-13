@@ -1004,6 +1004,9 @@ class WebPreviewInvite {
   final String? token;
 
   bool get isRevoked => revokedAt != null && revokedAt!.isNotEmpty;
+  bool get isMarkedExpired => expiredAt != null && expiredAt!.isNotEmpty;
+  bool get canRefreshAccessUrl => !isRevoked && !isMarkedExpired;
+  bool get hasInviteUrl => inviteUrl != null && inviteUrl!.trim().isNotEmpty;
   bool get canRetrySync => syncStatus == 'failed' || syncStatus == 'pending';
 
   factory WebPreviewInvite.fromJson(Map<String, dynamic> json) {

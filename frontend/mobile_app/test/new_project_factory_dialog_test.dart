@@ -485,6 +485,52 @@ void main() {
     expect(openedUrl, 'https://preview.nienfos.com/clinica-norte');
   });
 
+  testWidgets('web preview open creates invite access link', (tester) async {
+    String? openedUrl;
+    var createdNonSingleUse = false;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: WebPreviewPanelDialog(
+            listWebPreviews: () async => <WebPreview>[
+              _webPreview(status: 'active'),
+            ],
+            listInvites: (_) async => <WebPreviewInvite>[],
+            createInvite: (
+              previewId, {
+              int? ttlSeconds,
+              bool singleUse = true,
+              String? email,
+              String role = 'admin',
+            }) async {
+              createdNonSingleUse = previewId == 'wp-clinica-norte' &&
+                  ttlSeconds == 604800 &&
+                  singleUse == false &&
+                  role == 'admin';
+              return _webPreviewInvite(
+                inviteUrl:
+                    'https://preview.nienfos.com/clinica-norte/__preview/access?token=abc',
+              );
+            },
+            onOpenUrl: (url) async {
+              openedUrl = url;
+            },
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Open preview'));
+    await tester.pumpAndSettle();
+
+    expect(createdNonSingleUse, isTrue);
+    expect(
+      openedUrl,
+      'https://preview.nienfos.com/clinica-norte/__preview/access?token=abc',
+    );
+  });
+
   testWidgets('web preview panel shows disabled and failed states',
       (tester) async {
     await tester.pumpWidget(

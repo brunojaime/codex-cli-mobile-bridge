@@ -70,4 +70,32 @@ void main() {
     expect(workbench.isEnabled, isFalse);
     expect(workbench.disabledReason, 'No active bridge server.');
   });
+
+  test('dev handoff command is exposed only for enabled prod backends', () {
+    final prod = buildSlashCommands(
+      const SlashCommandContext(
+        isProdEnvironment: true,
+        devHandoffAvailable: true,
+      ),
+    ).singleWhere((command) => command.id == 'dev-handoff');
+    final prodDisabled = buildSlashCommands(
+      const SlashCommandContext(isProdEnvironment: true),
+    ).singleWhere((command) => command.id == 'dev-handoff');
+    final dev = buildSlashCommands(
+      const SlashCommandContext(
+        isProdEnvironment: false,
+        devHandoffAvailable: false,
+      ),
+    ).singleWhere((command) => command.id == 'dev-handoff');
+
+    expect(prod.isEnabled, isTrue);
+    expect(prod.actionKind, SlashCommandActionKind.callback);
+    expect(prodDisabled.isEnabled, isFalse);
+    expect(
+      prodDisabled.disabledReason,
+      'PROD to DEV handoff is disabled by this backend.',
+    );
+    expect(dev.isEnabled, isFalse);
+    expect(dev.disabledReason, 'DEV handoff is only available from PROD.');
+  });
 }

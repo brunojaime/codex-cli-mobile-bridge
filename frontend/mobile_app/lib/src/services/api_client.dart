@@ -9,10 +9,12 @@ import '../models/agent_configuration.dart';
 import '../models/agent_profile.dart';
 import '../models/chat_message.dart';
 import '../models/codex_tooling.dart';
+import '../models/dev_pipeline_handoff.dart';
 import '../models/domain_factory.dart';
 import '../models/feedback_queue_item.dart';
 import '../models/installable_app.dart';
 import '../models/project_factory.dart';
+import '../models/prod_update_status.dart';
 import '../models/server_capabilities.dart';
 import '../models/session_detail.dart';
 import '../models/chat_session_summary.dart';
@@ -81,6 +83,80 @@ class ApiClient {
     return ServerHealth.fromJson(
       jsonDecode(response.body) as Map<String, dynamic>,
     );
+  }
+
+  Future<DevPipelineHandoff> enqueueDevHandoff(
+    DevPipelineHandoffRequest request, {
+    required String idempotencyKey,
+  }) async {
+    final response = await _client.post(
+      Uri.parse('$baseUrl/dev-pipeline/handoffs'),
+      headers: <String, String>{
+        'Content-Type': 'application/json',
+        'X-Idempotency-Key': idempotencyKey,
+      },
+      body: jsonEncode(request.toJson()),
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception('Failed to enqueue DEV handoff: ${response.body}');
+    }
+
+    final payload = jsonDecode(response.body) as Map<String, dynamic>;
+    return DevPipelineHandoff.fromJson(
+      payload['data'] as Map<String, dynamic>,
+    );
+  }
+
+  Future<ProdUpdateStatus> getProdUpdateStatus() async {
+    final response = await _client.get(
+      Uri.parse('$baseUrl/dev-pipeline/prod-update/status'),
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception('Failed to fetch PROD update status: ${response.body}');
+    }
+
+    final payload = jsonDecode(response.body) as Map<String, dynamic>;
+    return ProdUpdateStatus.fromJson(payload['data'] as Map<String, dynamic>);
+  }
+
+  Future<ProdUpdateStatus> acknowledgeProdUpdate({
+    required String acknowledgedBy,
+  }) async {
+    final response = await _client.post(
+      Uri.parse('$baseUrl/dev-pipeline/prod-update/acknowledge'),
+      headers: <String, String>{'Content-Type': 'application/json'},
+      body: jsonEncode(<String, dynamic>{'acknowledged_by': acknowledgedBy}),
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception('Failed to acknowledge PROD update: ${response.body}');
+    }
+
+    final payload = jsonDecode(response.body) as Map<String, dynamic>;
+    return ProdUpdateStatus.fromJson(payload['data'] as Map<String, dynamic>);
+  }
+
+  Future<ProdUpdateStatus> forceProdUpdate({
+    required String requestedBy,
+    required String strongConfirmation,
+  }) async {
+    final response = await _client.post(
+      Uri.parse('$baseUrl/dev-pipeline/prod-update/force'),
+      headers: <String, String>{'Content-Type': 'application/json'},
+      body: jsonEncode(<String, dynamic>{
+        'requested_by': requestedBy,
+        'strong_confirmation': strongConfirmation,
+      }),
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception('Failed to force PROD update: ${response.body}');
+    }
+
+    final payload = jsonDecode(response.body) as Map<String, dynamic>;
+    return ProdUpdateStatus.fromJson(payload['data'] as Map<String, dynamic>);
   }
 
   Future<SynthesizedSpeechClip> synthesizeSpeech(String text) async {

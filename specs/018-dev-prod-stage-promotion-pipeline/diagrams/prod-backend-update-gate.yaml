@@ -1,0 +1,14 @@
+diagram_id: prod-backend-update-gate
+title: PROD Backend Update Gate
+diagram_type: state
+scope: feature
+status: planned
+owner: project
+source: specs/018-dev-prod-stage-promotion-pipeline/diagrams/prod-backend-update-gate.mmd
+description: State machine for automatic PROD backend updates when idle, pending update notification, force restart, validation, and user acknowledgement.
+requirements:
+  - FR-011
+acceptance_criteria:
+  - AC-021
+  - AC-022
+  - AC-023

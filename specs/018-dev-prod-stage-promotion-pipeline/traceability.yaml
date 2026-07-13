@@ -1,0 +1,125 @@
+spec_id: 018-dev-prod-stage-promotion-pipeline
+title: Dev Prod Stage And Deterministic Promotion Pipeline
+status: planned
+
+requirements:
+  FR-001:
+    description: Environment identity and permission enforcement must be deterministic and prompt-independent.
+    acceptance_criteria: [AC-001, AC-002]
+    tasks: [T001, T002, T003, T004, T005, T006]
+    diagrams: [system-context]
+    phase: 1
+  FR-002:
+    description: PROD slash/action must enqueue DEV handoffs without exposing DEV context during normal PROD operation.
+    acceptance_criteria: [AC-003, AC-004]
+    tasks: [T007, T008, T009, T010, T011, T012]
+    diagrams: [prod-to-dev-handoff-sequence, system-context]
+    phase: 2
+  FR-003:
+    description: DEV backlog must claim and materialize handoffs safely into SDD specs.
+    acceptance_criteria: [AC-005, AC-006]
+    tasks: [T013, T014, T015, T016, T017, T018]
+    diagrams: [backlog-stage-state-machine, control-plane-data-model]
+    phase: 3
+  FR-004:
+    description: DEV stages must isolate each spec by branch, worktree, backend context, and chat binding.
+    acceptance_criteria: [AC-007, AC-008]
+    tasks: [T019, T020, T021, T022, T023, T024]
+    diagrams: [worktree-topology, control-plane-data-model]
+    phase: 4
+  FR-005:
+    description: DEV execution must reuse the existing Generator/Reviewer chat chain and persist final evidence.
+    acceptance_criteria: [AC-009, AC-010]
+    tasks: [T025, T026, T027, T028, T029, T030]
+    diagrams: [backlog-stage-state-machine, control-plane-data-model]
+    phase: 5
+  FR-006:
+    description: Stage branches must merge into dev/main only through serialized deterministic gates.
+    acceptance_criteria: [AC-011, AC-012]
+    tasks: [T031, T032, T033, T034, T035, T036]
+    diagrams: [worktree-topology, promotion-pipeline]
+    phase: 6
+  FR-007:
+    description: Promotion from dev/main to PROD must be a deterministic tool-driven state machine.
+    acceptance_criteria: [AC-013, AC-014]
+    tasks: [T037, T038, T039, T040, T041, T042]
+    diagrams: [promotion-pipeline, control-plane-data-model]
+    phase: 7
+  FR-008:
+    description: DEV and PROD app releases must be visibly distinct and channel-safe.
+    acceptance_criteria: [AC-015, AC-016]
+    tasks: [T043, T044, T045, T046, T047, T048]
+    diagrams: [system-context, worktree-topology]
+    phase: 8
+  FR-009:
+    description: The complete flow must be observable, documented, testable, and roll-out controlled.
+    acceptance_criteria: [AC-017, AC-018]
+    tasks: [T049, T050, T051, T052, T053, T054]
+    diagrams: [system-context, prod-to-dev-handoff-sequence, promotion-pipeline]
+    phase: 9
+  FR-010:
+    description: Each DEV stage must own an isolated backend runtime so one spec restart does not affect another spec.
+    acceptance_criteria: [AC-019, AC-020]
+    tasks: [T055, T056, T057, T058, T059, T060]
+    diagrams: [stage-runtime-isolation, worktree-topology]
+    phase: 10
+  FR-011:
+    description: PROD backend updates must apply automatically only when the full PROD agent/job chain is idle, otherwise wait visibly with a force option.
+    acceptance_criteria: [AC-021, AC-022, AC-023]
+    tasks: [T061, T062, T063, T064, T065, T066]
+    diagrams: [prod-backend-update-gate]
+    phase: 11
+
+diagrams:
+  system-context:
+    path: diagrams/system-context.mmd
+    requirements: [FR-001, FR-002, FR-008, FR-009]
+  prod-to-dev-handoff-sequence:
+    path: diagrams/prod-to-dev-handoff-sequence.mmd
+    requirements: [FR-002, FR-009]
+  backlog-stage-state-machine:
+    path: diagrams/backlog-stage-state-machine.mmd
+    requirements: [FR-003, FR-005]
+  worktree-topology:
+    path: diagrams/worktree-topology.mmd
+    requirements: [FR-004, FR-006, FR-008]
+  promotion-pipeline:
+    path: diagrams/promotion-pipeline.mmd
+    requirements: [FR-006, FR-007, FR-009]
+  control-plane-data-model:
+    path: diagrams/control-plane-data-model.mmd
+    requirements: [FR-003, FR-004, FR-005, FR-007]
+  stage-runtime-isolation:
+    path: diagrams/stage-runtime-isolation.mmd
+    requirements: [FR-004, FR-010]
+  prod-backend-update-gate:
+    path: diagrams/prod-backend-update-gate.mmd
+    requirements: [FR-011]
+
+acceptance_criteria:
+  AC-001: Backend exposes environment identity and capabilities without prompt text.
+  AC-002: PROD normal sessions cannot mutate Bridge code or access DEV internals.
+  AC-003: Slash/action loads handoff context only temporarily.
+  AC-004: Slash/action can enqueue only and has no file, command, restart, deploy, or DEV-agent permissions.
+  AC-005: DEV backlog claims are exclusive and idempotent.
+  AC-006: Handoffs materialize into DEV specs without breaking SDD lifecycle metadata.
+  AC-007: Every DEV chat is bound to exactly one stage, branch, and worktree.
+  AC-008: Branch/worktree mismatches block execution before commands run.
+  AC-009: DEV stage runs use existing Generator/Reviewer auto-chain.
+  AC-010: Final run evidence includes changed files, tests, risks, and user validation checklist.
+  AC-011: dev/main integration is serialized.
+  AC-012: Merge conflicts or failed validation leave dev/main unchanged and report exact blockers.
+  AC-013: Promotion tool accepts validated parameters only.
+  AC-014: Active PROD jobs, failed tests, missing approval, or invalid release config block promotion.
+  AC-015: DEV and PROD apps have distinct labels, badges, colors, API URLs, updater channels, and release metadata.
+  AC-016: Existing CODEX DEV developer-mode signal is not repurposed.
+  AC-017: End-to-end dry-run covers handoff, backlog, stage, merge, and promotion.
+  AC-018: Rollout can be enabled for DEV first and PROD handoff later.
+  AC-019: Every DEV stage has its own backend URL, port, data dir, logs dir, PID file, env file, and health state.
+  AC-020: Restarting or failing one stage backend does not affect another active stage backend or chat.
+  AC-021: A prepared PROD backend update applies automatically only when no active job or pending agent-chain follow-up exists.
+  AC-022: While PROD is busy, the frontend shows a persistent waiting-for-update notice with an explicit force action.
+  AC-023: After a successful PROD backend update, the updated/restarted notice remains until the user acknowledges it.
+
+implementation:
+  status: planned

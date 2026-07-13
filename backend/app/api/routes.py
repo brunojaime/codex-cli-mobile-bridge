@@ -9,6 +9,7 @@ import secrets
 import subprocess
 import sys
 from collections.abc import Iterator
+from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
 from threading import Thread
@@ -58,6 +59,26 @@ from backend.app.api.schemas import (
     CodexToolingResponse,
     CreateSessionRequest,
     DocumentMessageAcceptedResponse,
+    DevPipelineBackfillRequest,
+    DevPipelineClaimRequest,
+    DevPipelineHandoffRequest,
+    DevPipelineMaterializeRequest,
+    DevPipelineMergeApplyRequest,
+    DevPipelineMergeRequest,
+    DevPipelineProdUpdateRequest,
+    DevPipelineProdUpdateAcknowledgeRequest,
+    DevPipelineProdUpdateForceRequest,
+    DevPipelineProdUpdatePrepareRequest,
+    DevPipelinePromotionAdvanceRequest,
+    DevPipelinePromotionRequest,
+    DevPipelineReleaseChannelValidationRequest,
+    DevPipelineResponse,
+    DevPipelineSessionBindRequest,
+    DevPipelineStageLifecycleRequest,
+    DevPipelineStageRegisterRequest,
+    DevPipelineStageRunControlRequest,
+    DevPipelineStageRunRequest,
+    DevPipelineStageSessionRequest,
     AssetDepotDeleteResponse,
     AssetDepotFromJobAttachmentRequest,
     AssetDepotItemResponse,
@@ -194,6 +215,7 @@ from backend.app.application.services.app_update_service import (
     GitHubReleaseError,
     UnknownAppError,
 )
+from backend.app.application.services.dev_pipeline_service import DevPipelineError
 from backend.app.application.services.message_service import (
     AttachmentInput,
     DocumentProcessingError,
@@ -365,7 +387,829 @@ async def healthcheck(
         tailscale_suggested_url=tailscale.suggested_url,
         preferred_client_url=tailscale.preferred_client_url,
         public_base_urls=tailscale.public_base_urls,
+        environment_identity=container.dev_pipeline_service.identity_payload(),
     )
+
+
+def _dev_pipeline_response(data: dict[str, Any] | list[Any]) -> DevPipelineResponse:
+    return DevPipelineResponse(
+        kind="codex.devPipelineResponse",
+        version=1,
+        data=data,
+    )
+
+
+def _raise_dev_pipeline_error(exc: DevPipelineError) -> None:
+    status_code = 403 if exc.code.endswith("_environment_required") else 409
+    raise HTTPException(
+        status_code=status_code,
+        detail={"code": exc.code, "message": exc.message},
+    )
+
+
+def _project_stage_run(container: AppContainer, run: dict[str, Any]) -> dict[str, Any]:
+    projection: dict[str, Any] = {}
+    job_id = run.get("job_id")
+    job = container.message_service.get_job(str(job_id)) if job_id else None
+    if run.get("status") in {"pause_requested", "paused", "resume_requested"}:
+        projection["status"] = run["status"]
+        projection["blocker_reason"] = run.get("blocker_reason")
+    elif job is None:
+        if job_id:
+            projection["status"] = "blocked"
+            projection["blocker_reason"] = "stage_run_job_missing"
+        else:
+            projection.setdefault("status", run.get("status") or "planned")
+            projection.setdefault("blocker_reason", "stage_run_has_no_job")
+    else:
+        status_map = {
+            "pending": "queued",
+            "running": "running",
+            "completed": "completed",
+            "failed": "failed",
+            "cancelled": "cancelled",
+        }
+        projection["status"] = status_map.get(str(job.status), str(job.status))
+        projection["job_id"] = job.id
+        projection["agent_run_id"] = job.run_id
+        projection["started_at"] = job.created_at.isoformat()
+        projection["finished_at"] = (
+            job.completed_at.isoformat() if job.completed_at else None
+        )
+    evidence = dict(run.get("evidence") or {})
+    evidence["changed_files"] = _stage_run_changed_files(run)
+    messages = container.message_service.list_messages(str(run["session_id"]))
+    run_messages = [
+        message for message in messages if message.run_id == run.get("agent_run_id")
+    ]
+    message_text = "\n".join(message.content for message in run_messages)
+    evidence["tests_declared"] = _stage_run_test_lines(message_text)
+    evidence["tests_executed"] = _stage_run_test_lines(message_text, executed=True)
+    reviewer_messages = [
+        message
+        for message in run_messages
+        if _enum_value(message.agent_id) == "reviewer" and message.content.strip()
+    ]
+    reviewer_evidence = dict(evidence.get("reviewer") or {})
+    if reviewer_messages:
+        latest = reviewer_messages[-1].content.strip()
+        contract = _stage_run_reviewer_contract(latest)
+        reviewer_evidence.update(contract)
+        if contract["status"] == "complete":
+            evidence["final_summary"] = _stage_run_final_summary(
+                run=run,
+                reviewer=contract,
+                changed_files=evidence["changed_files"],
+                tests=evidence["tests_executed"] or evidence["tests_declared"],
+            )
+            projection.setdefault("status", "completed")
+            projection.setdefault("finished_at", _utc_now_iso())
+        elif contract["status"] == "continue":
+            projection.setdefault("status", run.get("status") or "running")
+        else:
+            evidence.setdefault("blockers", []).append("reviewer_contract_invalid")
+    evidence["reviewer"] = reviewer_evidence
+    assistant_messages = [
+        message
+        for message in run_messages
+        if _enum_value(message.role) == "assistant" and message.content.strip()
+    ]
+    if assistant_messages:
+        evidence["final_summary"] = assistant_messages[-1].content.strip()[:2000]
+    projection["evidence"] = evidence
+    if projection:
+        try:
+            return container.dev_pipeline_service.update_stage_run_projection(
+                run_id=str(run["id"]),
+                projection=projection,
+            )
+        except DevPipelineError:
+            return {**run, **projection}
+    return run
+
+
+def _stage_run_reviewer_contract(text: str) -> dict[str, Any]:
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        return {
+            "status": "invalid_contract",
+            "raw": text[:1000],
+            "blocker": "reviewer_response_must_be_json",
+        }
+    if not isinstance(parsed, dict):
+        return {
+            "status": "invalid_contract",
+            "raw": text[:1000],
+            "blocker": "reviewer_response_must_be_json_object",
+        }
+    status = str(parsed.get("status") or "").strip().lower()
+    if status == "complete":
+        summary = str(parsed.get("summary") or "").strip()
+        if not summary:
+            return {
+                "status": "invalid_contract",
+                "payload": parsed,
+                "blocker": "reviewer_complete_requires_summary",
+            }
+        return {"status": "complete", "completion": summary, "payload": parsed}
+    if status == "continue":
+        prompt = str(parsed.get("prompt") or parsed.get("message") or "").strip()
+        if not prompt:
+            return {
+                "status": "invalid_contract",
+                "payload": parsed,
+                "blocker": "reviewer_continue_requires_prompt",
+            }
+        return {"status": "continue", "continue": prompt, "payload": parsed}
+    return {
+        "status": "invalid_contract",
+        "payload": parsed,
+        "blocker": "reviewer_status_must_be_complete_or_continue",
+    }
+
+
+def _stage_run_final_summary(
+    *,
+    run: dict[str, Any],
+    reviewer: dict[str, Any],
+    changed_files: list[str],
+    tests: list[str],
+) -> str:
+    files = "\n".join(f"- {item}" for item in changed_files) or "- Not reported"
+    tests_text = "\n".join(f"- {item}" for item in tests) or "- Not reported"
+    return "\n".join(
+        [
+            "Termine.",
+            "",
+            "Que cambio",
+            reviewer.get("completion") or "Reviewer marked the stage complete.",
+            "",
+            "Archivos tocados",
+            files,
+            "",
+            "Tests ejecutados",
+            tests_text,
+            "",
+            "Riesgos",
+            "- Review generated from DEV stage evidence; operator should verify.",
+            "",
+            "Que deberias probar",
+            f"- Stage {run.get('stage_id')} on {run.get('branch')}",
+            "",
+            "Resultado final",
+            "Reviewer JSON contract returned complete.",
+        ]
+    )
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _enum_value(value: Any) -> str:
+    return str(getattr(value, "value", value))
+
+
+def _stage_run_changed_files(run: dict[str, Any]) -> list[str]:
+    stage = run.get("stage") or {}
+    worktree_path = run.get("worktree_path") or stage.get("worktree_path")
+    if not worktree_path:
+        return []
+    try:
+        result = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=worktree_path,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    if result.returncode != 0:
+        return []
+    return [
+        line.strip()
+        for line in result.stdout.splitlines()
+        if line.strip()
+    ][:200]
+
+
+def _stage_run_test_lines(text: str, *, executed: bool = False) -> list[str]:
+    patterns = ("pytest", "ruff", "flutter test", "flutter analyze")
+    lines = []
+    for line in text.splitlines():
+        lowered = line.lower()
+        if any(pattern in lowered for pattern in patterns):
+            if not executed or any(
+                marker in lowered for marker in ("pass", "passed", "ran", "executed")
+            ):
+                lines.append(line.strip())
+    return lines[:50]
+
+
+@router.get("/dev-pipeline", response_model=DevPipelineResponse)
+async def get_dev_pipeline_snapshot(
+    container: AppContainer = Depends(get_container),
+) -> DevPipelineResponse:
+    try:
+        snapshot = container.dev_pipeline_service.snapshot()
+    except DevPipelineError as exc:
+        _raise_dev_pipeline_error(exc)
+    return _dev_pipeline_response(snapshot)
+
+
+@router.get("/dev-pipeline/projection", response_model=DevPipelineResponse)
+async def get_dev_pipeline_projection(
+    stage_id: str | None = Query(default=None, max_length=80),
+    spec_id: str | None = Query(default=None, max_length=160),
+    handoff_id: str | None = Query(default=None, max_length=120),
+    status: str | None = Query(default=None, max_length=80),
+    container: AppContainer = Depends(get_container),
+) -> DevPipelineResponse:
+    try:
+        projection = container.dev_pipeline_service.pipeline_projection(
+            stage_id=stage_id,
+            spec_id=spec_id,
+            handoff_id=handoff_id,
+            status=status,
+        )
+    except DevPipelineError as exc:
+        _raise_dev_pipeline_error(exc)
+    return _dev_pipeline_response(projection)
+
+
+@router.get("/dev-pipeline/identity", response_model=DevPipelineResponse)
+async def get_dev_pipeline_identity(
+    container: AppContainer = Depends(get_container),
+) -> DevPipelineResponse:
+    return _dev_pipeline_response(container.dev_pipeline_service.identity_payload())
+
+
+@router.get("/dev-pipeline/permissions", response_model=DevPipelineResponse)
+async def get_dev_pipeline_permissions(
+    container: AppContainer = Depends(get_container),
+) -> DevPipelineResponse:
+    return _dev_pipeline_response(container.dev_pipeline_service.permission_matrix())
+
+
+@router.post("/dev-pipeline/handoffs", response_model=DevPipelineResponse)
+async def enqueue_dev_handoff(
+    payload: DevPipelineHandoffRequest,
+    x_idempotency_key: str | None = Header(default=None),
+    container: AppContainer = Depends(get_container),
+) -> DevPipelineResponse:
+    selected_context = dict(payload.selected_context)
+    selected_context.setdefault(
+        "created_from_session_id", payload.created_from_session_id
+    )
+    selected_context.setdefault("created_by_action", payload.created_by_action)
+    try:
+        handoff = container.dev_pipeline_service.enqueue_handoff(
+            payload.model_dump(),
+            idempotency_key=x_idempotency_key or payload.idempotency_key,
+            selected_context=selected_context,
+        )
+    except DevPipelineError as exc:
+        _raise_dev_pipeline_error(exc)
+    return _dev_pipeline_response(handoff)
+
+
+@router.post("/dev-pipeline/backlog/claim", response_model=DevPipelineResponse)
+async def claim_dev_backlog(
+    payload: DevPipelineClaimRequest,
+    container: AppContainer = Depends(get_container),
+) -> DevPipelineResponse:
+    try:
+        item = container.dev_pipeline_service.claim_backlog_item(
+            worker_id=payload.worker_id,
+        )
+    except DevPipelineError as exc:
+        _raise_dev_pipeline_error(exc)
+    return _dev_pipeline_response(item)
+
+
+@router.post(
+    "/dev-pipeline/backlog/{handoff_id}/materialize",
+    response_model=DevPipelineResponse,
+)
+async def materialize_dev_backlog(
+    handoff_id: str,
+    payload: DevPipelineMaterializeRequest,
+    container: AppContainer = Depends(get_container),
+) -> DevPipelineResponse:
+    try:
+        item = container.dev_pipeline_service.materialize_backlog_item(
+            handoff_id=handoff_id,
+            worker_id=payload.worker_id,
+        )
+    except DevPipelineError as exc:
+        _raise_dev_pipeline_error(exc)
+    return _dev_pipeline_response(item)
+
+
+@router.post("/dev-pipeline/backfill/stages", response_model=DevPipelineResponse)
+async def dry_run_dev_stage_backfill(
+    payload: DevPipelineBackfillRequest,
+    container: AppContainer = Depends(get_container),
+) -> DevPipelineResponse:
+    try:
+        result = container.dev_pipeline_service.backfill_stage_candidates(
+            dry_run=payload.dry_run,
+            spec_ids=payload.spec_ids,
+        )
+    except DevPipelineError as exc:
+        _raise_dev_pipeline_error(exc)
+    return _dev_pipeline_response(result)
+
+
+@router.post("/dev-pipeline/stages", response_model=DevPipelineResponse)
+async def register_dev_stage(
+    payload: DevPipelineStageRegisterRequest,
+    container: AppContainer = Depends(get_container),
+) -> DevPipelineResponse:
+    try:
+        stage = container.dev_pipeline_service.register_stage(
+            spec_id=payload.spec_id,
+            stage_id=payload.stage_id,
+            branch=payload.branch,
+            worktree_path=payload.worktree_path,
+            backend_url=payload.backend_url,
+            owner=payload.owner,
+        )
+    except DevPipelineError as exc:
+        _raise_dev_pipeline_error(exc)
+    return _dev_pipeline_response(stage)
+
+
+@router.post("/dev-pipeline/sessions/bind", response_model=DevPipelineResponse)
+async def bind_dev_stage_session(
+    payload: DevPipelineSessionBindRequest,
+    container: AppContainer = Depends(get_container),
+) -> DevPipelineResponse:
+    try:
+        binding = container.dev_pipeline_service.bind_session(
+            session_id=payload.session_id,
+            stage_id=payload.stage_id,
+            workspace_path=payload.workspace_path,
+            branch=payload.branch,
+        )
+    except DevPipelineError as exc:
+        _raise_dev_pipeline_error(exc)
+    return _dev_pipeline_response(binding)
+
+
+@router.post(
+    "/dev-pipeline/stages/{stage_id}/sessions",
+    response_model=DevPipelineResponse,
+)
+async def bind_or_create_dev_stage_session(
+    stage_id: str,
+    payload: DevPipelineStageSessionRequest,
+    container: AppContainer = Depends(get_container),
+) -> DevPipelineResponse:
+    try:
+        stage = container.dev_pipeline_service.get_stage(stage_id)
+        if payload.session_id:
+            session = container.message_service.get_session(payload.session_id)
+            if session is None:
+                raise DevPipelineError(
+                    "unknown_session", f"Session {payload.session_id} was not found."
+                )
+            session_id = session.id
+        else:
+            session = container.message_service.create_session(
+                title=payload.title or f"{stage_id} DEV Stage",
+                workspace_path=stage["worktree_path"],
+            )
+            session_id = session.id
+        container.message_service.update_auto_mode(
+            session_id=session_id,
+            enabled=True,
+            max_turns=1,
+            reviewer_prompt="Return the next implementation prompt for the generator.",
+        )
+        binding = container.dev_pipeline_service.bind_stage_session(
+            session_id=session_id,
+            stage_id=stage_id,
+        )
+    except (DevPipelineError, RuntimeError, ValueError) as exc:
+        if isinstance(exc, DevPipelineError):
+            _raise_dev_pipeline_error(exc)
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return _dev_pipeline_response(binding)
+
+
+@router.get(
+    "/dev-pipeline/sessions/{session_id}/binding",
+    response_model=DevPipelineResponse,
+)
+async def get_dev_stage_session_binding(
+    session_id: str,
+    container: AppContainer = Depends(get_container),
+) -> DevPipelineResponse:
+    try:
+        binding = container.dev_pipeline_service.get_stage_session_binding(
+            session_id=session_id,
+        )
+    except DevPipelineError as exc:
+        _raise_dev_pipeline_error(exc)
+    return _dev_pipeline_response(binding)
+
+
+@router.post(
+    "/dev-pipeline/stages/{stage_id}/runs/start",
+    response_model=DevPipelineResponse,
+)
+async def start_dev_stage_run(
+    stage_id: str,
+    payload: DevPipelineStageRunRequest,
+    container: AppContainer = Depends(get_container),
+) -> DevPipelineResponse:
+    try:
+        prepared = container.dev_pipeline_service.prepare_stage_run_start(
+            stage_id=stage_id,
+            session_id=payload.session_id,
+            backend_url=container.settings.api_base_url,
+            initial_prompt=payload.initial_prompt,
+        )
+        container.message_service.update_auto_mode(
+            session_id=payload.session_id,
+            enabled=True,
+            max_turns=1,
+            reviewer_prompt="Return the next implementation prompt for the generator.",
+        )
+        job = container.message_service.submit_message(
+            prepared["prompt"],
+            session_id=payload.session_id,
+            workspace_path=prepared["stage"]["worktree_path"],
+        )
+        run = container.dev_pipeline_service.record_stage_run_start(
+            stage_id=stage_id,
+            session_id=payload.session_id,
+            requested_by=payload.requested_by,
+            prompt=prepared["prompt"],
+            job_id=job.id,
+            agent_run_id=job.run_id,
+        )
+    except (DevPipelineError, RuntimeError, ValueError) as exc:
+        if isinstance(exc, DevPipelineError):
+            _raise_dev_pipeline_error(exc)
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    projected = _project_stage_run(container, run)
+    return _dev_pipeline_response(projected)
+
+
+@router.get(
+    "/dev-pipeline/stage-runs/{run_id}",
+    response_model=DevPipelineResponse,
+)
+async def get_dev_stage_run(
+    run_id: str,
+    container: AppContainer = Depends(get_container),
+) -> DevPipelineResponse:
+    try:
+        run = container.dev_pipeline_service.stage_run_status(run_id=run_id)
+    except DevPipelineError as exc:
+        _raise_dev_pipeline_error(exc)
+    return _dev_pipeline_response(_project_stage_run(container, run))
+
+
+@router.post(
+    "/dev-pipeline/stage-runs/{run_id}/cancel",
+    response_model=DevPipelineResponse,
+)
+async def cancel_dev_stage_run(
+    run_id: str,
+    payload: DevPipelineStageRunControlRequest,
+    container: AppContainer = Depends(get_container),
+) -> DevPipelineResponse:
+    try:
+        run = container.dev_pipeline_service.stage_run_status(run_id=run_id)
+        if run.get("job_id"):
+            container.message_service.cancel_job(str(run["job_id"]))
+        run = container.dev_pipeline_service.control_stage_run(
+            run_id=run_id,
+            action="cancel",
+            requested_by=payload.requested_by,
+        )
+    except (DevPipelineError, RuntimeError, ValueError) as exc:
+        if isinstance(exc, DevPipelineError):
+            _raise_dev_pipeline_error(exc)
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return _dev_pipeline_response(_project_stage_run(container, run))
+
+
+@router.post(
+    "/dev-pipeline/stage-runs/{run_id}/retry",
+    response_model=DevPipelineResponse,
+)
+async def retry_dev_stage_run(
+    run_id: str,
+    payload: DevPipelineStageRunControlRequest,
+    container: AppContainer = Depends(get_container),
+) -> DevPipelineResponse:
+    try:
+        run = container.dev_pipeline_service.stage_run_status(run_id=run_id)
+        retry_job = None
+        if run.get("job_id"):
+            retry_job = container.message_service.retry_job(str(run["job_id"]))
+        run = container.dev_pipeline_service.control_stage_run(
+            run_id=run_id,
+            action="retry",
+            requested_by=payload.requested_by,
+        )
+        if retry_job is not None:
+            run = container.dev_pipeline_service.update_stage_run_projection(
+                run_id=run_id,
+                projection={
+                    "job_id": retry_job.id,
+                    "agent_run_id": retry_job.run_id,
+                    "status": "queued",
+                    "started_at": retry_job.created_at.isoformat(),
+                    "finished_at": None,
+                },
+            )
+    except (DevPipelineError, RuntimeError, ValueError) as exc:
+        if isinstance(exc, DevPipelineError):
+            _raise_dev_pipeline_error(exc)
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return _dev_pipeline_response(_project_stage_run(container, run))
+
+
+@router.post(
+    "/dev-pipeline/stage-runs/{run_id}/pause",
+    response_model=DevPipelineResponse,
+)
+async def pause_dev_stage_run(
+    run_id: str,
+    payload: DevPipelineStageRunControlRequest,
+    container: AppContainer = Depends(get_container),
+) -> DevPipelineResponse:
+    try:
+        run = container.dev_pipeline_service.control_stage_run(
+            run_id=run_id,
+            action="pause",
+            requested_by=payload.requested_by,
+        )
+    except DevPipelineError as exc:
+        _raise_dev_pipeline_error(exc)
+    return _dev_pipeline_response(_project_stage_run(container, run))
+
+
+@router.post(
+    "/dev-pipeline/stage-runs/{run_id}/resume",
+    response_model=DevPipelineResponse,
+)
+async def resume_dev_stage_run(
+    run_id: str,
+    payload: DevPipelineStageRunControlRequest,
+    container: AppContainer = Depends(get_container),
+) -> DevPipelineResponse:
+    try:
+        run = container.dev_pipeline_service.control_stage_run(
+            run_id=run_id,
+            action="resume",
+            requested_by=payload.requested_by,
+        )
+    except DevPipelineError as exc:
+        _raise_dev_pipeline_error(exc)
+    return _dev_pipeline_response(_project_stage_run(container, run))
+
+
+@router.post(
+    "/dev-pipeline/stages/{stage_id}/lifecycle", response_model=DevPipelineResponse
+)
+async def run_dev_stage_lifecycle(
+    stage_id: str,
+    payload: DevPipelineStageLifecycleRequest,
+    container: AppContainer = Depends(get_container),
+) -> DevPipelineResponse:
+    try:
+        result = container.dev_pipeline_service.stage_lifecycle(
+            stage_id=stage_id,
+            action=payload.action,
+            apply=payload.apply,
+        )
+    except DevPipelineError as exc:
+        _raise_dev_pipeline_error(exc)
+    return _dev_pipeline_response(result)
+
+
+@router.post("/dev-pipeline/merge-queue", response_model=DevPipelineResponse)
+async def queue_dev_stage_merge(
+    payload: DevPipelineMergeRequest,
+    container: AppContainer = Depends(get_container),
+) -> DevPipelineResponse:
+    try:
+        item = container.dev_pipeline_service.queue_merge(
+            stage_id=payload.stage_id,
+            requested_by=payload.requested_by,
+            approved=payload.approved,
+            evidence_validated=payload.evidence_validated,
+            validation_passed=payload.validation_passed,
+            validation_log=payload.validation_log,
+            tests_executed=payload.tests_executed,
+        )
+    except DevPipelineError as exc:
+        _raise_dev_pipeline_error(exc)
+    return _dev_pipeline_response(item)
+
+
+@router.get("/dev-pipeline/merge-queue/{merge_id}", response_model=DevPipelineResponse)
+async def get_dev_stage_merge_status(
+    merge_id: str,
+    container: AppContainer = Depends(get_container),
+) -> DevPipelineResponse:
+    try:
+        item = container.dev_pipeline_service.merge_status(merge_id=merge_id)
+    except DevPipelineError as exc:
+        _raise_dev_pipeline_error(exc)
+    return _dev_pipeline_response(item)
+
+
+@router.post(
+    "/dev-pipeline/merge-queue/{merge_id}/apply",
+    response_model=DevPipelineResponse,
+)
+async def apply_dev_stage_merge(
+    merge_id: str,
+    payload: DevPipelineMergeApplyRequest,
+    container: AppContainer = Depends(get_container),
+) -> DevPipelineResponse:
+    try:
+        item = container.dev_pipeline_service.apply_merge(
+            merge_id=merge_id,
+            requested_by=payload.requested_by,
+            evidence_validated=payload.evidence_validated,
+            validation_passed=payload.validation_passed,
+            validation_log=payload.validation_log,
+            tests_executed=payload.tests_executed,
+        )
+    except DevPipelineError as exc:
+        _raise_dev_pipeline_error(exc)
+    return _dev_pipeline_response(item)
+
+
+@router.post("/dev-pipeline/promotions", response_model=DevPipelineResponse)
+async def request_dev_pipeline_promotion(
+    payload: DevPipelinePromotionRequest,
+    container: AppContainer = Depends(get_container),
+) -> DevPipelineResponse:
+    try:
+        item = container.dev_pipeline_service.request_promotion(
+            requested_by=payload.requested_by,
+            target=payload.target,
+            release_tag=payload.release_tag,
+            user_approved=payload.user_approved,
+            dry_run=payload.dry_run,
+            drain_status=container.message_service.backend_drain_status(),
+        )
+    except DevPipelineError as exc:
+        _raise_dev_pipeline_error(exc)
+    return _dev_pipeline_response(item)
+
+
+@router.get("/dev-pipeline/promotions/{promotion_id}", response_model=DevPipelineResponse)
+async def get_dev_pipeline_promotion(
+    promotion_id: str,
+    container: AppContainer = Depends(get_container),
+) -> DevPipelineResponse:
+    try:
+        item = container.dev_pipeline_service.promotion_status(
+            promotion_id=promotion_id,
+        )
+    except DevPipelineError as exc:
+        _raise_dev_pipeline_error(exc)
+    return _dev_pipeline_response(item)
+
+
+@router.post(
+    "/dev-pipeline/promotions/{promotion_id}/advance",
+    response_model=DevPipelineResponse,
+)
+async def advance_dev_pipeline_promotion(
+    promotion_id: str,
+    payload: DevPipelinePromotionAdvanceRequest,
+    container: AppContainer = Depends(get_container),
+) -> DevPipelineResponse:
+    try:
+        item = container.dev_pipeline_service.advance_promotion(
+            promotion_id=promotion_id,
+            requested_by=payload.requested_by,
+            user_approved=payload.user_approved,
+            dry_run=payload.dry_run,
+            drain_status=container.message_service.backend_drain_status(),
+        )
+    except DevPipelineError as exc:
+        _raise_dev_pipeline_error(exc)
+    return _dev_pipeline_response(item)
+
+
+@router.post("/dev-pipeline/prod-update/status", response_model=DevPipelineResponse)
+async def get_prod_update_gate_status(
+    payload: DevPipelineProdUpdateRequest,
+    container: AppContainer = Depends(get_container),
+) -> DevPipelineResponse:
+    try:
+        item = container.dev_pipeline_service.prod_update_status(
+            prepared_update_id=payload.prepared_update_id,
+            update_version=payload.update_version,
+            force_requested=payload.force_requested,
+            acknowledged=payload.acknowledged,
+            requested_by=payload.requested_by,
+            strong_confirmation=payload.strong_confirmation,
+            drain_status=container.message_service.backend_drain_status(),
+        )
+    except DevPipelineError as exc:
+        _raise_dev_pipeline_error(exc)
+    return _dev_pipeline_response(item)
+
+
+@router.get("/dev-pipeline/prod-update/status", response_model=DevPipelineResponse)
+async def read_prod_update_gate_status(
+    container: AppContainer = Depends(get_container),
+) -> DevPipelineResponse:
+    try:
+        item = container.dev_pipeline_service.prod_update_status(
+            prepared_update_id=None,
+            drain_status=container.message_service.backend_drain_status(),
+        )
+    except DevPipelineError as exc:
+        _raise_dev_pipeline_error(exc)
+    return _dev_pipeline_response(item)
+
+
+@router.post("/dev-pipeline/prod-update/prepare", response_model=DevPipelineResponse)
+async def prepare_prod_update_gate(
+    payload: DevPipelineProdUpdatePrepareRequest,
+    container: AppContainer = Depends(get_container),
+) -> DevPipelineResponse:
+    try:
+        item = container.dev_pipeline_service.prod_update_status(
+            prepared_update_id=payload.prepared_update_id,
+            update_version=payload.update_version,
+            requested_by=payload.requested_by,
+            drain_status=container.message_service.backend_drain_status(),
+        )
+    except DevPipelineError as exc:
+        _raise_dev_pipeline_error(exc)
+    return _dev_pipeline_response(item)
+
+
+@router.post(
+    "/dev-pipeline/prod-update/acknowledge",
+    response_model=DevPipelineResponse,
+)
+async def acknowledge_prod_update_gate(
+    payload: DevPipelineProdUpdateAcknowledgeRequest,
+    container: AppContainer = Depends(get_container),
+) -> DevPipelineResponse:
+    try:
+        item = container.dev_pipeline_service.prod_update_status(
+            prepared_update_id=None,
+            acknowledged=True,
+            requested_by=payload.acknowledged_by,
+            drain_status=container.message_service.backend_drain_status(),
+        )
+    except DevPipelineError as exc:
+        _raise_dev_pipeline_error(exc)
+    return _dev_pipeline_response(item)
+
+
+@router.post("/dev-pipeline/prod-update/force", response_model=DevPipelineResponse)
+async def force_prod_update_gate(
+    payload: DevPipelineProdUpdateForceRequest,
+    container: AppContainer = Depends(get_container),
+) -> DevPipelineResponse:
+    try:
+        item = container.dev_pipeline_service.prod_update_status(
+            prepared_update_id=None,
+            force_requested=True,
+            requested_by=payload.requested_by,
+            strong_confirmation=payload.strong_confirmation,
+            drain_status=container.message_service.backend_drain_status(),
+        )
+    except DevPipelineError as exc:
+        _raise_dev_pipeline_error(exc)
+    return _dev_pipeline_response(item)
+
+
+@router.post(
+    "/dev-pipeline/release-channels/validate", response_model=DevPipelineResponse
+)
+async def validate_dev_pipeline_release_channels(
+    payload: DevPipelineReleaseChannelValidationRequest,
+    container: AppContainer = Depends(get_container),
+) -> DevPipelineResponse:
+    try:
+        result = container.dev_pipeline_service.validate_release_channels(
+            payload.configs,
+        )
+    except DevPipelineError as exc:
+        _raise_dev_pipeline_error(exc)
+    return _dev_pipeline_response(result)
 
 
 @router.get("/capabilities", response_model=ServerCapabilitiesResponse)
@@ -974,9 +1818,7 @@ async def list_web_previews(
     )
     return WebPreviewListResponse(
         previews=[
-            WebPreviewResponse(
-                **{**preview, "invite_email_delivery": email_preflight}
-            )
+            WebPreviewResponse(**{**preview, "invite_email_delivery": email_preflight})
             for preview in previews
         ],
     )
@@ -2657,6 +3499,15 @@ async def post_message(
         else None,
         container=container,
     )
+    if payload.session_id:
+        try:
+            container.dev_pipeline_service.validate_stage_session_execution(
+                session_id=payload.session_id,
+                workspace_path=payload.workspace_path,
+                backend_url=container.settings.api_base_url,
+            )
+        except DevPipelineError as exc:
+            _raise_dev_pipeline_error(exc)
     try:
         job = await run_in_threadpool(
             service.submit_message,
@@ -4823,6 +5674,14 @@ async def post_session_message(
         container=container,
     )
     try:
+        container.dev_pipeline_service.validate_stage_session_execution(
+            session_id=session_id,
+            workspace_path=payload.workspace_path,
+            backend_url=container.settings.api_base_url,
+        )
+    except DevPipelineError as exc:
+        _raise_dev_pipeline_error(exc)
+    try:
         job = await run_in_threadpool(
             service.submit_message,
             payload.message,
@@ -5428,9 +6287,7 @@ async def _web_preview_response(
     email_preflight = await run_in_threadpool(
         container.web_preview_invite_service.email_delivery_preflight,
     )
-    return WebPreviewResponse(
-        **{**payload, "invite_email_delivery": email_preflight}
-    )
+    return WebPreviewResponse(**{**payload, "invite_email_delivery": email_preflight})
 
 
 def _preserve_api_v1_prefix(request: Request, url: str) -> str:

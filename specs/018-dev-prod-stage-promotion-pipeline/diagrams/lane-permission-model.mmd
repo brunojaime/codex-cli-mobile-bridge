@@ -1,0 +1,48 @@
+flowchart TB
+  subgraph Modes[Operating modes]
+    ProdNormal[PROD normal chat]
+    ProdSlash[PROD temporary handoff action]
+    DevStage[DEV stage chat]
+    DevIntegration[DEV integration mode]
+    ProdPromotion[PROD promotion mode]
+  end
+
+  subgraph Capabilities[Capability boundary]
+    ReadProdContext[Read selected PROD context]
+    EnqueueHandoff[Enqueue immutable handoff]
+    EditStageFiles[Edit assigned stage worktree]
+    RunStageTools[Run stage tests and agents]
+    MergeDevMain[Integrate stage into dev/main]
+    DrainProd[Drain active PROD jobs]
+    RestartProd[Restart PROD backend]
+    ReleaseApps[Release DEV and PROD APKs]
+    ReadDevInternals[Read DEV internals]
+    ExecuteAdHoc[Execute ad hoc shell or git commands]
+  end
+
+  ProdNormal --> ReadProdContext
+  ProdNormal -. denied .-> EditStageFiles
+  ProdNormal -. denied .-> ReadDevInternals
+  ProdNormal -. denied .-> ExecuteAdHoc
+  ProdNormal -. denied .-> RestartProd
+
+  ProdSlash --> ReadProdContext
+  ProdSlash --> EnqueueHandoff
+  ProdSlash -. denied .-> EditStageFiles
+  ProdSlash -. denied .-> RunStageTools
+  ProdSlash -. denied .-> ExecuteAdHoc
+
+  DevStage --> EditStageFiles
+  DevStage --> RunStageTools
+  DevStage -. denied .-> MergeDevMain
+  DevStage -. denied .-> RestartProd
+
+  DevIntegration --> MergeDevMain
+  DevIntegration -. denied .-> RestartProd
+  DevIntegration -. denied .-> ReleaseApps
+
+  ProdPromotion --> DrainProd
+  ProdPromotion --> RestartProd
+  ProdPromotion --> ReleaseApps
+  ProdPromotion -. denied .-> ExecuteAdHoc
+

@@ -1,0 +1,60 @@
+flowchart LR
+  User[User]
+
+  subgraph ProdLane[PROD lane]
+    ProdApp[PROD mobile app]
+    ProdBackend[PROD backend]
+    ProdAgent[PROD agent normal mode]
+    SlashAction[Temporary DEV handoff action]
+  end
+
+  subgraph ControlPlane[Control plane]
+    DevQueue[DEV handoff queue]
+    StageRegistry[Stage registry]
+    MergeQueue[Merge queue]
+    PromotionRecords[Promotion records and evidence]
+    PromotionTool[Promotion orchestrator tool]
+  end
+
+  subgraph DevLane[DEV lane]
+    DevApp[DEV mobile app]
+    DevBackend[DEV backend]
+    DevMain[dev/main]
+    Stage017[spec-017 stage worktree]
+    Stage018[spec-018 stage worktree]
+    StageChat[Stage-bound chats]
+  end
+
+  subgraph ExternalBuilds[External deterministic services]
+    GitHubActions[GitHub Actions Android release]
+    AndroidRelease[APK releases and update metadata]
+    ExistingScripts[Existing release, drain, restart, validation scripts]
+  end
+
+  User --> ProdApp
+  ProdApp --> ProdBackend
+  ProdBackend --> ProdAgent
+  User --> SlashAction
+  SlashAction --> DevQueue
+  DevQueue --> DevBackend
+  DevBackend --> StageRegistry
+  StageRegistry --> Stage017
+  StageRegistry --> Stage018
+  StageRegistry --> StageChat
+  StageChat --> DevBackend
+  Stage017 --> MergeQueue
+  Stage018 --> MergeQueue
+  MergeQueue --> DevMain
+  DevMain --> PromotionTool
+  PromotionTool --> PromotionRecords
+  PromotionTool --> ExistingScripts
+  ExistingScripts --> ProdBackend
+  PromotionTool --> GitHubActions
+  GitHubActions --> AndroidRelease
+  AndroidRelease --> ProdApp
+  AndroidRelease --> DevApp
+  DevApp --> DevBackend
+
+  ProdAgent -. denied .-> DevLane
+  ProdAgent -. denied .-> PromotionTool
+

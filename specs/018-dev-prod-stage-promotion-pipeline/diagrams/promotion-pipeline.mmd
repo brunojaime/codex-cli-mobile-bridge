@@ -1,0 +1,32 @@
+flowchart LR
+  start["Promotion request\nvalidated parameters"]
+  preflight["Preflight\nclean repo, approved specs,\nrelease config"]
+  validation["Validation\nunit/widget/e2e,\nSDD doctor, network checks"]
+  approval["User approval gate"]
+  drain["PROD drain\nwait active jobs = 0"]
+  backend["Deploy/restart backend\nsafe_restart_backend.sh"]
+  appProd["Release PROD app\nstable channel"]
+  appDev["Release DEV app\ndev channel"]
+  post["Post validation\nhealth, updater, release assets"]
+  notify["Notify + evidence"]
+  done["Done"]
+  blocked["Blocked/Failed\nno partial promotion"]
+
+  start --> preflight
+  preflight -->|pass| validation
+  preflight -->|fail| blocked
+  validation -->|pass| approval
+  validation -->|fail| blocked
+  approval -->|approved| drain
+  approval -->|missing| blocked
+  drain -->|ready| backend
+  drain -->|active jobs/timeout| blocked
+  backend -->|pass| appProd
+  backend -->|fail| blocked
+  appProd -->|pass| appDev
+  appProd -->|fail| blocked
+  appDev -->|pass| post
+  appDev -->|fail| blocked
+  post -->|pass| notify
+  post -->|fail| blocked
+  notify --> done

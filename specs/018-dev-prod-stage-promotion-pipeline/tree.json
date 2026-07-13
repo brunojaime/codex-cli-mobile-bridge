@@ -1,0 +1,347 @@
+{
+  "spec": {
+    "file": "spec.md"
+  },
+  "diagrams": [
+    {
+      "id": "system-context",
+      "title": "System Context",
+      "diagram_type": "system-context",
+      "status": "planned",
+      "description": "End-to-end system context for PROD, DEV, control plane, worktrees, merge queue, promotion, GitHub Actions, and runtime.",
+      "file": "diagrams/system-context.mmd",
+      "metadata_file": "diagrams/system-context.yaml"
+    },
+    {
+      "id": "lane-permission-model",
+      "title": "Lane Permission Model",
+      "diagram_type": "component-impact",
+      "status": "planned",
+      "description": "Capability matrix showing what PROD normal mode, PROD slash mode, DEV stage mode, DEV integration mode, and PROD promotion mode may do.",
+      "file": "diagrams/lane-permission-model.mmd",
+      "metadata_file": "diagrams/lane-permission-model.yaml"
+    },
+    {
+      "id": "prod-handoff-sequence",
+      "title": "PROD Handoff Sequence",
+      "diagram_type": "sequence",
+      "status": "planned",
+      "description": "Sequence from normal PROD work to temporary slash handoff and enqueue-only DEV queue insertion.",
+      "file": "diagrams/prod-handoff-sequence.mmd",
+      "metadata_file": "diagrams/prod-handoff-sequence.yaml"
+    },
+    {
+      "id": "prod-to-dev-handoff-sequence",
+      "title": "PROD To DEV Handoff Sequence",
+      "diagram_type": "sequence",
+      "status": "planned",
+      "description": "Broader sequence from normal PROD work through temporary handoff, DEV worker materialization, and stage chat binding.",
+      "file": "diagrams/prod-to-dev-handoff-sequence.mmd",
+      "metadata_file": "diagrams/prod-to-dev-handoff-sequence.yaml"
+    },
+    {
+      "id": "backlog-stage-lifecycle",
+      "title": "Backlog Stage Lifecycle",
+      "diagram_type": "state",
+      "status": "planned",
+      "description": "Lifecycle for backlog items, stage execution, user validation, integration, and promotion readiness.",
+      "file": "diagrams/backlog-stage-lifecycle.mmd",
+      "metadata_file": "diagrams/backlog-stage-lifecycle.yaml"
+    },
+    {
+      "id": "backlog-stage-state-machine",
+      "title": "Backlog Stage State Machine",
+      "diagram_type": "state",
+      "status": "planned",
+      "description": "Compact state machine for DEV backlog items, stage execution, validation, integration, and promotion readiness.",
+      "file": "diagrams/backlog-stage-state-machine.mmd",
+      "metadata_file": "diagrams/backlog-stage-state-machine.yaml"
+    },
+    {
+      "id": "stage-worktree-topology",
+      "title": "Stage Worktree Topology",
+      "diagram_type": "deployment",
+      "status": "planned",
+      "description": "Branch, worktree, backend, app, and chat isolation topology for parallel DEV specs.",
+      "file": "diagrams/stage-worktree-topology.mmd",
+      "metadata_file": "diagrams/stage-worktree-topology.yaml"
+    },
+    {
+      "id": "worktree-topology",
+      "title": "Worktree Topology",
+      "diagram_type": "deployment",
+      "status": "planned",
+      "description": "Branch, worktree, backend-instance, merge-gate, and promotion-gate topology for parallel DEV specs.",
+      "file": "diagrams/worktree-topology.mmd",
+      "metadata_file": "diagrams/worktree-topology.yaml"
+    },
+    {
+      "id": "dev-agent-review-loop",
+      "title": "DEV Agent Review Loop",
+      "diagram_type": "sequence",
+      "status": "planned",
+      "description": "Generator and Reviewer auto-chain inside one stage-bound DEV chat.",
+      "file": "diagrams/dev-agent-review-loop.mmd",
+      "metadata_file": "diagrams/dev-agent-review-loop.yaml"
+    },
+    {
+      "id": "dev-main-merge-queue",
+      "title": "DEV Main Merge Queue",
+      "diagram_type": "component-impact",
+      "status": "planned",
+      "description": "Serialized stage branch integration into dev/main with preflight, conflict, validation, and rollback gates.",
+      "file": "diagrams/dev-main-merge-queue.mmd",
+      "metadata_file": "diagrams/dev-main-merge-queue.yaml"
+    },
+    {
+      "id": "promotion-pipeline",
+      "title": "Promotion Pipeline",
+      "diagram_type": "component-impact",
+      "status": "planned",
+      "description": "Gate-by-gate promotion flowchart from dev/main to PROD with release and validation gates.",
+      "file": "diagrams/promotion-pipeline.mmd",
+      "metadata_file": "diagrams/promotion-pipeline.yaml"
+    },
+    {
+      "id": "promotion-state-machine",
+      "title": "Promotion State Machine",
+      "diagram_type": "state",
+      "status": "planned",
+      "description": "Deterministic promotion state machine from dev/main to PROD with release and validation gates.",
+      "file": "diagrams/promotion-state-machine.mmd",
+      "metadata_file": "diagrams/promotion-state-machine.yaml"
+    },
+    {
+      "id": "prod-promotion-sequence",
+      "title": "PROD Promotion Sequence",
+      "diagram_type": "sequence",
+      "status": "planned",
+      "description": "End-to-end promotion sequence across validation, approval, drain, backend deploy, app release, and post-validation.",
+      "file": "diagrams/prod-promotion-sequence.mmd",
+      "metadata_file": "diagrams/prod-promotion-sequence.yaml"
+    },
+    {
+      "id": "release-channel-deployment",
+      "title": "Release Channel Deployment",
+      "diagram_type": "deployment",
+      "status": "planned",
+      "description": "Distinct DEV and PROD APK channels, visual identity, API URLs, updater channels, and backend identity validation.",
+      "file": "diagrams/release-channel-deployment.mmd",
+      "metadata_file": "diagrams/release-channel-deployment.yaml"
+    },
+    {
+      "id": "control-plane-data-model",
+      "title": "Control Plane Data Model",
+      "diagram_type": "data-impact",
+      "status": "planned",
+      "description": "Full control-plane data model for environments, handoffs, backlog, stages, runs, merge queue, promotion, validation, and releases.",
+      "file": "diagrams/control-plane-data-model.mmd",
+      "metadata_file": "diagrams/control-plane-data-model.yaml"
+    },
+    {
+      "id": "observability-evidence-model",
+      "title": "Observability Evidence Model",
+      "diagram_type": "entity-relationship",
+      "status": "planned",
+      "description": "Control-plane evidence model for handoffs, stages, runs, merges, promotions, and release artifacts.",
+      "file": "diagrams/observability-evidence-model.mmd",
+      "metadata_file": "diagrams/observability-evidence-model.yaml"
+    },
+    {
+      "id": "stage-runtime-isolation",
+      "title": "Stage Runtime Isolation",
+      "diagram_type": "deployment",
+      "status": "planned",
+      "description": "Per-stage backend process, port, data dir, logs, PID, env file, and chat routing isolation.",
+      "file": "diagrams/stage-runtime-isolation.mmd",
+      "metadata_file": "diagrams/stage-runtime-isolation.yaml"
+    },
+    {
+      "id": "prod-backend-update-gate",
+      "title": "PROD Backend Update Gate",
+      "diagram_type": "state",
+      "status": "planned",
+      "description": "Automatic PROD backend update eligibility, waiting-for-idle notification, force restart, validation, and user acknowledgement.",
+      "file": "diagrams/prod-backend-update-gate.mmd",
+      "metadata_file": "diagrams/prod-backend-update-gate.yaml"
+    }
+  ],
+  "plans": [
+    {
+      "id": "plan-1",
+      "number": 1,
+      "title": "Environment Isolation And Permission Model",
+      "status": "planned",
+      "description": "Define environment identity, capability rules, and PROD hard-denial behavior.",
+      "file": "plans/01-environment-isolation-and-permission-model/plan.md",
+      "tasks": [
+        {"id": "plan-1-task-1", "number": 1, "title": "T001 Define environment identity schema", "status": "planned", "description": "Represent PROD, DEV, control plane, stage, channel, backend URL, app label, and allowed capabilities.", "file": "tasks.md"},
+        {"id": "plan-1-task-2", "number": 2, "title": "T002 Define deterministic permission matrix", "status": "planned", "description": "Define allowed and denied operations for every operating mode.", "file": "tasks.md"},
+        {"id": "plan-1-task-3", "number": 3, "title": "T003 Add backend environment identity source", "status": "planned", "description": "Expose identity in health/config payloads for frontend and tools.", "file": "tasks.md"},
+        {"id": "plan-1-task-4", "number": 4, "title": "T004 Enforce PROD normal-mode denial", "status": "planned", "description": "Block writes, commands, restarts, deploys, and DEV workspace reads.", "file": "tasks.md"},
+        {"id": "plan-1-task-5", "number": 5, "title": "T005 Test PROD isolation", "status": "planned", "description": "Prove PROD normal sessions cannot access mutation capabilities or DEV context.", "file": "tasks.md"},
+        {"id": "plan-1-task-6", "number": 6, "title": "T006 Document isolation rules", "status": "planned", "description": "Document operator rules without injecting context into normal PROD agents.", "file": "tasks.md"}
+      ]
+    },
+    {
+      "id": "plan-2",
+      "number": 2,
+      "title": "PROD Slash Handoff And DEV Queue",
+      "status": "planned",
+      "description": "Create enqueue-only handoff mode from PROD to the DEV queue.",
+      "file": "plans/02-prod-slash-handoff-and-dev-queue/plan.md",
+      "tasks": [
+        {"id": "plan-2-task-1", "number": 1, "title": "T007 Define slash handoff contract", "status": "planned", "description": "Load temporary context only when the user invokes the action.", "file": "tasks.md"},
+        {"id": "plan-2-task-2", "number": 2, "title": "T008 Implement queue payload schema", "status": "planned", "description": "Validate immutability, idempotency, and environment checks.", "file": "tasks.md"},
+        {"id": "plan-2-task-3", "number": 3, "title": "T009 Add enqueue-only backend endpoint/tool", "status": "planned", "description": "Accept handoffs without granting mutation permissions.", "file": "tasks.md"},
+        {"id": "plan-2-task-4", "number": 4, "title": "T010 Add frontend slash/action UI", "status": "planned", "description": "Enter and exit temporary plan/handoff mode.", "file": "tasks.md"},
+        {"id": "plan-2-task-5", "number": 5, "title": "T011 Test slash permission limits", "status": "planned", "description": "Verify enqueue works and edits/commands/restarts/DEV launches fail.", "file": "tasks.md"},
+        {"id": "plan-2-task-6", "number": 6, "title": "T012 Add handoff audit records", "status": "planned", "description": "Persist source session, selected context, item id, and redacted evidence.", "file": "tasks.md"}
+      ]
+    },
+    {
+      "id": "plan-3",
+      "number": 3,
+      "title": "DEV Backlog Spec Materialization",
+      "status": "planned",
+      "description": "Claim queued handoffs and materialize them into DEV SDD specs.",
+      "file": "plans/03-dev-backlog-spec-materialization/plan.md",
+      "tasks": [
+        {"id": "plan-3-task-1", "number": 1, "title": "T013 Define DEV backlog states", "status": "planned", "description": "Define claim, retry, cancellation, and terminal-state behavior.", "file": "tasks.md"},
+        {"id": "plan-3-task-2", "number": 2, "title": "T014 Implement DEV worker import", "status": "planned", "description": "Materialize handoffs only in DEV workspaces.", "file": "tasks.md"},
+        {"id": "plan-3-task-3", "number": 3, "title": "T015 Implement spec attachment rules", "status": "planned", "description": "Attach to existing specs or create new specs deterministically.", "file": "tasks.md"},
+        {"id": "plan-3-task-4", "number": 4, "title": "T016 Store delivery state outside metadata.status", "status": "planned", "description": "Keep runtime state separate from SDD lifecycle.", "file": "tasks.md"},
+        {"id": "plan-3-task-5", "number": 5, "title": "T017 Add Workbench/Kanban visibility", "status": "planned", "description": "Show queued, materialized, blocked, and active backlog states.", "file": "tasks.md"},
+        {"id": "plan-3-task-6", "number": 6, "title": "T018 Test materialization", "status": "planned", "description": "Cover duplicate handoffs, races, blockers, and projection.", "file": "tasks.md"}
+      ]
+    },
+    {
+      "id": "plan-4",
+      "number": 4,
+      "title": "Stage Registry Worktrees And Chat Binding",
+      "status": "planned",
+      "description": "Bind each DEV spec chat to one registered branch and worktree.",
+      "file": "plans/04-stage-registry-worktrees-and-chat-binding/plan.md",
+      "tasks": [
+        {"id": "plan-4-task-1", "number": 1, "title": "T019 Define Stage Registry schema", "status": "planned", "description": "Represent stage id, spec id, branch, worktree, base branch, backend URL, channel, status, and owner.", "file": "tasks.md"},
+        {"id": "plan-4-task-2", "number": 2, "title": "T020 Implement branch/worktree creation", "status": "planned", "description": "Create or reuse one branch/worktree per spec stage.", "file": "tasks.md"},
+        {"id": "plan-4-task-3", "number": 3, "title": "T021 Bind DEV chats to stages", "status": "planned", "description": "Persist stage metadata on sessions.", "file": "tasks.md"},
+        {"id": "plan-4-task-4", "number": 4, "title": "T022 Add mismatch guards", "status": "planned", "description": "Reject actions when workspace, branch, or worktree diverges from registry.", "file": "tasks.md"},
+        {"id": "plan-4-task-5", "number": 5, "title": "T023 Render DEV stage header", "status": "planned", "description": "Show environment, spec, branch, worktree label, and backend URL source.", "file": "tasks.md"},
+        {"id": "plan-4-task-6", "number": 6, "title": "T024 Test parallel stages", "status": "planned", "description": "Cover spec 017/spec 018 isolation, mismatch rejection, and chat continuity.", "file": "tasks.md"}
+      ]
+    },
+    {
+      "id": "plan-5",
+      "number": 5,
+      "title": "DEV Agent Execution And Review Loop",
+      "status": "planned",
+      "description": "Reuse existing Generator/Reviewer auto-chain inside registered DEV stages.",
+      "file": "plans/05-dev-agent-execution-and-review-loop/plan.md",
+      "tasks": [
+        {"id": "plan-5-task-1", "number": 1, "title": "T025 Define DEV stage AgentConfiguration presets", "status": "planned", "description": "Set Generator/Reviewer pair budgets and optional Summary.", "file": "tasks.md"},
+        {"id": "plan-5-task-2", "number": 2, "title": "T026 Reuse MessageService auto-chain", "status": "planned", "description": "Run Generator -> Reviewer -> Generator loops in the stage chat.", "file": "tasks.md"},
+        {"id": "plan-5-task-3", "number": 3, "title": "T027 Add Reviewer completion JSON contract", "status": "planned", "description": "Allow Reviewer to continue or complete deterministically.", "file": "tasks.md"},
+        {"id": "plan-5-task-4", "number": 4, "title": "T028 Persist run evidence", "status": "planned", "description": "Store changed files, tests, risks, user checklist, and reviewer state.", "file": "tasks.md"},
+        {"id": "plan-5-task-5", "number": 5, "title": "T029 Add DEV worker controls", "status": "planned", "description": "Start, pause, cancel, retry, and resume stage agent runs.", "file": "tasks.md"},
+        {"id": "plan-5-task-6", "number": 6, "title": "T030 Test review loop behavior", "status": "planned", "description": "Cover continue, complete, failed follow-up recovery, and final summary.", "file": "tasks.md"}
+      ]
+    },
+    {
+      "id": "plan-6",
+      "number": 6,
+      "title": "DEV Main Merge Queue And Conflict Gates",
+      "status": "planned",
+      "description": "Serialize stage integration into dev/main with deterministic gates.",
+      "file": "plans/06-dev-main-merge-queue-and-conflict-gates/plan.md",
+      "tasks": [
+        {"id": "plan-6-task-1", "number": 1, "title": "T031 Define merge queue schema", "status": "planned", "description": "Represent stage branch integration into dev/main.", "file": "tasks.md"},
+        {"id": "plan-6-task-2", "number": 2, "title": "T032 Implement merge preflight", "status": "planned", "description": "Check clean worktree, approval, reviewer, tests, and base freshness.", "file": "tasks.md"},
+        {"id": "plan-6-task-3", "number": 3, "title": "T033 Implement deterministic merge attempt", "status": "planned", "description": "Capture conflicts and avoid partial integration.", "file": "tasks.md"},
+        {"id": "plan-6-task-4", "number": 4, "title": "T034 Run integration validation", "status": "planned", "description": "Record commit, tests, SDD doctor, and blockers after merge.", "file": "tasks.md"},
+        {"id": "plan-6-task-5", "number": 5, "title": "T035 Add user-visible merge status", "status": "planned", "description": "Show conflict remediation instructions in DEV Workbench.", "file": "tasks.md"},
+        {"id": "plan-6-task-6", "number": 6, "title": "T036 Test merge queue gates", "status": "planned", "description": "Cover success, stale branch, conflict, dirty tree, failed validation, and serialization.", "file": "tasks.md"}
+      ]
+    },
+    {
+      "id": "plan-7",
+      "number": 7,
+      "title": "Deterministic Promotion Orchestrator",
+      "status": "planned",
+      "description": "Promote dev/main to PROD through a backend-owned state machine and existing scripts.",
+      "file": "plans/07-deterministic-promotion-orchestrator/plan.md",
+      "tasks": [
+        {"id": "plan-7-task-1", "number": 1, "title": "T037 Define Promotion Orchestrator state machine", "status": "planned", "description": "Define preflight, validation, approval, drain, deploy, release, post-validation, notify, blocked, failed, and rollback states.", "file": "tasks.md"},
+        {"id": "plan-7-task-2", "number": 2, "title": "T038 Wrap existing deterministic scripts", "status": "planned", "description": "Use Android release, GitHub Actions, drain/restart, post-release validation, SDD doctor, and network checks.", "file": "tasks.md"},
+        {"id": "plan-7-task-3", "number": 3, "title": "T039 Add promotion API/tool", "status": "planned", "description": "Accept validated parameters only and hide ad hoc shell/git/deploy commands from LLMs.", "file": "tasks.md"},
+        {"id": "plan-7-task-4", "number": 4, "title": "T040 Enforce PROD drain and approval gates", "status": "planned", "description": "Block restart/release while jobs are active or approval is missing.", "file": "tasks.md"},
+        {"id": "plan-7-task-5", "number": 5, "title": "T041 Persist promotion evidence", "status": "planned", "description": "Store logs, tags, release URLs, backend validation, update metadata, and rollback hints.", "file": "tasks.md"},
+        {"id": "plan-7-task-6", "number": 6, "title": "T042 Test promotion behavior", "status": "planned", "description": "Cover blocked promotion, drain, failed validation, success, and no LLM command execution.", "file": "tasks.md"}
+      ]
+    },
+    {
+      "id": "plan-8",
+      "number": 8,
+      "title": "PROD DEV App Release And Environment UI",
+      "status": "planned",
+      "description": "Make DEV and PROD apps visibly distinct and channel-safe.",
+      "file": "plans/08-prod-dev-app-release-and-environment-ui/plan.md",
+      "tasks": [
+        {"id": "plan-8-task-1", "number": 1, "title": "T043 Define DEV/PROD release channels and UI identity", "status": "planned", "description": "Define labels, badges, colors, API URLs, updater channels, and stage visibility.", "file": "tasks.md"},
+        {"id": "plan-8-task-2", "number": 2, "title": "T044 Add backend channel configuration", "status": "planned", "description": "Support separate DEV/PROD app/update channels without mock/demo defaults.", "file": "tasks.md"},
+        {"id": "plan-8-task-3", "number": 3, "title": "T045 Add frontend environment banner", "status": "planned", "description": "Render independent from existing CODEX DEV developer-mode signal.", "file": "tasks.md"},
+        {"id": "plan-8-task-4", "number": 4, "title": "T046 Build release validation", "status": "planned", "description": "Verify labels, colors, API URLs, updater URLs, and environment identity.", "file": "tasks.md"},
+        {"id": "plan-8-task-5", "number": 5, "title": "T047 Update release workflow or wrapper", "status": "planned", "description": "Support DEV and PROD channels safely.", "file": "tasks.md"},
+        {"id": "plan-8-task-6", "number": 6, "title": "T048 Test DEV/PROD UI distinction", "status": "planned", "description": "Cover colors, badges, headers, and stage identity display.", "file": "tasks.md"}
+      ]
+    },
+    {
+      "id": "plan-9",
+      "number": 9,
+      "title": "Validation Observability And Rollout",
+      "status": "planned",
+      "description": "Validate, observe, document, and roll out the complete workflow.",
+      "file": "plans/09-validation-observability-and-rollout/plan.md",
+      "tasks": [
+        {"id": "plan-9-task-1", "number": 1, "title": "T049 Add end-to-end dry-run tests", "status": "planned", "description": "Cover PROD handoff through promotion dry-run.", "file": "tasks.md"},
+        {"id": "plan-9-task-2", "number": 2, "title": "T050 Add observability and notifications", "status": "planned", "description": "Expose backlog, stage, merge, promotion, release, and validation events.", "file": "tasks.md"},
+        {"id": "plan-9-task-3", "number": 3, "title": "T051 Add operator documentation", "status": "planned", "description": "Document stages, backlog, merge, promotion, and recovery.", "file": "tasks.md"},
+        {"id": "plan-9-task-4", "number": 4, "title": "T052 Add existing-spec migration strategy", "status": "planned", "description": "Handle untracked/pre-created specs such as spec 017.", "file": "tasks.md"},
+        {"id": "plan-9-task-5", "number": 5, "title": "T053 Add rollout flags", "status": "planned", "description": "Enable DEV first and PROD handoff later.", "file": "tasks.md"},
+        {"id": "plan-9-task-6", "number": 6, "title": "T054 Run closeout validation dry-runs", "status": "planned", "description": "Run regression suite, SDD doctor, release-network validation, and backend post-release validation dry-runs.", "file": "tasks.md"}
+      ]
+    },
+    {
+      "id": "plan-10",
+      "number": 10,
+      "title": "Stage Runtime Isolation",
+      "status": "planned",
+      "description": "Give every DEV stage its own backend process, port, data dir, logs, env, PID, and health state.",
+      "file": "plans/10-stage-runtime-isolation/plan.md",
+      "tasks": [
+        {"id": "plan-10-task-1", "number": 1, "title": "T055 Define stage runtime schema", "status": "planned", "description": "Represent backend URL, port, data dir, logs dir, PID file, env file, health, and restart policy.", "file": "tasks.md"},
+        {"id": "plan-10-task-2", "number": 2, "title": "T056 Implement deterministic per-stage port allocation", "status": "planned", "description": "Allocate stable ports with collision detection and reuse.", "file": "tasks.md"},
+        {"id": "plan-10-task-3", "number": 3, "title": "T057 Implement stage backend lifecycle commands", "status": "planned", "description": "Start, stop, restart, status, healthcheck, and log lookup for one registered stage.", "file": "tasks.md"},
+        {"id": "plan-10-task-4", "number": 4, "title": "T058 Bind DEV calls to stage backend URL", "status": "planned", "description": "Route chat API calls and worker actions to the stage backend instead of a shared DEV backend.", "file": "tasks.md"},
+        {"id": "plan-10-task-5", "number": 5, "title": "T059 Render stage backend status", "status": "planned", "description": "Show backend status, port, health, and last restart per chat in DEV.", "file": "tasks.md"},
+        {"id": "plan-10-task-6", "number": 6, "title": "T060 Test backend runtime isolation", "status": "planned", "description": "Prove restart/failure of one stage backend does not affect another stage backend or chat.", "file": "tasks.md"}
+      ]
+    },
+    {
+      "id": "plan-11",
+      "number": 11,
+      "title": "PROD Backend Update Idle Gate",
+      "status": "planned",
+      "description": "Apply prepared PROD backend updates automatically only when the full PROD agent and job chain is idle; otherwise show a persistent pending notice with force controls.",
+      "file": "plans/11-prod-backend-update-idle-gate/plan.md",
+      "tasks": [
+        {"id": "plan-11-task-1", "number": 1, "title": "T061 Define PROD backend update state machine", "status": "planned", "description": "Represent update_available, waiting_for_idle, auto_update_eligible, updating, updated_pending_ack, acknowledged, force_requested, blocked, and failed.", "file": "tasks.md"},
+        {"id": "plan-11-task-2", "number": 2, "title": "T062 Implement PROD quiescence detector", "status": "planned", "description": "Detect active jobs, active_agent_run_id, queued/reserved turns, Generator/Reviewer/Summary follow-ups, SDD/Codex jobs, Project Factory jobs, and background tasks.", "file": "tasks.md"},
+        {"id": "plan-11-task-3", "number": 3, "title": "T063 Implement idle automatic backend update", "status": "planned", "description": "Run the deterministic update only when no active or pending agent chain exists.", "file": "tasks.md"},
+        {"id": "plan-11-task-4", "number": 4, "title": "T064 Add persistent PROD update notification", "status": "planned", "description": "Show waiting-for-idle, updating, updated, failed, and acknowledgement states without a modal pop-up.", "file": "tasks.md"},
+        {"id": "plan-11-task-5", "number": 5, "title": "T065 Add force restart/update action", "status": "planned", "description": "Require strong confirmation and record interruption evidence, recovery summary, and post-update validation.", "file": "tasks.md"},
+        {"id": "plan-11-task-6", "number": 6, "title": "T066 Test PROD backend update gate", "status": "planned", "description": "Cover idle auto-update, busy waiting, Generator-to-Reviewer pending chains, forced restart, failed validation, and acknowledgement dismissal.", "file": "tasks.md"}
+      ]
+    }
+  ]
+}

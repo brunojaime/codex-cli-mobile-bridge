@@ -1,0 +1,7 @@
+diagram_id: worktree-topology
+diagram_type: component-impact
+scope: feature
+status: planned
+owner: project
+source: specs/018-dev-prod-stage-promotion-pipeline/diagrams/worktree-topology.mmd
+description: Branch, worktree, backend-instance, merge-gate, and promotion-gate topology for parallel DEV work.

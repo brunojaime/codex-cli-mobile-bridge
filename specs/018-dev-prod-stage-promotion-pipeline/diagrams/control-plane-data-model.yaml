@@ -1,0 +1,7 @@
+diagram_id: control-plane-data-model
+diagram_type: data-impact
+scope: feature
+status: planned
+owner: project
+source: specs/018-dev-prod-stage-promotion-pipeline/diagrams/control-plane-data-model.mmd
+description: Control-plane data model for environments, handoffs, backlog, stages, runs, merge queue, promotion, validation, and releases.

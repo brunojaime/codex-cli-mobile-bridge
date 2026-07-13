@@ -715,7 +715,15 @@ def _select_apk_asset(
 
 
 def _validate_channel(channel: str) -> None:
-    if channel not in {"stable", "preview", "prerelease", "private-install", "all"}:
+    if channel not in {
+        "stable",
+        "prod",
+        "dev",
+        "preview",
+        "prerelease",
+        "private-install",
+        "all",
+    }:
         raise ValueError("Unsupported app update channel.")
 
 
@@ -798,9 +806,9 @@ def _validate_android_package_id(value: str) -> str:
 
 def _release_allowed_for_channel(release: GitHubRelease, channel: str) -> bool:
     _validate_channel(channel)
-    if channel == "stable":
+    if channel in {"stable", "prod"}:
         return not release.prerelease
-    if channel in {"preview", "prerelease", "private-install"}:
+    if channel in {"dev", "preview", "prerelease", "private-install"}:
         return release.prerelease
     return True
 

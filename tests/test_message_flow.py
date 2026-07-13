@@ -768,6 +768,8 @@ def test_backend_drain_waits_through_reviewer_handoff_until_run_complete() -> No
         drain_status = service.set_backend_drain(True)
         assert drain_status.ready_to_restart is False
         assert drain_status.active_session_ids == [session.id]
+        assert drain_status.active_agent_run_ids == [initial_job.run_id]
+        assert drain_status.pending_follow_up_message_ids
         assert drain_status.active_job_count == 1
 
         reviewer_job = next(

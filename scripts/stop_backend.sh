@@ -10,6 +10,28 @@ ENV_FILE="${ROOT_DIR}/.env"
 # shellcheck source=scripts/backend_process_lib.sh
 source "${ROOT_DIR}/scripts/backend_process_lib.sh"
 
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --pid-file)
+      backend_require_arg_value "$1" "${2-}"
+      PID_FILE="${2:-}"
+      shift 2
+      ;;
+    --env-file)
+      backend_require_arg_value "$1" "${2-}"
+      ENV_FILE="${2:-}"
+      shift 2
+      ;;
+    *)
+      echo "Unknown argument: $1" >&2
+      exit 1
+      ;;
+  esac
+done
+
+BACKEND_ENV_ALLOWED_KEYS=(API_PORT)
+backend_export_env_file_values "${ENV_FILE}" "${BACKEND_ENV_ALLOWED_KEYS[@]}"
+
 API_PORT="${API_PORT:-$(backend_read_env_value API_PORT "${ENV_FILE}" || true)}"
 API_PORT="${API_PORT:-8000}"
 

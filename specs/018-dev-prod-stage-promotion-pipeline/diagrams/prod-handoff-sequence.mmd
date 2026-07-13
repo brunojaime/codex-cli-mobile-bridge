@@ -1,0 +1,25 @@
+sequenceDiagram
+  autonumber
+  actor User
+  participant ProdApp as PROD mobile app
+  participant ProdBackend as PROD backend
+  participant Slash as Handoff action
+  participant Queue as DEV handoff queue
+  participant Audit as Handoff audit log
+  participant DevWorker as DEV backlog worker
+
+  User->>ProdApp: Select conversation context
+  User->>ProdApp: Invoke DEV handoff action
+  ProdApp->>ProdBackend: Request temporary handoff mode
+  ProdBackend->>Slash: Load narrow handoff contract
+  Slash->>Slash: Validate enqueue-only capabilities
+  Slash->>Queue: Create immutable handoff with idempotency key
+  Queue->>Audit: Persist source session and redacted evidence
+  Queue-->>Slash: queued item id
+  Slash-->>ProdBackend: Confirmation only
+  ProdBackend-->>ProdApp: Handoff queued
+  ProdApp-->>User: Show queued item id
+  Queue-->>DevWorker: Item available for DEV claim
+
+  Note over Slash,Queue: No file edits, shell commands, restarts, git operations, or DEV agent launches are available.
+

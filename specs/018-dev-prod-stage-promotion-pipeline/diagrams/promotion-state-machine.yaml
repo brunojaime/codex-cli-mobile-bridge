@@ -1,0 +1,6 @@
+diagram_id: promotion-state-machine
+diagram_type: state
+scope: feature
+status: draft
+owner: project
+source: specs/018-dev-prod-stage-promotion-pipeline/diagrams/promotion-state-machine.mmd

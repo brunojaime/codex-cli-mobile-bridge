@@ -4,7 +4,17 @@ on:
   push:
     tags:
       - "android-v*"
+      - "android-dev-v*"
   workflow_dispatch:
+    inputs:
+      channel:
+        description: "Release channel to build"
+        required: true
+        default: "prod"
+        type: choice
+        options:
+          - prod
+          - dev
 
 permissions:
   contents: write
@@ -38,20 +48,25 @@ jobs:
           ANDROID_STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
           ANDROID_STORE_TYPE: ${{ secrets.ANDROID_STORE_TYPE }}
         run: |
-          if [[ -n "$ANDROID_KEYSTORE_BASE64" && -n "$ANDROID_KEY_ALIAS" && -n "$ANDROID_KEY_PASSWORD" && -n "$ANDROID_STORE_PASSWORD" ]]; then
-            printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > frontend/mobile_app/android/upload-keystore.jks
-            {
-              printf 'storeFile=upload-keystore.jks\n'
-              printf 'storePassword=%s\n' "$ANDROID_STORE_PASSWORD"
-              printf 'keyAlias=%s\n' "$ANDROID_KEY_ALIAS"
-              printf 'keyPassword=%s\n' "$ANDROID_KEY_PASSWORD"
-              if [[ -n "$ANDROID_STORE_TYPE" ]]; then
-                printf 'storeType=%s\n' "$ANDROID_STORE_TYPE"
-              fi
-            } > frontend/mobile_app/android/key.properties
-          else
-            echo "No Android release keystore secrets configured; using debug signing fallback."
+          missing=()
+          [[ -n "$ANDROID_KEYSTORE_BASE64" ]] || missing+=(ANDROID_KEYSTORE_BASE64)
+          [[ -n "$ANDROID_KEY_ALIAS" ]] || missing+=(ANDROID_KEY_ALIAS)
+          [[ -n "$ANDROID_KEY_PASSWORD" ]] || missing+=(ANDROID_KEY_PASSWORD)
+          [[ -n "$ANDROID_STORE_PASSWORD" ]] || missing+=(ANDROID_STORE_PASSWORD)
+          if [[ "${#missing[@]}" -gt 0 ]]; then
+            printf 'Missing required Android release signing secret(s): %s\n' "${missing[*]}" >&2
+            exit 1
           fi
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > frontend/mobile_app/android/upload-keystore.jks
+          {
+            printf 'storeFile=upload-keystore.jks\n'
+            printf 'storePassword=%s\n' "$ANDROID_STORE_PASSWORD"
+            printf 'keyAlias=%s\n' "$ANDROID_KEY_ALIAS"
+            printf 'keyPassword=%s\n' "$ANDROID_KEY_PASSWORD"
+            if [[ -n "$ANDROID_STORE_TYPE" ]]; then
+              printf 'storeType=%s\n' "$ANDROID_STORE_TYPE"
+            fi
+          } > frontend/mobile_app/android/key.properties
 
       - name: Read Flutter app version
         id: app_version
@@ -62,44 +77,142 @@ jobs:
           echo "value=$version" >> "$GITHUB_OUTPUT"
           echo "safe=$safe_version" >> "$GITHUB_OUTPUT"
 
+      - name: Resolve release channel
+        id: release_channel
+        shell: bash
+        env:
+          REQUESTED_CHANNEL: ${{ github.event.inputs.channel || 'prod' }}
+        run: |
+          if [[ "${GITHUB_REF_TYPE:-}" == "tag" ]]; then
+            case "$GITHUB_REF_NAME" in
+              android-dev-v*) channel=dev ;;
+              android-v*) channel=prod ;;
+              *) echo "Unsupported Android release tag: $GITHUB_REF_NAME" >&2; exit 1 ;;
+            esac
+          else
+            channel="$REQUESTED_CHANNEL"
+          fi
+
+          case "$channel" in
+            prod)
+              flavor=prod
+              source_app=codex-mobile
+              app_label="Codex Mobile Bridge"
+              updater_channel=prod
+              environment_color="#2563EB"
+              api_base_url="${{ vars.API_BASE_URL }}"
+              artifact_base=codex-mobile
+              expected_tag="android-v${{ steps.app_version.outputs.safe }}"
+              codex_dev_mode=false
+              ;;
+            dev)
+              flavor=dev
+              source_app=codex-mobile-dev
+              app_label="Codex Mobile Bridge DEV"
+              updater_channel=dev
+              environment_color="#F59E0B"
+              api_base_url="${{ vars.DEV_API_BASE_URL }}"
+              artifact_base=codex-mobile-dev
+              expected_tag="android-dev-v${{ steps.app_version.outputs.safe }}"
+              codex_dev_mode=true
+              ;;
+            *)
+              echo "Unsupported Android release channel: $channel" >&2
+              exit 1
+              ;;
+          esac
+
+          if [[ -z "$api_base_url" ]]; then
+            echo "Missing API base URL for channel $channel." >&2
+            exit 1
+          fi
+          if [[ "${GITHUB_REF_TYPE:-}" == "tag" && "$GITHUB_REF_NAME" != "$expected_tag" ]]; then
+            echo "Tag $GITHUB_REF_NAME does not match pubspec-derived $expected_tag." >&2
+            exit 1
+          fi
+
+          {
+            echo "channel=$channel"
+            echo "flavor=$flavor"
+            echo "source_app=$source_app"
+            echo "app_label=$app_label"
+            echo "updater_channel=$updater_channel"
+            echo "environment_color=$environment_color"
+            echo "api_base_url=$api_base_url"
+            echo "artifact_base=$artifact_base"
+            echo "expected_tag=$expected_tag"
+            echo "codex_dev_mode=$codex_dev_mode"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Install Flutter dependencies
         working-directory: frontend/mobile_app
         run: flutter pub get
 
       - name: Validate Android release networking
         env:
-          API_BASE_URL: ${{ vars.API_BASE_URL }}
-          CODEX_APP_UPDATER_BRIDGE_URL: ${{ vars.CODEX_APP_UPDATER_BRIDGE_URL }}
+          API_BASE_URL: ${{ steps.release_channel.outputs.api_base_url }}
+          CODEX_APP_UPDATER_BRIDGE_URL: ${{ steps.release_channel.outputs.api_base_url }}
         run: python3 scripts/validate_android_release_network.py
+
+      - name: Validate Android release channel
+        shell: bash
+        run: |
+          python3 scripts/validate_android_release_channel.py \
+            --channel "${{ steps.release_channel.outputs.channel }}" \
+            --source-app "${{ steps.release_channel.outputs.source_app }}" \
+            --api-base-url "${{ steps.release_channel.outputs.api_base_url }}" \
+            --app-label "${{ steps.release_channel.outputs.app_label }}" \
+            --updater-channel "${{ steps.release_channel.outputs.updater_channel }}" \
+            --environment-color "${{ steps.release_channel.outputs.environment_color }}" \
+            --release-tag "${{ steps.release_channel.outputs.expected_tag }}" \
+            --expected-package-id "${{ steps.release_channel.outputs.channel == 'dev' && 'com.example.codex_mobile_frontend.dev' || 'com.example.codex_mobile_frontend' }}" \
+            --pubspec frontend/mobile_app/pubspec.yaml \
+            --app-updates-registry backend/app/infrastructure/config/app_updates.json
 
       - name: Build Android APK
         working-directory: frontend/mobile_app
-        env:
-          API_BASE_URL: ${{ vars.API_BASE_URL }}
         run: |
-          bridge_url="${API_BASE_URL:-http://batata-default-string.tail0302c4.ts.net}"
+          bridge_url="${{ steps.release_channel.outputs.api_base_url }}"
           args=()
           args+=(--dart-define=API_BASE_URL="$bridge_url")
+          args+=(--dart-define=APP_UPDATER_ENABLED=true)
           args+=(--dart-define=CODEX_APP_UPDATER_ENABLED=true)
           args+=(--dart-define=CODEX_APP_UPDATER_BRIDGE_URL="$bridge_url")
           args+=(--dart-define=CODEX_APP_UPDATER_AUTO_INSTALL=true)
-          args+=(--dart-define=CODEX_BRIDGE_DEV_MODE=true)
+          args+=(--dart-define=BRIDGE_APP_SOURCE_APP="${{ steps.release_channel.outputs.source_app }}")
+          args+=(--dart-define=BRIDGE_APP_CHANNEL="${{ steps.release_channel.outputs.channel }}")
+          args+=(--dart-define=BRIDGE_UPDATER_CHANNEL="${{ steps.release_channel.outputs.updater_channel }}")
+          args+=(--dart-define=BRIDGE_APP_LABEL="${{ steps.release_channel.outputs.app_label }}")
+          args+=(--dart-define=BRIDGE_ENVIRONMENT_COLOR="${{ steps.release_channel.outputs.environment_color }}")
+          args+=(--dart-define=CODEX_BRIDGE_DEV_MODE="${{ steps.release_channel.outputs.codex_dev_mode }}")
           args+=(--dart-define=CODEX_BRIDGE_WORKSPACE_PATH=codex-cli-mobile-bridge)
-          flutter build apk --release "${args[@]}"
+          flutter build apk --release --flavor "${{ steps.release_channel.outputs.flavor }}" "${args[@]}"
 
       - name: Prepare release artifacts
         shell: bash
         run: |
           mkdir -p release-artifacts
-          cp frontend/mobile_app/build/app/outputs/flutter-apk/app-release.apk release-artifacts/codex-mobile.apk
-          cp frontend/mobile_app/build/app/outputs/flutter-apk/app-release.apk "release-artifacts/codex-mobile-${{ steps.app_version.outputs.safe }}.apk"
+          apk_path="frontend/mobile_app/build/app/outputs/flutter-apk/app-${{ steps.release_channel.outputs.flavor }}-release.apk"
+          if [[ ! -f "$apk_path" ]]; then
+            echo "Missing expected APK: $apk_path" >&2
+            find frontend/mobile_app/build/app/outputs/flutter-apk -maxdepth 1 -type f -name '*.apk' -print >&2
+            exit 1
+          fi
+          python3 scripts/verify_android_release_apk.py \
+            --channel "${{ steps.release_channel.outputs.channel }}" \
+            --apk "$apk_path" \
+            --metadata "frontend/mobile_app/build/app/outputs/apk/${{ steps.release_channel.outputs.flavor }}/release/output-metadata.json" \
+            --expected-package-id "${{ steps.release_channel.outputs.channel == 'dev' && 'com.example.codex_mobile_frontend.dev' || 'com.example.codex_mobile_frontend' }}" \
+            --expected-output-file "app-${{ steps.release_channel.outputs.flavor }}-release.apk"
+          cp "$apk_path" "release-artifacts/${{ steps.release_channel.outputs.artifact_base }}.apk"
+          cp "$apk_path" "release-artifacts/${{ steps.release_channel.outputs.artifact_base }}-${{ steps.app_version.outputs.safe }}.apk"
 
       - name: Upload workflow artifact
         if: ${{ !startsWith(github.ref, 'refs/tags/') }}
         continue-on-error: true
         uses: actions/upload-artifact@v7
         with:
-          name: codex-mobile-${{ steps.app_version.outputs.safe }}
+          name: ${{ steps.release_channel.outputs.artifact_base }}-${{ steps.app_version.outputs.safe }}
           path: release-artifacts/*
           if-no-files-found: error
           retention-days: 3
@@ -109,9 +222,10 @@ jobs:
         uses: softprops/action-gh-release@v3.0.0
         with:
           tag_name: ${{ github.ref_name }}
-          name: Android ${{ steps.app_version.outputs.value }}
+          name: Android ${{ steps.release_channel.outputs.channel == 'dev' && 'DEV ' || '' }}${{ steps.app_version.outputs.value }}
+          prerelease: ${{ steps.release_channel.outputs.channel == 'dev' }}
           files: |
-            release-artifacts/codex-mobile.apk
-            release-artifacts/codex-mobile-${{ steps.app_version.outputs.safe }}.apk
+            release-artifacts/${{ steps.release_channel.outputs.artifact_base }}.apk
+            release-artifacts/${{ steps.release_channel.outputs.artifact_base }}-${{ steps.app_version.outputs.safe }}.apk
           generate_release_notes: true
           fail_on_unmatched_files: true

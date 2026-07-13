@@ -1,0 +1,29 @@
+sequenceDiagram
+  autonumber
+  actor Operator as DEV operator
+  participant Workbench as DEV Workbench
+  participant Backend as DEV backend
+  participant Registry as Stage registry
+  participant Chat as Stage-bound chat
+  participant Generator
+  participant Reviewer
+  participant Evidence as Evidence store
+
+  Operator->>Workbench: Start or resume stage run
+  Workbench->>Backend: Run stage with stage_id
+  Backend->>Registry: Resolve stage branch and worktree
+  Registry-->>Backend: Validated workspace and AgentConfiguration
+  Backend->>Chat: Bind session to stage metadata
+  Chat->>Generator: Execute next implementation turn
+  Generator->>Chat: Changes, tests, and notes
+  Chat->>Reviewer: Review generated output
+  alt reviewer requests follow-up
+    Reviewer-->>Chat: {"status":"continue","summary":"..."}
+    Chat->>Generator: Follow-up prompt with bounded context
+  else reviewer completes
+    Reviewer-->>Chat: {"status":"complete","summary":"..."}
+    Chat->>Evidence: Persist changed files, tests, risks, checklist, reviewer state
+    Chat-->>Backend: Final user-facing summary
+  end
+  Backend-->>Workbench: Stage state and evidence
+

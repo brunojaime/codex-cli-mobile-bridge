@@ -1,0 +1,6 @@
+diagram_id: dev-agent-review-loop
+diagram_type: sequence
+scope: feature
+status: draft
+owner: project
+source: specs/018-dev-prod-stage-promotion-pipeline/diagrams/dev-agent-review-loop.mmd

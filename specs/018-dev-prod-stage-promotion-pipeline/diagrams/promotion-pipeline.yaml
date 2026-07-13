@@ -1,0 +1,7 @@
+diagram_id: promotion-pipeline
+diagram_type: component-impact
+scope: feature
+status: planned
+owner: project
+source: specs/018-dev-prod-stage-promotion-pipeline/diagrams/promotion-pipeline.mmd
+description: Deterministic promotion state machine from dev/main to PROD with release and validation gates.
