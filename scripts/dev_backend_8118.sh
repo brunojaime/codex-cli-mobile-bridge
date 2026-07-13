@@ -41,10 +41,11 @@ health_json() {
 }
 
 serve_has_port() {
+  local status
   command -v tailscale >/dev/null 2>&1 \
     && [[ -S "${TAILSCALE_SOCKET}" ]] \
-    && tailscale --socket="${TAILSCALE_SOCKET}" serve status 2>/dev/null \
-      | grep -q "tail0302c4.ts.net:${PORT}"
+    && status="$(tailscale --socket="${TAILSCALE_SOCKET}" serve status 2>/dev/null)" \
+    && grep -q "tail0302c4.ts.net:${PORT}" <<<"${status}"
 }
 
 pid_is_alive() {
