@@ -16,6 +16,7 @@ class ServerCapabilities {
     this.feedbackSourceWorkspaceAliases = const <String, String>{},
     this.supportsSdd = false,
     this.supportsProjectFactory = false,
+    this.supportsDomainFactory = false,
     this.backendVersion,
     this.backendCommit,
     this.features = const <String, bool>{},
@@ -35,6 +36,7 @@ class ServerCapabilities {
   final bool supportsPushJobStream;
   final bool supportsSdd;
   final bool supportsProjectFactory;
+  final bool supportsDomainFactory;
   final String? backendVersion;
   final String? backendCommit;
   final Map<String, bool> features;
@@ -64,6 +66,7 @@ class ServerCapabilities {
       supportsSdd: json['supports_sdd'] as bool? ?? false,
       supportsProjectFactory:
           json['supports_project_factory'] as bool? ?? false,
+      supportsDomainFactory: json['supports_domain_factory'] as bool? ?? false,
       backendVersion: json['backend_version'] as String?,
       backendCommit: json['backend_commit'] as String?,
       features: _boolMapFromJson(json['features']),

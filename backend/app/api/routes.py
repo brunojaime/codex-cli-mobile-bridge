@@ -87,6 +87,14 @@ from backend.app.api.schemas import (
     MessageRequest,
     PersistenceIntegrityIssueResponse,
     PersistenceIntegrityResponse,
+    DomainFactoryCompletionEvidenceResponse,
+    DomainFactoryImplementationResponse,
+    DomainFactoryIntakeRequest,
+    DomainFactoryIntakeResponse,
+    DomainFactoryReleaseEvidenceValidationRequest,
+    DomainFactoryReleaseEvidenceValidationResponse,
+    DomainFactoryStartRequest,
+    DomainFactoryStartResponse,
     ProjectFactoryDraftRequest,
     ProjectFactoryDraftAssetLinkRequest,
     ProjectFactoryDraftAssetResponse,
@@ -280,6 +288,7 @@ _FALLBACK_FEEDBACK_WORKFLOW_PRESETS = (
 _FEEDBACK_WORKSPACE_KEY_PATTERN = re.compile(r"[^a-z0-9]+")
 _BACKEND_FEATURES = {
     "project_factory": True,
+    "domain_factory": True,
     "sdd": True,
     "feedback_bridge": True,
     "app_updates": True,
@@ -381,6 +390,7 @@ async def capabilities(
         supports_push_job_stream=True,
         supports_sdd=True,
         supports_project_factory=True,
+        supports_domain_factory=True,
         backend_version="bridge-local",
         backend_commit=_backend_commit(),
         features=_BACKEND_FEATURES,
@@ -4823,6 +4833,154 @@ async def post_session_message(
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return MessageAcceptedResponse.from_domain(job)
+
+
+@router.post(
+    "/sessions/{session_id}/domain-factory/start",
+    response_model=DomainFactoryStartResponse,
+)
+async def start_domain_factory_mode(
+    session_id: str,
+    payload: DomainFactoryStartRequest,
+    service: MessageService = Depends(get_message_service),
+    container: AppContainer = Depends(get_container),
+) -> DomainFactoryStartResponse:
+    try:
+        result = await run_in_threadpool(
+            container.domain_factory_service.start,
+            session_id=session_id,
+            workspace_path=payload.workspace_path,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    messages = service.list_messages(session_id)
+    payload_data = result.to_payload()
+    return DomainFactoryStartResponse(
+        **payload_data,
+        session=SessionDetailResponse.from_domain(
+            result.session,
+            messages=messages,
+            turn_summaries=service.list_turn_summaries(session_id),
+            jobs_by_id=_jobs_by_id_for_messages(service, messages),
+            run_configurations_by_id=_run_configurations_by_id_for_session(
+                service, session_id
+            ),
+        ),
+    )
+
+
+@router.post(
+    "/sessions/{session_id}/domain-factory/intake",
+    response_model=DomainFactoryIntakeResponse,
+)
+async def submit_domain_factory_intake(
+    session_id: str,
+    payload: DomainFactoryIntakeRequest,
+    service: MessageService = Depends(get_message_service),
+    container: AppContainer = Depends(get_container),
+) -> DomainFactoryIntakeResponse:
+    try:
+        result = await run_in_threadpool(
+            container.domain_factory_service.submit_intake,
+            session_id=session_id,
+            brief=payload.brief,
+            media_references=tuple(
+                item.model_dump(by_alias=True, exclude_none=True)
+                for item in payload.media_references
+            ),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    messages = service.list_messages(session_id)
+    return DomainFactoryIntakeResponse(
+        **result.to_payload(),
+        session=SessionDetailResponse.from_domain(
+            result.session,
+            messages=messages,
+            turn_summaries=service.list_turn_summaries(session_id),
+            jobs_by_id=_jobs_by_id_for_messages(service, messages),
+            run_configurations_by_id=_run_configurations_by_id_for_session(
+                service, session_id
+            ),
+        ),
+    )
+
+
+@router.post(
+    "/sessions/{session_id}/domain-factory/implementation/confirm",
+    response_model=DomainFactoryImplementationResponse,
+)
+async def confirm_domain_factory_implementation(
+    session_id: str,
+    service: MessageService = Depends(get_message_service),
+    container: AppContainer = Depends(get_container),
+) -> DomainFactoryImplementationResponse:
+    try:
+        result = await run_in_threadpool(
+            container.domain_factory_service.confirm_implementation,
+            session_id=session_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    messages = service.list_messages(session_id)
+    return DomainFactoryImplementationResponse(
+        **result.to_payload(),
+        session=SessionDetailResponse.from_domain(
+            result.session,
+            messages=messages,
+            turn_summaries=service.list_turn_summaries(session_id),
+            jobs_by_id=_jobs_by_id_for_messages(service, messages),
+            run_configurations_by_id=_run_configurations_by_id_for_session(
+                service, session_id
+            ),
+        ),
+    )
+
+
+@router.get(
+    "/sessions/{session_id}/domain-factory/completion-evidence",
+    response_model=DomainFactoryCompletionEvidenceResponse,
+)
+async def domain_factory_completion_evidence(
+    session_id: str,
+    container: AppContainer = Depends(get_container),
+) -> DomainFactoryCompletionEvidenceResponse:
+    try:
+        payload = await run_in_threadpool(
+            container.domain_factory_service.validate_completion_evidence,
+            session_id=session_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return DomainFactoryCompletionEvidenceResponse(**payload)
+
+
+@router.post(
+    "/domain-factory/release-evidence/validate",
+    response_model=DomainFactoryReleaseEvidenceValidationResponse,
+)
+async def validate_domain_factory_release_evidence(
+    payload: DomainFactoryReleaseEvidenceValidationRequest,
+    container: AppContainer = Depends(get_container),
+) -> DomainFactoryReleaseEvidenceValidationResponse:
+    result = await run_in_threadpool(
+        container.domain_factory_service.validate_release_evidence,
+        source_app=payload.source_app,
+        evidence=payload.evidence,
+        initial_build=payload.initial_build,
+    )
+    return DomainFactoryReleaseEvidenceValidationResponse(**result)
 
 
 @router.put("/sessions/{session_id}/auto-mode", response_model=SessionDetailResponse)

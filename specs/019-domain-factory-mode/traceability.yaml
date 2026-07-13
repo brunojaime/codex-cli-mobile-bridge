@@ -1,0 +1,108 @@
+spec_id: 019-domain-factory-mode
+title: Domain Factory Mode
+status: partial
+evidence:
+  - command: "python3 -m py_compile backend/app/application/services/domain_factory_service.py backend/app/api/routes.py backend/app/api/schemas.py backend/app/container.py"
+    result: passed
+  - command: "uv run ruff check backend/app/application/services/domain_factory_service.py tests/test_domain_factory_service.py"
+    result: passed
+  - command: "uv run pytest tests/test_domain_factory_service.py -q"
+    result: "passed: 11 tests"
+  - command: "flutter test test/api_client_test.dart --plain-name \"api client starts domain factory on current session\""
+    result: passed
+  - command: "flutter test test/api_client_test.dart --plain-name \"api client submits domain factory intake and confirms implementation\""
+    result: passed
+  - command: "flutter test test/api_client_test.dart --plain-name \"server metadata exposes project factory capability\""
+    result: passed
+  - command: "flutter test test/chat_screen_overflow_test.dart --plain-name \"domain factory action starts on the current chat\""
+    result: passed
+requirements:
+  domain_factory_button:
+    status: completed
+    tasks:
+      - T007
+      - T008
+      - T009
+      - T010
+      - T011
+      - T012
+    evidence:
+      - "frontend/mobile_app/test/chat_screen_overflow_test.dart::domain factory action starts on the current chat"
+      - "frontend/mobile_app/test/api_client_test.dart::api client starts domain factory on current session"
+  baseline_context:
+    status: completed
+    tasks:
+      - T001
+      - T002
+      - T003
+      - T004
+      - T005
+      - T006
+    evidence:
+      - "tests/test_domain_factory_service.py covers ready context, missing critical baseline files, invalid runtime/API URL, workspace validation, and route registration."
+  domain_intake:
+    status: completed
+    tasks:
+      - T013
+      - T014
+      - T015
+      - T016
+      - T017
+      - T018
+      - T019
+    evidence:
+      - "DomainFactoryService.submit_intake persists intake/original-brief.md, intake/media-references.json, contract-preview.json, and a chat preview message."
+      - "tests/test_domain_factory_service.py::test_domain_factory_persists_intake_media_and_contract_preview"
+  agent_prompts:
+    status: completed
+    tasks:
+      - T020
+      - T021
+      - T022
+      - T023
+      - T024
+    evidence:
+      - "DomainFactoryService.confirm_implementation writes workflow-evidence.json with generator_reviewer_paired and reviewerFeedbackBecomesNextGeneratorPrompt=true."
+      - "tests/test_domain_factory_service.py::test_domain_factory_confirm_implementation_writes_paired_workflow_evidence"
+  sdd_workbench:
+    status: completed
+    tasks:
+      - T025
+      - T026
+      - T027
+      - T028
+      - T029
+      - T030
+    evidence:
+      - "Generated Domain Factory specs include SDD files, intake artifacts, pending tasks, diagrams, and release guardrails."
+      - "DomainFactoryService.validate_completion_evidence blocks completion until implementation, validation, and release or blocked-release evidence exists."
+      - "tests/test_domain_factory_service.py::test_domain_factory_completion_evidence_blocks_until_required_files_exist"
+  preview_release:
+    status: partial
+    tasks:
+      - T031
+      - T032
+      - T033
+      - T034
+      - T035
+    completed_tasks:
+      - T031
+      - T032
+      - T033
+    pending_tasks:
+      - T034
+      - T035
+    evidence:
+      - "DomainFactoryService.validate_release_evidence enforces build > initial build, preview/cloudflare_preview runtime, real preview API URL, no mock/demo/local/placeholder values, and required release fields."
+      - "tests/test_domain_factory_service.py::test_domain_factory_release_evidence_validator_enforces_real_preview_release"
+    blocker: "No preview APK/GitHub/Bridge/updater release was executed because remote release side effects require explicit approval."
+    next_action: "After a real Domain Factory implementation run and approval, execute the preview release pipeline, verify updater behavior, and persist release evidence."
+  tests_guardrails:
+    status: completed
+    tasks:
+      - T036
+      - T037
+    evidence:
+      - "tests/test_domain_factory_service.py"
+      - "frontend/mobile_app/test/api_client_test.dart"
+      - "frontend/mobile_app/test/chat_screen_overflow_test.dart"

@@ -162,6 +162,18 @@ bool isProjectFactoryIntakeConfiguration(AgentConfiguration? configuration) {
       reviewer?.enabled == false;
 }
 
+bool isDomainFactoryConfiguration(AgentConfiguration? configuration) {
+  if (configuration == null) {
+    return false;
+  }
+  final generator = configuration.byId(AgentId.generator);
+  final reviewer = configuration.byId(AgentId.reviewer);
+  return generator?.label == 'Domain Factory' &&
+      generator?.enabled == true &&
+      reviewer?.label == 'Domain Reviewer' &&
+      reviewer?.enabled == true;
+}
+
 bool projectFactoryHasBuildReadyMarker(Iterable<ChatMessage> messages) {
   return messages.any(
     (message) =>
@@ -239,6 +251,7 @@ enum _AppBarOverflowAction {
   replyMode,
   servers,
   newProject,
+  domainFactory,
   projectHistory,
   newChat,
 }
@@ -1721,6 +1734,49 @@ When you create the Project Factory draft, link each asset with POST /project-fa
     );
   }
 
+  Future<void> _openDomainFactoryMode() async {
+    final currentSession = _chatController.currentSession;
+    if (currentSession == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Open a project chat before starting Domain Factory.'),
+        ),
+      );
+      return;
+    }
+    final capabilities = _activeServerCapabilities;
+    if (capabilities != null && !capabilities.supportsDomainFactory) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Domain Factory needs an updated bridge backend. Restart or update the backend, then try again.',
+          ),
+        ),
+      );
+      return;
+    }
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Starting Domain Factory mode...')),
+    );
+    final started = await _chatController.startDomainFactoryMode();
+    if (!mounted) {
+      return;
+    }
+    _updateStickToBottom(true);
+    _scrollToBottom();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          started
+              ? 'Domain Factory mode is ready for the business brief.'
+              : _chatController.errorText ??
+                  'Domain Factory is blocked. Check the chat message for details.',
+        ),
+      ),
+    );
+  }
+
   Future<_NewProjectBasics?> _promptNewProjectBasics() async {
     return showDialog<_NewProjectBasics>(
       context: context,
@@ -3104,6 +3160,12 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
               label: 'New project',
             ),
             _buildAppBarOverflowMenuItem(
+              action: _AppBarOverflowAction.domainFactory,
+              icon: Icons.domain_add_outlined,
+              label: 'Domain factory',
+              enabled: _chatController.currentSession != null,
+            ),
+            _buildAppBarOverflowMenuItem(
               action: _AppBarOverflowAction.projectHistory,
               icon: Icons.history,
               label: 'Project history',
@@ -3202,6 +3264,15 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
         tooltip: 'New project',
       ),
       IconButton(
+        onPressed: _chatController.currentSession == null
+            ? null
+            : () async {
+                await _openDomainFactoryMode();
+              },
+        icon: const Icon(Icons.domain_add_outlined),
+        tooltip: 'Domain factory',
+      ),
+      IconButton(
         onPressed: () async {
           await _openProjectFactoryHistory();
         },
@@ -3277,6 +3348,9 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
         return;
       case _AppBarOverflowAction.newProject:
         await _openNewProjectFactory();
+        return;
+      case _AppBarOverflowAction.domainFactory:
+        await _openDomainFactoryMode();
         return;
       case _AppBarOverflowAction.projectHistory:
         await _openProjectFactoryHistory();

@@ -1,0 +1,39 @@
+# Domain Factory Mode Tasks
+
+- [x] T001 Define Domain Factory project-scoped state model with session id, source app, workspace path, baseline commit, mode status, and latest release baseline.
+- [x] T002 Define baseline context payload assembled from `codex-bridge.yaml`, `.codex/factory/init-result.json`, `.codex/factory/llm-start-context.md`, `release/preview-runtime.json`, SDD summary, git state, and Bridge installable detail.
+- [x] T003 Add backend context builder that validates the selected workspace is under `PROJECTS_ROOT` and returns blocked state when baseline files are missing or inconsistent.
+- [x] T004 Define protected foundation areas: generic auth, RBAC engine, admin shell, Bridge plumbing, Workbench plumbing, updater plumbing, preview runtime, and initial project identity.
+- [x] T005 Define allowed domain modification areas: UI, visuals, navigation, domain backend, domain migrations, domain admin modules, roles, permissions, tests, SDD, diagrams, and release evidence.
+- [x] T006 Add explicit approval policy for destructive operations: force-push, tag/release deletion, production release, repo deletion, workspace deletion, D1/Worker/route deletion, and mock/demo conversion.
+- [x] T007 Add a `Domain factory` button below `New project` in the mobile project menu.
+- [x] T008 Gate the button on current project/session presence and show a clear blocked message when no project workspace is selected.
+- [x] T009 Add API client support for starting or previewing Domain Factory mode for the current workspace/session.
+- [x] T010 Configure the current chat with Domain Factory generator/reviewer prompts instead of creating a new project chat.
+- [x] T011 Inject a deterministic first Domain Factory context message into the chat, including project identity, already-created baseline, and next user action.
+- [x] T012 Preserve Domain Factory mode state across app restart and session refresh.
+- [x] T013 Define domain intake fields: business outcome, domain roles, permissions, entities, relationships, workflows, screens, integrations, notifications, visual identity, assets, and acceptance criteria.
+- [x] T014 Ensure intake does not ask for baseline setup fields: name, slug, frontend, backend, GitHub, Cloudflare, D1, initial admins, initial APK, Bridge, or Workbench.
+- [x] T015 Support long-form user brief input in the current chat as the primary Domain Factory intake mechanism.
+- [x] T016 Support visual references, icon/logo assets, and exact assets as Domain Factory intake items linked to the current workspace.
+- [x] T017 Define domain role model where owner/admin has all access and domain roles receive explicit generated permissions.
+- [x] T018 Generate follow-up questions only for missing domain decisions and include recommended/default/inferred options where appropriate.
+- [x] T019 Produce a domain contract preview before implementation, including roles, entities, diagrams, visual direction, screens, backend scope, tests, and release target.
+- [x] T020 Add Domain Factory generator prompt rules that consume baseline context, avoid baseline recreation, preserve foundation admin/auth/RBAC, implement domain broadly, prioritize visuals, and finish with a new preview release.
+- [x] T021 Add Domain Factory reviewer prompt rules that verify baseline preservation, domain role permissions, admin all-access, visual quality, backend correctness, tests, SDD, diagrams, and release evidence.
+- [x] T022 Configure generator/reviewer paired workflow for Domain Factory after intake reaches ready state.
+- [x] T023 Ensure reviewer feedback becomes actionable next generator prompts until release readiness is achieved.
+- [x] T024 Ensure prompts explicitly allow product-wide UI/color/layout/domain changes while protecting generic foundation plumbing.
+- [x] T025 Create or update a new SDD spec for each Domain Factory run in the selected workspace.
+- [x] T026 Persist original intake text and media references under the new domain spec intake directory.
+- [x] T027 Generate or update SDD `spec.md`, `plan.md`, `tasks.md`, `traceability.yaml`, metadata, and Workbench indexes for the domain work.
+- [x] T028 Require DER/ERD, class, sequence, component, and deployment diagrams for domain implementation readiness.
+- [x] T029 Surface Domain Factory spec/tasks in Workbench and mark generated domain tasks as pending until implemented.
+- [x] T030 Add completion rules that mark domain tasks done only after implementation, validation, and release evidence exist.
+- [x] T031 Define the post-implementation preview release sequence: test, build, APK sign, GitHub prerelease, updater metadata, Bridge registration, smoke, and evidence.
+- [x] T032 Ensure new Domain Factory preview release increments from the existing initial preview build and never overwrites build 1.
+- [x] T033 Validate the release uses real preview API/D1 and no mock/demo/local/placeholder URLs.
+- [ ] T034 Verify app updater from previous preview build sees the new build and the new build has no pending self-update. Pending: requires an approved real post-implementation preview release and updater check.
+- [ ] T035 Persist release evidence: commit, tag, release URL, APK URL, SHA-256, preview URL, smoke results, Bridge registry payload, and rollback pointer. Pending: validator and required fields exist; actual evidence persistence requires an approved real release.
+- [x] T036 Add backend and Flutter tests for Domain Factory context building, UI entry, chat mode activation, intake filtering, role model, prompts, and SDD creation.
+- [x] T037 Add release/guardrail tests for baseline preservation, admin all-access, domain role permissions, no mock/demo defaults, no baseline recreation, and preview release evidence.

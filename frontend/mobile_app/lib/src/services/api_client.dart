@@ -9,6 +9,7 @@ import '../models/agent_configuration.dart';
 import '../models/agent_profile.dart';
 import '../models/chat_message.dart';
 import '../models/codex_tooling.dart';
+import '../models/domain_factory.dart';
 import '../models/feedback_queue_item.dart';
 import '../models/installable_app.dart';
 import '../models/project_factory.dart';
@@ -1016,6 +1017,75 @@ class ApiClient {
     }
 
     return SessionDetail.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<DomainFactoryStart> startDomainFactoryMode(
+    String sessionId, {
+    String? workspacePath,
+  }) async {
+    final response = await _client.post(
+      Uri.parse('$baseUrl/sessions/$sessionId/domain-factory/start'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode(<String, dynamic>{
+        if (workspacePath != null) 'workspace_path': workspacePath,
+      }),
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception('Failed to start Domain Factory: ${response.body}');
+    }
+
+    return DomainFactoryStart.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<DomainFactoryIntake> submitDomainFactoryIntake(
+    String sessionId, {
+    required String brief,
+    List<DomainFactoryMediaReference> mediaReferences =
+        const <DomainFactoryMediaReference>[],
+  }) async {
+    final response = await _client.post(
+      Uri.parse('$baseUrl/sessions/$sessionId/domain-factory/intake'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode(<String, dynamic>{
+        'brief': brief,
+        'mediaReferences': mediaReferences
+            .map((reference) => reference.toJson())
+            .toList(growable: false),
+      }),
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception(
+          'Failed to submit Domain Factory intake: ${response.body}');
+    }
+
+    return DomainFactoryIntake.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<DomainFactoryImplementation> confirmDomainFactoryImplementation(
+    String sessionId,
+  ) async {
+    final response = await _client.post(
+      Uri.parse(
+        '$baseUrl/sessions/$sessionId/domain-factory/implementation/confirm',
+      ),
+      headers: {'Content-Type': 'application/json'},
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception(
+        'Failed to confirm Domain Factory implementation: ${response.body}',
+      );
+    }
+
+    return DomainFactoryImplementation.fromJson(
       jsonDecode(response.body) as Map<String, dynamic>,
     );
   }

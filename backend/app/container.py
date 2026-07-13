@@ -12,6 +12,9 @@ from backend.app.application.services.asset_depot_service import AssetDepotServi
 from backend.app.application.services.cloudflare_preview_service import (
     CloudflarePreviewDoctorService,
 )
+from backend.app.application.services.domain_factory_service import (
+    DomainFactoryService,
+)
 from backend.app.application.services.message_service import MessageService
 from backend.app.application.services.project_factory_service import (
     ProjectFactoryService,
@@ -93,6 +96,7 @@ class AppContainer:
     cloudflare_preview_doctor_service: CloudflarePreviewDoctorService
     web_preview_deploy_service: WebPreviewDeployService
     web_preview_invite_service: WebPreviewInviteService
+    domain_factory_service: DomainFactoryService
     job_stream_hub: JobStreamHub
     audio_transcriber: AudioTranscriber
     speech_synthesizer: SpeechSynthesizer
@@ -205,6 +209,11 @@ def build_container(settings: Settings | None = None) -> AppContainer:
         settings=resolved_settings,
         preview_service=web_preview_deploy_service,
     )
+    domain_factory_service = DomainFactoryService(
+        projects_root=resolved_settings.projects_root,
+        chat_repository=repository,
+        app_update_registry_path=resolved_settings.app_update_registry_path,
+    )
     return AppContainer(
         settings=resolved_settings,
         message_service=message_service,
@@ -220,6 +229,7 @@ def build_container(settings: Settings | None = None) -> AppContainer:
         cloudflare_preview_doctor_service=cloudflare_preview_doctor_service,
         web_preview_deploy_service=web_preview_deploy_service,
         web_preview_invite_service=web_preview_invite_service,
+        domain_factory_service=domain_factory_service,
         job_stream_hub=job_stream_hub,
         audio_transcriber=audio_transcriber,
         speech_synthesizer=speech_synthesizer,

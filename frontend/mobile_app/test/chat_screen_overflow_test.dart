@@ -4,6 +4,7 @@ import 'package:codex_mobile_frontend/src/models/chat_message.dart';
 import 'package:codex_mobile_frontend/src/models/chat_session_summary.dart';
 import 'package:codex_mobile_frontend/src/models/conversation_product.dart';
 import 'package:codex_mobile_frontend/src/models/current_run_execution.dart';
+import 'package:codex_mobile_frontend/src/models/domain_factory.dart';
 import 'package:codex_mobile_frontend/src/models/chat_turn_summary.dart';
 import 'package:codex_mobile_frontend/src/models/reviewer_lifecycle_state.dart';
 import 'package:codex_mobile_frontend/src/models/session_detail.dart';
@@ -20,6 +21,35 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:async';
 
 void main() {
+  testWidgets('domain factory action starts on the current chat',
+      (WidgetTester tester) async {
+    final apiClient = _ChatScreenOverflowApiClient(
+      _buildSession(
+        workspacePath: '/projects/prueba-17',
+        messages: const <ChatMessage>[],
+      ),
+    );
+
+    await _pumpChatScreen(
+      tester,
+      width: 1200,
+      height: 760,
+      session: apiClient.session,
+      apiClient: apiClient,
+    );
+
+    await tester.tap(find.byTooltip('Domain factory'));
+    await tester.pumpAndSettle();
+
+    expect(apiClient.domainFactoryStarts, 1);
+    expect(apiClient.domainFactorySessionId, apiClient.session.id);
+    expect(apiClient.domainFactoryWorkspacePath, '/projects/prueba-17');
+    expect(
+      apiClient.session.agentConfiguration.byId(AgentId.generator)?.label,
+      'Domain Factory',
+    );
+  });
+
   testWidgets('conversation context sheet scrolls safely for long content',
       (WidgetTester tester) async {
     final longText = List<String>.filled(
@@ -1473,6 +1503,9 @@ class _ChatScreenOverflowApiClient extends ApiClient {
   )? onUpdateAgentConfiguration;
   final Map<String, String?> lastMessagePreviewBySession;
   final List<Workspace> workspaces;
+  int domainFactoryStarts = 0;
+  String? domainFactorySessionId;
+  String? domainFactoryWorkspacePath;
 
   SessionDetail get session => _session;
 
@@ -1557,6 +1590,67 @@ class _ChatScreenOverflowApiClient extends ApiClient {
       _session = updatedSession;
     }
     return updatedSession;
+  }
+
+  @override
+  Future<DomainFactoryStart> startDomainFactoryMode(
+    String sessionId, {
+    String? workspacePath,
+  }) async {
+    domainFactoryStarts += 1;
+    domainFactorySessionId = sessionId;
+    domainFactoryWorkspacePath = workspacePath;
+    final currentSession = _sessions.firstWhere(
+      (session) => session.id == sessionId,
+    );
+    final updatedConfiguration = currentSession.agentConfiguration.copyWith(
+      preset: AgentPreset.review,
+      agents: currentSession.agentConfiguration.agents.map((agent) {
+        switch (agent.agentId) {
+          case AgentId.generator:
+            return agent.copyWith(
+              enabled: true,
+              label: 'Domain Factory',
+              maxTurns: 20,
+            );
+          case AgentId.reviewer:
+            return agent.copyWith(
+              enabled: true,
+              label: 'Domain Reviewer',
+              maxTurns: 20,
+            );
+          default:
+            return agent.copyWith(enabled: false, maxTurns: 0);
+        }
+      }).toList(growable: false),
+    );
+    final updatedSession = currentSession.copyWith(
+      agentConfiguration: updatedConfiguration,
+      messages: <ChatMessage>[
+        ...currentSession.messages,
+        _message(
+          id: 'domain-factory-start',
+          text: 'Domain Factory mode is active for the current project.',
+          agentId: AgentId.generator,
+          agentType: AgentType.generator,
+        ),
+      ],
+      updatedAt: currentSession.updatedAt.add(const Duration(seconds: 1)),
+    );
+    final sessionIndex = _sessions.indexWhere(
+      (session) => session.id == sessionId,
+    );
+    _sessions[sessionIndex] = updatedSession;
+    if (_session.id == sessionId) {
+      _session = updatedSession;
+    }
+    return DomainFactoryStart(
+      status: 'ready',
+      session: updatedSession,
+      firstMessageId: 'domain-factory-start',
+      statePath: '.codex/factory/domain-factory-state.json',
+      specRoot: 'specs/019-domain-factory-session-a',
+    );
   }
 
   String? _defaultLastMessagePreview(SessionDetail session) {

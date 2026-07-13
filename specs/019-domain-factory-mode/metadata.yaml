@@ -1,0 +1,39 @@
+id: 019-domain-factory-mode
+slug: 019-domain-factory-mode
+title: Domain Factory Mode
+description: Add a project-scoped Domain Factory mode that starts from an initialized New Project baseline, collects domain requirements and visual references, runs generator/reviewer business implementation, updates SDD artifacts, and publishes a new real preview release.
+status: partial
+last_run_state: implemented_with_release_pending
+generated:
+  title: false
+  description: false
+  user_pinned_title: true
+  user_pinned_description: true
+tasks:
+  total: 37
+  completed: 35
+  pending: 2
+diagrams:
+  total: 5
+  items:
+    entity_relationship:
+      path: generated domain specs include diagrams/entity-relationship.mmd
+      status: template_created_per_run
+    class:
+      path: generated domain specs include diagrams/class.mmd
+      status: template_created_per_run
+    sequence:
+      path: generated domain specs include diagrams/sequence.mmd
+      status: template_created_per_run
+    component:
+      path: generated domain specs include diagrams/component.mmd
+      status: template_created_per_run
+    deployment:
+      path: generated domain specs include diagrams/deployment.mmd
+      status: template_created_per_run
+available_files:
+  - spec.md
+  - plan.md
+  - tasks.md
+  - tree.json
+  - traceability.yaml

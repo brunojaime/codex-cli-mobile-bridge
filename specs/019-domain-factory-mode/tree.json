@@ -1,0 +1,63 @@
+{
+  "spec": {
+    "file": "spec.md"
+  },
+  "plans": [
+    {
+      "id": "plan-1",
+      "number": 1,
+      "title": "Domain Factory Contract And Baseline Context",
+      "status": "pending",
+      "description": "Define project-scoped state, baseline context, protected foundation areas, allowed domain scope, and approval rules.",
+      "tasks": ["T001", "T002", "T003", "T004", "T005", "T006"]
+    },
+    {
+      "id": "plan-2",
+      "number": 2,
+      "title": "Mobile Entry Point And Chat Mode Activation",
+      "status": "pending",
+      "description": "Add the Domain Factory button, require a current project, configure the current chat, and persist mode state.",
+      "tasks": ["T007", "T008", "T009", "T010", "T011", "T012"]
+    },
+    {
+      "id": "plan-3",
+      "number": 3,
+      "title": "Domain Intake References And Role Model",
+      "status": "pending",
+      "description": "Collect domain requirements, references, role/permission needs, and domain contract without repeating baseline setup.",
+      "tasks": ["T013", "T014", "T015", "T016", "T017", "T018", "T019"]
+    },
+    {
+      "id": "plan-4",
+      "number": 4,
+      "title": "Generator And Reviewer Domain Prompts",
+      "status": "pending",
+      "description": "Configure paired generator/reviewer prompts for domain implementation on top of the initialized baseline.",
+      "tasks": ["T020", "T021", "T022", "T023", "T024"]
+    },
+    {
+      "id": "plan-5",
+      "number": 5,
+      "title": "SDD And Workbench Integration",
+      "status": "pending",
+      "description": "Persist intake, create/update domain SDD artifacts, require diagrams, and surface domain tasks in Workbench.",
+      "tasks": ["T025", "T026", "T027", "T028", "T029", "T030"]
+    },
+    {
+      "id": "plan-6",
+      "number": 6,
+      "title": "Domain Build Release Pipeline",
+      "status": "pending",
+      "description": "Validate, build, publish, smoke, register, and evidence the next real preview release after domain implementation.",
+      "tasks": ["T031", "T032", "T033", "T034", "T035"]
+    },
+    {
+      "id": "plan-7",
+      "number": 7,
+      "title": "Tests Evidence And Operational Guardrails",
+      "status": "pending",
+      "description": "Add regression tests and guardrails for context, UI, prompts, domain roles, SDD, release evidence, and baseline preservation.",
+      "tasks": ["T036", "T037"]
+    }
+  ]
+}

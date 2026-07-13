@@ -676,6 +676,34 @@ class ChatController extends ChangeNotifier {
     }
   }
 
+  Future<bool> startDomainFactoryMode() async {
+    final sessionId = _selectedSessionId;
+    final currentSession = _currentSession;
+    if (sessionId == null || currentSession == null) {
+      _errorText = 'Choose a project chat before starting Domain Factory.';
+      notifyListeners();
+      return false;
+    }
+
+    try {
+      _errorText = null;
+      final result = await _apiClient.startDomainFactoryMode(
+        sessionId,
+        workspacePath: currentSession.workspacePath,
+      );
+      _currentSession = _overlaySessionWithJobSnapshots(result.session);
+      await refreshSessions();
+      _reconcilePendingJobsForSession(_currentSession);
+      _trackPendingJobsFromSession(_currentSession);
+      notifyListeners();
+      return result.isReady;
+    } catch (error) {
+      _errorText = 'Failed to start Domain Factory.\n$error';
+      notifyListeners();
+      return false;
+    }
+  }
+
   Future<bool> updateTurnSummariesEnabled(bool enabled) async {
     final sessionId = _selectedSessionId;
     if (sessionId == null) {

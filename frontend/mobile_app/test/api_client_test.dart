@@ -2,6 +2,7 @@ import 'dart:typed_data';
 
 import 'package:codex_mobile_frontend/src/models/chat_session_summary.dart';
 import 'package:codex_mobile_frontend/src/models/codex_tooling.dart';
+import 'package:codex_mobile_frontend/src/models/domain_factory.dart';
 import 'package:codex_mobile_frontend/src/models/feedback_queue_item.dart';
 import 'package:codex_mobile_frontend/src/models/installable_app.dart';
 import 'package:codex_mobile_frontend/src/models/project_factory.dart';
@@ -485,9 +486,13 @@ void main() {
         'supports_push_job_stream': true,
         'supports_sdd': true,
         'supports_project_factory': true,
+        'supports_domain_factory': true,
         'backend_version': 'bridge-local',
         'backend_commit': 'abc123',
-        'features': <String, dynamic>{'project_factory': true},
+        'features': <String, dynamic>{
+          'project_factory': true,
+          'domain_factory': true,
+        },
         'speech_output_backend': 'disabled',
         'audio_max_upload_bytes': 1,
         'image_max_upload_bytes': 2,
@@ -514,10 +519,143 @@ void main() {
     );
 
     expect(capabilities.supportsProjectFactory, isTrue);
+    expect(capabilities.supportsDomainFactory, isTrue);
     expect(capabilities.features['project_factory'], isTrue);
+    expect(capabilities.features['domain_factory'], isTrue);
     expect(capabilities.backendCommit, 'abc123');
     expect(health.features['project_factory'], isTrue);
     expect(health.backendVersion, 'bridge-local');
+  });
+
+  test('api client starts domain factory on current session', () async {
+    final client = ApiClient(
+      baseUrl: 'http://localhost:8000',
+      client: MockClient((request) async {
+        expect(request.method, 'POST');
+        expect(request.url.path, '/sessions/session-1/domain-factory/start');
+        expect(request.body, contains('/workspace/project'));
+        return http.Response(
+          '''
+          {
+            "kind": "codex.domainFactoryStart",
+            "version": 1,
+            "status": "ready",
+            "sessionId": "session-1",
+            "firstMessageId": "domain-factory-start-session-1",
+            "statePath": ".codex/factory/domain-factory-state.json",
+            "specRoot": "specs/019-domain-factory-session-1",
+            "context": {
+              "kind": "codex.domainFactoryContext",
+              "version": 1,
+              "status": "ready",
+              "sessionId": "session-1",
+              "workspacePath": "/workspace/project",
+              "workspaceName": "project"
+            },
+            "session": ${_sessionDetailJson(title: 'Project chat')}
+          }
+          ''',
+          200,
+          headers: <String, String>{'content-type': 'application/json'},
+        );
+      }),
+    );
+
+    final result = await client.startDomainFactoryMode(
+      'session-1',
+      workspacePath: '/workspace/project',
+    );
+
+    expect(result.isReady, isTrue);
+    expect(result.session.id, 'session-1');
+    expect(result.statePath, '.codex/factory/domain-factory-state.json');
+    expect(result.specRoot, 'specs/019-domain-factory-session-1');
+  });
+
+  test('api client submits domain factory intake and confirms implementation',
+      () async {
+    var step = 0;
+    final client = ApiClient(
+      baseUrl: 'http://localhost:8000',
+      client: MockClient((request) async {
+        step += 1;
+        if (step == 1) {
+          expect(request.method, 'POST');
+          expect(request.url.path, '/sessions/session-1/domain-factory/intake');
+          expect(request.body, contains('Clinic staff and patients'));
+          expect(request.body, contains('clinic-home.png'));
+          return http.Response(
+            '''
+            {
+              "kind": "codex.domainFactoryIntake",
+              "version": 1,
+              "status": "implementation_ready",
+              "sessionId": "session-1",
+              "specRoot": "specs/019-domain-factory-session-1",
+              "briefPath": "specs/019-domain-factory-session-1/intake/original-brief.md",
+              "mediaReferencesPath": "specs/019-domain-factory-session-1/intake/media-references.json",
+              "contractPreviewPath": "specs/019-domain-factory-session-1/contract-preview.json",
+              "messageId": "domain-factory-contract-session-1",
+              "contractPreview": {
+                "status": "ready_for_implementation_confirmation",
+                "roles": {"owner": {"allAccess": true}, "admin": {"allAccess": true}},
+                "releaseTarget": {"apiUrl": "https://preview.nienfos.com/clinica-norte/api"}
+              },
+              "session": ${_sessionDetailJson(title: 'Project chat')}
+            }
+            ''',
+            200,
+            headers: <String, String>{'content-type': 'application/json'},
+          );
+        }
+        expect(request.method, 'POST');
+        expect(
+          request.url.path,
+          '/sessions/session-1/domain-factory/implementation/confirm',
+        );
+        return http.Response(
+          '''
+          {
+            "kind": "codex.domainFactoryImplementation",
+            "version": 1,
+            "status": "implementing",
+            "sessionId": "session-1",
+            "specRoot": "specs/019-domain-factory-session-1",
+            "workflowEvidencePath": "specs/019-domain-factory-session-1/workflow-evidence.json",
+            "messageId": "domain-factory-implementing-session-1",
+            "session": ${_sessionDetailJson(title: 'Project chat')}
+          }
+          ''',
+          200,
+          headers: <String, String>{'content-type': 'application/json'},
+        );
+      }),
+    );
+
+    final intake = await client.submitDomainFactoryIntake(
+      'session-1',
+      brief: 'Clinic staff and patients need appointments.',
+      mediaReferences: const <DomainFactoryMediaReference>[
+        DomainFactoryMediaReference(
+          id: 'asset-1',
+          role: 'visual_reference',
+          filename: 'clinic-home.png',
+          assetId: 'asset-1',
+          mimeType: 'image/png',
+        ),
+      ],
+    );
+    final implementation = await client.confirmDomainFactoryImplementation(
+      'session-1',
+    );
+
+    expect(intake.isImplementationReady, isTrue);
+    expect(
+      intake.contractPreview['status'],
+      'ready_for_implementation_confirmation',
+    );
+    expect(implementation.isImplementing, isTrue);
+    expect(implementation.workflowEvidencePath, contains('workflow-evidence'));
   });
 
   test('project factory client manages reference assets', () async {

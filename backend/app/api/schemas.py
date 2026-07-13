@@ -68,6 +68,139 @@ class MessageRequest(BaseModel):
     codex_options: "CodexRunOptionsRequest | None" = None
 
 
+class DomainFactoryStartRequest(BaseModel):
+    workspace_path: str | None = None
+
+
+class DomainFactoryMediaReferenceRequest(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    id: str | None = Field(default=None, max_length=160)
+    role: str | None = Field(default=None, max_length=80)
+    kind: str | None = Field(default=None, max_length=80)
+    filename: str | None = Field(default=None, max_length=240)
+    asset_id: str | None = Field(default=None, alias="assetId", max_length=160)
+    path: str | None = Field(default=None, max_length=1000)
+    url: str | None = Field(default=None, max_length=1000)
+    mime_type: str | None = Field(default=None, alias="mimeType", max_length=120)
+    sha256: str | None = Field(default=None, max_length=128)
+    source: str | None = Field(default=None, max_length=80)
+
+
+class DomainFactoryIntakeRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    brief: str = Field(..., min_length=1, max_length=50000)
+    media_references: list[DomainFactoryMediaReferenceRequest] = Field(
+        default_factory=list,
+        alias="mediaReferences",
+    )
+
+
+class DomainFactoryReleaseEvidenceValidationRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    source_app: str = Field(..., alias="sourceApp", min_length=1, max_length=120)
+    evidence: dict[str, Any]
+    initial_build: int = Field(default=1, alias="initialBuild", ge=1)
+
+
+class DomainFactoryBlockedReasonResponse(BaseModel):
+    code: str
+    message: str
+    nextAction: str
+
+
+class DomainFactoryContextResponse(BaseModel):
+    kind: str
+    version: int
+    status: str
+    sessionId: str
+    sourceApp: str | None = None
+    sourceDisplayName: str | None = None
+    workspacePath: str
+    workspaceName: str
+    baselineCommit: str | None = None
+    git: dict[str, Any] = Field(default_factory=dict)
+    preview: dict[str, Any] = Field(default_factory=dict)
+    apkStatus: dict[str, Any] = Field(default_factory=dict)
+    workbenchStatus: dict[str, Any] = Field(default_factory=dict)
+    feedbackStatus: dict[str, Any] = Field(default_factory=dict)
+    baselineFiles: list[str] = Field(default_factory=list)
+    missingBaselineFiles: list[str] = Field(default_factory=list)
+    protectedFoundationAreas: list[str] = Field(default_factory=list)
+    allowedDomainModificationAreas: list[str] = Field(default_factory=list)
+    destructiveOperationApprovalRequired: list[str] = Field(default_factory=list)
+    domainIntakeFields: list[str] = Field(default_factory=list)
+    baselineIntakeFieldsToAvoid: list[str] = Field(default_factory=list)
+    firstSpecSummary: str | None = None
+    blockers: list[DomainFactoryBlockedReasonResponse] = Field(default_factory=list)
+
+
+class DomainFactoryStartResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    kind: str
+    version: int
+    status: str
+    context: DomainFactoryContextResponse
+    session_id: str = Field(alias="sessionId")
+    first_message_id: str | None = Field(default=None, alias="firstMessageId")
+    state_path: str | None = Field(default=None, alias="statePath")
+    spec_root: str | None = Field(default=None, alias="specRoot")
+    session: "SessionDetailResponse"
+
+
+class DomainFactoryIntakeResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    kind: str
+    version: int
+    status: str
+    session_id: str = Field(alias="sessionId")
+    spec_root: str = Field(alias="specRoot")
+    brief_path: str = Field(alias="briefPath")
+    media_references_path: str = Field(alias="mediaReferencesPath")
+    contract_preview_path: str = Field(alias="contractPreviewPath")
+    contract_preview: dict[str, Any] = Field(alias="contractPreview")
+    message_id: str = Field(alias="messageId")
+    session: "SessionDetailResponse"
+
+
+class DomainFactoryImplementationResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    kind: str
+    version: int
+    status: str
+    session_id: str = Field(alias="sessionId")
+    spec_root: str = Field(alias="specRoot")
+    workflow_evidence_path: str = Field(alias="workflowEvidencePath")
+    message_id: str = Field(alias="messageId")
+    session: "SessionDetailResponse"
+
+
+class DomainFactoryCompletionEvidenceResponse(BaseModel):
+    kind: str
+    version: int
+    status: str
+    canCompleteTasks: bool
+    specRoot: str
+    missingEvidence: list[str] = Field(default_factory=list)
+    requiredEvidence: dict[str, str] = Field(default_factory=dict)
+    blockedReleasePath: str
+
+
+class DomainFactoryReleaseEvidenceValidationResponse(BaseModel):
+    kind: str
+    version: int
+    status: str
+    ok: bool
+    errors: list[dict[str, str]] = Field(default_factory=list)
+    initialBuild: int
+    build: int
+
+
 class ProjectFactoryDraftRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
@@ -3131,6 +3264,7 @@ class ServerCapabilitiesResponse(BaseModel):
     supports_feedback_batches: bool = True
     supports_sdd: bool = True
     supports_project_factory: bool = True
+    supports_domain_factory: bool = True
     backend_version: str | None = None
     backend_commit: str | None = None
     features: dict[str, bool] = Field(default_factory=dict)
