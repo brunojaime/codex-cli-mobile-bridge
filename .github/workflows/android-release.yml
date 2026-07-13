@@ -99,7 +99,7 @@ jobs:
               source_app=codex-mobile
               app_label="Codex Mobile Bridge"
               updater_channel=prod
-              environment_color="#2563EB"
+              environment_color="#55D6BE"
               api_base_url="${{ vars.API_BASE_URL }}"
               artifact_base=codex-mobile
               expected_tag="android-v${{ steps.app_version.outputs.safe }}"
@@ -110,7 +110,7 @@ jobs:
               source_app=codex-mobile-dev
               app_label="Codex Mobile Bridge DEV"
               updater_channel=dev
-              environment_color="#F59E0B"
+              environment_color="#38BDF8"
               api_base_url="${{ vars.DEV_API_BASE_URL }}"
               artifact_base=codex-mobile-dev
               expected_tag="android-dev-v${{ steps.app_version.outputs.safe }}"
