@@ -100,6 +100,48 @@ def test_start_domain_factory_configures_current_session_and_writes_sdd(
         assert (spec_root / "diagrams" / diagram).exists()
 
 
+def test_start_domain_factory_accepts_block_empty_lists_in_project_yaml(
+    tmp_path: Path,
+) -> None:
+    workspace = _baseline_workspace(tmp_path)
+    (workspace / ".codex/project.yaml").write_text(
+        """
+schema_version: 1
+name: Clinica Norte
+slug: clinica-norte
+visual_references:
+  uploaded_images:
+    []
+  reference_assets:
+    []
+asset_depot:
+  project_assets:
+    []
+admin:
+  initial_invites:
+    emails:
+      []
+runtime_profiles:
+  preview:
+    api_base_url: "https://preview.nienfos.com/clinica-norte/api"
+""".lstrip(),
+        encoding="utf-8",
+    )
+    repository = _repository(tmp_path)
+    session = _session(workspace)
+    repository.save_session(session)
+    service = DomainFactoryService(
+        projects_root=tmp_path / "projects",
+        chat_repository=repository,
+    )
+
+    result = service.start(session_id=session.id)
+
+    assert result.status == "ready"
+    assert result.context.source_app == "clinica-norte"
+    assert result.context.api_url == "https://preview.nienfos.com/clinica-norte/api"
+
+
 def test_start_domain_factory_blocks_without_baseline_context(
     tmp_path: Path,
 ) -> None:

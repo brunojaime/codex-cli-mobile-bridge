@@ -217,6 +217,8 @@ def _parse_block(
         return {}, index
     if current_indent != indent:
         raise SddInvalidStandardError("Invalid YAML indentation.")
+    if _is_supported_scalar(stripped):
+        return _parse_scalar(stripped), index + 1
     if stripped.startswith("- "):
         return _parse_list(lines, index, indent)
     return _parse_mapping(lines, index, indent)
@@ -297,6 +299,12 @@ def _parse_scalar(raw_value: str) -> object:
         return int(raw_value)
     except ValueError:
         return raw_value
+
+
+def _is_supported_scalar(raw_value: str) -> bool:
+    if raw_value.startswith("[") and raw_value.endswith("]"):
+        return True
+    return raw_value in {"true", "True", "false", "False", "null", "Null", "~"}
 
 
 def _strip_comment(raw_line: str) -> str:
