@@ -12,7 +12,7 @@ import shutil
 import tempfile
 import threading
 import time
-from typing import Literal
+from typing import Any, Literal
 from uuid import uuid4
 import xml.etree.ElementTree as ET
 import zipfile
@@ -331,6 +331,7 @@ class MessageService:
         self._maintenance_lock = threading.RLock()
         self._drain_requested = False
         self._drain_requested_at: datetime | None = None
+        self._domain_factory_service: Any | None = None
         self._follow_up_recovery_guard = threading.RLock()
         self._follow_up_reconcile_interval_seconds = (
             follow_up_reconcile_interval_seconds
@@ -347,6 +348,9 @@ class MessageService:
                 daemon=True,
             )
             self._follow_up_reconciler_thread.start()
+
+    def set_domain_factory_service(self, service: Any) -> None:
+        self._domain_factory_service = service
 
     def create_session(
         self,
@@ -946,6 +950,18 @@ class MessageService:
         )
         normalized_codex_options = codex_options.normalized() if codex_options else None
         current_configuration = session.agent_configuration.normalized()
+        if (
+            conversation_kind == JobConversationKind.PRIMARY
+            and author_type == ChatMessageAuthorType.HUMAN
+        ):
+            consumed_job = self._maybe_consume_domain_factory_intake(
+                session=session,
+                message=message,
+                current_configuration=current_configuration,
+                trigger_source=trigger_source,
+            )
+            if consumed_job is not None:
+                return consumed_job
         agent_run: AgentRun | None = None
         self._cancel_reserved_follow_ups_for_inactive_runs(session)
         if (
@@ -1056,6 +1072,93 @@ class MessageService:
                 agent_run=agent_run,
             )
             self._register_background_job_watch(job.id)
+        self._queue_session_title_refresh(session.id)
+        return job
+
+    def _maybe_consume_domain_factory_intake(
+        self,
+        *,
+        session: ChatSession,
+        message: str,
+        current_configuration: AgentConfiguration,
+        trigger_source: AgentTriggerSource,
+    ) -> Job | None:
+        domain_factory = self._domain_factory_service
+        if domain_factory is None:
+            return None
+        should_consume = getattr(domain_factory, "should_consume_chat_intake", None)
+        submit_intake = getattr(domain_factory, "submit_intake", None)
+        if should_consume is None or submit_intake is None:
+            return None
+        if not should_consume(session_id=session.id):
+            return None
+
+        result = submit_intake(
+            session_id=session.id,
+            brief=message,
+            emit_chat_message=False,
+        )
+        run_id = str(uuid4())
+        entry_agent_id = self._entry_agent_for_configuration(current_configuration)
+        entry_agent_definition = current_configuration.agents[entry_agent_id]
+        user_message = ChatMessage(
+            id=str(uuid4()),
+            session_id=session.id,
+            role=ChatMessageRole.USER,
+            author_type=ChatMessageAuthorType.HUMAN,
+            agent_id=AgentId.USER,
+            agent_type=AgentType.HUMAN,
+            visibility=AgentVisibilityMode.VISIBLE,
+            trigger_source=trigger_source,
+            run_id=run_id,
+            content=message,
+            status=ChatMessageStatus.COMPLETED,
+        )
+        assistant_message = ChatMessage(
+            id=result.message_id,
+            session_id=session.id,
+            role=ChatMessageRole.ASSISTANT,
+            author_type=ChatMessageAuthorType.ASSISTANT,
+            agent_id=entry_agent_id,
+            agent_type=entry_agent_definition.agent_type,
+            agent_label=entry_agent_definition.label,
+            visibility=entry_agent_definition.visibility,
+            trigger_source=trigger_source,
+            run_id=run_id,
+            content=result.assistant_message,
+            status=ChatMessageStatus.COMPLETED,
+            dedupe_key=f"domain-factory:contract-preview:{session.id}",
+        )
+        job = Job(
+            id=str(uuid4()),
+            session_id=session.id,
+            message=message,
+            user_message_id=user_message.id,
+            assistant_message_id=assistant_message.id,
+            conversation_kind=JobConversationKind.PRIMARY,
+            agent_id=entry_agent_id,
+            agent_type=entry_agent_definition.agent_type,
+            trigger_source=trigger_source,
+            run_id=run_id,
+            execution_message=message,
+        )
+        job.sync(
+            status=JobStatus.COMPLETED,
+            response=result.assistant_message,
+            phase="Completed",
+            latest_activity="Domain Factory intake captured.",
+        )
+        updated_session = self.get_session(session.id) or session
+        updated_session.active_agent_run_id = None
+        updated_session.active_agent_turn_index = 0
+        updated_session.auto_turn_index = 0
+        updated_session.touch()
+        self._repository.save_turn(
+            updated_session,
+            messages=[user_message, assistant_message],
+            job=job,
+            agent_run=None,
+        )
         self._queue_session_title_refresh(session.id)
         return job
 

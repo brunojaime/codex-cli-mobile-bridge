@@ -214,6 +214,7 @@ def build_container(settings: Settings | None = None) -> AppContainer:
         chat_repository=repository,
         app_update_registry_path=resolved_settings.app_update_registry_path,
     )
+    message_service.set_domain_factory_service(domain_factory_service)
     return AppContainer(
         settings=resolved_settings,
         message_service=message_service,

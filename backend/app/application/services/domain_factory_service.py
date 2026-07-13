@@ -330,6 +330,7 @@ class DomainFactoryIntakeResult:
     contract_preview_path: str
     contract_preview: dict[str, Any]
     message_id: str
+    assistant_message: str = ""
 
     def to_payload(self) -> dict[str, Any]:
         return {
@@ -343,6 +344,7 @@ class DomainFactoryIntakeResult:
             "contractPreviewPath": self.contract_preview_path,
             "contractPreview": self.contract_preview,
             "messageId": self.message_id,
+            "assistantMessage": self.assistant_message,
         }
 
 
@@ -569,6 +571,7 @@ class DomainFactoryService:
         session_id: str,
         brief: str,
         media_references: tuple[dict[str, Any], ...] = (),
+        emit_chat_message: bool = True,
     ) -> DomainFactoryIntakeResult:
         session = self._require_session(session_id)
         context = self.build_context(session_id=session_id)
@@ -622,12 +625,15 @@ class DomainFactoryService:
             }
         )
         self._write_state_payload(context, state)
-        message_id = self._attach_completed_message(
-            session,
-            content=_contract_preview_chat_message(contract_preview),
-            dedupe_key=f"domain-factory:contract-preview:{session.id}",
-            message_id=f"domain-factory-contract-{session.id}",
-        )
+        assistant_message = _contract_preview_chat_message(contract_preview)
+        message_id = f"domain-factory-contract-{session.id}"
+        if emit_chat_message:
+            message_id = self._attach_completed_message(
+                session,
+                content=assistant_message,
+                dedupe_key=f"domain-factory:contract-preview:{session.id}",
+                message_id=message_id,
+            )
         return DomainFactoryIntakeResult(
             status="implementation_ready",
             session=self._require_session(session_id),
@@ -637,6 +643,20 @@ class DomainFactoryService:
             contract_preview_path=str(contract_json_path.relative_to(workspace)),
             contract_preview=contract_preview,
             message_id=message_id,
+            assistant_message=assistant_message,
+        )
+
+    def should_consume_chat_intake(self, *, session_id: str) -> bool:
+        session = self._require_session(session_id)
+        if session.agent_profile_id != "domain-factory":
+            return False
+        context = self.build_context(session_id=session_id)
+        if context.blockers:
+            return False
+        state = self._read_state(context)
+        return (
+            state.get("modeStatus") == "intake"
+            and not str(state.get("contractPreviewPath") or "").strip()
         )
 
     def confirm_implementation(

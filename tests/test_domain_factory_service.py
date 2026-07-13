@@ -6,11 +6,18 @@ from pathlib import Path
 from backend.app.application.services.domain_factory_service import (
     DomainFactoryService,
 )
+from backend.app.application.services.message_service import MessageService
 from backend.app.main import create_app
 from backend.app.domain.entities.agent_configuration import AgentId
+from backend.app.domain.entities.codex_options import CodexRunOptions
 from backend.app.domain.entities.chat_session import ChatSession
+from backend.app.domain.entities.job import JobStatus
+from backend.app.infrastructure.execution.base import ExecutionProvider
 from backend.app.infrastructure.persistence.in_memory_chat_repository import (
     InMemoryChatRepository,
+)
+from backend.app.infrastructure.transcription.disabled_transcriber import (
+    DisabledAudioTranscriber,
 )
 
 
@@ -140,6 +147,53 @@ runtime_profiles:
     assert result.status == "ready"
     assert result.context.source_app == "clinica-norte"
     assert result.context.api_url == "https://preview.nienfos.com/clinica-norte/api"
+
+
+def test_domain_factory_chat_message_creates_contract_preview_without_codex_run(
+    tmp_path: Path,
+) -> None:
+    workspace = _baseline_workspace(tmp_path)
+    repository = _repository(tmp_path)
+    execution_provider = _CountingExecutionProvider()
+    message_service = MessageService(
+        repository=repository,
+        execution_provider=execution_provider,
+        default_workspace_path=str(tmp_path / "projects"),
+        audio_transcriber=DisabledAudioTranscriber(),
+    )
+    domain_factory = DomainFactoryService(
+        projects_root=tmp_path / "projects",
+        chat_repository=repository,
+    )
+    message_service.set_domain_factory_service(domain_factory)
+    session = _session(workspace)
+    repository.save_session(session)
+    domain_factory.start(session_id=session.id)
+
+    job = message_service.submit_message(
+        "Restaurant customers order dishes by WhatsApp. Roles: admin, employee, customer.",
+        session_id=session.id,
+    )
+
+    assert job.status == JobStatus.COMPLETED
+    assert execution_provider.execute_count == 0
+    state = json.loads(
+        (workspace / ".codex/factory/domain-factory-state.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert state["modeStatus"] == "implementation_ready"
+    spec_root = workspace / state["specRoot"]
+    assert (spec_root / "intake/original-brief.md").exists()
+    assert (spec_root / "contract-preview.json").exists()
+    messages = repository.list_messages(session.id)
+    assert [message.role.value for message in messages] == [
+        "assistant",
+        "user",
+        "assistant",
+    ]
+    assert all(message.status.value == "completed" for message in messages)
+    assert "Domain Factory contract preview is ready" in messages[-1].content
 
 
 def test_start_domain_factory_blocks_without_baseline_context(
@@ -500,6 +554,45 @@ def test_domain_factory_release_evidence_validator_enforces_real_preview_release
 
 def _repository(tmp_path: Path) -> InMemoryChatRepository:
     return InMemoryChatRepository(projects_root=str(tmp_path / "projects"))
+
+
+class _CountingExecutionProvider(ExecutionProvider):
+    def __init__(self) -> None:
+        self.execute_count = 0
+
+    def execute(
+        self,
+        message: str,
+        *,
+        image_paths: list[str] | None = None,
+        cleanup_paths: list[str] | None = None,
+        provider_session_id: str | None = None,
+        model: str | None = None,
+        codex_options: CodexRunOptions | None = None,
+        serial_key: str | None = None,
+        submission_token: str | None = None,
+        workdir: str | None = None,
+    ) -> str:
+        self.execute_count += 1
+        return f"job-{self.execute_count}"
+
+    def get_status(self, job_id: str) -> JobStatus:
+        return JobStatus.COMPLETED
+
+    def get_result(self, job_id: str) -> str | None:
+        return "completed"
+
+    def get_error(self, job_id: str) -> str | None:
+        return None
+
+    def get_provider_session_id(self, job_id: str) -> str | None:
+        return None
+
+    def get_phase(self, job_id: str) -> str | None:
+        return "Completed"
+
+    def get_latest_activity(self, job_id: str) -> str | None:
+        return "Completed"
 
 
 def _session(workspace: Path) -> ChatSession:
