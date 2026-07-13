@@ -84,6 +84,7 @@ def build_test_client() -> TestClient:
         codex_use_exec=False,
         projects_root="..",
         chat_store_backend="memory",
+        bridge_environment="dev",
         execution_timeout_seconds=10,
         poll_interval_seconds=0,
         audio_transcription_backend="auto",
@@ -101,6 +102,7 @@ def build_session_client(*, projects_root: str = "..") -> TestClient:
         codex_use_exec=True,
         projects_root=projects_root,
         chat_store_backend="memory",
+        bridge_environment="dev",
         execution_timeout_seconds=10,
         poll_interval_seconds=0,
         audio_transcription_backend="auto",
@@ -115,6 +117,7 @@ def build_json_only_client() -> TestClient:
         codex_use_exec=True,
         projects_root="..",
         chat_store_backend="memory",
+        bridge_environment="dev",
         execution_timeout_seconds=10,
         poll_interval_seconds=0,
         audio_transcription_backend="auto",
@@ -141,6 +144,7 @@ def build_app_server_streaming_client() -> TestClient:
         codex_resume_args="--skip-git-repo-check --dangerously-bypass-approvals-and-sandbox",
         projects_root="..",
         chat_store_backend="memory",
+        bridge_environment="dev",
         execution_timeout_seconds=10,
         poll_interval_seconds=0,
         audio_transcription_backend="auto",
@@ -157,6 +161,7 @@ def build_session_client_with_container(*, projects_root: str = ".."):
         codex_use_exec=True,
         projects_root=projects_root,
         chat_store_backend="memory",
+        bridge_environment="dev",
         execution_timeout_seconds=10,
         poll_interval_seconds=0,
         audio_transcription_backend="auto",
@@ -178,6 +183,7 @@ def build_tooling_client(
         codex_workdir=codex_workdir or str(Path.cwd()),
         projects_root=projects_root,
         chat_store_backend="memory",
+        bridge_environment="dev",
         execution_timeout_seconds=10,
         poll_interval_seconds=0,
         audio_transcription_backend="auto",
@@ -195,6 +201,7 @@ def build_sqlite_session_client_with_container(
         projects_root="..",
         chat_store_backend="sqlite",
         chat_store_path=database_path,
+        bridge_environment="dev",
         execution_timeout_seconds=10,
         poll_interval_seconds=0,
         audio_transcription_backend="auto",
@@ -1345,6 +1352,107 @@ def test_message_flow_returns_completed_response() -> None:
 
     assert payload["status"] == "completed"
     assert payload["response"] == "Codex response: hello from test"
+
+
+def test_prod_blocks_bridge_repo_default_message_workspace(tmp_path: Path) -> None:
+    bridge_repo = tmp_path / "codex-cli-mobile-bridge"
+    other_repo = tmp_path / "other-app"
+    bridge_repo.mkdir()
+    other_repo.mkdir()
+    client = TestClient(
+        create_app(
+            Settings(
+                codex_command=f"python3 {Path('tests/fixtures/fake_codex.py').resolve()}",
+                codex_use_exec=False,
+                codex_workdir=str(bridge_repo),
+                projects_root=str(tmp_path),
+                chat_store_backend="memory",
+                bridge_environment="prod",
+                execution_timeout_seconds=10,
+                poll_interval_seconds=0,
+                audio_transcription_backend="auto",
+                speech_synthesis_backend="disabled",
+            )
+        )
+    )
+
+    response = client.post("/message", json={"message": "Make the button yellow"})
+
+    assert response.status_code == 403
+    detail = response.json()["detail"]
+    assert detail["code"] == "prod_bridge_repo_modification_blocked"
+    assert detail["dev_handoff_action"] == "/dev-handoff"
+    assert str(bridge_repo) in detail["workspace_path"]
+
+
+def test_prod_allows_message_jobs_for_other_repos(tmp_path: Path) -> None:
+    bridge_repo = tmp_path / "codex-cli-mobile-bridge"
+    other_repo = tmp_path / "other-app"
+    bridge_repo.mkdir()
+    other_repo.mkdir()
+    client = TestClient(
+        create_app(
+            Settings(
+                codex_command=f"python3 {Path('tests/fixtures/fake_codex.py').resolve()}",
+                codex_use_exec=False,
+                codex_workdir=str(bridge_repo),
+                projects_root=str(tmp_path),
+                chat_store_backend="memory",
+                bridge_environment="prod",
+                execution_timeout_seconds=10,
+                poll_interval_seconds=0,
+                audio_transcription_backend="auto",
+                speech_synthesis_backend="disabled",
+            )
+        )
+    )
+
+    response = client.post(
+        "/message",
+        json={
+            "message": "Make the button yellow",
+            "workspace_path": str(other_repo),
+        },
+    )
+
+    assert response.status_code == 202, response.text
+    payload = wait_for_job(client, response.json()["job_id"])
+    assert payload["status"] == "completed"
+    assert payload["response"] == "Codex response: Make the button yellow"
+
+
+def test_prod_blocks_bridge_repo_session_message(tmp_path: Path) -> None:
+    bridge_repo = tmp_path / "codex-cli-mobile-bridge"
+    bridge_repo.mkdir()
+    client = TestClient(
+        create_app(
+            Settings(
+                codex_command=f"python3 {Path('tests/fixtures/fake_codex.py').resolve()}",
+                codex_use_exec=False,
+                codex_workdir=str(bridge_repo),
+                projects_root=str(tmp_path),
+                chat_store_backend="memory",
+                bridge_environment="prod",
+                execution_timeout_seconds=10,
+                poll_interval_seconds=0,
+                audio_transcription_backend="auto",
+                speech_synthesis_backend="disabled",
+            )
+        )
+    )
+    session = client.post(
+        "/sessions",
+        json={"title": "Bridge", "workspace_path": str(bridge_repo)},
+    )
+    assert session.status_code == 201, session.text
+
+    response = client.post(
+        f"/sessions/{session.json()['id']}/messages",
+        json={"message": "Make the button yellow"},
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "prod_bridge_repo_modification_blocked"
 
 
 def test_message_flow_returns_failed_response() -> None:

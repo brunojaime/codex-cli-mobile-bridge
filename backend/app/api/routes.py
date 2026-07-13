@@ -407,6 +407,62 @@ def _raise_dev_pipeline_error(exc: DevPipelineError) -> None:
     )
 
 
+def _effective_message_workspace_path(
+    *,
+    service: MessageService,
+    session_id: str | None,
+    workspace_path: str | None,
+    default_workspace_path: str,
+) -> Path | None:
+    if workspace_path:
+        return Path(workspace_path).expanduser().resolve()
+    if session_id:
+        session = service.get_session(session_id)
+        if session is None:
+            return None
+        return Path(session.workspace_path).expanduser().resolve()
+    return Path(default_workspace_path).expanduser().resolve()
+
+
+def _is_path_at_or_inside(path: Path, root: Path) -> bool:
+    return path == root or root in path.parents
+
+
+def _enforce_prod_bridge_repo_message_policy(
+    *,
+    container: AppContainer,
+    service: MessageService,
+    session_id: str | None,
+    workspace_path: str | None,
+) -> None:
+    if container.settings.bridge_environment != "prod":
+        return
+    bridge_root = Path(container.settings.codex_workdir).expanduser().resolve()
+    effective_workspace = _effective_message_workspace_path(
+        service=service,
+        session_id=session_id,
+        workspace_path=workspace_path,
+        default_workspace_path=container.settings.codex_workdir,
+    )
+    if effective_workspace is None:
+        return
+    if not _is_path_at_or_inside(effective_workspace, bridge_root):
+        return
+    raise HTTPException(
+        status_code=403,
+        detail={
+            "code": "prod_bridge_repo_modification_blocked",
+            "message": (
+                "Recorda que toda modificacion de Codex Mobile Bridge tiene "
+                "que entrar por la cola DEV. Usa /dev-handoff para crear el "
+                "pedido; el stage DEV lo toma desde ahi."
+            ),
+            "workspace_path": str(effective_workspace),
+            "dev_handoff_action": "/dev-handoff",
+        },
+    )
+
+
 def _project_stage_run(container: AppContainer, run: dict[str, Any]) -> dict[str, Any]:
     projection: dict[str, Any] = {}
     job_id = run.get("job_id")
@@ -3493,6 +3549,12 @@ async def post_message(
     service: MessageService = Depends(get_message_service),
     container: AppContainer = Depends(get_container),
 ) -> MessageAcceptedResponse:
+    _enforce_prod_bridge_repo_message_policy(
+        container=container,
+        service=service,
+        session_id=payload.session_id,
+        workspace_path=payload.workspace_path,
+    )
     codex_options = await _validate_codex_options(
         payload.codex_options.to_domain()
         if payload.codex_options is not None
@@ -5134,6 +5196,12 @@ async def post_audio_message(
     codex_options_json: str | None = Form(default=None),
     container: AppContainer = Depends(get_container),
 ) -> AudioMessageAcceptedResponse:
+    _enforce_prod_bridge_repo_message_policy(
+        container=container,
+        service=container.message_service,
+        session_id=session_id,
+        workspace_path=workspace_path,
+    )
     temp_path = await _store_uploaded_audio(
         audio,
         max_bytes=container.settings.audio_max_upload_bytes,
@@ -5182,6 +5250,12 @@ async def post_image_message(
     codex_options_json: str | None = Form(default=None),
     container: AppContainer = Depends(get_container),
 ) -> ImageMessageAcceptedResponse:
+    _enforce_prod_bridge_repo_message_policy(
+        container=container,
+        service=container.message_service,
+        session_id=session_id,
+        workspace_path=workspace_path,
+    )
     temp_path = await _store_uploaded_file(
         image,
         max_bytes=container.settings.image_max_upload_bytes,
@@ -5233,6 +5307,12 @@ async def post_document_message(
     codex_options_json: str | None = Form(default=None),
     container: AppContainer = Depends(get_container),
 ) -> DocumentMessageAcceptedResponse:
+    _enforce_prod_bridge_repo_message_policy(
+        container=container,
+        service=container.message_service,
+        session_id=session_id,
+        workspace_path=workspace_path,
+    )
     temp_path = await _store_uploaded_file(
         document,
         max_bytes=container.settings.document_max_upload_bytes,
@@ -5292,6 +5372,12 @@ async def post_attachment_message(
     codex_options_json: str | None = Form(default=None),
     container: AppContainer = Depends(get_container),
 ) -> MessageAcceptedResponse:
+    _enforce_prod_bridge_repo_message_policy(
+        container=container,
+        service=container.message_service,
+        session_id=session_id,
+        workspace_path=workspace_path,
+    )
     stored_files = await _store_uploaded_files(
         attachments,
         max_bytes=container.settings.document_max_upload_bytes,
@@ -5667,6 +5753,12 @@ async def post_session_message(
     service: MessageService = Depends(get_message_service),
     container: AppContainer = Depends(get_container),
 ) -> MessageAcceptedResponse:
+    _enforce_prod_bridge_repo_message_policy(
+        container=container,
+        service=service,
+        session_id=session_id,
+        workspace_path=payload.workspace_path,
+    )
     codex_options = await _validate_codex_options(
         payload.codex_options.to_domain()
         if payload.codex_options is not None
