@@ -654,6 +654,7 @@ class LocalExecutionProvider(ExecutionProvider):
                             if provider_session_id
                             else self._exec_args,
                             workdir=resolved_workdir,
+                            codex_options=codex_options,
                         ),
                         "model": model,
                         "effort": reasoning_effort,
@@ -867,13 +868,34 @@ class LocalExecutionProvider(ExecutionProvider):
     ) -> list[str]:
         return [
             *shlex.split(self._command),
+            *self._build_app_server_config_args(codex_options),
             "app-server",
             "--listen",
             "stdio://",
-            *self._build_app_server_args(codex_options),
+            *self._build_app_server_profile_args(codex_options),
         ]
 
-    def _build_app_server_args(
+    def _build_app_server_config_args(
+        self,
+        codex_options: CodexRunOptions | None,
+    ) -> list[str]:
+        normalized = codex_options.normalized() if codex_options is not None else None
+        overrides = list(normalized.config_overrides) if normalized is not None else []
+        has_sandbox_override = any(
+            override.partition("=")[0].strip() == "sandbox_mode"
+            for override in overrides
+        )
+        args: list[str] = []
+        if (
+            not has_sandbox_override
+            and self._sandbox_for_app_server(self._exec_args) == "danger-full-access"
+        ):
+            args.extend(["-c", 'sandbox_mode="danger-full-access"'])
+        for override in overrides:
+            args.extend(["-c", override])
+        return args
+
+    def _build_app_server_profile_args(
         self,
         codex_options: CodexRunOptions | None,
     ) -> list[str]:
@@ -884,8 +906,6 @@ class LocalExecutionProvider(ExecutionProvider):
         args: list[str] = []
         if normalized.profile:
             args.extend(["--profile", normalized.profile])
-        for override in normalized.config_overrides:
-            args.extend(["-c", override])
         return args
 
     def _build_codex_args(
@@ -968,8 +988,11 @@ class LocalExecutionProvider(ExecutionProvider):
         args: str,
         *,
         workdir: str | None,
+        codex_options: CodexRunOptions | None = None,
     ) -> dict[str, object] | None:
-        sandbox = self._sandbox_for_app_server(args)
+        sandbox = self._sandbox_for_codex_options(codex_options)
+        if sandbox is None:
+            sandbox = self._sandbox_for_app_server(args)
         if sandbox == "danger-full-access":
             return {"type": "dangerFullAccess"}
         if sandbox == "read-only":
@@ -983,6 +1006,20 @@ class LocalExecutionProvider(ExecutionProvider):
                 "excludeTmpdirEnvVar": False,
                 "excludeSlashTmp": False,
             }
+        return None
+
+    def _sandbox_for_codex_options(
+        self,
+        codex_options: CodexRunOptions | None,
+    ) -> str | None:
+        normalized = codex_options.normalized() if codex_options is not None else None
+        if normalized is None:
+            return None
+        for override in normalized.config_overrides:
+            key, _, value = override.partition("=")
+            if key.strip() != "sandbox_mode":
+                continue
+            return value.strip().strip('"').strip("'") or None
         return None
 
     def _app_server_send(
