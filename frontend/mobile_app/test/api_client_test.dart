@@ -527,7 +527,7 @@ void main() {
           'app_channel': 'dev',
           'app_label': 'Codex Mobile Bridge DEV',
           'updater_channel': 'dev',
-          'color': '#F59E0B',
+          'color': '#38BDF8',
           'allowed_capabilities': <String>['stage_backend_lifecycle'],
           'denied_capabilities': <String>['restart_prod_backend'],
         },

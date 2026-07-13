@@ -141,7 +141,8 @@ class _CodexMobileAppState extends State<CodexMobileApp> {
   Widget build(BuildContext context) {
     const background = Color(0xFF0B1020);
     const panel = Color(0xFF141C33);
-    const accent = Color(0xFF55D6BE);
+    final accent =
+        _isDevAppBuild() ? const Color(0xFF38BDF8) : const Color(0xFF55D6BE);
     const muted = Color(0xFF8B97B5);
 
     final scheme = ColorScheme.fromSeed(
@@ -208,6 +209,12 @@ class _CodexMobileAppState extends State<CodexMobileApp> {
       },
     );
   }
+}
+
+bool _isDevAppBuild() {
+  return _configuredBridgeUpdaterChannel.toLowerCase() == 'dev' ||
+      _configuredBridgeSourceApp.toLowerCase().endsWith('-dev') ||
+      _configuredBridgeAppLabel.toLowerCase().contains('dev');
 }
 
 Future<SddFeedbackSubmissionResult> _submitBridgeSddFeedback(

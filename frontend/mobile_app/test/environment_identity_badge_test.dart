@@ -12,18 +12,30 @@ void main() {
     expect(find.byKey(const ValueKey<String>('environment-identity-badge')),
         findsOneWidget);
     expect(find.text('PROD'), findsOneWidget);
-    expect(find.textContaining('prod  |  https://bridge.example.invalid'),
-        findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey<String>('environment-identity-badge')),
+        matching: find.textContaining('prod'),
+      ),
+      findsNothing,
+    );
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey<String>('environment-identity-badge')),
+        matching: find.textContaining('https://bridge.example.invalid'),
+      ),
+      findsNothing,
+    );
     expect(find.text('CODEX DEV'), findsNothing);
 
     final container = tester.widget<Container>(
       find.byKey(const ValueKey<String>('environment-identity-badge')),
     );
     final decoration = container.decoration as BoxDecoration;
-    expect(decoration.border, isNotNull);
+    expect(decoration.border, isNull);
   });
 
-  testWidgets('renders DEV stage identity with stage branch and backend', (
+  testWidgets('renders DEV environment identity as compact chip', (
     tester,
   ) async {
     await _pumpChatScreen(
@@ -36,7 +48,7 @@ void main() {
         appChannel: 'dev',
         appLabel: 'Codex Mobile Bridge DEV',
         updaterChannel: 'dev',
-        color: '#F59E0B',
+        color: '#38BDF8',
         stageRuntime: <String, dynamic>{
           'url': 'http://127.0.0.1:8118',
           'port': 8118,
@@ -48,27 +60,29 @@ void main() {
     );
 
     expect(find.text('DEV'), findsOneWidget);
-    expect(find.textContaining('spec-018'), findsOneWidget);
+    expect(find.textContaining('spec-018'), findsNothing);
     expect(
       find.textContaining('dev/spec-018-dev-prod-stage-promotion-pipeline'),
-      findsOneWidget,
+      findsNothing,
     );
     expect(
       find.descendant(
         of: find.byKey(const ValueKey<String>('environment-identity-badge')),
         matching: find.textContaining('http://127.0.0.1:8118'),
       ),
-      findsWidgets,
+      findsNothing,
     );
     expect(find.byKey(const ValueKey<String>('stage-runtime-status')),
-        findsOneWidget);
-    expect(find.textContaining('health healthy'), findsOneWidget);
-    expect(find.textContaining('port 8118'), findsOneWidget);
-    expect(find.textContaining('checked 2026-07-13T10:01:00Z'), findsOneWidget);
+        findsNothing);
+    expect(find.textContaining('health healthy'), findsNothing);
+    expect(find.textContaining('port 8118'), findsNothing);
+    expect(find.textContaining('checked 2026-07-13T10:01:00Z'), findsNothing);
     expect(find.text('CODEX DEV'), findsNothing);
   });
 
-  testWidgets('renders stage runtime in compact width', (tester) async {
+  testWidgets('renders compact DEV badge without technical details', (
+    tester,
+  ) async {
     tester.view.physicalSize = const Size(420, 900);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
@@ -84,7 +98,7 @@ void main() {
         appChannel: 'dev',
         appLabel: 'Codex Mobile Bridge DEV',
         updaterChannel: 'dev',
-        color: '#F59E0B',
+        color: '#38BDF8',
         stageRuntime: <String, dynamic>{
           'url': 'http://127.0.0.1:8118',
           'port': 8118,
@@ -94,10 +108,18 @@ void main() {
       ),
     );
 
+    expect(find.text('DEV'), findsOneWidget);
     expect(find.byKey(const ValueKey<String>('stage-runtime-status')),
-        findsOneWidget);
-    expect(find.textContaining('health unhealthy'), findsOneWidget);
-    expect(find.textContaining('source http://127.0.0.1:8118'), findsOneWidget);
+        findsNothing);
+    expect(find.textContaining('health unhealthy'), findsNothing);
+    expect(find.textContaining('source http://127.0.0.1:8118'), findsNothing);
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey<String>('environment-identity-badge')),
+        matching: find.textContaining('http://127.0.0.1:8118'),
+      ),
+      findsNothing,
+    );
   });
 }
 
@@ -128,7 +150,7 @@ ServerHealth _health({
   String appChannel = 'prod',
   String appLabel = 'Codex Mobile Bridge',
   String updaterChannel = 'prod',
-  String color = '#2563EB',
+  String color = '#55D6BE',
   Map<String, dynamic>? stageRuntime,
 }) {
   return ServerHealth.fromJson(

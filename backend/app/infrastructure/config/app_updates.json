@@ -355,7 +355,7 @@
     "releaseMetadata": {
       "initialPreviewRelease": true,
       "latestAssetName": "satshowroom.apk",
-      "releaseTag": "android-preview-v0.1.0-build.2",
+      "releaseTag": "android-preview-v0.1.0-build.6",
       "releaseTagPattern": "android-preview-v*"
     },
     "releaseTagPattern": "android-preview-v*",

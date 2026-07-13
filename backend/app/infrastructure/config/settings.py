@@ -109,7 +109,7 @@ class Settings(BaseSettings):
     bridge_app_channel: str = "prod"
     bridge_app_label: str = "Codex Mobile Bridge"
     bridge_updater_channel: str = "prod"
-    bridge_environment_color: str = "#2563EB"
+    bridge_environment_color: str = "#55D6BE"
     bridge_dev_main_branch: str = "dev/main"
     dev_pipeline_enabled: bool = True
     dev_pipeline_prod_handoff_enabled: bool = False

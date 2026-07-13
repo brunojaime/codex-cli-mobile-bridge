@@ -203,7 +203,7 @@ Before publishing Android artifacts, run the dry-run channel validator:
   --api-base-url http://batata-default-string.tail0302c4.ts.net \
   --app-label "Codex Mobile Bridge" \
   --updater-channel prod \
-  --environment-color "#2563EB" \
+  --environment-color "#55D6BE" \
   --release-tag android-vX.Y.Z-build.N
 ```
 
@@ -337,6 +337,50 @@ Required GitHub Actions variables:
 - `API_BASE_URL`: real PROD Bridge URL for `android-v*`.
 - `DEV_API_BASE_URL`: real DEV/stage Bridge URL for `android-dev-v*`.
 
+DEV APK backend on `8118`:
+
+The DEV APK published from `android-dev-v*` points at
+`http://batata-default-string.tail0302c4.ts.net:8118` with source app
+`codex-mobile-dev` and updater channel `dev`. Use the repo script below to
+bring up or recover that backend without touching the PROD backend on `8000`:
+
+```text
+scripts/dev_backend_8118.sh start
+scripts/dev_backend_8118.sh status
+scripts/dev_backend_8118.sh restart
+scripts/dev_backend_8118.sh stop
+```
+
+The script is idempotent. It uses isolated runtime files under
+`.run/dev-backend-8118/`, including:
+
+- `.run/dev-backend-8118/backend.pid`
+- `.run/dev-backend-8118/backend.log`
+- `.run/dev-backend-8118/dev.env`
+- `.run/dev-backend-8118/data/`
+- `.run/dev-backend-8118/runtime/`
+
+Verification:
+
+```text
+curl -fsS http://127.0.0.1:8118/health | jq '.environment_identity'
+tailscale --socket=/home/batata/.local/share/tailscale-userspace/tailscaled.sock serve status
+curl -fsSI 'http://127.0.0.1:8118/app-updates/codex-mobile-dev/apk/android-dev-v1.0.0-build.105/codex-mobile-dev.apk?platform=android&channel=dev'
+```
+
+Expected Tailscale Serve mapping:
+
+```text
+http://batata-default-string.tail0302c4.ts.net:8118
+|-- proxy http://127.0.0.1:8118
+```
+
+Persistence limitation: this is a repo-local process launcher, not a systemd
+service. After a host reboot, run `scripts/dev_backend_8118.sh start` again, or
+install a separate systemd unit that executes that command. `status` returns
+non-zero if the DEV backend, DEV health identity, or Tailscale Serve mapping is
+missing.
+
 ## Implementation Evidence
 
 Validation commands executed during closeout:
@@ -345,8 +389,8 @@ Validation commands executed during closeout:
 .venv/bin/python -m ruff check backend/app/application/services/dev_pipeline_service.py backend/app/api/routes.py backend/app/api/schemas.py backend/app/application/services/message_service.py backend/app/container.py backend/app/infrastructure/config/settings.py scripts/backend_process_lib.sh scripts/run_backend_detached.sh scripts/stop_backend.sh scripts/validate_android_release_channel.py tests/test_dev_pipeline.py tests/test_backend_process_scripts.py tests/test_android_release_channel_validation.py tests/test_message_flow.py
 .venv/bin/pytest tests/test_dev_pipeline.py tests/test_backend_process_scripts.py tests/test_android_release_channel_validation.py -q
 .venv/bin/pytest tests/test_dev_pipeline.py tests/test_message_flow.py -k 'dev_pipeline or prod_update or backend_drain or follow_up or stage_run or reviewer' -q
-.venv/bin/python scripts/validate_android_release_channel.py --channel prod --api-base-url https://bridge.example.invalid --app-label "Codex Mobile Bridge" --updater-channel prod --environment-color "#2563EB" --release-tag android-v1.2.3 --pubspec frontend/mobile_app/pubspec.yaml --app-updates-registry backend/app/infrastructure/config/app_updates.json
-.venv/bin/python scripts/validate_android_release_channel.py --channel dev --api-base-url http://127.0.0.1:8118 --app-label "Codex Mobile Bridge DEV" --updater-channel dev --environment-color "#F59E0B" --release-tag android-dev-v1.2.3 --pubspec frontend/mobile_app/pubspec.yaml --app-updates-registry backend/app/infrastructure/config/app_updates.json
+.venv/bin/python scripts/validate_android_release_channel.py --channel prod --api-base-url https://bridge.example.invalid --app-label "Codex Mobile Bridge" --updater-channel prod --environment-color "#55D6BE" --release-tag android-v1.2.3 --pubspec frontend/mobile_app/pubspec.yaml --app-updates-registry backend/app/infrastructure/config/app_updates.json
+.venv/bin/python scripts/validate_android_release_channel.py --channel dev --api-base-url http://batata-default-string.tail0302c4.ts.net:8118 --app-label "Codex Mobile Bridge DEV" --updater-channel dev --environment-color "#38BDF8" --release-tag android-dev-v1.2.3 --pubspec frontend/mobile_app/pubspec.yaml --app-updates-registry backend/app/infrastructure/config/app_updates.json
 flutter test test/api_client_test.dart test/dev_handoff_dialog_test.dart test/environment_identity_badge_test.dart test/prod_update_banner_test.dart test/slash_command_model_test.dart test/slash_command_palette_test.dart test/new_project_factory_dialog_test.dart
 flutter analyze lib/src/models/server_health.dart lib/src/models/dev_pipeline_handoff.dart lib/src/models/prod_update_status.dart lib/src/models/slash_command.dart lib/src/models/project_factory.dart lib/src/services/api_client.dart lib/src/screens/chat_screen.dart test/api_client_test.dart test/dev_handoff_dialog_test.dart test/environment_identity_badge_test.dart test/prod_update_banner_test.dart test/slash_command_model_test.dart test/slash_command_palette_test.dart test/new_project_factory_dialog_test.dart
 .venv/bin/python scripts/codex_bridge_sdd_doctor.py --workspace . --projects-root .. --json

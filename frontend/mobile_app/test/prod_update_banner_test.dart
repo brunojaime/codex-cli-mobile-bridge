@@ -24,7 +24,8 @@ void main() {
     expect(find.byKey(const ValueKey<String>('prod-update-status-banner')),
         findsOneWidget);
     expect(find.textContaining('PROD update waiting for idle'), findsOneWidget);
-    expect(find.textContaining('active_jobs, pending_follow_ups'), findsOneWidget);
+    expect(
+        find.textContaining('active_jobs, pending_follow_ups'), findsOneWidget);
     expect(find.widgetWithText(TextButton, 'Force'), findsOneWidget);
 
     await _pump(
@@ -126,7 +127,7 @@ ServerHealth _health() {
         'app_channel': 'prod',
         'app_label': 'Codex Mobile Bridge',
         'updater_channel': 'prod',
-        'color': '#2563EB',
+        'color': '#55D6BE',
       },
     },
   );

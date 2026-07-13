@@ -440,8 +440,14 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         final totalActivePinnedProjectsCount =
             _totalActivePinnedProjectsCount();
         final totalActivePinnedJobsCount = _totalActivePinnedJobsCount();
+        final hasEnvironmentBadge =
+            _activeServerHealth?.environmentIdentity != null;
+        final appBarHeight = hasEnvironmentBadge
+            ? (isCompactAppBar ? 94.0 : 104.0)
+            : kToolbarHeight;
         return Scaffold(
           appBar: AppBar(
+            toolbarHeight: appBarHeight,
             titleSpacing: isCompactAppBar ? 4 : null,
             leading: Builder(
               builder: (context) {
@@ -1329,7 +1335,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         .trim()
         .replaceAll(RegExp(r'/$'), '');
     try {
-      final client = widget.prodUpdateClientOverride ?? ApiClient(baseUrl: baseUrl);
+      final client =
+          widget.prodUpdateClientOverride ?? ApiClient(baseUrl: baseUrl);
       final status = await client.acknowledgeProdUpdate(
         acknowledgedBy: 'mobile',
       );
@@ -1358,7 +1365,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         .trim()
         .replaceAll(RegExp(r'/$'), '');
     try {
-      final client = widget.prodUpdateClientOverride ?? ApiClient(baseUrl: baseUrl);
+      final client =
+          widget.prodUpdateClientOverride ?? ApiClient(baseUrl: baseUrl);
       final status = await client.forceProdUpdate(
         requestedBy: 'mobile',
         strongConfirmation: confirmation,
@@ -3230,11 +3238,6 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
     final currentSession = _chatController.currentSession;
     if (currentSession != null) {
       segments.add(currentSession.workspaceName);
-      final identityLabel =
-          _activeServerHealth?.environmentIdentity?.displayLabel;
-      if (identityLabel != null && identityLabel.trim().isNotEmpty) {
-        segments.add(identityLabel);
-      }
       final statusLine = currentSession.conversationProduct?.statusLine.trim();
       if (statusLine != null && statusLine.isNotEmpty) {
         segments.add(statusLine);
@@ -3245,7 +3248,6 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
       segments.add(usageLabel);
     }
     if (!isCompactAppBar) {
-      segments.add(_activeServer?.baseUrl ?? widget.initialApiBaseUrl);
       if (_activeServerHealth != null) {
         segments.add(
           _activeServerHealth!.audioTranscriptionReady
@@ -7599,6 +7601,14 @@ Color _colorFromHex(String value) {
   return Color(0xFF000000 | parsed);
 }
 
+Color _environmentBadgeColor(BridgeEnvironmentIdentity identity) {
+  return switch (identity.environment.toLowerCase()) {
+    'dev' => const Color(0xFF38BDF8),
+    'prod' => const Color(0xFF55D6BE),
+    _ => _colorFromHex(identity.color),
+  };
+}
+
 String _presetLabel(AgentPreset preset) {
   return switch (preset) {
     AgentPreset.solo => 'Solo',
@@ -7656,17 +7666,18 @@ class _EnvironmentIdentityBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color = _colorFromHex(identity.color);
-    final foreground = ThemeData.estimateBrightnessForColor(color) ==
-            Brightness.dark
-        ? Colors.white
-        : const Color(0xFF07131D);
-    final parts = <String>[
-      identity.environment.toUpperCase(),
-      identity.appChannel,
-      if (identity.stageId != null) identity.stageId!,
-      if (identity.branch != null) identity.branch!,
-      identity.backendUrl,
+    final color = _environmentBadgeColor(identity);
+    final foreground =
+        ThemeData.estimateBrightnessForColor(color) == Brightness.dark
+            ? Colors.white
+            : const Color(0xFF07131D);
+    final environment = identity.environment.toLowerCase();
+    final label = identity.environment.toUpperCase();
+    final details = <String>[
+      if (environment == 'dev' && identity.stageId != null) identity.stageId!,
+      if (environment == 'dev' && identity.branch != null) identity.branch!,
+      if (environment == 'dev' && identity.backendUrl.isNotEmpty)
+        identity.backendUrl,
     ];
     final runtime = identity.stageRuntime;
     final runtimeParts = <String>[
@@ -7678,68 +7689,43 @@ class _EnvironmentIdentityBadge extends StatelessWidget {
       if (runtime?.url != null) 'source ${runtime!.url}',
     ];
     return Semantics(
-      label: 'Environment ${parts.join(' ')} ${runtimeParts.join(' ')}',
+      label:
+          'Environment $label ${details.join(' ')} ${runtimeParts.join(' ')}',
       child: Container(
         key: const ValueKey<String>('environment-identity-badge'),
-        constraints: const BoxConstraints(maxWidth: 720),
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
         decoration: BoxDecoration(
-          color: color.withValues(alpha: 0.18),
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: color.withValues(alpha: 0.65)),
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: <Widget>[
-            Row(
-              mainAxisSize: MainAxisSize.min,
-              children: <Widget>[
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-                  decoration: BoxDecoration(
-                    color: color,
-                    borderRadius: BorderRadius.circular(6),
-                  ),
-                  child: Text(
-                    identity.environment.toUpperCase(),
-                    style: TextStyle(
-                      color: foreground,
-                      fontSize: 11,
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Flexible(
-                  child: Text(
-                    parts.skip(1).join('  |  '),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
-              ],
+          color: color,
+          borderRadius: BorderRadius.circular(999),
+          boxShadow: <BoxShadow>[
+            BoxShadow(
+              color: color.withValues(alpha: 0.28),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
             ),
-            if (runtimeParts.isNotEmpty) ...[
-              const SizedBox(height: 3),
-              Text(
-                runtimeParts.join('  |  '),
-                key: const ValueKey<String>('stage-runtime-status'),
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: Colors.white.withValues(alpha: 0.82),
-                  fontSize: 11,
-                  fontWeight: FontWeight.w500,
-                ),
+          ],
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            Container(
+              width: 7,
+              height: 7,
+              decoration: BoxDecoration(
+                color: foreground.withValues(alpha: 0.85),
+                shape: BoxShape.circle,
               ),
-            ],
+            ),
+            const SizedBox(width: 7),
+            Text(
+              label,
+              style: TextStyle(
+                color: foreground,
+                fontSize: 12,
+                fontWeight: FontWeight.w900,
+                letterSpacing: 0,
+              ),
+            ),
           ],
         ),
       ),

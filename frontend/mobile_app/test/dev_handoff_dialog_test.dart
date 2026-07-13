@@ -109,7 +109,7 @@ ServerHealth _prodHandoffHealth() {
         'app_channel': 'prod',
         'app_label': 'Codex Mobile Bridge',
         'updater_channel': 'prod',
-        'color': '#2563EB',
+        'color': '#55D6BE',
         'allowed_capabilities': <String>['enqueue_dev_handoff'],
         'denied_capabilities': <String>['run_shell'],
       },

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import shlex
 import subprocess
 from pathlib import Path
@@ -101,3 +102,53 @@ def test_backend_process_script_arguments_require_non_empty_values(
 
     assert result.returncode != 0
     assert f"{flag} requires a non-empty value." in result.stderr
+
+
+def test_dev_backend_8118_script_contract() -> None:
+    script_path = ROOT / "scripts/dev_backend_8118.sh"
+    script = script_path.read_text(encoding="utf-8")
+
+    syntax = subprocess.run(
+        ["bash", "-n", str(script_path)],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert syntax.returncode == 0, syntax.stdout + syntax.stderr
+    assert os.access(script_path, os.X_OK)
+    assert "set -euo pipefail" in script
+    assert "start|status|restart|stop" in script
+    assert "PORT=8118" in script
+    assert "API_PORT=\"${PORT}\"" in script
+    assert "BRIDGE_ENVIRONMENT=\"dev\"" in script
+    assert "BRIDGE_APP_CHANNEL=\"dev\"" in script
+    assert "BRIDGE_UPDATER_CHANNEL=\"dev\"" in script
+    assert "BRIDGE_ENVIRONMENT_COLOR=#38BDF8" in script
+    assert "BRIDGE_ENVIRONMENT_COLOR=\"#38BDF8\"" in script
+    assert ".run/dev-backend-8118" in script
+    assert ".run/backend.pid" not in script
+    assert ".run/backend.log" not in script
+    assert "API_PORT=8000" not in script
+    assert "BRIDGE_ENVIRONMENT=prod" not in script
+    assert "serve --bg --http=\"${PORT}\"" in script
+    assert "restart)" in script
+    assert "stop)" in script
+
+
+def test_dev_backend_8118_script_does_not_embed_secrets() -> None:
+    script = (ROOT / "scripts/dev_backend_8118.sh").read_text(encoding="utf-8")
+    lowered = script.lower()
+
+    forbidden_fragments = [
+        "ghp_",
+        "github_token=",
+        "api_key=",
+        "password=",
+        "secret=",
+        "bearer ",
+        "-----begin",
+    ]
+    for fragment in forbidden_fragments:
+        assert fragment not in lowered

@@ -72,7 +72,7 @@ if [[ "$CHANNEL" == "dev" ]]; then
   SOURCE_APP="codex-mobile-dev"
   UPDATER_CHANNEL="dev"
   APP_LABEL="Codex Mobile Bridge DEV"
-  ENVIRONMENT_COLOR="#F59E0B"
+  ENVIRONMENT_COLOR="#38BDF8"
   EXPECTED_PACKAGE_ID="com.example.codex_mobile_frontend.dev"
   BRIDGE_URL="${DEV_API_BASE_URL:-${CODEX_DEV_APP_UPDATER_BRIDGE_URL:-}}"
   if [[ -z "$BRIDGE_URL" ]]; then
@@ -84,7 +84,7 @@ else
   SOURCE_APP="codex-mobile"
   UPDATER_CHANNEL="prod"
   APP_LABEL="Codex Mobile Bridge"
-  ENVIRONMENT_COLOR="#2563EB"
+  ENVIRONMENT_COLOR="#55D6BE"
   EXPECTED_PACKAGE_ID="com.example.codex_mobile_frontend"
   BRIDGE_URL="${CODEX_APP_UPDATER_BRIDGE_URL:-${API_BASE_URL:-http://batata-default-string.tail0302c4.ts.net}}"
 fi

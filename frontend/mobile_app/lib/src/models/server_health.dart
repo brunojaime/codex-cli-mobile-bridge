@@ -166,7 +166,7 @@ class BridgeEnvironmentIdentity {
       appChannel: json['app_channel'] as String? ?? 'prod',
       appLabel: json['app_label'] as String? ?? 'Codex Mobile Bridge',
       updaterChannel: json['updater_channel'] as String? ?? 'prod',
-      color: json['color'] as String? ?? '#2563EB',
+      color: json['color'] as String? ?? '#55D6BE',
       stageRuntime: json['stage_runtime'] is Map<String, dynamic>
           ? BridgeStageRuntime.fromJson(
               json['stage_runtime'] as Map<String, dynamic>,
