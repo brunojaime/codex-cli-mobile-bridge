@@ -2381,6 +2381,12 @@ def test_generated_web_preview_bundle_is_validable_locally(tmp_path: Path) -> No
     worker_text = worker.read_text(encoding="utf-8")
     assert "/__preview/health" in worker_text
     assert "/api/health" in worker_text
+    assert "function isPublicPreviewHealthRoute" in worker_text
+    assert "function stripLeadingSlug" in worker_text
+    assert "sluglessPath === '/api/health'" in worker_text
+    assert worker_text.index("isPublicPreviewHealthRoute(request, url, assetPath)") < (
+        worker_text.index("const access = await requireAccess(env, request, url)")
+    )
     assert "/api/auth/login" in worker_text
     assert "/api/invites/accept" in worker_text
     assert "handlePreviewInviteAccept" in worker_text

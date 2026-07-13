@@ -1305,6 +1305,27 @@ function stripAppPrefix(pathname) {
   return pathname || '/';
 }
 
+function stripLeadingSlug(pathname) {
+  const parts = pathname.split('/').filter(Boolean);
+  if (parts.length >= 2) {
+    return `/${parts.slice(1).join('/')}`;
+  }
+  return pathname || '/';
+}
+
+function isPublicPreviewHealthRoute(request, url, assetPath) {
+  if (request.method !== 'GET' && request.method !== 'HEAD') {
+    return false;
+  }
+  const sluglessPath = stripLeadingSlug(url.pathname);
+  return assetPath === '/api/health'
+    || assetPath === '/__preview/health'
+    || url.pathname === '/api/health'
+    || url.pathname === '/__preview/health'
+    || sluglessPath === '/api/health'
+    || sluglessPath === '/__preview/health';
+}
+
 function contentTypeFor(pathname) {
   const clean = pathname.toLowerCase();
   if (clean.endsWith('.html')) return 'text/html; charset=utf-8';
@@ -1402,6 +1423,14 @@ function randomId(prefix) {
 
 function previewApiBaseUrl(env) {
   return (env.API_BASE_URL || `https://preview.nienfos.com/${SOURCE_APP}/api`).replace(/\/+$/, '');
+}
+
+function previewApiBaseUrlFor(env, appSlug) {
+  const slug = appSlug || SOURCE_APP;
+  if (slug !== SOURCE_APP) {
+    return `https://preview.nienfos.com/${slug}/api`;
+  }
+  return previewApiBaseUrl(env);
 }
 
 async function readJson(request) {
@@ -1761,15 +1790,16 @@ async function requireApiSession(env, request) {
   return { ok: true, user, session };
 }
 
-async function handlePreviewHealth(env) {
+async function handlePreviewHealth(env, appSlug = SOURCE_APP) {
+  const healthSlug = appSlug || SOURCE_APP;
   return json({
     status: 'ok',
-    source_app: SOURCE_APP,
-    app_slug: SOURCE_APP,
+    source_app: healthSlug,
+    app_slug: healthSlug,
     display_name: DISPLAY_NAME,
     runtime_profile: env.APP_RUNTIME_PROFILE || DEFAULT_RUNTIME_PROFILE,
     runtime: API_RUNTIME,
-    api_base_url: previewApiBaseUrl(env),
+    api_base_url: previewApiBaseUrlFor(env, healthSlug),
     d1_bound: Boolean(env.PREVIEW_DB),
     d1_persistent: Boolean(env.PREVIEW_DB),
     assets_bound: Boolean(env.ASSETS),
@@ -2127,7 +2157,7 @@ async function handlePreviewNotifications(request, env) {
 
 async function handlePreviewApi(request, env, assetPath) {
   if (request.method === 'GET' && assetPath === '/api/health') {
-    return handlePreviewHealth(env);
+    return handlePreviewHealth(env, SOURCE_APP);
   }
   if (request.method === 'POST' && assetPath === '/api/admin/bootstrap') {
     return handlePreviewBootstrap(request, env);
@@ -2286,16 +2316,20 @@ async function handleRequest(request, env = globalThis, ctx = undefined) {
   const appSlug = appSlugFromPath(url.pathname);
   const assetPath = stripAppPrefix(url.pathname);
 
-    if (request.method === 'GET' && (assetPath === '/__preview/health' || url.pathname === '/__preview/health')) {
+    if (isPublicPreviewHealthRoute(request, url, assetPath)) {
+    const sluglessPath = stripLeadingSlug(url.pathname);
+    if (assetPath === '/api/health' || url.pathname === '/api/health' || sluglessPath === '/api/health') {
+      return handlePreviewHealth(env, appSlug || SOURCE_APP);
+    }
     return json({
       status: 'ok',
-      source_app: SOURCE_APP,
+      source_app: appSlug || SOURCE_APP,
       app_slug: appSlug || SOURCE_APP,
       display_name: DISPLAY_NAME,
       runtime_profile: env.APP_RUNTIME_PROFILE || DEFAULT_RUNTIME_PROFILE,
       runtime: API_RUNTIME,
       runtime_type: 'cloudflare_worker_assets',
-      api_base_url: previewApiBaseUrl(env),
+      api_base_url: previewApiBaseUrlFor(env, appSlug || SOURCE_APP),
       access_mode: ACCESS_MODE,
       build_id: env.PREVIEW_BUILD_ID || null,
       version: env.PREVIEW_VERSION || null,
@@ -2740,6 +2774,12 @@ const apiHealthBody = await apiHealth.json();
 assert.equal(apiHealthBody.runtime, 'cloudflare_preview');
 assert.equal(apiHealthBody.api_base_url, 'https://preview.nienfos.com/__SOURCE_APP__/api');
 assert.equal(apiHealthBody.d1_bound, true);
+
+const dynamicSlugHealth = await fetchJson('/other-preview/api/health');
+assert.equal(dynamicSlugHealth.status, 200);
+const dynamicSlugHealthBody = await dynamicSlugHealth.json();
+assert.equal(dynamicSlugHealthBody.source_app, 'other-preview');
+assert.equal(dynamicSlugHealthBody.api_base_url, 'https://preview.nienfos.com/other-preview/api');
 
 const bootstrap = await fetchJson('/__SOURCE_APP__/api/admin/bootstrap', {
   method: 'POST',
