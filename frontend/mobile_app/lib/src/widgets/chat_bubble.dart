@@ -131,18 +131,6 @@ class ChatBubble extends StatelessWidget {
               if (!isUser)
                 _AssistantHeader(message: message, textColor: textColor),
               if (isReviewerCodex || !isUser) const SizedBox(height: 10),
-              if (_summaryTurnRangeText(message) case final turnRangeText?) ...[
-                Text(
-                  turnRangeText,
-                  style: TextStyle(
-                    color: textColor.withValues(alpha: 0.76),
-                    fontSize: 12,
-                    height: 1.35,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                const SizedBox(height: 10),
-              ],
               if (_recoveryLineageText(message) case final lineageText?) ...[
                 Text(
                   lineageText,
@@ -1372,21 +1360,6 @@ String? _recoveryLineageText(ChatMessage message) {
     return null;
   }
   return parts.join(' ');
-}
-
-String? _summaryTurnRangeText(ChatMessage message) {
-  if (message.agentId != AgentId.summary) {
-    return null;
-  }
-  final start = message.summaryTurnStart;
-  final end = message.summaryTurnEnd;
-  if (start == null || end == null) {
-    return null;
-  }
-  if (start == end) {
-    return 'Covers turn $start';
-  }
-  return 'Covers turns $start to $end';
 }
 
 String? _diagnosticReasonText(ChatMessageReasonCode? reasonCode) {

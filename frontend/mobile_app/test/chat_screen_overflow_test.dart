@@ -541,7 +541,7 @@ void main() {
       ),
     );
 
-    await tester.tap(find.byTooltip('View summary').first);
+    await tester.tap(find.text('Chat summary').first);
     await tester.pumpAndSettle();
     await tester.scrollUntilVisible(
       find.text('The team enabled the summarizer and added provenance UI.'),
@@ -568,7 +568,7 @@ void main() {
   });
 
   testWidgets(
-      'short viewport keeps reviewer banner, run history, empty state, and composer scrollable',
+      'short viewport keeps reviewer banner, empty state, and composer scrollable',
       (WidgetTester tester) async {
     await _pumpChatScreen(
       tester,
@@ -578,7 +578,7 @@ void main() {
     expect(tester.takeException(), isNull);
     expect(find.byType(CustomScrollView), findsOneWidget);
     expect(find.text('Safety Reviewer running'), findsOneWidget);
-    expect(find.text('Run history'), findsOneWidget);
+    expect(find.text('Run history'), findsNothing);
     expect(find.text('Message'), findsOneWidget);
 
     await tester.ensureVisible(
@@ -619,7 +619,7 @@ void main() {
     );
 
     expect(tester.takeException(), isNull);
-    expect(find.text('Run history'), findsOneWidget);
+    expect(find.text('Run history'), findsNothing);
 
     await tester.scrollUntilVisible(
       find.text('Assistant update'),
@@ -723,7 +723,7 @@ void main() {
     expect(tester.takeException(), isNull);
 
     await tester.ensureVisible(
-      find.text('Run history', skipOffstage: false),
+      find.text('Safety Reviewer running', skipOffstage: false),
     );
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
@@ -855,7 +855,7 @@ void main() {
 
     expect(tester.takeException(), isNull);
     expect(find.text('Start a new Codex session'), findsNothing);
-    expect(find.text('Run history'), findsOneWidget);
+    expect(find.text('Run history'), findsNothing);
     expect(find.text('Message'), findsOneWidget);
 
     await tester.ensureVisible(
@@ -915,7 +915,7 @@ void main() {
 
     expect(tester.takeException(), isNull);
     expect(find.text('Start a new Codex session'), findsNothing);
-    expect(find.text('Run history'), findsOneWidget);
+    expect(find.text('Run history'), findsNothing);
     expect(find.text('Message'), findsOneWidget);
 
     await tester.ensureVisible(
@@ -1063,7 +1063,7 @@ void main() {
   });
 
   testWidgets(
-      'tall run history remains reachable in both directions on a short viewport with keyboard inset',
+      'tall session remains reachable in both directions without run history',
       (WidgetTester tester) async {
     await _pumpChatScreen(
       tester,
@@ -1073,18 +1073,12 @@ void main() {
 
     expect(tester.takeException(), isNull);
     expect(find.byKey(kChatScreenBodyScrollViewKey), findsOneWidget);
+    expect(find.text('Run history'), findsNothing);
+    expect(find.textContaining('Completed run run-0004'), findsNothing);
     expect(find.text('Message'), findsOneWidget);
 
     await tester.ensureVisible(
       find.text('Safety Reviewer running', skipOffstage: false),
-    );
-    await tester.pumpAndSettle();
-    expect(tester.takeException(), isNull);
-
-    await tester.scrollUntilVisible(
-      find.textContaining('Completed run run-0004', skipOffstage: false),
-      180,
-      scrollable: _chatBodyScrollable(),
     );
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);

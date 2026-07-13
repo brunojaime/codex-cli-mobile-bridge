@@ -37,7 +37,6 @@ import '../utils/chat_timestamp_formatter.dart';
 import '../utils/chat_message_visibility.dart';
 import '../widgets/agent_studio_status_button.dart';
 import '../widgets/chat_bubble.dart';
-import '../widgets/current_run_timeline_card.dart';
 import '../widgets/installable_apps_sheet.dart';
 import '../widgets/reviewer_status_banner.dart';
 
@@ -692,20 +691,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                       SliverToBoxAdapter(
                                         child: ReviewerStatusBanner(
                                           session: currentSession,
-                                        ),
-                                      ),
-                                    if (currentSession != null)
-                                      SliverPadding(
-                                        padding: const EdgeInsets.fromLTRB(
-                                          16,
-                                          8,
-                                          16,
-                                          0,
-                                        ),
-                                        sliver: SliverToBoxAdapter(
-                                          child: CurrentRunTimelineCard(
-                                            session: currentSession,
-                                          ),
                                         ),
                                       ),
                                     if (currentSession != null &&
@@ -4999,12 +4984,6 @@ class _FilteredMessagesPlaceholder extends StatelessWidget {
                   isUpdating ? 'Updating view...' : 'Show all messages',
                 ),
               ),
-              const SizedBox(height: 12),
-              const Text(
-                'Run history above still updates live, and you can keep chatting below.',
-                textAlign: TextAlign.center,
-                style: TextStyle(color: Color(0xFFB8C8EA), height: 1.5),
-              ),
               if (errorText != null) ...<Widget>[
                 const SizedBox(height: 12),
                 Text(
@@ -7637,7 +7616,7 @@ class _AgentProfilePill extends StatelessWidget {
         border: Border.all(color: color.withValues(alpha: 0.45)),
       ),
       child: Row(
-        mainAxisSize: MainAxisSize.min,
+        mainAxisSize: MainAxisSize.max,
         children: <Widget>[
           Container(
             width: 8,
@@ -7645,12 +7624,17 @@ class _AgentProfilePill extends StatelessWidget {
             decoration: BoxDecoration(color: color, shape: BoxShape.circle),
           ),
           const SizedBox(width: 8),
-          Text(
-            label,
-            style: const TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-              color: Colors.white,
+          Flexible(
+            child: Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              softWrap: false,
+              style: const TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: Colors.white,
+              ),
             ),
           ),
         ],
@@ -10538,8 +10522,6 @@ class _AgentStudioSheetState extends State<_AgentStudioSheet> {
                 },
               ),
               const SizedBox(height: 8),
-              CurrentRunTimelineCard(session: widget.session),
-              const SizedBox(height: 4),
               DropdownButtonFormField<AgentDisplayMode>(
                 initialValue: _displayMode,
                 decoration: const InputDecoration(labelText: 'Chat rendering'),

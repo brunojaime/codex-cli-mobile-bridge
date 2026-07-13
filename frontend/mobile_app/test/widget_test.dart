@@ -2240,7 +2240,7 @@ flowchart LR
     expect(find.textContaining('Showing 2 summary updates'), findsOneWidget);
     expect(find.text('Summary update one'), findsOneWidget);
     expect(find.text('Summary update two'), findsOneWidget);
-    expect(find.text('Covers turns 1 to 3'), findsOneWidget);
+    expect(find.text('Covers turns 1 to 3'), findsNothing);
     expect(find.text('Generator update'), findsNothing);
 
     controller.dispose();
