@@ -2974,7 +2974,10 @@ class DevPipelineService:
         branch: str,
         worktree_path: str,
     ) -> dict[str, str] | None:
-        if self._git_dirty(self._repository_root):
+        if self._git_dirty(
+            self._repository_root,
+            ignored_paths=self._materialization_ignored_dirty_paths(),
+        ):
             return {
                 "reason": "dirty_repository",
                 "detail": "Repository must be clean before backlog materialization.",
@@ -3592,7 +3595,21 @@ class DevPipelineService:
             "partial_artifacts": [],
         }
 
-    def _git_dirty(self, cwd: Path) -> bool:
+    def _materialization_ignored_dirty_paths(self) -> set[str]:
+        if not self._app_update_registry_path:
+            return set()
+        registry_path = Path(self._app_update_registry_path)
+        if not registry_path.is_absolute():
+            registry_path = self._repository_root / registry_path
+        try:
+            relative = registry_path.resolve().relative_to(
+                self._repository_root.resolve()
+            )
+        except ValueError:
+            return set()
+        return {relative.as_posix()}
+
+    def _git_dirty(self, cwd: Path, *, ignored_paths: set[str] | None = None) -> bool:
         try:
             result = subprocess.run(
                 ["git", "status", "--porcelain"],
@@ -3604,7 +3621,21 @@ class DevPipelineService:
             )
         except (OSError, subprocess.TimeoutExpired):
             return True
-        return result.returncode != 0 or bool(result.stdout.strip())
+        if result.returncode != 0:
+            return True
+        dirty_lines = [line for line in result.stdout.splitlines() if line.strip()]
+        if not dirty_lines:
+            return False
+        ignored = ignored_paths or set()
+        if not ignored:
+            return True
+        return any(self._git_status_path(line) not in ignored for line in dirty_lines)
+
+    def _git_status_path(self, line: str) -> str:
+        path = line[3:] if len(line) > 3 else line
+        if " -> " in path:
+            path = path.rsplit(" -> ", 1)[1]
+        return path.strip().strip('"')
 
     def _backfill_candidate(self, *, spec_id: str) -> dict[str, Any]:
         stage_id = f"spec-{spec_id.split('-', 1)[0]}"

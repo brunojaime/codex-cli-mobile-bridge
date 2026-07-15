@@ -607,6 +607,42 @@ def test_materialize_blocks_dirty_and_incompatible_worktrees(tmp_path: Path) -> 
     )
 
 
+def test_materialize_ignores_dirty_app_update_registry(tmp_path: Path) -> None:
+    repo_root = _init_git_repo(tmp_path)
+    registry = repo_root / "backend/app/infrastructure/config/app_updates.json"
+    registry.parent.mkdir(parents=True)
+    registry_payload = {
+        "codex-mobile": {
+            "apkAssetPattern": "codex-mobile-*.apk",
+            "displayName": "Codex Mobile Bridge",
+            "enabled": True,
+            "latestAssetName": "codex-mobile.apk",
+            "releaseTagPattern": "android-v*",
+            "repo": "owner/repo",
+            "requiredMinimumBuild": None,
+        }
+    }
+    registry.write_text(json.dumps(registry_payload), encoding="utf-8")
+    _git(repo_root, "add", str(registry.relative_to(repo_root)))
+    _git(repo_root, "commit", "-m", "add app update registry")
+    registry_payload["codex-mobile"]["releaseTagPattern"] = "android-v2*"
+    registry.write_text(json.dumps(registry_payload), encoding="utf-8")
+
+    handoff_id, dev_client = _enqueue_and_claim(
+        tmp_path,
+        repo_root=repo_root,
+        key="materialize-dirty-app-update-registry",
+        app_update_registry_path=str(registry),
+    )
+    response = dev_client.post(
+        f"/dev-pipeline/backlog/{handoff_id}/materialize",
+        json={"worker_id": "dev-worker"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["backlog"]["status"] == "materialized"
+
+
 def test_materialize_records_partial_artifacts_after_worktree_created(
     tmp_path: Path,
 ) -> None:
@@ -2289,6 +2325,7 @@ def _client(
     codex_command: str = _FAKE_CODEX,
     dev_notify_url: str | None = None,
     auto_runner_enabled: bool = False,
+    app_update_registry_path: str | None = None,
 ) -> TestClient:
     projects_root = projects_root or tmp_path / "projects"
     projects_root.mkdir(exist_ok=True)
@@ -2321,6 +2358,8 @@ def _client(
         dev_pipeline_promotion_enabled=promotion_enabled,
         dev_pipeline_dev_notify_url=dev_notify_url,
         dev_pipeline_auto_runner_enabled=auto_runner_enabled,
+        app_update_registry_path=app_update_registry_path
+        or Settings.model_fields["app_update_registry_path"].default,
         app_update_github_token=app_update_github_token,
     )
     return TestClient(create_app(settings))
@@ -2405,6 +2444,7 @@ def _enqueue_and_claim(
     repo_root: Path,
     key: str,
     payload: dict[str, object] | None = None,
+    app_update_registry_path: str | None = None,
 ) -> tuple[str, TestClient]:
     prod_client = _client(
         tmp_path,
@@ -2418,7 +2458,12 @@ def _enqueue_and_claim(
     )
     assert handoff.status_code == 200, handoff.text
     handoff_id = handoff.json()["data"]["id"]
-    dev_client = _client(tmp_path, environment="dev", repo_root=repo_root)
+    dev_client = _client(
+        tmp_path,
+        environment="dev",
+        repo_root=repo_root,
+        app_update_registry_path=app_update_registry_path,
+    )
     claim = dev_client.post(
         "/dev-pipeline/backlog/claim",
         json={"worker_id": "dev-worker"},
