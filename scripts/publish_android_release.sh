@@ -7,6 +7,10 @@ PUBSPEC_PATH="$ROOT_DIR/frontend/mobile_app/pubspec.yaml"
 CHANNEL="prod"
 PUSH_TAG=false
 DRY_RUN=false
+PYTHON_BIN="${PYTHON:-${ROOT_DIR}/.venv/bin/python}"
+if [[ ! -x "$PYTHON_BIN" ]]; then
+  PYTHON_BIN="python3"
+fi
 
 usage() {
   cat <<'EOF'
@@ -67,6 +71,16 @@ if [[ -z "$VERSION" ]]; then
   exit 1
 fi
 
+GUARD_OUTPUT="$("$PYTHON_BIN" "${ROOT_DIR}/scripts/environment_guard.py" \
+  --operation android-release-publish \
+  --target-environment "${CHANNEL}" \
+  --action release)" || {
+  echo "Environment guard blocked Android release publication." >&2
+  echo "${GUARD_OUTPUT}" >&2
+  exit 1
+}
+echo "${GUARD_OUTPUT}" | "$PYTHON_BIN" -c 'import json,sys; p=json.load(sys.stdin); print("Environment guard ok: current={} target={} audit={}".format(p["current_environment"], p["target_environment"], p["audit_log"]))'
+
 if [[ "$CHANNEL" == "dev" ]]; then
   TAG="android-dev-v${VERSION//+/-build.}"
   SOURCE_APP="codex-mobile-dev"
@@ -93,7 +107,7 @@ BRIDGE_URL="${BRIDGE_URL%/}"
 PREFLIGHT_OUTPUT="$(mktemp)"
 trap 'rm -f "${PREFLIGHT_OUTPUT}"' EXIT
 
-"${ROOT_DIR}/.venv/bin/python" "${ROOT_DIR}/scripts/validate_android_release_channel.py" \
+"${PYTHON_BIN}" "${ROOT_DIR}/scripts/validate_android_release_channel.py" \
   --channel "${CHANNEL}" \
   --source-app "${SOURCE_APP}" \
   --api-base-url "${BRIDGE_URL}" \

@@ -1260,24 +1260,44 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       );
       return;
     }
-    final draft = await showDialog<_DevHandoffDraft>(
-      context: context,
-      builder: (context) => const _DevHandoffDialog(),
-    );
-    if (draft == null || !mounted) {
-      return;
-    }
     final sessionId = _chatController.selectedSessionId;
     final baseUrl = (_activeServer?.baseUrl ?? widget.initialApiBaseUrl)
         .trim()
         .replaceAll(RegExp(r'/$'), '');
     final client =
         widget.devHandoffClientOverride ?? ApiClient(baseUrl: baseUrl);
+    late final DevPipelineHandoffRequest initialDraft;
+    try {
+      initialDraft = await client.draftDevHandoff(sessionId: sessionId);
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('DEV handoff draft failed. $error')),
+      );
+      return;
+    }
+    if (!mounted) {
+      return;
+    }
+    final draft = await showDialog<_DevHandoffDraft>(
+      context: context,
+      builder: (context) => _DevHandoffDialog(initialDraft: initialDraft),
+    );
+    if (draft == null || !mounted) {
+      return;
+    }
     final request = DevPipelineHandoffRequest(
       title: draft.title,
       problem: draft.problem,
       context: draft.context,
       acceptanceCriteria: draft.acceptanceCriteria,
+      proposedSpec: draft.proposedSpec,
+      proposedPlan: draft.proposedPlan,
+      proposedTasks: draft.proposedTasks,
+      regressionTests: draft.regressionTests,
+      risks: draft.risks,
       evidence: draft.evidence.trim().isEmpty
           ? const <Map<String, dynamic>>[]
           : <Map<String, dynamic>>[
@@ -1292,6 +1312,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         'context': draft.context,
       },
       createdFromSessionId: sessionId,
+      createdByAction: 'mobile_dev_handoff',
+      draftToken: draft.draftToken,
     );
     final idempotencyKey = _devHandoffIdempotencyKey(draft, sessionId);
     try {
@@ -1378,7 +1400,13 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       'problem': draft.problem,
       'context': draft.context,
       'acceptance_criteria': draft.acceptanceCriteria,
+      'proposed_spec': draft.proposedSpec,
+      'proposed_plan': draft.proposedPlan,
+      'proposed_tasks': draft.proposedTasks.join('\n'),
+      'regression_tests': draft.regressionTests.join('\n'),
+      'risks': draft.risks.join('\n'),
       'evidence': draft.evidence,
+      'draft_token': draft.draftToken,
     });
     final encoded = base64Url.encode(utf8.encode(raw)).replaceAll('=', '');
     return 'mobile-${encoded.substring(0, math.min(encoded.length, 120))}';
@@ -5567,18 +5595,32 @@ class _DevHandoffDraft {
     required this.problem,
     required this.context,
     required this.acceptanceCriteria,
+    required this.proposedSpec,
+    required this.proposedPlan,
+    required this.proposedTasks,
+    required this.regressionTests,
+    required this.risks,
     required this.evidence,
+    required this.draftToken,
   });
 
   final String title;
   final String problem;
   final String context;
   final String acceptanceCriteria;
+  final String proposedSpec;
+  final String proposedPlan;
+  final List<String> proposedTasks;
+  final List<String> regressionTests;
+  final List<String> risks;
   final String evidence;
+  final String? draftToken;
 }
 
 class _DevHandoffDialog extends StatefulWidget {
-  const _DevHandoffDialog();
+  const _DevHandoffDialog({required this.initialDraft});
+
+  final DevPipelineHandoffRequest initialDraft;
 
   @override
   State<_DevHandoffDialog> createState() => _DevHandoffDialogState();
@@ -5590,7 +5632,32 @@ class _DevHandoffDialogState extends State<_DevHandoffDialog> {
   final _problemController = TextEditingController();
   final _contextController = TextEditingController();
   final _criteriaController = TextEditingController();
+  final _proposedSpecController = TextEditingController();
+  final _proposedPlanController = TextEditingController();
+  final _tasksController = TextEditingController();
+  final _regressionController = TextEditingController();
+  final _risksController = TextEditingController();
   final _evidenceController = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    final draft = widget.initialDraft;
+    _titleController.text = draft.title;
+    _problemController.text = draft.problem;
+    _contextController.text = draft.context;
+    _criteriaController.text = draft.acceptanceCriteria;
+    _proposedSpecController.text = draft.proposedSpec ?? '';
+    _proposedPlanController.text = draft.proposedPlan ?? '';
+    _tasksController.text = draft.proposedTasks.join('\n');
+    _regressionController.text = draft.regressionTests.join('\n');
+    _risksController.text = draft.risks.join('\n');
+    final notes = draft.evidence
+        .map((item) => item['text']?.toString().trim() ?? '')
+        .where((item) => item.isNotEmpty)
+        .toList(growable: false);
+    _evidenceController.text = notes.join('\n');
+  }
 
   @override
   void dispose() {
@@ -5598,6 +5665,11 @@ class _DevHandoffDialogState extends State<_DevHandoffDialog> {
     _problemController.dispose();
     _contextController.dispose();
     _criteriaController.dispose();
+    _proposedSpecController.dispose();
+    _proposedPlanController.dispose();
+    _tasksController.dispose();
+    _regressionController.dispose();
+    _risksController.dispose();
     _evidenceController.dispose();
     super.dispose();
   }
@@ -5623,6 +5695,34 @@ class _DevHandoffDialogState extends State<_DevHandoffDialog> {
                 _handoffField(
                   _criteriaController,
                   'Acceptance criteria',
+                  maxLines: 3,
+                ),
+                const SizedBox(height: 12),
+                _handoffField(
+                  _proposedSpecController,
+                  'Proposed spec',
+                ),
+                const SizedBox(height: 12),
+                _handoffField(
+                  _proposedPlanController,
+                  'Proposed plan',
+                ),
+                const SizedBox(height: 12),
+                _handoffField(
+                  _tasksController,
+                  'Tasks',
+                  maxLines: 5,
+                ),
+                const SizedBox(height: 12),
+                _handoffField(
+                  _regressionController,
+                  'Regression tests',
+                  maxLines: 3,
+                ),
+                const SizedBox(height: 12),
+                _handoffField(
+                  _risksController,
+                  'Risks',
                   maxLines: 3,
                 ),
                 const SizedBox(height: 12),
@@ -5682,9 +5782,23 @@ class _DevHandoffDialogState extends State<_DevHandoffDialog> {
         problem: _problemController.text.trim(),
         context: _contextController.text.trim(),
         acceptanceCriteria: _criteriaController.text.trim(),
+        proposedSpec: _proposedSpecController.text.trim(),
+        proposedPlan: _proposedPlanController.text.trim(),
+        proposedTasks: _nonEmptyLines(_tasksController.text),
+        regressionTests: _nonEmptyLines(_regressionController.text),
+        risks: _nonEmptyLines(_risksController.text),
         evidence: _evidenceController.text.trim(),
+        draftToken: widget.initialDraft.draftToken,
       ),
     );
+  }
+
+  List<String> _nonEmptyLines(String value) {
+    return value
+        .split('\n')
+        .map((line) => line.trim())
+        .where((line) => line.isNotEmpty)
+        .toList(growable: false);
   }
 }
 

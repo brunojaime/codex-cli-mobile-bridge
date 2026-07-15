@@ -75,7 +75,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=${ROOT_DIR}
-ExecStart=${ROOT_DIR}/.venv/bin/python ${ROOT_DIR}/main.py
+ExecStart=${ROOT_DIR}/scripts/run_backend_foreground.sh
 Restart=always
 RestartSec=5
 

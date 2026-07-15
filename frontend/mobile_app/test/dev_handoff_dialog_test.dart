@@ -27,7 +27,31 @@ void main() {
       handoffClient.requests.single.acceptanceCriteria,
       'The DEV stage reproduces and fixes it.',
     );
+    expect(handoffClient.requests.single.proposedSpec,
+        '019-prod-chat-dev-handoff');
+    expect(
+      handoffClient.requests.single.proposedTasks,
+      contains('Implement in DEV.'),
+    );
+    expect(handoffClient.requests.single.draftToken, 'draft-token-1');
     expect(find.text('DEV handoff queued: handoff-1'), findsOneWidget);
+  });
+
+  testWidgets('dev handoff dialog queues generated draft without retyping',
+      (tester) async {
+    final handoffClient = _DevHandoffDialogApiClient();
+    await _pumpHandoffScreen(tester, handoffClient: handoffClient);
+
+    await _openHandoffDialog(tester);
+    expect(find.text('Generated PROD handoff'), findsOneWidget);
+    expect(find.text('019-prod-chat-dev-handoff'), findsOneWidget);
+    await tester.tap(find.widgetWithText(FilledButton, 'Queue'));
+    await tester.pumpAndSettle();
+
+    expect(handoffClient.requests, hasLength(1));
+    expect(handoffClient.requests.single.title, 'Generated PROD handoff');
+    expect(handoffClient.requests.single.proposedPlan, '01-prod-chat');
+    expect(handoffClient.requests.single.draftToken, 'draft-token-1');
   });
 
   testWidgets('dev handoff dialog shows enqueue errors', (tester) async {
@@ -85,7 +109,12 @@ Future<void> _fillHandoffDialog(WidgetTester tester) async {
   await tester.enterText(fields.at(2), 'Observed in the active session.');
   await tester.enterText(
       fields.at(3), 'The DEV stage reproduces and fixes it.');
-  await tester.enterText(fields.at(4), 'Screenshot and transcript available.');
+  await tester.enterText(fields.at(4), '019-prod-chat-dev-handoff');
+  await tester.enterText(fields.at(5), '01-prod-chat');
+  await tester.enterText(fields.at(6), 'Implement in DEV.');
+  await tester.enterText(fields.at(7), 'flutter test dev_handoff_dialog_test');
+  await tester.enterText(fields.at(8), 'Grant reuse.');
+  await tester.enterText(fields.at(9), 'Screenshot and transcript available.');
   await tester.pump();
 }
 
@@ -125,6 +154,23 @@ class _DevHandoffDialogApiClient extends ApiClient {
   final List<DevPipelineHandoffRequest> requests =
       <DevPipelineHandoffRequest>[];
   final List<String> idempotencyKeys = <String>[];
+
+  @override
+  Future<DevPipelineHandoffRequest> draftDevHandoff({String? sessionId}) async {
+    return const DevPipelineHandoffRequest(
+      title: 'Generated PROD handoff',
+      problem: 'Generated from the active chat.',
+      context: 'Recent PROD transcript.',
+      acceptanceCriteria: 'DEV handles the reviewed request.',
+      proposedSpec: '019-prod-chat-dev-handoff',
+      proposedPlan: '01-prod-chat',
+      proposedTasks: <String>['Implement in DEV.'],
+      regressionTests: <String>['flutter test dev_handoff_dialog_test'],
+      risks: <String>['Grant reuse.'],
+      createdFromSessionId: 'session-prod',
+      draftToken: 'draft-token-1',
+    );
+  }
 
   @override
   Future<DevPipelineHandoff> enqueueDevHandoff(

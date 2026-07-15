@@ -91,7 +91,7 @@ Group=${CURRENT_GROUP}
 WorkingDirectory=${ROOT_DIR}
 Environment=HOME=${CURRENT_HOME}
 Environment=PATH=${PATH_VALUE}
-ExecStart=${ROOT_DIR}/.venv/bin/python ${ROOT_DIR}/main.py
+ExecStart=${ROOT_DIR}/scripts/run_backend_foreground.sh
 Restart=always
 RestartSec=5
 

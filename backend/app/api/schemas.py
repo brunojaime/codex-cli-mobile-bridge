@@ -3259,7 +3259,18 @@ class DevPipelineHandoffRequest(BaseModel):
     risks: list[str] = Field(default_factory=list)
     created_from_session_id: str | None = Field(default=None, max_length=120)
     created_by_action: str = Field(default="prod_dev_handoff", max_length=120)
+    draft_token: str | None = Field(default=None, max_length=160)
     idempotency_key: str | None = Field(default=None, max_length=160)
+
+
+class DevPipelineHandoffDraftRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    session_id: str | None = Field(default=None, max_length=120)
+    title: str | None = Field(default=None, max_length=240)
+    problem: str | None = Field(default=None, max_length=5000)
+    context: str | None = Field(default=None, max_length=20000)
+    acceptance_criteria: str | None = Field(default=None, max_length=10000)
 
 
 class DevPipelineClaimRequest(BaseModel):

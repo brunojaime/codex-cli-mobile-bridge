@@ -87,6 +87,15 @@ _GITHUB_ACCESS_GUIDANCE = (
     "or `git ls-remote https://github.com/OWNER/REPO.git` before concluding "
     "that a repository is missing or inaccessible."
 )
+_PROD_BRIDGE_CHAT_GOVERNANCE_NOTICE = """\
+Production Bridge governance:
+- This is the production Codex Mobile Bridge backend.
+- You may answer questions, inspect/read files, summarize sessions, help with chat, create project/factory requests, and work on repositories outside the bridge repo when requested.
+- Do not modify files, configuration, releases, services, or runtime state inside the Codex Mobile Bridge repo from production.
+- If the user requests a Codex Mobile Bridge code/config/runtime change, explain that the change must enter the DEV queue via /dev-handoff and provide the exact handoff request to create.
+- Do not run commands that write to the bridge repo or restart/deploy production bridge services from this chat.
+"""
+_PROD_BRIDGE_READ_ONLY_SANDBOX_OVERRIDE = 'sandbox_mode="read-only"'
 
 _AUDIO_SUFFIXES = {
     ".aac",
@@ -320,6 +329,7 @@ class MessageService:
         execution_provider: ExecutionProvider,
         default_workspace_path: str,
         audio_transcriber: AudioTranscriber,
+        bridge_environment: str = "dev",
         document_text_char_limit: int = 20_000,
         title_generation_model: str | None = None,
         follow_up_reconcile_interval_seconds: float | None = None,
@@ -327,6 +337,7 @@ class MessageService:
         self._repository = repository
         self._execution_provider = execution_provider
         self._default_workspace_path = str(Path(default_workspace_path).resolve())
+        self._bridge_environment = bridge_environment
         self._audio_transcriber = audio_transcriber
         self._document_text_char_limit = document_text_char_limit
         self._title_generation_model = (title_generation_model or "").strip() or None
@@ -1058,6 +1069,13 @@ class MessageService:
             execution_message or message,
             normalized_codex_options,
         )
+        if self._prod_bridge_repo_governance_applies(session):
+            resolved_user_prompt = self._apply_prod_bridge_governance_notice(
+                resolved_user_prompt
+            )
+            normalized_codex_options = self._prod_bridge_read_only_codex_options(
+                normalized_codex_options
+            )
         if conversation_kind == JobConversationKind.PRIMARY:
             if entry_agent_id == AgentId.SUPERVISOR:
                 execution_message = self._build_supervisor_execution_message(
@@ -1228,6 +1246,39 @@ class MessageService:
         )
         self._queue_session_title_refresh(session.id)
         return job
+
+    def _prod_bridge_repo_governance_applies(self, session: ChatSession) -> bool:
+        if self._bridge_environment != "prod":
+            return False
+        bridge_root = Path(self._default_workspace_path).expanduser().resolve()
+        workspace = Path(session.workspace_path).expanduser().resolve()
+        return workspace == bridge_root or bridge_root in workspace.parents
+
+    def _apply_prod_bridge_governance_notice(self, prompt: str) -> str:
+        normalized_prompt = prompt.strip()
+        if _PROD_BRIDGE_CHAT_GOVERNANCE_NOTICE in normalized_prompt:
+            return normalized_prompt
+        if not normalized_prompt:
+            return _PROD_BRIDGE_CHAT_GOVERNANCE_NOTICE.strip()
+        return f"{_PROD_BRIDGE_CHAT_GOVERNANCE_NOTICE}\n\nUser message:\n{normalized_prompt}"
+
+    def _prod_bridge_read_only_codex_options(
+        self,
+        codex_options: CodexRunOptions | None,
+    ) -> CodexRunOptions:
+        normalized = codex_options.normalized() if codex_options else CodexRunOptions()
+        overrides = list(normalized.config_overrides)
+        if not any(
+            override.strip().startswith("sandbox_mode") for override in overrides
+        ):
+            overrides.append(_PROD_BRIDGE_READ_ONLY_SANDBOX_OVERRIDE)
+        return CodexRunOptions(
+            profile=normalized.profile,
+            search_enabled=normalized.search_enabled,
+            skill_ids=normalized.skill_ids,
+            mcp_server_ids=normalized.mcp_server_ids,
+            config_overrides=tuple(overrides),
+        ).normalized()
 
     def list_agent_runs(self, session_id: str) -> list[AgentRun]:
         return self._repository.list_agent_runs(session_id)

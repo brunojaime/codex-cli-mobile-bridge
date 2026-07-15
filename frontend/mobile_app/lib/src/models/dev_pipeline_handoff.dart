@@ -13,6 +13,7 @@ class DevPipelineHandoffRequest {
     this.risks = const <String>[],
     this.createdFromSessionId,
     this.createdByAction = 'mobile_dev_handoff',
+    this.draftToken,
   });
 
   final String title;
@@ -28,6 +29,39 @@ class DevPipelineHandoffRequest {
   final List<String> risks;
   final String? createdFromSessionId;
   final String createdByAction;
+  final String? draftToken;
+
+  factory DevPipelineHandoffRequest.fromJson(Map<String, dynamic> json) {
+    return DevPipelineHandoffRequest(
+      title: json['title'] as String? ?? '',
+      problem: json['problem'] as String? ?? '',
+      context: json['context'] as String? ?? '',
+      acceptanceCriteria: json['acceptance_criteria'] as String? ?? '',
+      selectedContext:
+          (json['selected_context'] as Map?)?.cast<String, dynamic>() ??
+              const <String, dynamic>{},
+      evidence: ((json['evidence'] as List?) ?? const <dynamic>[])
+          .whereType<Map>()
+          .map((item) => item.cast<String, dynamic>())
+          .toList(),
+      proposedSpec: json['proposed_spec'] as String?,
+      proposedPlan: json['proposed_plan'] as String?,
+      proposedTasks: ((json['proposed_tasks'] as List?) ?? const <dynamic>[])
+          .map((item) => item.toString())
+          .toList(),
+      regressionTests:
+          ((json['regression_tests'] as List?) ?? const <dynamic>[])
+              .map((item) => item.toString())
+              .toList(),
+      risks: ((json['risks'] as List?) ?? const <dynamic>[])
+          .map((item) => item.toString())
+          .toList(),
+      createdFromSessionId: json['created_from_session_id'] as String?,
+      createdByAction:
+          json['created_by_action'] as String? ?? 'mobile_dev_handoff',
+      draftToken: json['draft_token'] as String?,
+    );
+  }
 
   Map<String, dynamic> toJson() {
     return <String, dynamic>{
@@ -49,6 +83,7 @@ class DevPipelineHandoffRequest {
       'risks': risks,
       'created_from_session_id': createdFromSessionId,
       'created_by_action': createdByAction,
+      'draft_token': draftToken,
     }..removeWhere((_, value) => value == null);
   }
 }

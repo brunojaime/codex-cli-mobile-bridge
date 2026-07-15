@@ -1354,7 +1354,9 @@ def test_message_flow_returns_completed_response() -> None:
     assert payload["response"] == "Codex response: hello from test"
 
 
-def test_prod_blocks_bridge_repo_default_message_workspace(tmp_path: Path) -> None:
+def test_prod_allows_bridge_repo_default_message_workspace_with_governance_notice(
+    tmp_path: Path,
+) -> None:
     bridge_repo = tmp_path / "codex-cli-mobile-bridge"
     other_repo = tmp_path / "other-app"
     bridge_repo.mkdir()
@@ -1376,13 +1378,12 @@ def test_prod_blocks_bridge_repo_default_message_workspace(tmp_path: Path) -> No
         )
     )
 
-    response = client.post("/message", json={"message": "Make the button yellow"})
+    response = client.post("/message", json={"message": "Can we discuss the bridge?"})
 
-    assert response.status_code == 403
-    detail = response.json()["detail"]
-    assert detail["code"] == "prod_bridge_repo_modification_blocked"
-    assert detail["dev_handoff_action"] == "/dev-handoff"
-    assert str(bridge_repo) in detail["workspace_path"]
+    assert response.status_code == 202, response.text
+    payload = wait_for_job(client, response.json()["job_id"])
+    assert payload["status"] == "completed"
+    assert payload["error"] is None
 
 
 def test_prod_allows_message_jobs_for_other_repos(tmp_path: Path) -> None:
@@ -1421,7 +1422,9 @@ def test_prod_allows_message_jobs_for_other_repos(tmp_path: Path) -> None:
     assert payload["response"] == "Codex response: Make the button yellow"
 
 
-def test_prod_blocks_bridge_repo_session_message(tmp_path: Path) -> None:
+def test_prod_allows_bridge_repo_session_message_with_governance_notice(
+    tmp_path: Path,
+) -> None:
     bridge_repo = tmp_path / "codex-cli-mobile-bridge"
     bridge_repo.mkdir()
     client = TestClient(
@@ -1451,8 +1454,10 @@ def test_prod_blocks_bridge_repo_session_message(tmp_path: Path) -> None:
         json={"message": "Make the button yellow"},
     )
 
-    assert response.status_code == 403
-    assert response.json()["detail"]["code"] == "prod_bridge_repo_modification_blocked"
+    assert response.status_code == 202, response.text
+    payload = wait_for_job(client, response.json()["job_id"])
+    assert payload["status"] == "completed"
+    assert payload["error"] is None
 
 
 def test_message_flow_returns_failed_response() -> None:
@@ -6548,6 +6553,18 @@ def test_app_server_sandbox_payload_uses_structured_turn_policy() -> None:
     }
 
 
+def test_app_server_sandbox_payload_prefers_codex_option_override() -> None:
+    provider = LocalExecutionProvider(command="codex")
+
+    assert provider._app_server_turn_sandbox_policy(
+        "--dangerously-bypass-approvals-and-sandbox",
+        workdir="/tmp/codex-workdir",
+        codex_options=CodexRunOptions(
+            config_overrides=('sandbox_mode="read-only"',),
+        ),
+    ) == {"type": "readOnly", "networkAccess": False}
+
+
 def test_app_server_streaming_resumes_same_thread_for_follow_up_turns() -> None:
     client = build_app_server_streaming_client()
 
@@ -9834,6 +9851,56 @@ def test_submit_message_applies_codex_guidance_and_passes_codex_options() -> Non
         assert "Prefer these Codex skills" in request["message"]
         assert "`skill-creator`" in request["message"]
         assert "`github`" in request["message"]
+
+
+def test_prod_bridge_repo_message_adds_governance_and_read_only_sandbox() -> None:
+    with TemporaryDirectory() as temp_dir:
+        bridge_repo = Path(temp_dir) / "codex-cli-mobile-bridge"
+        bridge_repo.mkdir()
+        repository = InMemoryChatRepository(projects_root=temp_dir)
+        provider = _ControlledExecutionProvider()
+        service = MessageService(
+            repository=repository,
+            execution_provider=provider,
+            default_workspace_path=str(bridge_repo),
+            audio_transcriber=DisabledAudioTranscriber(),
+            bridge_environment="prod",
+        )
+
+        job = service.submit_message("Can we inspect the bridge?")
+
+        request = _provider_request(provider, job.id)
+        assert "Production Bridge governance:" in request["message"]
+        assert "User message:\nCan we inspect the bridge?" in request["message"]
+        assert request["codex_options"] == CodexRunOptions(
+            config_overrides=('sandbox_mode="read-only"',),
+        )
+
+
+def test_prod_other_repo_message_does_not_add_bridge_governance() -> None:
+    with TemporaryDirectory() as temp_dir:
+        bridge_repo = Path(temp_dir) / "codex-cli-mobile-bridge"
+        other_repo = Path(temp_dir) / "other-app"
+        bridge_repo.mkdir()
+        other_repo.mkdir()
+        repository = InMemoryChatRepository(projects_root=temp_dir)
+        provider = _ControlledExecutionProvider()
+        service = MessageService(
+            repository=repository,
+            execution_provider=provider,
+            default_workspace_path=str(bridge_repo),
+            audio_transcriber=DisabledAudioTranscriber(),
+            bridge_environment="prod",
+        )
+
+        job = service.submit_message(
+            "Make the other app button yellow.",
+            workspace_path=str(other_repo),
+        )
+
+        request = _provider_request(provider, job.id)
+        assert "Production Bridge governance:" not in request["message"]
+        assert request["codex_options"] is None
 
 
 def test_submit_message_adds_authenticated_github_guidance_for_repo_references() -> (

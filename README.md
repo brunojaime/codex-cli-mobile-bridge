@@ -513,6 +513,12 @@ Recommended flow:
 5. Download it from:
    `https://github.com/<owner>/<repo>/releases/latest/download/codex-mobile.apk`
 
+The release helper is protected by `scripts/environment_guard.py`. Local shells
+default to `BRIDGE_ENVIRONMENT=dev`, so `--channel prod` is blocked unless the
+operation is run from an explicitly governed `prod` or `control` environment.
+Each allow/deny writes a JSONL audit record to
+`.data/audit/environment_guard.jsonl` or `CODEX_ENVIRONMENT_AUDIT_LOG`.
+
 The normal phone update path does not require manually opening GitHub. The
 installed app checks the Bridge updater endpoint, downloads the APK through the
 Bridge proxy, and then hands it to Android's package installer. Android still

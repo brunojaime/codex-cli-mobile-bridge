@@ -47,6 +47,10 @@ mkdir -p "$(dirname "${PID_FILE}")" "$(dirname "${LOG_FILE}")"
 BACKEND_ENV_ALLOWED_KEYS=(
   API_PORT
   API_BASE_URL
+  CODEX_COMMAND
+  CODEX_USE_EXEC
+  CODEX_EXEC_ARGS
+  CODEX_RESUME_ARGS
   CODEX_WORKDIR
   PROJECTS_ROOT
   CHAT_STORE_PATH
@@ -105,10 +109,49 @@ if [[ -x "${ROOT_DIR}/.venv/bin/python" ]]; then
 fi
 
 cd "${ROOT_DIR}"
-nohup "${PYTHON_BIN}" main.py >>"${LOG_FILE}" 2>&1 &
+nohup env \
+  API_PORT="${API_PORT:-}" \
+  API_BASE_URL="${API_BASE_URL:-}" \
+  CODEX_COMMAND="${CODEX_COMMAND:-}" \
+  CODEX_USE_EXEC="${CODEX_USE_EXEC:-}" \
+  CODEX_EXEC_ARGS="${CODEX_EXEC_ARGS:-}" \
+  CODEX_RESUME_ARGS="${CODEX_RESUME_ARGS:-}" \
+  CODEX_WORKDIR="${CODEX_WORKDIR:-}" \
+  PROJECTS_ROOT="${PROJECTS_ROOT:-}" \
+  CHAT_STORE_PATH="${CHAT_STORE_PATH:-}" \
+  FEEDBACK_QUEUE_PATH="${FEEDBACK_QUEUE_PATH:-}" \
+  FEEDBACK_IMAGE_DIR="${FEEDBACK_IMAGE_DIR:-}" \
+  FEEDBACK_AUDIO_DIR="${FEEDBACK_AUDIO_DIR:-}" \
+  ASSET_DEPOT_DIR="${ASSET_DEPOT_DIR:-}" \
+  PROJECT_FACTORY_STATE_DIR="${PROJECT_FACTORY_STATE_DIR:-}" \
+  BRIDGE_ENVIRONMENT="${BRIDGE_ENVIRONMENT:-}" \
+  BRIDGE_STAGE_ID="${BRIDGE_STAGE_ID:-}" \
+  BRIDGE_SPEC_ID="${BRIDGE_SPEC_ID:-}" \
+  BRIDGE_STAGE_BRANCH="${BRIDGE_STAGE_BRANCH:-}" \
+  BRIDGE_STAGE_WORKTREE_PATH="${BRIDGE_STAGE_WORKTREE_PATH:-}" \
+  BRIDGE_APP_CHANNEL="${BRIDGE_APP_CHANNEL:-}" \
+  BRIDGE_UPDATER_CHANNEL="${BRIDGE_UPDATER_CHANNEL:-}" \
+  BRIDGE_APP_LABEL="${BRIDGE_APP_LABEL:-}" \
+  BRIDGE_ENVIRONMENT_COLOR="${BRIDGE_ENVIRONMENT_COLOR:-}" \
+  DEV_PIPELINE_STATE_PATH="${DEV_PIPELINE_STATE_PATH:-}" \
+  DEV_PIPELINE_RUNTIME_ROOT="${DEV_PIPELINE_RUNTIME_ROOT:-}" \
+  "${PYTHON_BIN}" main.py >>"${LOG_FILE}" 2>&1 &
 BACKEND_PID=$!
 echo "${BACKEND_PID}" > "${PID_FILE}"
 
-echo "Backend started with PID ${BACKEND_PID}"
+for _ in $(seq 1 20); do
+  LISTENER_PID="$(backend_find_listener_pid "${API_PORT}" || true)"
+  if [[ -n "${LISTENER_PID}" ]]; then
+    echo "${LISTENER_PID}" > "${PID_FILE}"
+    echo "Backend started with PID ${LISTENER_PID}"
+    echo "Log: ${LOG_FILE}"
+    echo "PID file: ${PID_FILE}"
+    exit 0
+  fi
+  sleep 1
+done
+
+echo "Backend start command returned PID ${BACKEND_PID}, but no listener appeared on port ${API_PORT}." >&2
 echo "Log: ${LOG_FILE}"
 echo "PID file: ${PID_FILE}"
+exit 1

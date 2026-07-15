@@ -9,6 +9,7 @@ DATA_DIR="${RUNTIME_DIR}/data"
 LOG_FILE="${RUNTIME_DIR}/backend.log"
 PID_FILE="${RUNTIME_DIR}/backend.pid"
 ENV_FILE="${RUNTIME_DIR}/dev.env"
+BASE_ENV_FILE="${ROOT_DIR}/.env"
 PORT=8118
 BASE_URL="http://batata-default-string.tail0302c4.ts.net:${PORT}"
 TAILSCALE_SOCKET="${TAILSCALE_SOCKET:-/home/batata/.local/share/tailscale-userspace/tailscaled.sock}"
@@ -53,13 +54,38 @@ pid_is_alive() {
   [[ "${pid}" =~ ^[0-9]+$ ]] && kill -0 "${pid}" 2>/dev/null
 }
 
+base_env_value() {
+  local key="$1"
+  [[ -f "${BASE_ENV_FILE}" ]] || return 1
+  sed -n "s/^${key}=//p" "${BASE_ENV_FILE}" | tail -n 1
+}
+
+codex_env_value() {
+  local key="$1"
+  local fallback="${2:-}"
+  local value="${!key:-}"
+  if [[ -z "${value}" ]]; then
+    value="$(base_env_value "${key}" || true)"
+  fi
+  printf '%s' "${value:-${fallback}}"
+}
+
 write_runtime_env() {
   mkdir -p "${DATA_DIR}" "${DATA_DIR}/feedback_images" "${DATA_DIR}/feedback_audio" \
     "${DATA_DIR}/asset_depot" "${DATA_DIR}/project_factory_state" \
     "${RUNTIME_DIR}/runtime"
+  local codex_command codex_use_exec codex_exec_args codex_resume_args
+  codex_command="$(codex_env_value CODEX_COMMAND "codex")"
+  codex_use_exec="$(codex_env_value CODEX_USE_EXEC "true")"
+  codex_exec_args="$(codex_env_value CODEX_EXEC_ARGS "--skip-git-repo-check --color never --dangerously-bypass-approvals-and-sandbox")"
+  codex_resume_args="$(codex_env_value CODEX_RESUME_ARGS "--skip-git-repo-check --dangerously-bypass-approvals-and-sandbox")"
   cat >"${ENV_FILE}" <<EOF
 API_PORT=${PORT}
 API_BASE_URL=${BASE_URL}
+CODEX_COMMAND=${codex_command}
+CODEX_USE_EXEC=${codex_use_exec}
+CODEX_EXEC_ARGS=${codex_exec_args}
+CODEX_RESUME_ARGS=${codex_resume_args}
 CODEX_WORKDIR=${ROOT_DIR}
 PROJECTS_ROOT=$(dirname "${ROOT_DIR}")
 CHAT_STORE_PATH=${DATA_DIR}/chat_store.sqlite3
@@ -77,7 +103,7 @@ BRIDGE_APP_CHANNEL=dev
 BRIDGE_UPDATER_CHANNEL=dev
 BRIDGE_APP_LABEL=Codex Mobile Bridge DEV
 BRIDGE_ENVIRONMENT_COLOR=#38BDF8
-DEV_PIPELINE_STATE_PATH=${RUNTIME_DIR}/dev_pipeline_state.json
+DEV_PIPELINE_STATE_PATH=${ROOT_DIR}/.data/dev_pipeline_state.json
 DEV_PIPELINE_RUNTIME_ROOT=${RUNTIME_DIR}/runtime
 EOF
 }
@@ -121,10 +147,20 @@ start_backend() {
     python_bin="python3"
   fi
 
+  local codex_command codex_use_exec codex_exec_args codex_resume_args
+  codex_command="$(codex_env_value CODEX_COMMAND "codex")"
+  codex_use_exec="$(codex_env_value CODEX_USE_EXEC "true")"
+  codex_exec_args="$(codex_env_value CODEX_EXEC_ARGS "--skip-git-repo-check --color never --dangerously-bypass-approvals-and-sandbox")"
+  codex_resume_args="$(codex_env_value CODEX_RESUME_ARGS "--skip-git-repo-check --dangerously-bypass-approvals-and-sandbox")"
+
   cd "${ROOT_DIR}"
   setsid -f env \
     API_PORT="${PORT}" \
     API_BASE_URL="${BASE_URL}" \
+    CODEX_COMMAND="${codex_command}" \
+    CODEX_USE_EXEC="${codex_use_exec}" \
+    CODEX_EXEC_ARGS="${codex_exec_args}" \
+    CODEX_RESUME_ARGS="${codex_resume_args}" \
     CODEX_WORKDIR="${ROOT_DIR}" \
     PROJECTS_ROOT="$(dirname "${ROOT_DIR}")" \
     CHAT_STORE_PATH="${DATA_DIR}/chat_store.sqlite3" \
@@ -142,7 +178,7 @@ start_backend() {
     BRIDGE_UPDATER_CHANNEL="dev" \
     BRIDGE_APP_LABEL="Codex Mobile Bridge DEV" \
     BRIDGE_ENVIRONMENT_COLOR="#38BDF8" \
-    DEV_PIPELINE_STATE_PATH="${RUNTIME_DIR}/dev_pipeline_state.json" \
+    DEV_PIPELINE_STATE_PATH="${ROOT_DIR}/.data/dev_pipeline_state.json" \
     DEV_PIPELINE_RUNTIME_ROOT="${RUNTIME_DIR}/runtime" \
     "${python_bin}" -u main.py >>"${LOG_FILE}" 2>&1
 

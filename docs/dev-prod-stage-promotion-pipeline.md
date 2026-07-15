@@ -17,6 +17,41 @@ The control plane stores immutable handoffs, backlog locks, stage records,
 session bindings, merge queue records, promotion evidence, release-channel
 validation, and PROD backend update gate state. It is not a code worktree.
 
+## Local Environment Guard
+
+All operator scripts that can publish or deploy across lanes must call
+`scripts/environment_guard.py` before the first external write. The guard
+compares the active environment with the requested target and fails closed:
+
+- `BRIDGE_ENVIRONMENT=dev` may target only `dev`.
+- `BRIDGE_ENVIRONMENT=prod` may target only `prod`.
+- `BRIDGE_ENVIRONMENT=control` may orchestrate explicit pipeline operations
+  for either lane.
+- If no environment is configured, the guard defaults to `dev`, which blocks
+  accidental PROD writes from local workspaces.
+
+Every allow or deny writes one JSONL event to
+`.data/audit/environment_guard.jsonl` by default. Override the path with
+`CODEX_ENVIRONMENT_AUDIT_LOG` when a pipeline should upload the audit file as a
+workflow artifact.
+
+Examples:
+
+```bash
+BRIDGE_ENVIRONMENT=dev \
+  scripts/publish_android_release.sh --channel dev --dry-run
+```
+
+```bash
+BRIDGE_ENVIRONMENT=dev \
+  scripts/publish_android_release.sh --channel prod --dry-run
+# blocked and audited: environment_boundary_violation
+```
+
+GitHub Actions runs release publication as `BRIDGE_ENVIRONMENT=control`, after
+channel resolution, and uploads the environment guard audit as a workflow
+artifact.
+
 ## Environment Identity
 
 The backend exposes the active lane through `/health` as

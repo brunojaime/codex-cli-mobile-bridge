@@ -104,6 +104,61 @@ def test_backend_process_script_arguments_require_non_empty_values(
     assert f"{flag} requires a non-empty value." in result.stderr
 
 
+def test_run_backend_detached_exports_codex_runtime_settings() -> None:
+    script_path = ROOT / "scripts/run_backend_detached.sh"
+    script = script_path.read_text(encoding="utf-8")
+
+    syntax = subprocess.run(
+        ["bash", "-n", str(script_path)],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert syntax.returncode == 0, syntax.stdout + syntax.stderr
+    assert "CODEX_COMMAND" in script
+    assert "CODEX_USE_EXEC" in script
+    assert "CODEX_EXEC_ARGS" in script
+    assert "CODEX_RESUME_ARGS" in script
+    assert "backend_export_env_file_values" in script
+    assert "nohup env \\" in script
+    assert "CODEX_EXEC_ARGS=\"${CODEX_EXEC_ARGS:-}\"" in script
+    assert "LISTENER_PID=\"$(backend_find_listener_pid" in script
+    assert "echo \"${LISTENER_PID}\" > \"${PID_FILE}\"" in script
+
+
+def test_run_backend_foreground_contract() -> None:
+    script_path = ROOT / "scripts/run_backend_foreground.sh"
+    script = script_path.read_text(encoding="utf-8")
+
+    syntax = subprocess.run(
+        ["bash", "-n", str(script_path)],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert syntax.returncode == 0, syntax.stdout + syntax.stderr
+    assert "backend_export_env_file_values" in script
+    assert "CODEX_EXEC_ARGS" in script
+    assert "exec env \\" in script
+    assert '"${PYTHON_BIN}" main.py' in script
+
+
+def test_main_loads_allowlisted_runtime_env_only() -> None:
+    source = (ROOT / "main.py").read_text(encoding="utf-8")
+
+    assert "_BRIDGE_RUNTIME_ENV_KEYS" in source
+    assert "CODEX_EXEC_ARGS" in source
+    assert "dotenv_values" in source
+    assert "os.environ.setdefault" in source
+    assert "APP_UPDATE_GITHUB_TOKEN" not in source
+    assert "SMTP_PASSWORD" not in source
+    assert "OPENAI_API_KEY" not in source
+
+
 def test_dev_backend_8118_script_contract() -> None:
     script_path = ROOT / "scripts/dev_backend_8118.sh"
     script = script_path.read_text(encoding="utf-8")
@@ -122,6 +177,11 @@ def test_dev_backend_8118_script_contract() -> None:
     assert "start|status|restart|stop" in script
     assert "PORT=8118" in script
     assert "API_PORT=\"${PORT}\"" in script
+    assert "CODEX_COMMAND=\"${codex_command}\"" in script
+    assert "CODEX_USE_EXEC=\"${codex_use_exec}\"" in script
+    assert "CODEX_EXEC_ARGS=\"${codex_exec_args}\"" in script
+    assert "CODEX_RESUME_ARGS=\"${codex_resume_args}\"" in script
+    assert "--dangerously-bypass-approvals-and-sandbox" in script
     assert "BRIDGE_ENVIRONMENT=\"dev\"" in script
     assert "BRIDGE_APP_CHANNEL=\"dev\"" in script
     assert "BRIDGE_UPDATER_CHANNEL=\"dev\"" in script

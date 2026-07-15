@@ -299,6 +299,28 @@
     "runtimeProfile": "preview",
     "verifiedPackageIds": {}
   },
+  "rentid": {
+    "apkAssetPattern": "rentid*.apk",
+    "displayName": "Rent ID",
+    "enabled": true,
+    "expectedPackageId": null,
+    "latestAssetName": "rentid.apk",
+    "mockOrDemo": false,
+    "previewUrl": "https://preview.nienfos.com/rentid",
+    "productionReady": false,
+    "releaseChannel": "prerelease",
+    "releaseMetadata": {
+      "initialPreviewRelease": true,
+      "latestAssetName": "rentid.apk",
+      "releaseTag": "android-preview-v0.1.0-build.13",
+      "releaseTagPattern": "android-preview-v*"
+    },
+    "releaseTagPattern": "android-preview-v*",
+    "repo": "brunojaime/rentid",
+    "requiredMinimumBuild": null,
+    "runtimeProfile": "preview",
+    "verifiedPackageIds": {}
+  },
   "sat-catalogo-ropa": {
     "apkAssetPattern": "sat-catalogo-ropa*.apk",
     "displayName": "SAT Catalogo Ropa",
@@ -355,7 +377,7 @@
     "releaseMetadata": {
       "initialPreviewRelease": true,
       "latestAssetName": "satshowroom.apk",
-      "releaseTag": "android-preview-v0.1.0-build.6",
+      "releaseTag": "android-preview-v0.1.0-build.28",
       "releaseTagPattern": "android-preview-v*"
     },
     "releaseTagPattern": "android-preview-v*",

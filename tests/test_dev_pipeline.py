@@ -43,6 +43,62 @@ def test_prod_handoff_is_flag_guarded(tmp_path: Path) -> None:
     assert not (tmp_path / "state.json").exists()
 
 
+def test_mobile_handoff_requires_one_shot_draft_grant(tmp_path: Path) -> None:
+    client = _client(tmp_path, prod_handoff_enabled=True)
+    payload = {**_handoff_payload(), "created_by_action": "mobile_dev_handoff"}
+
+    blocked = client.post(
+        "/dev-pipeline/handoffs",
+        json=payload,
+        headers={"X-Idempotency-Key": "mobile-no-grant"},
+    )
+
+    assert blocked.status_code == 409
+    assert blocked.json()["detail"]["code"] == "dev_handoff_draft_grant_required"
+
+    draft = client.post("/dev-pipeline/handoffs/draft", json={})
+    assert draft.status_code == 200, draft.text
+    draft_data = draft.json()["data"]
+    assert draft_data["draft_token"]
+    assert draft_data["proposed_spec"].startswith("001-")
+    assert draft_data["proposed_tasks"]
+
+    queued = client.post(
+        "/dev-pipeline/handoffs",
+        json={**payload, "draft_token": draft_data["draft_token"]},
+        headers={"X-Idempotency-Key": "mobile-with-grant"},
+    )
+    assert queued.status_code == 200, queued.text
+    assert queued.json()["data"]["status"] == "queued"
+
+    reused = client.post(
+        "/dev-pipeline/handoffs",
+        json={**payload, "draft_token": draft_data["draft_token"], "title": "Other"},
+        headers={"X-Idempotency-Key": "mobile-reused-grant"},
+    )
+    assert reused.status_code == 409
+    assert reused.json()["detail"]["code"] == "dev_handoff_draft_grant_consumed"
+
+
+def test_handoff_draft_does_not_enqueue_until_reviewed(tmp_path: Path) -> None:
+    client = _client(tmp_path, prod_handoff_enabled=True)
+
+    response = client.post(
+        "/dev-pipeline/handoffs/draft",
+        json={"title": "Enable reviewed DEV handoff specs"},
+    )
+
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    assert data["title"] == "Enable reviewed DEV handoff specs"
+    assert data["created_by_action"] == "mobile_dev_handoff"
+    assert data["acceptance_criteria"]
+    snapshot = json.loads((tmp_path / "state.json").read_text(encoding="utf-8"))
+    assert snapshot["handoffs"] == {}
+    assert snapshot["backlog"] == {}
+    assert len(snapshot["handoff_drafts"]) == 1
+
+
 def test_prod_normal_cannot_read_or_mutate_dev_pipeline_state(tmp_path: Path) -> None:
     client = _client(tmp_path, prod_handoff_enabled=True)
 
@@ -173,7 +229,7 @@ def test_dev_pipeline_enabled_flag_blocks_stateful_operations(tmp_path: Path) ->
 
 def test_prod_handoff_enqueue_is_immutable_and_idempotent(tmp_path: Path) -> None:
     client = _client(tmp_path, prod_handoff_enabled=True)
-    payload = _handoff_payload()
+    payload = _handoff_payload_with_grant(client)
 
     first = client.post(
         "/dev-pipeline/handoffs",
@@ -202,7 +258,7 @@ def test_prod_handoff_idempotency_key_conflicts_on_payload_change(
     tmp_path: Path,
 ) -> None:
     client = _client(tmp_path, prod_handoff_enabled=True)
-    payload = _handoff_payload()
+    payload = _handoff_payload_with_grant(client)
     changed = {**payload, "problem": "A different PROD problem."}
 
     first = client.post(
@@ -226,7 +282,7 @@ def test_prod_handoff_audit_redacts_selected_context_and_evidence(
 ) -> None:
     client = _client(tmp_path, prod_handoff_enabled=True)
     payload = {
-        **_handoff_payload(),
+        **_handoff_payload_with_grant(client),
         "selected_context": {
             "visible": "keep",
             "auth": {"token": "prod-token-value"},
@@ -264,7 +320,7 @@ def test_backlog_claim_requires_dev_environment(tmp_path: Path) -> None:
     prod_client = _client(tmp_path, prod_handoff_enabled=True)
     prod_client.post(
         "/dev-pipeline/handoffs",
-        json=_handoff_payload(),
+        json=_handoff_payload_with_grant(prod_client),
         headers={"X-Idempotency-Key": "claim-key"},
     )
 
@@ -1966,7 +2022,7 @@ def test_dev_pipeline_end_to_end_handoff_to_update_gate_is_deterministic(
     )
     handoff = prod_client.post(
         "/dev-pipeline/handoffs",
-        json=_handoff_payload(),
+        json=_handoff_payload_with_grant(prod_client),
         headers={"X-Idempotency-Key": "e2e-handoff"},
     )
     assert handoff.status_code == 200, handoff.text
@@ -2245,7 +2301,7 @@ def _enqueue_and_claim(
     )
     handoff = prod_client.post(
         "/dev-pipeline/handoffs",
-        json=payload or _handoff_payload(),
+        json=_handoff_payload_with_grant(prod_client, payload),
         headers={"X-Idempotency-Key": key},
     )
     assert handoff.status_code == 200, handoff.text
@@ -2403,6 +2459,20 @@ def _prod_update_service(
         enabled=True,
         prod_update_executor_enabled=executor_enabled,
     )
+
+
+def _handoff_payload_with_grant(
+    client: TestClient,
+    payload: dict[str, object] | None = None,
+) -> dict[str, object]:
+    granted_payload = dict(payload or _handoff_payload())
+    draft = client.post(
+        "/dev-pipeline/handoffs/draft",
+        json={"title": str(granted_payload.get("title") or "DEV handoff")},
+    )
+    assert draft.status_code == 200, draft.text
+    granted_payload["draft_token"] = draft.json()["data"]["draft_token"]
+    return granted_payload
 
 
 def _handoff_payload() -> dict[str, object]:

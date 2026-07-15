@@ -331,8 +331,13 @@ def test_verify_android_release_apk_checks_output_metadata(tmp_path: Path) -> No
     assert "metadata_variant_mismatch" in blockers
 
 
-def test_publish_script_preflights_before_tag_and_requires_dev_url() -> None:
+def test_publish_script_preflights_before_tag_and_requires_dev_url(
+    tmp_path: Path,
+) -> None:
     script = PUBLISH_SCRIPT.read_text(encoding="utf-8")
+    assert script.index("environment_guard.py") < script.index(
+        'git -C "$ROOT_DIR" tag'
+    )
     assert script.index("validate_android_release_channel.py") < script.index(
         'git -C "$ROOT_DIR" tag'
     )
@@ -345,6 +350,7 @@ def test_publish_script_preflights_before_tag_and_requires_dev_url() -> None:
             "DEV_API_BASE_URL",
             "-u",
             "CODEX_DEV_APP_UPDATER_BRIDGE_URL",
+            f"CODEX_ENVIRONMENT_AUDIT_LOG={tmp_path / 'guard.jsonl'}",
             "bash",
             str(PUBLISH_SCRIPT),
             "--channel",
@@ -359,6 +365,39 @@ def test_publish_script_preflights_before_tag_and_requires_dev_url() -> None:
 
     assert result.returncode == 1
     assert "DEV_API_BASE_URL" in result.stderr
+
+
+def test_publish_script_blocks_prod_from_default_dev_environment(
+    tmp_path: Path,
+) -> None:
+    audit_log = tmp_path / "guard.jsonl"
+
+    result = subprocess.run(
+        [
+            "env",
+            "-u",
+            "BRIDGE_ENVIRONMENT",
+            "-u",
+            "CODEX_BRIDGE_ENVIRONMENT",
+            f"CODEX_ENVIRONMENT_AUDIT_LOG={audit_log}",
+            "bash",
+            str(PUBLISH_SCRIPT),
+            "--channel",
+            "prod",
+            "--dry-run",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+    assert result.returncode == 1
+    assert "Environment guard blocked" in result.stderr
+    payload = json.loads(audit_log.read_text(encoding="utf-8").splitlines()[0])
+    assert payload["current_environment"] == "dev"
+    assert payload["target_environment"] == "prod"
+    assert payload["allowed"] is False
 
 
 def test_workflow_and_gradle_fail_closed_for_real_release_signing() -> None:

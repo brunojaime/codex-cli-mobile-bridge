@@ -650,6 +650,48 @@ void main() {
     );
   });
 
+  test('api client drafts dev handoff for review', () async {
+    final client = ApiClient(
+      baseUrl: 'http://localhost:8000',
+      client: MockClient((request) async {
+        expect(request.method, 'POST');
+        expect(request.url.path, '/dev-pipeline/handoffs/draft');
+        expect(request.body, contains('"session_id":"session-prod"'));
+        return http.Response(
+          '''
+          {
+            "kind": "codex.devPipelineResponse",
+            "version": 1,
+            "data": {
+              "title": "Generated handoff",
+              "problem": "Prod needs DEV work",
+              "context": "Recent session context",
+              "acceptance_criteria": "DEV validates it",
+              "proposed_spec": "019-prod-chat-dev-handoff",
+              "proposed_plan": "01-prod-chat",
+              "proposed_tasks": ["Implement in DEV"],
+              "regression_tests": ["flutter test"],
+              "risks": ["grant reuse"],
+              "created_from_session_id": "session-prod",
+              "created_by_action": "mobile_dev_handoff",
+              "draft_token": "draft-token-1"
+            }
+          }
+          ''',
+          200,
+          headers: <String, String>{'content-type': 'application/json'},
+        );
+      }),
+    );
+
+    final draft = await client.draftDevHandoff(sessionId: 'session-prod');
+
+    expect(draft.title, 'Generated handoff');
+    expect(draft.proposedSpec, '019-prod-chat-dev-handoff');
+    expect(draft.proposedTasks, <String>['Implement in DEV']);
+    expect(draft.draftToken, 'draft-token-1');
+  });
+
   test('api client starts domain factory on current session', () async {
     final client = ApiClient(
       baseUrl: 'http://localhost:8000',

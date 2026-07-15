@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 import os
 from pathlib import Path
 import re
+import secrets
 import subprocess
 import sys
+import unicodedata
 from urllib.error import HTTPError, URLError
 from urllib.request import urlopen
 from typing import Any, Literal
@@ -361,6 +363,8 @@ class DevPipelineService:
                 "prod_handoff_disabled",
                 "PROD handoff is disabled by rollout flag.",
             )
+        payload = dict(payload)
+        draft_token = str(payload.pop("draft_token", "") or "").strip()
         self._validate_handoff_payload(payload)
         idem = (idempotency_key or payload.get("idempotency_key") or "").strip()
         if not idem:
@@ -378,6 +382,14 @@ class DevPipelineService:
                         "Idempotency key was already used with a different handoff payload.",
                     )
                 return item
+        if self._requires_draft_grant(payload):
+            self._consume_handoff_draft_grant(
+                state,
+                draft_token=draft_token,
+                payload_hash=payload_hash,
+                session_id=str(payload.get("created_from_session_id") or "").strip()
+                or None,
+            )
         now = _utc_iso()
         handoff_id = f"handoff-{now.replace(':', '').replace('-', '')}-{idem[:12]}"
         item = {
@@ -435,6 +447,106 @@ class DevPipelineService:
         )
         self._write_state(state)
         return item
+
+    def draft_handoff(
+        self,
+        *,
+        session_id: str | None,
+        session_title: str | None,
+        workspace_path: str | None,
+        messages: list[dict[str, Any]],
+        title: str | None = None,
+        problem: str | None = None,
+        context: str | None = None,
+        acceptance_criteria: str | None = None,
+    ) -> dict[str, Any]:
+        self._require_enabled()
+        self._require_environment("prod")
+        if not self._prod_handoff_enabled:
+            raise DevPipelineError(
+                "prod_handoff_disabled",
+                "PROD handoff is disabled by rollout flag.",
+            )
+        recent_messages = messages[-12:]
+        derived_title = self._derive_handoff_title(title, recent_messages)
+        derived_problem = self._derive_handoff_problem(problem, recent_messages)
+        derived_context = self._derive_handoff_context(
+            context,
+            session_id=session_id,
+            session_title=session_title,
+            workspace_path=workspace_path,
+            messages=recent_messages,
+        )
+        derived_acceptance = self._derive_handoff_acceptance(
+            acceptance_criteria,
+            derived_title,
+        )
+        slug = self._slugify(derived_title or "dev-handoff")
+        proposed_spec = self._next_proposed_spec_id(slug)
+        draft_token = secrets.token_urlsafe(32)
+        token_hash = self._stable_hash({"draft_token": draft_token})
+        now = _utc_iso()
+        expires_at = (
+            datetime.now(timezone.utc) + timedelta(hours=2)
+        ).isoformat().replace("+00:00", "Z")
+        state = self._read_state()
+        state["handoff_drafts"][token_hash] = {
+            "kind": "bridge.devHandoffDraftGrant",
+            "version": 1,
+            "status": "active",
+            "source_environment": "prod",
+            "target_environment": "dev",
+            "session_id": session_id,
+            "created_at": now,
+            "expires_at": expires_at,
+            "consumed_at": None,
+            "payload_hash": None,
+        }
+        state["events"].append(
+            {
+                "type": "handoff.draft_created",
+                "created_at": now,
+                "source_session_id": session_id,
+                "expires_at": expires_at,
+            }
+        )
+        self._write_state(state)
+        return {
+            "kind": "bridge.devHandoff",
+            "version": 1,
+            "source_environment": "prod",
+            "target_environment": "dev",
+            "operation": "enqueue_only",
+            "title": derived_title,
+            "problem": derived_problem,
+            "context": derived_context,
+            "selected_context": {
+                **({"session_id": session_id} if session_id else {}),
+                "source": "mobile_chat",
+                "context": derived_context,
+            },
+            "evidence": [],
+            "proposed_spec": proposed_spec,
+            "proposed_plan": f"01-{slug[:80]}",
+            "proposed_tasks": [
+                "Confirm the PROD chat context and acceptance criteria in the DEV stage.",
+                "Implement the isolated repository/runtime changes in the DEV worktree only.",
+                "Run targeted backend and mobile regression tests for the handoff flow.",
+                "Report materialization, validation results, and any promotion blockers.",
+            ],
+            "acceptance_criteria": derived_acceptance,
+            "regression_tests": [
+                "Backend tests cover draft creation, one-shot grant consumption, and mobile enqueue rejection without a grant.",
+                "Flutter tests cover the prefilled /dev-handoff review dialog and queued payload.",
+            ],
+            "risks": [
+                "Accidentally allowing PROD to mutate bridge code outside the DEV queue.",
+                "Materializing a spec ID that collides with existing DEV work.",
+            ],
+            "created_from_session_id": session_id,
+            "created_by_action": "mobile_dev_handoff",
+            "draft_token": draft_token,
+        }
 
     def claim_backlog_item(self, *, worker_id: str) -> dict[str, Any]:
         self._require_enabled()
@@ -3524,6 +3636,170 @@ class DevPipelineService:
             if not str(payload.get(key) or "").strip():
                 raise DevPipelineError(f"missing_{key}", f"{key} is required.")
 
+    def _requires_draft_grant(self, payload: dict[str, Any]) -> bool:
+        return True
+
+    def _consume_handoff_draft_grant(
+        self,
+        state: dict[str, Any],
+        *,
+        draft_token: str,
+        payload_hash: str,
+        session_id: str | None,
+    ) -> None:
+        if not draft_token:
+            raise DevPipelineError(
+                "dev_handoff_draft_grant_required",
+                "Mobile DEV handoff enqueue requires an active /dev-handoff draft grant.",
+            )
+        token_hash = self._stable_hash({"draft_token": draft_token})
+        grant = state["handoff_drafts"].get(token_hash)
+        if not grant:
+            raise DevPipelineError(
+                "dev_handoff_draft_grant_required",
+                "Mobile DEV handoff enqueue requires an active /dev-handoff draft grant.",
+            )
+        if grant.get("status") != "active":
+            raise DevPipelineError(
+                "dev_handoff_draft_grant_consumed",
+                "This /dev-handoff draft grant has already been used.",
+            )
+        expires_at = str(grant.get("expires_at") or "").strip()
+        if expires_at:
+            try:
+                expires_dt = datetime.fromisoformat(
+                    expires_at.replace("Z", "+00:00")
+                )
+            except ValueError:
+                expires_dt = datetime.now(timezone.utc)
+            if datetime.now(timezone.utc) > expires_dt:
+                grant["status"] = "expired"
+                raise DevPipelineError(
+                    "dev_handoff_draft_grant_expired",
+                    "This /dev-handoff draft grant expired. Run /dev-handoff again.",
+                )
+        grant_session_id = str(grant.get("session_id") or "").strip() or None
+        if grant_session_id and session_id and grant_session_id != session_id:
+            raise DevPipelineError(
+                "dev_handoff_draft_session_mismatch",
+                "This /dev-handoff draft grant belongs to a different session.",
+            )
+        grant["status"] = "consumed"
+        grant["consumed_at"] = _utc_iso()
+        grant["payload_hash"] = payload_hash
+
+    def _derive_handoff_title(
+        self,
+        title: str | None,
+        messages: list[dict[str, Any]],
+    ) -> str:
+        explicit = str(title or "").strip()
+        if explicit:
+            return explicit[:240]
+        latest_user = self._latest_user_text(messages)
+        if latest_user:
+            compact = " ".join(latest_user.split())
+            return compact[:96].rstrip(". ") or "DEV handoff"
+        return "DEV handoff"
+
+    def _derive_handoff_problem(
+        self,
+        problem: str | None,
+        messages: list[dict[str, Any]],
+    ) -> str:
+        explicit = str(problem or "").strip()
+        if explicit:
+            return explicit[:5000]
+        latest_user = self._latest_user_text(messages)
+        if latest_user:
+            return latest_user[:1200]
+        return "PROD needs to pass a reviewed change request into the DEV queue."
+
+    def _derive_handoff_context(
+        self,
+        context: str | None,
+        *,
+        session_id: str | None,
+        session_title: str | None,
+        workspace_path: str | None,
+        messages: list[dict[str, Any]],
+    ) -> str:
+        explicit = str(context or "").strip()
+        if explicit:
+            return explicit[:20000]
+        lines = [
+            "Generated by /dev-handoff from PROD for review before queueing to DEV.",
+        ]
+        if session_id:
+            lines.append(f"Session: {session_id}")
+        if session_title:
+            lines.append(f"Session title: {session_title}")
+        if workspace_path:
+            lines.append(f"Workspace: {workspace_path}")
+        if messages:
+            lines.append("")
+            lines.append("Recent transcript:")
+            for message in messages:
+                role = str(message.get("role") or "message").strip()
+                label = str(message.get("agent_label") or role).strip()
+                content = " ".join(str(message.get("content") or "").split())
+                if content:
+                    lines.append(f"- {label}: {content[:700]}")
+        return "\n".join(lines)[:20000]
+
+    def _derive_handoff_acceptance(
+        self,
+        acceptance_criteria: str | None,
+        title: str,
+    ) -> str:
+        explicit = str(acceptance_criteria or "").strip()
+        if explicit:
+            return explicit[:10000]
+        return (
+            f"- DEV materializes a spec for {title} from this handoff.\n"
+            "- The implementation happens only in the DEV stage/worktree.\n"
+            "- PROD chat, reading, project/factory creation, and non-bridge repository work continue to function.\n"
+            "- Strong bridge modifications remain blocked in PROD and enter DEV through the queue.\n"
+            "- Targeted backend and mobile tests pass before promotion is considered."
+        )
+
+    def _latest_user_text(self, messages: list[dict[str, Any]]) -> str:
+        for message in reversed(messages):
+            if str(message.get("role") or "").lower() == "user":
+                content = str(message.get("content") or "").strip()
+                if content:
+                    return content
+        return ""
+
+    def _next_proposed_spec_id(self, slug: str) -> str:
+        state = self._read_state()
+        numbers: list[int] = []
+        specs_root = self._repository_root / "specs"
+        if specs_root.is_dir():
+            for spec_path in specs_root.iterdir():
+                if spec_path.is_dir():
+                    match = re.match(r"^(\d{3})-", spec_path.name)
+                    if match:
+                        numbers.append(int(match.group(1)))
+        for spec_id in state["specs"]:
+            match = re.match(r"^(\d{3})-", str(spec_id))
+            if match:
+                numbers.append(int(match.group(1)))
+        for handoff in state["handoffs"].values():
+            payload = handoff.get("payload") or {}
+            match = re.match(r"^(\d{3})-", str(payload.get("proposed_spec") or ""))
+            if match:
+                numbers.append(int(match.group(1)))
+        number = max(numbers, default=0) + 1
+        return f"{number:03d}-{slug[:80]}"
+
+    def _slugify(self, value: str) -> str:
+        normalized = unicodedata.normalize("NFKD", value)
+        ascii_value = normalized.encode("ascii", "ignore").decode("ascii")
+        slug = re.sub(r"[^a-z0-9]+", "-", ascii_value.lower()).strip("-")
+        slug = re.sub(r"-{2,}", "-", slug)
+        return slug or "dev-handoff"
+
     def _allowed_capabilities(self, capability_key: str) -> list[str]:
         capabilities = list(_CAPABILITIES[capability_key])
         if self._environment == "prod" and not self._prod_handoff_enabled:
@@ -3593,6 +3869,7 @@ def _empty_state() -> dict[str, Any]:
         "kind": "codex.devPipelineState",
         "version": _STATE_VERSION,
         "handoffs": {},
+        "handoff_drafts": {},
         "backlog": {},
         "specs": {},
         "stages": {},

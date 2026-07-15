@@ -144,6 +144,16 @@ jobs:
             echo "codex_dev_mode=$codex_dev_mode"
           } >> "$GITHUB_OUTPUT"
 
+      - name: Validate environment guard
+        env:
+          BRIDGE_ENVIRONMENT: control
+          CODEX_ENVIRONMENT_AUDIT_LOG: .data/audit/environment_guard.jsonl
+        run: |
+          python3 scripts/environment_guard.py \
+            --operation github-actions-android-release \
+            --target-environment "${{ steps.release_channel.outputs.channel }}" \
+            --action release
+
       - name: Install Flutter dependencies
         working-directory: frontend/mobile_app
         run: flutter pub get
@@ -216,6 +226,16 @@ jobs:
           path: release-artifacts/*
           if-no-files-found: error
           retention-days: 3
+
+      - name: Upload environment guard audit
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v7
+        with:
+          name: environment-guard-audit-${{ github.run_id }}
+          path: .data/audit/environment_guard.jsonl
+          if-no-files-found: ignore
+          retention-days: 30
 
       - name: Publish GitHub release
         if: startsWith(github.ref, 'refs/tags/')

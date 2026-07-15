@@ -108,6 +108,27 @@ class ApiClient {
     );
   }
 
+  Future<DevPipelineHandoffRequest> draftDevHandoff({
+    String? sessionId,
+  }) async {
+    final response = await _client.post(
+      Uri.parse('$baseUrl/dev-pipeline/handoffs/draft'),
+      headers: <String, String>{'Content-Type': 'application/json'},
+      body: jsonEncode(<String, dynamic>{
+        if (sessionId != null) 'session_id': sessionId,
+      }),
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception('Failed to draft DEV handoff: ${response.body}');
+    }
+
+    final payload = jsonDecode(response.body) as Map<String, dynamic>;
+    return DevPipelineHandoffRequest.fromJson(
+      payload['data'] as Map<String, dynamic>,
+    );
+  }
+
   Future<ProdUpdateStatus> getProdUpdateStatus() async {
     final response = await _client.get(
       Uri.parse('$baseUrl/dev-pipeline/prod-update/status'),
