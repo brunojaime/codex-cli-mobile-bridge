@@ -54,6 +54,21 @@ void main() {
     expect(handoffClient.requests.single.draftToken, 'draft-token-1');
   });
 
+  testWidgets('dev handoff waits for llm draft before opening review',
+      (tester) async {
+    final handoffClient = _DevHandoffDialogApiClient(startsGenerating: true);
+    await _pumpHandoffScreen(tester, handoffClient: handoffClient);
+
+    await _openHandoffDialog(tester, settle: false);
+    await tester.pump();
+    expect(find.text('Preparing DEV handoff'), findsOneWidget);
+    await tester.pump(const Duration(seconds: 2));
+    await tester.pumpAndSettle();
+
+    expect(handoffClient.fetchDrafts, <String>['draft-1']);
+    expect(find.text('Generated PROD handoff'), findsOneWidget);
+  });
+
   testWidgets('dev handoff dialog shows enqueue errors', (tester) async {
     final handoffClient = _DevHandoffDialogApiClient(shouldFail: true);
     await _pumpHandoffScreen(tester, handoffClient: handoffClient);
@@ -94,12 +109,17 @@ Future<void> _pumpHandoffScreen(
   await tester.pumpAndSettle();
 }
 
-Future<void> _openHandoffDialog(WidgetTester tester) async {
+Future<void> _openHandoffDialog(
+  WidgetTester tester, {
+  bool settle = true,
+}) async {
   await tester.enterText(find.byType(TextField).last, '/dev');
   await tester.pump();
   await tester.tap(find.text('/dev-handoff  DEV Handoff'));
-  await tester.pumpAndSettle();
-  expect(find.text('DEV Handoff'), findsOneWidget);
+  if (settle) {
+    await tester.pumpAndSettle();
+    expect(find.text('DEV Handoff'), findsOneWidget);
+  }
 }
 
 Future<void> _fillHandoffDialog(WidgetTester tester) async {
@@ -147,16 +167,42 @@ ServerHealth _prodHandoffHealth() {
 }
 
 class _DevHandoffDialogApiClient extends ApiClient {
-  _DevHandoffDialogApiClient({this.shouldFail = false})
-      : super(baseUrl: 'http://localhost:8000');
+  _DevHandoffDialogApiClient({
+    this.shouldFail = false,
+    this.startsGenerating = false,
+  }) : super(baseUrl: 'http://localhost:8000');
 
   final bool shouldFail;
+  final bool startsGenerating;
   final List<DevPipelineHandoffRequest> requests =
       <DevPipelineHandoffRequest>[];
   final List<String> idempotencyKeys = <String>[];
+  final List<String> fetchDrafts = <String>[];
 
   @override
   Future<DevPipelineHandoffRequest> draftDevHandoff({String? sessionId}) async {
+    if (startsGenerating) {
+      return const DevPipelineHandoffRequest(
+        title: 'Preparing handoff',
+        problem: 'Generating from chat.',
+        context: 'Pending LLM output.',
+        acceptanceCriteria: 'Ready before queue.',
+        createdFromSessionId: 'session-prod',
+        draftToken: 'draft-token-1',
+        draftId: 'draft-1',
+        draftStatus: 'generating',
+      );
+    }
+    return _readyDraft();
+  }
+
+  @override
+  Future<DevPipelineHandoffRequest> getDevHandoffDraft(String draftId) async {
+    fetchDrafts.add(draftId);
+    return _readyDraft();
+  }
+
+  DevPipelineHandoffRequest _readyDraft() {
     return const DevPipelineHandoffRequest(
       title: 'Generated PROD handoff',
       problem: 'Generated from the active chat.',
@@ -169,6 +215,8 @@ class _DevHandoffDialogApiClient extends ApiClient {
       risks: <String>['Grant reuse.'],
       createdFromSessionId: 'session-prod',
       draftToken: 'draft-token-1',
+      draftId: 'draft-1',
+      draftStatus: 'ready',
     );
   }
 

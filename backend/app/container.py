@@ -243,6 +243,7 @@ def build_container(settings: Settings | None = None) -> AppContainer:
         prod_update_executor_enabled=(
             resolved_settings.dev_pipeline_prod_update_executor_enabled
         ),
+        execution_provider=provider,
     )
     message_service.set_domain_factory_service(domain_factory_service)
     return AppContainer(

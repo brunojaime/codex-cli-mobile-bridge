@@ -1268,7 +1268,12 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         widget.devHandoffClientOverride ?? ApiClient(baseUrl: baseUrl);
     late final DevPipelineHandoffRequest initialDraft;
     try {
-      initialDraft = await client.draftDevHandoff(sessionId: sessionId);
+      final generatingDraft =
+          await client.draftDevHandoff(sessionId: sessionId);
+      initialDraft = await _waitForDevHandoffDraft(
+        client,
+        generatingDraft,
+      );
     } catch (error) {
       if (!mounted) {
         return;
@@ -1334,6 +1339,55 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('DEV handoff failed. $error')),
       );
+    }
+  }
+
+  Future<DevPipelineHandoffRequest> _waitForDevHandoffDraft(
+    ApiClient client,
+    DevPipelineHandoffRequest initialDraft,
+  ) async {
+    if (initialDraft.isDraftReady) {
+      return initialDraft;
+    }
+    if (initialDraft.isDraftFailed) {
+      throw Exception(initialDraft.draftError ?? 'DEV handoff draft failed.');
+    }
+    final draftId = initialDraft.draftId;
+    if (draftId == null || draftId.trim().isEmpty) {
+      throw Exception('DEV handoff draft did not include a draft id.');
+    }
+
+    var dialogOpen = false;
+    if (mounted) {
+      dialogOpen = true;
+      unawaited(
+        showDialog<void>(
+          context: context,
+          barrierDismissible: false,
+          builder: (context) => const _DevHandoffGeneratingDialog(),
+        ).whenComplete(() {
+          dialogOpen = false;
+        }),
+      );
+    }
+
+    DevPipelineHandoffRequest draft = initialDraft;
+    try {
+      for (var attempt = 0; attempt < 90; attempt += 1) {
+        await Future<void>.delayed(const Duration(seconds: 2));
+        draft = await client.getDevHandoffDraft(draftId);
+        if (draft.isDraftReady) {
+          return draft;
+        }
+        if (draft.isDraftFailed) {
+          throw Exception(draft.draftError ?? 'DEV handoff draft failed.');
+        }
+      }
+      throw Exception('DEV handoff draft timed out.');
+    } finally {
+      if (dialogOpen && mounted) {
+        Navigator.of(context, rootNavigator: true).pop();
+      }
     }
   }
 
@@ -5615,6 +5669,33 @@ class _DevHandoffDraft {
   final List<String> risks;
   final String evidence;
   final String? draftToken;
+}
+
+class _DevHandoffGeneratingDialog extends StatelessWidget {
+  const _DevHandoffGeneratingDialog();
+
+  @override
+  Widget build(BuildContext context) {
+    return const AlertDialog(
+      title: Text('Preparing DEV handoff'),
+      content: SizedBox(
+        width: 360,
+        child: Row(
+          children: <Widget>[
+            SizedBox(
+              width: 24,
+              height: 24,
+              child: CircularProgressIndicator(strokeWidth: 2.5),
+            ),
+            SizedBox(width: 16),
+            Expanded(
+              child: Text('Generating a reviewed spec from this chat.'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 class _DevHandoffDialog extends StatefulWidget {

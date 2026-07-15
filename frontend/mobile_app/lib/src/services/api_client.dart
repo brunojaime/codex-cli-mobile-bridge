@@ -129,6 +129,21 @@ class ApiClient {
     );
   }
 
+  Future<DevPipelineHandoffRequest> getDevHandoffDraft(String draftId) async {
+    final response = await _client.get(
+      Uri.parse('$baseUrl/dev-pipeline/handoffs/drafts/$draftId'),
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception('Failed to fetch DEV handoff draft: ${response.body}');
+    }
+
+    final payload = jsonDecode(response.body) as Map<String, dynamic>;
+    return DevPipelineHandoffRequest.fromJson(
+      payload['data'] as Map<String, dynamic>,
+    );
+  }
+
   Future<ProdUpdateStatus> getProdUpdateStatus() async {
     final response = await _client.get(
       Uri.parse('$baseUrl/dev-pipeline/prod-update/status'),

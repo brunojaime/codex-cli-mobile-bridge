@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import subprocess
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
@@ -16,6 +17,10 @@ from backend.app.application.services.dev_pipeline_service import DevPipelineSer
 from backend.app.application.services.message_service import BackendDrainStatus
 from backend.app.infrastructure.config.settings import Settings
 from backend.app.main import create_app
+
+_FIXTURES_DIR = Path(__file__).parent / "fixtures"
+_FAKE_CODEX = f"python3 {_FIXTURES_DIR / 'fake_codex.py'}"
+_FAKE_CODEX_HANDOFF = f"python3 {_FIXTURES_DIR / 'fake_codex_handoff.py'}"
 
 
 def test_health_exposes_prod_environment_identity(tmp_path: Path) -> None:
@@ -44,7 +49,11 @@ def test_prod_handoff_is_flag_guarded(tmp_path: Path) -> None:
 
 
 def test_mobile_handoff_requires_one_shot_draft_grant(tmp_path: Path) -> None:
-    client = _client(tmp_path, prod_handoff_enabled=True)
+    client = _client(
+        tmp_path,
+        prod_handoff_enabled=True,
+        codex_command=_FAKE_CODEX_HANDOFF,
+    )
     payload = {**_handoff_payload(), "created_by_action": "mobile_dev_handoff"}
 
     blocked = client.post(
@@ -60,6 +69,9 @@ def test_mobile_handoff_requires_one_shot_draft_grant(tmp_path: Path) -> None:
     assert draft.status_code == 200, draft.text
     draft_data = draft.json()["data"]
     assert draft_data["draft_token"]
+    assert draft_data["draft_status"] == "generating"
+    draft_data = _ready_handoff_draft(client, draft_data["draft_id"])
+    assert draft_data["draft_status"] == "ready"
     assert draft_data["proposed_spec"].startswith("001-")
     assert draft_data["proposed_tasks"]
 
@@ -81,7 +93,11 @@ def test_mobile_handoff_requires_one_shot_draft_grant(tmp_path: Path) -> None:
 
 
 def test_handoff_draft_does_not_enqueue_until_reviewed(tmp_path: Path) -> None:
-    client = _client(tmp_path, prod_handoff_enabled=True)
+    client = _client(
+        tmp_path,
+        prod_handoff_enabled=True,
+        codex_command=_FAKE_CODEX_HANDOFF,
+    )
 
     response = client.post(
         "/dev-pipeline/handoffs/draft",
@@ -91,6 +107,9 @@ def test_handoff_draft_does_not_enqueue_until_reviewed(tmp_path: Path) -> None:
     assert response.status_code == 200, response.text
     data = response.json()["data"]
     assert data["title"] == "Enable reviewed DEV handoff specs"
+    assert data["draft_status"] == "generating"
+    data = _ready_handoff_draft(client, data["draft_id"])
+    assert data["title"] == "LLM prepared bridge handoff"
     assert data["created_by_action"] == "mobile_dev_handoff"
     assert data["acceptance_criteria"]
     snapshot = json.loads((tmp_path / "state.json").read_text(encoding="utf-8"))
@@ -2179,13 +2198,14 @@ def _client(
     promotion_enabled: bool = False,
     pipeline_enabled: bool = True,
     app_update_github_token: str | None = None,
+    codex_command: str = _FAKE_CODEX,
 ) -> TestClient:
     projects_root = projects_root or tmp_path / "projects"
     projects_root.mkdir(exist_ok=True)
     repo_root = repo_root or tmp_path / "codex-cli-mobile-bridge"
     repo_root.mkdir(exist_ok=True)
     settings = Settings(
-        codex_command="python3 tests/fixtures/fake_codex.py",
+        codex_command=codex_command,
         codex_use_exec=False,
         codex_workdir=str(repo_root),
         api_base_url=api_base_url,
@@ -2471,8 +2491,26 @@ def _handoff_payload_with_grant(
         json={"title": str(granted_payload.get("title") or "DEV handoff")},
     )
     assert draft.status_code == 200, draft.text
-    granted_payload["draft_token"] = draft.json()["data"]["draft_token"]
+    data = draft.json()["data"]
+    ready = _ready_handoff_draft(client, str(data["draft_id"]))
+    granted_payload["draft_token"] = ready["draft_token"]
     return granted_payload
+
+
+def _ready_handoff_draft(client: TestClient, draft_id: str) -> dict[str, object]:
+    deadline = time.monotonic() + 3
+    last_response = None
+    while time.monotonic() < deadline:
+        response = client.get(f"/dev-pipeline/handoffs/drafts/{draft_id}")
+        assert response.status_code == 200, response.text
+        data = response.json()["data"]
+        if data["draft_status"] == "ready":
+            return data
+        if data["draft_status"] == "failed":
+            raise AssertionError(data.get("draft_error"))
+        last_response = data
+        time.sleep(0.05)
+    raise AssertionError(f"Handoff draft did not become ready: {last_response}")
 
 
 def _handoff_payload() -> dict[str, object]:

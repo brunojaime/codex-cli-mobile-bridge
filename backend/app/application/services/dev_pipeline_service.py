@@ -15,7 +15,10 @@ from urllib.error import HTTPError, URLError
 from urllib.request import urlopen
 from typing import Any, Literal
 
+from backend.app.domain.entities.codex_options import CodexRunOptions
+from backend.app.domain.entities.job import JobStatus
 from backend.app.application.services.message_service import BackendDrainStatus
+from backend.app.infrastructure.execution.base import ExecutionProvider
 
 
 EnvironmentName = Literal["prod", "dev", "control"]
@@ -137,6 +140,7 @@ class DevPipelineService:
         app_update_public_base_url: str | None = None,
         app_update_github_token_present: bool = False,
         prod_update_executor_enabled: bool = False,
+        execution_provider: ExecutionProvider | None = None,
     ) -> None:
         self._state_path = Path(state_path)
         self._runtime_root = Path(runtime_root)
@@ -159,6 +163,7 @@ class DevPipelineService:
         self._app_update_public_base_url = app_update_public_base_url
         self._app_update_github_token_present = app_update_github_token_present
         self._prod_update_executor_enabled = prod_update_executor_enabled
+        self._execution_provider = execution_provider
 
     def identity(self) -> EnvironmentIdentity:
         mode = "normal"
@@ -467,37 +472,93 @@ class DevPipelineService:
                 "prod_handoff_disabled",
                 "PROD handoff is disabled by rollout flag.",
             )
+        if self._execution_provider is None:
+            raise DevPipelineError(
+                "dev_handoff_llm_unavailable",
+                "DEV handoff spec generation is unavailable on this backend.",
+            )
         recent_messages = messages[-12:]
-        derived_title = self._derive_handoff_title(title, recent_messages)
-        derived_problem = self._derive_handoff_problem(problem, recent_messages)
-        derived_context = self._derive_handoff_context(
+        seed_title = self._derive_handoff_title(title, recent_messages)
+        seed_problem = self._derive_handoff_problem(problem, recent_messages)
+        seed_context = self._derive_handoff_context(
             context,
             session_id=session_id,
             session_title=session_title,
             workspace_path=workspace_path,
             messages=recent_messages,
         )
-        derived_acceptance = self._derive_handoff_acceptance(
+        seed_acceptance = self._derive_handoff_acceptance(
             acceptance_criteria,
-            derived_title,
+            seed_title,
         )
-        slug = self._slugify(derived_title or "dev-handoff")
+        slug = self._slugify(seed_title or "dev-handoff")
         proposed_spec = self._next_proposed_spec_id(slug)
         draft_token = secrets.token_urlsafe(32)
         token_hash = self._stable_hash({"draft_token": draft_token})
         now = _utc_iso()
+        draft_id = f"draft-{now.replace(':', '').replace('-', '')}-{token_hash[:12]}"
         expires_at = (
             datetime.now(timezone.utc) + timedelta(hours=2)
         ).isoformat().replace("+00:00", "Z")
+        prompt = self._build_handoff_spec_prompt(
+            title=seed_title,
+            problem=seed_problem,
+            context=seed_context,
+            acceptance_criteria=seed_acceptance,
+            proposed_spec=proposed_spec,
+            proposed_plan=f"01-{slug[:80]}",
+        )
+        job_id = self._execution_provider.execute(
+            prompt,
+            codex_options=CodexRunOptions(
+                config_overrides=(
+                    'sandbox_mode="read-only"',
+                    'approval_policy="never"',
+                )
+            ),
+            serial_key=f"dev-handoff-draft:{session_id or 'global'}",
+            workdir=str(self._repository_root),
+        )
         state = self._read_state()
-        state["handoff_drafts"][token_hash] = {
+        state["handoff_drafts"][draft_id] = {
             "kind": "bridge.devHandoffDraftGrant",
             "version": 1,
-            "status": "active",
+            "id": draft_id,
+            "status": "generating",
             "source_environment": "prod",
             "target_environment": "dev",
             "session_id": session_id,
+            "job_id": job_id,
+            "draft_token_hash": token_hash,
+            "draft_token": draft_token,
+            "seed_payload": {
+                "kind": "bridge.devHandoff",
+                "version": 1,
+                "source_environment": "prod",
+                "target_environment": "dev",
+                "operation": "enqueue_only",
+                "title": seed_title,
+                "problem": seed_problem,
+                "context": seed_context,
+                "selected_context": {
+                    **({"session_id": session_id} if session_id else {}),
+                    "source": "mobile_chat",
+                    "context": seed_context,
+                },
+                "evidence": [],
+                "proposed_spec": proposed_spec,
+                "proposed_plan": f"01-{slug[:80]}",
+                "proposed_tasks": [],
+                "acceptance_criteria": seed_acceptance,
+                "regression_tests": [],
+                "risks": [],
+                "created_from_session_id": session_id,
+                "created_by_action": "mobile_dev_handoff",
+            },
+            "payload": None,
+            "error": None,
             "created_at": now,
+            "updated_at": now,
             "expires_at": expires_at,
             "consumed_at": None,
             "payload_hash": None,
@@ -508,45 +569,28 @@ class DevPipelineService:
                 "created_at": now,
                 "source_session_id": session_id,
                 "expires_at": expires_at,
+                "draft_id": draft_id,
+                "job_id": job_id,
             }
         )
         self._write_state(state)
-        return {
-            "kind": "bridge.devHandoff",
-            "version": 1,
-            "source_environment": "prod",
-            "target_environment": "dev",
-            "operation": "enqueue_only",
-            "title": derived_title,
-            "problem": derived_problem,
-            "context": derived_context,
-            "selected_context": {
-                **({"session_id": session_id} if session_id else {}),
-                "source": "mobile_chat",
-                "context": derived_context,
-            },
-            "evidence": [],
-            "proposed_spec": proposed_spec,
-            "proposed_plan": f"01-{slug[:80]}",
-            "proposed_tasks": [
-                "Confirm the PROD chat context and acceptance criteria in the DEV stage.",
-                "Implement the isolated repository/runtime changes in the DEV worktree only.",
-                "Run targeted backend and mobile regression tests for the handoff flow.",
-                "Report materialization, validation results, and any promotion blockers.",
-            ],
-            "acceptance_criteria": derived_acceptance,
-            "regression_tests": [
-                "Backend tests cover draft creation, one-shot grant consumption, and mobile enqueue rejection without a grant.",
-                "Flutter tests cover the prefilled /dev-handoff review dialog and queued payload.",
-            ],
-            "risks": [
-                "Accidentally allowing PROD to mutate bridge code outside the DEV queue.",
-                "Materializing a spec ID that collides with existing DEV work.",
-            ],
-            "created_from_session_id": session_id,
-            "created_by_action": "mobile_dev_handoff",
-            "draft_token": draft_token,
-        }
+        return self._handoff_draft_response(state["handoff_drafts"][draft_id])
+
+    def get_handoff_draft(self, draft_id: str) -> dict[str, Any]:
+        self._require_enabled()
+        self._require_environment("prod")
+        draft_id = draft_id.strip()
+        if not draft_id:
+            raise DevPipelineError("invalid_handoff_draft_id", "draft_id is required.")
+        state = self._read_state()
+        draft = state["handoff_drafts"].get(draft_id)
+        if not draft:
+            raise DevPipelineError(
+                "unknown_handoff_draft", f"Handoff draft {draft_id} was not found."
+            )
+        self._refresh_handoff_draft_from_job(state, draft)
+        self._write_state(state)
+        return self._handoff_draft_response(draft)
 
     def claim_backlog_item(self, *, worker_id: str) -> dict[str, Any]:
         self._require_enabled()
@@ -3051,6 +3095,10 @@ class DevPipelineService:
         problem = str(payload.get("problem") or "").strip()
         context = str(payload.get("context") or "").strip()
         acceptance = str(payload.get("acceptance_criteria") or "").strip()
+        proposed_plan = str(payload.get("proposed_plan") or "").strip()
+        proposed_tasks = self._string_list(payload.get("proposed_tasks"))
+        regression_tests = self._string_list(payload.get("regression_tests"))
+        risks = self._string_list(payload.get("risks"))
         spec_path = spec_dir.joinpath("spec.md")
         plan_path = spec_dir.joinpath("plan.md")
         tasks_path = spec_dir.joinpath("tasks.md")
@@ -3061,22 +3109,29 @@ class DevPipelineService:
             "## Context\n\n"
             f"{context}\n\n"
             "## Acceptance Criteria\n\n"
-            f"{acceptance}\n",
+            f"{acceptance}\n\n"
+            "## Risks\n\n"
+            f"{_markdown_list(risks) or '- None recorded.'}\n",
             encoding="utf-8",
         )
         plan_path.write_text(
             f"# Implementation Plan: {title}\n\n"
+            f"Proposed plan: {proposed_plan or 'DEV generated plan'}\n\n"
             "## Scope\n\n"
             "Materialized from a PROD to DEV handoff.\n\n"
+            "## Proposed Tasks\n\n"
+            f"{_markdown_list(proposed_tasks) or '- Confirm handoff context and acceptance criteria.'}\n\n"
             "## Validation\n\n"
-            f"{acceptance}\n",
+            f"{acceptance}\n\n"
+            "## Regression Tests\n\n"
+            f"{_markdown_list(regression_tests) or '- Define targeted regression coverage in DEV.'}\n",
             encoding="utf-8",
         )
         tasks_path.write_text(
             f"# Tasks: {title}\n\n"
-            "- [ ] Confirm handoff context and acceptance criteria\n"
-            "- [ ] Implement the isolated DEV stage changes\n"
-            "- [ ] Run targeted regression validation\n",
+            f"{_markdown_checklist(proposed_tasks) or '- [ ] Confirm handoff context and acceptance criteria'}\n\n"
+            "## Regression\n\n"
+            f"{_markdown_checklist(regression_tests) or '- [ ] Run targeted regression validation'}\n",
             encoding="utf-8",
         )
         return [str(spec_path), str(plan_path), str(tasks_path)]
@@ -3653,16 +3708,25 @@ class DevPipelineService:
                 "Mobile DEV handoff enqueue requires an active /dev-handoff draft grant.",
             )
         token_hash = self._stable_hash({"draft_token": draft_token})
-        grant = state["handoff_drafts"].get(token_hash)
+        grant = None
+        for candidate in state["handoff_drafts"].values():
+            if candidate.get("draft_token_hash") == token_hash:
+                grant = candidate
+                break
         if not grant:
             raise DevPipelineError(
                 "dev_handoff_draft_grant_required",
                 "Mobile DEV handoff enqueue requires an active /dev-handoff draft grant.",
             )
-        if grant.get("status") != "active":
+        if grant.get("status") == "consumed":
             raise DevPipelineError(
                 "dev_handoff_draft_grant_consumed",
                 "This /dev-handoff draft grant has already been used.",
+            )
+        if grant.get("status") != "ready":
+            raise DevPipelineError(
+                "dev_handoff_draft_not_ready",
+                "This /dev-handoff draft is not ready to queue yet.",
             )
         expires_at = str(grant.get("expires_at") or "").strip()
         if expires_at:
@@ -3687,6 +3751,191 @@ class DevPipelineService:
         grant["status"] = "consumed"
         grant["consumed_at"] = _utc_iso()
         grant["payload_hash"] = payload_hash
+
+    def _refresh_handoff_draft_from_job(
+        self,
+        state: dict[str, Any],
+        draft: dict[str, Any],
+    ) -> None:
+        if draft.get("status") != "generating":
+            return
+        if self._execution_provider is None:
+            draft["status"] = "failed"
+            draft["error"] = "Execution provider is unavailable."
+            draft["updated_at"] = _utc_iso()
+            return
+        job_id = str(draft.get("job_id") or "").strip()
+        if not job_id:
+            draft["status"] = "failed"
+            draft["error"] = "Draft generation job is missing."
+            draft["updated_at"] = _utc_iso()
+            return
+        snapshot = self._execution_provider.get_snapshot(job_id)
+        if not snapshot.status.is_terminal:
+            draft["phase"] = snapshot.phase
+            draft["latest_activity"] = snapshot.latest_activity
+            draft["updated_at"] = _utc_iso()
+            return
+        if snapshot.status != JobStatus.COMPLETED:
+            draft["status"] = "failed"
+            draft["error"] = snapshot.error or "Draft generation failed."
+            draft["updated_at"] = _utc_iso()
+            state["events"].append(
+                {
+                    "type": "handoff.draft_failed",
+                    "created_at": draft["updated_at"],
+                    "draft_id": draft.get("id"),
+                    "job_id": job_id,
+                    "error": draft["error"],
+                }
+            )
+            return
+        try:
+            payload = self._handoff_payload_from_llm_response(
+                str(snapshot.response or ""),
+                seed_payload=dict(draft.get("seed_payload") or {}),
+                session_id=str(draft.get("session_id") or "").strip() or None,
+            )
+            self._validate_handoff_payload(payload)
+        except DevPipelineError as exc:
+            draft["status"] = "failed"
+            draft["error"] = exc.message
+            draft["updated_at"] = _utc_iso()
+            state["events"].append(
+                {
+                    "type": "handoff.draft_failed",
+                    "created_at": draft["updated_at"],
+                    "draft_id": draft.get("id"),
+                    "job_id": job_id,
+                    "error": draft["error"],
+                }
+            )
+            return
+        draft["status"] = "ready"
+        draft["payload"] = payload
+        draft["error"] = None
+        draft["updated_at"] = _utc_iso()
+        state["events"].append(
+            {
+                "type": "handoff.draft_ready",
+                "created_at": draft["updated_at"],
+                "draft_id": draft.get("id"),
+                "job_id": job_id,
+                "proposed_spec": payload.get("proposed_spec"),
+            }
+        )
+
+    def _handoff_payload_from_llm_response(
+        self,
+        response: str,
+        *,
+        seed_payload: dict[str, Any],
+        session_id: str | None,
+    ) -> dict[str, Any]:
+        parsed = self._parse_llm_json_object(response)
+        if not parsed:
+            raise DevPipelineError(
+                "invalid_handoff_draft_response",
+                "The LLM did not return a JSON handoff spec.",
+            )
+        payload = dict(seed_payload)
+        max_lengths = {
+            "title": 240,
+            "problem": 5000,
+            "context": 20000,
+            "acceptance_criteria": 10000,
+            "proposed_plan": 120,
+        }
+        for key, max_length in max_lengths.items():
+            value = str(parsed.get(key) or "").strip()
+            if value:
+                payload[key] = value[:max_length]
+        proposed_spec = str(parsed.get("proposed_spec") or "").strip()
+        if proposed_spec:
+            try:
+                payload["proposed_spec"] = self._validate_spec_id(proposed_spec)
+            except DevPipelineError:
+                payload["proposed_spec"] = seed_payload.get("proposed_spec")
+        for key in ["proposed_tasks", "regression_tests", "risks"]:
+            payload[key] = self._string_list(parsed.get(key))
+        evidence = parsed.get("evidence")
+        if isinstance(evidence, list):
+            payload["evidence"] = [
+                item for item in evidence if isinstance(item, dict)
+            ][:20]
+        payload["selected_context"] = {
+            **dict(seed_payload.get("selected_context") or {}),
+            "llm_generated": True,
+            "source": "mobile_chat",
+        }
+        payload["created_from_session_id"] = session_id
+        payload["created_by_action"] = "mobile_dev_handoff"
+        return payload
+
+    def _parse_llm_json_object(self, response: str) -> dict[str, Any] | None:
+        text = response.strip()
+        if text.startswith("```"):
+            text = re.sub(r"^```(?:json)?\s*", "", text)
+            text = re.sub(r"\s*```$", "", text)
+        start = text.find("{")
+        end = text.rfind("}")
+        if start < 0 or end < start:
+            return None
+        try:
+            parsed = json.loads(text[start : end + 1])
+        except json.JSONDecodeError:
+            return None
+        return parsed if isinstance(parsed, dict) else None
+
+    def _string_list(self, value: Any) -> list[str]:
+        if not isinstance(value, list):
+            return []
+        normalized: list[str] = []
+        for item in value:
+            text = str(item or "").strip()
+            if text:
+                normalized.append(text)
+        return normalized[:50]
+
+    def _handoff_draft_response(self, draft: dict[str, Any]) -> dict[str, Any]:
+        payload = dict(draft.get("payload") or draft.get("seed_payload") or {})
+        payload["draft_id"] = draft.get("id")
+        payload["draft_status"] = draft.get("status")
+        payload["draft_error"] = draft.get("error")
+        payload["draft_job_id"] = draft.get("job_id")
+        payload["draft_token"] = draft.get("draft_token")
+        payload["phase"] = draft.get("phase")
+        payload["latest_activity"] = draft.get("latest_activity")
+        return payload
+
+    def _build_handoff_spec_prompt(
+        self,
+        *,
+        title: str,
+        problem: str,
+        context: str,
+        acceptance_criteria: str,
+        proposed_spec: str,
+        proposed_plan: str,
+    ) -> str:
+        return (
+            "You are running the /dev-handoff preparation capability for Codex Mobile Bridge PROD.\n"
+            "This capability is temporary, read-only, and only prepares a handoff spec for DEV review.\n"
+            "Do not modify files. Do not run shell commands. Do not restart services. Do not enqueue anything.\n"
+            "Read the provided PROD chat context and produce a complete DEV handoff spec.\n\n"
+            "Return exactly one JSON object with these keys:\n"
+            "title, problem, context, acceptance_criteria, proposed_spec, proposed_plan, "
+            "proposed_tasks, regression_tests, risks, evidence.\n"
+            "proposed_tasks, regression_tests, risks, and evidence must be arrays. "
+            "evidence items must be objects with kind and text.\n"
+            "Use concrete details from the context. If data is missing, state the assumption explicitly.\n\n"
+            f"Suggested proposed_spec: {proposed_spec}\n"
+            f"Suggested proposed_plan: {proposed_plan}\n"
+            f"Seed title: {title}\n"
+            f"Seed problem: {problem}\n"
+            f"Seed acceptance criteria:\n{acceptance_criteria}\n\n"
+            f"PROD context:\n{context}\n"
+        )
 
     def _derive_handoff_title(
         self,
@@ -3885,3 +4134,11 @@ def _empty_state() -> dict[str, Any]:
 
 def _utc_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _markdown_list(items: list[str]) -> str:
+    return "\n".join(f"- {item}" for item in items if item.strip())
+
+
+def _markdown_checklist(items: list[str]) -> str:
+    return "\n".join(f"- [ ] {item}" for item in items if item.strip())

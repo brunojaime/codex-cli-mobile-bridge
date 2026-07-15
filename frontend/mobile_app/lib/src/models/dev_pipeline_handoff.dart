@@ -14,6 +14,12 @@ class DevPipelineHandoffRequest {
     this.createdFromSessionId,
     this.createdByAction = 'mobile_dev_handoff',
     this.draftToken,
+    this.draftId,
+    this.draftStatus,
+    this.draftError,
+    this.draftJobId,
+    this.phase,
+    this.latestActivity,
   });
 
   final String title;
@@ -30,6 +36,15 @@ class DevPipelineHandoffRequest {
   final String? createdFromSessionId;
   final String createdByAction;
   final String? draftToken;
+  final String? draftId;
+  final String? draftStatus;
+  final String? draftError;
+  final String? draftJobId;
+  final String? phase;
+  final String? latestActivity;
+
+  bool get isDraftReady => draftStatus == null || draftStatus == 'ready';
+  bool get isDraftFailed => draftStatus == 'failed';
 
   factory DevPipelineHandoffRequest.fromJson(Map<String, dynamic> json) {
     return DevPipelineHandoffRequest(
@@ -60,6 +75,12 @@ class DevPipelineHandoffRequest {
       createdByAction:
           json['created_by_action'] as String? ?? 'mobile_dev_handoff',
       draftToken: json['draft_token'] as String?,
+      draftId: json['draft_id'] as String?,
+      draftStatus: json['draft_status'] as String?,
+      draftError: json['draft_error'] as String?,
+      draftJobId: json['draft_job_id'] as String?,
+      phase: json['phase'] as String?,
+      latestActivity: json['latest_activity'] as String?,
     );
   }
 

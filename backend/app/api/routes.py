@@ -698,6 +698,20 @@ async def draft_dev_handoff(
     return _dev_pipeline_response(draft)
 
 
+@router.get(
+    "/dev-pipeline/handoffs/drafts/{draft_id}", response_model=DevPipelineResponse
+)
+async def get_dev_handoff_draft(
+    draft_id: str,
+    container: AppContainer = Depends(get_container),
+) -> DevPipelineResponse:
+    try:
+        draft = container.dev_pipeline_service.get_handoff_draft(draft_id)
+    except DevPipelineError as exc:
+        _raise_dev_pipeline_error(exc)
+    return _dev_pipeline_response(draft)
+
+
 @router.post("/dev-pipeline/handoffs", response_model=DevPipelineResponse)
 async def enqueue_dev_handoff(
     payload: DevPipelineHandoffRequest,
