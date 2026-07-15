@@ -20,6 +20,10 @@ When a filename includes a useful extension, office/PDF uploads validate by that
 
 Accepted non-image documents are copied into the active workspace under `.codex-mobile-bridge/attachments/<session-id>/`, and the Codex execution prompt includes the stored path so the file can be inspected from the real workspace. No mock/demo/local demo data paths were introduced.
 
+## Merge Readiness
+
+Implementation was committed in the DEV stage branch as `8e5b88f Support office document attachments`. The branch was then updated with `dev/main` through merge commit `8aa327b Merge branch 'dev/main' into dev/spec-020-por-lo-que-veo-solo-podemos-adjuntar-algunos-tipos-de-archivos-me-encantaria-que`, resolving the stale-branch preflight blocker for this worktree. Focused backend and mobile validations passed again after that merge.
+
 ## Risks
 
 - Office documents can contain large files or embedded content; DEV should enforce size limits and avoid unsafe parsing in the bridge layer unless a secure parser already exists.

@@ -45,7 +45,10 @@ DEV materializes a spec named 020-por-lo-que-veo-solo-podemos-adjuntar-algunos-t
 
 ## Evidence
 
+- DEV implementation commit: `8e5b88f Support office document attachments`.
+- DEV branch refreshed with `dev/main`: `8aa327b Merge branch 'dev/main' into dev/spec-020-por-lo-que-veo-solo-podemos-adjuntar-algunos-tipos-de-archivos-me-encantaria-que`.
 - `uv run pytest tests/test_message_flow.py -k "document_message_flow or attachment_batch_flow_accepts_office_documents or attachment_batch_flow_accepts_images or attachment_batch_flow_rejects_unsupported_extension_with_office_mime or attachment_batch_flow_preserves_text_image_audio_mime_classification or image_attachment_download"`: 21 passed.
 - `uv run ruff check backend/app/application/services/message_service.py backend/app/api/routes.py tests/test_message_flow.py`: passed.
 - `flutter test test/widget_test.dart --plain-name "attachment picker includes supported office documents"`: passed.
 - `flutter analyze lib/src/screens/chat_screen.dart test/widget_test.dart`: no issues found.
+- `git diff --check`: passed after merging `dev/main`.
