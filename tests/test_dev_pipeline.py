@@ -434,7 +434,12 @@ def test_backlog_notify_materializes_specific_handoff(tmp_path: Path) -> None:
     assert newer.status_code == 200, newer.text
     old_id = old.json()["data"]["id"]
     newer_id = newer.json()["data"]["id"]
-    dev_client = _client(tmp_path, environment="dev", repo_root=repo_root)
+    dev_client = _client(
+        tmp_path,
+        environment="dev",
+        repo_root=repo_root,
+        projects_root=tmp_path,
+    )
 
     response = dev_client.post(
         "/dev-pipeline/backlog/notify",
@@ -445,11 +450,30 @@ def test_backlog_notify_materializes_specific_handoff(tmp_path: Path) -> None:
     data = response.json()["data"]
     assert data["backlog"]["handoff_id"] == newer_id
     assert data["backlog"]["status"] == "materialized"
+    assert data["stage_run"]["stage_id"] == "spec-021"
+    assert data["stage_run"]["session_id"]
+    assert data["stage_run"]["job_id"]
+    assert data["stage_run"]["auto_chain"]["generator_max_turns"] == 20
+    assert data["stage_run"]["auto_chain"]["reviewer_max_turns"] == 20
     snapshot = dev_client.get("/dev-pipeline").json()["data"]
     backlog = {item["handoff_id"]: item for item in snapshot["backlog"]}
     assert backlog[old_id]["status"] == "queued"
     assert backlog[newer_id]["status"] == "materialized"
     assert data["stage"]["stage_id"] == "spec-021"
+    assert len(snapshot["sessions"]) == 1
+    assert snapshot["sessions"][0]["stage_id"] == "spec-021"
+    assert len(snapshot["runs"]) == 1
+    assert snapshot["runs"][0]["stage_id"] == "spec-021"
+    session_payload = dev_client.get(
+        f"/sessions/{data['stage_run']['session_id']}"
+    ).json()
+    agents = {
+        agent["agent_id"]: agent
+        for agent in session_payload["agent_configuration"]["agents"]
+    }
+    assert agents["generator"]["max_turns"] == 20
+    assert agents["reviewer"]["max_turns"] == 20
+    assert agents["summary"]["enabled"] is False
 
 
 def test_prod_enqueue_schedules_dev_notify_background_task(
@@ -905,12 +929,14 @@ def test_stage_run_uses_reviewer_auto_chain_preset_and_records_evidence(
     assert payload["job_id"]
     assert payload["agent_run_id"]
     assert payload["started_at"]
-    assert "Implement DEV stage" in payload["prompt"]
+    assert "Ponete a trabajar" in payload["prompt"]
     assert payload["preset"] == "DEV Stage Generator/Reviewer"
     assert payload["auto_chain"]["preset"] == "review"
+    assert payload["auto_chain"]["generator_max_turns"] == 20
+    assert payload["auto_chain"]["reviewer_max_turns"] == 20
     assert payload["evidence"]["reviewer"]["status"] in {"planned", "observed"}
     assert payload["evidence"]["risks"] == [
-        "agent execution is not started by this control yet"
+        "agent execution is running in a DEV stage chat"
     ]
     status = stage_client.get(f"/dev-pipeline/stage-runs/{payload['id']}")
     assert status.status_code == 200
