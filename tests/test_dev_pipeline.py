@@ -399,6 +399,94 @@ def test_materialize_creates_new_spec_stage_and_worktree(tmp_path: Path) -> None
     assert snapshot["stages"][0]["spec_id"] == "018-dev-prod-stage-promotion-pipeline"
 
 
+def test_backlog_notify_materializes_specific_handoff(tmp_path: Path) -> None:
+    repo_root = _init_git_repo(tmp_path)
+    prod_client = _client(
+        tmp_path,
+        repo_root=repo_root,
+        prod_handoff_enabled=True,
+    )
+    old = prod_client.post(
+        "/dev-pipeline/handoffs",
+        json=_handoff_payload_with_grant(
+            prod_client,
+            {
+                **_handoff_payload(),
+                "title": "Older queued handoff",
+                "proposed_spec": "020-older-queued-handoff",
+            },
+        ),
+        headers={"X-Idempotency-Key": "notify-old"},
+    )
+    assert old.status_code == 200, old.text
+    newer = prod_client.post(
+        "/dev-pipeline/handoffs",
+        json=_handoff_payload_with_grant(
+            prod_client,
+            {
+                **_handoff_payload(),
+                "title": "Newer exact handoff",
+                "proposed_spec": "021-newer-exact-handoff",
+            },
+        ),
+        headers={"X-Idempotency-Key": "notify-new"},
+    )
+    assert newer.status_code == 200, newer.text
+    old_id = old.json()["data"]["id"]
+    newer_id = newer.json()["data"]["id"]
+    dev_client = _client(tmp_path, environment="dev", repo_root=repo_root)
+
+    response = dev_client.post(
+        "/dev-pipeline/backlog/notify",
+        json={"worker_id": "dev-auto-runner", "handoff_id": newer_id},
+    )
+
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    assert data["backlog"]["handoff_id"] == newer_id
+    assert data["backlog"]["status"] == "materialized"
+    snapshot = dev_client.get("/dev-pipeline").json()["data"]
+    backlog = {item["handoff_id"]: item for item in snapshot["backlog"]}
+    assert backlog[old_id]["status"] == "queued"
+    assert backlog[newer_id]["status"] == "materialized"
+    assert data["stage"]["stage_id"] == "spec-021"
+
+
+def test_prod_enqueue_schedules_dev_notify_background_task(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    calls: list[dict[str, object]] = []
+
+    def fake_notify(**kwargs: object) -> None:
+        calls.append(kwargs)
+
+    monkeypatch.setattr(
+        "backend.app.api.routes._notify_dev_pipeline_backend",
+        fake_notify,
+    )
+    client = _client(
+        tmp_path,
+        prod_handoff_enabled=True,
+        dev_notify_url="http://127.0.0.1:8118/dev-pipeline/backlog/notify",
+    )
+
+    response = client.post(
+        "/dev-pipeline/handoffs",
+        json=_handoff_payload_with_grant(client),
+        headers={"X-Idempotency-Key": "notify-background"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert calls == [
+        {
+            "notify_url": "http://127.0.0.1:8118/dev-pipeline/backlog/notify",
+            "handoff_id": response.json()["data"]["id"],
+            "worker_id": "dev-auto-runner",
+        }
+    ]
+
+
 def test_materialize_attaches_existing_spec(tmp_path: Path) -> None:
     repo_root = _init_git_repo(tmp_path)
     spec_dir = repo_root / "specs/018-dev-prod-stage-promotion-pipeline"
@@ -2199,6 +2287,8 @@ def _client(
     pipeline_enabled: bool = True,
     app_update_github_token: str | None = None,
     codex_command: str = _FAKE_CODEX,
+    dev_notify_url: str | None = None,
+    auto_runner_enabled: bool = False,
 ) -> TestClient:
     projects_root = projects_root or tmp_path / "projects"
     projects_root.mkdir(exist_ok=True)
@@ -2229,6 +2319,8 @@ def _client(
         ),
         dev_pipeline_prod_handoff_enabled=prod_handoff_enabled,
         dev_pipeline_promotion_enabled=promotion_enabled,
+        dev_pipeline_dev_notify_url=dev_notify_url,
+        dev_pipeline_auto_runner_enabled=auto_runner_enabled,
         app_update_github_token=app_update_github_token,
     )
     return TestClient(create_app(settings))

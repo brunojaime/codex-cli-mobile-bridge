@@ -592,15 +592,28 @@ class DevPipelineService:
         self._write_state(state)
         return self._handoff_draft_response(draft)
 
-    def claim_backlog_item(self, *, worker_id: str) -> dict[str, Any]:
+    def claim_backlog_item(
+        self,
+        *,
+        worker_id: str,
+        handoff_id: str | None = None,
+    ) -> dict[str, Any]:
         self._require_enabled()
         self._require_environment("dev")
         worker_id = worker_id.strip()
         if not worker_id:
             raise DevPipelineError("invalid_worker_id", "worker_id is required.")
+        requested_handoff_id = (handoff_id or "").strip()
         state = self._read_state()
         now = _utc_iso()
-        for item in state["backlog"].values():
+        candidates = (
+            [state["backlog"].get(requested_handoff_id)]
+            if requested_handoff_id
+            else list(state["backlog"].values())
+        )
+        for item in candidates:
+            if not item:
+                continue
             if item["status"] == "queued":
                 item["status"] = "claimed"
                 item["attempts"] += 1
@@ -617,11 +630,107 @@ class DevPipelineService:
                 )
                 self._write_state(state)
                 return item
+            if requested_handoff_id and item["status"] == "materialized":
+                return item
             if item["status"] in {"claimed", "materializing"}:
                 continue
+            if requested_handoff_id:
+                raise DevPipelineError(
+                    "backlog_item_not_claimable",
+                    f"Backlog item {requested_handoff_id} is not claimable.",
+                )
+        if requested_handoff_id:
+            raise DevPipelineError(
+                "unknown_backlog_item",
+                f"Backlog item {requested_handoff_id} was not found.",
+            )
         raise DevPipelineError(
             "no_claimable_backlog", "No queued handoff is claimable."
         )
+
+    def auto_materialize_backlog_item(
+        self,
+        *,
+        worker_id: str,
+        handoff_id: str | None = None,
+    ) -> dict[str, Any]:
+        self._require_enabled()
+        self._require_environment("dev")
+        worker_id = worker_id.strip()
+        if not worker_id:
+            raise DevPipelineError("invalid_worker_id", "worker_id is required.")
+        requested_handoff_id = (handoff_id or "").strip()
+        claimed = self.claim_backlog_item(
+            worker_id=worker_id,
+            handoff_id=requested_handoff_id or None,
+        )
+        claimed_handoff_id = str(claimed.get("handoff_id") or claimed.get("id") or "")
+        if not claimed_handoff_id:
+            raise DevPipelineError(
+                "invalid_backlog_item", "Claimed backlog item did not include handoff_id."
+            )
+        if claimed.get("status") == "materialized":
+            state = self._read_state()
+            handoff = state["handoffs"].get(claimed_handoff_id) or {}
+            response = self._materialize_response(claimed, handoff, state)
+            stage_id = claimed.get("stage_id")
+            spec_id = claimed.get("spec_id")
+            if stage_id and stage_id in state["stages"]:
+                response["stage"] = state["stages"][stage_id]
+            if spec_id and spec_id in state["specs"]:
+                response["spec"] = state["specs"][spec_id]
+            response["auto_runner"] = {
+                "status": "already_materialized",
+                "worker_id": worker_id,
+            }
+            return response
+        response = self.materialize_backlog_item(
+            handoff_id=claimed_handoff_id,
+            worker_id=worker_id,
+        )
+        response["auto_runner"] = {
+            "status": "materialized",
+            "worker_id": worker_id,
+        }
+        return response
+
+    def auto_materialize_queued_backlog(
+        self,
+        *,
+        worker_id: str,
+        limit: int = 1,
+        created_after: str | None = None,
+    ) -> list[dict[str, Any]]:
+        self._require_enabled()
+        self._require_environment("dev")
+        if limit <= 0:
+            return []
+        results: list[dict[str, Any]] = []
+        state = self._read_state()
+        queued_ids = [
+            str(item.get("handoff_id") or item.get("id") or "")
+            for item in state["backlog"].values()
+            if item.get("status") == "queued"
+            and (
+                not created_after
+                or str(item.get("created_at") or "") >= created_after
+            )
+        ]
+        for handoff_id in queued_ids[:limit]:
+            if not handoff_id:
+                continue
+            try:
+                results.append(
+                    self.auto_materialize_backlog_item(
+                        worker_id=worker_id,
+                        handoff_id=handoff_id,
+                    )
+                )
+            except DevPipelineError as exc:
+                if exc.code in {"no_claimable_backlog", "unknown_backlog_item"}:
+                    break
+                raise
+        return results
 
     def materialize_backlog_item(
         self,

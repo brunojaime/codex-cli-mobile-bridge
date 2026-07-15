@@ -8,6 +8,8 @@ import re
 import secrets
 import subprocess
 import sys
+import urllib.error
+import urllib.request
 from collections.abc import Iterator
 from datetime import datetime, timezone
 from functools import lru_cache
@@ -19,6 +21,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 from fastapi import (
     APIRouter,
+    BackgroundTasks,
     Body,
     Depends,
     File,
@@ -60,6 +63,7 @@ from backend.app.api.schemas import (
     CreateSessionRequest,
     DocumentMessageAcceptedResponse,
     DevPipelineBackfillRequest,
+    DevPipelineBacklogNotifyRequest,
     DevPipelineClaimRequest,
     DevPipelineHandoffDraftRequest,
     DevPipelineHandoffRequest,
@@ -408,6 +412,35 @@ def _raise_dev_pipeline_error(exc: DevPipelineError) -> None:
     )
 
 
+def _notify_dev_pipeline_backend(
+    *,
+    notify_url: str | None,
+    handoff_id: str,
+    worker_id: str,
+) -> None:
+    if not notify_url:
+        return
+    body = json.dumps(
+        {
+            "handoff_id": handoff_id,
+            "worker_id": worker_id,
+        }
+    ).encode("utf-8")
+    request = urllib.request.Request(
+        notify_url,
+        data=body,
+        method="POST",
+        headers={"Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=3) as response:
+            response.read()
+    except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, OSError):
+        # Best-effort wakeup only. DEV also reconciles queued backlog, so a
+        # missed notify must not fail the PROD enqueue path.
+        return
+
+
 def _project_stage_run(container: AppContainer, run: dict[str, Any]) -> dict[str, Any]:
     projection: dict[str, Any] = {}
     job_id = run.get("job_id")
@@ -715,6 +748,7 @@ async def get_dev_handoff_draft(
 @router.post("/dev-pipeline/handoffs", response_model=DevPipelineResponse)
 async def enqueue_dev_handoff(
     payload: DevPipelineHandoffRequest,
+    background_tasks: BackgroundTasks,
     x_idempotency_key: str | None = Header(default=None),
     container: AppContainer = Depends(get_container),
 ) -> DevPipelineResponse:
@@ -731,7 +765,28 @@ async def enqueue_dev_handoff(
         )
     except DevPipelineError as exc:
         _raise_dev_pipeline_error(exc)
+    background_tasks.add_task(
+        _notify_dev_pipeline_backend,
+        notify_url=container.settings.dev_pipeline_dev_notify_url,
+        handoff_id=str(handoff["id"]),
+        worker_id=container.settings.dev_pipeline_auto_runner_worker_id,
+    )
     return _dev_pipeline_response(handoff)
+
+
+@router.post("/dev-pipeline/backlog/notify", response_model=DevPipelineResponse)
+async def notify_dev_backlog(
+    payload: DevPipelineBacklogNotifyRequest,
+    container: AppContainer = Depends(get_container),
+) -> DevPipelineResponse:
+    try:
+        item = container.dev_pipeline_service.auto_materialize_backlog_item(
+            worker_id=payload.worker_id,
+            handoff_id=payload.handoff_id,
+        )
+    except DevPipelineError as exc:
+        _raise_dev_pipeline_error(exc)
+    return _dev_pipeline_response(item)
 
 
 @router.post("/dev-pipeline/backlog/claim", response_model=DevPipelineResponse)

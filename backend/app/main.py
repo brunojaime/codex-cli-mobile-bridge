@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import asyncio
+from contextlib import suppress
+from datetime import datetime, timezone
 import sqlite3
 import uvicorn
 from fastapi import FastAPI
@@ -20,6 +23,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     _configure_dependencies(app, container)
     _configure_middleware(app, container)
     _configure_exception_handlers(app)
+    _configure_background_workers(app, container)
     app.include_router(router)
     app.include_router(router, prefix="/api/v1")
     return app
@@ -120,3 +124,52 @@ def _configure_exception_handlers(app: FastAPI) -> None:
                 }
             },
         )
+
+
+def _configure_background_workers(app: FastAPI, container: AppContainer) -> None:
+    runner_task: asyncio.Task[None] | None = None
+
+    @app.on_event("startup")
+    async def start_dev_pipeline_auto_runner() -> None:
+        nonlocal runner_task
+        settings = container.settings
+        if (
+            settings.bridge_environment != "dev"
+            or not settings.dev_pipeline_enabled
+            or not settings.dev_pipeline_auto_runner_enabled
+        ):
+            return
+        runner_task = asyncio.create_task(
+            _dev_pipeline_auto_runner_loop(container),
+            name="dev-pipeline-auto-runner",
+        )
+
+    @app.on_event("shutdown")
+    async def stop_dev_pipeline_auto_runner() -> None:
+        if runner_task is None:
+            return
+        runner_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await runner_task
+
+
+async def _dev_pipeline_auto_runner_loop(container: AppContainer) -> None:
+    settings = container.settings
+    interval = settings.dev_pipeline_auto_runner_interval_seconds
+    worker_id = settings.dev_pipeline_auto_runner_worker_id
+    started_at = None
+    if not settings.dev_pipeline_auto_runner_reconcile_existing:
+        started_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    while True:
+        try:
+            await asyncio.to_thread(
+                container.dev_pipeline_service.auto_materialize_queued_backlog,
+                worker_id=worker_id,
+                limit=1,
+                created_after=started_at,
+            )
+        except Exception:
+            # Reconciliation must stay alive. Failures are represented in the
+            # DEV pipeline state when materialization itself blocks.
+            pass
+        await asyncio.sleep(interval)

@@ -3285,6 +3285,13 @@ class DevPipelineMaterializeRequest(BaseModel):
     worker_id: str = Field(..., min_length=1, max_length=160)
 
 
+class DevPipelineBacklogNotifyRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    handoff_id: str | None = Field(default=None, max_length=160)
+    worker_id: str = Field(default="dev-auto-runner", min_length=1, max_length=160)
+
+
 class DevPipelineBackfillRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

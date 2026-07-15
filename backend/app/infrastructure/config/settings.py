@@ -115,6 +115,11 @@ class Settings(BaseSettings):
     dev_pipeline_prod_handoff_enabled: bool = False
     dev_pipeline_promotion_enabled: bool = False
     dev_pipeline_prod_update_executor_enabled: bool = False
+    dev_pipeline_dev_notify_url: str | None = None
+    dev_pipeline_auto_runner_enabled: bool = False
+    dev_pipeline_auto_runner_interval_seconds: float = Field(default=30.0, gt=0)
+    dev_pipeline_auto_runner_worker_id: str = "dev-auto-runner"
+    dev_pipeline_auto_runner_reconcile_existing: bool = False
     dev_pipeline_state_path: str = str(Path.cwd() / ".data" / "dev_pipeline_state.json")
     dev_pipeline_runtime_root: str = str(Path.home() / ".codex-bridge")
     installable_apps_registration_token: str | None = None
