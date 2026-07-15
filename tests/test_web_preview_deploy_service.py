@@ -88,6 +88,12 @@ def test_web_preview_plan_is_stable_and_persisted(tmp_path: Path) -> None:
         "https://preview.nienfos.com/clinica-norte/api/health"
     )
     assert {
+        "kind": "worker_route",
+        "name": "preview.nienfos.com/clinica-norte/*",
+        "script": "nienfos-preview-runtime",
+        "mode": "read_or_create",
+    } in first["planned_resources"]
+    assert {
         "kind": "worker_secret",
         "name": "WEB_PREVIEW_INVITE_SECRET",
         "mode": "required_external",
