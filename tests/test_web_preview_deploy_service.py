@@ -323,6 +323,61 @@ def test_web_preview_deploy_applies_resources_with_fake_cloudflare(
     assert invite["token_sha256"] in insert_calls[-1]["params"]
 
 
+def test_web_preview_deploy_accepts_same_worker_route_conflict(
+    tmp_path: Path,
+) -> None:
+    project = _generated_project(tmp_path)
+    _write_web_build_output(project)
+    fake = _FakeCloudflareClient(
+        worker_route_create_conflict_worker="nienfos-preview-runtime",
+    )
+    service = _service(tmp_path, apply_enabled=True, fake=fake)
+    plan = service.plan(WebPreviewPlanInput(project_path=str(project)))
+
+    payload = service.deploy(
+        WebPreviewDeployInput(
+            project_path=str(project),
+            confirm_apply=True,
+            expected_plan_hash=plan["plan_hash"],
+        )
+    )
+
+    route_resource = next(
+        item for item in payload["applied_resources"] if item["kind"] == "worker_route"
+    )
+    assert route_resource["name"] == "preview.nienfos.com/clinica-norte/*"
+    assert route_resource["status"] == "existing"
+    assert (
+        "create_worker_route:zone-1:preview.nienfos.com/clinica-norte/*"
+        in fake.calls
+    )
+
+
+def test_web_preview_deploy_rejects_different_worker_route_conflict(
+    tmp_path: Path,
+) -> None:
+    project = _generated_project(tmp_path)
+    _write_web_build_output(project)
+    fake = _FakeCloudflareClient(
+        worker_route_create_conflict_worker="other-preview-worker",
+    )
+    service = _service(tmp_path, apply_enabled=True, fake=fake)
+    plan = service.plan(WebPreviewPlanInput(project_path=str(project)))
+
+    with pytest.raises(WebPreviewError) as exc:
+        service.deploy(
+            WebPreviewDeployInput(
+                project_path=str(project),
+                confirm_apply=True,
+                expected_plan_hash=plan["plan_hash"],
+            )
+        )
+
+    assert exc.value.code == "deploy_failed"
+    assert "worker_route_create_failed" in exc.value.message
+    assert "other-preview-worker" in exc.value.message
+
+
 def test_web_preview_deploy_fails_when_public_health_missing_bindings(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -954,6 +1009,7 @@ class _FakeCloudflareClient:
         health_d1_bound: bool = True,
         health_assets_bound: bool = True,
         health_assets_bound_after_attempts: int | None = None,
+        worker_route_create_conflict_worker: str | None = None,
     ) -> None:
         self.calls: list[str] = []
         self.sql_calls: list[dict[str, Any]] = []
@@ -964,6 +1020,7 @@ class _FakeCloudflareClient:
         self.health_d1_bound = health_d1_bound
         self.health_assets_bound = health_assets_bound
         self.health_assets_bound_after_attempts = health_assets_bound_after_attempts
+        self.worker_route_create_conflict_worker = worker_route_create_conflict_worker
         self.health_fetch_count = 0
         self.worker_scripts: dict[str, str] = {}
         self.d1_columns: dict[str, set[str]] = {
@@ -1042,6 +1099,15 @@ class _FakeCloudflareClient:
         payload: dict[str, Any],
     ) -> CloudflareLookupResult:
         self.calls.append(f"create_worker_route:{zone_id}:{payload['pattern']}")
+        if self.worker_route_create_conflict_worker:
+            return CloudflareLookupResult(
+                ok=False,
+                error=(
+                    "A route with the same pattern already exists "
+                    f"(used by Worker: {self.worker_route_create_conflict_worker}). "
+                    "Either delete the existing route or try a different pattern."
+                ),
+            )
         return CloudflareLookupResult(ok=True, payload={"result": payload})
 
     def update_worker_route(

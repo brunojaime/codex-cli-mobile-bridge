@@ -1277,9 +1277,13 @@ class CloudflarePreviewProvisioner:
                 route_id=route_id,
                 payload=payload,
             )
+            if _same_worker_route_conflict(updated, worker_name=worker_name):
+                return {"kind": "worker_route", "name": pattern, "status": "existing"}
             _raise_if_failed(updated, "worker_route_update_failed")
             return {"kind": "worker_route", "name": pattern, "status": "updated"}
         created = self._client.create_worker_route(zone_id=zone_id, payload=payload)
+        if _same_worker_route_conflict(created, worker_name=worker_name):
+            return {"kind": "worker_route", "name": pattern, "status": "existing"}
         _raise_if_failed(created, "worker_route_create_failed")
         return {"kind": "worker_route", "name": pattern, "status": "created"}
 
@@ -1817,6 +1821,20 @@ def _raise_if_failed(result: CloudflareLookupResult, code: str) -> None:
     if result.ok:
         return
     raise RuntimeError(f"{code}: {_safe_error_text(result.error or 'Cloudflare request failed')}")
+
+
+def _same_worker_route_conflict(
+    result: CloudflareLookupResult,
+    *,
+    worker_name: str,
+) -> bool:
+    if result.ok:
+        return False
+    error = str(result.error or "")
+    if "same pattern already exists" not in error:
+        return False
+    match = re.search(r"used by Worker:\s*([A-Za-z0-9_-]+)", error)
+    return bool(match and match.group(1) == worker_name)
 
 
 def _safe_error(
