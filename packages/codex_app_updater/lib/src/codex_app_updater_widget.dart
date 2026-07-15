@@ -7,6 +7,7 @@ import 'codex_app_updater_controller.dart';
 import 'models.dart';
 
 const codexAppUpdaterBannerKey = Key('codex-app-updater-banner');
+const codexAppUpdaterIconKey = Key('codex-app-updater-icon');
 const codexAppUpdaterUpdateButtonKey = Key('codex-app-updater-update-button');
 const codexAppUpdaterLaterButtonKey = Key('codex-app-updater-later-button');
 
@@ -15,6 +16,7 @@ class CodexAppUpdater extends StatefulWidget {
     required this.config,
     required this.child,
     this.controller,
+    this.updateIcon,
     this.checkOnStart = true,
     this.checkOnResume = true,
     super.key,
@@ -23,6 +25,7 @@ class CodexAppUpdater extends StatefulWidget {
   final CodexAppUpdaterConfig config;
   final Widget child;
   final CodexAppUpdaterController? controller;
+  final Widget? updateIcon;
   final bool checkOnStart;
   final bool checkOnResume;
 
@@ -94,6 +97,7 @@ class _CodexAppUpdaterState extends State<CodexAppUpdater>
                   child: _CodexAppUpdateBanner(
                     controller: _controller,
                     config: widget.config,
+                    updateIcon: widget.updateIcon,
                   ),
                 ),
               ),
@@ -164,10 +168,15 @@ class _CodexAppUpdaterState extends State<CodexAppUpdater>
 }
 
 class _CodexAppUpdateBanner extends StatelessWidget {
-  const _CodexAppUpdateBanner({required this.controller, required this.config});
+  const _CodexAppUpdateBanner({
+    required this.controller,
+    required this.config,
+    required this.updateIcon,
+  });
 
   final CodexAppUpdaterController controller;
   final CodexAppUpdaterConfig config;
+  final Widget? updateIcon;
 
   @override
   Widget build(BuildContext context) {
@@ -208,14 +217,11 @@ class _CodexAppUpdateBanner extends StatelessWidget {
                     color: accentColor.withValues(alpha: 0.12),
                     borderRadius: BorderRadius.circular(8),
                   ),
-                  child: Icon(
-                    isError
-                        ? Icons.error_outline
-                        : isBusy
-                        ? Icons.downloading_rounded
-                        : Icons.system_update_alt_rounded,
-                    color: accentColor,
-                    size: 20,
+                  child: _BannerIcon(
+                    accentColor: accentColor,
+                    isBusy: isBusy,
+                    isError: isError,
+                    updateIcon: updateIcon,
                   ),
                 ),
                 const SizedBox(width: 12),
@@ -376,6 +382,43 @@ class _CodexAppUpdateBanner extends StatelessWidget {
       return '${(bytes / 1024).toStringAsFixed(0)} KB';
     }
     return '$bytes B';
+  }
+}
+
+class _BannerIcon extends StatelessWidget {
+  const _BannerIcon({
+    required this.accentColor,
+    required this.isBusy,
+    required this.isError,
+    required this.updateIcon,
+  });
+
+  final Color accentColor;
+  final bool isBusy;
+  final bool isError;
+  final Widget? updateIcon;
+
+  @override
+  Widget build(BuildContext context) {
+    if (updateIcon != null && !isError) {
+      return ClipRRect(
+        key: codexAppUpdaterIconKey,
+        borderRadius: BorderRadius.circular(8),
+        child: SizedBox.expand(
+          child: FittedBox(fit: BoxFit.cover, child: updateIcon),
+        ),
+      );
+    }
+    return Icon(
+      key: codexAppUpdaterIconKey,
+      isError
+          ? Icons.error_outline
+          : isBusy
+          ? Icons.downloading_rounded
+          : Icons.system_update_alt_rounded,
+      color: accentColor,
+      size: 20,
+    );
   }
 }
 
