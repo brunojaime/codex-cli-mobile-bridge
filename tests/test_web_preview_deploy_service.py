@@ -353,6 +353,45 @@ def test_web_preview_deploy_accepts_same_worker_route_conflict(
     )
 
 
+def test_web_preview_deploy_renders_manifest_r2_binding(
+    tmp_path: Path,
+) -> None:
+    project = _generated_project(tmp_path)
+    manifest_path = project / "deploy/web-preview/web-preview-manifest.yaml"
+    manifest = manifest_path.read_text(encoding="utf-8")
+    assert "r2_bucket: null" in manifest
+    manifest_path.write_text(
+        manifest.replace(
+            "r2_bucket: null",
+            "r2_bucket: clinica-preview-documents\n    r2_binding: DOCUMENTS_BUCKET",
+        ),
+        encoding="utf-8",
+    )
+    _write_web_build_output(project)
+    fake = _FakeCloudflareClient()
+    service = _service(tmp_path, apply_enabled=True, fake=fake)
+    plan = service.plan(WebPreviewPlanInput(project_path=str(project)))
+
+    payload = service.deploy(
+        WebPreviewDeployInput(
+            project_path=str(project),
+            confirm_apply=True,
+            expected_plan_hash=plan["plan_hash"],
+        )
+    )
+
+    worker_resource = next(
+        item for item in payload["applied_resources"] if item["kind"] == "worker_script"
+    )
+    assert "DOCUMENTS_BUCKET" in worker_resource["bindings"]
+    config = (
+        project / ".codex/factory/cloudflare/wrangler.toml"
+    ).read_text(encoding="utf-8")
+    assert "[[r2_buckets]]" in config
+    assert 'binding = "DOCUMENTS_BUCKET"' in config
+    assert 'bucket_name = "clinica-preview-documents"' in config
+
+
 def test_web_preview_deploy_rejects_different_worker_route_conflict(
     tmp_path: Path,
 ) -> None:
