@@ -32,6 +32,7 @@ frontend/mobile_app/.idea/
 
 # Local Codex/Cloudflare runtime caches
 .codex/
+.codex-mobile-bridge/
 .wrangler/
 backend/app/infrastructure/config/app_updates.json.bak.*
 

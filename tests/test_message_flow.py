@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import base64
+import re
 import threading
 import time
 from datetime import datetime, timedelta, timezone
@@ -7165,6 +7166,122 @@ def test_document_message_flow_reads_docx_documents() -> None:
     assert "Second paragraph" in job["response"]
 
 
+@pytest.mark.parametrize(
+    ("filename", "content_type", "expected_kind"),
+    [
+        ("brief.pdf", "application/pdf", "pdf"),
+        (
+            "slides.pptx",
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            "pptx",
+        ),
+        (
+            "sheet.xlsx",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "xlsx",
+        ),
+    ],
+)
+def test_document_message_flow_stores_office_documents_in_workspace(
+    filename: str,
+    content_type: str,
+    expected_kind: str,
+) -> None:
+    with TemporaryDirectory() as projects_dir:
+        workspace = Path(projects_dir) / "workspace-a"
+        workspace.mkdir()
+        client = build_session_client(projects_root=projects_dir)
+
+        create_response = client.post(
+            "/message/document",
+            data={
+                "message": "Inspect this office document",
+                "workspace_path": str(workspace),
+            },
+            files={"document": (filename, b"office bytes", content_type)},
+        )
+
+        assert create_response.status_code == 202
+        payload = create_response.json()
+        assert payload["document_kind"] == expected_kind
+        assert payload["attached_document_name"] == filename
+        assert payload["extracted_text_preview"] is None
+
+        job = wait_for_job(client, payload["job_id"])
+
+        assert job["status"] == "completed"
+        assert f"Document kind: {expected_kind}" in job["response"]
+        match = re.search(r"Stored file path: (.+)", job["response"])
+        assert match is not None
+        stored_path = Path(match.group(1).strip().splitlines()[0])
+        assert stored_path.is_file()
+        assert stored_path.read_bytes() == b"office bytes"
+        assert stored_path.name.endswith(f"-{filename}")
+        assert (
+            workspace / ".codex-mobile-bridge" / "attachments" / payload["session_id"]
+        ) in stored_path.parents
+
+
+def test_attachment_batch_flow_accepts_office_documents() -> None:
+    with TemporaryDirectory() as projects_dir:
+        workspace = Path(projects_dir) / "workspace-a"
+        workspace.mkdir()
+        client = build_session_client(projects_root=projects_dir)
+        docx_bytes = build_docx_bytes("Contract paragraph")
+
+        create_response = client.post(
+            "/message/attachments",
+            data={
+                "message": "Compare the office files",
+                "workspace_path": str(workspace),
+            },
+            files=[
+                ("attachments", ("brief.pdf", b"%PDF-1.7\n", "application/pdf")),
+                (
+                    "attachments",
+                    (
+                        "slides.pptx",
+                        b"pptx bytes",
+                        "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                    ),
+                ),
+                (
+                    "attachments",
+                    (
+                        "sheet.xlsx",
+                        b"xlsx bytes",
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    ),
+                ),
+                (
+                    "attachments",
+                    (
+                        "notes.docx",
+                        docx_bytes,
+                        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    ),
+                ),
+            ],
+        )
+
+        assert create_response.status_code == 202
+        payload = create_response.json()
+        job = wait_for_job(client, payload["job_id"])
+
+        assert job["status"] == "completed"
+        assert "- pdf: brief.pdf" in job["message"]
+        assert "- pptx: slides.pptx" in job["message"]
+        assert "- xlsx: sheet.xlsx" in job["message"]
+        assert "- docx: notes.docx" in job["message"]
+        assert "Stored file path:" in job["response"]
+        assert "Contract paragraph" in job["response"]
+        attachment_dir = (
+            workspace / ".codex-mobile-bridge" / "attachments" / payload["session_id"]
+        )
+        assert attachment_dir.is_dir()
+        assert len(list(attachment_dir.iterdir())) == 4
+
+
 def test_document_message_flow_rejects_unsupported_documents() -> None:
     client = build_test_client()
 
@@ -7177,6 +7294,108 @@ def test_document_message_flow_rejects_unsupported_documents() -> None:
 
     assert create_response.status_code == 415
     assert "Unsupported document type" in create_response.json()["detail"]
+
+
+def test_document_message_flow_rejects_unsupported_extension_with_office_mime() -> None:
+    client = build_test_client()
+
+    create_response = client.post(
+        "/message/document",
+        files={"document": ("payload.exe", b"MZ fake", "application/pdf")},
+    )
+
+    assert create_response.status_code == 415
+    assert (
+        "Unsupported file extension for office/PDF upload: .exe"
+        in create_response.json()["detail"]
+    )
+
+
+def test_document_message_flow_rejects_office_extension_mime_mismatch() -> None:
+    client = build_test_client()
+
+    create_response = client.post(
+        "/message/document",
+        files={"document": ("brief.pdf", b"plain text", "text/plain")},
+    )
+
+    assert create_response.status_code == 415
+    assert "Unsupported MIME type for .pdf uploads" in create_response.json()["detail"]
+
+
+def test_attachment_batch_flow_rejects_unsupported_extension_with_office_mime() -> None:
+    client = build_multi_attachment_client()
+
+    create_response = client.post(
+        "/message/attachments",
+        data={"message": "Inspect this batch"},
+        files=[
+            ("attachments", ("notes.txt", b"Alpha", "text/plain")),
+            ("attachments", ("payload.exe", b"MZ fake", "application/pdf")),
+        ],
+    )
+
+    assert create_response.status_code == 415
+    assert (
+        "Unsupported file extension for office/PDF upload: .exe"
+        in create_response.json()["detail"]
+    )
+
+
+def test_attachment_batch_flow_preserves_text_image_audio_mime_classification() -> None:
+    client = build_multi_attachment_client()
+
+    create_response = client.post(
+        "/message/attachments",
+        data={"message": "Inspect mixed MIME attachments"},
+        files=[
+            ("attachments", ("example.foo", b"Alpha line\nBeta line", "text/plain")),
+            ("attachments", ("photo.heic", b"fake image bytes", "image/heic")),
+            ("attachments", ("voice.aif", b"fake audio bytes", "audio/aiff")),
+        ],
+    )
+
+    assert create_response.status_code == 202
+    payload = create_response.json()
+    job = wait_for_job(client, payload["job_id"])
+
+    assert job["status"] == "completed"
+    assert "- text: example.foo" in job["message"]
+    assert "- image: photo.heic" in job["message"]
+    assert "- audio: voice.aif" in job["message"]
+    assert "Extracted document text:\nAlpha line\nBeta line" in job["response"]
+    assert "Transcript:\nTranscribed audio from voice.aif" in job["response"]
+    assert "photo.heic" in job["response"]
+
+
+def test_document_message_flow_rejects_legacy_office_documents() -> None:
+    client = build_test_client()
+
+    create_response = client.post(
+        "/message/document",
+        files={
+            "document": (
+                "legacy.xls",
+                b"legacy spreadsheet bytes",
+                "application/vnd.ms-excel",
+            )
+        },
+    )
+
+    assert create_response.status_code == 415
+    assert "Unsupported document type" in create_response.json()["detail"]
+
+
+def test_document_message_flow_rejects_unsafe_upload_filenames() -> None:
+    client = build_test_client()
+
+    create_response = client.post(
+        "/message/document",
+        files={"document": ("../brief.pdf", b"%PDF-1.7\n", "application/pdf")},
+    )
+
+    assert create_response.status_code == 400
+    assert "Unsafe upload filename" in create_response.json()["detail"]
 
 
 def test_image_message_flow_accepts_image_uploads() -> None:
