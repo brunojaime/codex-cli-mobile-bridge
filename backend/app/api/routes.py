@@ -11,6 +11,7 @@ import sys
 import urllib.error
 import urllib.request
 from collections.abc import Iterator
+from contextlib import suppress
 from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
@@ -258,7 +259,14 @@ from backend.app.application.services.sdd_spec_target_service import (
     SpecTargetInput,
 )
 from backend.app.domain.entities.chat_message import ChatMessage
-from backend.app.domain.entities.agent_configuration import AgentId
+from backend.app.domain.entities.agent_configuration import (
+    AgentConfiguration,
+    AgentDisplayMode,
+    AgentId,
+    AgentPreset,
+    AgentVisibilityMode,
+    TurnBudgetMode,
+)
 from backend.app.domain.entities.job import Job, JobStatus
 from backend.app.container import AppContainer
 from backend.app.infrastructure.codex_tooling import (
@@ -650,6 +658,232 @@ def _stage_run_test_lines(text: str, *, executed: bool = False) -> list[str]:
     return lines[:50]
 
 
+_DEV_STAGE_AGENT_TURN_BUDGET = 20
+
+
+def _dev_stage_handoff_payload(
+    projection: dict[str, Any],
+    *,
+    stage_id: str,
+) -> dict[str, Any]:
+    for handoff in projection.get("handoffs") or []:
+        if handoff.get("stage_id") == stage_id:
+            payload = handoff.get("payload") or {}
+            return payload if isinstance(payload, dict) else {}
+    for backlog in projection.get("backlog") or []:
+        if backlog.get("stage_id") != stage_id:
+            continue
+        handoff_id = backlog.get("handoff_id")
+        for handoff in projection.get("handoffs") or []:
+            if handoff.get("id") == handoff_id:
+                payload = handoff.get("payload") or {}
+                return payload if isinstance(payload, dict) else {}
+    return {}
+
+
+def _dev_stage_chat_title(stage: dict[str, Any], payload: dict[str, Any]) -> str:
+    title = str(payload.get("title") or stage["spec_id"]).strip()
+    return f"DEV {stage['stage_id']} - {title}"[:120]
+
+
+def _dev_stage_generator_prompt(stage: dict[str, Any]) -> str:
+    return "\n".join(
+        [
+            "Sos el Generator Codex de un stage DEV del Codex Mobile Bridge.",
+            f"Stage: {stage['stage_id']}",
+            f"Spec: {stage['spec_id']}",
+            f"Worktree permitido: {stage['worktree_path']}",
+            f"Branch permitido: {stage['branch']}",
+            "",
+            "Trabaja solo en ese worktree DEV. No toques PROD, no reinicies PROD y no "
+            "promuevas cambios a produccion.",
+            "Lee spec.md, plan.md y tasks.md antes de modificar codigo.",
+            "Implementa el spec completo, actualiza tareas/evidencia cuando corresponda, "
+            "ejecuta validaciones enfocadas y reporta archivos cambiados, tests, riesgos "
+            "y blockers concretos.",
+            "Si el reviewer devuelve un prompt de continuacion, seguilo y conserva el "
+            "mismo objetivo hasta terminar el spec.",
+        ]
+    )
+
+
+def _dev_stage_reviewer_prompt(stage: dict[str, Any]) -> str:
+    return "\n".join(
+        [
+            "Sos el Reviewer Codex de un stage DEV del Codex Mobile Bridge.",
+            f"Stage: {stage['stage_id']}",
+            f"Spec: {stage['spec_id']}",
+            f"Worktree esperado: {stage['worktree_path']}",
+            "",
+            "Despues de cada respuesta del generator, revisa estrictamente contra "
+            "spec.md, plan.md, tasks.md y los acceptance criteria del handoff.",
+            "Verifica que el generator trabaje solo en DEV, que no use mock/demo paths "
+            "para releases reales, que ejecute tests relevantes y que deje evidencia.",
+            "Si falta implementacion, tests, validacion, limpieza o documentacion, "
+            "devolve status=continue con un prompt concreto en espanol para el generator.",
+            "Usa status=complete solo cuando el spec este implementado, testeado, "
+            "validado y listo para considerar merge a dev/main.",
+            "No devuelvas texto fuera del JSON que exige el backend.",
+        ]
+    )
+
+
+def _configure_dev_stage_agents(
+    container: AppContainer,
+    *,
+    session_id: str,
+    stage: dict[str, Any],
+) -> None:
+    configuration = AgentConfiguration.default().normalized()
+    for agent_id, definition in configuration.agents.items():
+        definition.trigger_interval = 0
+        if agent_id == AgentId.GENERATOR:
+            definition.enabled = True
+            definition.label = "DEV Generator"
+            definition.prompt = _dev_stage_generator_prompt(stage)
+            definition.visibility = AgentVisibilityMode.VISIBLE
+            definition.max_turns = _DEV_STAGE_AGENT_TURN_BUDGET
+        elif agent_id == AgentId.REVIEWER:
+            definition.enabled = True
+            definition.label = "DEV Reviewer"
+            definition.prompt = _dev_stage_reviewer_prompt(stage)
+            definition.visibility = AgentVisibilityMode.COLLAPSED
+            definition.max_turns = _DEV_STAGE_AGENT_TURN_BUDGET
+        else:
+            definition.enabled = False
+            definition.max_turns = 0
+    container.message_service.update_agent_configuration(
+        session_id=session_id,
+        configuration=AgentConfiguration(
+            preset=AgentPreset.REVIEW,
+            display_mode=AgentDisplayMode.SHOW_ALL,
+            turn_budget_mode=TurnBudgetMode.EACH_AGENT,
+            agents=configuration.agents,
+            supervisor_member_ids=configuration.supervisor_member_ids,
+            summary_strategy=configuration.summary_strategy,
+        ),
+    )
+
+
+def _start_dev_stage_chat_run(
+    container: AppContainer,
+    *,
+    stage_id: str,
+    session_id: str,
+    requested_by: str,
+    initial_prompt: str | None = None,
+) -> dict[str, Any]:
+    stage = container.dev_pipeline_service.get_stage(stage_id)
+    prepared = container.dev_pipeline_service.prepare_stage_run_start(
+        stage_id=stage_id,
+        session_id=session_id,
+        backend_url=str(stage["backend_url"]),
+        initial_prompt=initial_prompt,
+    )
+    _configure_dev_stage_agents(
+        container,
+        session_id=session_id,
+        stage=prepared["stage"],
+    )
+    job = container.message_service.submit_message(
+        prepared["prompt"],
+        session_id=session_id,
+        workspace_path=prepared["stage"]["worktree_path"],
+    )
+    run = container.dev_pipeline_service.record_stage_run_start(
+        stage_id=stage_id,
+        session_id=session_id,
+        requested_by=requested_by,
+        prompt=prepared["prompt"],
+        job_id=job.id,
+        agent_run_id=job.run_id,
+        generator_max_turns=_DEV_STAGE_AGENT_TURN_BUDGET,
+        reviewer_max_turns=_DEV_STAGE_AGENT_TURN_BUDGET,
+    )
+    projected = _project_stage_run(container, run)
+    container.dev_pipeline_service.record_stage_auto_start(
+        stage_id=stage_id,
+        status=str(projected.get("status") or "queued"),
+        session_id=session_id,
+        run_id=str(projected["id"]),
+    )
+    return projected
+
+
+def ensure_dev_stage_chat_run(
+    container: AppContainer,
+    *,
+    stage_id: str,
+    requested_by: str = "dev-auto-runner",
+    initial_prompt: str | None = None,
+    raise_errors: bool = False,
+) -> dict[str, Any]:
+    try:
+        stage = container.dev_pipeline_service.get_stage(stage_id)
+        projection = container.dev_pipeline_service.pipeline_projection(
+            stage_id=stage_id
+        )
+        runs = list(projection.get("runs") or [])
+        if runs:
+            run = sorted(runs, key=lambda item: str(item.get("created_at") or ""))[-1]
+            projected = _project_stage_run(container, run)
+            container.dev_pipeline_service.record_stage_auto_start(
+                stage_id=stage_id,
+                status=str(projected.get("status") or run.get("status") or "queued"),
+                session_id=str(run.get("session_id") or ""),
+                run_id=str(run.get("id") or ""),
+            )
+            return projected
+
+        payload = _dev_stage_handoff_payload(projection, stage_id=stage_id)
+        bindings = [
+            item for item in projection.get("sessions") or []
+            if item.get("stage_id") == stage_id
+        ]
+        session_id = str(bindings[0]["session_id"]) if bindings else ""
+        session = (
+            container.message_service.get_session(session_id) if session_id else None
+        )
+        if session is None:
+            session = container.message_service.create_session(
+                title=_dev_stage_chat_title(stage, payload),
+                workspace_path=stage["worktree_path"],
+                title_is_placeholder=False,
+            )
+            session_id = session.id
+        container.dev_pipeline_service.bind_stage_session(
+            session_id=session_id,
+            stage_id=stage_id,
+        )
+        return _start_dev_stage_chat_run(
+            container,
+            stage_id=stage_id,
+            session_id=session_id,
+            requested_by=requested_by,
+            initial_prompt=initial_prompt,
+        )
+    except Exception as exc:
+        reason = exc.code if isinstance(exc, DevPipelineError) else exc.__class__.__name__
+        detail = exc.message if isinstance(exc, DevPipelineError) else str(exc)
+        with suppress(Exception):
+            container.dev_pipeline_service.record_stage_auto_start(
+                stage_id=stage_id,
+                status="blocked",
+                blocker_reason=reason,
+                blocker_detail=detail,
+            )
+        if raise_errors:
+            raise
+        return {
+            "kind": "codex.devStageAutoStart",
+            "version": 1,
+            "stage_id": stage_id,
+            "status": "blocked",
+            "blocker_reason": reason,
+            "blocker_detail": detail,
+        }
+
+
 @router.get("/dev-pipeline", response_model=DevPipelineResponse)
 async def get_dev_pipeline_snapshot(
     container: AppContainer = Depends(get_container),
@@ -791,6 +1025,13 @@ async def notify_dev_backlog(
             worker_id=payload.worker_id,
             handoff_id=payload.handoff_id,
         )
+        stage = item.get("stage") if isinstance(item, dict) else None
+        if isinstance(stage, dict) and stage.get("stage_id"):
+            item["stage_run"] = ensure_dev_stage_chat_run(
+                container,
+                stage_id=str(stage["stage_id"]),
+                requested_by=payload.worker_id,
+            )
     except DevPipelineError as exc:
         _raise_dev_pipeline_error(exc)
     return _dev_pipeline_response(item)
@@ -904,15 +1145,14 @@ async def bind_or_create_dev_stage_session(
                 workspace_path=stage["worktree_path"],
             )
             session_id = session.id
-        container.message_service.update_auto_mode(
-            session_id=session_id,
-            enabled=True,
-            max_turns=1,
-            reviewer_prompt="Return the next implementation prompt for the generator.",
-        )
         binding = container.dev_pipeline_service.bind_stage_session(
             session_id=session_id,
             stage_id=stage_id,
+        )
+        _configure_dev_stage_agents(
+            container,
+            session_id=session_id,
+            stage=stage,
         )
     except (DevPipelineError, RuntimeError, ValueError) as exc:
         if isinstance(exc, DevPipelineError):
@@ -948,37 +1188,18 @@ async def start_dev_stage_run(
     container: AppContainer = Depends(get_container),
 ) -> DevPipelineResponse:
     try:
-        prepared = container.dev_pipeline_service.prepare_stage_run_start(
-            stage_id=stage_id,
-            session_id=payload.session_id,
-            backend_url=container.settings.api_base_url,
-            initial_prompt=payload.initial_prompt,
-        )
-        container.message_service.update_auto_mode(
-            session_id=payload.session_id,
-            enabled=True,
-            max_turns=1,
-            reviewer_prompt="Return the next implementation prompt for the generator.",
-        )
-        job = container.message_service.submit_message(
-            prepared["prompt"],
-            session_id=payload.session_id,
-            workspace_path=prepared["stage"]["worktree_path"],
-        )
-        run = container.dev_pipeline_service.record_stage_run_start(
+        run = _start_dev_stage_chat_run(
+            container,
             stage_id=stage_id,
             session_id=payload.session_id,
             requested_by=payload.requested_by,
-            prompt=prepared["prompt"],
-            job_id=job.id,
-            agent_run_id=job.run_id,
+            initial_prompt=payload.initial_prompt,
         )
     except (DevPipelineError, RuntimeError, ValueError) as exc:
         if isinstance(exc, DevPipelineError):
             _raise_dev_pipeline_error(exc)
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    projected = _project_stage_run(container, run)
-    return _dev_pipeline_response(projected)
+    return _dev_pipeline_response(run)
 
 
 @router.get(

@@ -1104,6 +1104,47 @@ class DevPipelineService:
         state = self._read_state()
         return self._require_stage(state, stage_id)
 
+    def record_stage_auto_start(
+        self,
+        *,
+        stage_id: str,
+        status: str,
+        session_id: str | None = None,
+        run_id: str | None = None,
+        blocker_reason: str | None = None,
+        blocker_detail: str | None = None,
+    ) -> dict[str, Any]:
+        self._require_enabled()
+        self._require_environment("dev")
+        state = self._read_state()
+        stage = self._require_stage(state, stage_id)
+        now = _utc_iso()
+        auto_start = {
+            "kind": "codex.devStageAutoStart",
+            "version": 1,
+            "status": status,
+            "session_id": session_id or None,
+            "run_id": run_id or None,
+            "blocker_reason": blocker_reason,
+            "blocker_detail": blocker_detail,
+            "updated_at": now,
+        }
+        stage["auto_start"] = auto_start
+        stage["updated_at"] = now
+        state["events"].append(
+            {
+                "type": "stage.auto_start",
+                "created_at": now,
+                "stage_id": stage_id,
+                "status": status,
+                "session_id": session_id,
+                "run_id": run_id,
+                "blocker_reason": blocker_reason,
+            }
+        )
+        self._write_state(state)
+        return stage
+
     def bind_stage_session(
         self,
         *,
@@ -1226,6 +1267,8 @@ class DevPipelineService:
         prompt: str,
         job_id: str | None,
         agent_run_id: str | None,
+        generator_max_turns: int = 20,
+        reviewer_max_turns: int = 20,
     ) -> dict[str, Any]:
         self._require_enabled()
         self._require_environment("dev")
@@ -1254,6 +1297,8 @@ class DevPipelineService:
                 "generator": "enabled",
                 "reviewer": "enabled",
                 "reviewer_feedback_becomes_next_generator_prompt": True,
+                "generator_max_turns": generator_max_turns,
+                "reviewer_max_turns": reviewer_max_turns,
             },
             "evidence": {
                 "changed_files": [],
@@ -1264,7 +1309,7 @@ class DevPipelineService:
                     "continue": None,
                     "status": "planned",
                 },
-                "risks": ["agent execution is not started by this control yet"],
+                "risks": ["agent execution is running in a DEV stage chat"],
                 "final_summary": None,
             },
             "started_at": now if job_id else None,
@@ -1399,13 +1444,24 @@ class DevPipelineService:
         return "\n\n".join(
             part
             for part in [
-                f"Implement DEV stage `{stage['stage_id']}` for spec `{stage['spec_id']}`.",
-                f"Title: {title}",
-                f"Problem: {problem}" if problem else "",
-                f"Context: {context}" if context else "",
-                f"Acceptance criteria: {acceptance}" if acceptance else "",
-                f"Workspace: {stage['worktree_path']}",
-                f"Branch: {stage['branch']}",
+                (
+                    "Ponete a trabajar en este stage DEV hasta dejar el spec "
+                    "implementado, testeado y validado."
+                ),
+                f"Stage: `{stage['stage_id']}`",
+                f"Spec: `{stage['spec_id']}`",
+                f"Titulo: {title}",
+                f"Problema: {problem}" if problem else "",
+                f"Contexto: {context}" if context else "",
+                f"Criterios de aceptacion: {acceptance}" if acceptance else "",
+                f"Worktree DEV permitido: {stage['worktree_path']}",
+                f"Branch DEV permitido: {stage['branch']}",
+                (
+                    "Primero lee `spec.md`, `plan.md` y `tasks.md`. Despues "
+                    "implementa en este worktree, marca/actualiza evidencia si "
+                    "corresponde, ejecuta validaciones enfocadas y reporta archivos "
+                    "cambiados, tests ejecutados, riesgos y blockers. No toques PROD."
+                ),
             ]
             if part
         )

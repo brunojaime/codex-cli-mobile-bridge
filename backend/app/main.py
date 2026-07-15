@@ -9,7 +9,7 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
-from backend.app.api.routes import get_container, router
+from backend.app.api.routes import ensure_dev_stage_chat_run, get_container, router
 from backend.app.application.services.message_service import MaintenanceModeError
 from backend.app.container import AppContainer, build_container
 from backend.app.infrastructure.config.settings import Settings
@@ -163,13 +163,34 @@ async def _dev_pipeline_auto_runner_loop(container: AppContainer) -> None:
     while True:
         try:
             await asyncio.to_thread(
-                container.dev_pipeline_service.auto_materialize_queued_backlog,
-                worker_id=worker_id,
-                limit=1,
-                created_after=started_at,
+                _auto_materialize_and_start_stage_runs,
+                container,
+                worker_id,
+                started_at,
             )
         except Exception:
             # Reconciliation must stay alive. Failures are represented in the
             # DEV pipeline state when materialization itself blocks.
             pass
         await asyncio.sleep(interval)
+
+
+def _auto_materialize_and_start_stage_runs(
+    container: AppContainer,
+    worker_id: str,
+    created_after: str | None,
+) -> None:
+    results = container.dev_pipeline_service.auto_materialize_queued_backlog(
+        worker_id=worker_id,
+        limit=1,
+        created_after=created_after,
+    )
+    for result in results:
+        stage = result.get("stage") if isinstance(result, dict) else None
+        if not isinstance(stage, dict) or not stage.get("stage_id"):
+            continue
+        ensure_dev_stage_chat_run(
+            container,
+            stage_id=str(stage["stage_id"]),
+            requested_by=worker_id,
+        )
