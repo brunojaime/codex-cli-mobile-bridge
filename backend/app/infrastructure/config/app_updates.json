@@ -312,7 +312,7 @@
     "releaseMetadata": {
       "initialPreviewRelease": true,
       "latestAssetName": "rentid.apk",
-      "releaseTag": "android-preview-v0.1.0-build.13",
+      "releaseTag": "android-preview-v0.1.0-build.21",
       "releaseTagPattern": "android-preview-v*"
     },
     "releaseTagPattern": "android-preview-v*",
@@ -377,7 +377,7 @@
     "releaseMetadata": {
       "initialPreviewRelease": true,
       "latestAssetName": "satshowroom.apk",
-      "releaseTag": "android-preview-v0.1.0-build.28",
+      "releaseTag": "android-preview-v0.1.0-build.35",
       "releaseTagPattern": "android-preview-v*"
     },
     "releaseTagPattern": "android-preview-v*",
