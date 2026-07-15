@@ -54,6 +54,22 @@ void main() {
     );
   });
 
+  test('attachment picker includes supported office documents', () {
+    final withImages = supportedAttachmentPickerExtensionsForTest(
+      includeImages: true,
+    );
+    final withoutImages = supportedAttachmentPickerExtensionsForTest(
+      includeImages: false,
+    );
+
+    expect(withImages, containsAll(<String>['pdf', 'docx', 'pptx', 'xlsx']));
+    expect(withImages, containsAll(<String>['aif', 'aiff', 'amr', 'oga']));
+    expect(withImages, contains('png'));
+    expect(withoutImages, containsAll(<String>['pdf', 'docx', 'pptx', 'xlsx']));
+    expect(withoutImages, containsAll(<String>['aif', 'aiff', 'amr', 'oga']));
+    expect(withoutImages, isNot(contains('png')));
+  });
+
   test('Codex app updater honors explicit Android enablement define', () {
     expect(
       shouldEnableCodexAppUpdater(

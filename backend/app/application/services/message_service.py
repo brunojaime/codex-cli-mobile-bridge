@@ -71,7 +71,7 @@ from backend.app.infrastructure.transcription.base import (
 )
 
 
-DocumentKind = Literal["audio", "docx", "image", "text"]
+DocumentKind = Literal["audio", "docx", "image", "pdf", "pptx", "text", "xlsx"]
 _TURN_SUMMARY_TRIGGER_MESSAGE_COUNT = 3
 _TURN_SUMMARY_COMPLETION_TIMEOUT_SECONDS = 15.0
 _TITLE_REFRESH_USER_TURN_INTERVAL = 2
@@ -157,6 +157,61 @@ _TEXT_SUFFIXES = {
     ".xml",
     ".yaml",
     ".yml",
+}
+_OFFICE_DOCUMENT_KIND_BY_SUFFIX: dict[str, DocumentKind] = {
+    ".docx": "docx",
+    ".pdf": "pdf",
+    ".pptx": "pptx",
+    ".xlsx": "xlsx",
+}
+_LEGACY_OFFICE_SUFFIXES = frozenset({".doc", ".ppt", ".xls"})
+_MODERN_OFFICE_SUFFIXES = frozenset({".docx", ".pptx", ".xlsx"})
+_GENERIC_UPLOAD_CONTENT_TYPES = frozenset(
+    {
+        "",
+        "application/octet-stream",
+        "binary/octet-stream",
+        "application/x-octet-stream",
+    }
+)
+_ZIP_UPLOAD_CONTENT_TYPES = frozenset(
+    {
+        "application/zip",
+        "application/x-zip",
+        "application/x-zip-compressed",
+    }
+)
+_OFFICE_DOCUMENT_MIME_TYPES_BY_SUFFIX = {
+    ".docx": frozenset(
+        {
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "application/msword",
+        }
+    ),
+    ".pdf": frozenset({"application/pdf", "application/x-pdf"}),
+    ".pptx": frozenset(
+        {
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            "application/vnd.ms-powerpoint",
+        }
+    ),
+    ".xlsx": frozenset(
+        {
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "application/vnd.ms-excel",
+        }
+    ),
+}
+_OFFICE_DOCUMENT_KIND_BY_MIME_TYPE = {
+    mime_type: kind
+    for suffix, kind in _OFFICE_DOCUMENT_KIND_BY_SUFFIX.items()
+    for mime_type in _OFFICE_DOCUMENT_MIME_TYPES_BY_SUFFIX[suffix]
+    if mime_type
+    not in {
+        "application/msword",
+        "application/vnd.ms-excel",
+        "application/vnd.ms-powerpoint",
+    }
 }
 
 _RESERVED_MESSAGE_SUPERSEDED_REASON = (
@@ -1370,6 +1425,11 @@ class MessageService:
             document_kind=document_kind,
             document_name=attached_document_name,
         )
+        session = self._resolve_session(
+            message=display_message,
+            session_id=session_id,
+            workspace_path=workspace_path,
+        )
         cleanup_paths = [str(resolved_path)]
 
         if document_kind == "audio":
@@ -1391,8 +1451,7 @@ class MessageService:
             )
             job = self.submit_message(
                 display_message,
-                session_id=session_id,
-                workspace_path=workspace_path,
+                session_id=session.id,
                 cleanup_paths=cleanup_paths,
                 execution_message=prompt,
                 codex_options=codex_options,
@@ -1405,24 +1464,51 @@ class MessageService:
                 extracted_text_preview=self._build_text_preview(transcript),
             )
 
-        extracted_text = self._extract_document_text(
-            document_path=resolved_path,
-            document_kind=document_kind,
-        ).strip()
-        if not extracted_text:
-            raise DocumentProcessingError("Document extraction returned empty text.")
+        stored_document_path = self._stage_session_attachment(
+            session=session,
+            source_path=resolved_path,
+            filename=attached_document_name,
+        )
 
-        prompt = self._build_document_execution_message(
+        if document_kind in {"docx", "text"}:
+            extracted_text = self._extract_document_text(
+                document_path=resolved_path,
+                document_kind=document_kind,
+            ).strip()
+            if not extracted_text:
+                raise DocumentProcessingError("Document extraction returned empty text.")
+
+            prompt = self._build_document_execution_message(
+                message=message,
+                document_kind=document_kind,
+                document_name=attached_document_name,
+                content_label="Extracted document text",
+                content=extracted_text,
+                stored_file_path=stored_document_path,
+            )
+            job = self.submit_message(
+                display_message,
+                session_id=session.id,
+                cleanup_paths=cleanup_paths,
+                execution_message=prompt,
+                codex_options=codex_options,
+            )
+            return DocumentSubmission(
+                job=job,
+                document_kind=document_kind,
+                attached_document_name=attached_document_name,
+                extracted_text_preview=self._build_text_preview(extracted_text),
+            )
+
+        prompt = self._build_stored_document_execution_message(
             message=message,
             document_kind=document_kind,
             document_name=attached_document_name,
-            content_label="Extracted document text",
-            content=extracted_text,
+            stored_file_path=stored_document_path,
         )
         job = self.submit_message(
             display_message,
-            session_id=session_id,
-            workspace_path=workspace_path,
+            session_id=session.id,
             cleanup_paths=cleanup_paths,
             execution_message=prompt,
             codex_options=codex_options,
@@ -1431,7 +1517,6 @@ class MessageService:
             job=job,
             document_kind=document_kind,
             attached_document_name=attached_document_name,
-            extracted_text_preview=self._build_text_preview(extracted_text),
         )
 
     def submit_image_message(
@@ -1494,18 +1579,35 @@ class MessageService:
         if not attachments:
             raise ValueError("At least one attachment is required.")
 
+        classified_attachments: list[tuple[AttachmentInput, DocumentKind]] = []
+        for attachment in attachments:
+            attached_name = attachment.filename or Path(attachment.path).name
+            classified_attachments.append(
+                (
+                    attachment,
+                    self._classify_document(
+                        filename=attached_name,
+                        content_type=attachment.content_type,
+                    ),
+                )
+            )
+
+        session = self._resolve_session(
+            message=message or "",
+            session_id=session_id,
+            workspace_path=workspace_path,
+        )
         cleanup_paths: list[str] = []
         image_paths: list[str] = []
         attachment_summaries: list[str] = []
         attachment_details: list[str] = []
 
-        for index, attachment in enumerate(attachments, start=1):
+        for index, (attachment, document_kind) in enumerate(
+            classified_attachments,
+            start=1,
+        ):
             resolved_path = Path(attachment.path)
             attached_name = attachment.filename or resolved_path.name
-            document_kind = self._classify_document(
-                filename=attached_name,
-                content_type=attachment.content_type,
-            )
             cleanup_paths.append(str(resolved_path))
             attachment_summaries.append(f"- {document_kind}: {attached_name}")
 
@@ -1535,21 +1637,38 @@ class MessageService:
                 )
                 continue
 
-            extracted_text = self._extract_document_text(
-                document_path=resolved_path,
-                document_kind=document_kind,
-            ).strip()
-            if not extracted_text:
-                raise DocumentProcessingError(
-                    "Document extraction returned empty text."
+            stored_document_path = self._stage_session_attachment(
+                session=session,
+                source_path=resolved_path,
+                filename=attached_name,
+            )
+            if document_kind in {"docx", "text"}:
+                extracted_text = self._extract_document_text(
+                    document_path=resolved_path,
+                    document_kind=document_kind,
+                ).strip()
+                if not extracted_text:
+                    raise DocumentProcessingError(
+                        "Document extraction returned empty text."
+                    )
+                attachment_details.append(
+                    self._build_attachment_detail_section(
+                        index=index,
+                        document_kind=document_kind,
+                        document_name=attached_name,
+                        content_label="Extracted document text",
+                        content=extracted_text,
+                        stored_file_path=stored_document_path,
+                    )
                 )
+                continue
+
             attachment_details.append(
-                self._build_attachment_detail_section(
+                self._build_stored_attachment_detail_section(
                     index=index,
                     document_kind=document_kind,
                     document_name=attached_name,
-                    content_label="Extracted document text",
-                    content=extracted_text,
+                    stored_file_path=stored_document_path,
                 )
             )
 
@@ -1565,8 +1684,7 @@ class MessageService:
         )
         return self.submit_message(
             display_message,
-            session_id=session_id,
-            workspace_path=workspace_path,
+            session_id=session.id,
             image_paths=image_paths or None,
             cleanup_paths=cleanup_paths,
             execution_message=execution_message,
@@ -1905,6 +2023,40 @@ class MessageService:
             shutil.copy2(source, destination)
             persisted_paths.append(str(destination))
         return persisted_paths
+
+    def _stage_session_attachment(
+        self,
+        *,
+        session: ChatSession,
+        source_path: Path,
+        filename: str,
+    ) -> Path:
+        safe_filename = self._safe_attachment_filename(filename)
+        target_dir = (
+            Path(session.workspace_path).resolve()
+            / ".codex-mobile-bridge"
+            / "attachments"
+            / session.id
+        )
+        target_dir.mkdir(parents=True, exist_ok=True)
+        target_path = target_dir / f"{uuid4().hex}-{safe_filename}"
+        shutil.copy2(source_path, target_path)
+        return target_path
+
+    def _safe_attachment_filename(self, filename: str) -> str:
+        normalized = filename.strip()
+        if (
+            not normalized
+            or normalized in {".", ".."}
+            or "/" in normalized
+            or "\\" in normalized
+            or "\x00" in normalized
+            or Path(normalized).name != normalized
+        ):
+            raise UnsupportedDocumentError(
+                "Unsafe attachment filename. Use a plain file name without path separators."
+            )
+        return normalized
 
     def _resolve_session(
         self,
@@ -4380,15 +4532,43 @@ class MessageService:
         normalized_content_type = (
             (content_type or "").split(";", maxsplit=1)[0].strip().lower()
         )
+        has_useful_suffix = bool(suffix and suffix != ".bin")
 
-        if normalized_content_type.startswith("image/") or suffix in _IMAGE_SUFFIXES:
+        if suffix in _LEGACY_OFFICE_SUFFIXES:
+            raise UnsupportedDocumentError(
+                "Unsupported document type. Legacy .doc, .ppt, and .xls files "
+                "are not supported; upload .docx, .pptx, .xlsx, or .pdf instead."
+            )
+        if suffix in _OFFICE_DOCUMENT_KIND_BY_SUFFIX:
+            if not self._office_content_type_matches_suffix(
+                suffix=suffix,
+                content_type=normalized_content_type,
+            ):
+                raise UnsupportedDocumentError(
+                    f"Unsupported MIME type for {suffix} uploads: "
+                    f"{normalized_content_type or 'unknown'}."
+                )
+            return _OFFICE_DOCUMENT_KIND_BY_SUFFIX[suffix]
+        if suffix in _IMAGE_SUFFIXES:
             return "image"
-        if normalized_content_type.startswith("audio/") or suffix in _AUDIO_SUFFIXES:
+        if suffix in _AUDIO_SUFFIXES:
             return "audio"
-        if suffix == ".docx" or normalized_content_type in {
-            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        }:
-            return "docx"
+        if suffix in _TEXT_SUFFIXES:
+            return "text"
+        if (
+            has_useful_suffix
+            and normalized_content_type in _OFFICE_DOCUMENT_KIND_BY_MIME_TYPE
+        ):
+            raise UnsupportedDocumentError(
+                f"Unsupported file extension for office/PDF upload: {suffix}. "
+                "Use .pdf, .docx, .pptx, or .xlsx."
+            )
+        if normalized_content_type in _OFFICE_DOCUMENT_KIND_BY_MIME_TYPE:
+            return _OFFICE_DOCUMENT_KIND_BY_MIME_TYPE[normalized_content_type]
+        if normalized_content_type.startswith("image/"):
+            return "image"
+        if normalized_content_type.startswith("audio/"):
+            return "audio"
         if self._looks_like_text_document(
             suffix=suffix, content_type=normalized_content_type
         ):
@@ -4396,8 +4576,23 @@ class MessageService:
 
         raise UnsupportedDocumentError(
             "Unsupported document type. Supported uploads are audio, text/code files, "
-            "and .docx documents."
+            "images, and .pdf, .docx, .pptx, or .xlsx documents."
         )
+
+    def _office_content_type_matches_suffix(
+        self,
+        *,
+        suffix: str,
+        content_type: str,
+    ) -> bool:
+        if content_type in _GENERIC_UPLOAD_CONTENT_TYPES:
+            return True
+        if (
+            suffix in _MODERN_OFFICE_SUFFIXES
+            and content_type in _ZIP_UPLOAD_CONTENT_TYPES
+        ):
+            return True
+        return content_type in _OFFICE_DOCUMENT_MIME_TYPES_BY_SUFFIX[suffix]
 
     def _looks_like_text_document(
         self,
@@ -4440,16 +4635,41 @@ class MessageService:
         document_name: str,
         content_label: str,
         content: str,
+        stored_file_path: Path | None = None,
     ) -> str:
         instructions = (message or "").strip() or (
             f"Please analyze the attached {document_kind} document."
         )
         truncated_content = self._truncate_document_text(content)
+        stored_path_block = (
+            f"Stored file path: {stored_file_path}\n" if stored_file_path else ""
+        )
         return (
             f"{instructions}\n\n"
             f"Document name: {document_name}\n"
             f"Document kind: {document_kind}\n\n"
+            f"{stored_path_block}"
             f"{content_label}:\n{truncated_content}"
+        )
+
+    def _build_stored_document_execution_message(
+        self,
+        *,
+        message: str | None,
+        document_kind: DocumentKind,
+        document_name: str,
+        stored_file_path: Path,
+    ) -> str:
+        instructions = (message or "").strip() or (
+            f"Please inspect the attached {document_kind} document."
+        )
+        return (
+            f"{instructions}\n\n"
+            f"Document name: {document_name}\n"
+            f"Document kind: {document_kind}\n"
+            f"Stored file path: {stored_file_path}\n\n"
+            "The backend stored this file in the active workspace. "
+            "Inspect it directly from the stored path when needed."
         )
 
     def _build_attachment_detail_section(
@@ -4460,13 +4680,35 @@ class MessageService:
         document_name: str,
         content_label: str,
         content: str,
+        stored_file_path: Path | None = None,
     ) -> str:
         truncated_content = self._truncate_document_text(content)
+        stored_path_block = (
+            f"Stored file path: {stored_file_path}\n" if stored_file_path else ""
+        )
         return (
             f"Attachment {index}\n"
             f"Document name: {document_name}\n"
             f"Document kind: {document_kind}\n\n"
+            f"{stored_path_block}"
             f"{content_label}:\n{truncated_content}"
+        )
+
+    def _build_stored_attachment_detail_section(
+        self,
+        *,
+        index: int,
+        document_kind: DocumentKind,
+        document_name: str,
+        stored_file_path: Path,
+    ) -> str:
+        return (
+            f"Attachment {index}\n"
+            f"Document name: {document_name}\n"
+            f"Document kind: {document_kind}\n"
+            f"Stored file path: {stored_file_path}\n\n"
+            "The backend stored this file in the active workspace. "
+            "Inspect it directly from the stored path when needed."
         )
 
     def _build_attachment_batch_display_message(

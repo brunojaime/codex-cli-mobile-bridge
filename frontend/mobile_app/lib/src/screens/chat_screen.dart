@@ -69,6 +69,73 @@ const String _projectFactoryReviewerPrompt =
     'generator output.';
 const String kProjectFactoryReadyForBuildMarker =
     'PROJECT_FACTORY_READY_FOR_BUILD';
+const List<String> _supportedFileAttachmentExtensions = <String>[
+  'aac',
+  'aif',
+  'aiff',
+  'amr',
+  'c',
+  'cc',
+  'cfg',
+  'conf',
+  'cpp',
+  'cs',
+  'css',
+  'csv',
+  'docx',
+  'env',
+  'flac',
+  'go',
+  'graphql',
+  'h',
+  'hpp',
+  'html',
+  'ini',
+  'java',
+  'js',
+  'json',
+  'jsx',
+  'kt',
+  'log',
+  'lua',
+  'm4a',
+  'md',
+  'mp3',
+  'mp4',
+  'mpeg',
+  'mpga',
+  'ogg',
+  'oga',
+  'opus',
+  'pdf',
+  'pptx',
+  'py',
+  'rb',
+  'rs',
+  'sh',
+  'sql',
+  'svg',
+  'toml',
+  'ts',
+  'tsx',
+  'txt',
+  'wav',
+  'webm',
+  'xlsx',
+  'xml',
+  'yaml',
+  'yml',
+];
+const List<String> _supportedImageAttachmentExtensions = <String>[
+  'bmp',
+  'gif',
+  'jpeg',
+  'jpg',
+  'png',
+  'tif',
+  'tiff',
+  'webp',
+];
 
 AgentConfiguration buildProjectFactoryIntakeConfiguration(
   AgentConfiguration current, {
@@ -6606,7 +6673,7 @@ class _ComposerState extends State<_Composer> {
                   leading: const Icon(Icons.insert_drive_file_outlined),
                   title: const Text('Browse files'),
                   subtitle: const Text(
-                    'Attach documents, code, text files, or images',
+                    'Attach PDF, Office, code, text files, or images',
                   ),
                   onTap: () =>
                       Navigator.of(context).pop(_AttachmentSourceAction.file),
@@ -6668,7 +6735,10 @@ class _ComposerState extends State<_Composer> {
   Future<void> _pickDocument() async {
     try {
       final result = await FilePicker.platform.pickFiles(
-        type: FileType.any,
+        type: FileType.custom,
+        allowedExtensions: supportedAttachmentPickerExtensionsForTest(
+          includeImages: widget.imageAttachmentsEnabled,
+        ),
         allowMultiple: true,
         withData: true,
       );
@@ -11793,6 +11863,18 @@ String _editedImageFileName(String fileName) {
     return '$trimmed-edited.png';
   }
   return '${trimmed.substring(0, dotIndex)}-edited.png';
+}
+
+@visibleForTesting
+List<String> supportedAttachmentPickerExtensionsForTest({
+  required bool includeImages,
+}) {
+  final extensions = <String>{
+    ..._supportedFileAttachmentExtensions,
+    if (includeImages) ..._supportedImageAttachmentExtensions,
+  }.toList()
+    ..sort();
+  return extensions;
 }
 
 @visibleForTesting

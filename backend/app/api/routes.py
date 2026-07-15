@@ -289,6 +289,13 @@ _IMAGE_CONTENT_TYPE_SUFFIXES = {
     "image/tiff": ".tiff",
     "image/webp": ".webp",
 }
+_DOCUMENT_CONTENT_TYPE_SUFFIXES = {
+    "application/pdf": ".pdf",
+    "application/x-pdf": ".pdf",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation": ".pptx",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
+}
 
 _TRANSPARENT_PNG_BASE64 = (
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/"
@@ -6547,7 +6554,13 @@ async def _store_uploaded_file(
 
 
 def _safe_upload_suffix(upload: UploadFile, *, default_filename: str) -> str:
-    suffix = Path(upload.filename or "").suffix or Path(default_filename).suffix
+    filename = upload.filename or ""
+    if _has_unsafe_upload_filename(filename):
+        raise HTTPException(
+            status_code=400,
+            detail="Unsafe upload filename. Use a plain file name without path separators.",
+        )
+    suffix = Path(filename).suffix or Path(default_filename).suffix
     normalized_content_type = (
         (upload.content_type or "").split(";", maxsplit=1)[0].strip().lower()
     )
@@ -6555,7 +6568,22 @@ def _safe_upload_suffix(upload: UploadFile, *, default_filename: str) -> str:
         image_suffix = _IMAGE_CONTENT_TYPE_SUFFIXES.get(normalized_content_type)
         if image_suffix is not None:
             return image_suffix
+        document_suffix = _DOCUMENT_CONTENT_TYPE_SUFFIXES.get(normalized_content_type)
+        if document_suffix is not None:
+            return document_suffix
     return suffix or ".bin"
+
+
+def _has_unsafe_upload_filename(filename: str) -> bool:
+    if not filename:
+        return False
+    return (
+        filename in {".", ".."}
+        or "/" in filename
+        or "\\" in filename
+        or "\x00" in filename
+        or Path(filename).name != filename
+    )
 
 
 def _project_factory_manifest_input(
