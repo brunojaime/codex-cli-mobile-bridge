@@ -1276,7 +1276,7 @@ void main() {
     );
   });
 
-  testWidgets('sidebar project can be removed and stays removed after rebuild',
+  testWidgets('sidebar project can be unpinned while chats stay visible',
       (WidgetTester tester) async {
     SharedPreferences.setMockInitialValues(<String, Object>{});
 
@@ -1300,29 +1300,29 @@ void main() {
     expect(
       find.descendant(
         of: drawer,
-        matching: find.text('Workspace A', skipOffstage: false),
+        matching: find.text('Pinned Chat', skipOffstage: false),
       ),
       findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: drawer,
+        matching: find.text('No projects pinned yet', skipOffstage: false),
+      ),
+      findsNothing,
     );
 
     await tester.tap(
       find.byTooltip('Project actions for Workspace A'),
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Remove project'));
+    await tester.tap(find.text('Unpin project'));
     await tester.pumpAndSettle();
 
     expect(
       find.descendant(
         of: drawer,
-        matching: find.text('Workspace A', skipOffstage: false),
-      ),
-      findsNothing,
-    );
-    expect(
-      find.descendant(
-        of: drawer,
-        matching: find.text('No projects pinned yet', skipOffstage: false),
+        matching: find.text('Pinned Chat', skipOffstage: false),
       ),
       findsOneWidget,
     );
@@ -1350,16 +1350,16 @@ void main() {
     expect(
       find.descendant(
         of: rebuiltDrawer,
-        matching: find.text('Workspace A', skipOffstage: false),
+        matching: find.text('Pinned Chat', skipOffstage: false),
       ),
-      findsNothing,
+      findsOneWidget,
     );
     expect(
       find.descendant(
         of: rebuiltDrawer,
         matching: find.text('No projects pinned yet', skipOffstage: false),
       ),
-      findsOneWidget,
+      findsNothing,
     );
   });
 
@@ -1411,6 +1411,72 @@ void main() {
       find.descendant(
         of: drawer,
         matching: find.text('Recovered Chat', skipOffstage: false),
+      ),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('sidebar shows chats for discoverable unpinned workspaces',
+      (WidgetTester tester) async {
+    final session = _buildSession(
+      title: 'DEV spec-020 - Adjuntos de oficina',
+      workspacePath: '/workspace/codex-cli-mobile-bridge-spec-020',
+      workspaceName: 'codex-cli-mobile-bridge-spec-020',
+      messages: const <ChatMessage>[],
+    );
+    final apiClient = _ChatScreenOverflowApiClient(
+      session,
+      workspaces: const <Workspace>[
+        Workspace(
+          name: 'codex-cli-mobile-bridge',
+          path: '/workspace/codex-cli-mobile-bridge',
+        ),
+        Workspace(
+          name: 'codex-cli-mobile-bridge-spec-020',
+          path: '/workspace/codex-cli-mobile-bridge-spec-020',
+        ),
+      ],
+    );
+    final controller = ChatController(
+      apiClient: apiClient,
+      notificationService: const NoopChatNotificationService(),
+    );
+    addTearDown(controller.dispose);
+    await controller.refreshAppState();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ChatScreen(
+          initialApiBaseUrl: 'http://localhost:8000',
+          notificationService: const NoopChatNotificationService(),
+          controllerOverride: controller,
+          enableServerBootstrap: false,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    tester.state<ScaffoldState>(find.byType(Scaffold)).openDrawer();
+    await tester.pumpAndSettle();
+
+    final drawer = find.byType(Drawer);
+    expect(
+      find.descendant(
+        of: drawer,
+        matching: find.text(
+          'codex-cli-mobile-bridge-spec-020',
+          skipOffstage: false,
+        ),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: drawer,
+        matching: find.text(
+          'DEV spec-020 - Adjuntos de oficina',
+          skipOffstage: false,
+        ),
       ),
       findsOneWidget,
     );

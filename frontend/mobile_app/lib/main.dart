@@ -27,8 +27,9 @@ const _configuredCodexBridgeDevMode = bool.fromEnvironment(
 );
 const _configuredCodexBridgeWorkspacePath = String.fromEnvironment(
   'CODEX_BRIDGE_WORKSPACE_PATH',
-  defaultValue: 'codex-cli-mobile-bridge',
+  defaultValue: _defaultCodexBridgeWorkspacePath,
 );
+const _defaultCodexBridgeWorkspacePath = 'codex-cli-mobile-bridge';
 const _configuredBridgeSourceApp = String.fromEnvironment(
   'BRIDGE_APP_SOURCE_APP',
   defaultValue: 'codex-mobile',
@@ -99,6 +100,22 @@ bool isCodexBridgeDevModeEnabled({
   bool configuredEnabled = _configuredCodexBridgeDevMode,
 }) {
   return configuredEnabled;
+}
+
+@visibleForTesting
+String? resolveCodexBridgeWorkbenchWorkspacePath({
+  bool? devAppBuild,
+  String configuredWorkspacePath = _configuredCodexBridgeWorkspacePath,
+}) {
+  final trimmed = configuredWorkspacePath.trim();
+  if (trimmed.isEmpty) {
+    return null;
+  }
+  final isDevApp = devAppBuild ?? _isDevAppBuild();
+  if (isDevApp && trimmed == _defaultCodexBridgeWorkspacePath) {
+    return null;
+  }
+  return trimmed;
 }
 
 class CodexMobileApp extends StatefulWidget {
@@ -188,7 +205,7 @@ class _CodexMobileAppState extends State<CodexMobileApp> {
         return CodexBridgeDevModeWrapper(
           enabled: isCodexBridgeDevModeEnabled(),
           bridgeUrl: _activeBridgeUrl,
-          workspacePath: _configuredCodexBridgeWorkspacePath,
+          workspacePath: resolveCodexBridgeWorkbenchWorkspacePath(),
           sddFeedbackSubmitter: _submitBridgeSddFeedback,
           sddActionSubmitter: _submitBridgeSddCodexAction,
           child: CodexAppUpdater(

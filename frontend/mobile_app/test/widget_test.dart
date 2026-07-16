@@ -122,6 +122,38 @@ void main() {
     expect(isCodexBridgeDevModeEnabled(configuredEnabled: true), isTrue);
   });
 
+  test('Codex Bridge Workbench workspace resolves global index for DEV default',
+      () {
+    expect(
+      resolveCodexBridgeWorkbenchWorkspacePath(
+        devAppBuild: true,
+        configuredWorkspacePath: 'codex-cli-mobile-bridge',
+      ),
+      isNull,
+    );
+    expect(
+      resolveCodexBridgeWorkbenchWorkspacePath(
+        devAppBuild: true,
+        configuredWorkspacePath: '/workspace/stage-020',
+      ),
+      '/workspace/stage-020',
+    );
+    expect(
+      resolveCodexBridgeWorkbenchWorkspacePath(
+        devAppBuild: false,
+        configuredWorkspacePath: 'codex-cli-mobile-bridge',
+      ),
+      'codex-cli-mobile-bridge',
+    );
+    expect(
+      resolveCodexBridgeWorkbenchWorkspacePath(
+        devAppBuild: true,
+        configuredWorkspacePath: '   ',
+      ),
+      isNull,
+    );
+  });
+
   testWidgets('Codex Bridge dev wrapper returns child unchanged when disabled',
       (
     tester,

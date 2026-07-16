@@ -3962,22 +3962,22 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
     final visibleWorkspaces = <Workspace>[..._sidebarWorkspaces];
     final visibleWorkspacePaths =
         visibleWorkspaces.map((workspace) => workspace.path).toSet();
-    final knownWorkspacePaths =
-        _chatController.workspaces.map((workspace) => workspace.path).toSet();
-    if (knownWorkspacePaths.isNotEmpty) {
-      for (final workspacePath in groupedSessions.keys) {
-        if (visibleWorkspacePaths.contains(workspacePath) ||
-            knownWorkspacePaths.contains(workspacePath)) {
-          continue;
-        }
-        visibleWorkspacePaths.add(workspacePath);
-        visibleWorkspaces.add(
-          Workspace(
-            name: _fallbackWorkspaceName(workspacePath),
-            path: workspacePath,
-          ),
-        );
+    final knownWorkspacesByPath = <String, Workspace>{
+      for (final workspace in _chatController.workspaces)
+        workspace.path: workspace,
+    };
+    for (final workspacePath in groupedSessions.keys) {
+      if (visibleWorkspacePaths.contains(workspacePath)) {
+        continue;
       }
+      visibleWorkspacePaths.add(workspacePath);
+      visibleWorkspaces.add(
+        knownWorkspacesByPath[workspacePath] ??
+            Workspace(
+              name: _fallbackWorkspaceName(workspacePath),
+              path: workspacePath,
+            ),
+      );
     }
 
     for (final workspace in visibleWorkspaces) {
@@ -4197,7 +4197,7 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
                         ),
                         const PopupMenuItem<_PinnedWorkspaceAction>(
                           value: _PinnedWorkspaceAction.remove,
-                          child: Text('Remove project'),
+                          child: Text('Unpin project'),
                         ),
                       ],
                     ),
