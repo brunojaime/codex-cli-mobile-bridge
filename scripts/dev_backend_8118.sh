@@ -41,6 +41,17 @@ health_json() {
   curl -fsS --max-time 5 "http://127.0.0.1:${PORT}/health"
 }
 
+wait_for_dev_health() {
+  local attempts="${1:-60}"
+  for _ in $(seq 1 "${attempts}"); do
+    if [[ "$(health_environment 2>/dev/null || true)" == "dev" ]]; then
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+
 serve_has_port() {
   local status
   command -v tailscale >/dev/null 2>&1 \
@@ -195,6 +206,11 @@ start_backend() {
     if [[ -n "${existing_pid}" ]]; then
       echo "${existing_pid}" >"${PID_FILE}"
       configure_tailscale_serve
+      if ! wait_for_dev_health 60; then
+        echo "DEV backend started on ${PORT} with PID ${existing_pid}, but health did not become ready." >&2
+        tail -n 120 "${LOG_FILE}" >&2 || true
+        exit 1
+      fi
       echo "DEV backend started on ${PORT} with PID ${existing_pid}."
       return
     fi
@@ -230,6 +246,28 @@ stop_backend() {
   done
   echo "DEV backend PID ${pid} did not stop after SIGTERM." >&2
   exit 1
+}
+
+restart_backend() {
+  local stop_completed=false
+  local start_completed=false
+
+  recover_after_interrupted_restart() {
+    local exit_code=$?
+    trap - EXIT INT TERM
+    if [[ "${stop_completed}" == "true" && "${start_completed}" != "true" ]]; then
+      echo "Restart interrupted after stop; attempting to bring DEV backend back up." >&2
+      start_backend || true
+    fi
+    exit "${exit_code}"
+  }
+
+  trap recover_after_interrupted_restart EXIT INT TERM
+  stop_backend
+  stop_completed=true
+  start_backend
+  start_completed=true
+  trap - EXIT INT TERM
 }
 
 status_backend() {
@@ -275,8 +313,7 @@ case "${action}" in
     status_backend
     ;;
   restart)
-    stop_backend
-    start_backend
+    restart_backend
     ;;
   stop)
     stop_backend
