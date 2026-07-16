@@ -206,6 +206,11 @@ class SddProjectService:
             for key, value in (workspace_aliases or {}).items()
             if key.strip() and str(value).strip()
         }
+        self._normalized_workspace_aliases = {
+            _normalize_workspace_alias_key(key): value
+            for key, value in self._workspace_aliases.items()
+            if _normalize_workspace_alias_key(key)
+        }
         self._file_max_bytes = file_max_bytes
 
     def list_projects(self) -> tuple[SddProjectSummary, ...]:
@@ -216,9 +221,11 @@ class SddProjectService:
             ):
                 if child.is_dir():
                     try:
-                        roots.append(self._validate_workspace_path(str(child)))
+                        root = self._validate_workspace_path(str(child))
                     except SddWorkspacePathError:
                         continue
+                    if root not in roots:
+                        roots.append(root)
         for alias_path in self._workspace_aliases.values():
             if alias_path.is_dir() and alias_path not in roots:
                 roots.append(alias_path)
@@ -337,7 +344,6 @@ class SddProjectService:
             metadata_lines.append(f"diagram_spec_id: {export.diagram_spec_id.strip()}")
         metadata_path.write_text("\n".join(metadata_lines) + "\n", encoding="utf-8")
 
-        rel_dir = spec_dir.relative_to(workspace).as_posix()
         diagram = self._read_svg_diagram(
             workspace=workspace,
             path=svg_path,
@@ -354,12 +360,21 @@ class SddProjectService:
         if not raw_path:
             raise SddWorkspacePathError("workspace_path is required.")
         alias_path = self._workspace_aliases.get(raw_path)
+        if alias_path is None:
+            alias_path = self._normalized_workspace_aliases.get(
+                _normalize_workspace_alias_key(raw_path),
+            )
         candidate = (
             alias_path if alias_path is not None else Path(raw_path).expanduser()
         )
         if not candidate.is_absolute():
             candidate = self._projects_root / candidate
         resolved = candidate.resolve()
+        canonical_alias_path = self._normalized_workspace_aliases.get(
+            _normalize_workspace_alias_key(resolved.name),
+        )
+        if canonical_alias_path is not None:
+            resolved = canonical_alias_path
         if not self._is_allowed_workspace(resolved):
             raise SddWorkspacePathError(
                 "workspace_path must resolve under PROJECTS_ROOT or a known alias."
@@ -1486,6 +1501,13 @@ def _is_relative_to(path: Path, root: Path) -> bool:
     except ValueError:
         return False
     return True
+
+
+def _normalize_workspace_alias_key(value: str) -> str:
+    raw_value = (value or "").strip().lower()
+    if not raw_value:
+        return ""
+    return "-".join(part for part in re.split(r"[^a-z0-9_.-]+", raw_value) if part)
 
 
 def _safe_iterdir(path: Path) -> tuple[Path, ...]:

@@ -21,22 +21,22 @@ import 'package:http/testing.dart';
 void main() {
   test('installable app model parses install metadata', () {
     final app = InstallableApp.fromJson(const <String, dynamic>{
-      'sourceApp': 'sat-showroom',
+      'sourceApp': 'satshowroom',
       'displayName': 'SAT Showroom',
-      'repo': 'brunojaime/sat-showroom',
+      'repo': 'brunojaime/satshowroom',
       'releaseChannel': 'stable',
       'latestVersion': '1.0.0',
       'latestBuild': 12,
       'releaseTag': 'android-v1.0.0-build.12',
-      'apkUrl': 'http://bridge.test/app-updates/sat-showroom/apk/tag/app.apk',
-      'apkAssetName': 'sat-showroom.apk',
+      'apkUrl': 'http://bridge.test/app-updates/satshowroom/apk/tag/app.apk',
+      'apkAssetName': 'satshowroom.apk',
       'sizeBytes': 12345,
       'sha256': 'abc',
       'available': true,
       'enabled': true,
-      'packageId': 'com.sat.showroom',
+      'packageId': 'com.example.satshowroom',
       'installStatusHint': 'available',
-      'previewUrl': 'https://preview.nienfos.com/sat-showroom',
+      'previewUrl': 'https://preview.nienfos.com/satshowroom',
       'runtimeProfile': 'preview',
       'productionReady': false,
       'mockOrDemo': false,
@@ -45,11 +45,11 @@ void main() {
       },
     });
 
-    expect(app.sourceApp, 'sat-showroom');
+    expect(app.sourceApp, 'satshowroom');
     expect(app.title, 'SAT Showroom');
     expect(app.versionLabel, '1.0.0+12');
     expect(app.canInstall, isTrue);
-    expect(app.previewUrl, 'https://preview.nienfos.com/sat-showroom');
+    expect(app.previewUrl, 'https://preview.nienfos.com/satshowroom');
     expect(app.runtimeProfile, 'preview');
     expect(app.isProductionReady, isFalse);
     expect(app.isMockOrDemo, isFalse);
@@ -74,22 +74,22 @@ void main() {
                 {
                   "kind": "codex.installableApp",
                   "version": 1,
-                  "sourceApp": "sat-showroom",
+                  "sourceApp": "satshowroom",
                   "displayName": "SAT Showroom",
-                  "repo": "brunojaime/sat-showroom",
+                  "repo": "brunojaime/satshowroom",
                   "releaseChannel": "stable",
                   "latestVersion": "1.0.0",
                   "latestBuild": 12,
                   "releaseTag": "android-v1.0.0-build.12",
-                  "apkUrl": "http://bridge.test/app-updates/sat-showroom/apk/tag/app.apk",
-                  "apkAssetName": "sat-showroom.apk",
+                  "apkUrl": "http://bridge.test/app-updates/satshowroom/apk/tag/app.apk",
+                  "apkAssetName": "satshowroom.apk",
                   "sizeBytes": 12345,
                   "sha256": null,
                   "available": true,
                   "enabled": true,
-                  "packageId": "com.sat.showroom",
+                  "packageId": "com.example.satshowroom",
                   "installStatusHint": "available",
-                  "previewUrl": "https://preview.nienfos.com/sat-showroom",
+                  "previewUrl": "https://preview.nienfos.com/satshowroom",
                   "runtimeProfile": "preview",
                   "productionReady": false,
                   "mockOrDemo": false,
@@ -103,15 +103,15 @@ void main() {
           );
         }
         expect(request.method, 'GET');
-        expect(request.url.path, '/installable-apps/sat-showroom');
+        expect(request.url.path, '/installable-apps/satshowroom');
         return http.Response(
           '''
           {
             "kind": "codex.installableApp",
             "version": 1,
-            "sourceApp": "sat-showroom",
+            "sourceApp": "satshowroom",
             "displayName": "SAT Showroom",
-            "repo": "brunojaime/sat-showroom",
+            "repo": "brunojaime/satshowroom",
             "releaseChannel": "stable",
             "available": false,
             "enabled": true,
@@ -125,10 +125,10 @@ void main() {
     );
 
     final apps = await client.listInstallableApps();
-    expect(apps.single.sourceApp, 'sat-showroom');
+    expect(apps.single.sourceApp, 'satshowroom');
     expect(apps.single.canInstall, isTrue);
 
-    final detail = await client.getInstallableApp('sat-showroom');
+    final detail = await client.getInstallableApp('satshowroom');
     expect(detail.canInstall, isFalse);
     expect(detail.installStatusHint, 'no_release_available');
   });

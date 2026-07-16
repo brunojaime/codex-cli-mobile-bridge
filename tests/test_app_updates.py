@@ -314,6 +314,88 @@ def test_default_registry_includes_sat_catalog_updates() -> None:
     )
 
 
+def test_default_registry_uses_satshowroom_as_canonical_app() -> None:
+    registry = AppUpdateRegistry.from_json_file(
+        Path(__file__).resolve().parents[1]
+        / "backend/app/infrastructure/config/app_updates.json",
+    )
+    configs = {config.source_app: config for config in registry.list_configs()}
+
+    assert "sat-showroom" not in configs
+    config = registry.get("satshowroom")
+    assert config.enabled is True
+    assert config.display_name == "SAT Showroom"
+    assert config.repo == "brunojaime/satshowroom"
+    assert config.release_tag_pattern == "android-preview-v*"
+    assert config.apk_asset_pattern == "satshowroom*.apk"
+    assert config.latest_asset_name == "satshowroom.apk"
+    assert config.expected_package_id == "com.example.satshowroom"
+    assert config.preview_url == "https://preview.nienfos.com/satshowroom"
+    assert config.runtime_profile == "preview"
+    assert config.mock_or_demo is False
+    assert config.aliases == ("sat", "sat-showroom")
+    assert registry.get("sat-showroom").source_app == "satshowroom"
+    assert registry.get("SAT").source_app == "satshowroom"
+    assert registry.get("SAT Showroom").source_app == "satshowroom"
+
+
+def test_app_update_alias_returns_canonical_satshowroom_update(
+    tmp_path: Path,
+) -> None:
+    client = _build_app_update_client(
+        tmp_path,
+        source_app="satshowroom",
+        display_name="SAT Showroom",
+        repo="brunojaime/satshowroom",
+        release_tag_pattern="android-preview-v*",
+        apk_asset_pattern="satshowroom*.apk",
+        latest_asset_name="satshowroom.apk",
+        release_channel="prerelease",
+        expected_package_id="com.example.satshowroom",
+        verified_package_ids={
+            "android-preview-v*": "com.example.satshowroom",
+        },
+        aliases=["sat-showroom", "SAT Showroom", "SAT"],
+        preview_url="https://preview.nienfos.com/satshowroom",
+        releases=[
+            _release(
+                "android-preview-v0.1.0-build.36",
+                prerelease=True,
+                assets=[_apk_asset("satshowroom.apk")],
+            ),
+        ],
+    )
+
+    response = client.get(
+        "/app-updates/sat-showroom",
+        params={"currentVersion": "0.1.0", "currentBuild": 35},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["sourceApp"] == "satshowroom"
+    assert payload["displayName"] == "SAT Showroom"
+    assert payload["latestBuild"] == 36
+    assert payload["apkAssetName"] == "satshowroom.apk"
+    assert payload["packageId"] == "com.example.satshowroom"
+    assert payload["apkUrl"] == (
+        "http://testserver/app-updates/satshowroom/apk/"
+        "android-preview-v0.1.0-build.36/satshowroom.apk"
+        "?platform=android&channel=prerelease"
+    )
+
+    installable_response = client.get("/installable-apps/SAT%20Showroom")
+    assert installable_response.status_code == 200
+    installable = installable_response.json()
+    assert installable["sourceApp"] == "satshowroom"
+    assert installable["repo"] == "brunojaime/satshowroom"
+    assert installable["apkUrl"] == (
+        "http://testserver/app-updates/satshowroom/apk/"
+        "android-preview-v0.1.0-build.36/satshowroom.apk"
+        "?platform=android&channel=prerelease"
+    )
+
+
 def test_registry_parses_preview_metadata_booleans_explicitly() -> None:
     base = _registry_item(
         productionReady=False,
@@ -1770,6 +1852,7 @@ def _build_app_update_client(
     release_channel: str = "stable",
     expected_package_id: str | None = None,
     verified_package_ids: dict[str, str] | None = None,
+    aliases: list[str] | None = None,
     registration_token: str | None = "test-registration-token",
     app_update_public_base_url: str | None = None,
     preview_url: str | None = None,
@@ -1789,6 +1872,7 @@ def _build_app_update_client(
                     "releaseChannel": release_channel,
                     "expectedPackageId": expected_package_id,
                     "verifiedPackageIds": verified_package_ids or {},
+                    "aliases": aliases or [],
                     "previewUrl": preview_url,
                     "enabled": enabled,
                 }

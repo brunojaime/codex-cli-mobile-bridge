@@ -34,6 +34,7 @@ class AppUpdateConfig:
     production_ready: bool | None = None
     mock_or_demo: bool | None = None
     release_metadata: dict[str, Any] | None = None
+    aliases: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -220,6 +221,7 @@ class _HttpGitHubAssetStream:
 class AppUpdateRegistry:
     def __init__(self, configs: dict[str, AppUpdateConfig]) -> None:
         self._configs = configs
+        self._aliases = _build_alias_index(configs)
 
     @classmethod
     def from_json_file(cls, path: str | Path) -> "AppUpdateRegistry":
@@ -242,6 +244,10 @@ class AppUpdateRegistry:
 
     def get(self, source_app: str) -> AppUpdateConfig:
         config = self._configs.get(source_app)
+        if config is None:
+            canonical_source_app = self._aliases.get(_normalize_alias_key(source_app))
+            if canonical_source_app is not None:
+                config = self._configs.get(canonical_source_app)
         if config is None:
             raise UnknownAppError(source_app)
         if not config.enabled:
@@ -273,6 +279,11 @@ class AppUpdateService:
         with self._lock:
             self._reload_if_changed()
             return self._registry.list_configs()
+
+    def get_config(self, source_app: str) -> AppUpdateConfig:
+        with self._lock:
+            self._reload_if_changed()
+            return self._registry.get(source_app)
 
     def register_app(
         self,
@@ -647,6 +658,7 @@ def _config_from_raw(source_app: str, raw_config: dict[str, Any]) -> AppUpdateCo
             if isinstance(raw_config.get("releaseMetadata"), dict)
             else None
         ),
+        aliases=_parse_aliases(raw_config.get("aliases")),
     )
 
 
@@ -667,7 +679,50 @@ def _config_to_raw(config: AppUpdateConfig) -> dict[str, Any]:
         "productionReady": config.production_ready,
         "mockOrDemo": config.mock_or_demo,
         "releaseMetadata": config.release_metadata or {},
+        "aliases": list(config.aliases),
     }
+
+
+def _parse_aliases(raw_aliases: Any) -> tuple[str, ...]:
+    if raw_aliases is None:
+        return ()
+    if not isinstance(raw_aliases, list):
+        raise ValueError("aliases must be a list of strings.")
+    aliases: list[str] = []
+    seen: set[str] = set()
+    for raw_alias in raw_aliases:
+        alias = _non_empty_string(str(raw_alias), "aliases item")
+        key = _normalize_alias_key(alias)
+        if not key:
+            raise ValueError("aliases must contain at least one safe character.")
+        if key not in seen:
+            aliases.append(alias)
+            seen.add(key)
+    return tuple(aliases)
+
+
+def _build_alias_index(configs: dict[str, AppUpdateConfig]) -> dict[str, str]:
+    aliases: dict[str, str] = {}
+    for source_app, config in configs.items():
+        for alias in (source_app, *config.aliases):
+            key = _normalize_alias_key(alias)
+            if not key:
+                continue
+            existing = aliases.get(key)
+            if existing is not None and existing != source_app:
+                raise ValueError(
+                    f"App update alias {alias!r} maps to both {existing!r} "
+                    f"and {source_app!r}.",
+                )
+            aliases[key] = source_app
+    return aliases
+
+
+def _normalize_alias_key(value: str) -> str:
+    raw_value = (value or "").strip().lower()
+    if not raw_value:
+        return ""
+    return "-".join(part for part in re.split(r"[^a-z0-9_.-]+", raw_value) if part)
 
 
 def _release_from_json(payload: Any) -> GitHubRelease:

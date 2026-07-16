@@ -785,6 +785,7 @@ class AppUpdateRegistryItemResponse(BaseModel):
         default_factory=dict,
         alias="releaseMetadata",
     )
+    aliases: list[str] = Field(default_factory=list)
 
 
 class AppUpdateRegistryResponse(BaseModel):
@@ -853,6 +854,7 @@ class InstallableAppResponse(BaseModel):
         default_factory=dict,
         alias="releaseMetadata",
     )
+    aliases: list[str] = Field(default_factory=list)
 
 
 class InstallableAppsResponse(BaseModel):

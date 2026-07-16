@@ -1374,6 +1374,7 @@ class MessageService:
             document_name=attached_document_name,
         )
         cleanup_paths = [str(resolved_path)]
+        document_image_paths: list[str] = []
 
         if document_kind == "audio":
             transcript = self._audio_transcriber.transcribe(
@@ -1417,6 +1418,13 @@ class MessageService:
                 document_kind=document_kind,
                 document_name=attached_document_name,
             )
+        if document_kind == "pptx":
+            document_image_paths = self._extract_pptx_embedded_images(
+                document_path=resolved_path,
+                output_dir=resolved_path.parent,
+                document_name=attached_document_name,
+            )
+            cleanup_paths.extend(document_image_paths)
 
         prompt = self._build_document_execution_message(
             message=message,
@@ -1425,10 +1433,17 @@ class MessageService:
             content_label="Extracted document text",
             content=extracted_text,
         )
+        if document_image_paths:
+            prompt = (
+                f"{prompt}\n\n"
+                "Embedded images extracted from the PPTX are provided separately "
+                "to this prompt."
+            )
         job = self.submit_message(
             display_message,
             session_id=session_id,
             workspace_path=workspace_path,
+            image_paths=document_image_paths or None,
             cleanup_paths=cleanup_paths,
             execution_message=prompt,
             codex_options=codex_options,
@@ -1550,6 +1565,14 @@ class MessageService:
                     document_kind=document_kind,
                     document_name=attached_name,
                 )
+            if document_kind == "pptx":
+                pptx_image_paths = self._extract_pptx_embedded_images(
+                    document_path=resolved_path,
+                    output_dir=resolved_path.parent,
+                    document_name=attached_name,
+                )
+                image_paths.extend(pptx_image_paths)
+                cleanup_paths.extend(pptx_image_paths)
             attachment_details.append(
                 self._build_attachment_detail_section(
                     index=index,
@@ -4675,6 +4698,41 @@ class MessageService:
                 slides.append(f"Slide {index}:\n" + "\n".join(text_runs))
 
         return "\n\n".join(slides)
+
+    def _extract_pptx_embedded_images(
+        self,
+        *,
+        document_path: Path,
+        output_dir: Path,
+        document_name: str,
+    ) -> list[str]:
+        try:
+            with zipfile.ZipFile(document_path) as archive:
+                media_names = sorted(
+                    name
+                    for name in archive.namelist()
+                    if name.startswith("ppt/media/")
+                    and Path(name).suffix.lower() in _IMAGE_SUFFIXES
+                )
+                image_payloads = [
+                    (media_name, archive.read(media_name)) for media_name in media_names
+                ]
+        except (FileNotFoundError, zipfile.BadZipFile):
+            return []
+
+        if not image_payloads:
+            return []
+
+        safe_stem = re.sub(r"[^A-Za-z0-9_.-]+", "-", Path(document_name).stem).strip(
+            ".-"
+        ) or "pptx"
+        image_paths: list[str] = []
+        for index, (media_name, payload) in enumerate(image_payloads, start=1):
+            suffix = Path(media_name).suffix.lower()
+            image_path = output_dir / f"{safe_stem}-embedded-{index}{suffix}"
+            image_path.write_bytes(payload)
+            image_paths.append(str(image_path))
+        return image_paths
 
     @staticmethod
     def _pptx_slide_sort_key(slide_name: str) -> tuple[int, str]:

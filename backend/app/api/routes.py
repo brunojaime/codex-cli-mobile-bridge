@@ -3466,6 +3466,7 @@ async def list_app_updates(
                 production_ready=config.production_ready,
                 mock_or_demo=config.mock_or_demo,
                 release_metadata=config.release_metadata or {},
+                aliases=list(config.aliases),
             )
             for config in container.app_update_service.list_apps()
         ],
@@ -3547,6 +3548,7 @@ async def register_installable_app(
         production_ready=config.production_ready,
         mock_or_demo=config.mock_or_demo,
         release_metadata=config.release_metadata or {},
+        aliases=list(config.aliases),
     )
 
 
@@ -3561,19 +3563,19 @@ async def get_installable_app(
     channel: str = "stable",
     container: AppContainer = Depends(get_container),
 ) -> InstallableAppResponse:
-    configs = {
-        config.source_app: config
-        for config in await run_in_threadpool(container.app_update_service.list_apps)
-    }
-    config = configs.get(source_app)
-    if config is None:
+    try:
+        config = await run_in_threadpool(
+            container.app_update_service.get_config,
+            source_app,
+        )
+    except (UnknownAppError, AppDisabledError) as exc:
         raise HTTPException(
             status_code=404,
             detail={
                 "code": "unknown_source_app",
                 "sourceApp": source_app,
             },
-        )
+        ) from exc
     return await _installable_app_for_config(
         request=request,
         config=config,
@@ -6522,6 +6524,7 @@ async def _installable_app_for_config(
         production_ready=config.production_ready,
         mock_or_demo=config.mock_or_demo,
         release_metadata=config.release_metadata or {},
+        aliases=list(config.aliases),
     )
 
 
@@ -6555,6 +6558,7 @@ def _installable_app_response_from_config(
         production_ready=config.production_ready,
         mock_or_demo=config.mock_or_demo,
         release_metadata=config.release_metadata or {},
+        aliases=list(config.aliases),
     )
 
 

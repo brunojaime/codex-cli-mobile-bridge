@@ -1128,7 +1128,10 @@ def build_docx_bytes(*paragraphs: str) -> bytes:
         return archive_path.read_bytes()
 
 
-def build_pptx_bytes(*slides: tuple[str, ...]) -> bytes:
+def build_pptx_bytes(
+    *slides: tuple[str, ...],
+    embedded_images: tuple[tuple[str, bytes], ...] = (),
+) -> bytes:
     with TemporaryDirectory() as temp_dir:
         archive_path = Path(temp_dir) / "sample.pptx"
         with zipfile.ZipFile(archive_path, "w") as archive:
@@ -1145,6 +1148,8 @@ def build_pptx_bytes(*slides: tuple[str, ...]) -> bytes:
 </p:sld>
 """.format(runs="".join(f"<a:t>{text}</a:t>" for text in text_runs))
                 archive.writestr(f"ppt/slides/slide{index}.xml", slide_xml)
+            for index, (suffix, payload) in enumerate(embedded_images, start=1):
+                archive.writestr(f"ppt/media/image{index}.{suffix}", payload)
         return archive_path.read_bytes()
 
 
@@ -7755,6 +7760,21 @@ def test_capabilities_defaults_sat_catalog_to_project_root(
     assert aliases["sat-catalogo-ropa"] == str(projects_root / "sat-catalogo-ropa")
 
 
+def test_capabilities_defaults_sat_showroom_aliases_to_canonical_project(
+    tmp_path: Path,
+) -> None:
+    projects_root = tmp_path / "projects"
+    client = build_feedback_queue_client(tmp_path, projects_root=projects_root)
+
+    response = client.get("/capabilities")
+
+    assert response.status_code == 200
+    aliases = response.json()["feedback_source_workspace_aliases"]
+    assert aliases["satshowroom"] == str(projects_root / "satshowroom")
+    assert aliases["sat-showroom"] == str(projects_root / "satshowroom")
+    assert aliases["sat"] == str(projects_root / "satshowroom")
+
+
 def test_feedback_workflow_presets_expose_agent_profiles(tmp_path: Path) -> None:
     client = build_feedback_queue_client(tmp_path)
 
@@ -8553,6 +8573,78 @@ def test_feedback_batch_start_session_defaults_sat_catalog_to_sibling_repo(
     assert session["workspace_path"] == str(sat_workspace)
 
 
+def test_feedback_batch_start_session_defaults_sat_showroom_to_canonical_repo(
+    tmp_path: Path,
+) -> None:
+    projects_root = tmp_path / "projects"
+    bridge_workspace = projects_root / "codex-cli-mobile-bridge"
+    satshowroom_workspace = projects_root / "satshowroom"
+    stale_sat_workspace = projects_root / "sat"
+    bridge_workspace.mkdir(parents=True)
+    satshowroom_workspace.mkdir()
+    stale_sat_workspace.mkdir()
+    client = build_feedback_queue_client(tmp_path, projects_root=projects_root)
+
+    start_response = client.post(
+        "/feedback-batches/start-session",
+        json={
+            "sourceApp": "SAT",
+            "sourceDisplayName": "SAT Showroom",
+            "workflowPresetId": "default",
+            "items": [
+                {
+                    "id": "feedback-satshowroom-default",
+                    "comment": "Apply this to SAT Showroom.",
+                    "screenshotPngBase64": base64.b64encode(b"fake png").decode(
+                        "ascii"
+                    ),
+                }
+            ],
+        },
+    )
+
+    assert start_response.status_code == 202
+    session_response = client.get(f"/sessions/{start_response.json()['session_id']}")
+    assert session_response.status_code == 200
+    session = session_response.json()
+    assert session["workspace_name"] == "satshowroom"
+    assert session["workspace_path"] == str(satshowroom_workspace)
+
+
+def test_sdd_projects_canonicalize_sat_showroom_aliases(
+    tmp_path: Path,
+) -> None:
+    projects_root = tmp_path / "projects"
+    satshowroom_workspace = projects_root / "satshowroom"
+    stale_sat_workspace = projects_root / "sat"
+    stale_showroom_workspace = projects_root / "sat-showroom"
+    satshowroom_workspace.mkdir(parents=True)
+    stale_sat_workspace.mkdir()
+    stale_showroom_workspace.mkdir()
+    client = build_feedback_queue_client(tmp_path, projects_root=projects_root)
+
+    response = client.get("/sdd/projects")
+
+    assert response.status_code == 200
+    projects = response.json()["projects"]
+    sat_paths = [
+        project["workspace_path"]
+        for project in projects
+        if project["workspace_name"].startswith("sat")
+    ]
+    assert sat_paths == [str(satshowroom_workspace)]
+
+    detail_response = client.get(
+        "/sdd/project",
+        params={"workspace_path": str(stale_sat_workspace)},
+    )
+
+    assert detail_response.status_code == 200
+    detail = detail_response.json()
+    assert detail["workspace_name"] == "satshowroom"
+    assert detail["workspace_path"] == str(satshowroom_workspace)
+
+
 def test_feedback_batch_start_session_keeps_unknown_source_app_fallback(
     tmp_path: Path,
 ) -> None:
@@ -9085,8 +9177,11 @@ def test_attachment_batch_flow_accepts_standard_documents() -> None:
 
 
 def test_attachment_batch_flow_accepts_standard_document_with_no_text() -> None:
-    client = build_test_client()
-    pptx_bytes = build_pptx_bytes(())
+    client = build_multi_attachment_client()
+    pptx_bytes = build_pptx_bytes(
+        (),
+        embedded_images=(("png", b"fake embedded image bytes"),),
+    )
 
     create_response = client.post(
         "/message/attachments",
@@ -9117,6 +9212,7 @@ def test_attachment_batch_flow_accepts_standard_document_with_no_text() -> None:
     assert "No extractable text was found in image-only-market-study.pptx" in job[
         "response"
     ]
+    assert "[images: " in job["response"]
 
 
 def test_retry_job_accepts_image_inputs() -> None:

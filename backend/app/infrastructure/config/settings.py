@@ -10,6 +10,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _DEFAULT_FEEDBACK_SOURCE_WORKSPACE_ALIASES = {
     "sat-catalogo-ropa": Path("sat-catalogo-ropa"),
+    "sat": Path("satshowroom"),
+    "sat-showroom": Path("satshowroom"),
+    "satshowroom": Path("satshowroom"),
     "smart-nienfos": Path("smart_nienfos"),
     "smart-nienfos-admin": Path("smart_nienfos"),
 }
