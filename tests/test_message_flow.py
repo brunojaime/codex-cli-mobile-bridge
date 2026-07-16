@@ -9084,6 +9084,41 @@ def test_attachment_batch_flow_accepts_standard_documents() -> None:
     assert "Page 1:\nMarket PDF overview" in job["response"]
 
 
+def test_attachment_batch_flow_accepts_standard_document_with_no_text() -> None:
+    client = build_test_client()
+    pptx_bytes = build_pptx_bytes(())
+
+    create_response = client.post(
+        "/message/attachments",
+        data={"message": "Take this deck"},
+        files=[
+            (
+                "attachments",
+                (
+                    "image-only-market-study.pptx",
+                    pptx_bytes,
+                    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                ),
+            )
+        ],
+    )
+
+    assert create_response.status_code == 202
+    payload = create_response.json()
+
+    job = wait_for_job(client, payload["job_id"])
+
+    assert job["status"] == "completed"
+    assert job["message"] == (
+        "Take this deck\n\n[Attached files]\n- pptx: image-only-market-study.pptx"
+    )
+    assert "Document name: image-only-market-study.pptx" in job["response"]
+    assert "Document kind: pptx" in job["response"]
+    assert "No extractable text was found in image-only-market-study.pptx" in job[
+        "response"
+    ]
+
+
 def test_retry_job_accepts_image_inputs() -> None:
     with TemporaryDirectory() as tmpdir:
         client, container = build_session_client_with_container()

@@ -1413,7 +1413,10 @@ class MessageService:
             document_kind=document_kind,
         ).strip()
         if not extracted_text:
-            raise DocumentProcessingError("Document extraction returned empty text.")
+            extracted_text = self._build_empty_document_extraction_note(
+                document_kind=document_kind,
+                document_name=attached_document_name,
+            )
 
         prompt = self._build_document_execution_message(
             message=message,
@@ -1543,8 +1546,9 @@ class MessageService:
                 document_kind=document_kind,
             ).strip()
             if not extracted_text:
-                raise DocumentProcessingError(
-                    "Document extraction returned empty text."
+                extracted_text = self._build_empty_document_extraction_note(
+                    document_kind=document_kind,
+                    document_name=attached_name,
                 )
             attachment_details.append(
                 self._build_attachment_detail_section(
@@ -4552,6 +4556,19 @@ class MessageService:
         if len(normalized) <= 240:
             return normalized
         return f"{normalized[:237]}..."
+
+    def _build_empty_document_extraction_note(
+        self,
+        *,
+        document_kind: DocumentKind,
+        document_name: str,
+    ) -> str:
+        return (
+            f"No extractable text was found in {document_name}. "
+            f"The upload was accepted as a {document_kind} document, but the "
+            "backend could not derive readable text from it. Ask the user for a "
+            "text-exported version if the visual or embedded content is required."
+        )
 
     def _extract_document_text(
         self,
