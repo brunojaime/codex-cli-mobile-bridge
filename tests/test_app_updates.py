@@ -924,6 +924,86 @@ def test_installable_app_uses_public_base_url_for_apk_proxy(
     )
 
 
+def test_preview_app_update_public_base_uses_preview_path_prefix(
+    tmp_path: Path,
+) -> None:
+    client = _build_app_update_client(
+        tmp_path,
+        source_app="rentid",
+        display_name="Rent ID",
+        repo="brunojaime/rentid",
+        release_tag_pattern="android-preview-v*",
+        apk_asset_pattern="rentid*.apk",
+        latest_asset_name="rentid.apk",
+        release_channel="prerelease",
+        preview_url="https://preview.nienfos.com/rentid",
+        app_update_public_base_url="https://preview.nienfos.com",
+        releases=[
+            _release(
+                "android-preview-v0.1.0-build.23",
+                prerelease=True,
+                assets=[_apk_asset("rentid.apk")],
+            ),
+        ],
+    )
+
+    update_response = client.get(
+        "/app-updates/rentid",
+        params={"currentVersion": "0.1.0", "currentBuild": 22, "channel": "prerelease"},
+    )
+    installable_response = client.get(
+        "/installable-apps/rentid",
+        params={"channel": "prerelease"},
+    )
+
+    expected_url = (
+        "https://preview.nienfos.com/rentid/app-updates/rentid/apk/"
+        "android-preview-v0.1.0-build.23/rentid.apk"
+        "?platform=android&channel=prerelease"
+    )
+    assert update_response.status_code == 200
+    assert update_response.json()["apkUrl"] == expected_url
+    assert installable_response.status_code == 200
+    assert installable_response.json()["apkUrl"] == expected_url
+
+
+def test_preview_app_update_public_host_uses_preview_path_prefix(
+    tmp_path: Path,
+) -> None:
+    client = _build_app_update_client(
+        tmp_path,
+        source_app="rentid",
+        display_name="Rent ID",
+        repo="brunojaime/rentid",
+        release_tag_pattern="android-preview-v*",
+        apk_asset_pattern="rentid*.apk",
+        latest_asset_name="rentid.apk",
+        release_channel="prerelease",
+        preview_url="https://preview.nienfos.com/rentid",
+        app_update_public_base_url="https://preview.nienfos.com",
+        releases=[
+            _release(
+                "android-preview-v0.1.0-build.24",
+                prerelease=True,
+                assets=[_apk_asset("rentid.apk")],
+            ),
+        ],
+    )
+
+    response = client.get(
+        "/installable-apps/rentid",
+        params={"channel": "prerelease"},
+        headers={"host": "preview.nienfos.com", "x-forwarded-proto": "https"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["apkUrl"] == (
+        "https://preview.nienfos.com/rentid/app-updates/rentid/apk/"
+        "android-preview-v0.1.0-build.24/rentid.apk"
+        "?platform=android&channel=prerelease"
+    )
+
+
 def test_installable_app_prefers_request_host_for_nonlocal_clients(
     tmp_path: Path,
 ) -> None:
@@ -1692,6 +1772,7 @@ def _build_app_update_client(
     verified_package_ids: dict[str, str] | None = None,
     registration_token: str | None = "test-registration-token",
     app_update_public_base_url: str | None = None,
+    preview_url: str | None = None,
 ) -> TestClient:
     tmp_path.mkdir(parents=True, exist_ok=True)
     registry_path = tmp_path / "app_updates.json"
@@ -1708,6 +1789,7 @@ def _build_app_update_client(
                     "releaseChannel": release_channel,
                     "expectedPackageId": expected_package_id,
                     "verifiedPackageIds": verified_package_ids or {},
+                    "previewUrl": preview_url,
                     "enabled": enabled,
                 }
             },

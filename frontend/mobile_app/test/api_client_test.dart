@@ -1384,6 +1384,60 @@ void main() {
     );
   });
 
+  test('sendAttachmentsMessage infers standard document content types',
+      () async {
+    final client = ApiClient(
+      baseUrl: 'http://localhost:8000',
+      client: MockClient((request) async {
+        expect(request.method, 'POST');
+        expect(request.url.path, '/message/attachments');
+        final body = String.fromCharCodes(request.bodyBytes).toLowerCase();
+        expect(body, contains('filename="market.pdf"'));
+        expect(body, contains('content-type: application/pdf'));
+        expect(body, contains('filename="estudio de mercado.pptx"'));
+        expect(
+          body,
+          contains(
+            'content-type: application/vnd.openxmlformats-officedocument.presentationml.presentation',
+          ),
+        );
+        expect(body, contains('filename="market-data.xlsx"'));
+        expect(
+          body,
+          contains(
+            'content-type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          ),
+        );
+        return http.Response(
+          '{"job_id":"job-1","session_id":"session-1","status":"pending","elapsed_seconds":0}',
+          202,
+          headers: <String, String>{'content-type': 'application/json'},
+        );
+      }),
+    );
+
+    await client.sendAttachmentsMessage(
+      <XFile>[
+        XFile.fromData(
+          Uint8List.fromList(<int>[37, 80, 68, 70]),
+          name: 'market.pdf',
+          path: 'market.pdf',
+        ),
+        XFile.fromData(
+          Uint8List.fromList(<int>[80, 75, 3, 4]),
+          name: 'Estudio de Mercado.pptx',
+          path: 'Estudio de Mercado.pptx',
+        ),
+        XFile.fromData(
+          Uint8List.fromList(<int>[80, 75, 3, 4]),
+          name: 'market-data.xlsx',
+          path: 'market-data.xlsx',
+        ),
+      ],
+      message: 'podes ver este archivo?',
+    );
+  });
+
   test('sendAttachmentsMessage sends text, edited PNG image, and audio',
       () async {
     final client = ApiClient(

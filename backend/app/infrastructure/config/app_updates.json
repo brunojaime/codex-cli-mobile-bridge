@@ -312,7 +312,7 @@
     "releaseMetadata": {
       "initialPreviewRelease": true,
       "latestAssetName": "rentid.apk",
-      "releaseTag": "android-preview-v0.1.0-build.21",
+      "releaseTag": "android-preview-v0.1.0-build.26",
       "releaseTagPattern": "android-preview-v*"
     },
     "releaseTagPattern": "android-preview-v*",
@@ -366,7 +366,7 @@
   },
   "satshowroom": {
     "apkAssetPattern": "satshowroom*.apk",
-    "displayName": "satshowroom Preview",
+    "displayName": "SAT Preview",
     "enabled": true,
     "expectedPackageId": null,
     "latestAssetName": "satshowroom.apk",
@@ -377,11 +377,11 @@
     "releaseMetadata": {
       "initialPreviewRelease": true,
       "latestAssetName": "satshowroom.apk",
-      "releaseTag": "android-preview-v0.1.0-build.35",
+      "releaseTag": "android-preview-v0.1.0-build.7",
       "releaseTagPattern": "android-preview-v*"
     },
     "releaseTagPattern": "android-preview-v*",
-    "repo": "brunojaime/satshowroom",
+    "repo": "brunojaime/sat",
     "requiredMinimumBuild": null,
     "runtimeProfile": "preview",
     "verifiedPackageIds": {}

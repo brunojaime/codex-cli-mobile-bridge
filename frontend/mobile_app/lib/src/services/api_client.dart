@@ -1766,6 +1766,17 @@ class ApiClient {
       'mp3' => 'audio/mpeg',
       'wav' => 'audio/wav',
       'webm' => 'audio/webm',
+      'pdf' => 'application/pdf',
+      'docx' =>
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      'pptx' =>
+        'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+      'xlsx' =>
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'csv' => 'text/csv',
+      'txt' => 'text/plain',
+      'md' => 'text/markdown',
+      'json' => 'application/json',
       _ => null,
     };
   }
