@@ -15,6 +15,8 @@ from backend.app.application.services.project_factory_job_runner import (
     ProjectFactoryJobRunnerBlockedError,
     ProjectFactoryJobRunnerError,
     ProjectFactoryProcessResult,
+    _default_visual_ux_skill_path,
+    _load_visual_ux_skill_context,
 )
 from backend.app.application.services.project_factory_manifest_service import (
     ProjectFactoryManifestInput,
@@ -121,6 +123,35 @@ def test_project_factory_runner_prompts_load_skill_and_consume_ux_brief(
     assert "Required visual-ux-polish Skill Context" in ux_generator
     assert "references/visual-quality-checklist.md" in ux_generator
     assert "references/visual-validation-protocol.md" in ux_reviewer
+
+
+def test_visual_ux_skill_default_loader_uses_configured_runtime_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    skill_path = _visual_ux_skill_fixture(tmp_path)
+    monkeypatch.setenv("VISUAL_UX_POLISH_SKILL_PATH", str(skill_path))
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex-home"))
+
+    assert _default_visual_ux_skill_path() == skill_path
+
+    skill_context = _load_visual_ux_skill_context(None)
+
+    assert skill_context.skill_path == skill_path
+    assert "Required visual-ux-polish Skill Context" in skill_context.prompt_section
+    assert "references/visual-quality-checklist.md" in skill_context.prompt_section
+
+
+def test_visual_ux_skill_default_loader_falls_back_to_codex_home(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("VISUAL_UX_POLISH_SKILL_PATH", raising=False)
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex-home"))
+
+    assert _default_visual_ux_skill_path() == (
+        tmp_path / "codex-home" / "skills" / "visual-ux-polish" / "SKILL.md"
+    )
 
 
 def test_project_factory_runner_remote_publication_runs_required_phases(

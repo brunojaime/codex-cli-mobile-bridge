@@ -157,12 +157,18 @@ void main() {
     );
   });
 
-  test('ux full is disabled without a project workspace', () {
+  test('ux commands are disabled without a project workspace', () {
     final commands = buildSlashCommands(
       const SlashCommandContext(hasProjectWorkspace: false),
     );
+    final ux = commands.singleWhere((command) => command.id == 'ux');
     final uxFull = commands.singleWhere((command) => command.id == 'ux-full');
 
+    expect(ux.isEnabled, isFalse);
+    expect(
+      ux.disabledReason,
+      'Choose a project chat with a workspace before starting UX.',
+    );
     expect(uxFull.isEnabled, isFalse);
     expect(
       uxFull.disabledReason,

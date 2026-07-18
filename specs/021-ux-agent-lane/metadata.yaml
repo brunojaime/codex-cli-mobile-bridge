@@ -1,9 +1,10 @@
 id: 021-ux-agent-lane
 slug: 021-ux-agent-lane
 title: UX Agent Lane
-description: Add a dedicated UX generator and UX reviewer lane with required visual-ux-polish skill usage, benchmark research, screenshot evidence, UAT scenarios, scope boundaries, reviewer loops, and release gating for New Project and Domain Factory runs.
-status: drafted
-last_run_state: spec_created
+description: Add a dedicated UX lane for New Project and manual project polish, shipped first as a label-based MVP with required visual-ux-polish loading and guarded slash commands.
+status: mvp-slice
+last_run_state: mvp_cleanup
+implementation_scope: label_based_mvp
 generated:
   title: false
   description: false
@@ -11,8 +12,22 @@ generated:
   user_pinned_description: true
 tasks:
   total: 40
-  completed: 0
-  pending: 40
+  completed: 6
+  partial: 8
+  pending: 26
+shipped_mvp:
+  - Manual /ux configures the existing generator as UX Generator for the current workspace.
+  - Manual /ux-full configures the existing generator/reviewer as UX Generator and UX Reviewer with a 15-turn budget.
+  - /ux and /ux-full are blocked unless the selected chat has a real project workspace.
+  - Project Factory resolves visual-ux-polish before UX phases and fails closed when the skill or required references are unavailable.
+  - Project Factory creates and requires .codex/ux/pre-project-ux-brief.md before downstream planning and generation.
+  - Project Factory runs one post-baseline UX generator step and one UX reviewer step, then writes .codex/ux/evidence-index.json.
+deferred_full_lane:
+  - First-class ux_generator and ux_reviewer ids, schemas, lifecycle states, and projections.
+  - Backend UX reviewer JSON parsing with automatic continue/blocked/complete routing.
+  - UX evidence attachment to run/session projections and mobile/workbench rendering.
+  - Domain Factory automatic UX sequencing.
+  - Release gates that fail on unresolved UX findings or missing required evidence.
 available_files:
   - spec.md
   - plan.md

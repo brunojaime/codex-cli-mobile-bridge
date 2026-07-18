@@ -97,6 +97,11 @@ class GlobalSlashCommandProvider extends SlashCommandProvider {
                 : 'PROD to DEV handoff is disabled by this backend.';
     final handoffEnabled =
         context.isExplicitProdBridgeEnvironment && context.devHandoffAvailable;
+    final uxDisabledReason = !context.hasActiveBackend
+        ? 'No active bridge server.'
+        : !context.hasProjectWorkspace
+            ? 'Choose a project chat with a workspace before starting UX.'
+            : null;
     final uxFullDisabledReason = !context.hasActiveBackend
         ? 'No active bridge server.'
         : !context.hasProjectWorkspace
@@ -130,15 +135,18 @@ class GlobalSlashCommandProvider extends SlashCommandProvider {
         payload:
             'Review the current workspace changes and call out bugs, risks, and missing tests.',
       ),
-      const SlashCommand(
+      SlashCommand(
         id: 'ux',
         slash: '/ux',
-        aliases: <String>['/ux-generator'],
+        aliases: const <String>['/ux-generator'],
         title: 'UX',
         description: 'Run a Senior UX generator pass on the current project.',
         scope: 'workspace',
-        actionKind: SlashCommandActionKind.callback,
+        actionKind: uxDisabledReason == null
+            ? SlashCommandActionKind.callback
+            : SlashCommandActionKind.disabled,
         payload: 'generator',
+        disabledReason: uxDisabledReason,
       ),
       SlashCommand(
         id: 'ux-full',

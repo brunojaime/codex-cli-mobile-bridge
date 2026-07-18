@@ -1451,11 +1451,13 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       );
       return false;
     }
-    if (full && session.workspacePath.trim().isEmpty) {
+    if (session.workspacePath.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
+        SnackBar(
           content: Text(
-            'Choose a project chat with a workspace before starting UX Full.',
+            full
+                ? 'Choose a project chat with a workspace before starting UX Full.'
+                : 'Choose a project chat with a workspace before starting UX.',
           ),
         ),
       );
