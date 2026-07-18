@@ -6,15 +6,16 @@ owner: codex-mobile-bridge
 
 ## Intent
 
-Change the New Project button so it starts with a deterministic initialization
-pipeline before any business/product LLM work begins.
+Change the New Project button so it starts with domain intake and an approved
+project contract, then runs the deterministic initialization pipeline before any
+business/product implementation LLM work begins.
 
 The pipeline should create a real baseline project, publish the baseline
 infrastructure where configured, and open the first project chat with a complete
 context pack. The LLM should receive an already-created app, repository,
 preview/runtime contract, Workbench wiring, feedback wiring, and release state.
-The LLM then focuses on the business domain instead of recreating repeated
-project bureaucracy.
+The implementation LLM then focuses on the business domain instead of
+recreating repeated project bureaucracy.
 
 This spec complements:
 
@@ -32,7 +33,9 @@ When the user taps New Project:
 
 - the app opens or creates a New Project chat immediately;
 - the backend creates or resumes a Project Factory draft;
-- a deterministic init job starts before any business implementation prompt;
+- guided intake collects and confirms the domain/project contract before init;
+- a deterministic init job starts after approval and before any business
+  implementation prompt;
 - the init job creates the project baseline under `PROJECTS_ROOT`;
 - the init job creates or verifies the GitHub repository when remote publication
   is configured;
@@ -60,10 +63,13 @@ steps".
 
 ## Core Rules
 
-- Deterministic init must run before the first business/product LLM pass.
-- The deterministic init pipeline must not depend on LLM output.
+- Deterministic init must run before the first business/product implementation
+  LLM pass.
+- The deterministic init pipeline may consume the approved structured
+  draft/contract, but must not depend on unreviewed LLM side effects or
+  generated project files.
 - New Project button behavior changes from guided-only creation to
-  chat-plus-init creation.
+  chat-plus-intake creation with gated deterministic init.
 - The first chat must be opened or selected immediately and linked to the draft
   and init job.
 - The init pipeline must be idempotent and resumable by phase.
@@ -178,8 +184,8 @@ them.
     - Write `.codex/factory/init-result.json`.
     - Write `.codex/factory/llm-start-context.md`.
     - Attach the context pack to the first chat/session.
-    - Mark business LLM work as ready only after init reaches `ready` or a
-      user-visible `blocked_with_context` state.
+    - Mark business implementation LLM work as ready only after init reaches
+      `ready` or a user-visible `blocked_with_context` state.
 
 ## LLM Context Pack Contract
 
@@ -213,14 +219,19 @@ The context pack must include:
 The New Project button must:
 
 - create or focus the first New Project chat;
-- start or resume the deterministic init job;
+- collect and confirm the domain/project contract before deterministic init;
+- show a clear `Ok dale` approval button below the latest completed generator
+  contract message when the project contract is ready;
+- route that approval button through the same technical confirmation path as a
+  typed approval, without sending an extra normal user message to the LLM;
+- start or resume the deterministic init job after contract approval;
 - show init progress in the chat timeline;
 - show phase statuses with concrete blockers and commands;
-- disable business build actions until init is ready or explicitly continued
-  with blocked context;
+- disable business implementation actions until init is ready or explicitly
+  continued with blocked context;
 - keep the chat open after init completes;
-- show a clear "Start product conversation" affordance once the LLM context pack
-  is attached;
+- show a clear product/domain implementation affordance once the LLM context
+  pack is attached;
 - preserve the chat, draft, init job, generated workspace, and Workbench scope
   relationship across app restarts.
 
@@ -296,8 +307,9 @@ the authority for job state and recovery.
 
 ## Acceptance Criteria
 
-- Pressing New Project creates or focuses a first chat and starts/resumes
-  deterministic init.
+- Pressing New Project creates or focuses a first chat and starts guided domain
+  intake without starting deterministic init.
+- Approving the domain/project contract starts or resumes deterministic init.
 - Init can complete without running business/product LLM prompts.
 - Init creates a local baseline project with deterministic artifacts.
 - Init creates and pushes a GitHub repository when configured credentials are
@@ -311,8 +323,8 @@ the authority for job state and recovery.
 - Missing external credentials produce blocked phases with exact commands and
   do not prevent local baseline and context pack creation.
 - The first chat receives a persisted LLM context pack after init.
-- The LLM business phase starts with the initialized project context and does
-  not repeat deterministic setup work.
+- The LLM business implementation phase starts with the initialized project
+  context and does not repeat deterministic setup work.
 - Tests cover service state, phase idempotency, API payloads, UI behavior,
   context pack contents, Cloudflare/GitHub command construction, release
   guardrails, and blocked recovery.

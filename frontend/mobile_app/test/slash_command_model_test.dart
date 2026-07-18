@@ -74,17 +74,30 @@ void main() {
   test('dev handoff command is exposed only for enabled prod backends', () {
     final prod = buildSlashCommands(
       const SlashCommandContext(
+        bridgeEnvironment: 'prod',
         isProdEnvironment: true,
         devHandoffAvailable: true,
       ),
     ).singleWhere((command) => command.id == 'dev-handoff');
     final prodDisabled = buildSlashCommands(
-      const SlashCommandContext(isProdEnvironment: true),
+      const SlashCommandContext(
+        bridgeEnvironment: 'prod',
+        isProdEnvironment: true,
+      ),
     ).singleWhere((command) => command.id == 'dev-handoff');
     final dev = buildSlashCommands(
       const SlashCommandContext(
-        isProdEnvironment: false,
-        devHandoffAvailable: false,
+        bridgeEnvironment: 'dev',
+        devHandoffAvailable: true,
+      ),
+    ).singleWhere((command) => command.id == 'dev-handoff');
+    final unknown = buildSlashCommands(
+      const SlashCommandContext(),
+    ).singleWhere((command) => command.id == 'dev-handoff');
+    final legacyProdFallback = buildSlashCommands(
+      const SlashCommandContext(
+        isProdEnvironment: true,
+        devHandoffAvailable: true,
       ),
     ).singleWhere((command) => command.id == 'dev-handoff');
 
@@ -97,5 +110,33 @@ void main() {
     );
     expect(dev.isEnabled, isFalse);
     expect(dev.disabledReason, 'DEV handoff is only available from PROD.');
+    expect(unknown.isEnabled, isFalse);
+    expect(
+      unknown.disabledReason,
+      'Bridge environment identity is unavailable from this backend.',
+    );
+    expect(legacyProdFallback.isEnabled, isFalse);
+    expect(
+      legacyProdFallback.disabledReason,
+      'Bridge environment identity is unavailable from this backend.',
+    );
+  });
+
+  test('dev handoff command matches hyphen and underscore aliases', () {
+    final commands = buildSlashCommands(
+      const SlashCommandContext(
+        bridgeEnvironment: 'prod',
+        devHandoffAvailable: true,
+      ),
+    );
+
+    expect(
+      filterSlashCommands(commands, 'dev-handoff').map((command) => command.id),
+      contains('dev-handoff'),
+    );
+    expect(
+      filterSlashCommands(commands, 'dev_handoff').map((command) => command.id),
+      contains('dev-handoff'),
+    );
   });
 }

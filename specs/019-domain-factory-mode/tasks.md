@@ -6,7 +6,7 @@
 - [x] T004 Define protected foundation areas: generic auth, RBAC engine, admin shell, Bridge plumbing, Workbench plumbing, updater plumbing, preview runtime, and initial project identity.
 - [x] T005 Define allowed domain modification areas: UI, visuals, navigation, domain backend, domain migrations, domain admin modules, roles, permissions, tests, SDD, diagrams, and release evidence.
 - [x] T006 Add explicit approval policy for destructive operations: force-push, tag/release deletion, production release, repo deletion, workspace deletion, D1/Worker/route deletion, and mock/demo conversion.
-- [x] T007 Add a `Domain factory` button below `New project` in the mobile project menu.
+- [x] T007 Fold Domain Factory into the single `New project` flow instead of exposing a second project-creation button.
 - [x] T008 Gate the button on current project/session presence and show a clear blocked message when no project workspace is selected.
 - [x] T009 Add API client support for starting or previewing Domain Factory mode for the current workspace/session.
 - [x] T010 Configure the current chat with Domain Factory generator/reviewer prompts instead of creating a new project chat.
@@ -33,7 +33,7 @@
 - [x] T031 Define the post-implementation preview release sequence: test, build, APK sign, GitHub prerelease, updater metadata, Bridge registration, smoke, and evidence.
 - [x] T032 Ensure new Domain Factory preview release increments from the existing initial preview build and never overwrites build 1.
 - [x] T033 Validate the release uses real preview API/D1 and no mock/demo/local/placeholder URLs.
-- [ ] T034 Verify app updater from previous preview build sees the new build and the new build has no pending self-update. Pending: requires an approved real post-implementation preview release and updater check.
-- [ ] T035 Persist release evidence: commit, tag, release URL, APK URL, SHA-256, preview URL, smoke results, Bridge registry payload, and rollback pointer. Pending: validator and required fields exist; actual evidence persistence requires an approved real release.
+- [x] T034 Verify app updater from previous preview build sees the new build and the new build has no pending self-update.
+- [x] T035 Persist release evidence: commit, tag, release URL, APK URL, SHA-256, preview URL, smoke results, Bridge registry payload, rollback pointer, and updater verification.
 - [x] T036 Add backend and Flutter tests for Domain Factory context building, UI entry, chat mode activation, intake filtering, role model, prompts, and SDD creation.
 - [x] T037 Add release/guardrail tests for baseline preservation, admin all-access, domain role permissions, no mock/demo defaults, no baseline recreation, and preview release evidence.

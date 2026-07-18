@@ -82,11 +82,56 @@ void main() {
     expect(find.textContaining('DEV handoff failed.'), findsOneWidget);
     expect(find.textContaining('prod_handoff_disabled'), findsOneWidget);
   });
+
+  testWidgets('dev handoff stays blocked on dev backend without drafting',
+      (tester) async {
+    final handoffClient = _DevHandoffDialogApiClient();
+    await _pumpHandoffScreen(
+      tester,
+      handoffClient: handoffClient,
+      serverHealth: _devHandoffHealth(),
+    );
+
+    await tester.enterText(find.byType(TextField).last, '/dev');
+    await tester.pump();
+    await tester.tap(find.text('/dev-handoff  DEV Handoff'));
+    await tester.pump();
+
+    expect(find.text('DEV handoff is only available from PROD.'), findsWidgets);
+    expect(find.text('DEV Handoff'), findsNothing);
+    expect(handoffClient.draftSessionIds, isEmpty);
+    expect(handoffClient.requests, isEmpty);
+  });
+
+  testWidgets('dev handoff stays blocked without environment identity',
+      (tester) async {
+    final handoffClient = _DevHandoffDialogApiClient();
+    await _pumpHandoffScreen(
+      tester,
+      handoffClient: handoffClient,
+      serverHealth: _missingIdentityHealth(),
+    );
+
+    await tester.enterText(find.byType(TextField).last, '/dev');
+    await tester.pump();
+    await tester.tap(find.text('/dev-handoff  DEV Handoff'));
+    await tester.pump();
+
+    expect(
+      find.text(
+          'Bridge environment identity is unavailable from this backend.'),
+      findsWidgets,
+    );
+    expect(find.text('DEV Handoff'), findsNothing);
+    expect(handoffClient.draftSessionIds, isEmpty);
+    expect(handoffClient.requests, isEmpty);
+  });
 }
 
 Future<void> _pumpHandoffScreen(
   WidgetTester tester, {
   required _DevHandoffDialogApiClient handoffClient,
+  ServerHealth? serverHealth,
 }) async {
   SharedPreferences.setMockInitialValues(<String, Object>{});
   final controller = ChatController(
@@ -101,7 +146,7 @@ Future<void> _pumpHandoffScreen(
         notificationService: const NoopChatNotificationService(),
         controllerOverride: controller,
         enableServerBootstrap: false,
-        initialServerHealthOverride: _prodHandoffHealth(),
+        initialServerHealthOverride: serverHealth ?? _prodHandoffHealth(),
         devHandoffClientOverride: handoffClient,
       ),
     ),
@@ -166,6 +211,51 @@ ServerHealth _prodHandoffHealth() {
   );
 }
 
+ServerHealth _devHandoffHealth() {
+  return ServerHealth.fromJson(
+    const <String, dynamic>{
+      'server_name': 'dev',
+      'backend_mode': 'local',
+      'projects_root': '/projects',
+      'audio_transcription_backend': 'disabled',
+      'audio_transcription_resolved_backend': 'disabled',
+      'audio_transcription_ready': false,
+      'speech_synthesis_backend': 'disabled',
+      'speech_synthesis_ready': false,
+      'tailscale_installed': false,
+      'tailscale_online': false,
+      'environment_identity': <String, dynamic>{
+        'environment': 'dev',
+        'mode': 'stage',
+        'backend_url': 'http://localhost:8118',
+        'app_channel': 'dev',
+        'app_label': 'Codex Mobile Bridge DEV',
+        'updater_channel': 'dev',
+        'color': '#38BDF8',
+        'allowed_capabilities': <String>['enqueue_dev_handoff'],
+        'denied_capabilities': <String>['restart_prod_backend'],
+      },
+    },
+  );
+}
+
+ServerHealth _missingIdentityHealth() {
+  return ServerHealth.fromJson(
+    const <String, dynamic>{
+      'server_name': 'unknown',
+      'backend_mode': 'local',
+      'projects_root': '/projects',
+      'audio_transcription_backend': 'disabled',
+      'audio_transcription_resolved_backend': 'disabled',
+      'audio_transcription_ready': false,
+      'speech_synthesis_backend': 'disabled',
+      'speech_synthesis_ready': false,
+      'tailscale_installed': false,
+      'tailscale_online': false,
+    },
+  );
+}
+
 class _DevHandoffDialogApiClient extends ApiClient {
   _DevHandoffDialogApiClient({
     this.shouldFail = false,
@@ -178,9 +268,11 @@ class _DevHandoffDialogApiClient extends ApiClient {
       <DevPipelineHandoffRequest>[];
   final List<String> idempotencyKeys = <String>[];
   final List<String> fetchDrafts = <String>[];
+  final List<String?> draftSessionIds = <String?>[];
 
   @override
   Future<DevPipelineHandoffRequest> draftDevHandoff({String? sessionId}) async {
+    draftSessionIds.add(sessionId);
     if (startsGenerating) {
       return const DevPipelineHandoffRequest(
         title: 'Preparing handoff',

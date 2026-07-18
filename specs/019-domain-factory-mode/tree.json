@@ -16,7 +16,7 @@
       "number": 2,
       "title": "Mobile Entry Point And Chat Mode Activation",
       "status": "pending",
-      "description": "Add the Domain Factory button, require a current project, configure the current chat, and persist mode state.",
+      "description": "Fold Domain Factory into New Project, require deterministic baseline readiness, configure the generated project chat, and persist mode state.",
       "tasks": ["T007", "T008", "T009", "T010", "T011", "T012"]
     },
     {

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import signal
 import shlex
 import subprocess
 import tempfile
@@ -216,10 +217,7 @@ class LocalExecutionProvider(ExecutionProvider):
         )
 
         if process is not None:
-            try:
-                process.terminate()
-            except OSError:
-                pass
+            self._terminate_process_tree(process)
         else:
             self._remove_queued_job(job_id)
 
@@ -351,6 +349,7 @@ class LocalExecutionProvider(ExecutionProvider):
                     stderr=subprocess.PIPE,
                     text=True,
                     bufsize=1,
+                    start_new_session=True,
                 )
                 with self._lock:
                     self._processes[job_id] = process
@@ -405,7 +404,7 @@ class LocalExecutionProvider(ExecutionProvider):
                 else:
                     return_code = process.wait(timeout=self._timeout_seconds)
             except subprocess.TimeoutExpired:
-                process.kill()
+                self._terminate_process_tree(process, kill=True)
                 stdout_thread.join(timeout=1)
                 stderr_thread.join(timeout=1)
                 if self._is_cancelled(job_id):
@@ -514,6 +513,7 @@ class LocalExecutionProvider(ExecutionProvider):
                 stderr=subprocess.PIPE,
                 text=True,
                 bufsize=1,
+                start_new_session=True,
             )
             with self._lock:
                 self._processes[job_id] = process
@@ -727,7 +727,7 @@ class LocalExecutionProvider(ExecutionProvider):
             )
         except subprocess.TimeoutExpired:
             if process is not None:
-                process.kill()
+                self._terminate_process_tree(process, kill=True)
             if self._is_cancelled(job_id):
                 return
             self._set_state(
@@ -769,15 +769,42 @@ class LocalExecutionProvider(ExecutionProvider):
             with self._lock:
                 self._processes.pop(job_id, None)
             if process is not None and process.poll() is None:
-                try:
-                    process.terminate()
-                    process.wait(timeout=1)
-                except (OSError, subprocess.TimeoutExpired):
-                    try:
-                        process.kill()
-                    except OSError:
-                        pass
+                self._terminate_process_tree(process)
             self._cleanup_paths(cleanup_paths)
+
+    def _terminate_process_tree(
+        self,
+        process: subprocess.Popen[str],
+        *,
+        kill: bool = False,
+    ) -> None:
+        if process.poll() is not None:
+            return
+        signal_to_send = signal.SIGKILL if kill else signal.SIGTERM
+        try:
+            os.killpg(process.pid, signal_to_send)
+        except ProcessLookupError:
+            return
+        except OSError:
+            try:
+                if kill:
+                    process.kill()
+                else:
+                    process.terminate()
+            except OSError:
+                return
+        try:
+            process.wait(timeout=1)
+        except (OSError, subprocess.TimeoutExpired):
+            if kill:
+                return
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except OSError:
+                try:
+                    process.kill()
+                except OSError:
+                    pass
 
     def _should_use_app_server(
         self,

@@ -118,6 +118,8 @@ from backend.app.api.schemas import (
     DomainFactoryImplementationResponse,
     DomainFactoryIntakeRequest,
     DomainFactoryIntakeResponse,
+    DomainFactoryReleaseEvidencePersistRequest,
+    DomainFactoryReleaseEvidencePersistResponse,
     DomainFactoryReleaseEvidenceValidationRequest,
     DomainFactoryReleaseEvidenceValidationResponse,
     DomainFactoryStartRequest,
@@ -6177,6 +6179,29 @@ async def validate_domain_factory_release_evidence(
         initial_build=payload.initial_build,
     )
     return DomainFactoryReleaseEvidenceValidationResponse(**result)
+
+
+@router.post(
+    "/sessions/{session_id}/domain-factory/release-evidence",
+    response_model=DomainFactoryReleaseEvidencePersistResponse,
+)
+async def persist_domain_factory_release_evidence(
+    session_id: str,
+    payload: DomainFactoryReleaseEvidencePersistRequest,
+    container: AppContainer = Depends(get_container),
+) -> DomainFactoryReleaseEvidencePersistResponse:
+    try:
+        result = await run_in_threadpool(
+            container.domain_factory_service.persist_release_evidence,
+            session_id=session_id,
+            evidence=payload.evidence,
+            initial_build=payload.initial_build,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return DomainFactoryReleaseEvidencePersistResponse(**result)
 
 
 @router.put("/sessions/{session_id}/auto-mode", response_model=SessionDetailResponse)

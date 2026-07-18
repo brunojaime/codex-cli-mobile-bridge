@@ -91,7 +91,7 @@ void main() {
     await tester.pumpWidget(_harness(
       controller: controller,
       slashCommandContext: const SlashCommandContext(
-        isProdEnvironment: true,
+        bridgeEnvironment: 'prod',
         devHandoffAvailable: true,
       ),
       onSlashCommand: (commandId, payload) async {
@@ -101,6 +101,55 @@ void main() {
     ));
 
     await tester.enterText(find.byType(TextField), '/dev');
+    await tester.pump();
+    await tester.tap(find.text('/dev-handoff  DEV Handoff'));
+    await tester.pump();
+
+    expect(executed, <String>['dev-handoff']);
+  });
+
+  testWidgets('dev handoff is blocked only for explicit dev environment',
+      (tester) async {
+    final controller = TextEditingController();
+    final executed = <String>[];
+    await tester.pumpWidget(_harness(
+      controller: controller,
+      slashCommandContext: const SlashCommandContext(
+        bridgeEnvironment: 'dev',
+        devHandoffAvailable: false,
+      ),
+      onSlashCommand: (commandId, payload) async {
+        executed.add(commandId);
+        return true;
+      },
+    ));
+
+    await tester.enterText(find.byType(TextField), '/dev');
+    await tester.pump();
+    await tester.tap(find.text('/dev-handoff  DEV Handoff'));
+    await tester.pump();
+
+    expect(find.text('DEV handoff is only available from PROD.'), findsWidgets);
+    expect(executed, isEmpty);
+  });
+
+  testWidgets('dev handoff underscore alias dispatches same command',
+      (tester) async {
+    final controller = TextEditingController();
+    final executed = <String>[];
+    await tester.pumpWidget(_harness(
+      controller: controller,
+      slashCommandContext: const SlashCommandContext(
+        bridgeEnvironment: 'prod',
+        devHandoffAvailable: true,
+      ),
+      onSlashCommand: (commandId, payload) async {
+        executed.add(commandId);
+        return true;
+      },
+    ));
+
+    await tester.enterText(find.byType(TextField), '/dev_handoff');
     await tester.pump();
     await tester.tap(find.text('/dev-handoff  DEV Handoff'));
     await tester.pump();

@@ -5,10 +5,10 @@
 - [x] T003 Define draft, chat, init job, generated workspace, and Workbench scope relationships.
 - [x] T004 Define remote-resource identity model for GitHub repo, Cloudflare Worker, route, D1, release, and installable app.
 - [x] T005 Define init completion states: `ready`, `blocked_with_context`, `failed`, `cancelled`, and `resumable`.
-- [x] T006 Change New Project button flow to create or focus the first New Project chat before business LLM work.
-- [x] T007 Start or resume deterministic init from the New Project button and link it to the draft/chat.
+- [x] T006 Change New Project button flow to create or focus the first New Project intake chat before business implementation LLM work.
+- [x] T007 Start or resume deterministic init after contract approval and link it to the draft/chat.
 - [x] T008 Render init phase progress, blockers, commands, and retry actions in the chat timeline.
-- [x] T009 Block business LLM actions until init is `ready` or explicitly continued with blocked context.
+- [x] T009 Block business implementation LLM actions until init is `ready` or explicitly continued with blocked context.
 - [x] T010 Preserve New Project chat, draft, init job, and workspace continuity across app restarts.
 - [x] T011 Add GitHub preflight for `gh` auth, owner/repo availability, permissions, branch policy, and push capability.
 - [x] T012 Implement deterministic GitHub repo create-or-verify behavior with no duplicate repos.
@@ -21,7 +21,7 @@
 - [x] T019 Implement D1 database create-or-verify and baseline migration application.
 - [x] T020 Implement Cloudflare preview deploy verification for Worker updates, protected routes, static assets, cache headers, and MIME types.
 - [x] T021 Implement web preview and Preview API smoke phases with persisted public evidence.
-- [x] T022 Generate or verify Flutter baseline app, Android project, web target, and runtime profile wiring before business LLM work.
+- [x] T022 Generate or verify Flutter baseline app, Android project, web target, and runtime profile wiring before business implementation LLM work.
 - [x] T023 Wire Workbench/SDD metadata and Bridge-owned Workbench discovery during init.
 - [x] T024 Wire Codex developer feedback template, source app identity, updater Bridge URL, and feedback queue routing during init.
 - [x] T025 Validate that preview runtime uses real Cloudflare Preview API/D1 and does not use mock/demo or placeholder URLs.

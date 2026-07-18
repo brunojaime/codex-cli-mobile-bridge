@@ -58,13 +58,13 @@
       "number": 2,
       "title": "Deterministic New Project Button Creates Baseline And First Chat",
       "status": "completed",
-      "description": "Change the New Project button to open the first chat, start or resume init, show progress, and gate business LLM work.",
+      "description": "Change the New Project button to open the first intake chat, start or resume init after contract approval, show progress, and gate business implementation LLM work.",
       "file": "plans/02-deterministic-new-project-button-creates-baseline-and-first-chat/plan.md",
       "tasks": [
         {
           "id": "plan-2-task-1",
           "number": 1,
-          "title": "T006 Change New Project button flow to create or focus the first New Project chat before business LLM work",
+          "title": "T006 Change New Project button flow to create or focus the first New Project intake chat before business implementation LLM work",
           "status": "done",
           "description": "Make chat creation the primary surface for init and later business work.",
           "file": "tasks/plan-2-task-1/task.md"
@@ -72,7 +72,7 @@
         {
           "id": "plan-2-task-2",
           "number": 2,
-          "title": "T007 Start or resume deterministic init from the New Project button and link it to the draft/chat",
+          "title": "T007 Start or resume deterministic init after contract approval and link it to the draft/chat",
           "status": "done",
           "description": "Connect button, draft, chat, and init runner.",
           "file": "tasks/plan-2-task-2/task.md"
@@ -88,7 +88,7 @@
         {
           "id": "plan-2-task-4",
           "number": 4,
-          "title": "T009 Block business LLM actions until init is `ready` or explicitly continued with blocked context",
+          "title": "T009 Block business implementation LLM actions until init is `ready` or explicitly continued with blocked context",
           "status": "done",
           "description": "Prevent product prompts from starting before baseline context exists.",
           "file": "tasks/plan-2-task-4/task.md"
@@ -132,7 +132,7 @@
           "number": 3,
           "title": "T013 Implement origin setup and baseline branch push as an init phase",
           "status": "done",
-          "description": "Push the generated baseline before business LLM work.",
+          "description": "Push the generated baseline before business implementation LLM work.",
           "file": "tasks/plan-3-task-3/task.md"
         },
         {
@@ -190,7 +190,7 @@
           "number": 4,
           "title": "T019 Implement D1 database create-or-verify and baseline migration application",
           "status": "done",
-          "description": "Provision the real preview data path before business LLM work.",
+          "description": "Provision the real preview data path before business implementation LLM work.",
           "file": "tasks/plan-4-task-4/task.md"
         },
         {
@@ -222,7 +222,7 @@
         {
           "id": "plan-5-task-1",
           "number": 1,
-          "title": "T022 Generate or verify Flutter baseline app, Android project, web target, and runtime profile wiring before business LLM work",
+          "title": "T022 Generate or verify Flutter baseline app, Android project, web target, and runtime profile wiring before business implementation LLM work",
           "status": "done",
           "description": "Make Flutter app structure a deterministic init output.",
           "file": "tasks/plan-5-task-1/task.md"

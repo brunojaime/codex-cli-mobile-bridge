@@ -105,6 +105,13 @@ class DomainFactoryReleaseEvidenceValidationRequest(BaseModel):
     initial_build: int = Field(default=1, alias="initialBuild", ge=1)
 
 
+class DomainFactoryReleaseEvidencePersistRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    evidence: dict[str, Any]
+    initial_build: int = Field(default=1, alias="initialBuild", ge=1)
+
+
 class DomainFactoryBlockedReasonResponse(BaseModel):
     code: str
     message: str
@@ -199,6 +206,20 @@ class DomainFactoryReleaseEvidenceValidationResponse(BaseModel):
     errors: list[dict[str, str]] = Field(default_factory=list)
     initialBuild: int
     build: int
+
+
+class DomainFactoryReleaseEvidencePersistResponse(BaseModel):
+    kind: str
+    version: int
+    status: str
+    ok: bool
+    sessionId: str
+    sourceApp: str | None = None
+    specRoot: str
+    releaseEvidencePath: str
+    statePath: str
+    validation: dict[str, Any] = Field(default_factory=dict)
+    errors: list[dict[str, str]] = Field(default_factory=list)
 
 
 class ProjectFactoryDraftRequest(BaseModel):

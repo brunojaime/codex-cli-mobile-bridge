@@ -1,6 +1,6 @@
 # Deterministic LLM Context Pack For The First Project Chat
 
-Generate the first chat context from structured init state so business LLM work
+Generate the first chat context from structured init state so business implementation LLM work
 starts with the real project baseline instead of repeating setup instructions.
 
 Status: completed

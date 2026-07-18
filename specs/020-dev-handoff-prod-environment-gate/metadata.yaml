@@ -1,0 +1,18 @@
+id: 020-dev-handoff-prod-environment-gate
+slug: 020-dev-handoff-prod-environment-gate
+title: DEV Handoff PROD Environment Gate
+description: Fix /dev-handoff availability so PROD can create DEV handoffs, DEV remains blocked, unknown backend identity is not mislabeled as DEV, and /dev_handoff resolves to the same handler.
+status: completed
+last_run_state: implemented
+generated:
+  title: false
+  description: false
+  user_pinned_title: true
+  user_pinned_description: true
+tasks:
+  total: 8
+  completed: 8
+  pending: 0
+available_files:
+  - spec.md
+  - tasks.md

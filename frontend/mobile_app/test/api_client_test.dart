@@ -552,6 +552,37 @@ void main() {
     expect(health.environmentIdentity?.canEnqueueDevHandoff, isFalse);
   });
 
+  test('server health identifies prod dev-handoff availability', () {
+    final health = ServerHealth.fromJson(
+      const <String, dynamic>{
+        'server_name': 'prod',
+        'backend_mode': 'local',
+        'projects_root': '/projects',
+        'audio_transcription_backend': 'disabled',
+        'audio_transcription_resolved_backend': 'disabled',
+        'audio_transcription_ready': false,
+        'speech_synthesis_backend': 'disabled',
+        'speech_synthesis_ready': false,
+        'tailscale_installed': false,
+        'tailscale_online': false,
+        'environment_identity': <String, dynamic>{
+          'environment': 'prod',
+          'mode': 'normal',
+          'backend_url': 'http://prod.example.test',
+          'app_channel': 'prod',
+          'app_label': 'Codex Mobile Bridge',
+          'updater_channel': 'prod',
+          'color': '#55D6BE',
+          'allowed_capabilities': <String>['enqueue_dev_handoff'],
+          'denied_capabilities': <String>['run_shell'],
+        },
+      },
+    );
+
+    expect(health.environmentIdentity?.environment, 'prod');
+    expect(health.environmentIdentity?.canEnqueueDevHandoff, isTrue);
+  });
+
   test('api client enqueues dev handoff idempotently', () async {
     var calls = 0;
     final client = ApiClient(
@@ -859,6 +890,58 @@ void main() {
     );
     expect(implementation.isImplementing, isTrue);
     expect(implementation.workflowEvidencePath, contains('workflow-evidence'));
+  });
+
+  test('api client persists domain factory release evidence', () async {
+    final client = ApiClient(
+      baseUrl: 'http://localhost:8000',
+      client: MockClient((request) async {
+        expect(request.method, 'POST');
+        expect(
+          request.url.path,
+          '/sessions/session-1/domain-factory/release-evidence',
+        );
+        expect(request.body, contains('"commit":"def456"'));
+        expect(request.body, contains('"initialBuild":1'));
+        expect(request.body, contains('"previousBuildSeesNewBuild":true'));
+        return http.Response(
+          '''
+          {
+            "kind": "codex.domainFactoryReleaseEvidence",
+            "version": 1,
+            "status": "ready",
+            "ok": true,
+            "sessionId": "session-1",
+            "sourceApp": "clinica-norte",
+            "specRoot": "specs/019-domain-factory-session-1",
+            "releaseEvidencePath": "specs/019-domain-factory-session-1/release-evidence.json",
+            "statePath": ".codex/factory/domain-factory-state.json",
+            "validation": {"ok": true, "build": 2},
+            "errors": []
+          }
+          ''',
+          200,
+          headers: <String, String>{'content-type': 'application/json'},
+        );
+      }),
+    );
+
+    final result = await client.persistDomainFactoryReleaseEvidence(
+      'session-1',
+      evidence: const <String, dynamic>{
+        'build': 2,
+        'commit': 'def456',
+        'updaterVerification': <String, dynamic>{
+          'previousBuildSeesNewBuild': true,
+          'newBuildHasPendingSelfUpdate': false,
+        },
+      },
+    );
+
+    expect(result.isReady, isTrue);
+    expect(result.sourceApp, 'clinica-norte');
+    expect(result.releaseEvidencePath, contains('release-evidence.json'));
+    expect(result.validation['build'], 2);
   });
 
   test('project factory client manages reference assets', () async {

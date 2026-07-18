@@ -21,7 +21,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:async';
 
 void main() {
-  testWidgets('domain factory action starts on the current chat',
+  testWidgets(
+      'domain factory action is not exposed as a separate toolbar action',
       (WidgetTester tester) async {
     final apiClient = _ChatScreenOverflowApiClient(
       _buildSession(
@@ -38,16 +39,34 @@ void main() {
       apiClient: apiClient,
     );
 
-    await tester.tap(find.byTooltip('Domain factory'));
+    expect(find.byTooltip('Domain factory'), findsNothing);
+    expect(apiClient.domainFactoryStarts, 0);
+  });
+
+  testWidgets('domain factory action is absent from compact overflow menu',
+      (WidgetTester tester) async {
+    final apiClient = _ChatScreenOverflowApiClient(
+      _buildSession(
+        workspacePath: '/projects/prueba-17',
+        messages: const <ChatMessage>[],
+      ),
+    );
+
+    await _pumpChatScreen(
+      tester,
+      width: 430,
+      height: 760,
+      session: apiClient.session,
+      apiClient: apiClient,
+    );
+
+    await tester.tap(find.byTooltip('More actions'));
     await tester.pumpAndSettle();
 
-    expect(apiClient.domainFactoryStarts, 1);
-    expect(apiClient.domainFactorySessionId, apiClient.session.id);
-    expect(apiClient.domainFactoryWorkspacePath, '/projects/prueba-17');
-    expect(
-      apiClient.session.agentConfiguration.byId(AgentId.generator)?.label,
-      'Domain Factory',
-    );
+    expect(find.text('New project'), findsOneWidget);
+    expect(find.text('Domain factory'), findsNothing);
+    expect(find.text('Domain Factory'), findsNothing);
+    expect(apiClient.domainFactoryStarts, 0);
   });
 
   testWidgets('conversation context sheet scrolls safely for long content',

@@ -416,6 +416,17 @@ install a separate systemd unit that executes that command. `status` returns
 non-zero if the DEV backend, DEV health identity, or Tailscale Serve mapping is
 missing.
 
+Hung backend recovery:
+
+```text
+scripts/recover_codex_backends.sh --target all
+scripts/recover_codex_backends.sh --target dev --force
+```
+
+Use this when PROD or DEV is still running but `/health` hangs or fails. It uses
+a short health timeout and can restart the detached PROD backend plus the DEV
+backend without relying on the backend maintenance endpoints.
+
 ## Implementation Evidence
 
 Validation commands executed during closeout:
