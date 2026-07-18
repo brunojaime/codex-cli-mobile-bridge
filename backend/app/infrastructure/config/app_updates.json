@@ -347,7 +347,7 @@
     "releaseMetadata": {
       "initialPreviewRelease": true,
       "latestAssetName": "satshowroom.apk",
-      "releaseTag": "android-preview-v0.1.0-build.49",
+      "releaseTag": "android-preview-v0.1.0-build.50",
       "releaseTagPattern": "android-preview-v*"
     },
     "releaseTagPattern": "android-preview-v*",
@@ -355,7 +355,7 @@
     "requiredMinimumBuild": null,
     "runtimeProfile": "preview",
     "verifiedPackageIds": {
-      "android-preview-v0.1.0-build.49": "com.nienfos.satshowroom",
+      "android-preview-v0.1.0-build.50": "com.nienfos.satshowroom",
       "satshowroom.apk": "com.nienfos.satshowroom"
     }
   },
