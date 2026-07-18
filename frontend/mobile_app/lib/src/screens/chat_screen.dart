@@ -6418,10 +6418,8 @@ class _ComposerState extends State<_Composer> {
           minLines: 1,
           maxLines: 6,
           enabled: !widget.isBusy && !_isSubmittingAttachments,
-          textInputAction: TextInputAction.send,
-          onSubmitted: (_) async {
-            await _handlePrimaryAction();
-          },
+          keyboardType: TextInputType.multiline,
+          textInputAction: TextInputAction.newline,
           decoration: InputDecoration(
             filled: true,
             fillColor: const Color(0xFF1F2C34),

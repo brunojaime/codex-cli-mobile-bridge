@@ -1320,8 +1320,7 @@ flowchart LR
     expect(find.text('1 selected'), findsOneWidget);
     expect(textController.text, contains('Mantener el draft si falla'));
 
-    await tester.showKeyboard(find.byType(TextField).last);
-    await tester.testTextInput.receiveAction(TextInputAction.send);
+    await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 200));
 
@@ -1372,8 +1371,7 @@ flowchart LR
     );
     await tester.pumpAndSettle();
 
-    await tester.showKeyboard(find.byType(TextField).last);
-    await tester.testTextInput.receiveAction(TextInputAction.send);
+    await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 200));
 

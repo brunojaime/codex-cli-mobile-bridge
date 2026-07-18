@@ -134,7 +134,7 @@ void main() {
     expect(executed, isEmpty);
   });
 
-  testWidgets('ordinary slash-containing messages send normally',
+  testWidgets('ordinary slash-containing messages send from button',
       (tester) async {
     final controller = TextEditingController();
     var sent = 0;
@@ -150,10 +150,32 @@ void main() {
     ));
 
     await tester.enterText(find.byType(TextField), 'please inspect /tmp/logs');
-    await tester.testTextInput.receiveAction(TextInputAction.send);
+    await tester.pump();
+    await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
     await tester.pump();
 
     expect(sent, 1);
+  });
+
+  testWidgets('keyboard enter inserts newline instead of sending',
+      (tester) async {
+    final controller = TextEditingController();
+    var sent = 0;
+    await tester.pumpWidget(_harness(
+      controller: controller,
+      onSend: () async {
+        sent += 1;
+        return true;
+      },
+    ));
+
+    await tester.enterText(find.byType(TextField), 'line one');
+    await tester.testTextInput.receiveAction(TextInputAction.newline);
+    await tester.enterText(find.byType(TextField), 'line one\nline two');
+    await tester.pump();
+
+    expect(controller.text, 'line one\nline two');
+    expect(sent, 0);
   });
 }
 
