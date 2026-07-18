@@ -240,6 +240,16 @@ def build_container(settings: Settings | None = None) -> AppContainer:
         app_update_github_token_present=bool(
             resolved_settings.app_update_github_token
         ),
+        project_factory_github_owner=resolved_settings.project_factory_github_owner,
+        project_factory_github_visibility=(
+            resolved_settings.project_factory_github_visibility
+        ),
+        project_factory_github_default_branch=(
+            resolved_settings.project_factory_github_default_branch
+        ),
+        installable_apps_registration_token=(
+            resolved_settings.installable_apps_registration_token
+        ),
         prod_update_executor_enabled=(
             resolved_settings.dev_pipeline_prod_update_executor_enabled
         ),

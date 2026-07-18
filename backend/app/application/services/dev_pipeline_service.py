@@ -13,6 +13,7 @@ import sys
 import unicodedata
 from urllib.error import HTTPError, URLError
 from urllib.request import urlopen
+from urllib.parse import urlparse
 from typing import Any, Literal
 
 from backend.app.domain.entities.codex_options import CodexRunOptions
@@ -36,6 +37,24 @@ _CAPABILITIES: dict[str, list[str]] = {
     "dev_integration": ["merge_stage_to_dev_main", "run_integration_validation"],
     "prod_promotion": ["request_promotion", "approve_promotion", "drain_prod"],
 }
+
+
+def _clean_env_value(value: str | None) -> str:
+    return (value or "").strip()
+
+
+def _dev_bridge_public_url(value: str | None) -> str:
+    url = _clean_env_value(value).rstrip("/")
+    if not url:
+        return ""
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return ""
+    if (parsed.hostname or "").lower() == "preview.nienfos.com" and parsed.path.strip(
+        "/"
+    ):
+        return ""
+    return url
 
 _DENIED: dict[str, list[str]] = {
     "prod_normal": [
@@ -139,6 +158,10 @@ class DevPipelineService:
         app_update_registry_path: str | None = None,
         app_update_public_base_url: str | None = None,
         app_update_github_token_present: bool = False,
+        project_factory_github_owner: str | None = None,
+        project_factory_github_visibility: str | None = None,
+        project_factory_github_default_branch: str | None = None,
+        installable_apps_registration_token: str | None = None,
         prod_update_executor_enabled: bool = False,
         execution_provider: ExecutionProvider | None = None,
     ) -> None:
@@ -162,6 +185,18 @@ class DevPipelineService:
         self._app_update_registry_path = app_update_registry_path
         self._app_update_public_base_url = app_update_public_base_url
         self._app_update_github_token_present = app_update_github_token_present
+        self._project_factory_github_owner = _clean_env_value(
+            project_factory_github_owner
+        )
+        self._project_factory_github_visibility = _clean_env_value(
+            project_factory_github_visibility
+        )
+        self._project_factory_github_default_branch = _clean_env_value(
+            project_factory_github_default_branch
+        )
+        self._installable_apps_registration_token = _clean_env_value(
+            installable_apps_registration_token
+        )
         self._prod_update_executor_enabled = prod_update_executor_enabled
         self._execution_provider = execution_provider
 
@@ -2879,6 +2914,7 @@ class DevPipelineService:
         env_lines = {
             "API_PORT": str(runtime["port"]),
             "API_BASE_URL": runtime["url"],
+            "BRIDGE_URL": self._backend_url,
             "CODEX_WORKDIR": stage["worktree_path"],
             "PROJECTS_ROOT": str(Path(stage["worktree_path"]).parent),
             "CHAT_STORE_PATH": str(Path(runtime["data_dir"]) / "chat_store.sqlite3"),
@@ -2902,6 +2938,27 @@ class DevPipelineService:
             "DEV_PIPELINE_STATE_PATH": str(self._state_path),
             "DEV_PIPELINE_RUNTIME_ROOT": str(self._runtime_root),
         }
+        bridge_public_url = _dev_bridge_public_url(self._app_update_public_base_url)
+        if bridge_public_url:
+            env_lines["BRIDGE_PUBLIC_URL"] = bridge_public_url
+            env_lines["APP_UPDATE_PUBLIC_BASE_URL"] = bridge_public_url
+        if self._project_factory_github_owner:
+            env_lines["PROJECT_FACTORY_GITHUB_OWNER"] = self._project_factory_github_owner
+        if self._project_factory_github_visibility:
+            env_lines["PROJECT_FACTORY_GITHUB_VISIBILITY"] = (
+                self._project_factory_github_visibility
+            )
+        if self._project_factory_github_default_branch:
+            env_lines["PROJECT_FACTORY_GITHUB_DEFAULT_BRANCH"] = (
+                self._project_factory_github_default_branch
+            )
+        if self._installable_apps_registration_token:
+            env_lines["INSTALLABLE_APPS_REGISTRATION_TOKEN"] = (
+                self._installable_apps_registration_token
+            )
+            env_lines["BRIDGE_REGISTRATION_TOKEN"] = (
+                self._installable_apps_registration_token
+            )
         Path(runtime["env_file"]).write_text(
             "\n".join(f"{key}={value}" for key, value in env_lines.items()) + "\n",
             encoding="utf-8",

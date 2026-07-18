@@ -5370,7 +5370,7 @@ def _resolve_bridge_public_url(
     )
     for candidate in candidates:
         public_url = _non_local_http_url(candidate)
-        if public_url:
+        if public_url and not _is_preview_app_public_url(public_url, settings=settings):
             return public_url
     if not _is_local_bridge_url(bridge_base_url):
         return bridge_base_url.rstrip("/")
@@ -5381,7 +5381,10 @@ def _resolve_bridge_public_url(
         )
         for candidate in tailscale.public_base_urls:
             public_url = _non_local_http_url(candidate)
-            if public_url:
+            if public_url and not _is_preview_app_public_url(
+                public_url,
+                settings=settings,
+            ):
                 return public_url
     return bridge_base_url.rstrip("/")
 
@@ -5394,6 +5397,17 @@ def _non_local_http_url(value: str | None) -> str | None:
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         return None
     return url
+
+
+def _is_preview_app_public_url(value: str, *, settings: Settings | None) -> bool:
+    parsed = urlparse((value or "").strip())
+    preview_base_domain = (
+        getattr(settings, "preview_base_domain", None) or "preview.nienfos.com"
+    ).lower()
+    host = (parsed.hostname or "").lower()
+    if host != preview_base_domain:
+        return False
+    return bool(parsed.path.strip("/"))
 
 
 def _android_preview_bridge_url(value: str) -> str:
