@@ -186,7 +186,7 @@ class ProjectFactoryJobRunner:
         )
         preflight_steps = 1 if remote_publication and self._remote_preflight else 0
         total_steps = (
-            6
+            9
             + preflight_steps
             + publication_steps
             + context.generator_runs
@@ -229,6 +229,17 @@ class ProjectFactoryJobRunner:
         completed_steps = self._run_cli_step(
             context=context,
             project_path=project_path,
+            prompt_path=prompt_root / "ux-brief.md",
+            phase="ux_brief",
+            label="Lightweight UX brief",
+            completed_steps=completed_steps,
+            total_steps=total_steps,
+            event_sink=event_sink,
+        )
+
+        completed_steps = self._run_cli_step(
+            context=context,
+            project_path=project_path,
             prompt_path=prompt_root / "research-planning.md",
             phase="research_planning",
             label="Research and planning",
@@ -258,6 +269,27 @@ class ProjectFactoryJobRunner:
                 total_steps=total_steps,
                 event_sink=event_sink,
             )
+
+        completed_steps = self._run_cli_step(
+            context=context,
+            project_path=project_path,
+            prompt_path=prompt_root / "ux-generator.md",
+            phase="ux_generator",
+            label="Senior UX generator pass",
+            completed_steps=completed_steps,
+            total_steps=total_steps,
+            event_sink=event_sink,
+        )
+        completed_steps = self._run_cli_step(
+            context=context,
+            project_path=project_path,
+            prompt_path=prompt_root / "ux-reviewer.md",
+            phase="ux_reviewer",
+            label="Senior UX reviewer pass",
+            completed_steps=completed_steps,
+            total_steps=total_steps,
+            event_sink=event_sink,
+        )
 
         event_sink(
             _event(
@@ -745,6 +777,25 @@ Promoted project assets:
             base + "\nResearch typical apps, UX patterns, and product plan.\n",
             encoding="utf-8",
         )
+        (prompt_root / "ux-brief.md").write_text(
+            base
+            + """
+# Lightweight UX Brief
+
+Use the visual-ux-polish skill before acting.
+
+This is the pre-Project-Factory UX intervention. Do not edit product code,
+backend code, auth, RBAC, persistence, release wiring, or generated
+functionality. Create `.codex/ux/pre-project-ux-brief.md` only.
+
+Research the requested app type and comparable professional products. Produce
+clear UX direction for the factory generator: audience, first-use intent,
+information architecture, navigation model, primary screens, empty/loading/error
+states, visual tone, accessibility constraints, mobile/desktop expectations,
+benchmark notes, and UX acceptance criteria.
+""",
+            encoding="utf-8",
+        )
         for index in range(context.generator_runs):
             (prompt_root / f"generator-{index + 1:02d}.md").write_text(
                 base
@@ -759,6 +810,42 @@ Promoted project assets:
                 "same number, verify concrete fixes, and leave actionable follow-up.\n",
                 encoding="utf-8",
             )
+        (prompt_root / "ux-generator.md").write_text(
+            base
+            + """
+# Senior UX Generator
+
+Use the visual-ux-polish skill before acting.
+
+This is the post-Project-Factory UX intervention. Improve only visible UX:
+layout, hierarchy, typography, spacing, color, interaction polish, responsive
+behavior, empty/loading/error states, accessibility, and user-facing copy. Do
+not change product functionality, backend behavior, auth, RBAC, persistence,
+schemas, release wiring, or business logic.
+
+Benchmark comparable professional products, inspect or capture screenshots when
+the app can run, perform focused UAT on the primary journeys, and save concise
+evidence under `.codex/ux/`. Validate mobile and desktop fit before completion.
+""",
+            encoding="utf-8",
+        )
+        (prompt_root / "ux-reviewer.md").write_text(
+            base
+            + """
+# Senior UX Reviewer
+
+Use the visual-ux-polish skill before acting.
+
+Review only the UX Generator changes and evidence. Check visual quality,
+interaction clarity, accessibility, responsive fit, screenshots/UAT evidence,
+and scope discipline. Do not request functional/backend/business-logic changes.
+
+If more UX-only work is needed, write `.codex/ux/ux-reviewer-report.md` with the
+required follow-up. If the UX is professional and validated, write the same file
+with a stop decision and the evidence reviewed.
+""",
+            encoding="utf-8",
+        )
 
 
 def _codex_argv(command: str, prompt: str) -> tuple[str, ...]:

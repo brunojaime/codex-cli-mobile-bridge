@@ -139,4 +139,21 @@ void main() {
       contains('dev-handoff'),
     );
   });
+
+  test('ux commands expose generator-only and full loop callbacks', () {
+    final commands = buildSlashCommands(const SlashCommandContext());
+    final ux = commands.singleWhere((command) => command.id == 'ux');
+    final uxFull = commands.singleWhere((command) => command.id == 'ux-full');
+
+    expect(ux.slash, '/ux');
+    expect(ux.actionKind, SlashCommandActionKind.callback);
+    expect(ux.payload, 'generator');
+    expect(uxFull.slash, '/ux-full');
+    expect(uxFull.actionKind, SlashCommandActionKind.callback);
+    expect(uxFull.payload, 'full');
+    expect(
+      filterSlashCommands(commands, 'ux_full').map((command) => command.id),
+      contains('ux-full'),
+    );
+  });
 }

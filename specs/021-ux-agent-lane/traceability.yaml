@@ -1,0 +1,84 @@
+id: 021-ux-agent-lane
+status: drafted
+requirements:
+  first_class_ux_agents:
+    tasks:
+      - T001
+      - T002
+      - T004
+    acceptance:
+      - ux_generator and ux_reviewer are valid agent ids/types.
+      - Existing agent workflows remain compatible.
+  required_skill_binding:
+    tasks:
+      - T003
+      - T019
+      - T020
+    acceptance:
+      - visual-ux-polish is loaded for both UX agents.
+      - UX lane fails closed when the skill cannot be loaded.
+  lane_sequencing:
+    tasks:
+      - T005
+      - T006
+      - T007
+      - T021
+      - T022
+      - T023
+      - T036
+      - T037
+    acceptance:
+      - New Project runs lightweight UX before Project Factory baseline generation.
+      - Project Factory baseline completion can run UX generator/reviewer.
+      - Automatic New Project work stops after the post-baseline UX pass.
+      - UX reviewer can continue or block the lane.
+  manual_slash_commands:
+    tasks:
+      - T038
+      - T039
+      - T040
+    acceptance:
+      - /ux runs a generator-only UX pass.
+      - /ux-full runs a UX generator/reviewer loop.
+      - /ux-full defaults to 15 maximum iterations.
+      - UX reviewer controls early stop.
+  ux_evidence:
+    tasks:
+      - T010
+      - T012
+      - T013
+      - T014
+      - T015
+      - T016
+      - T017
+      - T018
+    acceptance:
+      - UX brief, benchmark, screenshots, UAT, and reports are persisted.
+      - Both UX agents can read the same evidence.
+  scope_enforcement:
+    tasks:
+      - T008
+      - T009
+      - T028
+      - T029
+    acceptance:
+      - UX agents are restricted to UI/design/visual-test artifacts.
+      - Protected backend, auth, RBAC, persistence, release, and runtime files
+        are blocked or flagged.
+  mobile_visibility:
+    tasks:
+      - T024
+      - T031
+    acceptance:
+      - Mobile/workbench UI shows UX lane state and evidence.
+  validation:
+    tasks:
+      - T025
+      - T026
+      - T027
+      - T030
+      - T032
+      - T035
+    acceptance:
+      - Visual capture and mechanical checks run when available.
+      - Regression tests cover lane behavior and compatibility.

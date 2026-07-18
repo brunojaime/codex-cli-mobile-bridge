@@ -1,0 +1,20 @@
+id: 021-ux-agent-lane
+slug: 021-ux-agent-lane
+title: UX Agent Lane
+description: Add a dedicated UX generator and UX reviewer lane with required visual-ux-polish skill usage, benchmark research, screenshot evidence, UAT scenarios, scope boundaries, reviewer loops, and release gating for New Project and Domain Factory runs.
+status: drafted
+last_run_state: spec_created
+generated:
+  title: false
+  description: false
+  user_pinned_title: true
+  user_pinned_description: true
+tasks:
+  total: 40
+  completed: 0
+  pending: 40
+available_files:
+  - spec.md
+  - plan.md
+  - tasks.md
+  - traceability.yaml

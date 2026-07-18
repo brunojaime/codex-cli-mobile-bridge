@@ -24,6 +24,25 @@ void main() {
     expect(config.byId(AgentId.reviewer)?.enabled, isFalse);
   });
 
+  test('UX lane configs bind generator and reviewer prompts with stop budget',
+      () {
+    final generatorOnly = buildUxGeneratorConfiguration(
+      kDefaultAgentConfiguration,
+    );
+    final full = buildUxFullConfiguration(kDefaultAgentConfiguration);
+
+    expect(isUxGeneratorConfiguration(generatorOnly), isTrue);
+    expect(generatorOnly.byId(AgentId.generator)?.label, 'UX Generator');
+    expect(generatorOnly.byId(AgentId.generator)?.prompt,
+        contains('visual-ux-polish'));
+    expect(generatorOnly.byId(AgentId.reviewer)?.enabled, isFalse);
+    expect(isUxFullConfiguration(full), isTrue);
+    expect(full.byId(AgentId.reviewer)?.label, 'UX Reviewer');
+    expect(full.byId(AgentId.reviewer)?.prompt, contains('"status"'));
+    expect(full.byId(AgentId.generator)?.maxTurns, 15);
+    expect(full.byId(AgentId.reviewer)?.maxTurns, 15);
+  });
+
   test('build confirmation requires ready marker in transcript', () {
     expect(isProjectFactoryBuildConfirmation('ok'), isTrue);
     expect(isProjectFactoryBuildConfirmation('dale'), isTrue);
@@ -304,7 +323,6 @@ void main() {
       apiClient: apiClient,
       notificationService: const NoopChatNotificationService(),
     );
-    addTearDown(controller.dispose);
 
     await tester.pumpWidget(
       MaterialApp(

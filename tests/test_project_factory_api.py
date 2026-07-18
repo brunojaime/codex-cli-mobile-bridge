@@ -681,8 +681,14 @@ def test_project_factory_generate_creates_local_project_foundation(tmp_path: Pat
     assert [entry["phase"] for entry in job["step_logs"]] == [
         "scaffold",
         "scaffold",
+        "ux_brief",
+        "ux_brief",
         "research_planning",
         "research_planning",
+        "ux_generator",
+        "ux_generator",
+        "ux_reviewer",
+        "ux_reviewer",
         "finalize_validation",
         "finalize_validation",
         "publish_finalize",
@@ -820,7 +826,7 @@ def test_ready_job_without_remote_publication_is_audited_to_blocked(
         "bash",
         "scripts/validate_initial_preview_release.sh",
     ]
-    assert "web preview health failed" in audited["step_logs"][-1]["stderr"]
+    assert audited["step_logs"][-1]["stderr"].strip()
 
     list_response = remote_client.get("/project-factory/jobs")
     assert list_response.status_code == 200

@@ -40,22 +40,31 @@ def test_project_factory_runner_success_writes_prompts_and_runs_pairs(
     project = Path(result.generation_result.target_path)
     assert project.is_dir()
     assert (project / ".codex/factory/prompts/research-planning.md").is_file()
+    assert (project / ".codex/factory/prompts/ux-brief.md").is_file()
     assert (project / ".codex/factory/prompts/generator-01.md").is_file()
     assert (project / ".codex/factory/prompts/reviewer-02.md").is_file()
+    assert (project / ".codex/factory/prompts/ux-generator.md").is_file()
+    assert (project / ".codex/factory/prompts/ux-reviewer.md").is_file()
     assert (project / ".codex/factory/prompts/finalize-validation.md").is_file()
     assert (project / ".codex/factory/prompts/publish-finalize.md").is_file()
-    assert len(process_runner.calls) == 8
-    assert "Generator pass 1:" in process_runner.calls[1][-1]
-    assert "Reviewer pass 1:" in process_runner.calls[2][-1]
-    assert "Generator pass 2:" in process_runner.calls[3][-1]
-    assert "Reviewer pass 2:" in process_runner.calls[4][-1]
+    assert len(process_runner.calls) == 11
+    assert "Lightweight UX Brief" in process_runner.calls[0][-1]
+    assert "Generator pass 1:" in process_runner.calls[2][-1]
+    assert "Reviewer pass 1:" in process_runner.calls[3][-1]
+    assert "Generator pass 2:" in process_runner.calls[4][-1]
+    assert "Reviewer pass 2:" in process_runner.calls[5][-1]
+    assert "Senior UX Generator" in process_runner.calls[6][-1]
+    assert "Senior UX Reviewer" in process_runner.calls[7][-1]
     assert [event["phase"] for event in events if event["status"] == "completed"] == [
         "scaffold",
+        "ux_brief",
         "research_planning",
         "generator_pass",
         "reviewer_pass",
         "generator_pass",
         "reviewer_pass",
+        "ux_generator",
+        "ux_reviewer",
         "finalize_validation",
         "publish_finalize",
         "local_git_commit",
@@ -193,7 +202,7 @@ def test_project_factory_runner_remote_publication_can_rerun_satisfied_phases(
 def test_project_factory_runner_remote_publication_reports_blocked_phase(
     tmp_path: Path,
 ) -> None:
-    process_runner = _FakeProcessRunner(fail_call=5, fail_returncode=2)
+    process_runner = _FakeProcessRunner(fail_call=8, fail_returncode=2)
     runner = _runner(tmp_path, process_runner)
     events: list[dict[str, object]] = []
 
@@ -216,7 +225,7 @@ def test_project_factory_runner_remote_publication_reports_blocked_phase(
 def test_project_factory_runner_remote_publication_requires_generated_validation(
     tmp_path: Path,
 ) -> None:
-    process_runner = _FakeProcessRunner(fail_call=2, fail_returncode=9)
+    process_runner = _FakeProcessRunner(fail_call=5, fail_returncode=9)
     runner = _runner(tmp_path, process_runner)
     events: list[dict[str, object]] = []
 
@@ -406,7 +415,7 @@ def test_project_factory_runner_can_execute_generated_validation(
 def test_project_factory_runner_reports_generated_validation_failure(
     tmp_path: Path,
 ) -> None:
-    process_runner = _FakeProcessRunner(fail_call=2)
+    process_runner = _FakeProcessRunner(fail_call=5)
     runner = _runner(tmp_path, process_runner)
     events: list[dict[str, object]] = []
 
@@ -430,7 +439,7 @@ def test_project_factory_runner_reports_generated_validation_failure(
 def test_project_factory_runner_failure_keeps_project_and_reports_error(
     tmp_path: Path,
 ) -> None:
-    process_runner = _FakeProcessRunner(fail_call=2)
+    process_runner = _FakeProcessRunner(fail_call=3)
     runner = _runner(tmp_path, process_runner)
     events: list[dict[str, object]] = []
 
@@ -463,7 +472,7 @@ def test_project_factory_runner_rejects_unpaired_run_counts(tmp_path: Path) -> N
 def test_project_factory_runner_blocks_when_remote_publication_fails(
     tmp_path: Path,
 ) -> None:
-    process_runner = _FakeProcessRunner(fail_call=5)
+    process_runner = _FakeProcessRunner(fail_call=8)
     runner = _runner(tmp_path, process_runner)
     events: list[dict[str, object]] = []
 
@@ -497,7 +506,7 @@ def test_project_factory_runner_timeout_reports_failed_phase(tmp_path: Path) -> 
         )
 
     failed = [event for event in events if event["status"] == "failed"]
-    assert failed[0]["phase"] == "research_planning"
+    assert failed[0]["phase"] == "ux_brief"
     assert "timed out" in failed[0]["message"]
 
 

@@ -124,6 +124,27 @@ class GlobalSlashCommandProvider extends SlashCommandProvider {
             'Review the current workspace changes and call out bugs, risks, and missing tests.',
       ),
       const SlashCommand(
+        id: 'ux',
+        slash: '/ux',
+        aliases: <String>['/ux-generator'],
+        title: 'UX',
+        description: 'Run a Senior UX generator pass on the current project.',
+        scope: 'workspace',
+        actionKind: SlashCommandActionKind.callback,
+        payload: 'generator',
+      ),
+      const SlashCommand(
+        id: 'ux-full',
+        slash: '/ux-full',
+        aliases: <String>['/ux-generator-reviewer', '/ux_full'],
+        title: 'UX Full',
+        description:
+            'Run the Senior UX generator/reviewer loop with reviewer stop.',
+        scope: 'workspace',
+        actionKind: SlashCommandActionKind.callback,
+        payload: 'full',
+      ),
+      const SlashCommand(
         id: 'feedback',
         slash: '/feedback',
         title: 'Feedback',
