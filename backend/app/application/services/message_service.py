@@ -17,6 +17,9 @@ from uuid import uuid4
 import xml.etree.ElementTree as ET
 import zipfile
 
+from pypdf import PdfReader
+from pypdf.errors import PdfReadError
+
 from backend.app.domain.entities.chat_message import (
     can_launch_reserved_follow_up,
     ChatMessageAuthorType,
@@ -1431,6 +1434,7 @@ class MessageService:
             workspace_path=workspace_path,
         )
         cleanup_paths = [str(resolved_path)]
+        document_image_paths: list[str] = []
 
         if document_kind == "audio":
             transcript = self._audio_transcriber.transcribe(
@@ -1452,6 +1456,7 @@ class MessageService:
             job = self.submit_message(
                 display_message,
                 session_id=session.id,
+                image_paths=document_image_paths or None,
                 cleanup_paths=cleanup_paths,
                 execution_message=prompt,
                 codex_options=codex_options,
@@ -1469,15 +1474,27 @@ class MessageService:
             source_path=resolved_path,
             filename=attached_document_name,
         )
-
-        if document_kind in {"docx", "text"}:
+        try:
             extracted_text = self._extract_document_text(
                 document_path=resolved_path,
                 document_kind=document_kind,
             ).strip()
-            if not extracted_text:
-                raise DocumentProcessingError("Document extraction returned empty text.")
+        except DocumentProcessingError:
+            extracted_text = ""
+        if not extracted_text:
+            extracted_text = self._build_empty_document_extraction_note(
+                document_kind=document_kind,
+                document_name=attached_document_name,
+            )
+        if document_kind == "pptx":
+            document_image_paths = self._extract_pptx_embedded_images(
+                document_path=resolved_path,
+                output_dir=resolved_path.parent,
+                document_name=attached_document_name,
+            )
+            cleanup_paths.extend(document_image_paths)
 
+        if document_kind in {"docx", "text", "pdf", "pptx", "xlsx"}:
             prompt = self._build_document_execution_message(
                 message=message,
                 document_kind=document_kind,
@@ -1506,9 +1523,16 @@ class MessageService:
             document_name=attached_document_name,
             stored_file_path=stored_document_path,
         )
+        if document_image_paths:
+            prompt = (
+                f"{prompt}\n\n"
+                "Embedded images extracted from the PPTX are provided separately "
+                "to this prompt."
+            )
         job = self.submit_message(
             display_message,
             session_id=session.id,
+            image_paths=document_image_paths or None,
             cleanup_paths=cleanup_paths,
             execution_message=prompt,
             codex_options=codex_options,
@@ -1642,15 +1666,27 @@ class MessageService:
                 source_path=resolved_path,
                 filename=attached_name,
             )
-            if document_kind in {"docx", "text"}:
-                extracted_text = self._extract_document_text(
-                    document_path=resolved_path,
-                    document_kind=document_kind,
-                ).strip()
+            if document_kind in {"docx", "text", "pdf", "pptx", "xlsx"}:
+                try:
+                    extracted_text = self._extract_document_text(
+                        document_path=resolved_path,
+                        document_kind=document_kind,
+                    ).strip()
+                except DocumentProcessingError:
+                    extracted_text = ""
                 if not extracted_text:
-                    raise DocumentProcessingError(
-                        "Document extraction returned empty text."
+                    extracted_text = self._build_empty_document_extraction_note(
+                        document_kind=document_kind,
+                        document_name=attached_name,
                     )
+                if document_kind == "pptx":
+                    pptx_image_paths = self._extract_pptx_embedded_images(
+                        document_path=resolved_path,
+                        output_dir=resolved_path.parent,
+                        document_name=attached_name,
+                    )
+                    image_paths.extend(pptx_image_paths)
+                    cleanup_paths.extend(pptx_image_paths)
                 attachment_details.append(
                     self._build_attachment_detail_section(
                         index=index,
@@ -4575,8 +4611,8 @@ class MessageService:
             return "text"
 
         raise UnsupportedDocumentError(
-            "Unsupported document type. Supported uploads are audio, text/code files, "
-            "images, and .pdf, .docx, .pptx, or .xlsx documents."
+            "Unsupported document type. Supported uploads are audio, images, PDFs, "
+            "text/code files, and .docx/.pptx/.xlsx documents."
         )
 
     def _office_content_type_matches_suffix(
@@ -4782,6 +4818,19 @@ class MessageService:
             return normalized
         return f"{normalized[:237]}..."
 
+    def _build_empty_document_extraction_note(
+        self,
+        *,
+        document_kind: DocumentKind,
+        document_name: str,
+    ) -> str:
+        return (
+            f"No extractable text was found in {document_name}. "
+            f"The upload was accepted as a {document_kind} document, but the "
+            "backend could not derive readable text from it. Ask the user for a "
+            "text-exported version if the visual or embedded content is required."
+        )
+
     def _extract_document_text(
         self,
         *,
@@ -4790,6 +4839,12 @@ class MessageService:
     ) -> str:
         if document_kind == "docx":
             return self._extract_docx_text(document_path)
+        if document_kind == "pptx":
+            return self._extract_pptx_text(document_path)
+        if document_kind == "xlsx":
+            return self._extract_xlsx_text(document_path)
+        if document_kind == "pdf":
+            return self._extract_pdf_text(document_path)
         if document_kind == "text":
             return document_path.read_text(encoding="utf-8", errors="replace")
         raise DocumentProcessingError(
@@ -4834,6 +4889,229 @@ class MessageService:
                 paragraphs.append("".join(runs))
 
         return "\n\n".join(paragraphs)
+
+    def _extract_pptx_text(self, document_path: Path) -> str:
+        try:
+            with zipfile.ZipFile(document_path) as archive:
+                slide_names = sorted(
+                    (
+                        name
+                        for name in archive.namelist()
+                        if re.fullmatch(r"ppt/slides/slide\d+\.xml", name)
+                    ),
+                    key=self._pptx_slide_sort_key,
+                )
+                if not slide_names:
+                    raise DocumentProcessingError(
+                        "The uploaded .pptx file does not contain slide XML."
+                    )
+                slide_payloads = [
+                    (slide_name, archive.read(slide_name)) for slide_name in slide_names
+                ]
+        except FileNotFoundError as exc:
+            raise DocumentProcessingError(
+                "The uploaded .pptx file could not be read."
+            ) from exc
+        except zipfile.BadZipFile as exc:
+            raise DocumentProcessingError(
+                "The uploaded .pptx file is not a valid ZIP archive."
+            ) from exc
+
+        slides: list[str] = []
+        namespace = {"a": "http://schemas.openxmlformats.org/drawingml/2006/main"}
+        for index, (slide_name, xml_payload) in enumerate(slide_payloads, start=1):
+            try:
+                root = ET.fromstring(xml_payload)
+            except ET.ParseError as exc:
+                raise DocumentProcessingError(
+                    f"The uploaded .pptx file could not parse {slide_name}."
+                ) from exc
+
+            text_runs = [
+                node.text.strip()
+                for node in root.findall(".//a:t", namespace)
+                if node.text and node.text.strip()
+            ]
+            if text_runs:
+                slides.append(f"Slide {index}:\n" + "\n".join(text_runs))
+
+        return "\n\n".join(slides)
+
+    def _extract_pptx_embedded_images(
+        self,
+        *,
+        document_path: Path,
+        output_dir: Path,
+        document_name: str,
+    ) -> list[str]:
+        try:
+            with zipfile.ZipFile(document_path) as archive:
+                media_names = sorted(
+                    name
+                    for name in archive.namelist()
+                    if name.startswith("ppt/media/")
+                    and Path(name).suffix.lower() in _IMAGE_SUFFIXES
+                )
+                image_payloads = [
+                    (media_name, archive.read(media_name)) for media_name in media_names
+                ]
+        except (FileNotFoundError, zipfile.BadZipFile):
+            return []
+
+        if not image_payloads:
+            return []
+
+        safe_stem = re.sub(r"[^A-Za-z0-9_.-]+", "-", Path(document_name).stem).strip(
+            ".-"
+        ) or "pptx"
+        image_paths: list[str] = []
+        for index, (media_name, payload) in enumerate(image_payloads, start=1):
+            suffix = Path(media_name).suffix.lower()
+            image_path = output_dir / f"{safe_stem}-embedded-{index}{suffix}"
+            image_path.write_bytes(payload)
+            image_paths.append(str(image_path))
+        return image_paths
+
+    @staticmethod
+    def _pptx_slide_sort_key(slide_name: str) -> tuple[int, str]:
+        match = re.search(r"slide(\d+)\.xml$", slide_name)
+        return (int(match.group(1)) if match else 0, slide_name)
+
+    def _extract_xlsx_text(self, document_path: Path) -> str:
+        try:
+            with zipfile.ZipFile(document_path) as archive:
+                shared_strings = self._read_xlsx_shared_strings(archive)
+                sheet_names = sorted(
+                    (
+                        name
+                        for name in archive.namelist()
+                        if re.fullmatch(r"xl/worksheets/sheet\d+\.xml", name)
+                    ),
+                    key=self._xlsx_sheet_sort_key,
+                )
+                if not sheet_names:
+                    raise DocumentProcessingError(
+                        "The uploaded .xlsx file does not contain worksheet XML."
+                    )
+                sheet_payloads = [
+                    (sheet_name, archive.read(sheet_name)) for sheet_name in sheet_names
+                ]
+        except FileNotFoundError as exc:
+            raise DocumentProcessingError(
+                "The uploaded .xlsx file could not be read."
+            ) from exc
+        except zipfile.BadZipFile as exc:
+            raise DocumentProcessingError(
+                "The uploaded .xlsx file is not a valid ZIP archive."
+            ) from exc
+
+        sheets: list[str] = []
+        namespace = {"s": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
+        for index, (sheet_name, xml_payload) in enumerate(sheet_payloads, start=1):
+            try:
+                root = ET.fromstring(xml_payload)
+            except ET.ParseError as exc:
+                raise DocumentProcessingError(
+                    f"The uploaded .xlsx file could not parse {sheet_name}."
+                ) from exc
+
+            rows: list[str] = []
+            for row in root.findall(".//s:row", namespace):
+                cells = [
+                    value
+                    for cell in row.findall("s:c", namespace)
+                    if (value := self._extract_xlsx_cell_text(cell, shared_strings))
+                ]
+                if cells:
+                    rows.append("\t".join(cells))
+            if rows:
+                sheets.append(f"Sheet {index}:\n" + "\n".join(rows))
+
+        return "\n\n".join(sheets)
+
+    def _read_xlsx_shared_strings(self, archive: zipfile.ZipFile) -> list[str]:
+        try:
+            shared_strings_xml = archive.read("xl/sharedStrings.xml")
+        except KeyError:
+            return []
+
+        try:
+            root = ET.fromstring(shared_strings_xml)
+        except ET.ParseError as exc:
+            raise DocumentProcessingError(
+                "The uploaded .xlsx file could not parse shared strings."
+            ) from exc
+
+        namespace = {"s": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
+        strings: list[str] = []
+        for item in root.findall("s:si", namespace):
+            text_runs = [
+                node.text
+                for node in item.findall(".//s:t", namespace)
+                if node.text is not None
+            ]
+            strings.append("".join(text_runs).strip())
+        return strings
+
+    def _extract_xlsx_cell_text(
+        self,
+        cell: ET.Element,
+        shared_strings: list[str],
+    ) -> str:
+        namespace = {"s": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
+        cell_type = cell.attrib.get("t")
+        if cell_type == "inlineStr":
+            return " ".join(
+                node.text.strip()
+                for node in cell.findall(".//s:t", namespace)
+                if node.text and node.text.strip()
+            )
+
+        value_node = cell.find("s:v", namespace)
+        if value_node is None or value_node.text is None:
+            return ""
+
+        raw_value = value_node.text.strip()
+        if not raw_value:
+            return ""
+        if cell_type == "s":
+            try:
+                return shared_strings[int(raw_value)]
+            except (ValueError, IndexError) as exc:
+                raise DocumentProcessingError(
+                    "The uploaded .xlsx file has an invalid shared string reference."
+                ) from exc
+        return raw_value
+
+    @staticmethod
+    def _xlsx_sheet_sort_key(sheet_name: str) -> tuple[int, str]:
+        match = re.search(r"sheet(\d+)\.xml$", sheet_name)
+        return (int(match.group(1)) if match else 0, sheet_name)
+
+    def _extract_pdf_text(self, document_path: Path) -> str:
+        try:
+            reader = PdfReader(str(document_path))
+        except FileNotFoundError as exc:
+            raise DocumentProcessingError(
+                "The uploaded PDF file could not be read."
+            ) from exc
+        except PdfReadError as exc:
+            raise DocumentProcessingError(
+                "The uploaded PDF file could not be parsed."
+            ) from exc
+
+        pages: list[str] = []
+        for index, page in enumerate(reader.pages, start=1):
+            try:
+                page_text = (page.extract_text() or "").strip()
+            except PdfReadError as exc:
+                raise DocumentProcessingError(
+                    f"The uploaded PDF file could not extract page {index}."
+                ) from exc
+            if page_text:
+                pages.append(f"Page {index}:\n{page_text}")
+
+        return "\n\n".join(pages)
 
     def _resolve_workspace(self, workspace_path: str | None) -> Workspace:
         workspaces = self._repository.list_workspaces()

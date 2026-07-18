@@ -38,6 +38,20 @@ def test_health_exposes_prod_environment_identity(tmp_path: Path) -> None:
     assert "enqueue_dev_handoff" not in identity["allowed_capabilities"]
 
 
+def test_health_exposes_prod_handoff_capability_when_enabled(
+    tmp_path: Path,
+) -> None:
+    client = _client(tmp_path, prod_handoff_enabled=True)
+
+    response = client.get("/health")
+
+    assert response.status_code == 200
+    identity = response.json()["environment_identity"]
+    assert identity["environment"] == "prod"
+    assert "enqueue_dev_handoff" in identity["allowed_capabilities"]
+    assert "enqueue_dev_handoff" not in identity["denied_capabilities"]
+
+
 def test_prod_handoff_is_flag_guarded(tmp_path: Path) -> None:
     client = _client(tmp_path, prod_handoff_enabled=False)
 

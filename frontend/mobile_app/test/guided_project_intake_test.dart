@@ -2,6 +2,7 @@ import 'package:codex_mobile_frontend/src/models/agent_configuration.dart';
 import 'package:codex_mobile_frontend/src/models/chat_message.dart';
 import 'package:codex_mobile_frontend/src/models/chat_session_summary.dart';
 import 'package:codex_mobile_frontend/src/models/codex_tooling.dart';
+import 'package:codex_mobile_frontend/src/models/domain_factory.dart';
 import 'package:codex_mobile_frontend/src/models/job_status_response.dart';
 import 'package:codex_mobile_frontend/src/models/project_factory.dart';
 import 'package:codex_mobile_frontend/src/models/session_detail.dart';
@@ -24,6 +25,8 @@ void main() {
   });
 
   test('build confirmation requires ready marker in transcript', () {
+    expect(isProjectFactoryBuildConfirmation('ok'), isTrue);
+    expect(isProjectFactoryBuildConfirmation('dale'), isTrue);
     expect(isProjectFactoryBuildConfirmation('ok, dale para adelante'), isTrue);
     expect(projectFactoryHasBuildReadyMarker(<ChatMessage>[]), isFalse);
 
@@ -154,7 +157,8 @@ void main() {
 
   testWidgets('New Project opens persisted guided intake and live answers',
       (tester) async {
-    final apiClient = _GuidedProjectApiClient();
+    final apiClient = _GuidedProjectApiClient()
+      ..includeGeneratorReadyMessage = true;
     final controller = ChatController(
       apiClient: apiClient,
       notificationService: const NoopChatNotificationService(),
@@ -227,7 +231,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(apiClient.createDraftCalls, 1);
-    expect(apiClient.startInitCalls, 1);
+    expect(apiClient.startInitCalls, 0);
     expect(apiClient.lastInitWorkspacePath, isNull);
     expect(apiClient.sendMessageCalls, 0);
     expect(apiClient.lastDraftRequest?.guidedIntakeEnabled, isTrue);
@@ -235,16 +239,30 @@ void main() {
     expect(apiClient.lastDraftRequest?.initialAdminEmails,
         <String>['owner@example.com']);
     expect(apiClient.lastCreatedSessionTitle, 'Clinica Norte');
-    expect(find.text('Deterministic baseline init'), findsOneWidget);
-    expect(
-        find.textContaining('Current phase: Init preflight'), findsOneWidget);
-    expect(find.text('Initial admin emails'), findsNothing);
-    expect(find.textContaining('Cloudflare doctor pending'), findsNothing);
-    expect(find.text('Preview contract'), findsNothing);
+    expect(find.text('Deterministic baseline init'), findsNothing);
+    expect(find.text('Initial admin emails'), findsOneWidget);
+    expect(find.textContaining('Cloudflare doctor pending'), findsOneWidget);
+    expect(find.text('Preview contract'), findsOneWidget);
     expect(find.text('Confirm build'), findsNothing);
     expect(apiClient.answerCalls, 0);
     expect(apiClient.previewCalls, 0);
     expect(apiClient.confirmCalls, 0);
+
+    await tester.ensureVisible(find.byType(ActionChip).first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byType(ActionChip).first);
+    await tester.pumpAndSettle();
+    expect(apiClient.answerCalls, 1);
+    expect(apiClient.previewCalls, 1);
+
+    await _tapOkDaleProjectFactoryButton(tester);
+
+    expect(apiClient.confirmCalls, 1);
+    expect(apiClient.startInitCalls, 1);
+    expect(apiClient.sendMessageCalls, 0);
+    expect(find.text('Deterministic baseline init'), findsOneWidget);
+    expect(
+        find.textContaining('Current phase: Init preflight'), findsOneWidget);
 
     await tester.tap(find.byTooltip('New project'));
     await tester.pumpAndSettle();
@@ -264,11 +282,354 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(apiClient.createDraftCalls, 2);
-    expect(apiClient.startInitCalls, 2);
+    expect(apiClient.startInitCalls, 1);
     expect(apiClient.sendMessageCalls, 0);
     expect(apiClient.createdDraftNames,
         containsAllInOrder(<String>['Clinica Norte', 'Veterinaria Sur']));
   });
+
+  testWidgets(
+      'Ok dale CTA is consumed as a technical event before init',
+      (tester) async {
+    final apiClient = _GuidedProjectApiClient()
+      ..includeGeneratorReadyMessage = true;
+
+    await _pumpGuidedChat(tester, apiClient);
+    await _openNewProjectIntake(
+      tester,
+      name: 'Clinica Norte',
+      adminEmail: 'owner@example.com',
+    );
+
+    expect(apiClient.createDraftCalls, 1);
+    expect(apiClient.startInitCalls, 0);
+    expect(apiClient.lastInitWorkspacePath, isNull);
+    expect(apiClient.domainFactoryStarts, 0);
+    expect(apiClient.sentMessages, isEmpty);
+    expect(find.text('Deterministic baseline init'), findsNothing);
+
+    await _answerGuidedIntakeQuestion(tester);
+    await _tapOkDaleProjectFactoryButton(tester);
+
+    expect(apiClient.confirmCalls, 1);
+    expect(apiClient.startInitCalls, 1);
+    expect(apiClient.sentMessages, isEmpty);
+    expect(apiClient.lastInitWorkspacePath, isNull);
+    expect(find.text('Deterministic baseline init'), findsOneWidget);
+  });
+
+  testWidgets('Ok dale button appears under generator and approves technically',
+      (tester) async {
+    final apiClient = _GuidedProjectApiClient()
+      ..includeGeneratorReadyMessage = true;
+
+    await _pumpGuidedChat(tester, apiClient);
+    await _openNewProjectIntake(
+      tester,
+      name: 'Clinica Norte',
+      adminEmail: 'owner@example.com',
+    );
+
+    final okDaleButton =
+        find.byKey(const ValueKey<String>('project-factory-ok-dale-button'));
+    expect(okDaleButton, findsOneWidget);
+    expect(apiClient.startInitCalls, 0);
+    expect(apiClient.sentMessages, isEmpty);
+    expect(
+      tester.getTopLeft(okDaleButton).dy,
+      greaterThan(
+        tester
+            .getBottomLeft(find.byKey(const ValueKey<String>(
+              'chat-bubble-generator-ready',
+            )))
+            .dy,
+      ),
+    );
+
+    await tester.tap(okDaleButton);
+    await tester.pumpAndSettle();
+
+    expect(apiClient.confirmCalls, 1);
+    expect(apiClient.startInitCalls, 1);
+    expect(apiClient.sendMessageCalls, 0);
+    expect(apiClient.sentMessages, isEmpty);
+    expect(find.text('Deterministic baseline init'), findsOneWidget);
+    expect(okDaleButton, findsNothing);
+  });
+
+  testWidgets(
+      'init polling starts Domain Factory once with generated workspace when ready',
+      (tester) async {
+    final apiClient = _GuidedProjectApiClient()
+      ..includeGeneratorReadyMessage = true
+      ..initPollJobs = <ProjectFactoryInitJob>[
+        _initJob(status: 'running', readyForBusinessLlm: false),
+        _initJob(
+          status: 'ready',
+          readyForBusinessLlm: true,
+          generatedWorkspacePath: '/projects/generated/clinica-norte',
+          workspacePath: '/projects/older-session-workspace',
+        ),
+      ];
+
+    await _pumpGuidedChat(tester, apiClient);
+    await _openNewProjectIntake(
+      tester,
+      name: 'Clinica Norte',
+      adminEmail: 'owner@example.com',
+    );
+    await _answerGuidedIntakeQuestion(tester);
+    await _tapOkDaleProjectFactoryButton(tester);
+
+    expect(apiClient.startInitCalls, 1);
+    expect(apiClient.domainFactoryStarts, 0);
+    await _sendComposerMessage(tester, 'ok');
+    expect(apiClient.startInitCalls, 1);
+
+    await tester.pump(const Duration(seconds: 2));
+    await tester.pump();
+    expect(apiClient.getInitJobCalls, 1);
+    expect(apiClient.domainFactoryStarts, 0);
+
+    await tester.pump(const Duration(seconds: 2));
+    await _pumpDeferredDomainFactoryStart(tester);
+
+    expect(apiClient.getInitJobCalls, 2);
+    expect(apiClient.startInitCalls, 1);
+    expect(apiClient.domainFactoryStarts, 1);
+    expect(apiClient.domainFactoryWorkspacePaths,
+        <String?>['/projects/generated/clinica-norte']);
+  });
+
+  testWidgets(
+      'blocked-with-context init can start Domain Factory with generated workspace',
+      (tester) async {
+    final apiClient = _GuidedProjectApiClient()
+      ..includeGeneratorReadyMessage = true
+      ..initPollJobs = <ProjectFactoryInitJob>[
+        _initJob(
+          status: 'blocked_with_context',
+          canContinueWithBlockedContext: true,
+          generatedWorkspacePath: '/projects/generated/blocked',
+        ),
+      ];
+
+    await _pumpGuidedChat(tester, apiClient);
+    await _openNewProjectIntake(
+      tester,
+      name: 'Clinica Norte',
+      adminEmail: 'owner@example.com',
+    );
+    await _answerGuidedIntakeQuestion(tester);
+    await _tapOkDaleProjectFactoryButton(tester);
+
+    await tester.pump(const Duration(seconds: 2));
+    await _pumpDeferredDomainFactoryStart(tester);
+
+    expect(apiClient.getInitJobCalls, 1);
+    expect(apiClient.domainFactoryStarts, 1);
+    expect(apiClient.domainFactoryWorkspacePaths,
+        <String?>['/projects/generated/blocked']);
+  });
+
+  testWidgets('cancelled init does not start Domain Factory', (tester) async {
+    final apiClient = _GuidedProjectApiClient()
+      ..includeGeneratorReadyMessage = true
+      ..initPollJobs = <ProjectFactoryInitJob>[
+        _initJob(
+          status: 'cancelled',
+          generatedWorkspacePath: '/projects/generated/cancelled',
+        ),
+      ];
+
+    await _pumpGuidedChat(tester, apiClient);
+    await _openNewProjectIntake(
+      tester,
+      name: 'Clinica Norte',
+      adminEmail: 'owner@example.com',
+    );
+    await _answerGuidedIntakeQuestion(tester);
+    await _tapOkDaleProjectFactoryButton(tester);
+
+    await tester.pump(const Duration(seconds: 2));
+    await _pumpDeferredDomainFactoryStart(tester);
+
+    expect(apiClient.getInitJobCalls, 1);
+    expect(apiClient.domainFactoryStarts, 0);
+    expect(tester.takeException(), isNull);
+
+    apiClient
+      ..initPollError = StateError('poll failed')
+      ..initPollJobs = <ProjectFactoryInitJob>[];
+    await _sendComposerMessage(tester, 'ok');
+    await tester.pump(const Duration(seconds: 2));
+    await tester.pump();
+
+    expect(apiClient.startInitCalls, 1);
+    expect(apiClient.domainFactoryStarts, 0);
+    expect(apiClient.sentMessages, isEmpty);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('init poll errors leave chat recoverable', (tester) async {
+    final apiClient = _GuidedProjectApiClient()
+      ..includeGeneratorReadyMessage = true
+      ..initPollError = StateError('poll failed');
+
+    await _pumpGuidedChat(tester, apiClient);
+    await _openNewProjectIntake(
+      tester,
+      name: 'Clinica Norte',
+      adminEmail: 'owner@example.com',
+    );
+    await _answerGuidedIntakeQuestion(tester);
+    await _tapOkDaleProjectFactoryButton(tester);
+
+    await tester.pump(const Duration(seconds: 2));
+    await tester.pump();
+
+    expect(apiClient.startInitCalls, 1);
+    expect(apiClient.getInitJobCalls, 1);
+    expect(apiClient.domainFactoryStarts, 0);
+    expect(find.textContaining('Could not refresh deterministic init.'),
+        findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('disposing chat cancels pending init polling safely',
+      (tester) async {
+    final apiClient = _GuidedProjectApiClient()
+      ..includeGeneratorReadyMessage = true;
+
+    await _pumpGuidedChat(tester, apiClient);
+    await _openNewProjectIntake(
+      tester,
+      name: 'Clinica Norte',
+      adminEmail: 'owner@example.com',
+    );
+    await _answerGuidedIntakeQuestion(tester);
+    await _tapOkDaleProjectFactoryButton(tester);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(seconds: 3));
+
+    expect(apiClient.getInitJobCalls, 0);
+    expect(apiClient.domainFactoryStarts, 0);
+    expect(tester.takeException(), isNull);
+  });
+}
+
+Finder _composerField() {
+  return find.byWidgetPredicate(
+    (widget) => widget is TextField && widget.decoration?.hintText == 'Message',
+  );
+}
+
+Future<void> _pumpGuidedChat(
+  WidgetTester tester,
+  _GuidedProjectApiClient apiClient,
+) async {
+  final controller = ChatController(
+    apiClient: apiClient,
+    notificationService: const NoopChatNotificationService(),
+  );
+  addTearDown(controller.dispose);
+
+  await tester.pumpWidget(
+    MaterialApp(
+      home: ChatScreen(
+        initialApiBaseUrl: 'http://localhost:8000',
+        notificationService: const NoopChatNotificationService(),
+        controllerOverride: controller,
+        enableServerBootstrap: false,
+        projectFactoryClientOverride: apiClient,
+      ),
+    ),
+  );
+}
+
+Future<void> _openNewProjectIntake(
+  WidgetTester tester, {
+  required String name,
+  required String adminEmail,
+}) async {
+  await tester.tap(find.byTooltip('New project'));
+  await tester.pumpAndSettle();
+
+  final fields = find.descendant(
+    of: find.byType(AlertDialog),
+    matching: find.byType(TextField),
+  );
+  await tester.enterText(fields.at(0), name);
+  await tester.enterText(fields.at(1), adminEmail);
+  await tester.tap(find.byTooltip('Add admin email'));
+  await tester.pumpAndSettle();
+  await tester.tap(find.text('Start'));
+  await tester.pumpAndSettle();
+}
+
+Future<void> _answerGuidedIntakeQuestion(WidgetTester tester) async {
+  await tester.ensureVisible(find.byType(ActionChip).first);
+  await tester.pumpAndSettle();
+  await tester.tap(find.byType(ActionChip).first);
+  await tester.pumpAndSettle();
+}
+
+Future<void> _sendComposerMessage(WidgetTester tester, String message) async {
+  await tester.enterText(_composerField(), message);
+  await tester.testTextInput.receiveAction(TextInputAction.send);
+  await tester.pumpAndSettle();
+}
+
+Future<void> _tapOkDaleProjectFactoryButton(
+  WidgetTester tester, {
+  bool requireVisible = true,
+}) async {
+  final button =
+      find.byKey(const ValueKey<String>('project-factory-ok-dale-button'));
+  if (requireVisible) {
+    await tester.ensureVisible(button);
+  }
+  tester.widget<FilledButton>(button).onPressed?.call();
+  await tester.pumpAndSettle();
+}
+
+Future<void> _pumpDeferredDomainFactoryStart(WidgetTester tester) async {
+  await tester.pumpAndSettle(const Duration(milliseconds: 10));
+}
+
+ProjectFactoryInitJob _initJob({
+  required String status,
+  bool readyForBusinessLlm = false,
+  bool canContinueWithBlockedContext = false,
+  String? workspacePath,
+  String? generatedWorkspacePath,
+}) {
+  return ProjectFactoryInitJob(
+    initJobId: 'pf-init-1',
+    draftId: 'pf-draft-1',
+    chatSessionId: 'created-session',
+    createdAt: _GuidedProjectApiClient._timestamp.toIso8601String(),
+    updatedAt: _GuidedProjectApiClient._timestamp.toIso8601String(),
+    status: status,
+    currentPhase: 'init_preflight',
+    workspacePath: workspacePath,
+    generatedWorkspacePath: generatedWorkspacePath,
+    phases: const <ProjectFactoryInitPhase>[
+      ProjectFactoryInitPhase(
+        name: 'init_preflight',
+        status: 'completed',
+        message: '',
+        blockers: <Map<String, dynamic>>[],
+        commandEvidence: <Map<String, dynamic>>[],
+        artifacts: <Map<String, dynamic>>[],
+      ),
+    ],
+    remoteResources: const <Map<String, dynamic>>[],
+    blockers: const <Map<String, dynamic>>[],
+    readyForBusinessLlm: readyForBusinessLlm,
+    canContinueWithBlockedContext: canContinueWithBlockedContext,
+  );
 }
 
 class _GuidedProjectApiClient extends ApiClient {
@@ -285,7 +646,14 @@ class _GuidedProjectApiClient extends ApiClient {
   int confirmCalls = 0;
   int getIntakeCalls = 0;
   int startInitCalls = 0;
+  int getInitJobCalls = 0;
   int sendMessageCalls = 0;
+  int domainFactoryStarts = 0;
+  bool includeGeneratorReadyMessage = false;
+  Object? initPollError;
+  List<ProjectFactoryInitJob> initPollJobs = <ProjectFactoryInitJob>[];
+  final List<String> sentMessages = <String>[];
+  final List<String?> domainFactoryWorkspacePaths = <String?>[];
   final List<String> createdDraftNames = <String>[];
   final Map<String, SessionDetail> _sessions = <String, SessionDetail>{};
   ProjectFactoryGuidedIntake _intake = _intakeFromJson(
@@ -462,30 +830,21 @@ class _GuidedProjectApiClient extends ApiClient {
   }) async {
     startInitCalls += 1;
     lastInitWorkspacePath = workspacePath;
-    return ProjectFactoryInitJob(
-      initJobId: 'pf-init-1',
-      draftId: draftId,
-      chatSessionId: chatSessionId,
-      createdAt: _timestamp.toIso8601String(),
-      updatedAt: _timestamp.toIso8601String(),
-      status: 'queued',
-      currentPhase: 'init_preflight',
-      workspacePath: workspacePath,
-      phases: const <ProjectFactoryInitPhase>[
-        ProjectFactoryInitPhase(
-          name: 'init_preflight',
-          status: 'pending',
-          message: '',
-          blockers: <Map<String, dynamic>>[],
-          commandEvidence: <Map<String, dynamic>>[],
-          artifacts: <Map<String, dynamic>>[],
-        ),
-      ],
-      remoteResources: const <Map<String, dynamic>>[],
-      blockers: const <Map<String, dynamic>>[],
-      readyForBusinessLlm: false,
-      canContinueWithBlockedContext: false,
-    );
+    return _initJob(status: 'queued', workspacePath: workspacePath);
+  }
+
+  @override
+  Future<ProjectFactoryInitJob> getProjectFactoryInitJob(
+      String initJobId) async {
+    getInitJobCalls += 1;
+    final error = initPollError;
+    if (error != null) {
+      throw error;
+    }
+    if (initPollJobs.isNotEmpty) {
+      return initPollJobs.removeAt(0);
+    }
+    return _initJob(status: 'running');
   }
 
   @override
@@ -508,7 +867,21 @@ class _GuidedProjectApiClient extends ApiClient {
       turnSummariesEnabled: turnSummariesEnabled,
       createdAt: _timestamp,
       updatedAt: _timestamp,
-      messages: const <ChatMessage>[],
+      messages: includeGeneratorReadyMessage
+          ? <ChatMessage>[
+              ChatMessage(
+                id: 'generator-ready',
+                text:
+                    'El contrato esta listo.\n$kProjectFactoryReadyForBuildMarker',
+                isUser: false,
+                authorType: ChatMessageAuthorType.assistant,
+                agentId: AgentId.generator,
+                status: ChatMessageStatus.completed,
+                createdAt: _timestamp,
+                updatedAt: _timestamp,
+              ),
+            ]
+          : const <ChatMessage>[],
     );
     _sessions[session.id] = session;
     return session;
@@ -563,11 +936,29 @@ class _GuidedProjectApiClient extends ApiClient {
     CodexRunOptions? codexRunOptions,
   }) async {
     sendMessageCalls += 1;
+    sentMessages.add(text);
     return JobStatusResponse(
       jobId: 'job-${DateTime.now().microsecondsSinceEpoch}',
       sessionId: sessionId ?? 'created-session',
       status: 'completed',
       elapsedSeconds: 0,
+    );
+  }
+
+  @override
+  Future<DomainFactoryStart> startDomainFactoryMode(
+    String sessionId, {
+    String? workspacePath,
+  }) async {
+    domainFactoryStarts += 1;
+    domainFactoryWorkspacePaths.add(workspacePath);
+    final current = _sessions[sessionId]!;
+    return DomainFactoryStart(
+      status: 'ready',
+      session: current,
+      firstMessageId: 'domain-factory-start',
+      statePath: '.codex/factory/domain-factory-state.json',
+      specRoot: 'specs/019-domain-factory-session-a',
     );
   }
 

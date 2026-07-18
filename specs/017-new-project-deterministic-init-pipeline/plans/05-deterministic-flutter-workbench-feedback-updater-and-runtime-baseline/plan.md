@@ -16,7 +16,7 @@ Status: completed
 
 ## Tasks
 
-- [x] T022 Generate or verify Flutter baseline app, Android project, web target, and runtime profile wiring before business LLM work.
+- [x] T022 Generate or verify Flutter baseline app, Android project, web target, and runtime profile wiring before business implementation LLM work.
 - [x] T023 Wire Workbench/SDD metadata and Bridge-owned Workbench discovery during init.
 - [x] T024 Wire Codex developer feedback template, source app identity, updater Bridge URL, and feedback queue routing during init.
 - [x] T025 Validate that preview runtime uses real Cloudflare Preview API/D1 and does not use mock/demo or placeholder URLs.

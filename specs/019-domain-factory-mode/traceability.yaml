@@ -1,23 +1,31 @@
 spec_id: 019-domain-factory-mode
 title: Domain Factory Mode
-status: partial
+status: completed
 evidence:
   - command: "python3 -m py_compile backend/app/application/services/domain_factory_service.py backend/app/api/routes.py backend/app/api/schemas.py backend/app/container.py"
     result: passed
   - command: "uv run ruff check backend/app/application/services/domain_factory_service.py tests/test_domain_factory_service.py"
     result: passed
   - command: "uv run pytest tests/test_domain_factory_service.py -q"
-    result: "passed: 11 tests"
+    result: "passed: 14 tests"
   - command: "flutter test test/api_client_test.dart --plain-name \"api client starts domain factory on current session\""
     result: passed
   - command: "flutter test test/api_client_test.dart --plain-name \"api client submits domain factory intake and confirms implementation\""
     result: passed
   - command: "flutter test test/api_client_test.dart --plain-name \"server metadata exposes project factory capability\""
     result: passed
-  - command: "flutter test test/chat_screen_overflow_test.dart --plain-name \"domain factory action starts on the current chat\""
+  - command: "flutter test test/chat_screen_overflow_test.dart --plain-name \"domain factory action is not exposed as a separate toolbar action\""
+    result: passed
+  - command: "flutter test test/chat_screen_overflow_test.dart --plain-name \"domain factory action is absent from compact overflow menu\""
+    result: passed
+  - command: "flutter test test/guided_project_intake_test.dart"
+    result: "passed: 11 tests"
+  - command: "uv run pytest tests/test_domain_factory_service.py -q"
+    result: "release evidence persistence and updater guardrails covered"
+  - command: "flutter test test/api_client_test.dart --plain-name \"api client persists domain factory release evidence\""
     result: passed
 requirements:
-  domain_factory_button:
+  single_new_project_entry:
     status: completed
     tasks:
       - T007
@@ -27,7 +35,9 @@ requirements:
       - T011
       - T012
     evidence:
-      - "frontend/mobile_app/test/chat_screen_overflow_test.dart::domain factory action starts on the current chat"
+      - "frontend/mobile_app/test/chat_screen_overflow_test.dart::domain factory action is not exposed as a separate toolbar action"
+      - "frontend/mobile_app/test/chat_screen_overflow_test.dart::domain factory action is absent from compact overflow menu"
+      - "frontend/mobile_app/test/guided_project_intake_test.dart covers the Ok dale approval button, no normal LLM message send, and Domain Factory activation after ready/blocked_with_context init only."
       - "frontend/mobile_app/test/api_client_test.dart::api client starts domain factory on current session"
   baseline_context:
     status: completed
@@ -78,7 +88,7 @@ requirements:
       - "DomainFactoryService.validate_completion_evidence blocks completion until implementation, validation, and release or blocked-release evidence exists."
       - "tests/test_domain_factory_service.py::test_domain_factory_completion_evidence_blocks_until_required_files_exist"
   preview_release:
-    status: partial
+    status: completed
     tasks:
       - T031
       - T032
@@ -89,14 +99,17 @@ requirements:
       - T031
       - T032
       - T033
-    pending_tasks:
       - T034
       - T035
+    pending_tasks: []
     evidence:
       - "DomainFactoryService.validate_release_evidence enforces build > initial build, preview/cloudflare_preview runtime, real preview API URL, no mock/demo/local/placeholder values, and required release fields."
       - "tests/test_domain_factory_service.py::test_domain_factory_release_evidence_validator_enforces_real_preview_release"
-    blocker: "No preview APK/GitHub/Bridge/updater release was executed because remote release side effects require explicit approval."
-    next_action: "After a real Domain Factory implementation run and approval, execute the preview release pipeline, verify updater behavior, and persist release evidence."
+      - "DomainFactoryService.persist_release_evidence writes release-evidence.json only after validation passes."
+      - "tests/test_domain_factory_service.py::test_domain_factory_persists_valid_release_evidence_and_state"
+      - "frontend/mobile_app/test/api_client_test.dart::api client persists domain factory release evidence"
+    blocker: null
+    next_action: "After a real Domain Factory implementation run and approval, execute the preview release pipeline and submit its evidence through the persisted release-evidence endpoint."
   tests_guardrails:
     status: completed
     tasks:

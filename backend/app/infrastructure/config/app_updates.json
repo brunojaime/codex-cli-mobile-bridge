@@ -61,7 +61,7 @@
     "apkAssetPattern": "prueba-11*.apk",
     "displayName": "prueba-11 Preview",
     "enabled": true,
-    "expectedPackageId": null,
+    "expectedPackageId": "com.example.satshowroom",
     "latestAssetName": "prueba-11.apk",
     "mockOrDemo": false,
     "previewUrl": "https://preview.nienfos.com/prueba-11",
@@ -312,7 +312,7 @@
     "releaseMetadata": {
       "initialPreviewRelease": true,
       "latestAssetName": "rentid.apk",
-      "releaseTag": "android-preview-v0.1.0-build.13",
+      "releaseTag": "android-preview-v0.1.0-build.38",
       "releaseTagPattern": "android-preview-v*"
     },
     "releaseTagPattern": "android-preview-v*",
@@ -334,41 +334,11 @@
       "android-feedback*-v*": "com.sat.sat_catalogo_ropa"
     }
   },
-  "sat-showroom": {
-    "apkAssetPattern": "sat-showroom*.apk",
-    "displayName": "SAT Showroom Preview",
-    "enabled": true,
-    "expectedPackageId": "com.nienfos.satshowroom",
-    "latestAssetName": "sat-showroom.apk",
-    "mockOrDemo": false,
-    "previewUrl": "https://preview.nienfos.com/sat-showroom",
-    "productionReady": false,
-    "releaseChannel": "prerelease",
-    "releaseMetadata": {
-      "android_tag_commit": "1c2b854b1a58f7712af4cbbd53480d7cc2207553",
-      "appUpdater": "codex_app_updater-v0.1.3",
-      "feedbackBridge": "codex_developer_feedback_template-v0.4.7",
-      "initialPreviewRelease": true,
-      "latestAssetName": "sat-showroom.apk",
-      "mockOrDemo": false,
-      "releaseTag": "android-preview-v0.1.0-build.3",
-      "releaseTagPattern": "android-preview-v*",
-      "report_generated_from_commit": "1c2b854b1a58f7712af4cbbd53480d7cc2207553",
-      "validated_source_commit": "1c2b854b1a58f7712af4cbbd53480d7cc2207553"
-    },
-    "releaseTagPattern": "android-preview-v*",
-    "repo": "brunojaime/sat-showroom",
-    "requiredMinimumBuild": null,
-    "runtimeProfile": "preview",
-    "verifiedPackageIds": {
-      "android-preview-v*": "com.nienfos.satshowroom"
-    }
-  },
   "satshowroom": {
     "apkAssetPattern": "satshowroom*.apk",
     "displayName": "satshowroom Preview",
     "enabled": true,
-    "expectedPackageId": null,
+    "expectedPackageId": "com.nienfos.satshowroom",
     "latestAssetName": "satshowroom.apk",
     "mockOrDemo": false,
     "previewUrl": "https://preview.nienfos.com/satshowroom",
@@ -377,14 +347,17 @@
     "releaseMetadata": {
       "initialPreviewRelease": true,
       "latestAssetName": "satshowroom.apk",
-      "releaseTag": "android-preview-v0.1.0-build.28",
+      "releaseTag": "android-preview-v0.1.0-build.49",
       "releaseTagPattern": "android-preview-v*"
     },
     "releaseTagPattern": "android-preview-v*",
     "repo": "brunojaime/satshowroom",
     "requiredMinimumBuild": null,
     "runtimeProfile": "preview",
-    "verifiedPackageIds": {}
+    "verifiedPackageIds": {
+      "android-preview-v0.1.0-build.49": "com.nienfos.satshowroom",
+      "satshowroom.apk": "com.nienfos.satshowroom"
+    }
   },
   "smart-nienfos": {
     "apkAssetPattern": "smart-nienfos-*.apk",

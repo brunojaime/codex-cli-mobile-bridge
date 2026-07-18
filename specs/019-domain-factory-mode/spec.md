@@ -1,20 +1,22 @@
 # Domain Factory Mode
 
 id: 019-domain-factory-mode
-status: partial
+status: completed
 owner: codex-mobile-bridge
 
 ## Intent
 
-Add a Domain Factory mode that starts from a project already created by New
-Project deterministic init. Domain Factory is not another project creator. It is
-the product/domain work mode for an initialized project.
+Add a Domain Factory mode that starts internally from a project already created
+by New Project deterministic init. Domain Factory is not another project
+creator or a separate visible creation button. It is the product/domain work
+mode for an initialized project.
 
-The user should be able to open a project chat such as `prueba-17`, tap Domain
-Factory, describe the real business domain, attach visual references or assets,
-answer follow-up questions, and then have generator/reviewer implement the
-domain layer on top of the existing baseline. The work must end in a new real
-preview release and installable APK when the project strategy supports Android.
+The user should be able to tap New Project, describe the real business domain,
+attach visual references or assets, answer follow-up questions, approve the
+domain/project contract, and then have the system run deterministic init before
+generator/reviewer implement the domain layer on top of the existing baseline.
+The work must end in a new real preview release and installable APK when the
+project strategy supports Android.
 
 This spec complements:
 
@@ -26,7 +28,8 @@ This spec complements:
 
 ## Product Outcome
 
-When the user taps Domain Factory from an initialized project chat:
+When the user approves the New Project domain contract and deterministic init
+finishes or reaches a user-visible blocked-with-context state:
 
 - the app keeps the user inside the current project;
 - the backend identifies the current workspace and source app;
@@ -237,21 +240,28 @@ next safe action.
 
 ## UI Contract
 
-The mobile app should add a Domain Factory entry near New Project.
+The mobile app should expose one project-creation entry: New Project. Domain
+Factory starts internally after the approved contract and deterministic baseline
+are ready.
 
 Initial version:
 
-- show Domain Factory below New Project in the project menu;
-- require a current project/session;
+- do not show a separate Domain Factory project-creation button;
+- require a current generated workspace before implementation mode starts;
+- show the `Ok dale` approval button under the latest completed generator
+  contract message and use it to enter the single New Project confirmation
+  path;
 - configure the current chat rather than creating a new project;
-- show a short confirmation that the project is entering Domain Factory mode;
+- show a short confirmation that the baseline is ready and implementation mode
+  has started;
 - allow the user to type or paste a long domain brief;
 - keep attachment/reference support available;
 - show Domain Factory state in chat;
 - do not expose project-creation fields.
 
-Later versions may add a richer dialog, but the first version should optimize
-for starting the domain conversation quickly.
+Later versions may add richer intake surfaces, but the first version should
+optimize for moving from one New Project conversation into implementation
+without asking the user to choose between project-creation modes.
 
 ## Operational Governance
 
@@ -295,7 +305,8 @@ Implemented and tested in the bridge:
   areas, allowed domain modification areas, destructive-operation approval
   policy, domain intake fields, role/permission model, follow-up question
   template, and release guardrails;
-- mobile Domain Factory entry next to New Project, gated on current session;
+- single New Project entry with Domain Factory activation after deterministic
+  init readiness, gated on the generated workspace;
 - SDD bootstrap per Domain Factory run, including spec/plan/tasks/
   traceability, intake contract JSON, media-reference placeholder, release
   guardrails JSON, and DER/ERD, class, sequence, component, and deployment
@@ -312,20 +323,28 @@ Implemented and tested in the bridge:
   complete without implementation, validation, and release or real blocked
   release evidence;
 - concrete release evidence validator for build increment after build 1, real
-  preview runtime/API, no mock/demo/local/placeholder values, and required
-  release evidence fields.
+  preview runtime/API, no mock/demo/local/placeholder values, required release
+  evidence fields, and updater verification;
+- release evidence persistence endpoint that writes `release-evidence.json`
+  only after validation passes and stores the result in Domain Factory state.
 
-Still pending:
+Operational release execution:
 
-- Android/GitHub/Bridge/updater preview release execution;
-- persisted real release evidence from an actual approved preview release.
+- Android/GitHub/Bridge/updater preview release execution still requires an
+  approved real post-implementation release run.
+- The approved run must submit commit, tag, release URL, APK URL, SHA-256,
+  preview URL, smoke results, Bridge registry payload, rollback pointer, and
+  updater verification through the persisted release-evidence endpoint.
 
 ## Evidence
 
 - `python3 -m py_compile backend/app/application/services/domain_factory_service.py backend/app/api/routes.py backend/app/api/schemas.py backend/app/container.py`
 - `uv run ruff check backend/app/application/services/domain_factory_service.py tests/test_domain_factory_service.py`
-- `uv run pytest tests/test_domain_factory_service.py -q` (`11 passed`)
+- `uv run pytest tests/test_domain_factory_service.py -q` (`14 passed`)
 - `flutter test test/api_client_test.dart --plain-name "api client starts domain factory on current session"`
 - `flutter test test/api_client_test.dart --plain-name "api client submits domain factory intake and confirms implementation"`
+- `flutter test test/api_client_test.dart --plain-name "api client persists domain factory release evidence"`
 - `flutter test test/api_client_test.dart --plain-name "server metadata exposes project factory capability"`
-- `flutter test test/chat_screen_overflow_test.dart --plain-name "domain factory action starts on the current chat"`
+- `flutter test test/chat_screen_overflow_test.dart --plain-name "domain factory action is not exposed as a separate toolbar action"`
+- `flutter test test/chat_screen_overflow_test.dart --plain-name "domain factory action is absent from compact overflow menu"`
+- `flutter test test/guided_project_intake_test.dart` (`11 passed`)

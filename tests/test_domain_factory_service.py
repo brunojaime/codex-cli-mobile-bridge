@@ -371,6 +371,7 @@ def test_domain_factory_route_registered_on_root_and_api_v1() -> None:
     assert "/api/v1/sessions/{session_id}/domain-factory/start" in paths
     assert "/sessions/{session_id}/domain-factory/intake" in paths
     assert "/sessions/{session_id}/domain-factory/implementation/confirm" in paths
+    assert "/sessions/{session_id}/domain-factory/release-evidence" in paths
 
 
 def test_domain_factory_persists_intake_media_and_contract_preview(
@@ -527,6 +528,9 @@ def test_domain_factory_release_evidence_validator_enforces_real_preview_release
         "invalid_release_api_runtime",
         "invalid_release_api_url",
         "forbidden_release_default",
+        "missing_release_evidence_field",
+        "updater_previous_build_missing_new_build",
+        "updater_new_build_has_pending_self_update",
     }.issubset({error["code"] for error in invalid["errors"]})
 
     valid = service.validate_release_evidence(
@@ -545,11 +549,74 @@ def test_domain_factory_release_evidence_validator_enforces_real_preview_release
             "smokeResults": "passed",
             "bridgeRegistryPayload": "registered",
             "rollbackPointer": "android-preview-v0.1.0-build.1",
+            "updaterVerification": {
+                "previousBuildSeesNewBuild": True,
+                "newBuildHasPendingSelfUpdate": False,
+            },
         },
         initial_build=1,
     )
     assert valid["ok"] is True
     assert valid["errors"] == []
+
+
+def test_domain_factory_persists_valid_release_evidence_and_state(
+    tmp_path: Path,
+) -> None:
+    workspace = _baseline_workspace(tmp_path)
+    repository = _repository(tmp_path)
+    session = _session(workspace)
+    repository.save_session(session)
+    service = DomainFactoryService(
+        projects_root=tmp_path / "projects",
+        chat_repository=repository,
+    )
+    start = service.start(session_id=session.id)
+
+    evidence = {
+        "build": 2,
+        "runtimeProfile": "preview",
+        "apiRuntime": "cloudflare_preview",
+        "apiUrl": "https://preview.nienfos.com/clinica-norte/api",
+        "commit": "def456",
+        "tag": "android-preview-v0.1.1-build.2",
+        "releaseUrl": "https://github.com/acme/clinica/releases/tag/android-preview-v0.1.1-build.2",
+        "apkUrl": "https://github.com/acme/clinica/releases/download/android-preview-v0.1.1-build.2/app.apk",
+        "sha256": "f" * 64,
+        "previewUrl": "https://preview.nienfos.com/clinica-norte",
+        "smokeResults": {"status": "passed"},
+        "bridgeRegistryPayload": {"source_app": "clinica-norte", "build": 2},
+        "rollbackPointer": "android-preview-v0.1.0-build.1",
+        "updaterVerification": {
+            "previousBuildSeesNewBuild": True,
+            "newBuildHasPendingSelfUpdate": False,
+        },
+    }
+
+    result = service.persist_release_evidence(
+        session_id=session.id,
+        evidence=evidence,
+        initial_build=1,
+    )
+
+    assert result["ok"] is True
+    assert result["status"] == "ready"
+    assert result["releaseEvidencePath"] == f"{start.spec_root}/release-evidence.json"
+    release = json.loads(
+        (workspace / result["releaseEvidencePath"]).read_text(encoding="utf-8")
+    )
+    assert release["evidence"]["commit"] == "def456"
+    assert release["updaterVerification"]["previousBuildSeesNewBuild"] is True
+    assert release["updaterVerification"]["newBuildHasPendingSelfUpdate"] is False
+    state = json.loads(
+        (workspace / ".codex/factory/domain-factory-state.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert state["modeStatus"] == "release_evidence_ready"
+    assert state["releaseEvidencePath"] == result["releaseEvidencePath"]
+    completion = service.validate_completion_evidence(session_id=session.id)
+    assert completion["missingEvidence"] == ["implementation", "validation"]
 
 
 def _repository(tmp_path: Path) -> InMemoryChatRepository:

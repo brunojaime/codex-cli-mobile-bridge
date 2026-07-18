@@ -48,19 +48,21 @@ const String _defaultAutoReviewerPrompt =
     'prompt.';
 const String _projectFactoryGeneratorPrompt =
     'You are the New Project Factory Codex inside Codex Mobile Bridge. '
-    'Guide the user through creating a new app as a normal chat, infer missing '
-    'project details from the conversation, ask concise questions, use any '
-    'attached images as visual references, produce a preview before generation, '
-    'and only create files after explicit confirmation. When confirmed, use the '
-    'bridge Project Factory workflow. The default first release is an Initial '
-    'Preview Release: real Cloudflare Preview API, persistent D1 data, '
+    'Guide the user through domain intake as a normal chat. Before explicit '
+    'approval, do not create files, do not run commands, do not create repos, '
+    'and do not implement product code. Infer missing details, ask concise '
+    'questions, use attached images as visual references, and produce a '
+    'domain contract/spec seed for approval. The contract should cover business '
+    'outcome, users, roles, permissions, entities, workflows, screens, visual '
+    'direction, assets, acceptance criteria, and release expectations. After '
+    'approval, the bridge will run deterministic New Project init first, then '
+    'Domain Factory implementation on the generated baseline. The default '
+    'release path is real preview data: Cloudflare Preview API, persistent D1, '
     'https://preview.nienfos.com/<slug> and /api, android-preview-v* APK, '
-    'Codex Mobile Apps Bridge registration, production not ready, and no '
-    'mock/demo data unless the user explicitly asks for a mock/demo APK. Ask '
-    'for initial admin emails before build-ready confirmation, include invite '
-    'delivery assumptions, default expiration, and manual-link fallback. Keep '
-    'specs, plan, tasks, reference assets, Flutter, FastAPI, auth, RBAC, admin, '
-    'notifications, validation, and workspace handoff consistent.';
+    'Bridge registration, production not ready, and no mock/demo data unless '
+    'the user explicitly asks for a mock/demo APK. Ask for initial admin emails '
+    'before build-ready confirmation. End only a fully reviewed contract with '
+    'the exact marker PROJECT_FACTORY_READY_FOR_BUILD.';
 const String _projectFactoryReviewerPrompt =
     'You are reviewing the New Project Factory generator. Check that the '
     'project brief, defaults, visual references, roles, auth, admin, '
@@ -271,6 +273,9 @@ bool isProjectFactoryBuildConfirmation(String? rawText) {
   if (blockers.any(text.contains)) {
     return false;
   }
+  if (text == 'ok' || text == 'dale') {
+    return true;
+  }
   const confirmations = <String>[
     'ok dale para adelante',
     'dale para adelante',
@@ -319,7 +324,6 @@ enum _AppBarOverflowAction {
   replyMode,
   servers,
   newProject,
-  domainFactory,
   projectHistory,
   newChat,
 }
@@ -411,6 +415,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   final Map<String, ProjectFactoryInitJob> _projectFactoryInitBySession =
       <String, ProjectFactoryInitJob>{};
   final Set<String> _loadingProjectFactoryInitSessions = <String>{};
+  final Map<String, Timer> _projectFactoryInitPollTimers = <String, Timer>{};
+  final Set<String> _startingDomainFactoryAfterInitSessions = <String>{};
   String? _projectFactoryInitErrorText;
   final Map<String, Set<String>> _collapsedMessageIdsBySession =
       <String, Set<String>>{};
@@ -460,6 +466,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     unawaited(_replyPlaybackService.dispose());
+    for (final timer in _projectFactoryInitPollTimers.values) {
+      timer.cancel();
+    }
+    _projectFactoryInitPollTimers.clear();
     _chatController.removeListener(_handleChatControllerChanged);
     if (widget.controllerOverride == null) {
       _chatController.dispose();
@@ -1074,6 +1084,13 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                                 );
                                               }
                                               final message = entry.message!;
+                                              final showProjectFactoryApproval =
+                                                  currentSession != null &&
+                                                      _shouldShowProjectFactoryApprovalCta(
+                                                        currentSession,
+                                                        message,
+                                                        messages,
+                                                      );
                                               final nextEntry = index + 1 <
                                                       timelineEntries.length
                                                   ? timelineEntries[index + 1]
@@ -1094,39 +1111,46 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                                   padding: EdgeInsets.only(
                                                     bottom: extraBottomSpacing,
                                                   ),
-                                                  child: ChatBubble(
-                                                    key: ValueKey<String>(
-                                                      'chat-bubble-${message.id}',
-                                                    ),
-                                                    message: message,
-                                                    isCollapsed:
-                                                        _isMessageCollapsed(
-                                                      message,
-                                                    ),
-                                                    onToggleCollapsed: () =>
-                                                        _toggleMessageCollapsed(
-                                                      message,
-                                                    ),
-                                                    generatorColor: _chatController
-                                                                .currentSession !=
-                                                            null
-                                                        ? _colorFromHex(
+                                                  child: Column(
+                                                    crossAxisAlignment: message
+                                                            .isUser
+                                                        ? CrossAxisAlignment.end
+                                                        : CrossAxisAlignment
+                                                            .start,
+                                                    children: <Widget>[
+                                                      ChatBubble(
+                                                        key: ValueKey<String>(
+                                                          'chat-bubble-${message.id}',
+                                                        ),
+                                                        message: message,
+                                                        isCollapsed:
+                                                            _isMessageCollapsed(
+                                                          message,
+                                                        ),
+                                                        onToggleCollapsed: () =>
+                                                            _toggleMessageCollapsed(
+                                                          message,
+                                                        ),
+                                                        generatorColor:
                                                             _chatController
-                                                                .currentSession!
-                                                                .agentProfileColor,
-                                                          )
-                                                        : null,
-                                                    onOptionSelected:
-                                                        _handleSuggestedReply,
-                                                    onLinkTap:
-                                                        _handleMessageLinkTap,
-                                                    attachmentBaseUrl:
-                                                        _activeServer
-                                                                ?.baseUrl ??
-                                                            widget
-                                                                .initialApiBaseUrl,
-                                                    onCancelJob:
-                                                        (_activeServerCapabilities
+                                                                        .currentSession !=
+                                                                    null
+                                                                ? _colorFromHex(
+                                                                    _chatController
+                                                                        .currentSession!
+                                                                        .agentProfileColor,
+                                                                  )
+                                                                : null,
+                                                        onOptionSelected:
+                                                            _handleSuggestedReply,
+                                                        onLinkTap:
+                                                            _handleMessageLinkTap,
+                                                        attachmentBaseUrl:
+                                                            _activeServer
+                                                                    ?.baseUrl ??
+                                                                widget
+                                                                    .initialApiBaseUrl,
+                                                        onCancelJob: (_activeServerCapabilities
                                                                         ?.supportsJobCancellation ??
                                                                     false) &&
                                                                 message.jobId !=
@@ -1137,8 +1161,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                                                       .jobId!,
                                                                 )
                                                             : null,
-                                                    onRetryJob:
-                                                        (_activeServerCapabilities
+                                                        onRetryJob: (_activeServerCapabilities
                                                                         ?.supportsJobRetry ??
                                                                     false) &&
                                                                 message.jobId !=
@@ -1149,24 +1172,40 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                                                       .jobId!,
                                                                 )
                                                             : null,
-                                                    onRecoverUnknownSubmission: message
-                                                                .status ==
-                                                            ChatMessageStatus
-                                                                .submissionUnknown
-                                                        ? () =>
-                                                            _handleRecoverUnknownSubmission(
-                                                              message.id,
-                                                            )
-                                                        : null,
-                                                    onCancelUnknownSubmission: message
-                                                                .status ==
-                                                            ChatMessageStatus
-                                                                .submissionUnknown
-                                                        ? () =>
-                                                            _handleCancelUnknownSubmission(
-                                                              message.id,
-                                                            )
-                                                        : null,
+                                                        onRecoverUnknownSubmission: message
+                                                                    .status ==
+                                                                ChatMessageStatus
+                                                                    .submissionUnknown
+                                                            ? () =>
+                                                                _handleRecoverUnknownSubmission(
+                                                                  message.id,
+                                                                )
+                                                            : null,
+                                                        onCancelUnknownSubmission: message
+                                                                    .status ==
+                                                                ChatMessageStatus
+                                                                    .submissionUnknown
+                                                            ? () =>
+                                                                _handleCancelUnknownSubmission(
+                                                                  message.id,
+                                                                )
+                                                            : null,
+                                                      ),
+                                                      if (showProjectFactoryApproval)
+                                                        Padding(
+                                                          padding:
+                                                              const EdgeInsets
+                                                                  .only(
+                                                            top: 8,
+                                                            left: 4,
+                                                          ),
+                                                          child:
+                                                              _ProjectFactoryApprovalButton(
+                                                            onPressed:
+                                                                _handleProjectFactoryApprovalButton,
+                                                          ),
+                                                        ),
+                                                    ],
                                                   ),
                                                 ),
                                               );
@@ -1233,6 +1272,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                     isProdEnvironment:
                         _activeServerHealth?.environmentIdentity?.environment ==
                             'prod',
+                    bridgeEnvironment:
+                        _activeServerHealth?.environmentIdentity?.environment,
                     devHandoffAvailable: _activeServerHealth
                             ?.environmentIdentity?.canEnqueueDevHandoff ??
                         false,
@@ -1321,9 +1362,29 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
 
   Future<void> _openDevHandoffDialog() async {
     final identity = _activeServerHealth?.environmentIdentity;
-    if (!(identity?.canEnqueueDevHandoff ?? false)) {
+    if (identity == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('DEV handoff is not available here.')),
+        const SnackBar(
+          content: Text(
+            'Bridge environment identity is unavailable from this backend.',
+          ),
+        ),
+      );
+      return;
+    }
+    if (identity.environment != 'prod') {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('DEV handoff is only available from PROD.'),
+        ),
+      );
+      return;
+    }
+    if (!identity.canEnqueueDevHandoff) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('PROD to DEV handoff is disabled by this backend.'),
+        ),
       );
       return;
     }
@@ -1546,13 +1607,14 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: <Widget>[
-          ProjectFactoryInitCard(
-            initJob: initJob,
-            isLoading: isInitLoading,
-            errorText: _projectFactoryInitErrorText,
-          ),
+          if (initJob != null || isInitLoading)
+            ProjectFactoryInitCard(
+              initJob: initJob,
+              isLoading: isInitLoading,
+              errorText: _projectFactoryInitErrorText,
+            ),
           if (showLegacyGuidedIntake) ...<Widget>[
-            const SizedBox(height: 10),
+            if (initJob != null || isInitLoading) const SizedBox(height: 10),
             ProjectFactoryGuidedIntakeCard(
               intake: intake,
               onAnswer: (questionId, value) =>
@@ -1886,6 +1948,37 @@ When you create the Project Factory draft, link each asset with POST /project-fa
     return entries;
   }
 
+  bool _shouldShowProjectFactoryApprovalCta(
+    SessionDetail session,
+    ChatMessage message,
+    List<ChatMessage> visibleMessages,
+  ) {
+    if (message.isUser ||
+        message.agentId != AgentId.generator ||
+        message.status != ChatMessageStatus.completed) {
+      return false;
+    }
+    if (!isProjectFactoryIntakeConfiguration(session.agentConfiguration)) {
+      return false;
+    }
+    if (!_projectFactoryGuidedIntakeAllowsBuild(session.id) &&
+        !projectFactoryHasBuildReadyMarker(session.messages)) {
+      return false;
+    }
+    if (_projectFactoryInitBySession.containsKey(session.id) ||
+        _loadingProjectFactoryInitSessions.contains(session.id)) {
+      return false;
+    }
+    for (final candidate in visibleMessages.reversed) {
+      if (!candidate.isUser &&
+          candidate.agentId == AgentId.generator &&
+          candidate.status == ChatMessageStatus.completed) {
+        return candidate.id == message.id;
+      }
+    }
+    return false;
+  }
+
   int _summaryMessageCountForCurrentSession() {
     final currentSession = _chatController.currentSession;
     if (currentSession == null) {
@@ -2043,47 +2136,61 @@ When you create the Project Factory draft, link each asset with POST /project-fa
     );
   }
 
-  Future<void> _openDomainFactoryMode() async {
+  Future<void> _openDomainFactoryMode({
+    String? workspacePathOverride,
+    bool showSnackbars = true,
+  }) async {
     final currentSession = _chatController.currentSession;
     if (currentSession == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Open a project chat before starting Domain Factory.'),
-        ),
-      );
+      if (showSnackbars) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content:
+                Text('Open a project chat before starting Domain Factory.'),
+          ),
+        );
+      }
       return;
     }
     final capabilities = _activeServerCapabilities;
     if (capabilities != null && !capabilities.supportsDomainFactory) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Domain Factory needs an updated bridge backend. Restart or update the backend, then try again.',
+      if (showSnackbars) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Domain Factory needs an updated bridge backend. Restart or update the backend, then try again.',
+            ),
           ),
-        ),
-      );
+        );
+      }
       return;
     }
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Starting Domain Factory mode...')),
+    if (showSnackbars) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Starting Domain Factory mode...')),
+      );
+    }
+    final started = await _chatController.startDomainFactoryMode(
+      workspacePathOverride: workspacePathOverride,
     );
-    final started = await _chatController.startDomainFactoryMode();
     if (!mounted) {
       return;
     }
     _updateStickToBottom(true);
     _scrollToBottom();
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          started
-              ? 'Domain Factory mode is ready for the business brief.'
-              : _chatController.errorText ??
-                  'Domain Factory is blocked. Check the chat message for details.',
+    if (showSnackbars) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            started
+                ? 'Domain Factory mode is ready for implementation.'
+                : _chatController.errorText ??
+                    'Domain Factory is blocked. Check the chat message for details.',
+          ),
         ),
-      ),
-    );
+      );
+    }
   }
 
   Future<_NewProjectBasics?> _promptNewProjectBasics() async {
@@ -2141,28 +2248,11 @@ When you create the Project Factory draft, link each asset with POST /project-fa
       _projectFactoryGuidedIntakeErrorText = null;
     });
 
-    final initJob = await _startOrResumeProjectFactoryInit(
-      client: _projectFactoryClient(),
-      draft: draft,
-      session: session,
-    );
-    if (!mounted) {
-      return;
-    }
-    if (initJob == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            _projectFactoryInitErrorText ??
-                'Could not start deterministic project init.',
-          ),
-        ),
-      );
-      return;
-    }
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
-        content: Text('New Project baseline init started.'),
+        content: Text(
+          'New Project intake started. Approve the contract to create the baseline.',
+        ),
       ),
     );
   }
@@ -2206,18 +2296,6 @@ When you create the Project Factory draft, link each asset with POST /project-fa
     }
   }
 
-  Future<ProjectFactoryInitJob?> _startOrResumeProjectFactoryInit({
-    required ApiClient client,
-    required ProjectFactoryDraft draft,
-    required SessionDetail session,
-  }) {
-    return _startOrResumeProjectFactoryInitForDraft(
-      client: client,
-      draftId: draft.draftId,
-      sessionId: session.id,
-    );
-  }
-
   Future<ProjectFactoryInitJob?> _startOrResumeProjectFactoryInitForDraft({
     required ApiClient client,
     required String draftId,
@@ -2239,6 +2317,11 @@ When you create the Project Factory draft, link each asset with POST /project-fa
         _projectFactoryInitBySession[sessionId] = initJob;
         _loadingProjectFactoryInitSessions.remove(sessionId);
       });
+      _scheduleProjectFactoryInitPoll(
+        client: client,
+        sessionId: sessionId,
+        initJob: initJob,
+      );
       return initJob;
     } catch (error) {
       if (!mounted) {
@@ -2250,6 +2333,116 @@ When you create the Project Factory draft, link each asset with POST /project-fa
             'Could not start deterministic init. $error';
       });
       return null;
+    }
+  }
+
+  void _scheduleProjectFactoryInitPoll({
+    required ApiClient client,
+    required String sessionId,
+    required ProjectFactoryInitJob initJob,
+    int attempt = 0,
+  }) {
+    _projectFactoryInitPollTimers.remove(sessionId)?.cancel();
+    if (!_shouldPollProjectFactoryInit(initJob) || attempt >= 120) {
+      _deferDomainFactoryStartAfterInit(sessionId, initJob);
+      return;
+    }
+    _projectFactoryInitPollTimers[sessionId] = Timer(
+      const Duration(seconds: 2),
+      () async {
+        if (!mounted) {
+          return;
+        }
+        try {
+          final latest =
+              await client.getProjectFactoryInitJob(initJob.initJobId);
+          if (!mounted) {
+            return;
+          }
+          setState(() {
+            _projectFactoryInitBySession[sessionId] = latest;
+          });
+          if (_shouldPollProjectFactoryInit(latest)) {
+            _scheduleProjectFactoryInitPoll(
+              client: client,
+              sessionId: sessionId,
+              initJob: latest,
+              attempt: attempt + 1,
+            );
+            return;
+          }
+          unawaited(_maybeStartDomainFactoryAfterInit(sessionId, latest));
+        } catch (error) {
+          if (!mounted) {
+            return;
+          }
+          setState(() {
+            _projectFactoryInitErrorText =
+                'Could not refresh deterministic init. $error';
+          });
+        }
+      },
+    );
+  }
+
+  void _deferDomainFactoryStartAfterInit(
+    String sessionId,
+    ProjectFactoryInitJob initJob,
+  ) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          unawaited(_maybeStartDomainFactoryAfterInit(sessionId, initJob));
+        }
+      });
+    });
+  }
+
+  bool _shouldPollProjectFactoryInit(ProjectFactoryInitJob job) {
+    return !job.isReady &&
+        !job.isBlockedWithContext &&
+        job.status != 'failed' &&
+        job.status != 'cancelled';
+  }
+
+  Future<void> _maybeStartDomainFactoryAfterInit(
+    String sessionId,
+    ProjectFactoryInitJob initJob,
+  ) async {
+    final canStartImplementation = initJob.readyForBusinessLlm ||
+        initJob.isReady ||
+        initJob.isBlockedWithContext ||
+        initJob.canContinueWithBlockedContext;
+    if (!canStartImplementation) {
+      return;
+    }
+    if (_startingDomainFactoryAfterInitSessions.contains(sessionId)) {
+      return;
+    }
+    final workspacePath = initJob.generatedWorkspacePath ??
+        initJob.workspacePath ??
+        initJob.projectPath;
+    if (workspacePath == null || workspacePath.isEmpty) {
+      return;
+    }
+    _startingDomainFactoryAfterInitSessions.add(sessionId);
+    try {
+      await _openDomainFactoryMode(
+        workspacePathOverride: workspacePath,
+        showSnackbars: false,
+      );
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Baseline ready. Domain Factory implementation mode started.',
+          ),
+        ),
+      );
+    } finally {
+      _startingDomainFactoryAfterInitSessions.remove(sessionId);
     }
   }
 
@@ -2332,8 +2525,62 @@ When you create the Project Factory draft, link each asset with POST /project-fa
   }
 
   bool _projectFactoryGuidedIntakeAllowsBuild(String sessionId) {
-    return _projectFactoryGuidedIntakeBySession[sessionId]?.buildAllowed ==
-        true;
+    final intake = _projectFactoryGuidedIntakeBySession[sessionId];
+    return intake?.buildAllowed == true || intake?.readyForConfirmation == true;
+  }
+
+  Future<void> _handleProjectFactoryApprovalButton() async {
+    final shouldSendAsMessage =
+        await _maybeActivateProjectFactoryBuildMode('ok');
+    if (!mounted || !shouldSendAsMessage) {
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('New Project contract is not ready to approve yet.'),
+      ),
+    );
+  }
+
+  Future<ProjectFactoryGuidedIntake?> _confirmProjectFactoryGuidedIntake(
+    String sessionId,
+  ) async {
+    final draftId = _projectFactoryDraftIdBySession[sessionId];
+    if (draftId == null) {
+      return null;
+    }
+    final current = _projectFactoryGuidedIntakeBySession[sessionId];
+    if (current?.buildAllowed == true) {
+      return current;
+    }
+    setState(() {
+      _loadingProjectFactoryIntakeSessions.add(sessionId);
+      _projectFactoryGuidedIntakeErrorText = null;
+    });
+    try {
+      final intake =
+          await _projectFactoryClient().confirmProjectFactoryGuidedIntake(
+        draftId,
+      );
+      if (!mounted) {
+        return intake;
+      }
+      setState(() {
+        _projectFactoryGuidedIntakeBySession[sessionId] = intake;
+        _loadingProjectFactoryIntakeSessions.remove(sessionId);
+      });
+      return intake;
+    } catch (error) {
+      if (!mounted) {
+        return null;
+      }
+      setState(() {
+        _loadingProjectFactoryIntakeSessions.remove(sessionId);
+        _projectFactoryGuidedIntakeErrorText =
+            'Could not approve guided intake contract. $error';
+      });
+      return null;
+    }
   }
 
   Future<void> _openProjectFactoryHistory() async {
@@ -2387,24 +2634,60 @@ When you create the Project Factory draft, link each asset with POST /project-fa
       );
       return true;
     }
+    if (_projectFactoryInitBySession.containsKey(session.id) ||
+        _loadingProjectFactoryInitSessions.contains(session.id)) {
+      return false;
+    }
 
-    final didConfigure = await _chatController.updateAgentConfiguration(
-      buildProjectFactoryBuildConfiguration(session.agentConfiguration),
+    final approved = await _confirmProjectFactoryGuidedIntake(session.id);
+    if (!mounted) {
+      return false;
+    }
+    if (approved == null || approved.buildAllowed != true) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _projectFactoryGuidedIntakeErrorText ??
+                'Could not approve the New Project contract.',
+          ),
+        ),
+      );
+      return false;
+    }
+    final draftId = _projectFactoryDraftIdBySession[session.id];
+    if (draftId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('New Project draft is missing.')),
+      );
+      return false;
+    }
+    final initJob = await _startOrResumeProjectFactoryInitForDraft(
+      client: _projectFactoryClient(),
+      draftId: draftId,
+      sessionId: session.id,
     );
     if (!mounted) {
-      return didConfigure;
+      return false;
+    }
+    if (initJob == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _projectFactoryInitErrorText ??
+                'Could not start deterministic project init.',
+          ),
+        ),
+      );
+      return false;
     }
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
+      const SnackBar(
         content: Text(
-          didConfigure
-              ? 'New project build mode enabled: reviewer will run after each generator pass.'
-              : _chatController.errorText ??
-                  'Could not enable New project build mode.',
+          'Contract approved. Deterministic baseline init started.',
         ),
       ),
     );
-    return didConfigure;
+    return false;
   }
 
   // Legacy kickoff prompt kept until Plan 7 replaces it with init context packs.
@@ -3483,12 +3766,6 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
               label: 'New project',
             ),
             _buildAppBarOverflowMenuItem(
-              action: _AppBarOverflowAction.domainFactory,
-              icon: Icons.domain_add_outlined,
-              label: 'Domain factory',
-              enabled: _chatController.currentSession != null,
-            ),
-            _buildAppBarOverflowMenuItem(
               action: _AppBarOverflowAction.projectHistory,
               icon: Icons.history,
               label: 'Project history',
@@ -3587,15 +3864,6 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
         tooltip: 'New project',
       ),
       IconButton(
-        onPressed: _chatController.currentSession == null
-            ? null
-            : () async {
-                await _openDomainFactoryMode();
-              },
-        icon: const Icon(Icons.domain_add_outlined),
-        tooltip: 'Domain factory',
-      ),
-      IconButton(
         onPressed: () async {
           await _openProjectFactoryHistory();
         },
@@ -3671,9 +3939,6 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
         return;
       case _AppBarOverflowAction.newProject:
         await _openNewProjectFactory();
-        return;
-      case _AppBarOverflowAction.domainFactory:
-        await _openDomainFactoryMode();
         return;
       case _AppBarOverflowAction.projectHistory:
         await _openProjectFactoryHistory();
@@ -5319,6 +5584,33 @@ class _GuidedProjectIntakeCard extends StatelessWidget {
   }
 }
 
+class _ProjectFactoryApprovalButton extends StatelessWidget {
+  const _ProjectFactoryApprovalButton({required this.onPressed});
+
+  final Future<void> Function() onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return FilledButton.icon(
+      key: const ValueKey<String>('project-factory-ok-dale-button'),
+      onPressed: () {
+        unawaited(onPressed());
+      },
+      style: FilledButton.styleFrom(
+        backgroundColor: const Color(0xFF55D6BE),
+        foregroundColor: const Color(0xFF07131D),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+      ),
+      icon: const Icon(Icons.check_circle_rounded, size: 18),
+      label: const Text(
+        'Ok dale',
+        style: TextStyle(fontWeight: FontWeight.w800),
+      ),
+    );
+  }
+}
+
 class ProjectFactoryInitCard extends StatelessWidget {
   const ProjectFactoryInitCard({
     super.key,
@@ -6132,6 +6424,7 @@ class _ComposerState extends State<_Composer> {
   bool _isSubmittingAttachments = false;
   bool _attachmentsExpanded = true;
   bool _didStartRecordingFromPrimaryDrag = false;
+  bool _isApplyingDraft = false;
   double _primaryActionDragDy = 0;
   int _selectedSlashCommandIndex = 0;
   String? _slashCommandErrorText;
@@ -6530,6 +6823,9 @@ class _ComposerState extends State<_Composer> {
   }
 
   void _handleTextChanged() {
+    if (_isApplyingDraft) {
+      return;
+    }
     final hasText = widget.controller.text.trim().isNotEmpty;
     final slashQuery = _slashQuery;
     if (_hasText != hasText ||
@@ -7217,10 +7513,15 @@ class _ComposerState extends State<_Composer> {
   void _applyDraft(_ComposerDraft draft, {required bool notifyParent}) {
     final nextText = draft.text;
     if (widget.controller.text != nextText) {
-      widget.controller.value = TextEditingValue(
-        text: nextText,
-        selection: TextSelection.collapsed(offset: nextText.length),
-      );
+      _isApplyingDraft = true;
+      try {
+        widget.controller.value = TextEditingValue(
+          text: nextText,
+          selection: TextSelection.collapsed(offset: nextText.length),
+        );
+      } finally {
+        _isApplyingDraft = false;
+      }
     }
 
     final nextAttachments = _filterDisallowedImageAttachments(

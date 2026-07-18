@@ -16,6 +16,7 @@ class SlashCommand {
     required this.description,
     required this.scope,
     required this.actionKind,
+    this.aliases = const <String>[],
     this.payload = '',
     this.disabledReason,
   });
@@ -26,6 +27,7 @@ class SlashCommand {
   final String description;
   final String scope;
   final SlashCommandActionKind actionKind;
+  final List<String> aliases;
   final String payload;
   final String? disabledReason;
 
@@ -35,6 +37,7 @@ class SlashCommand {
   bool matches(String query) {
     final normalized = query.toLowerCase();
     return slash.toLowerCase().contains(normalized) ||
+        aliases.any((alias) => alias.toLowerCase().contains(normalized)) ||
         title.toLowerCase().contains(normalized) ||
         description.toLowerCase().contains(normalized);
   }
@@ -47,6 +50,7 @@ class SlashCommandContext {
     this.workbenchAvailable = true,
     this.appsAvailable = true,
     this.isProdEnvironment = false,
+    this.bridgeEnvironment,
     this.devHandoffAvailable = false,
   });
 
@@ -55,7 +59,18 @@ class SlashCommandContext {
   final bool workbenchAvailable;
   final bool appsAvailable;
   final bool isProdEnvironment;
+  final String? bridgeEnvironment;
   final bool devHandoffAvailable;
+
+  String? get normalizedBridgeEnvironment {
+    final normalized = bridgeEnvironment?.trim().toLowerCase();
+    return normalized == null || normalized.isEmpty ? null : normalized;
+  }
+
+  bool get hasKnownBridgeEnvironment => normalizedBridgeEnvironment != null;
+
+  bool get isExplicitProdBridgeEnvironment =>
+      normalizedBridgeEnvironment == 'prod';
 }
 
 abstract class SlashCommandProvider {
@@ -73,9 +88,13 @@ class GlobalSlashCommandProvider extends SlashCommandProvider {
         context.hasActiveBackend ? null : 'No active bridge server.';
     final handoffDisabledReason = !context.hasActiveBackend
         ? 'No active bridge server.'
-        : !context.isProdEnvironment
-            ? 'DEV handoff is only available from PROD.'
-            : 'PROD to DEV handoff is disabled by this backend.';
+        : !context.hasKnownBridgeEnvironment
+            ? 'Bridge environment identity is unavailable from this backend.'
+            : !context.isExplicitProdBridgeEnvironment
+                ? 'DEV handoff is only available from PROD.'
+                : 'PROD to DEV handoff is disabled by this backend.';
+    final handoffEnabled =
+        context.isExplicitProdBridgeEnvironment && context.devHandoffAvailable;
     return <SlashCommand>[
       const SlashCommand(
         id: 'new-project',
@@ -161,14 +180,14 @@ class GlobalSlashCommandProvider extends SlashCommandProvider {
       SlashCommand(
         id: 'dev-handoff',
         slash: '/dev-handoff',
+        aliases: const <String>['/dev_handoff'],
         title: 'DEV Handoff',
         description: 'Queue an explicit PROD to DEV handoff.',
         scope: 'global',
-        actionKind: context.devHandoffAvailable
+        actionKind: handoffEnabled
             ? SlashCommandActionKind.callback
             : SlashCommandActionKind.disabled,
-        disabledReason:
-            context.devHandoffAvailable ? null : handoffDisabledReason,
+        disabledReason: handoffEnabled ? null : handoffDisabledReason,
       ),
       const SlashCommand(
         id: 'plan',

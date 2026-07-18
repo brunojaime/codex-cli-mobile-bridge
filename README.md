@@ -736,6 +736,18 @@ The safe restart flow enables backend drain mode, rejects new jobs, waits for
 accepted runs to finish, and then restarts the backend. Use
 `--systemd-user`, `--systemd`, or `--detached` to force a restart strategy.
 
+If the backend is alive but no longer answers `/health`, use the hard recovery
+script instead:
+
+```bash
+./scripts/recover_codex_backends.sh --target all
+```
+
+Add `--force` when you want to restart PROD and DEV even if health still
+responds. This path does not require the maintenance API to answer; for detached
+processes it stops the backend listener and its child process tree before
+starting it again.
+
 Important: this only solves closing the terminal. If the computer sleeps, reboots, or shuts down, the backend stops. For true always-on access, run it on a machine that stays on, or install it as a system service.
 
 ### Autostart On Login Or Boot

@@ -16,8 +16,8 @@ Tasks: T001-T006
 
 Status: completed
 
-Add the Domain Factory button below New Project and configure the current chat
-with project-scoped Domain Factory mode.
+Fold Domain Factory into the New Project flow and configure the generated
+project chat with project-scoped Domain Factory mode after deterministic init.
 
 Tasks: T007-T012
 
@@ -52,10 +52,10 @@ Tasks: T025-T030
 
 ## Plan 6: Domain Build Release Pipeline
 
-Status: partial
+Status: completed
 
-After implementation starts, validate, build, publish, smoke, and register the
-next real preview APK/release.
+After implementation starts, validate, build, publish, smoke, register, verify
+updater behavior, and persist evidence for the next real preview APK/release.
 
 Tasks: T031-T035
 

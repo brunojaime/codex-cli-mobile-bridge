@@ -18,6 +18,7 @@ dependencies = [
     "pyyaml>=6.0,<7.0",
     "uvicorn[standard]>=0.35,<1.0",
     "mcp>=1,<2",
+    "pypdf>=5,<7",
 ]
 
 [project.optional-dependencies]

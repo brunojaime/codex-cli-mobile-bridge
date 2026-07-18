@@ -1,9 +1,9 @@
 id: 019-domain-factory-mode
 slug: 019-domain-factory-mode
 title: Domain Factory Mode
-description: Add a project-scoped Domain Factory mode that starts from an initialized New Project baseline, collects domain requirements and visual references, runs generator/reviewer business implementation, updates SDD artifacts, and publishes a new real preview release.
-status: partial
-last_run_state: implemented_with_release_pending
+description: Add a project-scoped Domain Factory mode that starts internally from the single New Project flow after deterministic baseline readiness, collects domain requirements and visual references, runs generator/reviewer business implementation, updates SDD artifacts, and publishes a new real preview release.
+status: completed
+last_run_state: implemented
 generated:
   title: false
   description: false
@@ -11,8 +11,8 @@ generated:
   user_pinned_description: true
 tasks:
   total: 37
-  completed: 35
-  pending: 2
+  completed: 37
+  pending: 0
 diagrams:
   total: 5
   items:

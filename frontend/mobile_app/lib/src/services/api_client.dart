@@ -1202,6 +1202,31 @@ class ApiClient {
     );
   }
 
+  Future<DomainFactoryReleaseEvidence> persistDomainFactoryReleaseEvidence(
+    String sessionId, {
+    required Map<String, dynamic> evidence,
+    int initialBuild = 1,
+  }) async {
+    final response = await _client.post(
+      Uri.parse('$baseUrl/sessions/$sessionId/domain-factory/release-evidence'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode(<String, dynamic>{
+        'evidence': evidence,
+        'initialBuild': initialBuild,
+      }),
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception(
+        'Failed to persist Domain Factory release evidence: ${response.body}',
+      );
+    }
+
+    return DomainFactoryReleaseEvidence.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
   Future<SessionDetail> updateTurnSummaries(
     String sessionId, {
     required bool enabled,
@@ -1766,6 +1791,17 @@ class ApiClient {
       'mp3' => 'audio/mpeg',
       'wav' => 'audio/wav',
       'webm' => 'audio/webm',
+      'pdf' => 'application/pdf',
+      'docx' =>
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      'pptx' =>
+        'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+      'xlsx' =>
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'csv' => 'text/csv',
+      'txt' => 'text/plain',
+      'md' => 'text/markdown',
+      'json' => 'application/json',
       _ => null,
     };
   }

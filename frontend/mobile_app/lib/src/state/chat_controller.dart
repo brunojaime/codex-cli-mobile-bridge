@@ -676,7 +676,7 @@ class ChatController extends ChangeNotifier {
     }
   }
 
-  Future<bool> startDomainFactoryMode() async {
+  Future<bool> startDomainFactoryMode({String? workspacePathOverride}) async {
     final sessionId = _selectedSessionId;
     final currentSession = _currentSession;
     if (sessionId == null || currentSession == null) {
@@ -689,7 +689,7 @@ class ChatController extends ChangeNotifier {
       _errorText = null;
       final result = await _apiClient.startDomainFactoryMode(
         sessionId,
-        workspacePath: currentSession.workspacePath,
+        workspacePath: workspacePathOverride ?? currentSession.workspacePath,
       );
       _currentSession = _overlaySessionWithJobSnapshots(result.session);
       await refreshSessions();

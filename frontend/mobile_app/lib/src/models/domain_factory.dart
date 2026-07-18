@@ -142,3 +142,50 @@ class DomainFactoryImplementation {
     );
   }
 }
+
+class DomainFactoryReleaseEvidence {
+  const DomainFactoryReleaseEvidence({
+    required this.status,
+    required this.ok,
+    required this.specRoot,
+    required this.releaseEvidencePath,
+    required this.statePath,
+    required this.validation,
+    required this.errors,
+    this.sourceApp,
+  });
+
+  final String status;
+  final bool ok;
+  final String? sourceApp;
+  final String specRoot;
+  final String releaseEvidencePath;
+  final String statePath;
+  final Map<String, dynamic> validation;
+  final List<Map<String, dynamic>> errors;
+
+  bool get isReady => ok && status == 'ready';
+
+  factory DomainFactoryReleaseEvidence.fromJson(Map<String, dynamic> json) {
+    return DomainFactoryReleaseEvidence(
+      status: json['status'] as String? ?? 'blocked',
+      ok: json['ok'] as bool? ?? false,
+      sourceApp: json['sourceApp'] as String?,
+      specRoot: json['specRoot'] as String? ?? '',
+      releaseEvidencePath: json['releaseEvidencePath'] as String? ?? '',
+      statePath: json['statePath'] as String? ?? '',
+      validation: (json['validation'] as Map?)?.map(
+            (key, value) => MapEntry(key.toString(), value),
+          ) ??
+          const <String, dynamic>{},
+      errors: ((json['errors'] as List<dynamic>?) ?? const <dynamic>[])
+          .whereType<Map>()
+          .map(
+            (item) => item.map(
+              (key, value) => MapEntry(key.toString(), value),
+            ),
+          )
+          .toList(growable: false),
+    );
+  }
+}

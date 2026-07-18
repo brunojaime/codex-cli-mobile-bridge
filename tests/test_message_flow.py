@@ -11,6 +11,7 @@ from pathlib import Path
 import tempfile
 from tempfile import TemporaryDirectory
 import zipfile
+from xml.sax.saxutils import escape
 
 from fastapi.testclient import TestClient
 import pytest
@@ -229,17 +230,18 @@ def _read_fake_mcp_state(home_dir: Path) -> dict[str, dict[str, object]]:
 def _matching_project_catalog_server_state(
     projects_root: str = "..",
 ) -> dict[str, object]:
+    repo_root = Settings().codex_workdir
     return {
         "summary": (
             "project-catalog: uv run --project "
-            f"{Path.cwd()} python -m mcp_apps.project_catalog.server"
+            f"{repo_root} python -m mcp_apps.project_catalog.server"
         ),
         "transport": "stdio",
         "command": "uv",
         "args": [
             "run",
             "--project",
-            str(Path.cwd()),
+            repo_root,
             "python",
             "-m",
             "mcp_apps.project_catalog.server",
@@ -1126,6 +1128,112 @@ def build_docx_bytes(*paragraphs: str) -> bytes:
             archive.writestr("[Content_Types].xml", "")
             archive.writestr("word/document.xml", document_xml)
         return archive_path.read_bytes()
+
+
+def build_pptx_bytes(
+    *slides: tuple[str, ...],
+    embedded_images: tuple[tuple[str, bytes], ...] = (),
+) -> bytes:
+    with TemporaryDirectory() as temp_dir:
+        archive_path = Path(temp_dir) / "sample.pptx"
+        with zipfile.ZipFile(archive_path, "w") as archive:
+            archive.writestr("[Content_Types].xml", "")
+            for index, text_runs in enumerate(slides, start=1):
+                slide_xml = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"
+       xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+  <p:cSld>
+    <p:spTree>
+      {runs}
+    </p:spTree>
+  </p:cSld>
+</p:sld>
+""".format(runs="".join(f"<a:t>{text}</a:t>" for text in text_runs))
+                archive.writestr(f"ppt/slides/slide{index}.xml", slide_xml)
+            for index, (suffix, payload) in enumerate(embedded_images, start=1):
+                archive.writestr(f"ppt/media/image{index}.{suffix}", payload)
+        return archive_path.read_bytes()
+
+
+def build_xlsx_bytes(*rows: tuple[str, ...]) -> bytes:
+    shared_strings = [cell for row in rows for cell in row]
+    shared_strings_xml = (
+        '<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+        + "".join(f"<si><t>{escape(value)}</t></si>" for value in shared_strings)
+        + "</sst>"
+    )
+    cell_index = 0
+    row_xml: list[str] = []
+    for row_number, row in enumerate(rows, start=1):
+        cells: list[str] = []
+        for column_index, _cell in enumerate(row, start=1):
+            column_name = chr(ord("A") + column_index - 1)
+            cells.append(
+                f'<c r="{column_name}{row_number}" t="s"><v>{cell_index}</v></c>'
+            )
+            cell_index += 1
+        row_xml.append(f'<row r="{row_number}">{"".join(cells)}</row>')
+
+    worksheet_xml = (
+        '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+        f"<sheetData>{''.join(row_xml)}</sheetData>"
+        "</worksheet>"
+    )
+
+    with TemporaryDirectory() as temp_dir:
+        archive_path = Path(temp_dir) / "sample.xlsx"
+        with zipfile.ZipFile(archive_path, "w") as archive:
+            archive.writestr("[Content_Types].xml", "")
+            archive.writestr("xl/sharedStrings.xml", shared_strings_xml)
+            archive.writestr("xl/worksheets/sheet1.xml", worksheet_xml)
+        return archive_path.read_bytes()
+
+
+def build_pdf_bytes(*lines: str) -> bytes:
+    def pdf_literal(value: str) -> str:
+        return value.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+
+    text_commands = ["BT", "/F1 24 Tf", "72 720 Td"]
+    for index, line in enumerate(lines):
+        if index > 0:
+            text_commands.append("0 -30 Td")
+        text_commands.append(f"({pdf_literal(line)}) Tj")
+    text_commands.append("ET")
+    content_stream = "\n".join(text_commands).encode()
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        (
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+            b"/Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>"
+        ),
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        b"<< /Length "
+        + str(len(content_stream)).encode()
+        + b" >>\nstream\n"
+        + content_stream
+        + b"\nendstream",
+    ]
+
+    chunks = [b"%PDF-1.4\n"]
+    offsets = [0]
+    for object_number, payload in enumerate(objects, start=1):
+        offsets.append(sum(len(chunk) for chunk in chunks))
+        chunks.append(f"{object_number} 0 obj\n".encode() + payload + b"\nendobj\n")
+    startxref = sum(len(chunk) for chunk in chunks)
+    xref_entries = ["0000000000 65535 f "]
+    xref_entries.extend(f"{offset:010d} 00000 n " for offset in offsets[1:])
+    chunks.append(
+        (
+            "xref\n"
+            f"0 {len(objects) + 1}\n" + "\n".join(xref_entries) + "\ntrailer\n"
+            f"<< /Root 1 0 R /Size {len(objects) + 1} >>\n"
+            "startxref\n"
+            f"{startxref}\n"
+            "%%EOF\n"
+        ).encode()
+    )
+    return b"".join(chunks)
 
 
 def list_agent_profiles(client: TestClient) -> list[dict]:
@@ -7205,12 +7313,16 @@ def test_document_message_flow_stores_office_documents_in_workspace(
         payload = create_response.json()
         assert payload["document_kind"] == expected_kind
         assert payload["attached_document_name"] == filename
-        assert payload["extracted_text_preview"] is None
+        assert payload["extracted_text_preview"] is not None
+        assert payload["extracted_text_preview"].startswith(
+            f"No extractable text was found in {filename}."
+        )
 
         job = wait_for_job(client, payload["job_id"])
 
         assert job["status"] == "completed"
         assert f"Document kind: {expected_kind}" in job["response"]
+        assert f"No extractable text was found in {filename}." in job["response"]
         match = re.search(r"Stored file path: (.+)", job["response"])
         assert match is not None
         stored_path = Path(match.group(1).strip().splitlines()[0])
@@ -7280,6 +7392,101 @@ def test_attachment_batch_flow_accepts_office_documents() -> None:
         )
         assert attachment_dir.is_dir()
         assert len(list(attachment_dir.iterdir())) == 4
+
+
+def test_document_message_flow_reads_pptx_presentations() -> None:
+    client = build_test_client()
+    pptx_bytes = build_pptx_bytes(
+        ("Market overview", "Q3 revenue grew"),
+        ("Competitors", "Price pressure increased"),
+    )
+
+    create_response = client.post(
+        "/message/document",
+        data={"message": "Summarize this deck"},
+        files={
+            "document": (
+                "market-study.pptx",
+                pptx_bytes,
+                "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            )
+        },
+    )
+
+    assert create_response.status_code == 202
+    payload = create_response.json()
+    assert payload["document_kind"] == "pptx"
+    assert payload["attached_document_name"] == "market-study.pptx"
+    assert payload["extracted_text_preview"].startswith(
+        "Slide 1: Market overview Q3 revenue grew"
+    )
+
+    job = wait_for_job(client, payload["job_id"])
+
+    assert job["status"] == "completed"
+    assert "Document name: market-study.pptx" in job["response"]
+    assert "Document kind: pptx" in job["response"]
+    assert "Slide 1:\nMarket overview\nQ3 revenue grew" in job["response"]
+    assert "Slide 2:\nCompetitors\nPrice pressure increased" in job["response"]
+
+
+def test_document_message_flow_reads_xlsx_spreadsheets() -> None:
+    client = build_test_client()
+    xlsx_bytes = build_xlsx_bytes(
+        ("Quarter", "Revenue"),
+        ("Q3", "$120k"),
+    )
+
+    create_response = client.post(
+        "/message/document",
+        data={"message": "Summarize this spreadsheet"},
+        files={
+            "document": (
+                "market-data.xlsx",
+                xlsx_bytes,
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+        },
+    )
+
+    assert create_response.status_code == 202
+    payload = create_response.json()
+    assert payload["document_kind"] == "xlsx"
+    assert payload["attached_document_name"] == "market-data.xlsx"
+    assert payload["extracted_text_preview"].startswith("Sheet 1: Quarter Revenue")
+
+    job = wait_for_job(client, payload["job_id"])
+
+    assert job["status"] == "completed"
+    assert "Document name: market-data.xlsx" in job["response"]
+    assert "Document kind: xlsx" in job["response"]
+    assert "Sheet 1:\nQuarter\tRevenue\nQ3\t$120k" in job["response"]
+
+
+def test_document_message_flow_reads_pdf_documents() -> None:
+    client = build_test_client()
+    pdf_bytes = build_pdf_bytes("Market PDF overview", "Second line")
+
+    create_response = client.post(
+        "/message/document",
+        data={"message": "Summarize this PDF"},
+        files={"document": ("market.pdf", pdf_bytes, "application/pdf")},
+    )
+
+    assert create_response.status_code == 202
+    payload = create_response.json()
+    assert payload["document_kind"] == "pdf"
+    assert payload["attached_document_name"] == "market.pdf"
+    assert payload["extracted_text_preview"].startswith(
+        "Page 1: Market PDF overview Second line"
+    )
+
+    job = wait_for_job(client, payload["job_id"])
+
+    assert job["status"] == "completed"
+    assert "Document name: market.pdf" in job["response"]
+    assert "Document kind: pdf" in job["response"]
+    assert "Page 1:\nMarket PDF overview\nSecond line" in job["response"]
 
 
 def test_document_message_flow_rejects_unsupported_documents() -> None:
@@ -7775,6 +7982,21 @@ def test_capabilities_defaults_sat_catalog_to_project_root(
     assert response.status_code == 200
     aliases = response.json()["feedback_source_workspace_aliases"]
     assert aliases["sat-catalogo-ropa"] == str(projects_root / "sat-catalogo-ropa")
+
+
+def test_capabilities_defaults_sat_showroom_aliases_to_canonical_project(
+    tmp_path: Path,
+) -> None:
+    projects_root = tmp_path / "projects"
+    client = build_feedback_queue_client(tmp_path, projects_root=projects_root)
+
+    response = client.get("/capabilities")
+
+    assert response.status_code == 200
+    aliases = response.json()["feedback_source_workspace_aliases"]
+    assert aliases["satshowroom"] == str(projects_root / "satshowroom")
+    assert aliases["sat-showroom"] == str(projects_root / "satshowroom")
+    assert aliases["sat"] == str(projects_root / "satshowroom")
 
 
 def test_feedback_workflow_presets_expose_agent_profiles(tmp_path: Path) -> None:
@@ -8575,6 +8797,78 @@ def test_feedback_batch_start_session_defaults_sat_catalog_to_sibling_repo(
     assert session["workspace_path"] == str(sat_workspace)
 
 
+def test_feedback_batch_start_session_defaults_sat_showroom_to_canonical_repo(
+    tmp_path: Path,
+) -> None:
+    projects_root = tmp_path / "projects"
+    bridge_workspace = projects_root / "codex-cli-mobile-bridge"
+    satshowroom_workspace = projects_root / "satshowroom"
+    stale_sat_workspace = projects_root / "sat"
+    bridge_workspace.mkdir(parents=True)
+    satshowroom_workspace.mkdir()
+    stale_sat_workspace.mkdir()
+    client = build_feedback_queue_client(tmp_path, projects_root=projects_root)
+
+    start_response = client.post(
+        "/feedback-batches/start-session",
+        json={
+            "sourceApp": "SAT",
+            "sourceDisplayName": "SAT Showroom",
+            "workflowPresetId": "default",
+            "items": [
+                {
+                    "id": "feedback-satshowroom-default",
+                    "comment": "Apply this to SAT Showroom.",
+                    "screenshotPngBase64": base64.b64encode(b"fake png").decode(
+                        "ascii"
+                    ),
+                }
+            ],
+        },
+    )
+
+    assert start_response.status_code == 202
+    session_response = client.get(f"/sessions/{start_response.json()['session_id']}")
+    assert session_response.status_code == 200
+    session = session_response.json()
+    assert session["workspace_name"] == "satshowroom"
+    assert session["workspace_path"] == str(satshowroom_workspace)
+
+
+def test_sdd_projects_canonicalize_sat_showroom_aliases(
+    tmp_path: Path,
+) -> None:
+    projects_root = tmp_path / "projects"
+    satshowroom_workspace = projects_root / "satshowroom"
+    stale_sat_workspace = projects_root / "sat"
+    stale_showroom_workspace = projects_root / "sat-showroom"
+    satshowroom_workspace.mkdir(parents=True)
+    stale_sat_workspace.mkdir()
+    stale_showroom_workspace.mkdir()
+    client = build_feedback_queue_client(tmp_path, projects_root=projects_root)
+
+    response = client.get("/sdd/projects")
+
+    assert response.status_code == 200
+    projects = response.json()["projects"]
+    sat_paths = [
+        project["workspace_path"]
+        for project in projects
+        if project["workspace_name"].startswith("sat")
+    ]
+    assert sat_paths == [str(satshowroom_workspace)]
+
+    detail_response = client.get(
+        "/sdd/project",
+        params={"workspace_path": str(stale_sat_workspace)},
+    )
+
+    assert detail_response.status_code == 200
+    detail = detail_response.json()
+    assert detail["workspace_name"] == "satshowroom"
+    assert detail["workspace_path"] == str(satshowroom_workspace)
+
+
 def test_feedback_batch_start_session_keeps_unknown_source_app_fallback(
     tmp_path: Path,
 ) -> None:
@@ -9050,6 +9344,99 @@ def test_attachment_batch_flow_accepts_images() -> None:
     assert "Transcript:\nTranscribed audio from voice.ogg" in job["response"]
     assert "[images: " in job["response"]
     assert "diagram.png" in job["response"]
+
+
+def test_attachment_batch_flow_accepts_standard_documents() -> None:
+    client = build_test_client()
+    pptx_bytes = build_pptx_bytes(("Market overview", "Total addressable market"))
+    xlsx_bytes = build_xlsx_bytes(("Metric", "Value"), ("Users", "1200"))
+    pdf_bytes = build_pdf_bytes("Market PDF overview")
+
+    create_response = client.post(
+        "/message/attachments",
+        data={"message": "Review these files"},
+        files=[
+            (
+                "attachments",
+                (
+                    "Estudio de Mercado.pptx",
+                    pptx_bytes,
+                    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                ),
+            ),
+            (
+                "attachments",
+                (
+                    "market-data.xlsx",
+                    xlsx_bytes,
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                ),
+            ),
+            ("attachments", ("market.pdf", pdf_bytes, "application/pdf")),
+        ],
+    )
+
+    assert create_response.status_code == 202
+    payload = create_response.json()
+
+    job = wait_for_job(client, payload["job_id"])
+
+    assert job["status"] == "completed"
+    assert job["message"] == (
+        "Review these files\n\n"
+        "[Attached files]\n"
+        "- pptx: Estudio de Mercado.pptx\n"
+        "- xlsx: market-data.xlsx\n"
+        "- pdf: market.pdf"
+    )
+    assert "Document name: Estudio de Mercado.pptx" in job["response"]
+    assert "Document kind: pptx" in job["response"]
+    assert "Slide 1:\nMarket overview\nTotal addressable market" in job["response"]
+    assert "Document name: market-data.xlsx" in job["response"]
+    assert "Document kind: xlsx" in job["response"]
+    assert "Sheet 1:\nMetric\tValue\nUsers\t1200" in job["response"]
+    assert "Document name: market.pdf" in job["response"]
+    assert "Document kind: pdf" in job["response"]
+    assert "Page 1:\nMarket PDF overview" in job["response"]
+
+
+def test_attachment_batch_flow_accepts_standard_document_with_no_text() -> None:
+    client = build_multi_attachment_client()
+    pptx_bytes = build_pptx_bytes(
+        (),
+        embedded_images=(("png", b"fake embedded image bytes"),),
+    )
+
+    create_response = client.post(
+        "/message/attachments",
+        data={"message": "Take this deck"},
+        files=[
+            (
+                "attachments",
+                (
+                    "image-only-market-study.pptx",
+                    pptx_bytes,
+                    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                ),
+            )
+        ],
+    )
+
+    assert create_response.status_code == 202
+    payload = create_response.json()
+
+    job = wait_for_job(client, payload["job_id"])
+
+    assert job["status"] == "completed"
+    assert job["message"] == (
+        "Take this deck\n\n[Attached files]\n- pptx: image-only-market-study.pptx"
+    )
+    assert "Document name: image-only-market-study.pptx" in job["response"]
+    assert "Document kind: pptx" in job["response"]
+    assert "No extractable text was found in image-only-market-study.pptx" in job[
+        "response"
+    ]
+    assert "[images: " in job["response"]
 
 
 def test_retry_job_accepts_image_inputs() -> None:

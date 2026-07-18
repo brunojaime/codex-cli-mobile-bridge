@@ -26,6 +26,7 @@ evidence:
       - .venv/bin/python -m pytest tests/test_project_factory_init_service.py tests/test_project_factory_api.py::test_project_factory_deterministic_init_starts_resumes_and_persists -q
       - .venv/bin/python -m ruff check backend/app/application/services/project_factory_init_service.py backend/app/container.py backend/app/api/routes.py backend/app/api/schemas.py tests/test_project_factory_init_service.py tests/test_project_factory_api.py
       - flutter test test/guided_project_intake_test.dart --plain-name "New Project opens persisted guided intake and live answers"
+      - flutter test test/guided_project_intake_test.dart
       - flutter test test/api_client_test.dart --plain-name "project factory init API starts and fetches deterministic init job"
       - dart analyze lib/src/models/project_factory.dart lib/src/services/api_client.dart lib/src/screens/chat_screen.dart test/api_client_test.dart test/guided_project_intake_test.dart
   - plan: Deterministic GitHub Repository Creation And Baseline Push

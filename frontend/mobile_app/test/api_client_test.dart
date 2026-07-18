@@ -21,22 +21,22 @@ import 'package:http/testing.dart';
 void main() {
   test('installable app model parses install metadata', () {
     final app = InstallableApp.fromJson(const <String, dynamic>{
-      'sourceApp': 'sat-showroom',
+      'sourceApp': 'satshowroom',
       'displayName': 'SAT Showroom',
-      'repo': 'brunojaime/sat-showroom',
+      'repo': 'brunojaime/satshowroom',
       'releaseChannel': 'stable',
       'latestVersion': '1.0.0',
       'latestBuild': 12,
       'releaseTag': 'android-v1.0.0-build.12',
-      'apkUrl': 'http://bridge.test/app-updates/sat-showroom/apk/tag/app.apk',
-      'apkAssetName': 'sat-showroom.apk',
+      'apkUrl': 'http://bridge.test/app-updates/satshowroom/apk/tag/app.apk',
+      'apkAssetName': 'satshowroom.apk',
       'sizeBytes': 12345,
       'sha256': 'abc',
       'available': true,
       'enabled': true,
-      'packageId': 'com.sat.showroom',
+      'packageId': 'com.example.satshowroom',
       'installStatusHint': 'available',
-      'previewUrl': 'https://preview.nienfos.com/sat-showroom',
+      'previewUrl': 'https://preview.nienfos.com/satshowroom',
       'runtimeProfile': 'preview',
       'productionReady': false,
       'mockOrDemo': false,
@@ -45,11 +45,11 @@ void main() {
       },
     });
 
-    expect(app.sourceApp, 'sat-showroom');
+    expect(app.sourceApp, 'satshowroom');
     expect(app.title, 'SAT Showroom');
     expect(app.versionLabel, '1.0.0+12');
     expect(app.canInstall, isTrue);
-    expect(app.previewUrl, 'https://preview.nienfos.com/sat-showroom');
+    expect(app.previewUrl, 'https://preview.nienfos.com/satshowroom');
     expect(app.runtimeProfile, 'preview');
     expect(app.isProductionReady, isFalse);
     expect(app.isMockOrDemo, isFalse);
@@ -74,22 +74,22 @@ void main() {
                 {
                   "kind": "codex.installableApp",
                   "version": 1,
-                  "sourceApp": "sat-showroom",
+                  "sourceApp": "satshowroom",
                   "displayName": "SAT Showroom",
-                  "repo": "brunojaime/sat-showroom",
+                  "repo": "brunojaime/satshowroom",
                   "releaseChannel": "stable",
                   "latestVersion": "1.0.0",
                   "latestBuild": 12,
                   "releaseTag": "android-v1.0.0-build.12",
-                  "apkUrl": "http://bridge.test/app-updates/sat-showroom/apk/tag/app.apk",
-                  "apkAssetName": "sat-showroom.apk",
+                  "apkUrl": "http://bridge.test/app-updates/satshowroom/apk/tag/app.apk",
+                  "apkAssetName": "satshowroom.apk",
                   "sizeBytes": 12345,
                   "sha256": null,
                   "available": true,
                   "enabled": true,
-                  "packageId": "com.sat.showroom",
+                  "packageId": "com.example.satshowroom",
                   "installStatusHint": "available",
-                  "previewUrl": "https://preview.nienfos.com/sat-showroom",
+                  "previewUrl": "https://preview.nienfos.com/satshowroom",
                   "runtimeProfile": "preview",
                   "productionReady": false,
                   "mockOrDemo": false,
@@ -103,15 +103,15 @@ void main() {
           );
         }
         expect(request.method, 'GET');
-        expect(request.url.path, '/installable-apps/sat-showroom');
+        expect(request.url.path, '/installable-apps/satshowroom');
         return http.Response(
           '''
           {
             "kind": "codex.installableApp",
             "version": 1,
-            "sourceApp": "sat-showroom",
+            "sourceApp": "satshowroom",
             "displayName": "SAT Showroom",
-            "repo": "brunojaime/sat-showroom",
+            "repo": "brunojaime/satshowroom",
             "releaseChannel": "stable",
             "available": false,
             "enabled": true,
@@ -125,10 +125,10 @@ void main() {
     );
 
     final apps = await client.listInstallableApps();
-    expect(apps.single.sourceApp, 'sat-showroom');
+    expect(apps.single.sourceApp, 'satshowroom');
     expect(apps.single.canInstall, isTrue);
 
-    final detail = await client.getInstallableApp('sat-showroom');
+    final detail = await client.getInstallableApp('satshowroom');
     expect(detail.canInstall, isFalse);
     expect(detail.installStatusHint, 'no_release_available');
   });
@@ -552,6 +552,37 @@ void main() {
     expect(health.environmentIdentity?.canEnqueueDevHandoff, isFalse);
   });
 
+  test('server health identifies prod dev-handoff availability', () {
+    final health = ServerHealth.fromJson(
+      const <String, dynamic>{
+        'server_name': 'prod',
+        'backend_mode': 'local',
+        'projects_root': '/projects',
+        'audio_transcription_backend': 'disabled',
+        'audio_transcription_resolved_backend': 'disabled',
+        'audio_transcription_ready': false,
+        'speech_synthesis_backend': 'disabled',
+        'speech_synthesis_ready': false,
+        'tailscale_installed': false,
+        'tailscale_online': false,
+        'environment_identity': <String, dynamic>{
+          'environment': 'prod',
+          'mode': 'normal',
+          'backend_url': 'http://prod.example.test',
+          'app_channel': 'prod',
+          'app_label': 'Codex Mobile Bridge',
+          'updater_channel': 'prod',
+          'color': '#55D6BE',
+          'allowed_capabilities': <String>['enqueue_dev_handoff'],
+          'denied_capabilities': <String>['run_shell'],
+        },
+      },
+    );
+
+    expect(health.environmentIdentity?.environment, 'prod');
+    expect(health.environmentIdentity?.canEnqueueDevHandoff, isTrue);
+  });
+
   test('api client enqueues dev handoff idempotently', () async {
     var calls = 0;
     final client = ApiClient(
@@ -859,6 +890,58 @@ void main() {
     );
     expect(implementation.isImplementing, isTrue);
     expect(implementation.workflowEvidencePath, contains('workflow-evidence'));
+  });
+
+  test('api client persists domain factory release evidence', () async {
+    final client = ApiClient(
+      baseUrl: 'http://localhost:8000',
+      client: MockClient((request) async {
+        expect(request.method, 'POST');
+        expect(
+          request.url.path,
+          '/sessions/session-1/domain-factory/release-evidence',
+        );
+        expect(request.body, contains('"commit":"def456"'));
+        expect(request.body, contains('"initialBuild":1'));
+        expect(request.body, contains('"previousBuildSeesNewBuild":true'));
+        return http.Response(
+          '''
+          {
+            "kind": "codex.domainFactoryReleaseEvidence",
+            "version": 1,
+            "status": "ready",
+            "ok": true,
+            "sessionId": "session-1",
+            "sourceApp": "clinica-norte",
+            "specRoot": "specs/019-domain-factory-session-1",
+            "releaseEvidencePath": "specs/019-domain-factory-session-1/release-evidence.json",
+            "statePath": ".codex/factory/domain-factory-state.json",
+            "validation": {"ok": true, "build": 2},
+            "errors": []
+          }
+          ''',
+          200,
+          headers: <String, String>{'content-type': 'application/json'},
+        );
+      }),
+    );
+
+    final result = await client.persistDomainFactoryReleaseEvidence(
+      'session-1',
+      evidence: const <String, dynamic>{
+        'build': 2,
+        'commit': 'def456',
+        'updaterVerification': <String, dynamic>{
+          'previousBuildSeesNewBuild': true,
+          'newBuildHasPendingSelfUpdate': false,
+        },
+      },
+    );
+
+    expect(result.isReady, isTrue);
+    expect(result.sourceApp, 'clinica-norte');
+    expect(result.releaseEvidencePath, contains('release-evidence.json'));
+    expect(result.validation['build'], 2);
   });
 
   test('project factory client manages reference assets', () async {
@@ -1381,6 +1464,60 @@ void main() {
         ),
       ],
       message: 'Use this screenshot',
+    );
+  });
+
+  test('sendAttachmentsMessage infers standard document content types',
+      () async {
+    final client = ApiClient(
+      baseUrl: 'http://localhost:8000',
+      client: MockClient((request) async {
+        expect(request.method, 'POST');
+        expect(request.url.path, '/message/attachments');
+        final body = String.fromCharCodes(request.bodyBytes).toLowerCase();
+        expect(body, contains('filename="market.pdf"'));
+        expect(body, contains('content-type: application/pdf'));
+        expect(body, contains('filename="estudio de mercado.pptx"'));
+        expect(
+          body,
+          contains(
+            'content-type: application/vnd.openxmlformats-officedocument.presentationml.presentation',
+          ),
+        );
+        expect(body, contains('filename="market-data.xlsx"'));
+        expect(
+          body,
+          contains(
+            'content-type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          ),
+        );
+        return http.Response(
+          '{"job_id":"job-1","session_id":"session-1","status":"pending","elapsed_seconds":0}',
+          202,
+          headers: <String, String>{'content-type': 'application/json'},
+        );
+      }),
+    );
+
+    await client.sendAttachmentsMessage(
+      <XFile>[
+        XFile.fromData(
+          Uint8List.fromList(<int>[37, 80, 68, 70]),
+          name: 'market.pdf',
+          path: 'market.pdf',
+        ),
+        XFile.fromData(
+          Uint8List.fromList(<int>[80, 75, 3, 4]),
+          name: 'Estudio de Mercado.pptx',
+          path: 'Estudio de Mercado.pptx',
+        ),
+        XFile.fromData(
+          Uint8List.fromList(<int>[80, 75, 3, 4]),
+          name: 'market-data.xlsx',
+          path: 'market-data.xlsx',
+        ),
+      ],
+      message: 'podes ver este archivo?',
     );
   });
 

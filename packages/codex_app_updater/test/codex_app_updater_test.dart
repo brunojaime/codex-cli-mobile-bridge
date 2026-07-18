@@ -84,6 +84,31 @@ void main() {
     expect(find.byKey(codexAppUpdaterLaterButtonKey), findsOneWidget);
   });
 
+  testWidgets('shows custom update icon when provided', (tester) async {
+    final controller = CodexAppUpdaterController(
+      httpClient: MockClient(
+        (_) async =>
+            http.Response(jsonEncode(_updateJson(available: true)), 200),
+      ),
+    );
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(
+      _Harness(
+        controller: controller,
+        updateIcon: const ColoredBox(
+          key: Key('custom-update-icon'),
+          color: Colors.blue,
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(controller.status, CodexAppUpdateStatus.updateAvailable);
+    expect(find.byKey(codexAppUpdaterIconKey), findsOneWidget);
+    expect(find.byKey(const Key('custom-update-icon')), findsOneWidget);
+  });
+
   testWidgets('auto install requests update flow when enabled', (tester) async {
     final controller = _AutoInstallProbeController();
     addTearDown(controller.dispose);
@@ -912,11 +937,13 @@ class _Harness extends StatelessWidget {
   const _Harness({
     required this.controller,
     this.config = _defaultConfig,
+    this.updateIcon,
     this.checkOnStart = true,
   });
 
   final CodexAppUpdaterController controller;
   final CodexAppUpdaterConfig config;
+  final Widget? updateIcon;
   final bool checkOnStart;
 
   @override
@@ -925,6 +952,7 @@ class _Harness extends StatelessWidget {
       home: CodexAppUpdater(
         config: config,
         controller: controller,
+        updateIcon: updateIcon,
         checkOnStart: checkOnStart,
         child: const Scaffold(body: Text('App')),
       ),

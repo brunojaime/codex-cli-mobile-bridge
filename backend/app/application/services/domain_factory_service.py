@@ -195,6 +195,7 @@ DOMAIN_RELEASE_GUARDRAILS = {
         "smokeResults",
         "bridgeRegistryPayload",
         "rollbackPointer",
+        "updaterVerification",
     ],
 }
 
@@ -765,6 +766,84 @@ class DomainFactoryService:
             evidence=evidence,
             initial_build=initial_build,
         )
+
+    def persist_release_evidence(
+        self,
+        *,
+        session_id: str,
+        evidence: dict[str, Any],
+        initial_build: int = 1,
+    ) -> dict[str, Any]:
+        context = self.build_context(session_id=session_id)
+        if context.blockers:
+            raise RuntimeError(
+                "Domain Factory release evidence requires ready baseline context."
+            )
+        spec_root = self._require_state_spec_root(context)
+        validation = _validate_release_evidence(
+            source_app=context.source_app or Path(context.workspace_path).name,
+            evidence=evidence,
+            initial_build=initial_build,
+        )
+        workspace = Path(context.workspace_path)
+        release_path = workspace / spec_root / "release-evidence.json"
+        state_path = workspace / ".codex/factory/domain-factory-state.json"
+        if not validation["ok"]:
+            return {
+                "kind": "codex.domainFactoryReleaseEvidence",
+                "version": 1,
+                "status": "blocked",
+                "ok": False,
+                "sessionId": context.session_id,
+                "sourceApp": context.source_app,
+                "specRoot": spec_root,
+                "releaseEvidencePath": str(release_path.relative_to(workspace)),
+                "statePath": str(state_path.relative_to(workspace)),
+                "validation": validation,
+                "errors": validation["errors"],
+            }
+
+        release_payload = {
+            "kind": "codex.domainFactoryReleaseEvidence",
+            "version": 1,
+            "status": "ready",
+            "sessionId": context.session_id,
+            "sourceApp": context.source_app,
+            "specRoot": spec_root,
+            "initialBuild": initial_build,
+            "build": validation["build"],
+            "persistedAt": _now_iso(),
+            "evidence": evidence,
+            "updaterVerification": _updater_verification_payload(evidence),
+            "validation": validation,
+        }
+        release_path.write_text(
+            json.dumps(release_payload, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        state = self._read_state(context)
+        state.update(
+            {
+                "modeStatus": "release_evidence_ready",
+                "releaseEvidencePath": str(release_path.relative_to(workspace)),
+                "releaseEvidenceValidation": validation,
+                "updatedAt": _now_iso(),
+            }
+        )
+        self._write_state_payload(context, state)
+        return {
+            "kind": "codex.domainFactoryReleaseEvidence",
+            "version": 1,
+            "status": "ready",
+            "ok": True,
+            "sessionId": context.session_id,
+            "sourceApp": context.source_app,
+            "specRoot": spec_root,
+            "releaseEvidencePath": str(release_path.relative_to(workspace)),
+            "statePath": str(state_path.relative_to(workspace)),
+            "validation": validation,
+            "errors": [],
+        }
 
     def _require_session(self, session_id: str) -> ChatSession:
         session = self._chat_repository.get_session(session_id)
@@ -1411,7 +1490,7 @@ def _validate_release_evidence(
     errors: list[dict[str, str]] = []
     required_fields = DOMAIN_RELEASE_GUARDRAILS["requiredEvidenceFields"]
     for field_name in required_fields:
-        if not _first_text(evidence.get(field_name)):
+        if not _evidence_field_present(evidence.get(field_name)):
             errors.append(
                 {
                     "code": "missing_release_evidence_field",
@@ -1463,6 +1542,23 @@ def _validate_release_evidence(
                 "message": f"Release API URL must be {expected_api_url}.",
             }
         )
+    updater = _updater_verification_payload(evidence)
+    if updater.get("previousBuildSeesNewBuild") is not True:
+        errors.append(
+            {
+                "code": "updater_previous_build_missing_new_build",
+                "field": "updaterVerification.previousBuildSeesNewBuild",
+                "message": "Previous preview build must see the new updater build.",
+            }
+        )
+    if updater.get("newBuildHasPendingSelfUpdate") is not False:
+        errors.append(
+            {
+                "code": "updater_new_build_has_pending_self_update",
+                "field": "updaterVerification.newBuildHasPendingSelfUpdate",
+                "message": "The newly installed build must not report a pending self-update.",
+            }
+        )
     for forbidden in DOMAIN_RELEASE_GUARDRAILS["forbiddenDefaults"]:
         if _contains_forbidden_value(evidence, str(forbidden)):
             errors.append(
@@ -1481,6 +1577,30 @@ def _validate_release_evidence(
         "initialBuild": initial_build,
         "build": build_number,
     }
+
+
+def _evidence_field_present(value: Any) -> bool:
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, (dict, list, tuple, set)):
+        return bool(value)
+    if isinstance(value, bool):
+        return True
+    return value is not None
+
+
+def _updater_verification_payload(evidence: dict[str, Any]) -> dict[str, Any]:
+    nested = evidence.get("updaterVerification")
+    updater = dict(nested) if isinstance(nested, dict) else {}
+    if "previousBuildSeesNewBuild" not in updater:
+        updater["previousBuildSeesNewBuild"] = evidence.get(
+            "previousBuildSeesNewBuild"
+        )
+    if "newBuildHasPendingSelfUpdate" not in updater:
+        updater["newBuildHasPendingSelfUpdate"] = evidence.get(
+            "newBuildHasPendingSelfUpdate"
+        )
+    return updater
 
 
 def _contains_forbidden_value(value: Any, forbidden: str) -> bool:

@@ -118,6 +118,8 @@ from backend.app.api.schemas import (
     DomainFactoryImplementationResponse,
     DomainFactoryIntakeRequest,
     DomainFactoryIntakeResponse,
+    DomainFactoryReleaseEvidencePersistRequest,
+    DomainFactoryReleaseEvidencePersistResponse,
     DomainFactoryReleaseEvidenceValidationRequest,
     DomainFactoryReleaseEvidenceValidationResponse,
     DomainFactoryStartRequest,
@@ -3473,6 +3475,7 @@ async def list_app_updates(
                 production_ready=config.production_ready,
                 mock_or_demo=config.mock_or_demo,
                 release_metadata=config.release_metadata or {},
+                aliases=list(config.aliases),
             )
             for config in container.app_update_service.list_apps()
         ],
@@ -3554,6 +3557,7 @@ async def register_installable_app(
         production_ready=config.production_ready,
         mock_or_demo=config.mock_or_demo,
         release_metadata=config.release_metadata or {},
+        aliases=list(config.aliases),
     )
 
 
@@ -3568,19 +3572,19 @@ async def get_installable_app(
     channel: str = "stable",
     container: AppContainer = Depends(get_container),
 ) -> InstallableAppResponse:
-    configs = {
-        config.source_app: config
-        for config in await run_in_threadpool(container.app_update_service.list_apps)
-    }
-    config = configs.get(source_app)
-    if config is None:
+    try:
+        config = await run_in_threadpool(
+            container.app_update_service.get_config,
+            source_app,
+        )
+    except (UnknownAppError, AppDisabledError) as exc:
         raise HTTPException(
             status_code=404,
             detail={
                 "code": "unknown_source_app",
                 "sourceApp": source_app,
             },
-        )
+        ) from exc
     return await _installable_app_for_config(
         request=request,
         config=config,
@@ -3663,6 +3667,7 @@ async def get_app_update(
             asset_name=result.apk_asset_name,
             platform=platform,
             channel=response_channel,
+            preview_url=_app_update_preview_url(container, result.source_app),
         )
     return _app_update_response(result, apk_url=apk_url)
 
@@ -6183,6 +6188,29 @@ async def validate_domain_factory_release_evidence(
     return DomainFactoryReleaseEvidenceValidationResponse(**result)
 
 
+@router.post(
+    "/sessions/{session_id}/domain-factory/release-evidence",
+    response_model=DomainFactoryReleaseEvidencePersistResponse,
+)
+async def persist_domain_factory_release_evidence(
+    session_id: str,
+    payload: DomainFactoryReleaseEvidencePersistRequest,
+    container: AppContainer = Depends(get_container),
+) -> DomainFactoryReleaseEvidencePersistResponse:
+    try:
+        result = await run_in_threadpool(
+            container.domain_factory_service.persist_release_evidence,
+            session_id=session_id,
+            evidence=payload.evidence,
+            initial_build=payload.initial_build,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return DomainFactoryReleaseEvidencePersistResponse(**result)
+
+
 @router.put("/sessions/{session_id}/auto-mode", response_model=SessionDetailResponse)
 async def update_auto_mode(
     session_id: str,
@@ -6499,6 +6527,7 @@ async def _installable_app_for_config(
             asset_name=result.apk_asset_name,
             platform=platform,
             channel=response_channel,
+            preview_url=config.preview_url,
         )
     elif result.release_tag and not result.apk_asset_name:
         install_status_hint = "missing_apk_asset"
@@ -6527,6 +6556,7 @@ async def _installable_app_for_config(
         production_ready=config.production_ready,
         mock_or_demo=config.mock_or_demo,
         release_metadata=config.release_metadata or {},
+        aliases=list(config.aliases),
     )
 
 
@@ -6560,6 +6590,7 @@ def _installable_app_response_from_config(
         production_ready=config.production_ready,
         mock_or_demo=config.mock_or_demo,
         release_metadata=config.release_metadata or {},
+        aliases=list(config.aliases),
     )
 
 
@@ -6650,6 +6681,7 @@ def _app_update_apk_proxy_url(
     asset_name: str,
     platform: str,
     channel: str,
+    preview_url: str | None = None,
 ) -> str:
     generated_apk_url = request.url_for(
         "download_app_update_apk",
@@ -6660,8 +6692,80 @@ def _app_update_apk_proxy_url(
     apk_url = _preserve_api_v1_prefix(request, str(generated_apk_url))
     public_base_url = (container.settings.app_update_public_base_url or "").strip()
     if not public_base_url or not _should_use_public_app_update_base(request):
-        return apk_url
-    return _replace_url_origin(apk_url, public_base_url)
+        if public_base_url:
+            public_host_url = _public_app_update_url_for_matching_host(
+                apk_url,
+                public_base_url,
+                preview_url,
+            )
+            if public_host_url is not None:
+                return public_host_url
+        return _prefix_public_app_update_url(apk_url, preview_url)
+    public_path_prefix = _public_app_update_path_prefix(public_base_url, preview_url)
+    return _replace_url_origin(
+        apk_url,
+        public_base_url,
+        path_prefix=public_path_prefix,
+    )
+
+
+def _prefix_public_app_update_url(url: str, preview_url: str | None) -> str:
+    public_path_prefix = _public_app_update_path_prefix(url, preview_url)
+    if not public_path_prefix:
+        return url
+    return _replace_url_origin(
+        url,
+        url,
+        path_prefix=public_path_prefix,
+    )
+
+
+def _public_app_update_url_for_matching_host(
+    url: str,
+    public_base_url: str,
+    preview_url: str | None,
+) -> str | None:
+    parsed_url = urlsplit(url)
+    parsed_base = urlsplit(public_base_url)
+    parsed_preview = urlsplit(preview_url or "")
+    if not parsed_base.scheme or not parsed_base.netloc:
+        return None
+    if parsed_url.netloc not in {parsed_base.netloc, parsed_preview.netloc}:
+        return None
+    return _replace_url_origin(
+        url,
+        public_base_url,
+        path_prefix=_public_app_update_path_prefix(public_base_url, preview_url),
+    )
+
+
+def _app_update_preview_url(
+    container: AppContainer,
+    source_app: str,
+) -> str | None:
+    with suppress(Exception):
+        for config in container.app_update_service.list_apps():
+            if config.source_app == source_app:
+                return config.preview_url
+    return None
+
+
+def _public_app_update_path_prefix(
+    public_base_url: str,
+    preview_url: str | None,
+) -> str:
+    if not preview_url:
+        return ""
+    parsed_base = urlsplit(public_base_url)
+    parsed_preview = urlsplit(preview_url)
+    if (
+        not parsed_base.scheme
+        or not parsed_base.netloc
+        or parsed_base.scheme != parsed_preview.scheme
+        or parsed_base.netloc != parsed_preview.netloc
+    ):
+        return ""
+    return parsed_preview.path.rstrip("/")
 
 
 def _should_use_public_app_update_base(request: Request) -> bool:
@@ -6677,16 +6781,25 @@ def _should_use_public_app_update_base(request: Request) -> bool:
     }
 
 
-def _replace_url_origin(url: str, public_base_url: str) -> str:
+def _replace_url_origin(
+    url: str,
+    public_base_url: str,
+    *,
+    path_prefix: str = "",
+) -> str:
     parsed_url = urlsplit(url)
     parsed_base = urlsplit(public_base_url)
     if not parsed_base.scheme or not parsed_base.netloc:
         return url
+    path = parsed_url.path
+    prefix = f"/{path_prefix.strip('/')}" if path_prefix.strip("/") else ""
+    if prefix and path != prefix and not path.startswith(f"{prefix}/"):
+        path = f"{prefix}{path}"
     return urlunsplit(
         (
             parsed_base.scheme,
             parsed_base.netloc,
-            parsed_url.path,
+            path,
             parsed_url.query,
             parsed_url.fragment,
         )

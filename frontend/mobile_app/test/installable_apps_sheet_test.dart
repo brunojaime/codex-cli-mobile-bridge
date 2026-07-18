@@ -104,9 +104,9 @@ void main() {
     expect(controller.installCallCount, 1);
     expect(
       controller.requestedApkUrl.toString(),
-      'http://bridge.test/app-updates/sat-showroom/apk/tag/sat-showroom.apk',
+      'http://bridge.test/app-updates/satshowroom/apk/tag/satshowroom.apk',
     );
-    expect(controller.requestedSourceApp, 'sat-showroom');
+    expect(controller.requestedSourceApp, 'satshowroom');
     expect(find.text('Installer opened'), findsOneWidget);
   });
 
@@ -120,7 +120,7 @@ void main() {
         http.Response(
           _appsJson(
             apkUrl:
-                'http://127.0.0.1:8000/app-updates/sat-showroom/apk/tag/sat-showroom.apk?platform=android&channel=stable',
+                'http://127.0.0.1:8000/app-updates/satshowroom/apk/tag/satshowroom.apk?platform=android&channel=stable',
           ),
           200,
         ),
@@ -136,7 +136,7 @@ void main() {
     expect(controller.installCallCount, 1);
     expect(
       controller.requestedApkUrl.toString(),
-      'http://bridge.tailnet.test/app-updates/sat-showroom/apk/tag/sat-showroom.apk?platform=android&channel=stable',
+      'http://bridge.tailnet.test/app-updates/satshowroom/apk/tag/satshowroom.apk?platform=android&channel=stable',
     );
   });
 
@@ -192,20 +192,20 @@ String _appsJson({String? sha256, String? apkUrl}) {
       {
         "kind": "codex.installableApp",
         "version": 1,
-        "sourceApp": "sat-showroom",
+        "sourceApp": "satshowroom",
         "displayName": "SAT Showroom",
-        "repo": "brunojaime/sat-showroom",
+        "repo": "brunojaime/satshowroom",
         "releaseChannel": "stable",
         "latestVersion": "1.0.0",
         "latestBuild": 12,
         "releaseTag": "android-v1.0.0-build.12",
-        "apkUrl": "${apkUrl ?? 'http://bridge.test/app-updates/sat-showroom/apk/tag/sat-showroom.apk'}",
-        "apkAssetName": "sat-showroom.apk",
+        "apkUrl": "${apkUrl ?? 'http://bridge.test/app-updates/satshowroom/apk/tag/satshowroom.apk'}",
+        "apkAssetName": "satshowroom.apk",
         "sizeBytes": 2097152,
         "sha256": ${sha256 == null ? 'null' : '"$sha256"'},
         "available": true,
         "enabled": true,
-        "packageId": "com.sat.showroom",
+        "packageId": "com.example.satshowroom",
         "installStatusHint": "available"
       },
       {

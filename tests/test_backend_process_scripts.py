@@ -86,6 +86,9 @@ def test_backend_env_loader_does_not_execute_metacharacters_and_preserves_spaces
         ("scripts/run_backend_detached.sh", "--log-file"),
         ("scripts/stop_backend.sh", "--env-file"),
         ("scripts/stop_backend.sh", "--pid-file"),
+        ("scripts/recover_codex_backends.sh", "--target"),
+        ("scripts/recover_codex_backends.sh", "--health-timeout"),
+        ("scripts/recover_codex_backends.sh", "--prod-mode"),
     ],
 )
 def test_backend_process_script_arguments_require_non_empty_values(
@@ -145,6 +148,29 @@ def test_run_backend_foreground_contract() -> None:
     assert "CODEX_EXEC_ARGS" in script
     assert "exec env \\" in script
     assert '"${PYTHON_BIN}" main.py' in script
+
+
+def test_recover_codex_backends_contract() -> None:
+    script_path = ROOT / "scripts/recover_codex_backends.sh"
+    script = script_path.read_text(encoding="utf-8")
+
+    syntax = subprocess.run(
+        ["bash", "-n", str(script_path)],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert syntax.returncode == 0, syntax.stdout + syntax.stderr
+    assert os.access(script_path, os.X_OK)
+    assert "--target prod|dev|all" in script
+    assert "--force" in script
+    assert "curl -fsS --max-time" in script
+    assert "force_stop_port_backend" in script
+    assert "backend_is_expected_process" in script
+    assert "scripts/dev_backend_8118.sh\" start" in script
+    assert "scripts/run_backend_detached.sh" in script
 
 
 def test_main_loads_allowlisted_runtime_env_only() -> None:
