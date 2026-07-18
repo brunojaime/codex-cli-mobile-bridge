@@ -33,12 +33,12 @@ listener_pid() {
 }
 
 health_environment() {
-  curl -fsS --max-time 5 "http://127.0.0.1:${PORT}/health" \
+  curl -fsS --max-time 15 "http://127.0.0.1:${PORT}/health" \
     | jq -r '.environment_identity.environment // empty'
 }
 
 health_json() {
-  curl -fsS --max-time 5 "http://127.0.0.1:${PORT}/health"
+  curl -fsS --max-time 15 "http://127.0.0.1:${PORT}/health"
 }
 
 wait_for_dev_health() {
@@ -93,6 +93,7 @@ write_runtime_env() {
   cat >"${ENV_FILE}" <<EOF
 API_PORT=${PORT}
 API_BASE_URL=${BASE_URL}
+TAILSCALE_SOCKET=${TAILSCALE_SOCKET}
 CODEX_COMMAND=${codex_command}
 CODEX_USE_EXEC=${codex_use_exec}
 CODEX_EXEC_ARGS=${codex_exec_args}
@@ -172,6 +173,7 @@ start_backend() {
   setsid -f env \
     API_PORT="${PORT}" \
     API_BASE_URL="${BASE_URL}" \
+    TAILSCALE_SOCKET="${TAILSCALE_SOCKET}" \
     CODEX_COMMAND="${codex_command}" \
     CODEX_USE_EXEC="${codex_use_exec}" \
     CODEX_EXEC_ARGS="${codex_exec_args}" \
