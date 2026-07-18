@@ -1341,6 +1341,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                     hasActiveBackend: _activeServer != null,
                     workbenchAvailable: _activeServer != null,
                     appsAvailable: _activeServer != null,
+                    hasProjectWorkspace: _chatController
+                            .currentSession?.workspacePath
+                            .trim()
+                            .isNotEmpty ??
+                        false,
                     isProdEnvironment:
                         _activeServerHealth?.environmentIdentity?.environment ==
                             'prod',
@@ -1442,6 +1447,16 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Choose a project chat before starting UX.'),
+        ),
+      );
+      return false;
+    }
+    if (full && session.workspacePath.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Choose a project chat with a workspace before starting UX Full.',
+          ),
         ),
       );
       return false;

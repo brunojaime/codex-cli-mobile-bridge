@@ -152,6 +152,25 @@ class ProjectFactoryJobRunnerBlockedError(ProjectFactoryJobRunnerError):
 ProjectFactoryEventSink = Callable[[dict[str, object]], None]
 ProjectFactoryRemotePreflight = Callable[[], Mapping[str, object]]
 
+_VISUAL_UX_SKILL_NAME = "visual-ux-polish"
+_VISUAL_UX_SKILL_ENV = "VISUAL_UX_POLISH_SKILL_PATH"
+_VISUAL_UX_REQUIRED_REFERENCES = (
+    "references/visual-quality-checklist.md",
+    "references/product-category-playbooks.md",
+    "references/visual-validation-protocol.md",
+    "references/accessibility-performance-polish.md",
+)
+
+
+@dataclass(frozen=True, slots=True)
+class _VisualUxSkillContext:
+    skill_path: Path
+    prompt_section: str
+
+
+class ProjectFactoryUxSkillUnavailableError(ProjectFactoryJobRunnerError):
+    pass
+
 
 class ProjectFactoryJobRunner:
     def __init__(
@@ -160,10 +179,12 @@ class ProjectFactoryJobRunner:
         generator_service: ProjectFactoryGeneratorService,
         process_runner: ProjectFactoryProcessRunner | None = None,
         remote_preflight: ProjectFactoryRemotePreflight | None = None,
+        visual_ux_skill_path: Path | None = None,
     ) -> None:
         self._generator_service = generator_service
         self._process_runner = process_runner or SubprocessProjectFactoryProcessRunner()
         self._remote_preflight = remote_preflight
+        self._visual_ux_skill_path = visual_ux_skill_path
 
     def run(
         self,
@@ -201,6 +222,24 @@ class ProjectFactoryJobRunner:
                 event_sink=event_sink,
             )
 
+        try:
+            visual_ux_skill_context = _load_visual_ux_skill_context(
+                self._visual_ux_skill_path,
+            )
+        except ProjectFactoryUxSkillUnavailableError as exc:
+            event_sink(
+                _event(
+                    "ux_skill_unavailable",
+                    "blocked",
+                    "visual-ux-polish skill is unavailable; UX lane cannot run.",
+                    _progress(completed_steps, total_steps),
+                    stderr=str(exc),
+                )
+            )
+            raise ProjectFactoryJobRunnerBlockedError(
+                "visual-ux-polish skill is unavailable; UX lane cannot run."
+            ) from exc
+
         event_sink(_event("scaffold", "running", "Creating project scaffold.", 0))
         generation_result = self._generator_service.generate(
             context.manifest_plan,
@@ -224,6 +263,7 @@ class ProjectFactoryJobRunner:
             prompt_root=prompt_root,
             context=context,
             project_path=project_path,
+            visual_ux_skill_context=visual_ux_skill_context,
         )
 
         completed_steps = self._run_cli_step(
@@ -236,6 +276,18 @@ class ProjectFactoryJobRunner:
             total_steps=total_steps,
             event_sink=event_sink,
         )
+        try:
+            _require_ux_brief(project_path)
+        except ProjectFactoryJobRunnerError as exc:
+            event_sink(
+                _event(
+                    "ux_brief",
+                    "failed",
+                    str(exc),
+                    _progress(completed_steps, total_steps),
+                )
+            )
+            raise
 
         completed_steps = self._run_cli_step(
             context=context,
@@ -290,6 +342,8 @@ class ProjectFactoryJobRunner:
             total_steps=total_steps,
             event_sink=event_sink,
         )
+
+        _write_ux_evidence_index(project_path)
 
         event_sink(
             _event(
@@ -719,6 +773,7 @@ class ProjectFactoryJobRunner:
         prompt_root: Path,
         context: ProjectFactoryRunnerContext,
         project_path: Path,
+        visual_ux_skill_context: _VisualUxSkillContext,
     ) -> None:
         manifest = context.manifest_plan.manifest
         frontend_strategy = str(manifest.get("frontend_strategy") or "flutter")
@@ -773,16 +828,28 @@ Reference assets:
 Promoted project assets:
 {chr(10).join(project_asset_lines)}
 """
+        ux_brief_contract = """
+Required UX brief input:
+- Read `.codex/ux/pre-project-ux-brief.md` before planning, generating, or
+  reviewing app UI.
+- If the file is missing, stop and report that the UX brief contract was not
+  satisfied instead of proceeding with generic UX assumptions.
+- Apply the brief as product direction while preserving the manifest, release
+  defaults, backend contracts, auth, RBAC, persistence, and business logic.
+"""
         (prompt_root / "research-planning.md").write_text(
-            base + "\nResearch typical apps, UX patterns, and product plan.\n",
+            base
+            + ux_brief_contract
+            + "\nResearch typical apps, UX patterns, and product plan.\n",
             encoding="utf-8",
         )
         (prompt_root / "ux-brief.md").write_text(
             base
+            + visual_ux_skill_context.prompt_section
             + """
 # Lightweight UX Brief
 
-Use the visual-ux-polish skill before acting.
+The visual-ux-polish skill above is loaded and required.
 
 This is the pre-Project-Factory UX intervention. Do not edit product code,
 backend code, auth, RBAC, persistence, release wiring, or generated
@@ -799,6 +866,7 @@ benchmark notes, and UX acceptance criteria.
         for index in range(context.generator_runs):
             (prompt_root / f"generator-{index + 1:02d}.md").write_text(
                 base
+                + ux_brief_contract
                 + f"\nGenerator pass {index + 1}: implement the next safe slice with tests. "
                 "A reviewer pass runs immediately after this pass.\n",
                 encoding="utf-8",
@@ -806,16 +874,19 @@ benchmark notes, and UX acceptance criteria.
         for index in range(context.reviewer_runs):
             (prompt_root / f"reviewer-{index + 1:02d}.md").write_text(
                 base
+                + ux_brief_contract
                 + f"\nReviewer pass {index + 1}: review only the generator pass with the "
                 "same number, verify concrete fixes, and leave actionable follow-up.\n",
                 encoding="utf-8",
             )
         (prompt_root / "ux-generator.md").write_text(
             base
+            + visual_ux_skill_context.prompt_section
+            + ux_brief_contract
             + """
 # Senior UX Generator
 
-Use the visual-ux-polish skill before acting.
+The visual-ux-polish skill above is loaded and required.
 
 This is the post-Project-Factory UX intervention. Improve only visible UX:
 layout, hierarchy, typography, spacing, color, interaction polish, responsive
@@ -831,10 +902,12 @@ evidence under `.codex/ux/`. Validate mobile and desktop fit before completion.
         )
         (prompt_root / "ux-reviewer.md").write_text(
             base
+            + visual_ux_skill_context.prompt_section
+            + ux_brief_contract
             + """
 # Senior UX Reviewer
 
-Use the visual-ux-polish skill before acting.
+The visual-ux-polish skill above is loaded and required.
 
 Review only the UX Generator changes and evidence. Check visual quality,
 interaction clarity, accessibility, responsive fit, screenshots/UAT evidence,
@@ -851,6 +924,87 @@ with a stop decision and the evidence reviewed.
 def _codex_argv(command: str, prompt: str) -> tuple[str, ...]:
     base = tuple(shlex.split(command.strip() or "codex"))
     return (*base, "exec", "--skip-git-repo-check", "--color", "never", prompt)
+
+
+def _load_visual_ux_skill_context(
+    override_path: Path | None,
+) -> _VisualUxSkillContext:
+    skill_path = override_path or _default_visual_ux_skill_path()
+    skill_path = skill_path.expanduser()
+    if not skill_path.is_file():
+        raise ProjectFactoryUxSkillUnavailableError(
+            f"{_VISUAL_UX_SKILL_NAME} skill file not found: {skill_path}"
+        )
+    skill_root = skill_path.parent
+    sections = [("SKILL.md", skill_path)]
+    sections.extend(
+        (relative_path, skill_root / relative_path)
+        for relative_path in _VISUAL_UX_REQUIRED_REFERENCES
+    )
+    loaded: list[str] = []
+    for label, path in sections:
+        if not path.is_file():
+            raise ProjectFactoryUxSkillUnavailableError(
+                f"{_VISUAL_UX_SKILL_NAME} required reference missing: {path}"
+            )
+        content = path.read_text(encoding="utf-8").strip()
+        if not content:
+            raise ProjectFactoryUxSkillUnavailableError(
+                f"{_VISUAL_UX_SKILL_NAME} required reference is empty: {path}"
+            )
+        loaded.append(f"## {label}\n\n{content}")
+    prompt_section = (
+        "\n# Required visual-ux-polish Skill Context\n\n"
+        f"Resolved skill path: `{skill_path}`\n\n"
+        + "\n\n".join(loaded)
+        + "\n"
+    )
+    return _VisualUxSkillContext(
+        skill_path=skill_path,
+        prompt_section=prompt_section,
+    )
+
+
+def _default_visual_ux_skill_path() -> Path:
+    configured = os.environ.get(_VISUAL_UX_SKILL_ENV)
+    if configured:
+        return Path(configured)
+    codex_home = os.environ.get("CODEX_HOME")
+    if codex_home:
+        return Path(codex_home) / "skills" / _VISUAL_UX_SKILL_NAME / "SKILL.md"
+    return Path.home() / ".codex" / "skills" / _VISUAL_UX_SKILL_NAME / "SKILL.md"
+
+
+def _require_ux_brief(project_path: Path) -> None:
+    brief_path = project_path / ".codex" / "ux" / "pre-project-ux-brief.md"
+    if not brief_path.is_file() or not brief_path.read_text(encoding="utf-8").strip():
+        raise ProjectFactoryJobRunnerError(
+            "UX brief step completed without writing .codex/ux/pre-project-ux-brief.md."
+        )
+
+
+def _write_ux_evidence_index(project_path: Path) -> None:
+    ux_root = project_path / ".codex" / "ux"
+    ux_root.mkdir(parents=True, exist_ok=True)
+    index_path = ux_root / "evidence-index.json"
+    artifacts = [
+        str(path.relative_to(project_path))
+        for path in sorted(ux_root.rglob("*"))
+        if path.is_file() and path != index_path
+    ]
+    index_path.write_text(
+        json.dumps(
+            {
+                "kind": "codex.projectFactoryUxEvidenceIndex",
+                "version": 1,
+                "artifacts": artifacts,
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
 
 
 def _allowed_env() -> dict[str, str]:

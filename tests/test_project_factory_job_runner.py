@@ -47,6 +47,8 @@ def test_project_factory_runner_success_writes_prompts_and_runs_pairs(
     assert (project / ".codex/factory/prompts/ux-reviewer.md").is_file()
     assert (project / ".codex/factory/prompts/finalize-validation.md").is_file()
     assert (project / ".codex/factory/prompts/publish-finalize.md").is_file()
+    assert (project / ".codex/ux/pre-project-ux-brief.md").is_file()
+    assert (project / ".codex/ux/evidence-index.json").is_file()
     assert len(process_runner.calls) == 11
     assert "Lightweight UX Brief" in process_runner.calls[0][-1]
     assert "Generator pass 1:" in process_runner.calls[2][-1]
@@ -71,6 +73,54 @@ def test_project_factory_runner_success_writes_prompts_and_runs_pairs(
         "publish_verification",
     ]
     assert events[-1]["command"] == ["bash", "scripts/validate_publication_ready.sh"]
+
+
+def test_project_factory_runner_fails_closed_when_visual_ux_skill_missing(
+    tmp_path: Path,
+) -> None:
+    process_runner = _FakeProcessRunner()
+    runner = _runner(
+        tmp_path,
+        process_runner,
+        visual_ux_skill_path=tmp_path / "missing-visual-ux-polish" / "SKILL.md",
+    )
+    events: list[dict[str, object]] = []
+
+    with pytest.raises(ProjectFactoryJobRunnerBlockedError):
+        runner.run(
+            _context(tmp_path, generator_runs=0, reviewer_runs=0),
+            event_sink=events.append,
+        )
+
+    assert process_runner.calls == []
+    assert not (tmp_path / "clinica-norte").exists()
+    assert events[-1]["phase"] == "ux_skill_unavailable"
+    assert events[-1]["status"] == "blocked"
+
+
+def test_project_factory_runner_prompts_load_skill_and_consume_ux_brief(
+    tmp_path: Path,
+) -> None:
+    process_runner = _FakeProcessRunner()
+    runner = _runner(tmp_path, process_runner)
+
+    result = runner.run(
+        _context(tmp_path, generator_runs=1, reviewer_runs=1),
+        event_sink=lambda _event: None,
+    )
+
+    prompt_root = Path(result.generation_result.target_path) / ".codex/factory/prompts"
+    research = (prompt_root / "research-planning.md").read_text(encoding="utf-8")
+    generator = (prompt_root / "generator-01.md").read_text(encoding="utf-8")
+    ux_generator = (prompt_root / "ux-generator.md").read_text(encoding="utf-8")
+    ux_reviewer = (prompt_root / "ux-reviewer.md").read_text(encoding="utf-8")
+
+    for prompt in (research, generator, ux_generator, ux_reviewer):
+        assert "Required UX brief input" in prompt
+        assert ".codex/ux/pre-project-ux-brief.md" in prompt
+    assert "Required visual-ux-polish Skill Context" in ux_generator
+    assert "references/visual-quality-checklist.md" in ux_generator
+    assert "references/visual-validation-protocol.md" in ux_reviewer
 
 
 def test_project_factory_runner_remote_publication_runs_required_phases(
@@ -534,7 +584,30 @@ class _FakeProcessRunner:
                 stdout="partial",
                 stderr="failed",
             )
+        self._write_ux_artifacts(argv=tuple(argv), cwd=cwd)
         return ProjectFactoryProcessResult(returncode=0, stdout="ok", stderr="")
+
+    def _write_ux_artifacts(self, *, argv: tuple[str, ...], cwd: Path) -> None:
+        prompt = str(argv[-1]) if argv else ""
+        ux_root = cwd / ".codex" / "ux"
+        if "Lightweight UX Brief" in prompt:
+            ux_root.mkdir(parents=True, exist_ok=True)
+            ux_root.joinpath("pre-project-ux-brief.md").write_text(
+                "# Pre-project UX brief\n\nUse concise professional UX direction.\n",
+                encoding="utf-8",
+            )
+        if "Senior UX Generator" in prompt:
+            ux_root.mkdir(parents=True, exist_ok=True)
+            ux_root.joinpath("ux-generator-report.md").write_text(
+                "# UX generator report\n\nVisual improvements completed.\n",
+                encoding="utf-8",
+            )
+        if "Senior UX Reviewer" in prompt:
+            ux_root.mkdir(parents=True, exist_ok=True)
+            ux_root.joinpath("ux-reviewer-report.md").write_text(
+                "# UX reviewer report\n\nstatus: complete\n",
+                encoding="utf-8",
+            )
 
 
 class _MissingScriptProcessRunner(_FakeProcessRunner):
@@ -550,6 +623,7 @@ class _MissingScriptProcessRunner(_FakeProcessRunner):
                 stdout="",
                 stderr=f"missing script: {self.missing_script}",
             )
+        self._write_ux_artifacts(argv=tuple(argv), cwd=cwd)
         return ProjectFactoryProcessResult(returncode=0, stdout="ok", stderr="")
 
 
@@ -574,6 +648,7 @@ def _runner(
     tmp_path: Path,
     process_runner: _FakeProcessRunner,
     remote_preflight=None,
+    visual_ux_skill_path: Path | None = None,
 ) -> ProjectFactoryJobRunner:
     reference_service = ProjectFactoryReferenceAssetService(
         storage_root=tmp_path / ".assets",
@@ -585,7 +660,30 @@ def _runner(
         generator_service=generator,
         process_runner=process_runner,
         remote_preflight=remote_preflight,
+        visual_ux_skill_path=visual_ux_skill_path
+        or _visual_ux_skill_fixture(tmp_path),
     )
+
+
+def _visual_ux_skill_fixture(tmp_path: Path) -> Path:
+    root = tmp_path / ".skill-fixtures" / "visual-ux-polish"
+    references = root / "references"
+    references.mkdir(parents=True, exist_ok=True)
+    root.joinpath("SKILL.md").write_text(
+        "# Visual UX Polish\n\nUse this skill for professional UX polish.\n",
+        encoding="utf-8",
+    )
+    for relative_path in (
+        "visual-quality-checklist.md",
+        "product-category-playbooks.md",
+        "visual-validation-protocol.md",
+        "accessibility-performance-polish.md",
+    ):
+        references.joinpath(relative_path).write_text(
+            f"# {relative_path}\n\nRequired UX reference content.\n",
+            encoding="utf-8",
+        )
+    return root / "SKILL.md"
 
 
 def _context(

@@ -1,13 +1,13 @@
 # UX Agent Lane
 
 id: 021-ux-agent-lane
-status: drafted
+status: mvp-slice
 owner: codex-mobile-bridge
 
 ## Intent
 
-Add a first-class UX lane to New Project and Domain Factory runs. The lane must
-use two dedicated agents:
+Add a UX lane to New Project and manual project improvement runs. The target
+architecture is a first-class lane with two dedicated agents:
 
 - `ux_generator`: a Senior UX implementation agent that changes the product UI,
   visible copy, layout, interaction states, visual hierarchy, accessibility, and
@@ -20,6 +20,38 @@ This replaces the current single advisory `ux` specialist for project creation
 and Domain Factory work. The existing `ux` supervisor member may remain for
 generic advisory use, but the new lane is the default for serious product UX
 improvement because it can act, validate, and require another UX pass.
+
+## Implemented MVP Scope
+
+The current implementation is intentionally a label-based MVP, not the complete
+target architecture above.
+
+Implemented now:
+
+- manual `/ux` configures the existing `generator` agent as `UX Generator`;
+- manual `/ux-full` configures the existing `generator` and `reviewer` agents
+  as `UX Generator` and `UX Reviewer` with a 15-turn budget;
+- `/ux-full` is blocked unless the selected chat has a workspace;
+- Project Factory runner fails closed before UX phases when the
+  `visual-ux-polish` skill and required reference files cannot be loaded;
+- Project Factory runner adds a pre-planning UX brief step and requires
+  `.codex/ux/pre-project-ux-brief.md` before downstream planning/generation;
+- downstream planning, generator, reviewer, and UX prompts explicitly require
+  reading `.codex/ux/pre-project-ux-brief.md`;
+- Project Factory runner adds one post-factory `ux_generator` prompt step and
+  one `ux_reviewer` prompt step;
+- Project Factory runner writes `.codex/ux/evidence-index.json` listing UX
+  artifacts produced under `.codex/ux/`.
+
+Deferred:
+
+- first-class `ux_generator`/`ux_reviewer` ids, API schema fields, lifecycle
+  states, and mobile rendering;
+- backend Project Factory reviewer JSON parsing/continue routing for multiple
+  automatic UX iterations;
+- attached UX evidence in session projections or Workbench UI;
+- Domain Factory automatic UX sequencing;
+- release gates that fail on unresolved UX findings.
 
 ## Product Outcome
 
@@ -55,7 +87,11 @@ New Project has exactly two automatic UX interventions:
    - May edit UI, visual design, copy, responsive behavior, states,
      accessibility, and UX evidence.
    - Must not touch functionality.
-   - Reviewer decides whether another UX generator pass is required.
+   - Target architecture: reviewer decides whether another UX generator pass is
+     required.
+   - Current MVP: backend Project Factory runs one UX generator step and one UX
+     reviewer step only. Manual `/ux-full` uses the existing chat
+     generator/reviewer loop and 15-turn budget.
    - When this pass completes, the automatic New Project task stops. No
      additional automatic Domain Factory or release phase is started by this UX
      lane.

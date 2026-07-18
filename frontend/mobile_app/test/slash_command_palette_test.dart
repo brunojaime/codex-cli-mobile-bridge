@@ -109,6 +109,32 @@ void main() {
     expect(executed, <String>['ux:generator', 'ux-full:full']);
   });
 
+  testWidgets('ux full is blocked without a project workspace', (tester) async {
+    final controller = TextEditingController();
+    final executed = <String>[];
+    await tester.pumpWidget(_harness(
+      controller: controller,
+      slashCommandContext:
+          const SlashCommandContext(hasProjectWorkspace: false),
+      onSlashCommand: (commandId, payload) async {
+        executed.add('$commandId:$payload');
+        return true;
+      },
+    ));
+
+    await tester.enterText(find.byType(TextField), '/ux-full');
+    await tester.pump();
+    await tester.tap(find.text('/ux-full  UX Full'));
+    await tester.pump();
+
+    expect(
+      find.text(
+          'Choose a project chat with a workspace before starting UX Full.'),
+      findsWidgets,
+    );
+    expect(executed, isEmpty);
+  });
+
   testWidgets('dev handoff command dispatches only when enabled',
       (tester) async {
     final controller = TextEditingController();

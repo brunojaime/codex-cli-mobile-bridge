@@ -156,4 +156,17 @@ void main() {
       contains('ux-full'),
     );
   });
+
+  test('ux full is disabled without a project workspace', () {
+    final commands = buildSlashCommands(
+      const SlashCommandContext(hasProjectWorkspace: false),
+    );
+    final uxFull = commands.singleWhere((command) => command.id == 'ux-full');
+
+    expect(uxFull.isEnabled, isFalse);
+    expect(
+      uxFull.disabledReason,
+      'Choose a project chat with a workspace before starting UX Full.',
+    );
+  });
 }
