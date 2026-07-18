@@ -9,6 +9,11 @@ from dotenv import dotenv_values
 _BRIDGE_RUNTIME_ENV_KEYS = {
     "API_PORT",
     "API_BASE_URL",
+    "APP_UPDATE_PUBLIC_BASE_URL",
+    "BRIDGE_URL",
+    "BRIDGE_PUBLIC_URL",
+    "CODEX_APP_UPDATER_BRIDGE_URL",
+    "CODEX_FEEDBACK_BRIDGE_URL",
     "CODEX_COMMAND",
     "CODEX_USE_EXEC",
     "CODEX_EXEC_ARGS",
@@ -21,6 +26,11 @@ _BRIDGE_RUNTIME_ENV_KEYS = {
     "FEEDBACK_AUDIO_DIR",
     "ASSET_DEPOT_DIR",
     "PROJECT_FACTORY_STATE_DIR",
+    "PROJECT_FACTORY_GITHUB_OWNER",
+    "PROJECT_FACTORY_GITHUB_VISIBILITY",
+    "PROJECT_FACTORY_GITHUB_DEFAULT_BRANCH",
+    "INSTALLABLE_APPS_REGISTRATION_TOKEN",
+    "BRIDGE_REGISTRATION_TOKEN",
     "BRIDGE_ENVIRONMENT",
     "BRIDGE_STAGE_ID",
     "BRIDGE_SPEC_ID",
@@ -51,7 +61,7 @@ def _load_bridge_runtime_env() -> None:
 
 _load_bridge_runtime_env()
 
-from backend.app.main import run
+from backend.app.main import run  # noqa: E402
 
 
 if __name__ == "__main__":
