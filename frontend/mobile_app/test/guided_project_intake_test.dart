@@ -290,6 +290,56 @@ void main() {
   });
 
   testWidgets(
+      'empty Project Factory session hydrates intake and waits for approval',
+      (tester) async {
+    final apiClient = _GuidedProjectApiClient()
+      ..exposePersistedDraftSummary = true
+      ..persistedDraftName = 'Clinica Norte'
+      ..setReadyForReviewIntake();
+    apiClient.seedProjectFactorySession(
+      id: 'empty-session',
+      title: 'Clinica Norte',
+    );
+    final controller = ChatController(
+      apiClient: apiClient,
+      notificationService: const NoopChatNotificationService(),
+    );
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ChatScreen(
+          initialApiBaseUrl: 'http://localhost:8000',
+          notificationService: const NoopChatNotificationService(),
+          controllerOverride: controller,
+          enableServerBootstrap: false,
+          projectFactoryClientOverride: apiClient,
+        ),
+      ),
+    );
+
+    await controller.selectSession('empty-session');
+    await tester.pumpAndSettle();
+
+    expect(controller.currentSession?.messages, isEmpty);
+    expect(apiClient.listDraftCalls, 1);
+    expect(apiClient.createDraftCalls, 0);
+    expect(apiClient.confirmCalls, 0);
+    expect(apiClient.startInitCalls, 0);
+    expect(find.text('Guided intake'), findsOneWidget);
+    expect(find.text('Contract preview'), findsOneWidget);
+    expect(find.text('Confirm build'), findsOneWidget);
+
+    await tester.tap(find.text('Confirm build'));
+    await tester.pumpAndSettle();
+
+    expect(apiClient.confirmCalls, 1);
+    expect(apiClient.startInitCalls, 1);
+    expect(apiClient.sendMessageCalls, 0);
+    expect(find.text('Deterministic baseline init'), findsOneWidget);
+  });
+
+  testWidgets(
       'ok/dale confirmation is consumed as a technical event before init',
       (tester) async {
     final apiClient = _GuidedProjectApiClient();
@@ -603,11 +653,14 @@ class _GuidedProjectApiClient extends ApiClient {
   int previewCalls = 0;
   int confirmCalls = 0;
   int getIntakeCalls = 0;
+  int listDraftCalls = 0;
   int startInitCalls = 0;
   int getInitJobCalls = 0;
   int sendMessageCalls = 0;
   int domainFactoryStarts = 0;
   bool includeGeneratorReadyMessage = false;
+  bool exposePersistedDraftSummary = false;
+  String persistedDraftName = 'Untitled project';
   Object? initPollError;
   List<ProjectFactoryInitJob> initPollJobs = <ProjectFactoryInitJob>[];
   final List<String> sentMessages = <String>[];
@@ -666,14 +719,16 @@ class _GuidedProjectApiClient extends ApiClient {
   Future<List<ProjectFactoryDraftSummary>> listProjectFactoryDrafts({
     int limit = 50,
   }) async {
-    if (createDraftCalls == 0) {
+    listDraftCalls += 1;
+    if (createDraftCalls == 0 && !exposePersistedDraftSummary) {
       return const <ProjectFactoryDraftSummary>[];
     }
     return <ProjectFactoryDraftSummary>[
       ProjectFactoryDraftSummary(
         id: 'pf-draft-1',
         draftId: 'pf-draft-1',
-        name: 'Untitled project',
+        name: persistedDraftName,
+        slug: persistedDraftName.toLowerCase().replaceAll(' ', '-'),
         businessType: 'saas',
         primaryGoal: 'Build a new application',
         status: 'draft',
@@ -923,6 +978,49 @@ class _GuidedProjectApiClient extends ApiClient {
   @override
   Future<List<Workspace>> listWorkspaces() async {
     return const <Workspace>[];
+  }
+
+  void seedProjectFactorySession({
+    required String id,
+    required String title,
+  }) {
+    _sessions[id] = SessionDetail(
+      id: id,
+      title: title,
+      workspacePath: '/workspace/a',
+      workspaceName: 'A',
+      agentProfileId: 'default',
+      agentProfileName: 'Generator',
+      agentProfileColor: '#55D6BE',
+      agentConfiguration:
+          buildProjectFactoryIntakeConfiguration(kDefaultAgentConfiguration),
+      createdAt: _timestamp,
+      updatedAt: _timestamp,
+      messages: const <ChatMessage>[],
+    );
+  }
+
+  void setReadyForReviewIntake() {
+    _intake = _intakeFromJson(
+      status: 'ready_for_review',
+      blockers: const <Map<String, dynamic>>[
+        <String, dynamic>{
+          'scope': 'release',
+          'message': 'Cloudflare doctor pending',
+          'external': true,
+        }
+      ],
+      contractPreview: const <String, dynamic>{
+        'decisions': <String, dynamic>{
+          'name': 'Clinica Norte',
+          'platforms': <String>['ios', 'android', 'web'],
+        },
+        'defaults': <String, dynamic>{
+          'previewUrl': 'https://preview.nienfos.com/clinica-norte',
+        },
+      },
+      readyForConfirmation: true,
+    );
   }
 
   ProjectFactoryDraft _draft() {

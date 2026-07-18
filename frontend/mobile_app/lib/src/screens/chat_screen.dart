@@ -344,6 +344,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       _projectFactoryGuidedIntakeBySession =
       <String, ProjectFactoryGuidedIntake>{};
   final Set<String> _loadingProjectFactoryIntakeSessions = <String>{};
+  final Set<String> _hydratedProjectFactoryIntakeSessions = <String>{};
   String? _projectFactoryGuidedIntakeErrorText;
   final Map<String, ProjectFactoryInitJob> _projectFactoryInitBySession =
       <String, ProjectFactoryInitJob>{};
@@ -1559,6 +1560,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
               onPreview: () => _previewProjectFactoryGuidedIntake(
                 currentSession.id,
               ),
+              onConfirm: intake.readyForConfirmation && !intake.buildAllowed
+                  ? _handleProjectFactoryApprovalButton
+                  : null,
             ),
           ],
           if (isLoading) ...<Widget>[
@@ -2177,6 +2181,7 @@ When you create the Project Factory draft, link each asset with POST /project-fa
 
     _projectFactoryDraftIdBySession[session.id] = draft.draftId;
     _projectFactoryGuidedIntakeBySession[session.id] = draft.guidedIntake;
+    _hydratedProjectFactoryIntakeSessions.add(session.id);
     setState(() {
       _projectFactoryGuidedIntakeErrorText = null;
     });
@@ -2193,6 +2198,70 @@ When you create the Project Factory draft, link each asset with POST /project-fa
   ApiClient _projectFactoryClient() {
     return widget.projectFactoryClientOverride ??
         ApiClient(baseUrl: _activeServer?.baseUrl ?? widget.initialApiBaseUrl);
+  }
+
+  Future<void> _hydrateProjectFactoryIntakeForSession(
+    SessionDetail session,
+  ) async {
+    if (_projectFactoryDraftIdBySession.containsKey(session.id) ||
+        _loadingProjectFactoryIntakeSessions.contains(session.id) ||
+        _hydratedProjectFactoryIntakeSessions.contains(session.id)) {
+      return;
+    }
+    if (!isProjectFactoryIntakeConfiguration(session.agentConfiguration)) {
+      return;
+    }
+
+    setState(() {
+      _loadingProjectFactoryIntakeSessions.add(session.id);
+      _projectFactoryGuidedIntakeErrorText = null;
+    });
+
+    try {
+      final drafts = await _projectFactoryClient().listProjectFactoryDrafts(
+        limit: 100,
+      );
+      final draft = _matchProjectFactoryDraftForSession(session, drafts);
+      if (!mounted || _chatController.selectedSessionId != session.id) {
+        return;
+      }
+      setState(() {
+        _hydratedProjectFactoryIntakeSessions.add(session.id);
+        _loadingProjectFactoryIntakeSessions.remove(session.id);
+        if (draft != null) {
+          _projectFactoryDraftIdBySession[session.id] = draft.draftId;
+          _projectFactoryGuidedIntakeBySession[session.id] = draft.guidedIntake;
+        }
+      });
+    } catch (error) {
+      if (!mounted || _chatController.selectedSessionId != session.id) {
+        return;
+      }
+      setState(() {
+        _hydratedProjectFactoryIntakeSessions.add(session.id);
+        _loadingProjectFactoryIntakeSessions.remove(session.id);
+        _projectFactoryGuidedIntakeErrorText =
+            'Could not load New Project intake. $error';
+      });
+    }
+  }
+
+  ProjectFactoryDraftSummary? _matchProjectFactoryDraftForSession(
+    SessionDetail session,
+    List<ProjectFactoryDraftSummary> drafts,
+  ) {
+    final titleKey = _projectFactoryLookupKey(session.title);
+    final titleSlug = _projectFactorySlugKey(session.title);
+    for (final draft in drafts) {
+      if (_projectFactoryLookupKey(draft.name) == titleKey ||
+          _projectFactorySlugKey(draft.slug ?? '') == titleSlug ||
+          _projectFactorySlugKey(
+                  _fallbackWorkspaceName(draft.targetPath ?? '')) ==
+              titleSlug) {
+        return draft;
+      }
+    }
+    return null;
   }
 
   Future<ProjectFactoryDraft?> _findOrCreateProjectFactoryGuidedDraft(
@@ -4540,6 +4609,18 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
     return parts.last;
   }
 
+  String _projectFactoryLookupKey(String value) {
+    return value.trim().toLowerCase().replaceAll(RegExp(r'\s+'), ' ');
+  }
+
+  String _projectFactorySlugKey(String value) {
+    return value
+        .trim()
+        .toLowerCase()
+        .replaceAll(RegExp(r'[^a-z0-9]+'), '-')
+        .replaceAll(RegExp(r'^-+|-+$'), '');
+  }
+
   void _handleChatControllerChanged() {
     _markCurrentSessionAsRead();
     final currentSessionId = _chatController.selectedSessionId;
@@ -4574,6 +4655,11 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
       _updateStickToBottom(true);
     } else if (newestMessageId != _lastObservedNewestMessageId) {
       _lastObservedNewestMessageId = newestMessageId;
+    }
+
+    final currentSession = _chatController.currentSession;
+    if (currentSession != null) {
+      unawaited(_hydrateProjectFactoryIntakeForSession(currentSession));
     }
 
     if (_stickToBottom) {
@@ -8552,11 +8638,13 @@ class ProjectFactoryGuidedIntakeCard extends StatefulWidget {
     required this.intake,
     required this.onAnswer,
     required this.onPreview,
+    this.onConfirm,
   });
 
   final ProjectFactoryGuidedIntake intake;
   final Future<void> Function(String questionId, Object? value) onAnswer;
   final Future<void> Function() onPreview;
+  final Future<void> Function()? onConfirm;
 
   @override
   State<ProjectFactoryGuidedIntakeCard> createState() =>
@@ -8649,6 +8737,12 @@ class _ProjectFactoryGuidedIntakeCardState
                   icon: const Icon(Icons.fact_check_outlined),
                   label: const Text('Preview contract'),
                 ),
+                if (widget.onConfirm != null)
+                  FilledButton.icon(
+                    onPressed: widget.onConfirm,
+                    icon: const Icon(Icons.check_circle_outline),
+                    label: const Text('Confirm build'),
+                  ),
               ],
             ),
           ],
