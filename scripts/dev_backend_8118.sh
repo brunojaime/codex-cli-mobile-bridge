@@ -10,7 +10,9 @@ LOG_FILE="${RUNTIME_DIR}/backend.log"
 PID_FILE="${RUNTIME_DIR}/backend.pid"
 ENV_FILE="${RUNTIME_DIR}/dev.env"
 BASE_ENV_FILE="${ROOT_DIR}/.env"
+BASE_SECRET_ENV_FILE="${ROOT_DIR}/secrets/cloudflare.env"
 FALLBACK_BASE_ENV_FILE="$(dirname "${ROOT_DIR}")/codex-cli-mobile-bridge/.env"
+FALLBACK_SECRET_ENV_FILE="$(dirname "${ROOT_DIR}")/codex-cli-mobile-bridge/secrets/cloudflare.env"
 PORT=8118
 BASE_URL="http://batata-default-string.tail0302c4.ts.net:${PORT}"
 TAILSCALE_SOCKET="${TAILSCALE_SOCKET:-/home/batata/.local/share/tailscale-userspace/tailscaled.sock}"
@@ -69,7 +71,11 @@ pid_is_alive() {
 base_env_value() {
   local key="$1"
   local file line
-  for file in "${BASE_ENV_FILE}" "${FALLBACK_BASE_ENV_FILE}"; do
+  for file in \
+    "${BASE_ENV_FILE}" \
+    "${BASE_SECRET_ENV_FILE}" \
+    "${FALLBACK_BASE_ENV_FILE}" \
+    "${FALLBACK_SECRET_ENV_FILE}"; do
     [[ -f "${file}" ]] || continue
     line="$(sed -n "s/^${key}=//p" "${file}" | tail -n 1)"
     if [[ -n "${line}" ]]; then
@@ -96,6 +102,8 @@ write_runtime_env() {
     "${RUNTIME_DIR}/runtime"
   local codex_command codex_use_exec codex_exec_args codex_resume_args
   local github_owner github_visibility github_branch registration_token
+  local cloudflare_api_token cloudflare_dns_token cloudflare_account_id
+  local cloudflare_zone_id cloudflare_zone_name web_preview_apply_enabled
   codex_command="$(codex_env_value CODEX_COMMAND "codex")"
   codex_use_exec="$(codex_env_value CODEX_USE_EXEC "true")"
   codex_exec_args="$(codex_env_value CODEX_EXEC_ARGS "--skip-git-repo-check --color never --dangerously-bypass-approvals-and-sandbox")"
@@ -104,6 +112,12 @@ write_runtime_env() {
   github_visibility="$(codex_env_value PROJECT_FACTORY_GITHUB_VISIBILITY "private")"
   github_branch="$(codex_env_value PROJECT_FACTORY_GITHUB_DEFAULT_BRANCH "main")"
   registration_token="$(codex_env_value INSTALLABLE_APPS_REGISTRATION_TOKEN "")"
+  cloudflare_api_token="$(codex_env_value CLOUDFLARE_API_TOKEN "")"
+  cloudflare_dns_token="$(codex_env_value CLOUDFLARE_DNS_API_TOKEN "")"
+  cloudflare_account_id="$(codex_env_value CLOUDFLARE_ACCOUNT_ID "")"
+  cloudflare_zone_id="$(codex_env_value CLOUDFLARE_ZONE_ID "")"
+  cloudflare_zone_name="$(codex_env_value CLOUDFLARE_ZONE_NAME "nienfos.com")"
+  web_preview_apply_enabled="$(codex_env_value WEB_PREVIEW_APPLY_ENABLED "false")"
   cat >"${ENV_FILE}" <<EOF
 API_PORT=${PORT}
 API_BASE_URL=${BASE_URL}
@@ -130,6 +144,12 @@ PROJECT_FACTORY_GITHUB_VISIBILITY=${github_visibility}
 PROJECT_FACTORY_GITHUB_DEFAULT_BRANCH=${github_branch}
 INSTALLABLE_APPS_REGISTRATION_TOKEN=${registration_token}
 BRIDGE_REGISTRATION_TOKEN=${registration_token}
+CLOUDFLARE_API_TOKEN=${cloudflare_api_token}
+CLOUDFLARE_DNS_API_TOKEN=${cloudflare_dns_token}
+CLOUDFLARE_ACCOUNT_ID=${cloudflare_account_id}
+CLOUDFLARE_ZONE_ID=${cloudflare_zone_id}
+CLOUDFLARE_ZONE_NAME=${cloudflare_zone_name}
+WEB_PREVIEW_APPLY_ENABLED=${web_preview_apply_enabled}
 BRIDGE_ENVIRONMENT=dev
 BRIDGE_STAGE_ID=dev-app
 BRIDGE_SPEC_ID=018
@@ -189,6 +209,8 @@ start_backend() {
 
   local codex_command codex_use_exec codex_exec_args codex_resume_args
   local github_owner github_visibility github_branch registration_token
+  local cloudflare_api_token cloudflare_dns_token cloudflare_account_id
+  local cloudflare_zone_id cloudflare_zone_name web_preview_apply_enabled
   codex_command="$(codex_env_value CODEX_COMMAND "codex")"
   codex_use_exec="$(codex_env_value CODEX_USE_EXEC "true")"
   codex_exec_args="$(codex_env_value CODEX_EXEC_ARGS "--skip-git-repo-check --color never --dangerously-bypass-approvals-and-sandbox")"
@@ -197,6 +219,12 @@ start_backend() {
   github_visibility="$(codex_env_value PROJECT_FACTORY_GITHUB_VISIBILITY "private")"
   github_branch="$(codex_env_value PROJECT_FACTORY_GITHUB_DEFAULT_BRANCH "main")"
   registration_token="$(codex_env_value INSTALLABLE_APPS_REGISTRATION_TOKEN "")"
+  cloudflare_api_token="$(codex_env_value CLOUDFLARE_API_TOKEN "")"
+  cloudflare_dns_token="$(codex_env_value CLOUDFLARE_DNS_API_TOKEN "")"
+  cloudflare_account_id="$(codex_env_value CLOUDFLARE_ACCOUNT_ID "")"
+  cloudflare_zone_id="$(codex_env_value CLOUDFLARE_ZONE_ID "")"
+  cloudflare_zone_name="$(codex_env_value CLOUDFLARE_ZONE_NAME "nienfos.com")"
+  web_preview_apply_enabled="$(codex_env_value WEB_PREVIEW_APPLY_ENABLED "false")"
 
   cd "${ROOT_DIR}"
   setsid -f env \
@@ -225,6 +253,12 @@ start_backend() {
     PROJECT_FACTORY_GITHUB_DEFAULT_BRANCH="${github_branch}" \
     INSTALLABLE_APPS_REGISTRATION_TOKEN="${registration_token}" \
     BRIDGE_REGISTRATION_TOKEN="${registration_token}" \
+    CLOUDFLARE_API_TOKEN="${cloudflare_api_token}" \
+    CLOUDFLARE_DNS_API_TOKEN="${cloudflare_dns_token}" \
+    CLOUDFLARE_ACCOUNT_ID="${cloudflare_account_id}" \
+    CLOUDFLARE_ZONE_ID="${cloudflare_zone_id}" \
+    CLOUDFLARE_ZONE_NAME="${cloudflare_zone_name}" \
+    WEB_PREVIEW_APPLY_ENABLED="${web_preview_apply_enabled}" \
     BRIDGE_ENVIRONMENT="dev" \
     BRIDGE_STAGE_ID="dev-app" \
     BRIDGE_SPEC_ID="018" \

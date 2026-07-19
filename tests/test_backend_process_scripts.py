@@ -262,6 +262,14 @@ def test_dev_backend_8118_script_contract() -> None:
     assert "BRIDGE_ENVIRONMENT=prod" not in script
     assert "FALLBACK_BASE_ENV_FILE" in script
     assert "codex-cli-mobile-bridge/.env" in script
+    assert "BASE_SECRET_ENV_FILE" in script
+    assert "FALLBACK_SECRET_ENV_FILE" in script
+    assert "codex-cli-mobile-bridge/secrets/cloudflare.env" in script
+    assert "CLOUDFLARE_API_TOKEN" in script
+    assert "CLOUDFLARE_DNS_API_TOKEN" in script
+    assert "CLOUDFLARE_ACCOUNT_ID" in script
+    assert "CLOUDFLARE_ZONE_ID" in script
+    assert "WEB_PREVIEW_APPLY_ENABLED" in script
     assert "serve --bg --http=\"${PORT}\"" in script
     assert "restart)" in script
     assert "stop)" in script
