@@ -10,6 +10,7 @@ LOG_FILE="${RUNTIME_DIR}/backend.log"
 PID_FILE="${RUNTIME_DIR}/backend.pid"
 ENV_FILE="${RUNTIME_DIR}/dev.env"
 BASE_ENV_FILE="${ROOT_DIR}/.env"
+FALLBACK_BASE_ENV_FILE="$(dirname "${ROOT_DIR}")/codex-cli-mobile-bridge/.env"
 PORT=8118
 BASE_URL="http://batata-default-string.tail0302c4.ts.net:${PORT}"
 TAILSCALE_SOCKET="${TAILSCALE_SOCKET:-/home/batata/.local/share/tailscale-userspace/tailscaled.sock}"
@@ -67,8 +68,16 @@ pid_is_alive() {
 
 base_env_value() {
   local key="$1"
-  [[ -f "${BASE_ENV_FILE}" ]] || return 1
-  sed -n "s/^${key}=//p" "${BASE_ENV_FILE}" | tail -n 1
+  local file line
+  for file in "${BASE_ENV_FILE}" "${FALLBACK_BASE_ENV_FILE}"; do
+    [[ -f "${file}" ]] || continue
+    line="$(sed -n "s/^${key}=//p" "${file}" | tail -n 1)"
+    if [[ -n "${line}" ]]; then
+      printf '%s' "${line}"
+      return 0
+    fi
+  done
+  return 1
 }
 
 codex_env_value() {

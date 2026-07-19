@@ -260,6 +260,8 @@ def test_dev_backend_8118_script_contract() -> None:
     assert ".run/backend.log" not in script
     assert "API_PORT=8000" not in script
     assert "BRIDGE_ENVIRONMENT=prod" not in script
+    assert "FALLBACK_BASE_ENV_FILE" in script
+    assert "codex-cli-mobile-bridge/.env" in script
     assert "serve --bg --http=\"${PORT}\"" in script
     assert "restart)" in script
     assert "stop)" in script
