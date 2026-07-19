@@ -58,7 +58,9 @@ class _FakeRunner:
             )
         assert self.responses, f"Unexpected command: {argv}"
         expected, response = self.responses.pop(0)
-        if not _argv_matches(argv, expected) and _is_auto_github_actions_config_cmd(argv):
+        if not _argv_matches(argv, expected) and _is_auto_github_actions_config_cmd(
+            argv
+        ):
             self.responses.insert(0, (expected, response))
             stdout = (
                 "https://github.com/owner/clinica-norte\n"
@@ -112,7 +114,10 @@ def test_android_release_creates_prerelease_registers_bridge_and_persists(
     release_tag = "android-preview-v0.1.0-build.1"
     runner = _FakeRunner(
         [
-            (_release_view_cmd(release_tag), _FakeResponse(exit_code=1, stderr="not found")),
+            (
+                _release_view_cmd(release_tag),
+                _FakeResponse(exit_code=1, stderr="not found"),
+            ),
             (
                 _publish_cmd(),
                 _FakeResponse(stdout="secret-token built", on_run=_write_apk),
@@ -164,9 +169,9 @@ def test_android_release_creates_prerelease_registers_bridge_and_persists(
     assert variable_sets["CODEX_FEEDBACK_BRIDGE_URL"] == "https://bridge.test"
     assert variable_sets["CODEX_APP_UPDATER_BRIDGE_URL"] == "https://bridge.test"
     mobile = tmp_path / "projects/clinica-norte/apps/mobile"
-    android_manifest = (
-        mobile / "android/app/src/main/AndroidManifest.xml"
-    ).read_text(encoding="utf-8")
+    android_manifest = (mobile / "android/app/src/main/AndroidManifest.xml").read_text(
+        encoding="utf-8"
+    )
     assert 'android:networkSecurityConfig="@xml/network_security_config"' in (
         android_manifest
     )
@@ -176,7 +181,9 @@ def test_android_release_creates_prerelease_registers_bridge_and_persists(
     assert "tail0302c4.ts.net" in network_security
     assert "localhost" not in json.dumps(completed.to_payload())
     apk = next(
-        artifact for artifact in release_phase.artifacts if artifact.kind == "android_preview_apk"
+        artifact
+        for artifact in release_phase.artifacts
+        if artifact.kind == "android_preview_apk"
     )
     assert apk.path and apk.path.endswith("clinica-norte.apk")
     assert apk.sha256
@@ -319,10 +326,7 @@ def test_workbench_phase_aligns_verified_foundation_tasks_and_pushes(
             encoding="utf-8",
         )
     )
-    statuses = {
-        task["id"]: task["status"]
-        for task in tree["plans"][0]["tasks"]
-    }
+    statuses = {task["id"]: task["status"] for task in tree["plans"][0]["tasks"]}
     assert statuses["plan-1-task-10"] == "done"
     assert statuses["plan-1-task-11"] == "done"
     tasks_md = (project / "specs/001-product-foundation/tasks.md").read_text(
@@ -448,15 +452,24 @@ def test_android_release_generates_preview_signing_when_missing(
     keytool = tmp_path / "bin/keytool"
     keytool.parent.mkdir(parents=True)
     keytool.write_text("#!/bin/sh\n", encoding="utf-8")
-    monkeypatch.setattr(init_module.shutil, "which", lambda name: str(keytool) if name == "keytool" else None)
+    monkeypatch.setattr(
+        init_module.shutil,
+        "which",
+        lambda name: str(keytool) if name == "keytool" else None,
+    )
 
     runner = _FakeRunner(
         [
             (
                 _keytool_cmd(keytool, tmp_path),
-                _FakeResponse(on_run=lambda _project: _write_generated_keystore(tmp_path)),
+                _FakeResponse(
+                    on_run=lambda _project: _write_generated_keystore(tmp_path)
+                ),
             ),
-            (_release_view_cmd(release_tag), _FakeResponse(exit_code=1, stderr="not found")),
+            (
+                _release_view_cmd(release_tag),
+                _FakeResponse(exit_code=1, stderr="not found"),
+            ),
             (
                 _publish_cmd(),
                 _FakeResponse(stdout="built", on_run=_write_apk),
@@ -478,9 +491,10 @@ def test_android_release_generates_preview_signing_when_missing(
 
     completed = service.run_android_preview_release_phases(job.id)
 
-    assert completed.phase(
-        ProjectFactoryInitPhaseName.ANDROID_PREVIEW_RELEASE
-    ).status == ProjectFactoryInitPhaseStatus.COMPLETED
+    assert (
+        completed.phase(ProjectFactoryInitPhaseName.ANDROID_PREVIEW_RELEASE).status
+        == ProjectFactoryInitPhaseStatus.COMPLETED
+    )
     assert (tmp_path / "secrets/clinica-norte-preview-signing.env").is_file()
     assert (tmp_path / "secrets/clinica-norte-preview-upload-keystore.jks").is_file()
     evidence = completed.phase(
@@ -490,9 +504,9 @@ def test_android_release_generates_preview_signing_when_missing(
     assert "ANDROID_STORE_PASSWORD" in evidence.redacted_env_keys
     assert "ANDROID_KEY_PASSWORD" in evidence.redacted_env_keys
     payload = json.dumps(completed.to_payload())
-    signing_env = (
-        tmp_path / "secrets/clinica-norte-preview-signing.env"
-    ).read_text(encoding="utf-8")
+    signing_env = (tmp_path / "secrets/clinica-norte-preview-signing.env").read_text(
+        encoding="utf-8"
+    )
     for line in signing_env.splitlines():
         if "_PASSWORD=" in line:
             assert line.split("=", 1)[1] not in payload
@@ -504,7 +518,10 @@ def test_android_release_commits_safe_generated_gitignore_repair_before_retry(
     release_tag = "android-preview-v0.1.0-build.1"
     runner = _FakeRunner(
         [
-            (_release_view_cmd(release_tag), _FakeResponse(exit_code=1, stderr="not found")),
+            (
+                _release_view_cmd(release_tag),
+                _FakeResponse(exit_code=1, stderr="not found"),
+            ),
             (
                 _publish_cmd(),
                 _FakeResponse(
@@ -536,7 +553,9 @@ def test_android_release_commits_safe_generated_gitignore_repair_before_retry(
                     "-m",
                     "Ignore generated Project Factory artifacts",
                 ),
-                _FakeResponse(stdout="[main abc123] Ignore generated Project Factory artifacts"),
+                _FakeResponse(
+                    stdout="[main abc123] Ignore generated Project Factory artifacts"
+                ),
             ),
             (_publish_cmd(), _FakeResponse(stdout="built", on_run=_write_apk)),
             (
@@ -556,9 +575,10 @@ def test_android_release_commits_safe_generated_gitignore_repair_before_retry(
 
     completed = service.run_android_preview_release_phases(job.id)
 
-    assert completed.phase(
-        ProjectFactoryInitPhaseName.ANDROID_PREVIEW_RELEASE
-    ).status == ProjectFactoryInitPhaseStatus.COMPLETED
+    assert (
+        completed.phase(ProjectFactoryInitPhaseName.ANDROID_PREVIEW_RELEASE).status
+        == ProjectFactoryInitPhaseStatus.COMPLETED
+    )
     assert runner.calls.count(_publish_cmd()) == 2
     assert ("git", "add", ".gitignore") in runner.calls
     assert (
@@ -590,9 +610,9 @@ def test_android_release_verifies_existing_prerelease_and_installable_without_pu
 
     completed = service.run_android_preview_release_phases(job.id)
 
-    assert completed.phase(ProjectFactoryInitPhaseName.ANDROID_PREVIEW_RELEASE).status == (
-        ProjectFactoryInitPhaseStatus.COMPLETED
-    )
+    assert completed.phase(
+        ProjectFactoryInitPhaseName.ANDROID_PREVIEW_RELEASE
+    ).status == (ProjectFactoryInitPhaseStatus.COMPLETED)
     assert _publish_cmd() not in runner.calls
     assert _register_cmd() not in runner.calls
 
@@ -603,7 +623,10 @@ def test_android_release_rerun_is_idempotent_after_create(
     release_tag = "android-preview-v0.1.0-build.1"
     runner = _FakeRunner(
         [
-            (_release_view_cmd(release_tag), _FakeResponse(exit_code=1, stderr="not found")),
+            (
+                _release_view_cmd(release_tag),
+                _FakeResponse(exit_code=1, stderr="not found"),
+            ),
             (_publish_cmd(), _FakeResponse(stdout="built", on_run=_write_apk)),
             (
                 _release_view_cmd(release_tag),
@@ -631,9 +654,10 @@ def test_android_release_rerun_is_idempotent_after_create(
     service.run_android_preview_release_phases(job.id)
     second = service.run_android_preview_release_phases(job.id)
 
-    assert second.phase(
-        ProjectFactoryInitPhaseName.BRIDGE_INSTALLABLE_REGISTRATION
-    ).status == ProjectFactoryInitPhaseStatus.COMPLETED
+    assert (
+        second.phase(ProjectFactoryInitPhaseName.BRIDGE_INSTALLABLE_REGISTRATION).status
+        == ProjectFactoryInitPhaseStatus.COMPLETED
+    )
     assert runner.calls.count(_publish_cmd()) == 1
     assert runner.calls.count(_register_cmd()) == 1
 
@@ -654,12 +678,15 @@ def test_android_release_preserves_svelte_web_only_skip(
     completed = service.run_android_preview_release_phases(baseline.id)
 
     assert runner.calls == []
-    assert completed.phase(ProjectFactoryInitPhaseName.ANDROID_PREVIEW_RELEASE).status == (
-        ProjectFactoryInitPhaseStatus.SKIPPED
-    )
     assert completed.phase(
-        ProjectFactoryInitPhaseName.BRIDGE_INSTALLABLE_REGISTRATION
-    ).status == ProjectFactoryInitPhaseStatus.SKIPPED
+        ProjectFactoryInitPhaseName.ANDROID_PREVIEW_RELEASE
+    ).status == (ProjectFactoryInitPhaseStatus.SKIPPED)
+    assert (
+        completed.phase(
+            ProjectFactoryInitPhaseName.BRIDGE_INSTALLABLE_REGISTRATION
+        ).status
+        == ProjectFactoryInitPhaseStatus.SKIPPED
+    )
 
 
 def test_android_release_blocks_missing_tooling_or_signing_with_redaction(
@@ -668,7 +695,10 @@ def test_android_release_blocks_missing_tooling_or_signing_with_redaction(
     release_tag = "android-preview-v0.1.0-build.1"
     runner = _FakeRunner(
         [
-            (_release_view_cmd(release_tag), _FakeResponse(exit_code=1, stderr="not found")),
+            (
+                _release_view_cmd(release_tag),
+                _FakeResponse(exit_code=1, stderr="not found"),
+            ),
             (
                 _publish_cmd(),
                 _FakeResponse(
@@ -701,13 +731,45 @@ def test_android_release_blocks_missing_tooling_or_signing_with_redaction(
     assert "ANDROID_STORE_PASSWORD" in evidence.redacted_env_keys
 
 
+def test_android_release_publish_uses_same_bridge_root_as_generated_signing(
+    tmp_path: Path,
+) -> None:
+    release_tag = "android-preview-v0.1.0-build.1"
+    runner = _FakeRunner(
+        [
+            (
+                _release_view_cmd(release_tag),
+                _FakeResponse(exit_code=1, stderr="not found"),
+            ),
+            (_publish_cmd(), _FakeResponse(exit_code=2, stderr="publish blocked")),
+        ]
+    )
+    bridge_root = tmp_path / "bridge-root"
+    service = _service(
+        tmp_path,
+        runner,
+        command_env={"CODEX_MOBILE_BRIDGE_ROOT": str(bridge_root)},
+    )
+    job = _generated_job(service)
+
+    service.run_android_preview_release_phases(job.id)
+
+    publish_env = runner.envs[runner.calls.index(_publish_cmd())] or {}
+    assert publish_env["CODEX_MOBILE_BRIDGE_ROOT"] == str(bridge_root)
+    assert (bridge_root / "secrets/clinica-norte-preview-signing.env").is_file()
+    assert (bridge_root / "secrets/clinica-norte-preview-upload-keystore.jks").is_file()
+
+
 def test_android_release_blocks_generic_publish_failure(
     tmp_path: Path,
 ) -> None:
     release_tag = "android-preview-v0.1.0-build.1"
     runner = _FakeRunner(
         [
-            (_release_view_cmd(release_tag), _FakeResponse(exit_code=1, stderr="not found")),
+            (
+                _release_view_cmd(release_tag),
+                _FakeResponse(exit_code=1, stderr="not found"),
+            ),
             (_publish_cmd(), _FakeResponse(exit_code=1, stderr="upload failed")),
         ]
     )
@@ -728,7 +790,10 @@ def test_android_release_blocks_missing_apk_asset_after_publish(
     release_tag = "android-preview-v0.1.0-build.1"
     runner = _FakeRunner(
         [
-            (_release_view_cmd(release_tag), _FakeResponse(exit_code=1, stderr="not found")),
+            (
+                _release_view_cmd(release_tag),
+                _FakeResponse(exit_code=1, stderr="not found"),
+            ),
             (_publish_cmd(), _FakeResponse(stdout="built")),
             (
                 _release_view_cmd(release_tag),
@@ -828,7 +893,10 @@ def test_android_release_blocks_mock_or_local_installable_payload(
     phase = blocked.phase(ProjectFactoryInitPhaseName.BRIDGE_INSTALLABLE_REGISTRATION)
     assert phase.status == ProjectFactoryInitPhaseStatus.BLOCKED
     assert phase.blockers[0].code == "bridge_installable_mock_or_local_blocked"
-    assert "localhost" in phase.blockers[0].message.lower() or "mock" in phase.blockers[0].message.lower()
+    assert (
+        "localhost" in phase.blockers[0].message.lower()
+        or "mock" in phase.blockers[0].message.lower()
+    )
 
 
 def test_android_release_blocks_mock_or_local_runtime_contract(
@@ -867,7 +935,11 @@ def _service(
     app_update_public_base_url: str | None = None,
 ) -> ProjectFactoryInitService:
     del create_signing
-    env = {"CODEX_MOBILE_BRIDGE_ROOT": str(tmp_path), **(command_env or {})}
+    env = {
+        "CODEX_MOBILE_BRIDGE_ROOT": str(tmp_path),
+        "BRIDGE_PUBLIC_URL": "https://bridge.test",
+        **(command_env or {}),
+    }
     return ProjectFactoryInitService(
         state_root=tmp_path / "state",
         command_runner=runner,

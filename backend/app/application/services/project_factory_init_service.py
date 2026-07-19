@@ -761,6 +761,9 @@ class ProjectFactoryInitService:
                 "APP_ANDROID_PREVIEW_RELEASE_TAG": release_tag,
                 "BRIDGE_URL": bridge_base_url,
                 "BRIDGE_PUBLIC_URL": bridge_public_url,
+                "CODEX_MOBILE_BRIDGE_ROOT": str(
+                    self._bridge_root_for_generated_scripts()
+                ),
             }
             if self._settings and self._settings.installable_apps_registration_token:
                 env["INSTALLABLE_APPS_REGISTRATION_TOKEN"] = (
