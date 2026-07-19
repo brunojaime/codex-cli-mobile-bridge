@@ -145,7 +145,57 @@ def test_context_pack_blocked_json_markdown_includes_retry_actions(
     assert payload["blockers"][0]["command"] == ["wrangler", "login"]
     assert "blocked_with_context" in markdown
     assert "wrangler login" in markdown
-    assert "None." not in markdown
+    assert "## Current Blockers\n\n- `cloudflare_preview_provision`" in markdown
+
+
+def test_context_pack_treats_queued_github_repo_as_pending_not_blocked(
+    tmp_path: Path,
+) -> None:
+    service = _service(tmp_path)
+    job = service.start_or_resume(
+        draft_id="draft-1",
+        chat_session_id="chat-1",
+        project_name="Clinica Norte",
+        slug="clinica-norte",
+        frontend_strategy="flutter",
+    )
+    job = service.run_frontend_baseline_phase(job.id)
+    for phase in (
+        ProjectFactoryInitPhaseName.INIT_PREFLIGHT,
+        ProjectFactoryInitPhaseName.DRAFT_AND_SLUG,
+        ProjectFactoryInitPhaseName.BASELINE_SCAFFOLD,
+        ProjectFactoryInitPhaseName.LOCAL_VALIDATION,
+        ProjectFactoryInitPhaseName.LOCAL_GIT_COMMIT,
+    ):
+        job = service.complete_phase(job.id, phase.value)
+
+    completed = service.run_llm_context_pack_phase(job.id)
+    workspace = Path(completed.relationships.generated_workspace_path or "")
+    payload = json.loads(
+        (workspace / ".codex/factory/init-result.json").read_text(encoding="utf-8")
+    )
+    markdown = (workspace / ".codex/factory/llm-start-context.md").read_text(
+        encoding="utf-8"
+    )
+
+    assert payload["currentPhase"] == "github_repository"
+    assert payload["blockers"] == []
+    assert payload["blockedWithContext"] is False
+    assert payload["hasBlockers"] is False
+    assert payload["resources"]["github"]["repoUrl"] is None
+    assert {
+        "phase": "github_repository",
+        "status": "queued",
+        "current": True,
+        "message": "",
+        "llmDisposition": "wait_for_deterministic_init",
+        "isBlocker": False,
+    } in payload["pendingDeterministicWork"]
+    assert "missing GitHub repository before gh repo create completes is expected" in (
+        markdown
+    )
+    assert "`github_repository` is `queued` current" in markdown
+    assert "## Current Blockers\n\n- None." in markdown
 
 
 def test_context_pack_redacts_secrets_from_json_markdown_and_state(
@@ -247,6 +297,10 @@ def _ready_job(
         frontend_strategy="flutter",
     )
     job = service.run_frontend_baseline_phase(job.id)
+    workspace = Path(job.relationships.generated_workspace_path or "")
+    brief_path = workspace / ".codex/ux/pre-project-ux-brief.md"
+    brief_path.parent.mkdir(parents=True, exist_ok=True)
+    brief_path.write_text("UX brief ready for business implementation.\n", encoding="utf-8")
     for phase in INIT_PHASE_ORDER:
         if phase in {
             ProjectFactoryInitPhaseName.FLUTTER_OR_STRATEGY_BASELINE,
