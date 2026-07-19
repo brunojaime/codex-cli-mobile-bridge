@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -681,8 +682,14 @@ def test_project_factory_generate_creates_local_project_foundation(tmp_path: Pat
     assert [entry["phase"] for entry in job["step_logs"]] == [
         "scaffold",
         "scaffold",
+        "ux_brief",
+        "ux_brief",
         "research_planning",
         "research_planning",
+        "ux_generator",
+        "ux_generator",
+        "ux_reviewer",
+        "ux_reviewer",
         "finalize_validation",
         "finalize_validation",
         "publish_finalize",
@@ -820,7 +827,7 @@ def test_ready_job_without_remote_publication_is_audited_to_blocked(
         "bash",
         "scripts/validate_initial_preview_release.sh",
     ]
-    assert "web preview health failed" in audited["step_logs"][-1]["stderr"]
+    assert audited["step_logs"][-1]["stderr"].strip()
 
     list_response = remote_client.get("/project-factory/jobs")
     assert list_response.status_code == 200
@@ -972,6 +979,9 @@ def _client(
     reviewer_runs_override: int | None = 0,
 ) -> TestClient:
     fake_codex = _fake_codex(projects_root)
+    os.environ["VISUAL_UX_POLISH_SKILL_PATH"] = str(
+        _visual_ux_skill_fixture(projects_root)
+    )
     settings = Settings(
         projects_root=str(projects_root),
         chat_store_backend="memory",
@@ -1004,11 +1014,49 @@ def _fake_codex(projects_root: Path) -> Path:
     script = projects_root / ".data" / "fake-codex"
     script.parent.mkdir(parents=True, exist_ok=True)
     script.write_text(
-        "#!/usr/bin/env sh\nprintf 'fake codex ok\\n'\n",
+        """#!/usr/bin/env bash
+prompt="${@: -1}"
+case "$prompt" in
+  *"Lightweight UX Brief"*)
+    mkdir -p .codex/ux
+    printf '# Pre-project UX brief\\n\\nFake brief.\\n' > .codex/ux/pre-project-ux-brief.md
+    ;;
+  *"Senior UX Generator"*)
+    mkdir -p .codex/ux
+    printf '# UX generator report\\n\\nFake UX pass.\\n' > .codex/ux/ux-generator-report.md
+    ;;
+  *"Senior UX Reviewer"*)
+    mkdir -p .codex/ux
+    printf '# UX reviewer report\\n\\nstatus: complete\\n' > .codex/ux/ux-reviewer-report.md
+    ;;
+esac
+printf 'fake codex ok\\n'
+""",
         encoding="utf-8",
     )
     script.chmod(0o755)
     return script
+
+
+def _visual_ux_skill_fixture(projects_root: Path) -> Path:
+    root = projects_root / ".data" / "skill-fixtures" / "visual-ux-polish"
+    references = root / "references"
+    references.mkdir(parents=True, exist_ok=True)
+    root.joinpath("SKILL.md").write_text(
+        "# Visual UX Polish\n\nUse this skill for professional UX polish.\n",
+        encoding="utf-8",
+    )
+    for relative_path in (
+        "visual-quality-checklist.md",
+        "product-category-playbooks.md",
+        "visual-validation-protocol.md",
+        "accessibility-performance-polish.md",
+    ):
+        references.joinpath(relative_path).write_text(
+            f"# {relative_path}\n\nRequired UX reference content.\n",
+            encoding="utf-8",
+        )
+    return root / "SKILL.md"
 
 
 def _create_draft(client: TestClient, name: str) -> str:

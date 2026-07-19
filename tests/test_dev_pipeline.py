@@ -413,6 +413,49 @@ def test_materialize_creates_new_spec_stage_and_worktree(tmp_path: Path) -> None
     assert snapshot["stages"][0]["spec_id"] == "018-dev-prod-stage-promotion-pipeline"
 
 
+def test_materialize_stage_runtime_propagates_project_factory_bridge_env(
+    tmp_path: Path,
+) -> None:
+    service = DevPipelineService(
+        state_path=str(tmp_path / "state.json"),
+        runtime_root=str(tmp_path / "runtime"),
+        repository_root=str(tmp_path / "codex-cli-mobile-bridge"),
+        environment="dev",
+        backend_url="http://127.0.0.1:8000",
+        app_channel="dev",
+        app_label="Codex Mobile Bridge DEV",
+        updater_channel="dev",
+        color="#38BDF8",
+        app_update_public_base_url="https://bridge.example.test",
+        project_factory_github_owner="brunojaime",
+        installable_apps_registration_token="install-token",
+    )
+    env_file = tmp_path / "runtime/stages/spec-018/.env.stage"
+    stage = {
+        "stage_id": "spec-018",
+        "spec_id": "018",
+        "branch": "dev/spec-018",
+        "worktree_path": str(tmp_path / "codex-cli-mobile-bridge-spec-018"),
+        "runtime": {
+            "port": 8118,
+            "url": "http://bridge-dev.example.test:8118",
+            "data_dir": str(tmp_path / "runtime/stages/spec-018/data"),
+            "logs_dir": str(tmp_path / "runtime/stages/spec-018/logs"),
+            "env_file": str(env_file),
+        },
+    }
+
+    service._prepare_stage_runtime(stage)
+
+    env_text = env_file.read_text(encoding="utf-8")
+    assert "PROJECT_FACTORY_GITHUB_OWNER=brunojaime" in env_text
+    assert "BRIDGE_URL=http://127.0.0.1:8000" in env_text
+    assert "BRIDGE_PUBLIC_URL=https://bridge.example.test" in env_text
+    assert "APP_UPDATE_PUBLIC_BASE_URL=https://bridge.example.test" in env_text
+    assert "INSTALLABLE_APPS_REGISTRATION_TOKEN=install-token" in env_text
+    assert "BRIDGE_REGISTRATION_TOKEN=install-token" in env_text
+
+
 def test_backlog_notify_materializes_specific_handoff(tmp_path: Path) -> None:
     repo_root = _init_git_repo(tmp_path)
     prod_client = _client(
@@ -2366,6 +2409,9 @@ def _client(
     dev_notify_url: str | None = None,
     auto_runner_enabled: bool = False,
     app_update_registry_path: str | None = None,
+    app_update_public_base_url: str | None = None,
+    project_factory_github_owner: str | None = None,
+    installable_apps_registration_token: str | None = None,
 ) -> TestClient:
     projects_root = projects_root or tmp_path / "projects"
     projects_root.mkdir(exist_ok=True)
@@ -2400,7 +2446,10 @@ def _client(
         dev_pipeline_auto_runner_enabled=auto_runner_enabled,
         app_update_registry_path=app_update_registry_path
         or Settings.model_fields["app_update_registry_path"].default,
+        app_update_public_base_url=app_update_public_base_url,
         app_update_github_token=app_update_github_token,
+        project_factory_github_owner=project_factory_github_owner,
+        installable_apps_registration_token=installable_apps_registration_token,
     )
     return TestClient(create_app(settings))
 

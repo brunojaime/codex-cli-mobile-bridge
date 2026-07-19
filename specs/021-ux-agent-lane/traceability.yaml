@@ -1,0 +1,131 @@
+id: 021-ux-agent-lane
+status: mvp-slice
+implementation_scope: label_based_mvp
+notes:
+  - Shipped behavior reuses the existing generator/reviewer ids with UX labels and prompts.
+  - Full first-class UX lane semantics remain deferred unless marked shipped_mvp below.
+requirements:
+  first_class_ux_agents:
+    status: deferred
+    tasks:
+      - T001
+      - T002
+      - T004
+    acceptance:
+      - ux_generator and ux_reviewer are valid agent ids/types.
+      - Existing agent workflows remain compatible.
+    mvp_note: Current MVP relabels existing generator/reviewer agents only.
+  required_skill_binding:
+    status: partially_shipped
+    tasks:
+      - T003
+      - T019
+      - T020
+    acceptance:
+      - visual-ux-polish is loaded for both UX agents.
+      - UX lane fails closed when the skill cannot be loaded.
+    shipped_mvp:
+      - Project Factory resolves visual-ux-polish instructions and required references before UX phases.
+      - Project Factory fails closed with ux_skill_unavailable when the skill cannot be loaded.
+    deferred:
+      - First-class per-agent required_skills schema and validation.
+  lane_sequencing:
+    status: partially_shipped
+    tasks:
+      - T005
+      - T006
+      - T007
+      - T021
+      - T022
+      - T023
+      - T036
+      - T037
+    acceptance:
+      - New Project runs lightweight UX before Project Factory baseline generation.
+      - Project Factory baseline completion can run UX generator/reviewer.
+      - Automatic New Project work stops after the post-baseline UX pass.
+      - UX reviewer can continue or block the lane.
+    shipped_mvp:
+      - Project Factory runs a pre-planning UX brief step.
+      - Planning/generator/reviewer prompts require .codex/ux/pre-project-ux-brief.md.
+      - Project Factory runs one automatic UX generator step and one UX reviewer step after the baseline.
+    deferred:
+      - First-class generator_reviewer_ux workflow option.
+      - Domain Factory UX sequencing.
+      - Automatic backend UX reviewer JSON parsing and continuation routing.
+      - UX lifecycle states in run/session projections.
+  manual_slash_commands:
+    status: shipped_mvp
+    tasks:
+      - T038
+      - T039
+      - T040
+    acceptance:
+      - /ux runs a generator-only UX pass.
+      - /ux-full runs a UX generator/reviewer loop.
+      - /ux-full defaults to 15 maximum iterations.
+      - UX reviewer controls early stop.
+    shipped_mvp:
+      - /ux configures the existing generator as UX Generator for the current workspace.
+      - /ux-full configures the existing generator/reviewer as UX Generator/UX Reviewer.
+      - /ux-full sets a 15-turn budget.
+      - /ux and /ux-full are blocked without an active backend or selected project workspace.
+    deferred:
+      - UX-specific lifecycle states and blocked/complete projection for manual slash runs.
+  ux_evidence:
+    status: partially_shipped
+    tasks:
+      - T010
+      - T012
+      - T013
+      - T014
+      - T015
+      - T016
+      - T017
+      - T018
+    acceptance:
+      - UX brief, benchmark, screenshots, UAT, and reports are persisted.
+      - Both UX agents can read the same evidence.
+    shipped_mvp:
+      - Project Factory requires .codex/ux/pre-project-ux-brief.md.
+      - Prompts instruct agents to write benchmark, screenshots, UAT, generator report, and reviewer report artifacts under .codex/ux/.
+      - Project Factory writes .codex/ux/evidence-index.json for discovered artifacts.
+    deferred:
+      - Backend enforcement that all evidence artifacts exist.
+      - Evidence attachment to run/session projections.
+      - Evidence rendering in mobile/workbench.
+  scope_enforcement:
+    status: deferred
+    tasks:
+      - T008
+      - T009
+      - T028
+      - T029
+    acceptance:
+      - UX agents are restricted to UI/design/visual-test artifacts.
+      - Protected backend, auth, RBAC, persistence, release, and runtime files are blocked or flagged.
+    mvp_note: MVP uses prompt-level boundaries only.
+  mobile_visibility:
+    status: deferred
+    tasks:
+      - T024
+      - T031
+    acceptance:
+      - Mobile/workbench UI shows UX lane state and evidence.
+    mvp_note: Mobile currently exposes slash commands, not UX lane evidence UI.
+  validation:
+    status: partially_shipped
+    tasks:
+      - T025
+      - T026
+      - T027
+      - T030
+      - T032
+      - T035
+    acceptance:
+      - Visual capture and mechanical checks run when available.
+      - Regression tests cover lane behavior and compatibility.
+    shipped_mvp:
+      - Tests cover required skill loader behavior, fail-closed Project Factory behavior, prompt brief consumption, slash command guards, and guided-intake hydration.
+    deferred:
+      - Automated screenshot capture, mechanical visual checks, release gate tests, and full first-class lane compatibility tests.

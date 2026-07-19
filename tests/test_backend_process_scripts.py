@@ -124,9 +124,25 @@ def test_run_backend_detached_exports_codex_runtime_settings() -> None:
     assert "CODEX_USE_EXEC" in script
     assert "CODEX_EXEC_ARGS" in script
     assert "CODEX_RESUME_ARGS" in script
+    assert "PROJECT_FACTORY_GITHUB_OWNER" in script
+    assert "APP_UPDATE_PUBLIC_BASE_URL" in script
+    assert "BRIDGE_PUBLIC_URL" in script
+    assert "INSTALLABLE_APPS_REGISTRATION_TOKEN" in script
     assert "backend_export_env_file_values" in script
     assert "nohup env \\" in script
     assert "CODEX_EXEC_ARGS=\"${CODEX_EXEC_ARGS:-}\"" in script
+    assert (
+        'DEV_PIPELINE_AUTO_RUNNER_ENABLED="${DEV_PIPELINE_AUTO_RUNNER_ENABLED:-false}"'
+        in script
+    )
+    assert (
+        'DEV_PIPELINE_AUTO_RUNNER_INTERVAL_SECONDS="${DEV_PIPELINE_AUTO_RUNNER_INTERVAL_SECONDS:-30}"'
+        in script
+    )
+    assert (
+        'DEV_PIPELINE_AUTO_RUNNER_RECONCILE_EXISTING="${DEV_PIPELINE_AUTO_RUNNER_RECONCILE_EXISTING:-false}"'
+        in script
+    )
     assert "LISTENER_PID=\"$(backend_find_listener_pid" in script
     assert "echo \"${LISTENER_PID}\" > \"${PID_FILE}\"" in script
 
@@ -146,6 +162,22 @@ def test_run_backend_foreground_contract() -> None:
     assert syntax.returncode == 0, syntax.stdout + syntax.stderr
     assert "backend_export_env_file_values" in script
     assert "CODEX_EXEC_ARGS" in script
+    assert "PROJECT_FACTORY_GITHUB_OWNER" in script
+    assert "APP_UPDATE_PUBLIC_BASE_URL" in script
+    assert "BRIDGE_PUBLIC_URL" in script
+    assert "INSTALLABLE_APPS_REGISTRATION_TOKEN" in script
+    assert (
+        'DEV_PIPELINE_AUTO_RUNNER_ENABLED="${DEV_PIPELINE_AUTO_RUNNER_ENABLED:-false}"'
+        in script
+    )
+    assert (
+        'DEV_PIPELINE_AUTO_RUNNER_INTERVAL_SECONDS="${DEV_PIPELINE_AUTO_RUNNER_INTERVAL_SECONDS:-30}"'
+        in script
+    )
+    assert (
+        'DEV_PIPELINE_AUTO_RUNNER_RECONCILE_EXISTING="${DEV_PIPELINE_AUTO_RUNNER_RECONCILE_EXISTING:-false}"'
+        in script
+    )
     assert "exec env \\" in script
     assert '"${PYTHON_BIN}" main.py' in script
 
@@ -178,6 +210,10 @@ def test_main_loads_allowlisted_runtime_env_only() -> None:
 
     assert "_BRIDGE_RUNTIME_ENV_KEYS" in source
     assert "CODEX_EXEC_ARGS" in source
+    assert "PROJECT_FACTORY_GITHUB_OWNER" in source
+    assert "APP_UPDATE_PUBLIC_BASE_URL" in source
+    assert "BRIDGE_PUBLIC_URL" in source
+    assert "INSTALLABLE_APPS_REGISTRATION_TOKEN" in source
     assert "dotenv_values" in source
     assert "os.environ.setdefault" in source
     assert "APP_UPDATE_GITHUB_TOKEN" not in source

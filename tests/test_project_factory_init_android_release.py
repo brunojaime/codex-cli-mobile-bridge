@@ -252,6 +252,22 @@ def test_android_release_uses_public_bridge_url_when_transport_is_local(
     )
 
 
+def test_bridge_public_url_ignores_app_preview_api_base_url(tmp_path: Path) -> None:
+    settings = _settings(
+        tmp_path,
+        api_base_url="http://localhost:8000",
+        app_update_public_base_url="https://preview.nienfos.com/satshowroom/api",
+    )
+
+    resolved = init_module._resolve_bridge_public_url(
+        "http://localhost:8000",
+        settings=settings,
+        command_env={"BRIDGE_PUBLIC_URL": "https://bridge.example.test"},
+    )
+
+    assert resolved == "https://bridge.example.test"
+
+
 def test_workbench_phase_aligns_verified_foundation_tasks_and_pushes(
     tmp_path: Path,
 ) -> None:

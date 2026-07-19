@@ -4461,6 +4461,8 @@ def _context_pack_result_payload(
         for blocker in phase.blockers
     ]
     phases = [_context_phase_payload(phase) for phase in job.phases]
+    pending_work = _context_pending_work(job)
+    llm_guidance = _llm_operational_guidance()
     remote_resources = [
         _remote_resource_response_payload(resource) for resource in job.remote_resources
     ]
@@ -4486,6 +4488,8 @@ def _context_pack_result_payload(
         "relationships": job.relationships.to_payload(),
         "phases": phases,
         "phaseStatuses": {phase.name.value: phase.status.value for phase in job.phases},
+        "pendingDeterministicWork": pending_work,
+        "llmOperationalGuidance": llm_guidance,
         "blockers": blockers,
         "remoteResources": remote_resources,
         "artifacts": [
@@ -4551,6 +4555,40 @@ def _context_ready_for_business_llm(job: ProjectFactoryInitJob) -> bool:
         if phase.status not in terminal:
             return False
     return False
+
+
+def _context_pending_work(job: ProjectFactoryInitJob) -> list[dict[str, object]]:
+    pending_statuses = {
+        ProjectFactoryInitPhaseStatus.QUEUED,
+        ProjectFactoryInitPhaseStatus.RUNNING,
+    }
+    current_phase = _context_current_phase(job)
+    pending: list[dict[str, object]] = []
+    for phase in job.phases:
+        if phase.name == ProjectFactoryInitPhaseName.LLM_CONTEXT_PACK:
+            continue
+        if phase.status not in pending_statuses:
+            continue
+        pending.append(
+            {
+                "phase": phase.name.value,
+                "status": phase.status.value,
+                "current": phase.name == current_phase,
+                "message": phase.message,
+                "llmDisposition": "wait_for_deterministic_init",
+                "isBlocker": False,
+            }
+        )
+    return pending
+
+
+def _llm_operational_guidance() -> list[str]:
+    return [
+        "Only treat entries in blockers[] as user-actionable blockers.",
+        "Do not infer blockers from missing remote resources while the owning deterministic phase is queued or running.",
+        "For github_repository, a missing GitHub repository before gh repo create completes is expected pending work, not a blocker.",
+        "Ask the user for GitHub help only when blockers[] contains an explicit github_* blocker such as github_owner_missing, github_auth_required, github_repo_create_failed, or github_push_failed.",
+    ]
 
 
 def _context_resource_summary(job: ProjectFactoryInitJob) -> dict[str, object]:
@@ -4819,6 +4857,18 @@ def _context_pack_markdown(payload: dict[str, object]) -> str:
     blockers = (
         payload.get("blockers") if isinstance(payload.get("blockers"), list) else []
     )
+    pending_work = (
+        payload.get("pendingDeterministicWork")
+        if isinstance(payload.get("pendingDeterministicWork"), list)
+        else []
+    )
+    pending_lines = _markdown_pending_work_lines(pending_work)
+    llm_guidance = payload.get("llmOperationalGuidance")
+    guidance_lines = (
+        [f"- {rule}" for rule in llm_guidance if isinstance(rule, str)]
+        if isinstance(llm_guidance, list)
+        else []
+    )
     blocker_lines = _markdown_blocker_lines(blockers)
     rules = payload.get("businessPhaseRules")
     rule_lines = (
@@ -4862,6 +4912,14 @@ def _context_pack_markdown(payload: dict[str, object]) -> str:
             "",
             *rule_lines,
             "",
+            "## Pending Deterministic Work",
+            "",
+            *(pending_lines or ["- None."]),
+            "",
+            "## LLM Operational Guidance",
+            "",
+            *guidance_lines,
+            "",
             "## Current Blockers",
             "",
             *(blocker_lines or ["- None."]),
@@ -4870,6 +4928,20 @@ def _context_pack_markdown(payload: dict[str, object]) -> str:
             "",
         ]
     )
+
+
+def _markdown_pending_work_lines(pending_work: list[object]) -> list[str]:
+    lines: list[str] = []
+    for item in pending_work:
+        if not isinstance(item, dict):
+            continue
+        phase = item.get("phase")
+        status = item.get("status")
+        current = " current" if item.get("current") is True else ""
+        lines.append(
+            f"- `{phase}` is `{status}`{current}; wait for deterministic init before asking the user for setup help."
+        )
+    return lines
 
 
 def _markdown_blocker_lines(blockers: list[object]) -> list[str]:
@@ -5370,7 +5442,7 @@ def _resolve_bridge_public_url(
     )
     for candidate in candidates:
         public_url = _non_local_http_url(candidate)
-        if public_url:
+        if public_url and not _is_preview_app_public_url(public_url, settings=settings):
             return public_url
     if not _is_local_bridge_url(bridge_base_url):
         return bridge_base_url.rstrip("/")
@@ -5381,7 +5453,10 @@ def _resolve_bridge_public_url(
         )
         for candidate in tailscale.public_base_urls:
             public_url = _non_local_http_url(candidate)
-            if public_url:
+            if public_url and not _is_preview_app_public_url(
+                public_url,
+                settings=settings,
+            ):
                 return public_url
     return bridge_base_url.rstrip("/")
 
@@ -5394,6 +5469,17 @@ def _non_local_http_url(value: str | None) -> str | None:
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         return None
     return url
+
+
+def _is_preview_app_public_url(value: str, *, settings: Settings | None) -> bool:
+    parsed = urlparse((value or "").strip())
+    preview_base_domain = (
+        getattr(settings, "preview_base_domain", None) or "preview.nienfos.com"
+    ).lower()
+    host = (parsed.hostname or "").lower()
+    if host != preview_base_domain:
+        return False
+    return bool(parsed.path.strip("/"))
 
 
 def _android_preview_bridge_url(value: str) -> str:

@@ -69,6 +69,40 @@ const String _projectFactoryReviewerPrompt =
     'notifications, generated files, tests, and validation are complete. '
     'Return only the next concrete prompt that should improve or verify the '
     'generator output.';
+const String _uxGeneratorPrompt =
+    'You are the Senior UX Generator Codex. You must use the visual-ux-polish '
+    'skill before acting. Improve only visible UX: layout, hierarchy, '
+    'typography, spacing, color, interaction polish, responsive behavior, '
+    'empty/loading/error states, accessibility, and user-facing copy. Do not '
+    'change product functionality, backend behavior, auth, RBAC, persistence, '
+    'schemas, release wiring, or business logic. Benchmark comparable '
+    'professional products, inspect screenshots or capture them when the app '
+    'can run, perform focused UAT on the primary journeys, and save concise UX '
+    'evidence under .codex/ux/. Validate responsive desktop and mobile views '
+    'before reporting completion.';
+const String _uxReviewerPrompt =
+    'You are the Senior UX Reviewer Codex. You must use the visual-ux-polish '
+    'skill before acting. Review only the UX Generator changes and evidence. '
+    'Check visual quality, interaction clarity, accessibility, responsive '
+    'fit, screenshot/UAT evidence, and scope discipline. Do not request '
+    'functional/backend/business-logic changes. Return only JSON with '
+    '{"status":"continue","prompt":"<next UX-only prompt>"} when another UX '
+    'iteration is needed, or {"status":"complete","summary":"<why the UX pass '
+    'is done>"} when no further UX-only work is needed.';
+const String _uxGeneratorKickoffPrompt =
+    'Run a Senior UX pass on this project. Use the visual-ux-polish skill, '
+    'benchmark comparable apps, inspect or capture screenshots when possible, '
+    'perform focused UAT on the primary flows, improve only visual UX/copy/'
+    'responsive/accessibility states, write evidence under .codex/ux/, and do '
+    'not change functionality or backend behavior.';
+const String _uxFullKickoffPrompt =
+    'Run the full Senior UX generator/reviewer lane on this project. The '
+    'generator should improve only UX/visual/copy/responsive/accessibility '
+    'quality using visual-ux-polish, benchmarks, screenshots, and UAT evidence '
+    'under .codex/ux/. The reviewer controls the stop condition and may request '
+    'up to the configured iteration budget, but must stop early when the UX is '
+    'professional and validated. Do not change functionality or backend '
+    'behavior.';
 const String kProjectFactoryReadyForBuildMarker =
     'PROJECT_FACTORY_READY_FOR_BUILD';
 const List<String> _supportedFileAttachmentExtensions = <String>[
@@ -241,6 +275,110 @@ bool isDomainFactoryConfiguration(AgentConfiguration? configuration) {
   return generator?.label == 'Domain Factory' &&
       generator?.enabled == true &&
       reviewer?.label == 'Domain Reviewer' &&
+      reviewer?.enabled == true;
+}
+
+AgentConfiguration buildUxGeneratorConfiguration(
+  AgentConfiguration current, {
+  int generatorRuns = 1,
+}) {
+  return current.copyWith(
+    preset: AgentPreset.solo,
+    displayMode: AgentDisplayMode.showAll,
+    turnBudgetMode: TurnBudgetMode.eachAgent,
+    agents: current.agents.map((agent) {
+      switch (agent.agentId) {
+        case AgentId.generator:
+          return agent.copyWith(
+            enabled: true,
+            label: 'UX Generator',
+            prompt: _uxGeneratorPrompt,
+            visibility: AgentVisibilityMode.visible,
+            maxTurns: generatorRuns,
+          );
+        case AgentId.reviewer:
+          return agent.copyWith(
+            enabled: false,
+            label: 'UX Reviewer',
+            prompt: _uxReviewerPrompt,
+            visibility: AgentVisibilityMode.collapsed,
+            maxTurns: 0,
+          );
+        case AgentId.summary:
+          return agent.copyWith(enabled: false, maxTurns: 0);
+        case AgentId.user:
+        case AgentId.supervisor:
+        case AgentId.qa:
+        case AgentId.ux:
+        case AgentId.seniorEngineer:
+        case AgentId.scraper:
+          return agent.copyWith(enabled: false, maxTurns: 0);
+      }
+    }).toList(growable: false),
+  );
+}
+
+AgentConfiguration buildUxFullConfiguration(
+  AgentConfiguration current, {
+  int maxIterations = 15,
+}) {
+  return current.copyWith(
+    preset: AgentPreset.review,
+    displayMode: AgentDisplayMode.showAll,
+    turnBudgetMode: TurnBudgetMode.eachAgent,
+    agents: current.agents.map((agent) {
+      switch (agent.agentId) {
+        case AgentId.generator:
+          return agent.copyWith(
+            enabled: true,
+            label: 'UX Generator',
+            prompt: _uxGeneratorPrompt,
+            visibility: AgentVisibilityMode.visible,
+            maxTurns: maxIterations,
+          );
+        case AgentId.reviewer:
+          return agent.copyWith(
+            enabled: true,
+            label: 'UX Reviewer',
+            prompt: _uxReviewerPrompt,
+            visibility: AgentVisibilityMode.collapsed,
+            maxTurns: maxIterations,
+          );
+        case AgentId.summary:
+          return agent.copyWith(enabled: false, maxTurns: 0);
+        case AgentId.user:
+        case AgentId.supervisor:
+        case AgentId.qa:
+        case AgentId.ux:
+        case AgentId.seniorEngineer:
+        case AgentId.scraper:
+          return agent.copyWith(enabled: false, maxTurns: 0);
+      }
+    }).toList(growable: false),
+  );
+}
+
+bool isUxGeneratorConfiguration(AgentConfiguration? configuration) {
+  if (configuration == null) {
+    return false;
+  }
+  final generator = configuration.byId(AgentId.generator);
+  final reviewer = configuration.byId(AgentId.reviewer);
+  return generator?.label == 'UX Generator' &&
+      generator?.enabled == true &&
+      reviewer?.label == 'UX Reviewer' &&
+      reviewer?.enabled == false;
+}
+
+bool isUxFullConfiguration(AgentConfiguration? configuration) {
+  if (configuration == null) {
+    return false;
+  }
+  final generator = configuration.byId(AgentId.generator);
+  final reviewer = configuration.byId(AgentId.reviewer);
+  return generator?.label == 'UX Generator' &&
+      generator?.enabled == true &&
+      reviewer?.label == 'UX Reviewer' &&
       reviewer?.enabled == true;
 }
 
@@ -1270,6 +1408,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                     hasActiveBackend: _activeServer != null,
                     workbenchAvailable: _activeServer != null,
                     appsAvailable: _activeServer != null,
+                    hasProjectWorkspace: _chatController
+                            .currentSession?.workspacePath
+                            .trim()
+                            .isNotEmpty ??
+                        false,
                     isProdEnvironment:
                         _activeServerHealth?.environmentIdentity?.environment ==
                             'prod',
@@ -1335,6 +1478,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       case 'dev-handoff':
         await _openDevHandoffDialog();
         return true;
+      case 'ux':
+        return _startUxLane(full: false);
+      case 'ux-full':
+        return _startUxLane(full: true);
       case 'status':
       case 'review':
       case 'compact':
@@ -1359,6 +1506,53 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       default:
         return false;
     }
+  }
+
+  Future<bool> _startUxLane({required bool full}) async {
+    final session = _chatController.currentSession;
+    if (session == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Choose a project chat before starting UX.'),
+        ),
+      );
+      return false;
+    }
+    if (session.workspacePath.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            full
+                ? 'Choose a project chat with a workspace before starting UX Full.'
+                : 'Choose a project chat with a workspace before starting UX.',
+          ),
+        ),
+      );
+      return false;
+    }
+    final updatedConfiguration = full
+        ? buildUxFullConfiguration(session.agentConfiguration)
+        : buildUxGeneratorConfiguration(session.agentConfiguration);
+    final updated = await _chatController.updateAgentConfiguration(
+      updatedConfiguration,
+    );
+    if (!updated) {
+      if (!mounted) {
+        return false;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Could not start UX agents for this chat.'),
+        ),
+      );
+      return false;
+    }
+    _textController.text =
+        full ? _uxFullKickoffPrompt : _uxGeneratorKickoffPrompt;
+    _textController.selection = TextSelection.collapsed(
+      offset: _textController.text.length,
+    );
+    return _handleSend();
   }
 
   Future<void> _openDevHandoffDialog() async {

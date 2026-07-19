@@ -15,6 +15,8 @@ from backend.app.application.services.project_factory_job_runner import (
     ProjectFactoryJobRunnerBlockedError,
     ProjectFactoryJobRunnerError,
     ProjectFactoryProcessResult,
+    _default_visual_ux_skill_path,
+    _load_visual_ux_skill_context,
 )
 from backend.app.application.services.project_factory_manifest_service import (
     ProjectFactoryManifestInput,
@@ -40,28 +42,116 @@ def test_project_factory_runner_success_writes_prompts_and_runs_pairs(
     project = Path(result.generation_result.target_path)
     assert project.is_dir()
     assert (project / ".codex/factory/prompts/research-planning.md").is_file()
+    assert (project / ".codex/factory/prompts/ux-brief.md").is_file()
     assert (project / ".codex/factory/prompts/generator-01.md").is_file()
     assert (project / ".codex/factory/prompts/reviewer-02.md").is_file()
+    assert (project / ".codex/factory/prompts/ux-generator.md").is_file()
+    assert (project / ".codex/factory/prompts/ux-reviewer.md").is_file()
     assert (project / ".codex/factory/prompts/finalize-validation.md").is_file()
     assert (project / ".codex/factory/prompts/publish-finalize.md").is_file()
-    assert len(process_runner.calls) == 8
-    assert "Generator pass 1:" in process_runner.calls[1][-1]
-    assert "Reviewer pass 1:" in process_runner.calls[2][-1]
-    assert "Generator pass 2:" in process_runner.calls[3][-1]
-    assert "Reviewer pass 2:" in process_runner.calls[4][-1]
+    assert (project / ".codex/ux/pre-project-ux-brief.md").is_file()
+    assert (project / ".codex/ux/evidence-index.json").is_file()
+    assert len(process_runner.calls) == 11
+    assert "Lightweight UX Brief" in process_runner.calls[0][-1]
+    assert "Generator pass 1:" in process_runner.calls[2][-1]
+    assert "Reviewer pass 1:" in process_runner.calls[3][-1]
+    assert "Generator pass 2:" in process_runner.calls[4][-1]
+    assert "Reviewer pass 2:" in process_runner.calls[5][-1]
+    assert "Senior UX Generator" in process_runner.calls[6][-1]
+    assert "Senior UX Reviewer" in process_runner.calls[7][-1]
     assert [event["phase"] for event in events if event["status"] == "completed"] == [
         "scaffold",
+        "ux_brief",
         "research_planning",
         "generator_pass",
         "reviewer_pass",
         "generator_pass",
         "reviewer_pass",
+        "ux_generator",
+        "ux_reviewer",
         "finalize_validation",
         "publish_finalize",
         "local_git_commit",
         "publish_verification",
     ]
     assert events[-1]["command"] == ["bash", "scripts/validate_publication_ready.sh"]
+
+
+def test_project_factory_runner_fails_closed_when_visual_ux_skill_missing(
+    tmp_path: Path,
+) -> None:
+    process_runner = _FakeProcessRunner()
+    runner = _runner(
+        tmp_path,
+        process_runner,
+        visual_ux_skill_path=tmp_path / "missing-visual-ux-polish" / "SKILL.md",
+    )
+    events: list[dict[str, object]] = []
+
+    with pytest.raises(ProjectFactoryJobRunnerBlockedError):
+        runner.run(
+            _context(tmp_path, generator_runs=0, reviewer_runs=0),
+            event_sink=events.append,
+        )
+
+    assert process_runner.calls == []
+    assert not (tmp_path / "clinica-norte").exists()
+    assert events[-1]["phase"] == "ux_skill_unavailable"
+    assert events[-1]["status"] == "blocked"
+
+
+def test_project_factory_runner_prompts_load_skill_and_consume_ux_brief(
+    tmp_path: Path,
+) -> None:
+    process_runner = _FakeProcessRunner()
+    runner = _runner(tmp_path, process_runner)
+
+    result = runner.run(
+        _context(tmp_path, generator_runs=1, reviewer_runs=1),
+        event_sink=lambda _event: None,
+    )
+
+    prompt_root = Path(result.generation_result.target_path) / ".codex/factory/prompts"
+    research = (prompt_root / "research-planning.md").read_text(encoding="utf-8")
+    generator = (prompt_root / "generator-01.md").read_text(encoding="utf-8")
+    ux_generator = (prompt_root / "ux-generator.md").read_text(encoding="utf-8")
+    ux_reviewer = (prompt_root / "ux-reviewer.md").read_text(encoding="utf-8")
+
+    for prompt in (research, generator, ux_generator, ux_reviewer):
+        assert "Required UX brief input" in prompt
+        assert ".codex/ux/pre-project-ux-brief.md" in prompt
+    assert "Required visual-ux-polish Skill Context" in ux_generator
+    assert "references/visual-quality-checklist.md" in ux_generator
+    assert "references/visual-validation-protocol.md" in ux_reviewer
+
+
+def test_visual_ux_skill_default_loader_uses_configured_runtime_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    skill_path = _visual_ux_skill_fixture(tmp_path)
+    monkeypatch.setenv("VISUAL_UX_POLISH_SKILL_PATH", str(skill_path))
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex-home"))
+
+    assert _default_visual_ux_skill_path() == skill_path
+
+    skill_context = _load_visual_ux_skill_context(None)
+
+    assert skill_context.skill_path == skill_path
+    assert "Required visual-ux-polish Skill Context" in skill_context.prompt_section
+    assert "references/visual-quality-checklist.md" in skill_context.prompt_section
+
+
+def test_visual_ux_skill_default_loader_falls_back_to_codex_home(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("VISUAL_UX_POLISH_SKILL_PATH", raising=False)
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex-home"))
+
+    assert _default_visual_ux_skill_path() == (
+        tmp_path / "codex-home" / "skills" / "visual-ux-polish" / "SKILL.md"
+    )
 
 
 def test_project_factory_runner_remote_publication_runs_required_phases(
@@ -193,7 +283,7 @@ def test_project_factory_runner_remote_publication_can_rerun_satisfied_phases(
 def test_project_factory_runner_remote_publication_reports_blocked_phase(
     tmp_path: Path,
 ) -> None:
-    process_runner = _FakeProcessRunner(fail_call=5, fail_returncode=2)
+    process_runner = _FakeProcessRunner(fail_call=8, fail_returncode=2)
     runner = _runner(tmp_path, process_runner)
     events: list[dict[str, object]] = []
 
@@ -216,7 +306,7 @@ def test_project_factory_runner_remote_publication_reports_blocked_phase(
 def test_project_factory_runner_remote_publication_requires_generated_validation(
     tmp_path: Path,
 ) -> None:
-    process_runner = _FakeProcessRunner(fail_call=2, fail_returncode=9)
+    process_runner = _FakeProcessRunner(fail_call=5, fail_returncode=9)
     runner = _runner(tmp_path, process_runner)
     events: list[dict[str, object]] = []
 
@@ -406,7 +496,7 @@ def test_project_factory_runner_can_execute_generated_validation(
 def test_project_factory_runner_reports_generated_validation_failure(
     tmp_path: Path,
 ) -> None:
-    process_runner = _FakeProcessRunner(fail_call=2)
+    process_runner = _FakeProcessRunner(fail_call=5)
     runner = _runner(tmp_path, process_runner)
     events: list[dict[str, object]] = []
 
@@ -430,7 +520,7 @@ def test_project_factory_runner_reports_generated_validation_failure(
 def test_project_factory_runner_failure_keeps_project_and_reports_error(
     tmp_path: Path,
 ) -> None:
-    process_runner = _FakeProcessRunner(fail_call=2)
+    process_runner = _FakeProcessRunner(fail_call=3)
     runner = _runner(tmp_path, process_runner)
     events: list[dict[str, object]] = []
 
@@ -463,7 +553,7 @@ def test_project_factory_runner_rejects_unpaired_run_counts(tmp_path: Path) -> N
 def test_project_factory_runner_blocks_when_remote_publication_fails(
     tmp_path: Path,
 ) -> None:
-    process_runner = _FakeProcessRunner(fail_call=5)
+    process_runner = _FakeProcessRunner(fail_call=8)
     runner = _runner(tmp_path, process_runner)
     events: list[dict[str, object]] = []
 
@@ -497,7 +587,7 @@ def test_project_factory_runner_timeout_reports_failed_phase(tmp_path: Path) -> 
         )
 
     failed = [event for event in events if event["status"] == "failed"]
-    assert failed[0]["phase"] == "research_planning"
+    assert failed[0]["phase"] == "ux_brief"
     assert "timed out" in failed[0]["message"]
 
 
@@ -525,7 +615,30 @@ class _FakeProcessRunner:
                 stdout="partial",
                 stderr="failed",
             )
+        self._write_ux_artifacts(argv=tuple(argv), cwd=cwd)
         return ProjectFactoryProcessResult(returncode=0, stdout="ok", stderr="")
+
+    def _write_ux_artifacts(self, *, argv: tuple[str, ...], cwd: Path) -> None:
+        prompt = str(argv[-1]) if argv else ""
+        ux_root = cwd / ".codex" / "ux"
+        if "Lightweight UX Brief" in prompt:
+            ux_root.mkdir(parents=True, exist_ok=True)
+            ux_root.joinpath("pre-project-ux-brief.md").write_text(
+                "# Pre-project UX brief\n\nUse concise professional UX direction.\n",
+                encoding="utf-8",
+            )
+        if "Senior UX Generator" in prompt:
+            ux_root.mkdir(parents=True, exist_ok=True)
+            ux_root.joinpath("ux-generator-report.md").write_text(
+                "# UX generator report\n\nVisual improvements completed.\n",
+                encoding="utf-8",
+            )
+        if "Senior UX Reviewer" in prompt:
+            ux_root.mkdir(parents=True, exist_ok=True)
+            ux_root.joinpath("ux-reviewer-report.md").write_text(
+                "# UX reviewer report\n\nstatus: complete\n",
+                encoding="utf-8",
+            )
 
 
 class _MissingScriptProcessRunner(_FakeProcessRunner):
@@ -541,6 +654,7 @@ class _MissingScriptProcessRunner(_FakeProcessRunner):
                 stdout="",
                 stderr=f"missing script: {self.missing_script}",
             )
+        self._write_ux_artifacts(argv=tuple(argv), cwd=cwd)
         return ProjectFactoryProcessResult(returncode=0, stdout="ok", stderr="")
 
 
@@ -565,6 +679,7 @@ def _runner(
     tmp_path: Path,
     process_runner: _FakeProcessRunner,
     remote_preflight=None,
+    visual_ux_skill_path: Path | None = None,
 ) -> ProjectFactoryJobRunner:
     reference_service = ProjectFactoryReferenceAssetService(
         storage_root=tmp_path / ".assets",
@@ -576,7 +691,30 @@ def _runner(
         generator_service=generator,
         process_runner=process_runner,
         remote_preflight=remote_preflight,
+        visual_ux_skill_path=visual_ux_skill_path
+        or _visual_ux_skill_fixture(tmp_path),
     )
+
+
+def _visual_ux_skill_fixture(tmp_path: Path) -> Path:
+    root = tmp_path / ".skill-fixtures" / "visual-ux-polish"
+    references = root / "references"
+    references.mkdir(parents=True, exist_ok=True)
+    root.joinpath("SKILL.md").write_text(
+        "# Visual UX Polish\n\nUse this skill for professional UX polish.\n",
+        encoding="utf-8",
+    )
+    for relative_path in (
+        "visual-quality-checklist.md",
+        "product-category-playbooks.md",
+        "visual-validation-protocol.md",
+        "accessibility-performance-polish.md",
+    ):
+        references.joinpath(relative_path).write_text(
+            f"# {relative_path}\n\nRequired UX reference content.\n",
+            encoding="utf-8",
+        )
+    return root / "SKILL.md"
 
 
 def _context(

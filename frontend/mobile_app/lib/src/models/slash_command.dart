@@ -49,6 +49,7 @@ class SlashCommandContext {
     this.hasActiveBackend = true,
     this.workbenchAvailable = true,
     this.appsAvailable = true,
+    this.hasProjectWorkspace = true,
     this.isProdEnvironment = false,
     this.bridgeEnvironment,
     this.devHandoffAvailable = false,
@@ -58,6 +59,7 @@ class SlashCommandContext {
   final bool hasActiveBackend;
   final bool workbenchAvailable;
   final bool appsAvailable;
+  final bool hasProjectWorkspace;
   final bool isProdEnvironment;
   final String? bridgeEnvironment;
   final bool devHandoffAvailable;
@@ -95,6 +97,16 @@ class GlobalSlashCommandProvider extends SlashCommandProvider {
                 : 'PROD to DEV handoff is disabled by this backend.';
     final handoffEnabled =
         context.isExplicitProdBridgeEnvironment && context.devHandoffAvailable;
+    final uxDisabledReason = !context.hasActiveBackend
+        ? 'No active bridge server.'
+        : !context.hasProjectWorkspace
+            ? 'Choose a project chat with a workspace before starting UX.'
+            : null;
+    final uxFullDisabledReason = !context.hasActiveBackend
+        ? 'No active bridge server.'
+        : !context.hasProjectWorkspace
+            ? 'Choose a project chat with a workspace before starting UX Full.'
+            : null;
     return <SlashCommand>[
       const SlashCommand(
         id: 'new-project',
@@ -122,6 +134,33 @@ class GlobalSlashCommandProvider extends SlashCommandProvider {
         actionKind: SlashCommandActionKind.sendMessage,
         payload:
             'Review the current workspace changes and call out bugs, risks, and missing tests.',
+      ),
+      SlashCommand(
+        id: 'ux',
+        slash: '/ux',
+        aliases: const <String>['/ux-generator'],
+        title: 'UX',
+        description: 'Run a Senior UX generator pass on the current project.',
+        scope: 'workspace',
+        actionKind: uxDisabledReason == null
+            ? SlashCommandActionKind.callback
+            : SlashCommandActionKind.disabled,
+        payload: 'generator',
+        disabledReason: uxDisabledReason,
+      ),
+      SlashCommand(
+        id: 'ux-full',
+        slash: '/ux-full',
+        aliases: const <String>['/ux-generator-reviewer', '/ux_full'],
+        title: 'UX Full',
+        description:
+            'Run the Senior UX generator/reviewer loop with reviewer stop.',
+        scope: 'workspace',
+        actionKind: uxFullDisabledReason == null
+            ? SlashCommandActionKind.callback
+            : SlashCommandActionKind.disabled,
+        payload: 'full',
+        disabledReason: uxFullDisabledReason,
       ),
       const SlashCommand(
         id: 'feedback',
