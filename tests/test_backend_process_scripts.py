@@ -270,6 +270,7 @@ def test_dev_backend_8118_script_contract() -> None:
     assert "CLOUDFLARE_ACCOUNT_ID" in script
     assert "CLOUDFLARE_ZONE_ID" in script
     assert "WEB_PREVIEW_APPLY_ENABLED" in script
+    assert "WEB_PREVIEW_INVITE_SECRET" in script
     assert "serve --bg --http=\"${PORT}\"" in script
     assert "restart)" in script
     assert "stop)" in script

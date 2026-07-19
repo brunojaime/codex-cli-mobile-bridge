@@ -104,6 +104,7 @@ write_runtime_env() {
   local github_owner github_visibility github_branch registration_token
   local cloudflare_api_token cloudflare_dns_token cloudflare_account_id
   local cloudflare_zone_id cloudflare_zone_name web_preview_apply_enabled
+  local web_preview_invite_secret
   codex_command="$(codex_env_value CODEX_COMMAND "codex")"
   codex_use_exec="$(codex_env_value CODEX_USE_EXEC "true")"
   codex_exec_args="$(codex_env_value CODEX_EXEC_ARGS "--skip-git-repo-check --color never --dangerously-bypass-approvals-and-sandbox")"
@@ -118,6 +119,7 @@ write_runtime_env() {
   cloudflare_zone_id="$(codex_env_value CLOUDFLARE_ZONE_ID "")"
   cloudflare_zone_name="$(codex_env_value CLOUDFLARE_ZONE_NAME "nienfos.com")"
   web_preview_apply_enabled="$(codex_env_value WEB_PREVIEW_APPLY_ENABLED "false")"
+  web_preview_invite_secret="$(codex_env_value WEB_PREVIEW_INVITE_SECRET "")"
   cat >"${ENV_FILE}" <<EOF
 API_PORT=${PORT}
 API_BASE_URL=${BASE_URL}
@@ -150,6 +152,7 @@ CLOUDFLARE_ACCOUNT_ID=${cloudflare_account_id}
 CLOUDFLARE_ZONE_ID=${cloudflare_zone_id}
 CLOUDFLARE_ZONE_NAME=${cloudflare_zone_name}
 WEB_PREVIEW_APPLY_ENABLED=${web_preview_apply_enabled}
+WEB_PREVIEW_INVITE_SECRET=${web_preview_invite_secret}
 BRIDGE_ENVIRONMENT=dev
 BRIDGE_STAGE_ID=dev-app
 BRIDGE_SPEC_ID=018
@@ -211,6 +214,7 @@ start_backend() {
   local github_owner github_visibility github_branch registration_token
   local cloudflare_api_token cloudflare_dns_token cloudflare_account_id
   local cloudflare_zone_id cloudflare_zone_name web_preview_apply_enabled
+  local web_preview_invite_secret
   codex_command="$(codex_env_value CODEX_COMMAND "codex")"
   codex_use_exec="$(codex_env_value CODEX_USE_EXEC "true")"
   codex_exec_args="$(codex_env_value CODEX_EXEC_ARGS "--skip-git-repo-check --color never --dangerously-bypass-approvals-and-sandbox")"
@@ -225,6 +229,7 @@ start_backend() {
   cloudflare_zone_id="$(codex_env_value CLOUDFLARE_ZONE_ID "")"
   cloudflare_zone_name="$(codex_env_value CLOUDFLARE_ZONE_NAME "nienfos.com")"
   web_preview_apply_enabled="$(codex_env_value WEB_PREVIEW_APPLY_ENABLED "false")"
+  web_preview_invite_secret="$(codex_env_value WEB_PREVIEW_INVITE_SECRET "")"
 
   cd "${ROOT_DIR}"
   setsid -f env \
@@ -259,6 +264,7 @@ start_backend() {
     CLOUDFLARE_ZONE_ID="${cloudflare_zone_id}" \
     CLOUDFLARE_ZONE_NAME="${cloudflare_zone_name}" \
     WEB_PREVIEW_APPLY_ENABLED="${web_preview_apply_enabled}" \
+    WEB_PREVIEW_INVITE_SECRET="${web_preview_invite_secret}" \
     BRIDGE_ENVIRONMENT="dev" \
     BRIDGE_STAGE_ID="dev-app" \
     BRIDGE_SPEC_ID="018" \
