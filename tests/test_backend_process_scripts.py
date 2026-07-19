@@ -243,6 +243,12 @@ def test_dev_backend_8118_script_contract() -> None:
     assert "CODEX_USE_EXEC=\"${codex_use_exec}\"" in script
     assert "CODEX_EXEC_ARGS=\"${codex_exec_args}\"" in script
     assert "CODEX_RESUME_ARGS=\"${codex_resume_args}\"" in script
+    assert "PROJECT_FACTORY_GITHUB_OWNER" in script
+    assert "PROJECT_FACTORY_GITHUB_VISIBILITY" in script
+    assert "PROJECT_FACTORY_GITHUB_DEFAULT_BRANCH" in script
+    assert "APP_UPDATE_PUBLIC_BASE_URL=${BASE_URL}" in script
+    assert "BRIDGE_PUBLIC_URL=${BASE_URL}" in script
+    assert "INSTALLABLE_APPS_REGISTRATION_TOKEN" in script
     assert "--dangerously-bypass-approvals-and-sandbox" in script
     assert "BRIDGE_ENVIRONMENT=\"dev\"" in script
     assert "BRIDGE_APP_CHANNEL=\"dev\"" in script

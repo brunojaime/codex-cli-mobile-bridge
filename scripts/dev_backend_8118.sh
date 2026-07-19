@@ -86,14 +86,24 @@ write_runtime_env() {
     "${DATA_DIR}/asset_depot" "${DATA_DIR}/project_factory_state" \
     "${RUNTIME_DIR}/runtime"
   local codex_command codex_use_exec codex_exec_args codex_resume_args
+  local github_owner github_visibility github_branch registration_token
   codex_command="$(codex_env_value CODEX_COMMAND "codex")"
   codex_use_exec="$(codex_env_value CODEX_USE_EXEC "true")"
   codex_exec_args="$(codex_env_value CODEX_EXEC_ARGS "--skip-git-repo-check --color never --dangerously-bypass-approvals-and-sandbox")"
   codex_resume_args="$(codex_env_value CODEX_RESUME_ARGS "--skip-git-repo-check --dangerously-bypass-approvals-and-sandbox")"
+  github_owner="$(codex_env_value PROJECT_FACTORY_GITHUB_OWNER "")"
+  github_visibility="$(codex_env_value PROJECT_FACTORY_GITHUB_VISIBILITY "private")"
+  github_branch="$(codex_env_value PROJECT_FACTORY_GITHUB_DEFAULT_BRANCH "main")"
+  registration_token="$(codex_env_value INSTALLABLE_APPS_REGISTRATION_TOKEN "")"
   cat >"${ENV_FILE}" <<EOF
 API_PORT=${PORT}
 API_BASE_URL=${BASE_URL}
 TAILSCALE_SOCKET=${TAILSCALE_SOCKET}
+APP_UPDATE_PUBLIC_BASE_URL=${BASE_URL}
+BRIDGE_URL=${BASE_URL}
+BRIDGE_PUBLIC_URL=${BASE_URL}
+CODEX_APP_UPDATER_BRIDGE_URL=${BASE_URL}
+CODEX_FEEDBACK_BRIDGE_URL=${BASE_URL}
 CODEX_COMMAND=${codex_command}
 CODEX_USE_EXEC=${codex_use_exec}
 CODEX_EXEC_ARGS=${codex_exec_args}
@@ -106,6 +116,11 @@ FEEDBACK_IMAGE_DIR=${DATA_DIR}/feedback_images
 FEEDBACK_AUDIO_DIR=${DATA_DIR}/feedback_audio
 ASSET_DEPOT_DIR=${DATA_DIR}/asset_depot
 PROJECT_FACTORY_STATE_DIR=${DATA_DIR}/project_factory_state
+PROJECT_FACTORY_GITHUB_OWNER=${github_owner}
+PROJECT_FACTORY_GITHUB_VISIBILITY=${github_visibility}
+PROJECT_FACTORY_GITHUB_DEFAULT_BRANCH=${github_branch}
+INSTALLABLE_APPS_REGISTRATION_TOKEN=${registration_token}
+BRIDGE_REGISTRATION_TOKEN=${registration_token}
 BRIDGE_ENVIRONMENT=dev
 BRIDGE_STAGE_ID=dev-app
 BRIDGE_SPEC_ID=018
@@ -164,16 +179,26 @@ start_backend() {
   fi
 
   local codex_command codex_use_exec codex_exec_args codex_resume_args
+  local github_owner github_visibility github_branch registration_token
   codex_command="$(codex_env_value CODEX_COMMAND "codex")"
   codex_use_exec="$(codex_env_value CODEX_USE_EXEC "true")"
   codex_exec_args="$(codex_env_value CODEX_EXEC_ARGS "--skip-git-repo-check --color never --dangerously-bypass-approvals-and-sandbox")"
   codex_resume_args="$(codex_env_value CODEX_RESUME_ARGS "--skip-git-repo-check --dangerously-bypass-approvals-and-sandbox")"
+  github_owner="$(codex_env_value PROJECT_FACTORY_GITHUB_OWNER "")"
+  github_visibility="$(codex_env_value PROJECT_FACTORY_GITHUB_VISIBILITY "private")"
+  github_branch="$(codex_env_value PROJECT_FACTORY_GITHUB_DEFAULT_BRANCH "main")"
+  registration_token="$(codex_env_value INSTALLABLE_APPS_REGISTRATION_TOKEN "")"
 
   cd "${ROOT_DIR}"
   setsid -f env \
     API_PORT="${PORT}" \
     API_BASE_URL="${BASE_URL}" \
     TAILSCALE_SOCKET="${TAILSCALE_SOCKET}" \
+    APP_UPDATE_PUBLIC_BASE_URL="${BASE_URL}" \
+    BRIDGE_URL="${BASE_URL}" \
+    BRIDGE_PUBLIC_URL="${BASE_URL}" \
+    CODEX_APP_UPDATER_BRIDGE_URL="${BASE_URL}" \
+    CODEX_FEEDBACK_BRIDGE_URL="${BASE_URL}" \
     CODEX_COMMAND="${codex_command}" \
     CODEX_USE_EXEC="${codex_use_exec}" \
     CODEX_EXEC_ARGS="${codex_exec_args}" \
@@ -186,6 +211,11 @@ start_backend() {
     FEEDBACK_AUDIO_DIR="${DATA_DIR}/feedback_audio" \
     ASSET_DEPOT_DIR="${DATA_DIR}/asset_depot" \
     PROJECT_FACTORY_STATE_DIR="${DATA_DIR}/project_factory_state" \
+    PROJECT_FACTORY_GITHUB_OWNER="${github_owner}" \
+    PROJECT_FACTORY_GITHUB_VISIBILITY="${github_visibility}" \
+    PROJECT_FACTORY_GITHUB_DEFAULT_BRANCH="${github_branch}" \
+    INSTALLABLE_APPS_REGISTRATION_TOKEN="${registration_token}" \
+    BRIDGE_REGISTRATION_TOKEN="${registration_token}" \
     BRIDGE_ENVIRONMENT="dev" \
     BRIDGE_STAGE_ID="dev-app" \
     BRIDGE_SPEC_ID="018" \
