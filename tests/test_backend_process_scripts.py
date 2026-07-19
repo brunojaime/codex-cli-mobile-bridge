@@ -131,6 +131,18 @@ def test_run_backend_detached_exports_codex_runtime_settings() -> None:
     assert "backend_export_env_file_values" in script
     assert "nohup env \\" in script
     assert "CODEX_EXEC_ARGS=\"${CODEX_EXEC_ARGS:-}\"" in script
+    assert (
+        'DEV_PIPELINE_AUTO_RUNNER_ENABLED="${DEV_PIPELINE_AUTO_RUNNER_ENABLED:-false}"'
+        in script
+    )
+    assert (
+        'DEV_PIPELINE_AUTO_RUNNER_INTERVAL_SECONDS="${DEV_PIPELINE_AUTO_RUNNER_INTERVAL_SECONDS:-30}"'
+        in script
+    )
+    assert (
+        'DEV_PIPELINE_AUTO_RUNNER_RECONCILE_EXISTING="${DEV_PIPELINE_AUTO_RUNNER_RECONCILE_EXISTING:-false}"'
+        in script
+    )
     assert "LISTENER_PID=\"$(backend_find_listener_pid" in script
     assert "echo \"${LISTENER_PID}\" > \"${PID_FILE}\"" in script
 
@@ -154,6 +166,18 @@ def test_run_backend_foreground_contract() -> None:
     assert "APP_UPDATE_PUBLIC_BASE_URL" in script
     assert "BRIDGE_PUBLIC_URL" in script
     assert "INSTALLABLE_APPS_REGISTRATION_TOKEN" in script
+    assert (
+        'DEV_PIPELINE_AUTO_RUNNER_ENABLED="${DEV_PIPELINE_AUTO_RUNNER_ENABLED:-false}"'
+        in script
+    )
+    assert (
+        'DEV_PIPELINE_AUTO_RUNNER_INTERVAL_SECONDS="${DEV_PIPELINE_AUTO_RUNNER_INTERVAL_SECONDS:-30}"'
+        in script
+    )
+    assert (
+        'DEV_PIPELINE_AUTO_RUNNER_RECONCILE_EXISTING="${DEV_PIPELINE_AUTO_RUNNER_RECONCILE_EXISTING:-false}"'
+        in script
+    )
     assert "exec env \\" in script
     assert '"${PYTHON_BIN}" main.py' in script
 
