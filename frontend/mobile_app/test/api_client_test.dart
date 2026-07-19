@@ -390,7 +390,7 @@ void main() {
       baseUrl: 'http://localhost:8000',
       client: MockClient((request) async {
         calls.add('${request.method} ${request.url.path}');
-        if (request.method == 'POST') {
+        if (request.url.path == '/project-factory/drafts/pf-draft-1/init') {
           expect(request.body, contains('"chatSessionId":"chat-1"'));
           expect(request.body, contains('"workspacePath":"/projects"'));
         }
@@ -425,7 +425,8 @@ void main() {
             "contextPack": null,
             "blockers": [],
             "readyForBusinessLlm": false,
-            "canContinueWithBlockedContext": false
+            "canContinueWithBlockedContext": false,
+            "retryAvailable": true
           }
           ''',
           200,
@@ -440,15 +441,19 @@ void main() {
       workspacePath: '/projects',
     );
     final loaded = await client.getProjectFactoryInitJob(started.initJobId);
+    final retried = await client.retryProjectFactoryInitJob(started.initJobId);
 
     expect(started.initJobId, 'pf-init-1');
     expect(started.currentPhase, 'init_preflight');
     expect(started.phases.single.name, 'init_preflight');
     expect(started.readyForBusinessLlm, isFalse);
+    expect(started.retryAvailable, isTrue);
     expect(loaded.initJobId, 'pf-init-1');
+    expect(retried.initJobId, 'pf-init-1');
     expect(calls, <String>[
       'POST /project-factory/drafts/pf-draft-1/init',
       'GET /project-factory/init-jobs/pf-init-1',
+      'POST /project-factory/init-jobs/pf-init-1/retry',
     ]);
   });
 

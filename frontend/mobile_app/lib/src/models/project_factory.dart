@@ -568,6 +568,11 @@ class ProjectFactoryInitPhase {
   final List<Map<String, dynamic>> commandEvidence;
   final List<Map<String, dynamic>> artifacts;
 
+  bool get isBlocked => status == 'blocked';
+  bool get isRunning => status == 'running';
+  bool get isQueued => status == 'queued' || status == 'pending';
+  bool get isCompleted => status == 'completed';
+
   factory ProjectFactoryInitPhase.fromJson(Map<String, dynamic> json) {
     return ProjectFactoryInitPhase(
       name: json['name'] as String? ?? '',
@@ -602,6 +607,7 @@ class ProjectFactoryInitJob {
     this.workspacePath,
     this.generatedWorkspacePath,
     this.contextPack,
+    this.retryAvailable = false,
   });
 
   final String initJobId;
@@ -620,9 +626,15 @@ class ProjectFactoryInitJob {
   final List<Map<String, dynamic>> blockers;
   final bool readyForBusinessLlm;
   final bool canContinueWithBlockedContext;
+  final bool retryAvailable;
 
   bool get isReady => status == 'ready';
   bool get isBlockedWithContext => status == 'blocked_with_context';
+  bool get isBlocked =>
+      isBlockedWithContext || phases.any((phase) => phase.isBlocked);
+  bool get isRunning =>
+      status == 'running' || phases.any((phase) => phase.isRunning);
+  bool get hasRetryAction => retryAvailable && isBlocked;
 
   factory ProjectFactoryInitJob.fromJson(Map<String, dynamic> json) {
     return ProjectFactoryInitJob(
@@ -660,6 +672,9 @@ class ProjectFactoryInitJob {
           json['canContinueWithBlockedContext'] as bool? ??
               json['can_continue_with_blocked_context'] as bool? ??
               false,
+      retryAvailable: json['retryAvailable'] as bool? ??
+          json['retry_available'] as bool? ??
+          false,
     );
   }
 }

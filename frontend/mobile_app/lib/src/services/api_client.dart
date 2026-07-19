@@ -467,6 +467,21 @@ class ApiClient {
     );
   }
 
+  Future<ProjectFactoryInitJob> retryProjectFactoryInitJob(
+      String initJobId) async {
+    final response = await _client.post(
+      Uri.parse('$baseUrl/project-factory/init-jobs/$initJobId/retry'),
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception('Failed to retry project init: ${response.body}');
+    }
+
+    return ProjectFactoryInitJob.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
   Future<List<ProjectFactoryJobSummary>> listProjectFactoryJobs({
     String? status,
     String? draftId,

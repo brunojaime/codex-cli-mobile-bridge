@@ -499,6 +499,93 @@ void main() {
         <String?>['/projects/generated/blocked']);
   });
 
+  testWidgets('blocked init shows phases and can be retried', (tester) async {
+    final apiClient = _GuidedProjectApiClient()
+      ..includeGeneratorReadyMessage = true
+      ..initPollJobs = <ProjectFactoryInitJob>[
+        _initJob(
+          status: 'blocked_with_context',
+          currentPhase: 'preview_smoke',
+          canContinueWithBlockedContext: true,
+          generatedWorkspacePath: '/projects/generated/blocked',
+          retryAvailable: true,
+          phases: const <ProjectFactoryInitPhase>[
+            ProjectFactoryInitPhase(
+              name: 'github_repository',
+              status: 'completed',
+              message: 'GitHub repository verified.',
+              blockers: <Map<String, dynamic>>[],
+              commandEvidence: <Map<String, dynamic>>[],
+              artifacts: <Map<String, dynamic>>[],
+            ),
+            ProjectFactoryInitPhase(
+              name: 'preview_smoke',
+              status: 'blocked',
+              message: '',
+              blockers: <Map<String, dynamic>>[
+                <String, dynamic>{
+                  'code': 'web_preview_invite_secret_missing',
+                  'phase': 'preview_smoke',
+                  'message': 'Invite secret missing.',
+                  'nextAction': 'Configure WEB_PREVIEW_INVITE_SECRET.',
+                  'recoverable': true,
+                }
+              ],
+              commandEvidence: <Map<String, dynamic>>[],
+              artifacts: <Map<String, dynamic>>[],
+            ),
+          ],
+          blockers: const <Map<String, dynamic>>[
+            <String, dynamic>{
+              'code': 'web_preview_invite_secret_missing',
+              'phase': 'preview_smoke',
+              'message': 'Invite secret missing.',
+              'nextAction': 'Configure WEB_PREVIEW_INVITE_SECRET.',
+              'recoverable': true,
+            }
+          ],
+        ),
+      ]
+      ..retryInitJobs = <ProjectFactoryInitJob>[
+        _initJob(status: 'running', currentPhase: 'preview_smoke'),
+      ]
+      ..initPollAfterRetryJobs = <ProjectFactoryInitJob>[
+        _initJob(
+          status: 'ready',
+          readyForBusinessLlm: true,
+          generatedWorkspacePath: '/projects/generated/blocked',
+        ),
+      ];
+
+    await _pumpGuidedChat(tester, apiClient);
+    await _openNewProjectIntake(
+      tester,
+      name: 'Clinica Norte',
+      adminEmail: 'owner@example.com',
+    );
+    await _answerGuidedIntakeQuestion(tester);
+    await _tapOkDaleProjectFactoryButton(tester);
+
+    await tester.pump(const Duration(seconds: 2));
+    await _pumpDeferredDomainFactoryStart(tester);
+
+    expect(find.text('Preview smoke'), findsWidgets);
+    expect(find.text('Invite secret missing.'), findsWidgets);
+    expect(
+        find.byKey(const ValueKey<String>('project-factory-init-retry-button')),
+        findsOneWidget);
+
+    final retryButton = tester.widget<FilledButton>(find
+        .byKey(const ValueKey<String>('project-factory-init-retry-button')));
+    retryButton.onPressed?.call();
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 2));
+    await _pumpDeferredDomainFactoryStart(tester);
+
+    expect(apiClient.retryInitCalls, 1);
+    expect(apiClient.domainFactoryStarts, 1);
+  });
+
   testWidgets('cancelled init does not start Domain Factory', (tester) async {
     final apiClient = _GuidedProjectApiClient()
       ..includeGeneratorReadyMessage = true
@@ -667,10 +754,23 @@ Future<void> _pumpDeferredDomainFactoryStart(WidgetTester tester) async {
 
 ProjectFactoryInitJob _initJob({
   required String status,
+  String currentPhase = 'init_preflight',
   bool readyForBusinessLlm = false,
   bool canContinueWithBlockedContext = false,
+  bool retryAvailable = false,
   String? workspacePath,
   String? generatedWorkspacePath,
+  List<ProjectFactoryInitPhase> phases = const <ProjectFactoryInitPhase>[
+    ProjectFactoryInitPhase(
+      name: 'init_preflight',
+      status: 'completed',
+      message: '',
+      blockers: <Map<String, dynamic>>[],
+      commandEvidence: <Map<String, dynamic>>[],
+      artifacts: <Map<String, dynamic>>[],
+    ),
+  ],
+  List<Map<String, dynamic>> blockers = const <Map<String, dynamic>>[],
 }) {
   return ProjectFactoryInitJob(
     initJobId: 'pf-init-1',
@@ -679,23 +779,15 @@ ProjectFactoryInitJob _initJob({
     createdAt: _GuidedProjectApiClient._timestamp.toIso8601String(),
     updatedAt: _GuidedProjectApiClient._timestamp.toIso8601String(),
     status: status,
-    currentPhase: 'init_preflight',
+    currentPhase: currentPhase,
     workspacePath: workspacePath,
     generatedWorkspacePath: generatedWorkspacePath,
-    phases: const <ProjectFactoryInitPhase>[
-      ProjectFactoryInitPhase(
-        name: 'init_preflight',
-        status: 'completed',
-        message: '',
-        blockers: <Map<String, dynamic>>[],
-        commandEvidence: <Map<String, dynamic>>[],
-        artifacts: <Map<String, dynamic>>[],
-      ),
-    ],
+    phases: phases,
     remoteResources: const <Map<String, dynamic>>[],
-    blockers: const <Map<String, dynamic>>[],
+    blockers: blockers,
     readyForBusinessLlm: readyForBusinessLlm,
     canContinueWithBlockedContext: canContinueWithBlockedContext,
+    retryAvailable: retryAvailable,
   );
 }
 
@@ -715,6 +807,7 @@ class _GuidedProjectApiClient extends ApiClient {
   int listDraftCalls = 0;
   int startInitCalls = 0;
   int getInitJobCalls = 0;
+  int retryInitCalls = 0;
   int sendMessageCalls = 0;
   int domainFactoryStarts = 0;
   bool includeGeneratorReadyMessage = false;
@@ -722,6 +815,9 @@ class _GuidedProjectApiClient extends ApiClient {
   String persistedDraftName = 'Untitled project';
   Object? initPollError;
   List<ProjectFactoryInitJob> initPollJobs = <ProjectFactoryInitJob>[];
+  List<ProjectFactoryInitJob> retryInitJobs = <ProjectFactoryInitJob>[];
+  List<ProjectFactoryInitJob> initPollAfterRetryJobs =
+      <ProjectFactoryInitJob>[];
   final List<String> sentMessages = <String>[];
   final List<String?> domainFactoryWorkspacePaths = <String?>[];
   final List<String> createdDraftNames = <String>[];
@@ -915,6 +1011,19 @@ class _GuidedProjectApiClient extends ApiClient {
     }
     if (initPollJobs.isNotEmpty) {
       return initPollJobs.removeAt(0);
+    }
+    if (initPollAfterRetryJobs.isNotEmpty) {
+      return initPollAfterRetryJobs.removeAt(0);
+    }
+    return _initJob(status: 'running');
+  }
+
+  @override
+  Future<ProjectFactoryInitJob> retryProjectFactoryInitJob(
+      String initJobId) async {
+    retryInitCalls += 1;
+    if (retryInitJobs.isNotEmpty) {
+      return retryInitJobs.removeAt(0);
     }
     return _initJob(status: 'running');
   }

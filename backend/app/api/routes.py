@@ -1922,6 +1922,43 @@ async def get_project_factory_deterministic_init(
 
 
 @router.post(
+    "/project-factory/init-jobs/{init_job_id}/retry",
+    response_model=ProjectFactoryInitJobResponse,
+)
+async def retry_project_factory_deterministic_init(
+    init_job_id: str,
+    container: AppContainer = Depends(get_container),
+) -> ProjectFactoryInitJobResponse:
+    job = await run_in_threadpool(
+        container.project_factory_init_service.get_job,
+        init_job_id,
+    )
+    if job is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Project factory init job not found.",
+        )
+    queued = await run_in_threadpool(
+        container.project_factory_init_service.queue_retry,
+        init_job_id,
+    )
+    if container.settings.project_factory_async_jobs:
+        Thread(
+            target=container.project_factory_init_service.run_pipeline,
+            args=(queued.id,),
+            daemon=True,
+        ).start()
+    else:
+        queued = await run_in_threadpool(
+            container.project_factory_init_service.run_pipeline,
+            queued.id,
+        )
+    return ProjectFactoryInitJobResponse(
+        **container.project_factory_init_service.to_response_payload(queued)
+    )
+
+
+@router.post(
     "/project-factory/drafts/{draft_id}/reference-assets",
     response_model=ProjectFactoryReferenceAssetResponse,
 )

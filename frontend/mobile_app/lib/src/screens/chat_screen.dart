@@ -554,8 +554,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   final Map<String, ProjectFactoryInitJob> _projectFactoryInitBySession =
       <String, ProjectFactoryInitJob>{};
   final Set<String> _loadingProjectFactoryInitSessions = <String>{};
+  final Set<String> _retryingProjectFactoryInitSessions = <String>{};
   final Map<String, Timer> _projectFactoryInitPollTimers = <String, Timer>{};
   final Set<String> _startingDomainFactoryAfterInitSessions = <String>{};
+  final Set<String> _startedDomainFactoryAfterInitSessions = <String>{};
   String? _projectFactoryInitErrorText;
   final Map<String, Set<String>> _collapsedMessageIdsBySession =
       <String, Set<String>>{};
@@ -1795,6 +1797,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     final initJob = _projectFactoryInitBySession[currentSession.id];
     final isInitLoading =
         _loadingProjectFactoryInitSessions.contains(currentSession.id);
+    final isInitRetrying =
+        _retryingProjectFactoryInitSessions.contains(currentSession.id);
     final isLoading =
         _loadingProjectFactoryIntakeSessions.contains(currentSession.id);
     final showLegacyGuidedIntake = initJob == null && !isInitLoading;
@@ -1805,8 +1809,22 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           if (initJob != null || isInitLoading)
             ProjectFactoryInitCard(
               initJob: initJob,
-              isLoading: isInitLoading,
+              isLoading: isInitLoading || isInitRetrying,
               errorText: _projectFactoryInitErrorText,
+              onRefresh: initJob == null
+                  ? null
+                  : () => _refreshProjectFactoryInitJob(
+                        client: _projectFactoryClient(),
+                        sessionId: currentSession.id,
+                        initJobId: initJob.initJobId,
+                      ),
+              onRetry: initJob == null || !initJob.hasRetryAction
+                  ? null
+                  : () => _retryProjectFactoryInitJob(
+                        client: _projectFactoryClient(),
+                        sessionId: currentSession.id,
+                        initJobId: initJob.initJobId,
+                      ),
             ),
           if (showLegacyGuidedIntake) ...<Widget>[
             if (initJob != null || isInitLoading) const SizedBox(height: 10),
@@ -2648,6 +2666,81 @@ When you create the Project Factory draft, link each asset with POST /project-fa
     );
   }
 
+  Future<void> _refreshProjectFactoryInitJob({
+    required ApiClient client,
+    required String sessionId,
+    required String initJobId,
+  }) async {
+    setState(() {
+      _loadingProjectFactoryInitSessions.add(sessionId);
+      _projectFactoryInitErrorText = null;
+    });
+    try {
+      final latest = await client.getProjectFactoryInitJob(initJobId);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _projectFactoryInitBySession[sessionId] = latest;
+        _loadingProjectFactoryInitSessions.remove(sessionId);
+      });
+      if (_shouldPollProjectFactoryInit(latest)) {
+        _scheduleProjectFactoryInitPoll(
+          client: client,
+          sessionId: sessionId,
+          initJob: latest,
+        );
+      } else {
+        unawaited(_maybeStartDomainFactoryAfterInit(sessionId, latest));
+      }
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _loadingProjectFactoryInitSessions.remove(sessionId);
+        _projectFactoryInitErrorText =
+            'Could not refresh deterministic init. $error';
+      });
+    }
+  }
+
+  Future<void> _retryProjectFactoryInitJob({
+    required ApiClient client,
+    required String sessionId,
+    required String initJobId,
+  }) async {
+    _projectFactoryInitPollTimers.remove(sessionId)?.cancel();
+    setState(() {
+      _retryingProjectFactoryInitSessions.add(sessionId);
+      _projectFactoryInitErrorText = null;
+    });
+    try {
+      final queued = await client.retryProjectFactoryInitJob(initJobId);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _projectFactoryInitBySession[sessionId] = queued;
+        _retryingProjectFactoryInitSessions.remove(sessionId);
+      });
+      _scheduleProjectFactoryInitPoll(
+        client: client,
+        sessionId: sessionId,
+        initJob: queued,
+      );
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _retryingProjectFactoryInitSessions.remove(sessionId);
+        _projectFactoryInitErrorText =
+            'Could not retry deterministic init. $error';
+      });
+    }
+  }
+
   void _deferDomainFactoryStartAfterInit(
     String sessionId,
     ProjectFactoryInitJob initJob,
@@ -2679,7 +2772,8 @@ When you create the Project Factory draft, link each asset with POST /project-fa
     if (!canStartImplementation) {
       return;
     }
-    if (_startingDomainFactoryAfterInitSessions.contains(sessionId)) {
+    if (_startingDomainFactoryAfterInitSessions.contains(sessionId) ||
+        _startedDomainFactoryAfterInitSessions.contains(sessionId)) {
       return;
     }
     final workspacePath = initJob.generatedWorkspacePath ??
@@ -2694,6 +2788,7 @@ When you create the Project Factory draft, link each asset with POST /project-fa
         workspacePathOverride: workspacePath,
         showSnackbars: false,
       );
+      _startedDomainFactoryAfterInitSessions.add(sessionId);
       if (!mounted) {
         return;
       }
@@ -5897,11 +5992,15 @@ class ProjectFactoryInitCard extends StatelessWidget {
     required this.initJob,
     required this.isLoading,
     this.errorText,
+    this.onRefresh,
+    this.onRetry,
   });
 
   final ProjectFactoryInitJob? initJob;
   final bool isLoading;
   final String? errorText;
+  final Future<void> Function()? onRefresh;
+  final Future<void> Function()? onRetry;
 
   @override
   Widget build(BuildContext context) {
@@ -5909,6 +6008,9 @@ class ProjectFactoryInitCard extends StatelessWidget {
     final status = job?.status ?? (isLoading ? 'running' : 'queued');
     final currentPhase = job?.currentPhase ?? 'init_preflight';
     final blockers = job?.blockers ?? const <Map<String, dynamic>>[];
+    final phases = job?.phases ?? const <ProjectFactoryInitPhase>[];
+    final canRetry = job?.hasRetryAction ?? false;
+    final controlsBusy = isLoading && (job?.isRunning ?? true);
     return DecoratedBox(
       decoration: BoxDecoration(
         color: const Color(0xFF0E1A22),
@@ -5946,26 +6048,52 @@ class ProjectFactoryInitCard extends StatelessWidget {
               'Current phase: ${_humanizeInitPhase(currentPhase)}',
               style: const TextStyle(color: Color(0xFFB8C8EA), height: 1.35),
             ),
-            const SizedBox(height: 6),
-            const Text(
-              'Preparing repo, preview infrastructure, runtime profile, Workbench, feedback, release wiring, and first-chat context before business work starts.',
-              style: TextStyle(color: Color(0xFF8EA6C7), height: 1.35),
-            ),
+            if (phases.isNotEmpty) ...<Widget>[
+              const SizedBox(height: 12),
+              Column(
+                children: phases
+                    .map(
+                      (phase) => _ProjectFactoryInitPhaseRow(
+                        phase: phase,
+                        isCurrent: phase.name == currentPhase,
+                      ),
+                    )
+                    .toList(growable: false),
+              ),
+            ],
             if (isLoading) ...<Widget>[
               const SizedBox(height: 10),
               const LinearProgressIndicator(minHeight: 2),
             ],
             if (blockers.isNotEmpty) ...<Widget>[
               const SizedBox(height: 10),
-              ...blockers.take(2).map(
-                    (blocker) => Text(
-                      blocker['message'] as String? ?? 'Init blocker',
+              Text(
+                'Current blockers',
+                style: TextStyle(
+                  color: _initStatusForeground('blocked_with_context'),
+                  fontSize: 12,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const SizedBox(height: 6),
+              ...blockers.map(
+                (blocker) {
+                  final phase = blocker['phase'] as String? ?? currentPhase;
+                  final nextAction = blocker['nextAction'] as String? ?? '';
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 6),
+                    child: Text(
+                      '${_humanizeInitPhase(phase)}: '
+                      '${blocker['message'] as String? ?? 'Init blocker'}'
+                      '${nextAction.isEmpty ? '' : ' Next: $nextAction'}',
                       style: const TextStyle(
                         color: Color(0xFFFFD7A8),
                         height: 1.35,
                       ),
                     ),
-                  ),
+                  );
+                },
+              ),
             ],
             if (errorText != null) ...<Widget>[
               const SizedBox(height: 10),
@@ -5974,8 +6102,120 @@ class ProjectFactoryInitCard extends StatelessWidget {
                 style: const TextStyle(color: Color(0xFFFFB4B4), height: 1.35),
               ),
             ],
+            if (onRefresh != null || (canRetry && onRetry != null)) ...<Widget>[
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: <Widget>[
+                  if (canRetry && onRetry != null)
+                    FilledButton.icon(
+                      key: const ValueKey<String>(
+                          'project-factory-init-retry-button'),
+                      onPressed:
+                          controlsBusy ? null : () => unawaited(onRetry!()),
+                      style: FilledButton.styleFrom(
+                        backgroundColor: const Color(0xFFFFC36A),
+                        foregroundColor: const Color(0xFF14100A),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                      ),
+                      icon: const Icon(Icons.replay_rounded, size: 18),
+                      label: const Text('Retry'),
+                    ),
+                  if (onRefresh != null)
+                    OutlinedButton.icon(
+                      key: const ValueKey<String>(
+                          'project-factory-init-refresh-button'),
+                      onPressed:
+                          controlsBusy ? null : () => unawaited(onRefresh!()),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: const Color(0xFFBFE8FF),
+                        side: const BorderSide(color: Color(0xFF32627A)),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                      ),
+                      icon: const Icon(Icons.refresh_rounded, size: 18),
+                      label: const Text('Refresh'),
+                    ),
+                ],
+              ),
+            ],
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _ProjectFactoryInitPhaseRow extends StatelessWidget {
+  const _ProjectFactoryInitPhaseRow({
+    required this.phase,
+    required this.isCurrent,
+  });
+
+  final ProjectFactoryInitPhase phase;
+  final bool isCurrent;
+
+  @override
+  Widget build(BuildContext context) {
+    final statusColor = _initPhaseStatusColor(phase.status);
+    final message = phase.blockers.isNotEmpty
+        ? phase.blockers.first['message'] as String? ?? phase.message
+        : phase.message;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Icon(_initPhaseStatusIcon(phase.status),
+              size: 17, color: statusColor),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 4,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: <Widget>[
+                    Text(
+                      _humanizeInitPhase(phase.name),
+                      style: TextStyle(
+                        color: isCurrent
+                            ? const Color(0xFFFFFFFF)
+                            : const Color(0xFFD8E6F2),
+                        fontWeight:
+                            isCurrent ? FontWeight.w800 : FontWeight.w600,
+                      ),
+                    ),
+                    _StatusPill(
+                      label: _initPhaseStatusLabel(phase.status),
+                      backgroundColor: _initStatusBackground(
+                          _initJobStatusFromPhase(phase.status)),
+                      foregroundColor: _initStatusForeground(
+                          _initJobStatusFromPhase(phase.status)),
+                    ),
+                  ],
+                ),
+                if (message.trim().isNotEmpty) ...<Widget>[
+                  const SizedBox(height: 2),
+                  Text(
+                    message,
+                    style: const TextStyle(
+                      color: Color(0xFF8EA6C7),
+                      fontSize: 12,
+                      height: 1.3,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -10578,6 +10818,46 @@ String _initStatusLabel(String status) {
     'running' => 'Running',
     _ => 'Queued',
   };
+}
+
+String _initPhaseStatusLabel(String status) {
+  return switch (status) {
+    'completed' => 'Done',
+    'blocked' => 'Blocked',
+    'failed' => 'Failed',
+    'cancelled' => 'Cancelled',
+    'skipped' => 'Skipped',
+    'running' => 'Running',
+    'queued' => 'Queued',
+    _ => 'Pending',
+  };
+}
+
+String _initJobStatusFromPhase(String status) {
+  return switch (status) {
+    'completed' => 'ready',
+    'blocked' => 'blocked_with_context',
+    'failed' => 'failed',
+    'cancelled' => 'cancelled',
+    'running' => 'running',
+    _ => 'queued',
+  };
+}
+
+IconData _initPhaseStatusIcon(String status) {
+  return switch (status) {
+    'completed' => Icons.check_circle_rounded,
+    'blocked' => Icons.lock_rounded,
+    'failed' => Icons.error_rounded,
+    'cancelled' => Icons.cancel_rounded,
+    'skipped' => Icons.remove_circle_rounded,
+    'running' => Icons.sync_rounded,
+    _ => Icons.radio_button_unchecked_rounded,
+  };
+}
+
+Color _initPhaseStatusColor(String status) {
+  return _initStatusForeground(_initJobStatusFromPhase(status));
 }
 
 Color _initStatusBackground(String status) {

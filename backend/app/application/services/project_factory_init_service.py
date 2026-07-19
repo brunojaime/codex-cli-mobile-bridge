@@ -281,7 +281,7 @@ class ProjectFactoryInitService:
         """Run the deterministic init phases for a queued/resumable job."""
 
         try:
-            self._reset_blocked_phase_for_retry(init_job_id)
+            self.queue_retry(init_job_id)
             job = self.complete_phase(
                 init_job_id,
                 ProjectFactoryInitPhaseName.INIT_PREFLIGHT.value,
@@ -326,6 +326,11 @@ class ProjectFactoryInitService:
                 return self.run_llm_context_pack_phase(failed.id)
             except Exception:
                 return failed
+
+    def queue_retry(self, init_job_id: str) -> ProjectFactoryInitJob:
+        """Prepare a blocked deterministic init job for another pipeline pass."""
+
+        return self._reset_blocked_phase_for_retry(init_job_id)
 
     def _reset_blocked_phase_for_retry(self, init_job_id: str) -> ProjectFactoryInitJob:
         with self._lock:
@@ -1783,6 +1788,12 @@ class ProjectFactoryInitService:
         blockers = [
             blocker.to_payload() for phase in job.phases for blocker in phase.blockers
         ]
+        retry_available = any(
+            blocker.recoverable
+            for phase in job.phases
+            if phase.status == ProjectFactoryInitPhaseStatus.BLOCKED
+            for blocker in phase.blockers
+        )
         workspace_path = job.relationships.generated_workspace_path
         context_pack = job.context_pack.to_payload() if job.context_pack else None
         if context_pack is not None:
@@ -1815,6 +1826,7 @@ class ProjectFactoryInitService:
             "blockers": blockers,
             "readyForBusinessLlm": status == "ready",
             "canContinueWithBlockedContext": status == "blocked_with_context",
+            "retryAvailable": retry_available,
         }
 
     def _active_or_latest_job_for_draft(

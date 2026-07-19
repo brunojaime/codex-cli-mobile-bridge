@@ -456,6 +456,7 @@ class ProjectFactoryInitJobResponse(BaseModel):
     can_continue_with_blocked_context: bool = Field(
         alias="canContinueWithBlockedContext",
     )
+    retry_available: bool = Field(default=False, alias="retryAvailable")
 
 
 class ProjectFactoryJobsResponse(BaseModel):

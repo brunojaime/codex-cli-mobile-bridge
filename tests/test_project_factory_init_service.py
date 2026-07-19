@@ -41,7 +41,9 @@ def test_init_service_creates_idempotent_draft_chat_job(tmp_path: Path) -> None:
     assert resumed.relationships.chat_session_id == "chat-1"
     assert resumed.relationships.generated_workspace_path == "/workspace"
     assert [phase.name.value for phase in resumed.phases] == list(INIT_PHASES)
-    assert all(phase.status == ProjectFactoryInitPhaseStatus.QUEUED for phase in resumed.phases)
+    assert all(
+        phase.status == ProjectFactoryInitPhaseStatus.QUEUED for phase in resumed.phases
+    )
     payload = service.to_response_payload(resumed)
     assert payload["status"] == "queued"
     assert payload["currentPhase"] == "init_preflight"
@@ -129,19 +131,26 @@ def test_init_service_run_pipeline_generates_workspace_and_blocked_context(
     assert completed.relationships.generated_workspace_path == str(workspace)
     assert (workspace / ".codex/factory/init-result.json").is_file()
     assert (workspace / ".codex/factory/llm-start-context.md").is_file()
-    assert completed.phase(
-        ProjectFactoryInitPhaseName.FLUTTER_OR_STRATEGY_BASELINE
-    ).status == ProjectFactoryInitPhaseStatus.COMPLETED
-    assert completed.phase(
-        ProjectFactoryInitPhaseName.LOCAL_GIT_COMMIT
-    ).status == ProjectFactoryInitPhaseStatus.COMPLETED
-    assert completed.phase(
-        ProjectFactoryInitPhaseName.GITHUB_REPOSITORY
-    ).status == ProjectFactoryInitPhaseStatus.BLOCKED
-    assert completed.phase(
-        ProjectFactoryInitPhaseName.LLM_CONTEXT_PACK
-    ).status == ProjectFactoryInitPhaseStatus.COMPLETED
-    assert completed.completion_state == ProjectFactoryInitCompletionState.BLOCKED_WITH_CONTEXT
+    assert (
+        completed.phase(ProjectFactoryInitPhaseName.FLUTTER_OR_STRATEGY_BASELINE).status
+        == ProjectFactoryInitPhaseStatus.COMPLETED
+    )
+    assert (
+        completed.phase(ProjectFactoryInitPhaseName.LOCAL_GIT_COMMIT).status
+        == ProjectFactoryInitPhaseStatus.COMPLETED
+    )
+    assert (
+        completed.phase(ProjectFactoryInitPhaseName.GITHUB_REPOSITORY).status
+        == ProjectFactoryInitPhaseStatus.BLOCKED
+    )
+    assert (
+        completed.phase(ProjectFactoryInitPhaseName.LLM_CONTEXT_PACK).status
+        == ProjectFactoryInitPhaseStatus.COMPLETED
+    )
+    assert (
+        completed.completion_state
+        == ProjectFactoryInitCompletionState.BLOCKED_WITH_CONTEXT
+    )
 
 
 def test_init_service_blocked_with_context_and_remote_context_payload(
@@ -188,9 +197,40 @@ def test_init_service_blocked_with_context_and_remote_context_payload(
     payload = service.to_response_payload(with_context)
     assert payload["status"] == "blocked_with_context"
     assert payload["canContinueWithBlockedContext"] is True
+    assert payload["retryAvailable"] is True
     assert payload["blockers"][0]["code"] == "cloudflare_credentials"
     assert payload["remoteResources"][0]["url"] == "https://github.com/owner/app"
     assert payload["contextPack"]["attachedSessionId"] == "chat-1"
+
+
+def test_init_service_queues_retry_for_any_blocked_phase(tmp_path: Path) -> None:
+    service = ProjectFactoryInitService(state_root=tmp_path)
+    job = service.start_or_resume(draft_id="draft-1")
+    service.complete_phase(job.id, "init_preflight")
+    blocked = service.block_phase(
+        job.id,
+        "cloudflare_preview_deploy",
+        blocker=ProjectFactoryInitBlocker(
+            code="cloudflare_token_missing",
+            message="Cloudflare token missing.",
+            phase=ProjectFactoryInitPhaseName.CLOUDFLARE_PREVIEW_DEPLOY,
+            next_action="Configure CLOUDFLARE_API_TOKEN.",
+        ),
+        context_available=True,
+    )
+
+    payload = service.to_response_payload(blocked)
+    assert payload["status"] == "blocked_with_context"
+    assert payload["currentPhase"] == "cloudflare_preview_deploy"
+    assert payload["retryAvailable"] is True
+
+    queued = service.queue_retry(blocked.id)
+    retry_phase = queued.phase(ProjectFactoryInitPhaseName.CLOUDFLARE_PREVIEW_DEPLOY)
+
+    assert retry_phase.status == ProjectFactoryInitPhaseStatus.QUEUED
+    assert retry_phase.blockers == ()
+    assert service.to_response_payload(queued)["status"] == "resumable"
+    assert service.to_response_payload(queued)["retryAvailable"] is False
 
 
 def test_init_service_recovers_running_job_as_resumable(tmp_path: Path) -> None:
