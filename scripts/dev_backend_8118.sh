@@ -96,6 +96,23 @@ codex_env_value() {
   printf '%s' "${value:-${fallback}}"
 }
 
+bridge_root_for_generated_scripts() {
+  local configured="${CODEX_MOBILE_BRIDGE_ROOT:-}"
+  if [[ -n "${configured}" ]]; then
+    printf '%s' "${configured}"
+    return
+  fi
+  if [[ -f "${BASE_SECRET_ENV_FILE}" || -f "${BASE_ENV_FILE}" ]]; then
+    printf '%s' "${ROOT_DIR}"
+    return
+  fi
+  if [[ -f "${FALLBACK_SECRET_ENV_FILE}" || -f "${FALLBACK_BASE_ENV_FILE}" ]]; then
+    printf '%s' "$(dirname "${ROOT_DIR}")/codex-cli-mobile-bridge"
+    return
+  fi
+  printf '%s' "${ROOT_DIR}"
+}
+
 write_runtime_env() {
   mkdir -p "${DATA_DIR}" "${DATA_DIR}/feedback_images" "${DATA_DIR}/feedback_audio" \
     "${DATA_DIR}/asset_depot" "${DATA_DIR}/project_factory_state" \
@@ -104,7 +121,8 @@ write_runtime_env() {
   local github_owner github_visibility github_branch registration_token
   local cloudflare_api_token cloudflare_dns_token cloudflare_account_id
   local cloudflare_zone_id cloudflare_zone_name web_preview_apply_enabled
-  local web_preview_invite_secret
+  local web_preview_invite_secret preview_admin_email preview_admin_password
+  local preview_admin_bootstrap_token generated_scripts_bridge_root
   codex_command="$(codex_env_value CODEX_COMMAND "codex")"
   codex_use_exec="$(codex_env_value CODEX_USE_EXEC "true")"
   codex_exec_args="$(codex_env_value CODEX_EXEC_ARGS "--skip-git-repo-check --color never --dangerously-bypass-approvals-and-sandbox")"
@@ -120,6 +138,10 @@ write_runtime_env() {
   cloudflare_zone_name="$(codex_env_value CLOUDFLARE_ZONE_NAME "nienfos.com")"
   web_preview_apply_enabled="$(codex_env_value WEB_PREVIEW_APPLY_ENABLED "false")"
   web_preview_invite_secret="$(codex_env_value WEB_PREVIEW_INVITE_SECRET "")"
+  preview_admin_email="$(codex_env_value PREVIEW_ADMIN_EMAIL "")"
+  preview_admin_password="$(codex_env_value PREVIEW_ADMIN_PASSWORD "")"
+  preview_admin_bootstrap_token="$(codex_env_value PREVIEW_ADMIN_BOOTSTRAP_TOKEN "")"
+  generated_scripts_bridge_root="$(bridge_root_for_generated_scripts)"
   cat >"${ENV_FILE}" <<EOF
 API_PORT=${PORT}
 API_BASE_URL=${BASE_URL}
@@ -134,6 +156,7 @@ CODEX_USE_EXEC=${codex_use_exec}
 CODEX_EXEC_ARGS=${codex_exec_args}
 CODEX_RESUME_ARGS=${codex_resume_args}
 CODEX_WORKDIR=${ROOT_DIR}
+CODEX_MOBILE_BRIDGE_ROOT=${generated_scripts_bridge_root}
 PROJECTS_ROOT=$(dirname "${ROOT_DIR}")
 CHAT_STORE_PATH=${DATA_DIR}/chat_store.sqlite3
 FEEDBACK_QUEUE_PATH=${DATA_DIR}/feedback_queue.json
@@ -153,6 +176,9 @@ CLOUDFLARE_ZONE_ID=${cloudflare_zone_id}
 CLOUDFLARE_ZONE_NAME=${cloudflare_zone_name}
 WEB_PREVIEW_APPLY_ENABLED=${web_preview_apply_enabled}
 WEB_PREVIEW_INVITE_SECRET=${web_preview_invite_secret}
+PREVIEW_ADMIN_EMAIL=${preview_admin_email}
+PREVIEW_ADMIN_PASSWORD=${preview_admin_password}
+PREVIEW_ADMIN_BOOTSTRAP_TOKEN=${preview_admin_bootstrap_token}
 BRIDGE_ENVIRONMENT=dev
 BRIDGE_STAGE_ID=dev-app
 BRIDGE_SPEC_ID=018
@@ -214,7 +240,8 @@ start_backend() {
   local github_owner github_visibility github_branch registration_token
   local cloudflare_api_token cloudflare_dns_token cloudflare_account_id
   local cloudflare_zone_id cloudflare_zone_name web_preview_apply_enabled
-  local web_preview_invite_secret
+  local web_preview_invite_secret preview_admin_email preview_admin_password
+  local preview_admin_bootstrap_token generated_scripts_bridge_root
   codex_command="$(codex_env_value CODEX_COMMAND "codex")"
   codex_use_exec="$(codex_env_value CODEX_USE_EXEC "true")"
   codex_exec_args="$(codex_env_value CODEX_EXEC_ARGS "--skip-git-repo-check --color never --dangerously-bypass-approvals-and-sandbox")"
@@ -230,6 +257,10 @@ start_backend() {
   cloudflare_zone_name="$(codex_env_value CLOUDFLARE_ZONE_NAME "nienfos.com")"
   web_preview_apply_enabled="$(codex_env_value WEB_PREVIEW_APPLY_ENABLED "false")"
   web_preview_invite_secret="$(codex_env_value WEB_PREVIEW_INVITE_SECRET "")"
+  preview_admin_email="$(codex_env_value PREVIEW_ADMIN_EMAIL "")"
+  preview_admin_password="$(codex_env_value PREVIEW_ADMIN_PASSWORD "")"
+  preview_admin_bootstrap_token="$(codex_env_value PREVIEW_ADMIN_BOOTSTRAP_TOKEN "")"
+  generated_scripts_bridge_root="$(bridge_root_for_generated_scripts)"
 
   cd "${ROOT_DIR}"
   setsid -f env \
@@ -246,6 +277,7 @@ start_backend() {
     CODEX_EXEC_ARGS="${codex_exec_args}" \
     CODEX_RESUME_ARGS="${codex_resume_args}" \
     CODEX_WORKDIR="${ROOT_DIR}" \
+    CODEX_MOBILE_BRIDGE_ROOT="${generated_scripts_bridge_root}" \
     PROJECTS_ROOT="$(dirname "${ROOT_DIR}")" \
     CHAT_STORE_PATH="${DATA_DIR}/chat_store.sqlite3" \
     FEEDBACK_QUEUE_PATH="${DATA_DIR}/feedback_queue.json" \
@@ -265,6 +297,9 @@ start_backend() {
     CLOUDFLARE_ZONE_NAME="${cloudflare_zone_name}" \
     WEB_PREVIEW_APPLY_ENABLED="${web_preview_apply_enabled}" \
     WEB_PREVIEW_INVITE_SECRET="${web_preview_invite_secret}" \
+    PREVIEW_ADMIN_EMAIL="${preview_admin_email}" \
+    PREVIEW_ADMIN_PASSWORD="${preview_admin_password}" \
+    PREVIEW_ADMIN_BOOTSTRAP_TOKEN="${preview_admin_bootstrap_token}" \
     BRIDGE_ENVIRONMENT="dev" \
     BRIDGE_STAGE_ID="dev-app" \
     BRIDGE_SPEC_ID="018" \
