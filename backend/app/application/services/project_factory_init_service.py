@@ -765,6 +765,12 @@ class ProjectFactoryInitService:
                     self._bridge_root_for_generated_scripts()
                 ),
             }
+            preview_admin_email = self._preview_admin_email_for_generated_scripts(
+                job=job,
+                target=target,
+            )
+            if preview_admin_email:
+                env["PREVIEW_ADMIN_EMAIL"] = preview_admin_email
             if self._settings and self._settings.installable_apps_registration_token:
                 env["INSTALLABLE_APPS_REGISTRATION_TOKEN"] = (
                     self._settings.installable_apps_registration_token
@@ -2166,6 +2172,26 @@ class ProjectFactoryInitService:
             "CODEX_MOBILE_BRIDGE_ROOT"
         ) or os.environ.get("CODEX_MOBILE_BRIDGE_ROOT")
         return Path(configured).expanduser().resolve() if configured else Path.cwd()
+
+    def _preview_admin_email_for_generated_scripts(
+        self,
+        *,
+        job: ProjectFactoryInitJob,
+        target: Path,
+    ) -> str | None:
+        configured = (
+            self._command_env.get("PREVIEW_ADMIN_EMAIL")
+            or os.environ.get("PREVIEW_ADMIN_EMAIL")
+            or ""
+        ).strip()
+        if configured:
+            return configured
+        config = self._initial_admin_invite_config(job=job, target=target)
+        emails = config.get("emails")
+        if not isinstance(emails, tuple | list) or not emails:
+            return None
+        email = str(emails[0] or "").strip().lower()
+        return email or None
 
     def _ensure_flutter_android_project(
         self,
@@ -5358,6 +5384,9 @@ def _android_blocker_from_command(
     elif "permission" in output or "protected" in output:
         resolved_code = "android_preview_release_permission_blocked"
         resolved_message = "Android preview release publish is blocked by GitHub permissions or policy."
+    detail = _summarize_output(result.stderr or result.stdout, ())
+    if detail and detail not in resolved_message:
+        resolved_message = f"{resolved_message} Detail: {detail}"
     return _android_blocker(
         phase=phase,
         code=resolved_code,
