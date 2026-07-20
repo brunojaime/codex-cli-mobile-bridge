@@ -750,6 +750,11 @@ class ProjectFactoryInitService:
                 settings=self._settings,
                 command_env=self._command_env,
             )
+            bridge_registration_url = _resolve_bridge_registration_url(
+                bridge_base_url,
+                settings=self._settings,
+                command_env=self._command_env,
+            )
             env = {
                 "APP_RUNTIME_PROFILE": "preview",
                 "API_RUNTIME": "cloudflare_preview",
@@ -762,6 +767,7 @@ class ProjectFactoryInitService:
                 "ANDROID_PREVIEW_RELEASE_MODE": "bridge_local",
                 "BRIDGE_URL": bridge_base_url,
                 "BRIDGE_PUBLIC_URL": bridge_public_url,
+                "BRIDGE_REGISTRATION_URL": bridge_registration_url,
                 "CODEX_MOBILE_BRIDGE_ROOT": str(
                     self._bridge_root_for_generated_scripts()
                 ),
@@ -930,7 +936,7 @@ class ProjectFactoryInitService:
 
             lookup = self._run_env(
                 _bridge_installable_lookup_command(
-                    bridge_base_url,
+                    bridge_registration_url,
                     bridge_public_url,
                     job.slug,
                 ),
@@ -983,7 +989,7 @@ class ProjectFactoryInitService:
                     )
                 lookup = self._run_env(
                     _bridge_installable_lookup_command(
-                        bridge_base_url,
+                        bridge_registration_url,
                         bridge_public_url,
                         job.slug,
                     ),
@@ -5503,6 +5509,29 @@ def _resolve_bridge_public_url(
                 settings=settings,
             ):
                 return public_url
+    return bridge_base_url.rstrip("/")
+
+
+def _resolve_bridge_registration_url(
+    bridge_base_url: str,
+    *,
+    settings: Settings | None,
+    command_env: dict[str, str],
+) -> str:
+    explicit = (
+        command_env.get("BRIDGE_REGISTRATION_URL")
+        or os.environ.get("BRIDGE_REGISTRATION_URL")
+        or ""
+    ).strip().rstrip("/")
+    if explicit:
+        return explicit
+    if settings is not None and getattr(settings, "api_port", None):
+        return f"http://127.0.0.1:{settings.api_port}"
+    if _is_local_bridge_url(bridge_base_url):
+        return bridge_base_url.rstrip("/")
+    parsed = urlparse((bridge_base_url or "").strip())
+    if parsed.port:
+        return f"http://127.0.0.1:{parsed.port}"
     return bridge_base_url.rstrip("/")
 
 

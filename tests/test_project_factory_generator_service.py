@@ -625,7 +625,32 @@ def test_generator_writes_executable_publish_script(tmp_path: Path) -> None:
     assert "gh run list" in android_preview_content
     assert "DEBUG_PREVIEW_SIGNING" not in android_preview_content
     assert "https://preview.nienfos.com/$SOURCE_APP/api" in android_preview_content
+    assert "--dart-define=CODEX_APP_UPDATER_ENABLED=true" in android_preview_content
+    assert '--dart-define=CODEX_APP_UPDATER_BRIDGE_URL="${BRIDGE_PUBLIC_URL:-${BRIDGE_URL:-}}"' in android_preview_content
+    assert "BRIDGE_REGISTRATION_URL or BRIDGE_URL is required" in android_preview_content
+    assert 'BRIDGE_URL="$bridge_registration_url"' in android_preview_content
+    assert '"$HOME/.local/share/android-sdk"' in android_preview_content
+    assert '[[ -d "$sdk_root/build-tools" ]] || continue' in android_preview_content
     assert "git push origin \"$tag\"" in android_preview_content
+    assert android_preview_content.index(
+        "Preview APK must not be signed with Android debug certificate"
+    ) < android_preview_content.index('git push origin "$tag"')
+    assert android_preview_content.index('"$apksigner" verify') < android_preview_content.index(
+        'git push origin "$tag"'
+    )
+    assert "GitHub Actions Android preview workflow failed before producing" in (
+        android_preview_content
+    )
+    register_script_content = (
+        tmp_path / "clinica-norte/scripts/register_installable_app.sh"
+    ).read_text(encoding="utf-8")
+    assert 'BRIDGE_REGISTRATION_URL="${BRIDGE_REGISTRATION_URL:-}"' in (
+        register_script_content
+    )
+    assert 'BRIDGE_URL="$BRIDGE_REGISTRATION_URL"' in register_script_content
+    assert "BRIDGE_URL or BRIDGE_REGISTRATION_URL is required" in (
+        register_script_content
+    )
     env_loader_content = (
         tmp_path / "clinica-norte/scripts/load_bridge_env.sh"
     ).read_text(encoding="utf-8")
@@ -2523,6 +2548,10 @@ def test_generated_web_preview_validation_accepts_real_and_blocks_mock(
     real = subprocess.run(
         ["scripts/validate_web_preview.sh"],
         cwd=project,
+        env={
+            **os.environ,
+            "API_BASE_URL": "https://preview.nienfos.com/clinica-norte/api",
+        },
         text=True,
         capture_output=True,
         check=False,
@@ -2537,7 +2566,11 @@ def test_generated_web_preview_validation_accepts_real_and_blocks_mock(
     strict = subprocess.run(
         ["scripts/validate_web_preview.sh"],
         cwd=project,
-        env={**os.environ, "REQUIRE_WEB_BUILD_OUTPUT": "true"},
+        env={
+            **os.environ,
+            "API_BASE_URL": "https://preview.nienfos.com/clinica-norte/api",
+            "REQUIRE_WEB_BUILD_OUTPUT": "true",
+        },
         text=True,
         capture_output=True,
         check=False,
@@ -2547,7 +2580,11 @@ def test_generated_web_preview_validation_accepts_real_and_blocks_mock(
     mock = subprocess.run(
         ["scripts/validate_web_preview.sh"],
         cwd=project,
-        env={**os.environ, "APP_RUNTIME_PROFILE": "mock"},
+        env={
+            **os.environ,
+            "API_BASE_URL": "https://preview.nienfos.com/clinica-norte/api",
+            "APP_RUNTIME_PROFILE": "mock",
+        },
         text=True,
         capture_output=True,
         check=False,

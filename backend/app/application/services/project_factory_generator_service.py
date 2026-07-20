@@ -3608,6 +3608,7 @@ source "$ROOT_DIR/scripts/load_bridge_env.sh"
 source "$ROOT_DIR/scripts/github_repo_access.sh"
 DRY_RUN=false
 BRIDGE_URL="${{BRIDGE_URL:-}}"
+BRIDGE_REGISTRATION_URL="${{BRIDGE_REGISTRATION_URL:-}}"
 BRIDGE_PUBLIC_URL="${{BRIDGE_PUBLIC_URL:-}}"
 SOURCE_APP="${{SOURCE_APP:-}}"
 DISPLAY_NAME="${{DISPLAY_NAME:-}}"
@@ -3690,8 +3691,11 @@ RUNTIME_PROFILE="${{RUNTIME_PROFILE:-${{RT_RUNTIME_PROFILE:-preview}}}}"
 PRODUCTION_READY="${{PRODUCTION_READY:-${{RT_PRODUCTION_READY:-false}}}}"
 MOCK_OR_DEMO="${{MOCK_OR_DEMO:-${{RT_MOCK_OR_DEMO:-false}}}}"
 
+if [[ -n "$BRIDGE_REGISTRATION_URL" ]]; then
+  BRIDGE_URL="$BRIDGE_REGISTRATION_URL"
+fi
 if [[ -z "$BRIDGE_URL" ]]; then
-  echo "BRIDGE_URL is required. Example: BRIDGE_URL=http://127.0.0.1:8000 $0" >&2
+  echo "BRIDGE_URL or BRIDGE_REGISTRATION_URL is required. Example: BRIDGE_REGISTRATION_URL=http://127.0.0.1:8000 $0" >&2
   exit 2
 fi
 BRIDGE_URL="${{BRIDGE_URL%/}}"
@@ -4680,7 +4684,7 @@ if [[ "$ANDROID_PREVIEW_RELEASE_MODE" == "bridge_local" ]]; then
     --dart-define=CODEX_FEEDBACK_ENABLED=true
     --dart-define=CODEX_BRIDGE_DEV_MODE=true
     --dart-define=CODEX_BRIDGE_WORKBENCH_URL="${{BRIDGE_PUBLIC_URL:-${{BRIDGE_URL:-}}}}"
-    --dart-define=CODEX_APP_UPDATER_ENABLED=false
+    --dart-define=CODEX_APP_UPDATER_ENABLED=true
     --dart-define=CODEX_APP_UPDATER_BRIDGE_URL="${{BRIDGE_PUBLIC_URL:-${{BRIDGE_URL:-}}}}"
   )
 
@@ -4695,9 +4699,10 @@ if [[ "$ANDROID_PREVIEW_RELEASE_MODE" == "bridge_local" ]]; then
 
   apksigner="$(command -v apksigner 2>/dev/null || true)"
   if [[ -z "$apksigner" ]]; then
-    for sdk_root in "${{ANDROID_HOME:-}}" "${{ANDROID_SDK_ROOT:-}}"; do
+    for sdk_root in "${{ANDROID_HOME:-}}" "${{ANDROID_SDK_ROOT:-}}" "$HOME/Android/Sdk" "$HOME/.local/share/android-sdk" "/opt/android-sdk"; do
       [[ -n "$sdk_root" ]] || continue
-      apksigner="$(find "$sdk_root/build-tools" -name apksigner -type f 2>/dev/null | sort -V | tail -n 1)"
+      [[ -d "$sdk_root/build-tools" ]] || continue
+      apksigner="$(find "$sdk_root/build-tools" -name apksigner -type f 2>/dev/null | sort -V | tail -n 1 || true)"
       [[ -n "$apksigner" ]] && break
     done
   fi
@@ -4750,8 +4755,11 @@ EOF
   printf '%s\\n' "$assets" | grep -Fx "${{SOURCE_APP}}.apk" >/dev/null || \\
     fail_blocked "GitHub release $tag did not expose $SOURCE_APP.apk after bridge-local upload"
 
-  bridge_env_require BRIDGE_URL INSTALLABLE_APPS_REGISTRATION_TOKEN
+  bridge_registration_url="${{BRIDGE_REGISTRATION_URL:-${{BRIDGE_URL:-}}}}"
+  [[ -n "$bridge_registration_url" ]] || fail_blocked "BRIDGE_REGISTRATION_URL or BRIDGE_URL is required for installable app registration"
+  bridge_env_require INSTALLABLE_APPS_REGISTRATION_TOKEN
   APP_RELEASE_TAG="$tag" \\
+  BRIDGE_URL="$bridge_registration_url" \\
   BRIDGE_REGISTRATION_TOKEN="$INSTALLABLE_APPS_REGISTRATION_TOKEN" \\
   scripts/register_installable_app.sh
   printf 'android preview release completed: %s\\n' "$tag"
@@ -4780,8 +4788,11 @@ deadline=$((SECONDS + timeout))
 while (( SECONDS <= deadline )); do
   assets="$(gh release view "$tag" --repo "$repo_ref" --json assets --jq '.assets[].name' 2>/dev/null || true)"
   if printf '%s\\n' "$assets" | grep -Fx "${{SOURCE_APP}}.apk" >/dev/null; then
-    bridge_env_require BRIDGE_URL INSTALLABLE_APPS_REGISTRATION_TOKEN
+    bridge_registration_url="${{BRIDGE_REGISTRATION_URL:-${{BRIDGE_URL:-}}}}"
+    [[ -n "$bridge_registration_url" ]] || fail_blocked "BRIDGE_REGISTRATION_URL or BRIDGE_URL is required for installable app registration"
+    bridge_env_require INSTALLABLE_APPS_REGISTRATION_TOKEN
     APP_RELEASE_TAG="$tag" \\
+    BRIDGE_URL="$bridge_registration_url" \\
     BRIDGE_REGISTRATION_TOKEN="$INSTALLABLE_APPS_REGISTRATION_TOKEN" \\
     scripts/register_installable_app.sh
     printf 'android preview release completed: %s\\n' "$tag"

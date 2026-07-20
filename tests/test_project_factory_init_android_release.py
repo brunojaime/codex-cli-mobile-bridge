@@ -156,6 +156,8 @@ def test_android_release_creates_prerelease_registers_bridge_and_persists(
     assert publish_env["ANDROID_PREVIEW_RELEASE_MODE"] == "bridge_local"
     assert publish_env["APP_RELEASE_TAG"] == release_tag
     assert publish_env["BRIDGE_REGISTRATION_TOKEN"] == "secret-token"
+    assert publish_env["BRIDGE_PUBLIC_URL"] == "https://bridge.test"
+    assert publish_env["BRIDGE_REGISTRATION_URL"] == "http://127.0.0.1:8000"
     variable_sets = {
         call[3]: call[5]
         for call in runner.calls
@@ -223,7 +225,7 @@ def test_android_release_uses_public_bridge_url_when_transport_is_local(
         "Host: bridge.test",
         "-H",
         "X-Forwarded-Proto: https",
-        "http://localhost:8000/installable-apps/clinica-norte",
+        "http://127.0.0.1:8000/installable-apps/clinica-norte",
     )
     runner = _FakeRunner(
         [
@@ -253,7 +255,7 @@ def test_android_release_uses_public_bridge_url_when_transport_is_local(
     assert phase.status == ProjectFactoryInitPhaseStatus.COMPLETED
     assert public_lookup in runner.calls
     register_env = runner.envs[runner.calls.index(_register_cmd())] or {}
-    assert register_env["BRIDGE_URL"] == "http://localhost:8000"
+    assert register_env["BRIDGE_REGISTRATION_URL"] == "http://127.0.0.1:8000"
     assert register_env["BRIDGE_PUBLIC_URL"] == "https://bridge.test"
     assert "localhost" not in json.dumps(
         [resource.to_payload() for resource in completed.remote_resources]
@@ -965,6 +967,7 @@ def _settings(
         projects_root=str(tmp_path / "projects"),
         project_factory_state_dir=str(tmp_path / "state"),
         preview_base_domain="preview.nienfos.com",
+        api_port=8000,
         api_base_url=api_base_url,
         app_update_public_base_url=app_update_public_base_url,
         installable_apps_registration_token=registration_token,
@@ -1055,7 +1058,15 @@ def _any_secret_set_cmd() -> tuple[str, ...]:
 
 
 def _lookup_cmd() -> tuple[str, ...]:
-    return ("curl", "-fsS", "https://bridge.test/installable-apps/clinica-norte")
+    return (
+        "curl",
+        "-fsS",
+        "-H",
+        "Host: bridge.test",
+        "-H",
+        "X-Forwarded-Proto: https",
+        "http://127.0.0.1:8000/installable-apps/clinica-norte",
+    )
 
 
 def _write_apk(project: Path) -> None:
