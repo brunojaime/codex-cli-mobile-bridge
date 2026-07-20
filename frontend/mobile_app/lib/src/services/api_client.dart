@@ -467,6 +467,31 @@ class ApiClient {
     );
   }
 
+  Future<List<ProjectFactoryInitJob>> listProjectFactoryInitJobs({
+    String? draftId,
+    int limit = 20,
+  }) async {
+    final query = <String, String>{'limit': '$limit'};
+    if (draftId != null && draftId.trim().isNotEmpty) {
+      query['draft_id'] = draftId.trim();
+    }
+    final response = await _client.get(
+      Uri.parse('$baseUrl/project-factory/init-jobs')
+          .replace(queryParameters: query),
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception('Failed to list project init jobs: ${response.body}');
+    }
+
+    final payload = jsonDecode(response.body) as Map<String, dynamic>;
+    final jobs = payload['jobs'] as List<dynamic>? ?? const <dynamic>[];
+    return jobs
+        .whereType<Map<String, dynamic>>()
+        .map(ProjectFactoryInitJob.fromJson)
+        .toList(growable: false);
+  }
+
   Future<ProjectFactoryInitJob> retryProjectFactoryInitJob(
       String initJobId) async {
     final response = await _client.post(

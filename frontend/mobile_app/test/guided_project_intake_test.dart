@@ -356,6 +356,80 @@ void main() {
     expect(find.text('Deterministic baseline init'), findsOneWidget);
   });
 
+  testWidgets('persisted blocked init hydrates retry action', (tester) async {
+    final apiClient = _GuidedProjectApiClient()
+      ..exposePersistedDraftSummary = true
+      ..persistedDraftName = 'Clinica Norte'
+      ..setReadyForReviewIntake()
+      ..persistedInitJobs = <ProjectFactoryInitJob>[
+        _initJob(
+          status: 'blocked_with_context',
+          currentPhase: 'github_repository',
+          canContinueWithBlockedContext: true,
+          retryAvailable: true,
+          phases: const <ProjectFactoryInitPhase>[
+            ProjectFactoryInitPhase(
+              name: 'github_repository',
+              status: 'blocked',
+              message: 'GitHub repository could not be created.',
+              blockers: <Map<String, dynamic>>[
+                <String, dynamic>{
+                  'code': 'github_repo_create_failed',
+                  'phase': 'github_repository',
+                  'message': 'GitHub repository could not be created.',
+                  'nextAction': 'Retry repository creation.',
+                  'recoverable': true,
+                }
+              ],
+              commandEvidence: <Map<String, dynamic>>[],
+              artifacts: <Map<String, dynamic>>[],
+            ),
+          ],
+          blockers: const <Map<String, dynamic>>[
+            <String, dynamic>{
+              'code': 'github_repo_create_failed',
+              'phase': 'github_repository',
+              'message': 'GitHub repository could not be created.',
+              'nextAction': 'Retry repository creation.',
+              'recoverable': true,
+            }
+          ],
+        ),
+      ];
+    apiClient.seedProjectFactorySession(
+      id: 'blocked-session',
+      title: 'Clinica Norte',
+    );
+    final controller = ChatController(
+      apiClient: apiClient,
+      notificationService: const NoopChatNotificationService(),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ChatScreen(
+          initialApiBaseUrl: 'http://localhost:8000',
+          notificationService: const NoopChatNotificationService(),
+          controllerOverride: controller,
+          enableServerBootstrap: false,
+          projectFactoryClientOverride: apiClient,
+        ),
+      ),
+    );
+
+    await controller.selectSession('blocked-session');
+    await tester.pumpAndSettle();
+
+    expect(apiClient.listDraftCalls, 1);
+    expect(apiClient.listInitJobCalls, 1);
+    expect(find.text('Deterministic baseline init'), findsOneWidget);
+    expect(find.text('Github repository'), findsWidgets);
+    expect(
+      find.byKey(const ValueKey<String>('project-factory-init-retry-button')),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('Ok dale CTA is consumed as a technical event before init',
       (tester) async {
     final apiClient = _GuidedProjectApiClient()
@@ -805,6 +879,7 @@ class _GuidedProjectApiClient extends ApiClient {
   int confirmCalls = 0;
   int getIntakeCalls = 0;
   int listDraftCalls = 0;
+  int listInitJobCalls = 0;
   int startInitCalls = 0;
   int getInitJobCalls = 0;
   int retryInitCalls = 0;
@@ -818,6 +893,7 @@ class _GuidedProjectApiClient extends ApiClient {
   List<ProjectFactoryInitJob> retryInitJobs = <ProjectFactoryInitJob>[];
   List<ProjectFactoryInitJob> initPollAfterRetryJobs =
       <ProjectFactoryInitJob>[];
+  List<ProjectFactoryInitJob> persistedInitJobs = <ProjectFactoryInitJob>[];
   final List<String> sentMessages = <String>[];
   final List<String?> domainFactoryWorkspacePaths = <String?>[];
   final List<String> createdDraftNames = <String>[];
@@ -1016,6 +1092,15 @@ class _GuidedProjectApiClient extends ApiClient {
       return initPollAfterRetryJobs.removeAt(0);
     }
     return _initJob(status: 'running');
+  }
+
+  @override
+  Future<List<ProjectFactoryInitJob>> listProjectFactoryInitJobs({
+    String? draftId,
+    int limit = 20,
+  }) async {
+    listInitJobCalls += 1;
+    return persistedInitJobs.take(limit).toList(growable: false);
   }
 
   @override

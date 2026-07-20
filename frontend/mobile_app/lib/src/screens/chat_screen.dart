@@ -2497,10 +2497,19 @@ When you create the Project Factory draft, link each asset with POST /project-fa
     });
 
     try {
-      final drafts = await _projectFactoryClient().listProjectFactoryDrafts(
+      final client = _projectFactoryClient();
+      final drafts = await client.listProjectFactoryDrafts(
         limit: 100,
       );
       final draft = _matchProjectFactoryDraftForSession(session, drafts);
+      ProjectFactoryInitJob? initJob;
+      if (draft != null) {
+        final initJobs = await client.listProjectFactoryInitJobs(
+          draftId: draft.draftId,
+          limit: 1,
+        );
+        initJob = initJobs.isEmpty ? null : initJobs.first;
+      }
       if (!mounted || _chatController.selectedSessionId != session.id) {
         return;
       }
@@ -2511,7 +2520,17 @@ When you create the Project Factory draft, link each asset with POST /project-fa
           _projectFactoryDraftIdBySession[session.id] = draft.draftId;
           _projectFactoryGuidedIntakeBySession[session.id] = draft.guidedIntake;
         }
+        if (initJob != null) {
+          _projectFactoryInitBySession[session.id] = initJob;
+        }
       });
+      if (initJob != null && _shouldPollProjectFactoryInit(initJob)) {
+        _scheduleProjectFactoryInitPoll(
+          client: client,
+          sessionId: session.id,
+          initJob: initJob,
+        );
+      }
     } catch (error) {
       if (!mounted || _chatController.selectedSessionId != session.id) {
         return;

@@ -459,6 +459,12 @@ class ProjectFactoryInitJobResponse(BaseModel):
     retry_available: bool = Field(default=False, alias="retryAvailable")
 
 
+class ProjectFactoryInitJobsResponse(BaseModel):
+    kind: str = "codex.projectFactoryInitJobs"
+    version: int = 1
+    jobs: list[ProjectFactoryInitJobResponse]
+
+
 class ProjectFactoryJobsResponse(BaseModel):
     kind: str = "codex.projectFactoryJobs"
     version: int = 1

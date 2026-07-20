@@ -394,6 +394,44 @@ void main() {
           expect(request.body, contains('"chatSessionId":"chat-1"'));
           expect(request.body, contains('"workspacePath":"/projects"'));
         }
+        if (request.url.path == '/project-factory/init-jobs' &&
+            request.method == 'GET') {
+          expect(request.url.queryParameters['draft_id'], 'pf-draft-1');
+          expect(request.url.queryParameters['limit'], '1');
+          return http.Response(
+            '''
+            {
+              "kind": "codex.projectFactoryInitJobs",
+              "version": 1,
+              "jobs": [
+                {
+                  "kind": "codex.projectFactoryInitJob",
+                  "version": 1,
+                  "initJobId": "pf-init-1",
+                  "draftId": "pf-draft-1",
+                  "chatSessionId": "chat-1",
+                  "createdAt": "2026-07-11T00:00:00Z",
+                  "updatedAt": "2026-07-11T00:00:00Z",
+                  "status": "queued",
+                  "currentPhase": "init_preflight",
+                  "projectPath": null,
+                  "workspacePath": "/projects",
+                  "generatedWorkspacePath": null,
+                  "phases": [],
+                  "remoteResources": [],
+                  "contextPack": null,
+                  "blockers": [],
+                  "readyForBusinessLlm": false,
+                  "canContinueWithBlockedContext": false,
+                  "retryAvailable": true
+                }
+              ]
+            }
+            ''',
+            200,
+            headers: <String, String>{'content-type': 'application/json'},
+          );
+        }
         return http.Response(
           '''
           {
@@ -441,6 +479,10 @@ void main() {
       workspacePath: '/projects',
     );
     final loaded = await client.getProjectFactoryInitJob(started.initJobId);
+    final listed = await client.listProjectFactoryInitJobs(
+      draftId: 'pf-draft-1',
+      limit: 1,
+    );
     final retried = await client.retryProjectFactoryInitJob(started.initJobId);
 
     expect(started.initJobId, 'pf-init-1');
@@ -449,10 +491,12 @@ void main() {
     expect(started.readyForBusinessLlm, isFalse);
     expect(started.retryAvailable, isTrue);
     expect(loaded.initJobId, 'pf-init-1');
+    expect(listed.single.retryAvailable, isTrue);
     expect(retried.initJobId, 'pf-init-1');
     expect(calls, <String>[
       'POST /project-factory/drafts/pf-draft-1/init',
       'GET /project-factory/init-jobs/pf-init-1',
+      'GET /project-factory/init-jobs',
       'POST /project-factory/init-jobs/pf-init-1/retry',
     ]);
   });

@@ -135,6 +135,7 @@ from backend.app.api.schemas import (
     ProjectFactoryGuidedIntakeAnswerRequest,
     ProjectFactoryGuidedIntakeResponse,
     ProjectFactoryInitJobResponse,
+    ProjectFactoryInitJobsResponse,
     ProjectFactoryInitStartRequest,
     ProjectFactoryJobResponse,
     ProjectFactoryJobsResponse,
@@ -1896,6 +1897,30 @@ async def start_project_factory_deterministic_init(
         ).start()
     return ProjectFactoryInitJobResponse(
         **container.project_factory_init_service.to_response_payload(job)
+    )
+
+
+@router.get(
+    "/project-factory/init-jobs",
+    response_model=ProjectFactoryInitJobsResponse,
+)
+async def list_project_factory_deterministic_init_jobs(
+    draft_id: str | None = Query(default=None),
+    limit: int = Query(default=20, ge=1, le=200),
+    container: AppContainer = Depends(get_container),
+) -> ProjectFactoryInitJobsResponse:
+    jobs = await run_in_threadpool(
+        container.project_factory_init_service.list_jobs,
+        draft_id=draft_id,
+        limit=limit,
+    )
+    return ProjectFactoryInitJobsResponse(
+        jobs=[
+            ProjectFactoryInitJobResponse(
+                **container.project_factory_init_service.to_response_payload(job)
+            )
+            for job in jobs
+        ]
     )
 
 
