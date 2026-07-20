@@ -6,6 +6,7 @@ import hashlib
 import json
 import re
 import shutil
+import subprocess
 import threading
 import time
 from pathlib import Path
@@ -133,6 +134,8 @@ class HttpGitHubReleaseClient:
             )
             response.raise_for_status()
         except httpx.HTTPError as exc:
+            if not self._token:
+                return self._list_releases_with_gh(repo, exc)
             raise GitHubReleaseError(str(exc)) from exc
 
         payload = response.json()
@@ -141,15 +144,50 @@ class HttpGitHubReleaseClient:
         return [_release_from_json(item) for item in payload]
 
     def open_asset_stream(self, repo: str, asset: GitHubAsset) -> GitHubAssetStream:
-        del repo
         url = asset.api_url or asset.browser_download_url
         if not url:
             raise GitHubReleaseError("GitHub release asset has no download URL.")
+        if not self._token and shutil.which("gh"):
+            return _GhGitHubAssetStream(
+                url=url,
+                content_length=asset.size,
+                timeout_seconds=self._timeout_seconds,
+            ).open()
         return _HttpGitHubAssetStream(
             url=url,
             headers=self._headers(accept="application/octet-stream"),
             timeout_seconds=self._timeout_seconds,
         ).open()
+
+    def _list_releases_with_gh(
+        self,
+        repo: str,
+        original_error: httpx.HTTPError,
+    ) -> list[GitHubRelease]:
+        if not shutil.which("gh"):
+            raise GitHubReleaseError(str(original_error)) from original_error
+        try:
+            completed = subprocess.run(
+                ("gh", "api", "--paginate", "--slurp", f"repos/{repo}/releases"),
+                text=True,
+                capture_output=True,
+                check=False,
+                timeout=self._timeout_seconds,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise GitHubReleaseError(str(original_error)) from exc
+        if completed.returncode != 0:
+            detail = completed.stderr.strip() or completed.stdout.strip()
+            raise GitHubReleaseError(detail or str(original_error)) from original_error
+        try:
+            payload = json.loads(completed.stdout)
+        except json.JSONDecodeError as exc:
+            raise GitHubReleaseError("GitHub CLI releases response was invalid JSON.") from exc
+        if payload and all(isinstance(page, list) for page in payload):
+            payload = [item for page in payload for item in page]
+        if not isinstance(payload, list):
+            raise GitHubReleaseError("GitHub CLI releases response was not a list.")
+        return [_release_from_json(item) for item in payload]
 
     def _headers(self, *, accept: str) -> dict[str, str]:
         headers = {
@@ -216,6 +254,65 @@ class _HttpGitHubAssetStream:
             self._context.__exit__(None, None, None)
             self._context = None
         self._response = None
+
+
+class _GhGitHubAssetStream:
+    def __init__(
+        self,
+        *,
+        url: str,
+        content_length: int | None,
+        timeout_seconds: float,
+    ) -> None:
+        self._url = url
+        self._content_length = content_length
+        self._timeout_seconds = timeout_seconds
+        self._process: subprocess.Popen[bytes] | None = None
+
+    def open(self) -> "_GhGitHubAssetStream":
+        try:
+            self._process = subprocess.Popen(
+                (
+                    "gh",
+                    "api",
+                    self._url,
+                    "-H",
+                    "Accept: application/octet-stream",
+                ),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+        except OSError as exc:
+            raise GitHubReleaseError(str(exc)) from exc
+        return self
+
+    @property
+    def content_length(self) -> int | None:
+        return self._content_length
+
+    def iter_bytes(self) -> Iterator[bytes]:
+        process = self._process
+        if process is None or process.stdout is None:
+            return
+        while True:
+            chunk = process.stdout.read(1024 * 1024)
+            if not chunk:
+                break
+            yield chunk
+        try:
+            _, stderr = process.communicate(timeout=self._timeout_seconds)
+        except subprocess.TimeoutExpired as exc:
+            self.close()
+            raise GitHubReleaseError("GitHub CLI asset download timed out.") from exc
+        if process.returncode != 0:
+            detail = stderr.decode(errors="replace").strip()
+            raise GitHubReleaseError(detail or "GitHub CLI asset download failed.")
+
+    def close(self) -> None:
+        process = self._process
+        if process is not None and process.poll() is None:
+            process.terminate()
+        self._process = None
 
 
 class AppUpdateRegistry:

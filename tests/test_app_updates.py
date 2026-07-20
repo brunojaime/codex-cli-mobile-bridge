@@ -4,11 +4,14 @@ from concurrent.futures import ThreadPoolExecutor
 import json
 import hashlib
 from pathlib import Path
+import subprocess
 
 from fastapi.testclient import TestClient
+import httpx
 import pytest
 
 from backend.app.api.routes import get_container
+from backend.app.application.services import app_update_service as app_update_module
 from backend.app.application.services.app_update_service import (
     AppDisabledError,
     AppUpdateRegistry,
@@ -16,6 +19,7 @@ from backend.app.application.services.app_update_service import (
     GitHubAsset,
     GitHubRelease,
     GitHubReleaseError,
+    HttpGitHubReleaseClient,
 )
 from backend.app.infrastructure.config.settings import Settings
 from backend.app.main import create_app
@@ -55,6 +59,104 @@ def test_known_app_with_newer_release_returns_update(tmp_path: Path) -> None:
     )
     assert payload["apkAssetName"] == "ambientando-calendar-1.0.0-build.40.apk"
     assert payload["releaseNotes"] == "Cambios disponibles."
+
+
+def test_http_github_release_client_falls_back_to_gh_for_private_repos(
+    monkeypatch,
+) -> None:
+    def fail_http(*_args, **_kwargs):
+        raise httpx.HTTPError("404 not found")
+
+    def fake_run(argv, **kwargs):
+        assert argv == (
+            "gh",
+            "api",
+            "--paginate",
+            "--slurp",
+            "repos/brunojaime/private-app/releases",
+        )
+        assert kwargs["timeout"] == 10.0
+        payload = [
+            [
+                {
+                    "tag_name": "android-preview-v0.1.0-build.1",
+                    "html_url": "https://github.com/brunojaime/private-app/releases/tag/android-preview-v0.1.0-build.1",
+                    "body": "Preview",
+                    "draft": False,
+                    "prerelease": True,
+                    "assets": [
+                        {
+                            "name": "private-app.apk",
+                            "browser_download_url": "https://github.com/brunojaime/private-app/releases/download/android-preview-v0.1.0-build.1/private-app.apk",
+                            "size": 123,
+                            "digest": "sha256:" + ("a" * 64),
+                            "url": "https://api.github.com/repos/brunojaime/private-app/releases/assets/1",
+                        }
+                    ],
+                }
+            ]
+        ]
+        return subprocess.CompletedProcess(argv, 0, stdout=json.dumps(payload), stderr="")
+
+    monkeypatch.setattr(app_update_module.httpx, "get", fail_http)
+    monkeypatch.setattr(app_update_module.shutil, "which", lambda name: "/usr/bin/gh")
+    monkeypatch.setattr(app_update_module.subprocess, "run", fake_run)
+
+    releases = HttpGitHubReleaseClient().list_releases("brunojaime/private-app")
+
+    assert releases[0].tag_name == "android-preview-v0.1.0-build.1"
+    assert releases[0].assets[0].name == "private-app.apk"
+    assert releases[0].assets[0].api_url == (
+        "https://api.github.com/repos/brunojaime/private-app/releases/assets/1"
+    )
+
+
+def test_http_github_release_client_uses_gh_for_private_asset_stream(
+    monkeypatch,
+) -> None:
+    class FakeProcess:
+        def __init__(self) -> None:
+            self.stdout = _ChunkReader([b"PK\x03\x04", b"apk"])
+            self.returncode = 0
+            self.terminated = False
+
+        def communicate(self, timeout=None):
+            assert timeout == 10.0
+            return b"", b""
+
+        def poll(self):
+            return self.returncode
+
+        def terminate(self):
+            self.terminated = True
+
+    def fake_popen(argv, **kwargs):
+        assert argv == (
+            "gh",
+            "api",
+            "https://api.github.com/repos/brunojaime/private-app/releases/assets/1",
+            "-H",
+            "Accept: application/octet-stream",
+        )
+        assert kwargs["stdout"] == app_update_module.subprocess.PIPE
+        return FakeProcess()
+
+    monkeypatch.setattr(app_update_module.shutil, "which", lambda name: "/usr/bin/gh")
+    monkeypatch.setattr(app_update_module.subprocess, "Popen", fake_popen)
+
+    asset = GitHubAsset(
+        name="private-app.apk",
+        browser_download_url="https://github.com/brunojaime/private-app/releases/download/tag/private-app.apk",
+        size=7,
+        api_url="https://api.github.com/repos/brunojaime/private-app/releases/assets/1",
+    )
+    stream = HttpGitHubReleaseClient().open_asset_stream(
+        "brunojaime/private-app",
+        asset,
+    )
+
+    assert stream.content_length == 7
+    assert b"".join(stream.iter_bytes()) == b"PK\x03\x04apk"
 
 
 def test_codex_prod_and_dev_update_channels_are_separate(tmp_path: Path) -> None:
@@ -1835,6 +1937,16 @@ class _FakeGitHubAssetStream:
 
     def close(self) -> None:
         self.closed = True
+
+
+class _ChunkReader:
+    def __init__(self, chunks: list[bytes]) -> None:
+        self._chunks = chunks
+
+    def read(self, _size: int) -> bytes:
+        if not self._chunks:
+            return b""
+        return self._chunks.pop(0)
 
 
 def _build_app_update_client(
