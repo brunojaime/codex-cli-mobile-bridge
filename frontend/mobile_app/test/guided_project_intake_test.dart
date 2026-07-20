@@ -430,6 +430,95 @@ void main() {
     );
   });
 
+  testWidgets('context-only blocked init hydrates retry action',
+      (tester) async {
+    final apiClient = _GuidedProjectApiClient()
+      ..initPollJobs = <ProjectFactoryInitJob>[
+        _initJob(
+          status: 'blocked_with_context',
+          currentPhase: 'android_preview_release',
+          canContinueWithBlockedContext: true,
+          retryAvailable: true,
+          phases: const <ProjectFactoryInitPhase>[
+            ProjectFactoryInitPhase(
+              name: 'android_preview_release',
+              status: 'blocked',
+              message: 'Android preview APK release publish failed.',
+              blockers: <Map<String, dynamic>>[
+                <String, dynamic>{
+                  'code': 'android_preview_release_publish_failed',
+                  'phase': 'android_preview_release',
+                  'message': 'Android preview APK release publish failed.',
+                  'nextAction': 'Run publish script.',
+                  'recoverable': true,
+                }
+              ],
+              commandEvidence: <Map<String, dynamic>>[],
+              artifacts: <Map<String, dynamic>>[],
+            ),
+          ],
+          blockers: const <Map<String, dynamic>>[
+            <String, dynamic>{
+              'code': 'android_preview_release_publish_failed',
+              'phase': 'android_preview_release',
+              'message': 'Android preview APK release publish failed.',
+              'nextAction': 'Run publish script.',
+              'recoverable': true,
+            }
+          ],
+        ),
+      ];
+    apiClient.seedProjectFactorySession(
+      id: 'context-only-session',
+      title: 'prueba11',
+      messages: <ChatMessage>[
+        ChatMessage(
+          id: 'pf-init-context-pf-init-1',
+          text: '# Deterministic Init Context\n\n'
+              'Project: prueba11 (`prueba11`)\n'
+              'Init job id: `pf-init-1`\n\n'
+              '## Current Blockers\n'
+              '- `android_preview_release`: failed',
+          isUser: false,
+          authorType: ChatMessageAuthorType.assistant,
+          agentId: AgentId.generator,
+          status: ChatMessageStatus.completed,
+          createdAt: _GuidedProjectApiClient._timestamp,
+          updatedAt: _GuidedProjectApiClient._timestamp,
+        ),
+      ],
+    );
+    final controller = ChatController(
+      apiClient: apiClient,
+      notificationService: const NoopChatNotificationService(),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ChatScreen(
+          initialApiBaseUrl: 'http://localhost:8000',
+          notificationService: const NoopChatNotificationService(),
+          controllerOverride: controller,
+          enableServerBootstrap: false,
+          projectFactoryClientOverride: apiClient,
+        ),
+      ),
+    );
+
+    await controller.selectSession('context-only-session');
+    await tester.pumpAndSettle();
+
+    expect(apiClient.listDraftCalls, 0);
+    expect(apiClient.getInitJobCalls, 1);
+    expect(apiClient.listInitJobCalls, 0);
+    expect(find.text('Deterministic baseline init'), findsOneWidget);
+    expect(find.text('Android preview release'), findsWidgets);
+    expect(
+      find.byKey(const ValueKey<String>('project-factory-init-retry-button')),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('Ok dale CTA is consumed as a technical event before init',
       (tester) async {
     final apiClient = _GuidedProjectApiClient()
@@ -1236,6 +1325,7 @@ class _GuidedProjectApiClient extends ApiClient {
   void seedProjectFactorySession({
     required String id,
     required String title,
+    List<ChatMessage> messages = const <ChatMessage>[],
   }) {
     _sessions[id] = SessionDetail(
       id: id,
@@ -1249,7 +1339,7 @@ class _GuidedProjectApiClient extends ApiClient {
           buildProjectFactoryIntakeConfiguration(kDefaultAgentConfiguration),
       createdAt: _timestamp,
       updatedAt: _timestamp,
-      messages: const <ChatMessage>[],
+      messages: messages,
     );
   }
 

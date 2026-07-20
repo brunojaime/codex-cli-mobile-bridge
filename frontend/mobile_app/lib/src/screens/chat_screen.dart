@@ -554,6 +554,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   final Map<String, ProjectFactoryInitJob> _projectFactoryInitBySession =
       <String, ProjectFactoryInitJob>{};
   final Set<String> _loadingProjectFactoryInitSessions = <String>{};
+  final Set<String> _hydratedProjectFactoryInitSessions = <String>{};
   final Set<String> _retryingProjectFactoryInitSessions = <String>{};
   final Map<String, Timer> _projectFactoryInitPollTimers = <String, Timer>{};
   final Set<String> _startingDomainFactoryAfterInitSessions = <String>{};
@@ -1801,12 +1802,13 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         _retryingProjectFactoryInitSessions.contains(currentSession.id);
     final isLoading =
         _loadingProjectFactoryIntakeSessions.contains(currentSession.id);
+    final showInit = initJob != null || isInitLoading;
     final showLegacyGuidedIntake = initJob == null && !isInitLoading;
-    if (intake != null && draftId != null) {
+    if (showInit || (intake != null && draftId != null)) {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: <Widget>[
-          if (initJob != null || isInitLoading)
+          if (showInit)
             ProjectFactoryInitCard(
               initJob: initJob,
               isLoading: isInitLoading || isInitRetrying,
@@ -1826,8 +1828,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                         initJobId: initJob.initJobId,
                       ),
             ),
-          if (showLegacyGuidedIntake) ...<Widget>[
-            if (initJob != null || isInitLoading) const SizedBox(height: 10),
+          if (intake != null &&
+              draftId != null &&
+              showLegacyGuidedIntake) ...<Widget>[
+            if (showInit) const SizedBox(height: 10),
             ProjectFactoryGuidedIntakeCard(
               intake: intake,
               onAnswer: (questionId, value) =>
@@ -2482,9 +2486,16 @@ When you create the Project Factory draft, link each asset with POST /project-fa
   Future<void> _hydrateProjectFactoryIntakeForSession(
     SessionDetail session,
   ) async {
-    if (_projectFactoryDraftIdBySession.containsKey(session.id) ||
-        _loadingProjectFactoryIntakeSessions.contains(session.id) ||
-        _hydratedProjectFactoryIntakeSessions.contains(session.id)) {
+    final initJobIdFromContext = _projectFactoryInitJobIdFromSession(session);
+    final shouldHydrateIntake = initJobIdFromContext == null &&
+        !_projectFactoryDraftIdBySession.containsKey(session.id) &&
+        !_loadingProjectFactoryIntakeSessions.contains(session.id) &&
+        !_hydratedProjectFactoryIntakeSessions.contains(session.id);
+    final shouldHydrateInit = initJobIdFromContext != null &&
+        !_projectFactoryInitBySession.containsKey(session.id) &&
+        !_loadingProjectFactoryInitSessions.contains(session.id) &&
+        !_hydratedProjectFactoryInitSessions.contains(session.id);
+    if (!shouldHydrateIntake && !shouldHydrateInit) {
       return;
     }
     if (!isProjectFactoryIntakeConfiguration(session.agentConfiguration)) {
@@ -2492,16 +2503,25 @@ When you create the Project Factory draft, link each asset with POST /project-fa
     }
 
     setState(() {
-      _loadingProjectFactoryIntakeSessions.add(session.id);
+      if (shouldHydrateIntake) {
+        _loadingProjectFactoryIntakeSessions.add(session.id);
+      }
+      if (shouldHydrateInit) {
+        _loadingProjectFactoryInitSessions.add(session.id);
+      }
       _projectFactoryGuidedIntakeErrorText = null;
+      _projectFactoryInitErrorText = null;
     });
 
     try {
       final client = _projectFactoryClient();
-      final drafts = await client.listProjectFactoryDrafts(
-        limit: 100,
-      );
-      final draft = _matchProjectFactoryDraftForSession(session, drafts);
+      ProjectFactoryDraftSummary? draft;
+      if (shouldHydrateIntake) {
+        final drafts = await client.listProjectFactoryDrafts(
+          limit: 100,
+        );
+        draft = _matchProjectFactoryDraftForSession(session, drafts);
+      }
       ProjectFactoryInitJob? initJob;
       if (draft != null) {
         final initJobs = await client.listProjectFactoryInitJobs(
@@ -2510,12 +2530,21 @@ When you create the Project Factory draft, link each asset with POST /project-fa
         );
         initJob = initJobs.isEmpty ? null : initJobs.first;
       }
+      if (initJob == null && initJobIdFromContext != null) {
+        initJob = await client.getProjectFactoryInitJob(initJobIdFromContext);
+      }
       if (!mounted || _chatController.selectedSessionId != session.id) {
         return;
       }
       setState(() {
-        _hydratedProjectFactoryIntakeSessions.add(session.id);
-        _loadingProjectFactoryIntakeSessions.remove(session.id);
+        if (shouldHydrateIntake) {
+          _hydratedProjectFactoryIntakeSessions.add(session.id);
+          _loadingProjectFactoryIntakeSessions.remove(session.id);
+        }
+        if (shouldHydrateInit) {
+          _hydratedProjectFactoryInitSessions.add(session.id);
+          _loadingProjectFactoryInitSessions.remove(session.id);
+        }
         if (draft != null) {
           _projectFactoryDraftIdBySession[session.id] = draft.draftId;
           _projectFactoryGuidedIntakeBySession[session.id] = draft.guidedIntake;
@@ -2536,12 +2565,35 @@ When you create the Project Factory draft, link each asset with POST /project-fa
         return;
       }
       setState(() {
-        _hydratedProjectFactoryIntakeSessions.add(session.id);
-        _loadingProjectFactoryIntakeSessions.remove(session.id);
-        _projectFactoryGuidedIntakeErrorText =
-            'Could not load New Project intake. $error';
+        if (shouldHydrateIntake) {
+          _hydratedProjectFactoryIntakeSessions.add(session.id);
+          _loadingProjectFactoryIntakeSessions.remove(session.id);
+          _projectFactoryGuidedIntakeErrorText =
+              'Could not load New Project intake. $error';
+        }
+        if (shouldHydrateInit) {
+          _hydratedProjectFactoryInitSessions.add(session.id);
+          _loadingProjectFactoryInitSessions.remove(session.id);
+          _projectFactoryInitErrorText =
+              'Could not load deterministic init. $error';
+        }
       });
     }
+  }
+
+  String? _projectFactoryInitJobIdFromSession(SessionDetail session) {
+    final pattern = RegExp(r'Init job id:\s*`([^`]+)`');
+    for (final message in session.messages.reversed) {
+      if (message.isUser || message.status != ChatMessageStatus.completed) {
+        continue;
+      }
+      final match = pattern.firstMatch(message.text);
+      final initJobId = match?.group(1)?.trim();
+      if (initJobId != null && initJobId.isNotEmpty) {
+        return initJobId;
+      }
+    }
+    return null;
   }
 
   ProjectFactoryDraftSummary? _matchProjectFactoryDraftForSession(
