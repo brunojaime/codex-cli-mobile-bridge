@@ -560,6 +560,7 @@ def test_android_release_commits_safe_generated_gitignore_repair_before_retry(
                     stdout="[main abc123] Ignore generated Project Factory artifacts"
                 ),
             ),
+            (("git", "push"), _FakeResponse(stdout="pushed")),
             (_publish_cmd(), _FakeResponse(stdout="built", on_run=_write_apk)),
             (
                 _release_view_cmd(release_tag),
@@ -590,6 +591,91 @@ def test_android_release_commits_safe_generated_gitignore_repair_before_retry(
         "-m",
         "Ignore generated Project Factory artifacts",
     ) in runner.calls
+    assert ("git", "push") in runner.calls
+
+
+def test_android_release_commits_generated_android_platform_before_retry(
+    tmp_path: Path,
+) -> None:
+    release_tag = "android-preview-v0.1.0-build.1"
+    runner = _FakeRunner(
+        [
+            (
+                _release_view_cmd(release_tag),
+                _FakeResponse(exit_code=1, stderr="not found"),
+            ),
+            (
+                _publish_cmd(),
+                _FakeResponse(
+                    exit_code=2,
+                    stdout=(
+                        "Recreating project ....\n"
+                        "  android/app/build.gradle.kts (created)\n"
+                    ),
+                    stderr=(
+                        "?? apps/mobile/.metadata\n"
+                        "?? apps/mobile/android/app/build.gradle.kts\n"
+                        "?? apps/mobile/android/app/src/main/kotlin/com/example/clinica_norte/MainActivity.kt\n"
+                        "android preview release blocked: working tree must be "
+                        "clean before tagging the preview release\n"
+                    ),
+                ),
+            ),
+            (
+                ("git", "status", "--porcelain"),
+                _FakeResponse(
+                    stdout=(
+                        "?? apps/mobile/.metadata\n"
+                        "?? apps/mobile/android/app/build.gradle.kts\n"
+                        "?? apps/mobile/android/app/src/main/kotlin/com/example/clinica_norte/MainActivity.kt\n"
+                    ),
+                ),
+            ),
+            (
+                (
+                    "git",
+                    "add",
+                    "apps/mobile/.metadata",
+                    "apps/mobile/android/app/build.gradle.kts",
+                    "apps/mobile/android/app/src/main/kotlin/com/example/clinica_norte/MainActivity.kt",
+                ),
+                _FakeResponse(),
+            ),
+            (
+                ("git", "commit", "-m", "Generate Flutter Android platform"),
+                _FakeResponse(stdout="[main def456] Generate Flutter Android platform"),
+            ),
+            (("git", "push"), _FakeResponse(stdout="pushed")),
+            (_publish_cmd(), _FakeResponse(stdout="built", on_run=_write_apk)),
+            (
+                _release_view_cmd(release_tag),
+                _FakeResponse(stdout=json.dumps(_release(release_tag))),
+            ),
+            (_lookup_cmd(), _FakeResponse(exit_code=22, stderr="not found")),
+            (_register_cmd(), _FakeResponse(stdout="registered")),
+            (
+                _lookup_cmd(),
+                _FakeResponse(stdout=json.dumps(_installable(release_tag))),
+            ),
+        ]
+    )
+    service = _service(tmp_path, runner)
+    job = _generated_job(service)
+
+    completed = service.run_android_preview_release_phases(job.id)
+
+    assert (
+        completed.phase(ProjectFactoryInitPhaseName.ANDROID_PREVIEW_RELEASE).status
+        == ProjectFactoryInitPhaseStatus.COMPLETED
+    )
+    assert runner.calls.count(_publish_cmd()) == 2
+    assert (
+        "git",
+        "commit",
+        "-m",
+        "Generate Flutter Android platform",
+    ) in runner.calls
+    assert ("git", "push") in runner.calls
 
 
 def test_android_release_verifies_existing_prerelease_and_installable_without_publish(

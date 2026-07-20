@@ -876,6 +876,34 @@ class ProjectFactoryInitService:
                                 blocker=repair_blocker,
                                 evidence=tuple(release_evidence),
                             )
+                    elif _release_failed_due_android_platform_repair(publish):
+                        repair_evidence, repair_blocker = (
+                            self._commit_generated_android_platform_repair(
+                                job=job,
+                                target=target,
+                                env=env,
+                            )
+                        )
+                        release_evidence.extend(repair_evidence)
+                        if repair_blocker is None:
+                            publish = self._run_env(
+                                (
+                                    "bash",
+                                    "scripts/publish_android_preview_release.sh",
+                                    "--push",
+                                    "--watch",
+                                ),
+                                cwd=target,
+                                env=env,
+                            )
+                            release_evidence.append(self._evidence(publish))
+                        else:
+                            return self._block_android_phase(
+                                job,
+                                phase_name=ProjectFactoryInitPhaseName.ANDROID_PREVIEW_RELEASE,
+                                blocker=repair_blocker,
+                                evidence=tuple(release_evidence),
+                            )
                 if publish.exit_code != 0:
                     return self._block_android_phase(
                         job,
@@ -3313,6 +3341,104 @@ class ProjectFactoryInitService:
                     ),
                 ),
             )
+        push = self._run_env(("git", "push"), cwd=target, env=env)
+        evidence.append(self._evidence(push))
+        if push.exit_code != 0:
+            return (
+                tuple(evidence),
+                _android_blocker_from_command(
+                    code="android_preview_gitignore_repair_failed",
+                    message="Generated artifact .gitignore repair could not be pushed.",
+                    phase=ProjectFactoryInitPhaseName.ANDROID_PREVIEW_RELEASE,
+                    result=push,
+                    command=("git", "push"),
+                ),
+            )
+        return tuple(evidence), None
+
+    def _commit_generated_android_platform_repair(
+        self,
+        *,
+        job: ProjectFactoryInitJob,
+        target: Path,
+        env: dict[str, str],
+    ) -> tuple[
+        tuple[ProjectFactoryInitCommandEvidence, ...],
+        ProjectFactoryInitBlocker | None,
+    ]:
+        del job
+        evidence: list[ProjectFactoryInitCommandEvidence] = []
+        status = self._run_env(("git", "status", "--porcelain"), cwd=target, env=env)
+        evidence.append(self._evidence(status))
+        if status.exit_code != 0:
+            return (
+                tuple(evidence),
+                _android_blocker_from_command(
+                    code="android_preview_android_platform_repair_failed",
+                    message="Generated Android platform repair could not inspect git status.",
+                    phase=ProjectFactoryInitPhaseName.ANDROID_PREVIEW_RELEASE,
+                    result=status,
+                    command=("git", "status", "--porcelain"),
+                ),
+            )
+        paths = _safe_generated_android_platform_paths(status.stdout)
+        if not paths:
+            return (
+                tuple(evidence),
+                _android_blocker(
+                    phase=ProjectFactoryInitPhaseName.ANDROID_PREVIEW_RELEASE,
+                    code="android_preview_android_platform_repair_unsafe",
+                    message="Generated Android platform repair is mixed with unrelated changes.",
+                    next_action=(
+                        "Review the generated workspace, commit only Flutter Android "
+                        "platform files, then rerun deterministic init."
+                    ),
+                    command=("git", "status", "--porcelain"),
+                ),
+            )
+        add = self._run_env(("git", "add", *paths), cwd=target, env=env)
+        evidence.append(self._evidence(add))
+        if add.exit_code != 0:
+            return (
+                tuple(evidence),
+                _android_blocker_from_command(
+                    code="android_preview_android_platform_repair_failed",
+                    message="Generated Android platform files could not be staged.",
+                    phase=ProjectFactoryInitPhaseName.ANDROID_PREVIEW_RELEASE,
+                    result=add,
+                    command=("git", "add", *paths),
+                ),
+            )
+        commit = self._run_env(
+            ("git", "commit", "-m", "Generate Flutter Android platform"),
+            cwd=target,
+            env=env,
+        )
+        evidence.append(self._evidence(commit))
+        if commit.exit_code != 0:
+            return (
+                tuple(evidence),
+                _android_blocker_from_command(
+                    code="android_preview_android_platform_repair_failed",
+                    message="Generated Android platform files could not be committed.",
+                    phase=ProjectFactoryInitPhaseName.ANDROID_PREVIEW_RELEASE,
+                    result=commit,
+                    command=("git", "commit", "-m", "Generate Flutter Android platform"),
+                ),
+            )
+        push = self._run_env(("git", "push"), cwd=target, env=env)
+        evidence.append(self._evidence(push))
+        if push.exit_code != 0:
+            return (
+                tuple(evidence),
+                _android_blocker_from_command(
+                    code="android_preview_android_platform_repair_failed",
+                    message="Generated Android platform commit could not be pushed.",
+                    phase=ProjectFactoryInitPhaseName.ANDROID_PREVIEW_RELEASE,
+                    result=push,
+                    command=("git", "push"),
+                ),
+            )
         return tuple(evidence), None
 
     def _view_repo(
@@ -3771,6 +3897,49 @@ def _release_failed_due_generated_gitignore_repair(
         and "working tree must be clean before tagging the preview release" in output
         and "M .gitignore" in output
     )
+
+
+def _release_failed_due_android_platform_repair(
+    result: ProjectFactoryInitCommandResult,
+) -> bool:
+    output = f"{result.stdout}\n{result.stderr}"
+    return (
+        result.exit_code != 0
+        and "working tree must be clean before tagging the preview release" in output
+        and (
+            "apps/mobile/android/" in output
+            or "apps/mobile/.metadata" in output
+            or "apps/mobile/analysis_options.yaml" in output
+        )
+    )
+
+
+def _safe_generated_android_platform_paths(status: str) -> tuple[str, ...]:
+    paths: list[str] = []
+    for line in status.splitlines():
+        if len(line) < 4:
+            return ()
+        state = line[:2]
+        path = line[3:].strip()
+        if not path or state.strip() not in {"??", "M"}:
+            return ()
+        if not _is_generated_android_platform_path(path):
+            return ()
+        paths.append(path)
+    return tuple(paths)
+
+
+def _is_generated_android_platform_path(path: str) -> bool:
+    if path.startswith("apps/mobile/android/"):
+        return True
+    if path.startswith("apps/mobile/.idea/"):
+        return True
+    if path.startswith("apps/mobile/") and path.endswith(".iml"):
+        return True
+    return path in {
+        "apps/mobile/.gitignore",
+        "apps/mobile/.metadata",
+    }
 
 
 def _gitignore_repair_diff_is_safe(diff: str) -> bool:

@@ -4605,8 +4605,82 @@ SOURCE_APP="${{SOURCE_APP:-{slug}}}"
 PREVIEW_API_BASE_URL="${{PREVIEW_API_BASE_URL:-${{API_BASE_URL:-https://preview.nienfos.com/$SOURCE_APP/api}}}}"
 PREVIEW_API_BASE_URL="${{PREVIEW_API_BASE_URL%/}}"
 
+flutter_android_platform_complete() {{
+  [[ -f apps/mobile/android/app/build.gradle || -f apps/mobile/android/app/build.gradle.kts ]] || return 1
+  [[ -f apps/mobile/android/settings.gradle || -f apps/mobile/android/settings.gradle.kts ]] || return 1
+  find apps/mobile/android/app/src/main -name 'MainActivity.*' -type f | grep -q .
+}}
+
+ensure_flutter_android_platform() {{
+  if flutter_android_platform_complete; then
+    return 0
+  fi
+  command -v flutter >/dev/null 2>&1 || fail_blocked "flutter is required to create the missing Android platform"
+  had_analysis_options=false
+  had_widget_test=false
+  [[ -f apps/mobile/analysis_options.yaml ]] && had_analysis_options=true
+  [[ -f apps/mobile/test/widget_test.dart ]] && had_widget_test=true
+  (cd apps/mobile && flutter create --platforms=android .)
+  if [[ "$had_analysis_options" == "false" ]] && grep -q "package:flutter_lints/flutter.yaml" apps/mobile/analysis_options.yaml 2>/dev/null; then
+    rm -f apps/mobile/analysis_options.yaml
+  fi
+  if [[ "$had_widget_test" == "false" ]] && grep -q "MyApp" apps/mobile/test/widget_test.dart 2>/dev/null; then
+    rm -f apps/mobile/test/widget_test.dart
+  fi
+  flutter_android_platform_complete || fail_blocked "flutter create did not produce a complete Android v2 platform"
+}}
+
+patch_flutter_android_release_signing() {{
+  local build_gradle="apps/mobile/android/app/build.gradle.kts"
+  [[ -f "$build_gradle" ]] || fail_blocked "apps/mobile/android/app/build.gradle.kts is required for release signing"
+  python3 - "$build_gradle" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+if "keystoreProperties" not in text:
+    text = text.replace("plugins {{\\n", "import java.util.Properties\\n\\nplugins {{\\n", 1)
+    text = text.replace(
+        "\\nandroid {{\\n",
+        (
+            "\\nval keystoreProperties = Properties()\\n"
+            "val keystorePropertiesFile = rootProject.file(\\"key.properties\\")\\n"
+            "if (keystorePropertiesFile.exists()) {{\\n"
+            "    keystorePropertiesFile.inputStream().use {{ keystoreProperties.load(it) }}\\n"
+            "}}\\n"
+            "\\nandroid {{\\n"
+        ),
+        1,
+    )
+if 'create("release")' not in text:
+    text = text.replace(
+        "    buildTypes {{\\n",
+        (
+            "    signingConfigs {{\\n"
+            "        create(\\"release\\") {{\\n"
+            "            keyAlias = keystoreProperties[\\"keyAlias\\"] as String?\\n"
+            "            keyPassword = keystoreProperties[\\"keyPassword\\"] as String?\\n"
+            "            storeFile = keystoreProperties[\\"storeFile\\"]?.let {{ rootProject.file(it) }}\\n"
+            "            storePassword = keystoreProperties[\\"storePassword\\"] as String?\\n"
+            "            storeType = (keystoreProperties[\\"storeType\\"] as String?) ?: \\"JKS\\"\\n"
+            "        }}\\n"
+            "    }}\\n"
+            "\\n"
+            "    buildTypes {{\\n"
+        ),
+        1,
+    )
+text = text.replace(
+    'signingConfig = signingConfigs.getByName("debug")',
+    'signingConfig = signingConfigs.getByName("release")',
+)
+path.write_text(text, encoding="utf-8")
+PY
+}}
+
 [[ -f apps/mobile/pubspec.yaml ]] || fail_blocked "apps/mobile/pubspec.yaml is required"
-[[ -d apps/mobile/android ]] || fail_blocked "apps/mobile/android is required; run 'cd apps/mobile && flutter create --platforms=android .'"
+ensure_flutter_android_platform
 bridge_env_require APP_RUNTIME_PROFILE API_RUNTIME API_BASE_URL
 [[ "$PREVIEW_API_BASE_URL" == "https://preview.nienfos.com/$SOURCE_APP/api" ]] || \\
   fail_blocked "initial preview API must be https://preview.nienfos.com/$SOURCE_APP/api"
@@ -4622,6 +4696,7 @@ keyPassword=$ANDROID_KEY_PASSWORD
 keyAlias=$ANDROID_KEY_ALIAS
 storeType=${{ANDROID_STORE_TYPE:-JKS}}
 EOF
+patch_flutter_android_release_signing
 
 scripts/smoke_preview_api.sh
 

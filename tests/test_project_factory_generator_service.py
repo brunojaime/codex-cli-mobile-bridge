@@ -614,7 +614,9 @@ def test_generator_writes_executable_publish_script(tmp_path: Path) -> None:
     assert android_preview_script.is_file()
     assert android_preview_script.stat().st_mode & stat.S_IXUSR
     android_preview_content = android_preview_script.read_text(encoding="utf-8")
-    assert "apps/mobile/android is required" in android_preview_content
+    assert "flutter is required to create the missing Android platform" in (
+        android_preview_content
+    )
     assert "android-preview-v${version//+/-build.}" in android_preview_content
     assert "scripts/smoke_preview_api.sh" in android_preview_content
     assert "scripts/load_bridge_env.sh" in android_preview_content
@@ -625,6 +627,17 @@ def test_generator_writes_executable_publish_script(tmp_path: Path) -> None:
     assert "--github-actions" in android_preview_content
     assert "flutter build apk" in android_preview_content
     assert "--target=lib/main_preview.dart" in android_preview_content
+    assert "ensure_flutter_android_platform" in android_preview_content
+    assert "flutter create --platforms=android ." in android_preview_content
+    assert "flutter create did not produce a complete Android v2 platform" in (
+        android_preview_content
+    )
+    assert "rm -f apps/mobile/analysis_options.yaml" in android_preview_content
+    assert "rm -f apps/mobile/test/widget_test.dart" in android_preview_content
+    assert "patch_flutter_android_release_signing" in android_preview_content
+    assert 'signingConfig = signingConfigs.getByName("release")' in (
+        android_preview_content
+    )
     assert "gh release create" in android_preview_content
     assert "gh release upload" in android_preview_content
     assert "gh run list" in android_preview_content
