@@ -623,7 +623,7 @@ def test_generator_writes_executable_publish_script(tmp_path: Path) -> None:
     env_loader_content = (
         tmp_path / "clinica-norte/scripts/load_bridge_env.sh"
     ).read_text(encoding="utf-8")
-    assert '[[ -n "${!key+x}" ]]' in env_loader_content
+    assert '"$key" != PREVIEW_ADMIN_*' in env_loader_content
     gitignore_content = (tmp_path / "clinica-norte/.gitignore").read_text(
         encoding="utf-8"
     )

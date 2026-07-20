@@ -3957,7 +3957,9 @@ bridge_env_load_file() {
       value="${value:1:${#value}-2}"
     fi
     if [[ -n "${!key+x}" ]]; then
-      continue
+      if [[ -n "${!key:-}" || "$key" != PREVIEW_ADMIN_* ]]; then
+        continue
+      fi
     fi
     export "$key=$value"
   done < "$env_file"
