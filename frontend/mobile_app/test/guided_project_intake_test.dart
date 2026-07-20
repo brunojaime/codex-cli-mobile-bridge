@@ -471,6 +471,7 @@ void main() {
     apiClient.seedProjectFactorySession(
       id: 'context-only-session',
       title: 'prueba11',
+      agentConfiguration: kDefaultAgentConfiguration,
       messages: <ChatMessage>[
         ChatMessage(
           id: 'pf-init-context-pf-init-1',
@@ -1325,6 +1326,7 @@ class _GuidedProjectApiClient extends ApiClient {
   void seedProjectFactorySession({
     required String id,
     required String title,
+    AgentConfiguration? agentConfiguration,
     List<ChatMessage> messages = const <ChatMessage>[],
   }) {
     _sessions[id] = SessionDetail(
@@ -1335,7 +1337,7 @@ class _GuidedProjectApiClient extends ApiClient {
       agentProfileId: 'default',
       agentProfileName: 'Generator',
       agentProfileColor: '#55D6BE',
-      agentConfiguration:
+      agentConfiguration: agentConfiguration ??
           buildProjectFactoryIntakeConfiguration(kDefaultAgentConfiguration),
       createdAt: _timestamp,
       updatedAt: _timestamp,

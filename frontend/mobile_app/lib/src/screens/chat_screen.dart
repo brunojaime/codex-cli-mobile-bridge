@@ -913,8 +913,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                         ),
                                       ),
                                     if (currentSession != null &&
-                                        isProjectFactoryIntakeConfiguration(
-                                          currentSession.agentConfiguration,
+                                        _shouldShowProjectFactoryInitPanel(
+                                          currentSession,
                                         ))
                                       SliverPadding(
                                         padding: const EdgeInsets.fromLTRB(
@@ -1879,6 +1879,13 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     );
   }
 
+  bool _shouldShowProjectFactoryInitPanel(SessionDetail session) {
+    return isProjectFactoryIntakeConfiguration(session.agentConfiguration) ||
+        _projectFactoryInitBySession.containsKey(session.id) ||
+        _loadingProjectFactoryInitSessions.contains(session.id) ||
+        _projectFactoryInitJobIdFromSession(session) != null;
+  }
+
   Future<bool> _handleSendAttachments(
     List<_PendingAttachmentDraft> attachments, {
     String? prompt,
@@ -2498,7 +2505,8 @@ When you create the Project Factory draft, link each asset with POST /project-fa
     if (!shouldHydrateIntake && !shouldHydrateInit) {
       return;
     }
-    if (!isProjectFactoryIntakeConfiguration(session.agentConfiguration)) {
+    if (!isProjectFactoryIntakeConfiguration(session.agentConfiguration) &&
+        !shouldHydrateInit) {
       return;
     }
 
