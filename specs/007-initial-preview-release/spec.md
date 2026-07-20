@@ -220,12 +220,16 @@ production API domain.
 Required generated artifacts:
 
 ```text
-.github/workflows/android-preview-release.yml
 scripts/publish_android_preview_release.sh
 scripts/validate_preview_release_profiles.sh
 release/preview-release-output-template.md
 release/preview-runtime.json
 ```
+
+`.github/workflows/android-preview-release.yml` may still be generated as an
+optional CI fallback, but the default Initial Preview Release publisher must not
+depend on GitHub-hosted runners. Preview APKs are built on the Bridge host by
+default and then uploaded to GitHub Releases with `gh`.
 
 The preview APK release tag must use:
 
@@ -248,6 +252,40 @@ The GitHub release must include:
 Debug signing may be allowed for preview APKs only when the final report,
 release metadata, and Bridge catalog entry say `signing=debug_preview`. A
 production `android-v*` tag must still require real release signing.
+
+### Bridge-Local Android Preview Publisher
+
+The default preview Android publisher is `bridge_local`.
+
+```text
+ANDROID_PREVIEW_RELEASE_MODE=bridge_local
+```
+
+In this mode the generated `scripts/publish_android_preview_release.sh` must:
+
+- load Bridge-owned preview signing secrets from `CODEX_MOBILE_BRIDGE_ROOT`;
+- run the deployed preview API smoke test before building;
+- run Flutter dependency resolution, analyze, tests, and release APK build on
+  the Bridge host;
+- build with preview runtime defines pointing at
+  `https://preview.nienfos.com/<app-slug>/api`;
+- sign with the stable preview keystore, not Android debug signing;
+- verify the APK with `apksigner` and fail if a debug certificate is detected;
+- create or update the `android-preview-v*` Git tag;
+- create or update a GitHub prerelease with `<app-slug>.apk` as the APK asset;
+- register the APK in Bridge installable apps after the GitHub release asset is
+  visible.
+
+`github_actions` remains an explicit fallback mode only:
+
+```text
+ANDROID_PREVIEW_RELEASE_MODE=github_actions
+```
+
+If GitHub Actions is used and a run fails before producing a release asset, the
+blocker must report the workflow failure instead of waiting for the release poll
+timeout. Billing/spending-limit failures are external infrastructure blockers,
+not app-code blockers.
 
 ## Bridge Registration Contract
 

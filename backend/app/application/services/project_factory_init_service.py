@@ -759,6 +759,7 @@ class ProjectFactoryInitService:
                 "SOURCE_APP": job.slug,
                 "APP_RELEASE_TAG": release_tag,
                 "APP_ANDROID_PREVIEW_RELEASE_TAG": release_tag,
+                "ANDROID_PREVIEW_RELEASE_MODE": "bridge_local",
                 "BRIDGE_URL": bridge_base_url,
                 "BRIDGE_PUBLIC_URL": bridge_public_url,
                 "CODEX_MOBILE_BRIDGE_ROOT": str(

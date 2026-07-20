@@ -153,6 +153,7 @@ def test_android_release_creates_prerelease_registers_bridge_and_persists(
     assert publish_env["API_BASE_URL"] == (
         "https://preview.nienfos.com/clinica-norte/api"
     )
+    assert publish_env["ANDROID_PREVIEW_RELEASE_MODE"] == "bridge_local"
     assert publish_env["APP_RELEASE_TAG"] == release_tag
     assert publish_env["BRIDGE_REGISTRATION_TOKEN"] == "secret-token"
     variable_sets = {

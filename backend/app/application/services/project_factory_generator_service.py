@@ -4560,8 +4560,18 @@ fail_blocked() {{
   exit 2
 }}
 
+ANDROID_PREVIEW_RELEASE_MODE="${{ANDROID_PREVIEW_RELEASE_MODE:-bridge_local}}"
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --bridge-local)
+      ANDROID_PREVIEW_RELEASE_MODE=bridge_local
+      shift
+      ;;
+    --github-actions)
+      ANDROID_PREVIEW_RELEASE_MODE=github_actions
+      shift
+      ;;
     --push)
       shift
       ;;
@@ -4578,6 +4588,14 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+case "$ANDROID_PREVIEW_RELEASE_MODE" in
+  bridge_local|github_actions)
+    ;;
+  *)
+    fail_blocked "ANDROID_PREVIEW_RELEASE_MODE must be bridge_local or github_actions"
+    ;;
+esac
 
 SOURCE_APP="${{SOURCE_APP:-{slug}}}"
 PREVIEW_API_BASE_URL="${{PREVIEW_API_BASE_URL:-${{API_BASE_URL:-https://preview.nienfos.com/$SOURCE_APP/api}}}}"
@@ -4619,7 +4637,7 @@ repo_ref="${{repo_ref%.git}}"
 [[ "$repo_ref" == */* ]] || fail_blocked "origin remote must point to a GitHub owner/repo"
 github_require_repo_access "$repo_ref" || fail_blocked "GitHub repository is not accessible with authenticated tools"
 
-if command -v gh >/dev/null 2>&1 && [[ "${{SKIP_GITHUB_API_BASE_URL_VAR_CHECK:-false}}" != "true" ]]; then
+if command -v gh >/dev/null 2>&1 && [[ "$ANDROID_PREVIEW_RELEASE_MODE" == "github_actions" && "${{SKIP_GITHUB_API_BASE_URL_VAR_CHECK:-false}}" != "true" ]]; then
   workflow_api_base_url="$(
     gh variable list --repo "$repo_ref" --json name,value --jq '.[] | select(.name == "API_BASE_URL") | .value' 2>/dev/null || true
   )"
@@ -4646,6 +4664,100 @@ API_RUNTIME=cloudflare_preview \\
 APP_SLUG="$SOURCE_APP" \\
 API_BASE_URL="$PREVIEW_API_BASE_URL" \\
 scripts/validate_preview_release_profiles.sh
+
+if [[ "$ANDROID_PREVIEW_RELEASE_MODE" == "bridge_local" ]]; then
+  command -v flutter >/dev/null 2>&1 || fail_blocked "flutter is required on the bridge host for bridge-local Android preview release"
+  command -v gh >/dev/null 2>&1 || fail_blocked "gh is required on the bridge host for bridge-local Android preview release"
+  command -v sha256sum >/dev/null 2>&1 || fail_blocked "sha256sum is required on the bridge host"
+
+  flutter_args=(
+    --release
+    --dart-define=APP_RUNTIME_PROFILE=preview
+    --dart-define=API_RUNTIME=cloudflare_preview
+    --dart-define=API_BASE_URL="$PREVIEW_API_BASE_URL"
+    --dart-define=APP_SLUG="$SOURCE_APP"
+    --dart-define=CODEX_FEEDBACK_BRIDGE_URL="${{BRIDGE_PUBLIC_URL:-${{BRIDGE_URL:-}}}}"
+    --dart-define=CODEX_FEEDBACK_ENABLED=true
+    --dart-define=CODEX_BRIDGE_DEV_MODE=true
+    --dart-define=CODEX_BRIDGE_WORKBENCH_URL="${{BRIDGE_PUBLIC_URL:-${{BRIDGE_URL:-}}}}"
+    --dart-define=CODEX_APP_UPDATER_ENABLED=false
+    --dart-define=CODEX_APP_UPDATER_BRIDGE_URL="${{BRIDGE_PUBLIC_URL:-${{BRIDGE_URL:-}}}}"
+  )
+
+  (cd apps/mobile && flutter pub get)
+  (cd apps/mobile && flutter analyze)
+  (cd apps/mobile && flutter test)
+  (cd apps/mobile && flutter build apk "${{flutter_args[@]}}")
+
+  apk_path="apps/mobile/build/app/outputs/flutter-apk/$SOURCE_APP.apk"
+  cp apps/mobile/build/app/outputs/flutter-apk/app-release.apk "$apk_path"
+  [[ -f "$apk_path" ]] || fail_blocked "bridge-local Android preview APK was not produced at $apk_path"
+
+  apksigner="$(command -v apksigner 2>/dev/null || true)"
+  if [[ -z "$apksigner" ]]; then
+    for sdk_root in "${{ANDROID_HOME:-}}" "${{ANDROID_SDK_ROOT:-}}"; do
+      [[ -n "$sdk_root" ]] || continue
+      apksigner="$(find "$sdk_root/build-tools" -name apksigner -type f 2>/dev/null | sort -V | tail -n 1)"
+      [[ -n "$apksigner" ]] && break
+    done
+  fi
+  [[ -n "$apksigner" ]] || fail_blocked "apksigner is required on the bridge host for signed APK verification"
+
+  mkdir -p .codex/factory
+  "$apksigner" verify --verbose --print-certs "$apk_path" | tee ".codex/factory/$SOURCE_APP-apksigner.txt"
+  grep -q "Verified using" ".codex/factory/$SOURCE_APP-apksigner.txt" || fail_blocked "APK signature verification did not report a verified signature"
+  if grep -Eqi 'CN=Android Debug|Android Debug' ".codex/factory/$SOURCE_APP-apksigner.txt"; then
+    fail_blocked "Preview APK must not be signed with Android debug certificate"
+  fi
+  signer_sha256="$(awk -F': ' '/certificate SHA-256 digest/ {{ print $NF; exit }}' ".codex/factory/$SOURCE_APP-apksigner.txt" | tr -d '[:space:]')"
+  if [[ ! "$signer_sha256" =~ ^[A-Fa-f0-9]{{64}}$ ]]; then
+    fail_blocked "Could not parse signer certificate SHA256 from apksigner output"
+  fi
+  sha256sum "$apk_path" | tee "$apk_path.sha256"
+
+  if git rev-parse --verify "refs/tags/$tag" >/dev/null 2>&1; then
+    tag_commit="$(git rev-list -n 1 "$tag")"
+    [[ "$tag_commit" == "$local_head" ]] || fail_blocked "existing tag $tag does not point at HEAD"
+  else
+    git tag "$tag"
+  fi
+  git push origin "$tag"
+
+  notes_file=".codex/factory/android-preview-release-notes.md"
+  cat >"$notes_file" <<EOF
+Android preview release for $SOURCE_APP.
+
+Preview API: $PREVIEW_API_BASE_URL
+Runtime profile: preview
+Backend kind: cloudflare_preview
+Mock/demo: false
+Production ready: false
+Signer certificate SHA256: $signer_sha256
+EOF
+
+  if gh release view "$tag" --repo "$repo_ref" >/dev/null 2>&1; then
+    gh release upload "$tag" "$apk_path#${{SOURCE_APP}}.apk" --repo "$repo_ref" --clobber
+  else
+    gh release create "$tag" "$apk_path#${{SOURCE_APP}}.apk" \\
+      --repo "$repo_ref" \\
+      --title "Android Preview $version" \\
+      --notes-file "$notes_file" \\
+      --prerelease \\
+      --target "$local_head"
+  fi
+
+  assets="$(gh release view "$tag" --repo "$repo_ref" --json assets --jq '.assets[].name' 2>/dev/null || true)"
+  printf '%s\\n' "$assets" | grep -Fx "${{SOURCE_APP}}.apk" >/dev/null || \\
+    fail_blocked "GitHub release $tag did not expose $SOURCE_APP.apk after bridge-local upload"
+
+  bridge_env_require BRIDGE_URL INSTALLABLE_APPS_REGISTRATION_TOKEN
+  APP_RELEASE_TAG="$tag" \\
+  BRIDGE_REGISTRATION_TOKEN="$INSTALLABLE_APPS_REGISTRATION_TOKEN" \\
+  scripts/register_installable_app.sh
+  printf 'android preview release completed: %s\\n' "$tag"
+  printf '%s\\n' "$assets"
+  exit 0
+fi
 
 if git rev-parse --verify "refs/tags/$tag" >/dev/null 2>&1; then
   tag_commit="$(git rev-list -n 1 "$tag")"
@@ -4675,6 +4787,14 @@ while (( SECONDS <= deadline )); do
     printf 'android preview release completed: %s\\n' "$tag"
     printf '%s\\n' "$assets"
     exit 0
+  fi
+  run_status="$(
+    gh run list --repo "$repo_ref" --workflow "Android Preview Release" --branch "$tag" --limit 1 \\
+      --json databaseId,status,conclusion,url \\
+      --jq '.[0] | select(.status == "completed" and (.conclusion != "success")) | "run=\\(.databaseId) conclusion=\\(.conclusion) url=\\(.url)"' 2>/dev/null || true
+  )"
+  if [[ -n "$run_status" ]]; then
+    fail_blocked "GitHub Actions Android preview workflow failed before producing $SOURCE_APP.apk: $run_status"
   fi
   sleep "$poll"
 done

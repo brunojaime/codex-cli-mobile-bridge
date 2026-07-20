@@ -617,6 +617,12 @@ def test_generator_writes_executable_publish_script(tmp_path: Path) -> None:
     assert "scripts/github_repo_access.sh" in android_preview_content
     assert "bridge_env_load_preview_signing" in android_preview_content
     assert "APP_RUNTIME_PROFILE=preview" in android_preview_content
+    assert 'ANDROID_PREVIEW_RELEASE_MODE="${ANDROID_PREVIEW_RELEASE_MODE:-bridge_local}"' in android_preview_content
+    assert "--github-actions" in android_preview_content
+    assert "flutter build apk" in android_preview_content
+    assert "gh release create" in android_preview_content
+    assert "gh release upload" in android_preview_content
+    assert "gh run list" in android_preview_content
     assert "DEBUG_PREVIEW_SIGNING" not in android_preview_content
     assert "https://preview.nienfos.com/$SOURCE_APP/api" in android_preview_content
     assert "git push origin \"$tag\"" in android_preview_content

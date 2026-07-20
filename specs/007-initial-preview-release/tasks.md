@@ -131,6 +131,14 @@ This file is the legacy task index. Task numbering is local to each plan in `tre
 - [x] T095 Validate preview runtime profiles across all generated sources of truth. ([Task 5](./tasks/plan-11-task-5/task.md))
 - [x] T096 Regenerate and validate final release output freshness and anti-overpromise fields. ([Task 6](./tasks/plan-11-task-6/task.md))
 
+## Plan 12: Bridge-Local Android Preview Publishing
+
+- [x] T097 Specify bridge-local Android preview publishing as the default mode.
+- [x] T098 Generate local Flutter build, signing verification, GitHub prerelease upload, and Bridge registration in `scripts/publish_android_preview_release.sh`.
+- [x] T099 Keep GitHub Actions preview release as explicit fallback only.
+- [x] T100 Fail fast with actionable blockers when local Flutter, Android SDK, `apksigner`, `gh`, signing secrets, or GitHub release upload are unavailable.
+- [x] T101 Add regression coverage for bridge-local default mode and generated script contract.
+
 ## Completion Notes
 
 All tasks in this spec are marked complete. The implementation remains scoped to
