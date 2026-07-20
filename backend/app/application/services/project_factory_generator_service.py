@@ -4691,7 +4691,7 @@ if [[ "$ANDROID_PREVIEW_RELEASE_MODE" == "bridge_local" ]]; then
   (cd apps/mobile && flutter pub get)
   (cd apps/mobile && flutter analyze)
   (cd apps/mobile && flutter test)
-  (cd apps/mobile && flutter build apk "${{flutter_args[@]}}")
+  (cd apps/mobile && flutter build apk --target=lib/main_preview.dart "${{flutter_args[@]}}")
 
   apk_path="apps/mobile/build/app/outputs/flutter-apk/$SOURCE_APP.apk"
   cp apps/mobile/build/app/outputs/flutter-apk/app-release.apk "$apk_path"
@@ -5398,7 +5398,7 @@ EOF
 run_local_apk_build() {{
   configure_preview_signing
   cd "$ROOT_DIR/apps/mobile"
-  flutter build apk --release \\
+  flutter build apk --release --target=lib/main_preview.dart \\
     --dart-define=APP_RUNTIME_PROFILE=preview \\
     --dart-define=API_RUNTIME=cloudflare_preview \\
     --dart-define=API_BASE_URL="$PREVIEW_API_BASE_URL" \\
@@ -6155,7 +6155,7 @@ jobs:
       - name: Build Android preview APK
         working-directory: apps/mobile
         run: |
-          flutter build apk --release \\
+          flutter build apk --release --target=lib/main_preview.dart \\
             --dart-define=APP_RUNTIME_PROFILE="$APP_RUNTIME_PROFILE" \\
             --dart-define=API_RUNTIME="$API_RUNTIME" \\
             --dart-define=API_BASE_URL="$API_BASE_URL" \\
@@ -6164,7 +6164,7 @@ jobs:
             --dart-define=CODEX_FEEDBACK_ENABLED="${{{{ vars.CODEX_FEEDBACK_ENABLED || 'true' }}}}" \\
             --dart-define=CODEX_BRIDGE_DEV_MODE="${{{{ vars.CODEX_BRIDGE_DEV_MODE || 'true' }}}}" \\
             --dart-define=CODEX_BRIDGE_WORKBENCH_URL="${{{{ vars.CODEX_BRIDGE_WORKBENCH_URL }}}}" \\
-            --dart-define=CODEX_APP_UPDATER_ENABLED="${{{{ vars.CODEX_APP_UPDATER_ENABLED || 'false' }}}}" \\
+            --dart-define=CODEX_APP_UPDATER_ENABLED="${{{{ vars.CODEX_APP_UPDATER_ENABLED || 'true' }}}}" \\
             --dart-define=CODEX_APP_UPDATER_BRIDGE_URL="${{{{ vars.CODEX_APP_UPDATER_BRIDGE_URL }}}}"
           cp build/app/outputs/flutter-apk/app-release.apk build/app/outputs/flutter-apk/{slug}.apk
 
@@ -8742,6 +8742,7 @@ def _mobile_files(name: str, slug: str) -> dict[str, str]:
         "apps/mobile/pubspec.yaml": _mobile_pubspec(package_name),
         "apps/mobile/README.md": _mobile_readme(name),
         "apps/mobile/lib/main.dart": _mobile_main_dart(name),
+        "apps/mobile/lib/main_preview.dart": _mobile_preview_main_dart(name),
         "apps/mobile/lib/src/config.dart": _mobile_config_dart(),
         "apps/mobile/lib/src/models.dart": _mobile_models_dart(),
         "apps/mobile/lib/src/api_client.dart": _mobile_api_client_dart(),
@@ -9042,6 +9043,353 @@ class ProjectApp extends StatelessWidget {{
       theme: ThemeData(useMaterial3: true, colorSchemeSeed: Colors.teal),
       home: feedbackWrapped,
     );
+  }}
+}}
+"""
+
+
+def _mobile_preview_main_dart(name: str) -> str:
+    return f"""import 'package:flutter/material.dart';
+import 'package:codex_app_updater/codex_app_updater.dart';
+import 'package:codex_bridge_workbench/codex_bridge_workbench.dart';
+import 'package:codex_developer_feedback_template/developer_feedback_template.dart';
+import 'package:http/http.dart' as http;
+
+import 'src/api_client.dart';
+import 'src/models.dart';
+
+void main() {{
+  const apiBaseUrl = String.fromEnvironment('API_BASE_URL');
+  const apiRuntime = String.fromEnvironment(
+    'API_RUNTIME',
+    defaultValue: 'cloudflare_preview',
+  );
+  const appSlug = String.fromEnvironment('APP_SLUG');
+  const developerWorkbenchEnabled = bool.fromEnvironment(
+    'CODEX_BRIDGE_DEV_MODE',
+    defaultValue: true,
+  );
+  const feedbackEnabled = bool.fromEnvironment(
+    'CODEX_FEEDBACK_ENABLED',
+    defaultValue: true,
+  );
+  const appUpdaterEnabled = bool.fromEnvironment(
+    'CODEX_APP_UPDATER_ENABLED',
+    defaultValue: true,
+  );
+  const feedbackBridgeUrl = String.fromEnvironment('CODEX_FEEDBACK_BRIDGE_URL');
+  const workbenchBridgeUrl = String.fromEnvironment('CODEX_BRIDGE_WORKBENCH_URL');
+  const updaterBridgeUrl = String.fromEnvironment('CODEX_APP_UPDATER_BRIDGE_URL');
+  runApp(PreviewEntrypoint(
+    apiBaseUrl: apiBaseUrl,
+    apiRuntime: apiRuntime,
+    appSlug: appSlug,
+    developerWorkbenchEnabled: developerWorkbenchEnabled,
+    feedbackEnabled: feedbackEnabled,
+    appUpdaterEnabled: appUpdaterEnabled,
+    feedbackBridgeUrl: feedbackBridgeUrl,
+    workbenchBridgeUrl: workbenchBridgeUrl,
+    updaterBridgeUrl: updaterBridgeUrl,
+  ));
+}}
+
+class PreviewEntrypoint extends StatelessWidget {{
+  const PreviewEntrypoint({{
+    super.key,
+    required this.apiBaseUrl,
+    required this.apiRuntime,
+    required this.appSlug,
+    required this.developerWorkbenchEnabled,
+    required this.feedbackEnabled,
+    required this.appUpdaterEnabled,
+    required this.feedbackBridgeUrl,
+    required this.workbenchBridgeUrl,
+    required this.updaterBridgeUrl,
+  }});
+
+  final String apiBaseUrl;
+  final String apiRuntime;
+  final String appSlug;
+  final bool developerWorkbenchEnabled;
+  final bool feedbackEnabled;
+  final bool appUpdaterEnabled;
+  final String feedbackBridgeUrl;
+  final String workbenchBridgeUrl;
+  final String updaterBridgeUrl;
+
+  @override
+  Widget build(BuildContext context) {{
+    final normalizedApiBaseUrl = apiBaseUrl.trim().replaceAll(RegExp(r'/$'), '');
+    final normalizedSlug = appSlug.trim();
+    final configured = normalizedApiBaseUrl.isNotEmpty &&
+        apiRuntime == 'cloudflare_preview' &&
+        normalizedSlug.isNotEmpty;
+    final home = configured
+        ? PreviewHome(
+            projectName: '{name}',
+            api: ProjectApiClient(
+              baseUrl: normalizedApiBaseUrl,
+              client: http.Client(),
+            ),
+          )
+        : const PreviewConfigMissing();
+    final workbenchWrapped = CodexBridgeDevModeWrapper(
+      enabled: developerWorkbenchEnabled && workbenchBridgeUrl.trim().isNotEmpty,
+      bridgeUrl: workbenchBridgeUrl.trim(),
+      workspacePath: normalizedSlug,
+      child: home,
+    );
+    final updaterWrapped = CodexAppUpdater(
+      config: CodexAppUpdaterConfig(
+        enabled: appUpdaterEnabled && updaterBridgeUrl.trim().isNotEmpty,
+        sourceApp: normalizedSlug.isEmpty ? 'generated-project' : normalizedSlug,
+        bridgeUrl: updaterBridgeUrl.trim(),
+        currentVersion: '0.1.0',
+        currentBuild: 1,
+        channel: 'prerelease',
+      ),
+      checkOnStart: appUpdaterEnabled && updaterBridgeUrl.trim().isNotEmpty,
+      checkOnResume: appUpdaterEnabled && updaterBridgeUrl.trim().isNotEmpty,
+      child: workbenchWrapped,
+    );
+    final feedbackWrapped = DeveloperFeedbackTemplate(
+      enabled: feedbackEnabled && feedbackBridgeUrl.trim().isNotEmpty,
+      sourceApp: normalizedSlug.isEmpty ? 'generated-project' : normalizedSlug,
+      sourceDisplayName: '{name}',
+      bridgeUrl: feedbackBridgeUrl.trim(),
+      child: updaterWrapped,
+    );
+    return MaterialApp(
+      title: '{name}',
+      theme: ThemeData(useMaterial3: true, colorSchemeSeed: Colors.teal),
+      home: feedbackWrapped,
+    );
+  }}
+}}
+
+class PreviewConfigMissing extends StatelessWidget {{
+  const PreviewConfigMissing({{super.key}});
+
+  @override
+  Widget build(BuildContext context) {{
+    return const Scaffold(
+      body: Center(
+        child: Padding(
+          padding: EdgeInsets.all(24),
+          child: Text(
+            'API_BASE_URL, API_RUNTIME, and APP_SLUG are required for this preview build.',
+            textAlign: TextAlign.center,
+          ),
+        ),
+      ),
+    );
+  }}
+}}
+
+class PreviewHome extends StatefulWidget {{
+  const PreviewHome({{super.key, required this.projectName, required this.api}});
+
+  final String projectName;
+  final ProjectApiClient api;
+
+  @override
+  State<PreviewHome> createState() => _PreviewHomeState();
+}}
+
+class _PreviewHomeState extends State<PreviewHome> {{
+  final _email = TextEditingController();
+  final _password = TextEditingController();
+  final _passwordConfirmation = TextEditingController();
+  String? _token;
+  AppUser? _user;
+  List<AppNotification> _notifications = const [];
+  String? _error;
+  bool _loading = false;
+
+  @override
+  void initState() {{
+    super.initState();
+    final uri = Uri.base;
+    final invitedEmail = uri.queryParameters['email'] ?? '';
+    if (invitedEmail.isNotEmpty) {{
+      _email.text = invitedEmail;
+    }}
+  }}
+
+  @override
+  void dispose() {{
+    _email.dispose();
+    _password.dispose();
+    _passwordConfirmation.dispose();
+    super.dispose();
+  }}
+
+  @override
+  Widget build(BuildContext context) {{
+    final user = _user;
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(widget.projectName),
+        actions: [
+          if (user != null)
+            IconButton(
+              tooltip: 'Sign out',
+              onPressed: _loading ? null : _logout,
+              icon: const Icon(Icons.logout),
+            ),
+        ],
+      ),
+      body: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 520),
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: user == null ? _authForm(context) : _signedIn(context, user),
+          ),
+        ),
+      ),
+    );
+  }}
+
+  Widget _authForm(BuildContext context) {{
+    final uri = Uri.base;
+    final inviteToken = uri.queryParameters['invite_token'] ?? uri.queryParameters['token'];
+    final inviteState = uri.queryParameters['invite_state'] ?? (inviteToken == null ? 'login' : 'activate');
+    final acceptingInvite = inviteToken != null && inviteState != 'login';
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          acceptingInvite ? 'Accept preview invite' : 'Preview sign in',
+          style: Theme.of(context).textTheme.titleLarge,
+        ),
+        const SizedBox(height: 16),
+        TextField(
+          controller: _email,
+          keyboardType: TextInputType.emailAddress,
+          decoration: const InputDecoration(labelText: 'Email'),
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          controller: _password,
+          obscureText: true,
+          decoration: InputDecoration(
+            labelText: acceptingInvite ? 'Create password' : 'Password',
+          ),
+        ),
+        if (acceptingInvite) ...[
+          const SizedBox(height: 12),
+          TextField(
+            controller: _passwordConfirmation,
+            obscureText: true,
+            decoration: const InputDecoration(labelText: 'Repeat password'),
+          ),
+        ],
+        if (_error != null) ...[
+          const SizedBox(height: 12),
+          Text(_error!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
+        ],
+        const SizedBox(height: 16),
+        FilledButton(
+          onPressed: _loading
+              ? null
+              : () => acceptingInvite
+                  ? _acceptInvite(inviteToken)
+                  : _login(),
+          child: Text(acceptingInvite ? 'Accept invite' : 'Sign in'),
+        ),
+      ],
+    );
+  }}
+
+  Widget _signedIn(BuildContext context, AppUser user) {{
+    return RefreshIndicator(
+      onRefresh: _loadNotifications,
+      child: ListView(
+        children: [
+          ListTile(
+            leading: const Icon(Icons.verified_user_outlined),
+            title: Text(user.email),
+            subtitle: Text(user.roles.join(', ')),
+          ),
+          const Divider(),
+          Text('Notifications', style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(height: 8),
+          if (_notifications.isEmpty)
+            const ListTile(title: Text('No notifications yet.')),
+          for (final notification in _notifications)
+            ListTile(
+              leading: const Icon(Icons.notifications_outlined),
+              title: Text(notification.title),
+              subtitle: Text(notification.body),
+            ),
+        ],
+      ),
+    );
+  }}
+
+  Future<void> _login() async {{
+    await _run(() async {{
+      final auth = await widget.api.login(
+        email: _email.text.trim(),
+        password: _password.text,
+      );
+      _token = auth.accessToken;
+      _user = await widget.api.me(_token!);
+      await _loadNotifications();
+    }});
+  }}
+
+  Future<void> _acceptInvite(String inviteToken) async {{
+    if (_password.text != _passwordConfirmation.text) {{
+      setState(() => _error = 'Passwords must match.');
+      return;
+    }}
+    await _run(() async {{
+      final auth = await widget.api.acceptPreviewInvite(
+        inviteToken: inviteToken,
+        email: _email.text.trim(),
+        password: _password.text,
+        passwordConfirmation: _passwordConfirmation.text,
+      );
+      _token = auth.accessToken;
+      _user = await widget.api.me(_token!);
+      await _loadNotifications();
+    }});
+  }}
+
+  Future<void> _loadNotifications() async {{
+    final token = _token;
+    if (token == null) return;
+    _notifications = await widget.api.notifications(token);
+    if (mounted) setState(() {{}});
+  }}
+
+  Future<void> _logout() async {{
+    final token = _token;
+    setState(() {{
+      _token = null;
+      _user = null;
+      _notifications = const [];
+    }});
+    if (token != null) {{
+      await widget.api.logout(token);
+    }}
+  }}
+
+  Future<void> _run(Future<void> Function() action) async {{
+    setState(() {{
+      _loading = true;
+      _error = null;
+    }});
+    try {{
+      await action();
+    }} catch (err) {{
+      if (mounted) setState(() => _error = err.toString());
+    }} finally {{
+      if (mounted) setState(() => _loading = false);
+    }}
   }}
 }}
 """

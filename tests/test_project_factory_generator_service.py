@@ -605,6 +605,10 @@ def test_generator_writes_executable_publish_script(tmp_path: Path) -> None:
         "|| 'true' }}\""
     ) in android_preview
     assert "--dart-define=CODEX_BRIDGE_WORKBENCH_URL=" in android_preview
+    assert "flutter build apk --release --target=lib/main_preview.dart" in (
+        android_preview
+    )
+    assert "vars.CODEX_APP_UPDATER_ENABLED || 'true'" in android_preview
 
     android_preview_script = tmp_path / "clinica-norte/scripts/publish_android_preview_release.sh"
     assert android_preview_script.is_file()
@@ -620,6 +624,7 @@ def test_generator_writes_executable_publish_script(tmp_path: Path) -> None:
     assert 'ANDROID_PREVIEW_RELEASE_MODE="${ANDROID_PREVIEW_RELEASE_MODE:-bridge_local}"' in android_preview_content
     assert "--github-actions" in android_preview_content
     assert "flutter build apk" in android_preview_content
+    assert "--target=lib/main_preview.dart" in android_preview_content
     assert "gh release create" in android_preview_content
     assert "gh release upload" in android_preview_content
     assert "gh run list" in android_preview_content
@@ -2293,6 +2298,7 @@ def test_generator_writes_flutter_mobile_v1_template(tmp_path: Path) -> None:
     assert (mobile / "pubspec.yaml").is_file()
     assert (mobile / "README.md").is_file()
     assert (mobile / "lib/main.dart").is_file()
+    assert (mobile / "lib/main_preview.dart").is_file()
     assert (mobile / "lib/src/config.dart").is_file()
     assert (mobile / "lib/src/models.dart").is_file()
     assert (mobile / "lib/src/api_client.dart").is_file()
@@ -2330,6 +2336,15 @@ def test_generator_writes_flutter_mobile_v1_template(tmp_path: Path) -> None:
     assert "DeveloperFeedbackTemplate" in main
     assert "APP_RUNTIME_PROFILE" in main
     assert "MockProjectApiClient" in main
+    preview_main = (mobile / "lib/main_preview.dart").read_text(encoding="utf-8")
+    assert "ProjectApiClient" in preview_main
+    assert "MockProjectApiClient" not in preview_main
+    assert "mock_api_client" not in preview_main
+    assert "Enter demo as role" not in preview_main
+    assert "seedRoles" not in preview_main
+    assert "mock://local" not in preview_main
+    assert "CODEX_APP_UPDATER_ENABLED" in preview_main
+    assert "CodexAppUpdater" in preview_main
     api_client = (mobile / "lib/src/api_client.dart").read_text(encoding="utf-8")
     assert "/health" in api_client
     assert "/auth/register" in api_client
