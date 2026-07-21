@@ -47,6 +47,12 @@ class _QueuedExecution:
     serial_key: str | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class _McpAuthFailure:
+    server_id: str | None
+    detail: str
+
+
 class LocalExecutionProvider(ExecutionProvider):
     def __init__(
         self,
@@ -484,6 +490,10 @@ class LocalExecutionProvider(ExecutionProvider):
         resolved_workdir = workdir or self._workdir
         final_agent_message_item_ids: set[str] = set()
         non_final_agent_message_item_ids: set[str] = set()
+        required_mcp_server_ids = _required_mcp_server_ids(
+            message=message,
+            codex_options=codex_options,
+        )
 
         def response_buffer_setter(value: str) -> None:
             nonlocal response_buffer
@@ -552,6 +562,7 @@ class LocalExecutionProvider(ExecutionProvider):
                 mark_turn_completed=lambda: None,
                 final_agent_message_item_ids=final_agent_message_item_ids,
                 non_final_agent_message_item_ids=non_final_agent_message_item_ids,
+                required_mcp_server_ids=required_mcp_server_ids,
             )
             self._app_server_send(process, {"method": "initialized"})
 
@@ -584,6 +595,7 @@ class LocalExecutionProvider(ExecutionProvider):
                         mark_turn_completed=lambda: None,
                         final_agent_message_item_ids=final_agent_message_item_ids,
                         non_final_agent_message_item_ids=non_final_agent_message_item_ids,
+                        required_mcp_server_ids=required_mcp_server_ids,
                     )
                 except _AppServerRequestError:
                     thread_id = None
@@ -615,6 +627,7 @@ class LocalExecutionProvider(ExecutionProvider):
                     mark_turn_completed=lambda: None,
                     final_agent_message_item_ids=final_agent_message_item_ids,
                     non_final_agent_message_item_ids=non_final_agent_message_item_ids,
+                    required_mcp_server_ids=required_mcp_server_ids,
                 )
 
             if self._is_cancelled(job_id):
@@ -671,6 +684,7 @@ class LocalExecutionProvider(ExecutionProvider):
                 mark_turn_completed=lambda: turn_completed_setter(),
                 final_agent_message_item_ids=final_agent_message_item_ids,
                 non_final_agent_message_item_ids=non_final_agent_message_item_ids,
+                required_mcp_server_ids=required_mcp_server_ids,
             )
 
             if self._timeout_seconds is None or self._timeout_seconds <= 0:
@@ -697,6 +711,7 @@ class LocalExecutionProvider(ExecutionProvider):
                     timeout_seconds=self._timeout_seconds,
                     final_agent_message_item_ids=final_agent_message_item_ids,
                     non_final_agent_message_item_ids=non_final_agent_message_item_ids,
+                    required_mcp_server_ids=required_mcp_server_ids,
                 )
 
             if self._is_cancelled(job_id):
@@ -742,6 +757,33 @@ class LocalExecutionProvider(ExecutionProvider):
             if self._is_cancelled(job_id):
                 return
             fallback_error = self._first_non_empty(stderr_lines) or str(exc)
+            auth_failure = _mcp_auth_failure_from_text(fallback_error)
+            if auth_failure is not None:
+                if _mcp_server_is_required(
+                    auth_failure.server_id,
+                    required_mcp_server_ids,
+                ):
+                    self._set_state(
+                        job_id,
+                        status=JobStatus.FAILED,
+                        error=_required_mcp_auth_error(auth_failure),
+                        provider_session_id=thread_id,
+                        phase="Blocked",
+                        latest_activity=(
+                            "A required MCP integration needs authentication."
+                        ),
+                    )
+                    return
+                warning = _optional_mcp_auth_warning(auth_failure)
+                self._set_state(
+                    job_id,
+                    status=JobStatus.COMPLETED,
+                    response=warning,
+                    provider_session_id=thread_id,
+                    phase="Completed with warnings",
+                    latest_activity=warning,
+                )
+                return
             self._set_state(
                 job_id,
                 status=JobStatus.FAILED,
@@ -749,6 +791,17 @@ class LocalExecutionProvider(ExecutionProvider):
                 provider_session_id=thread_id,
                 phase="Failed",
                 latest_activity=str(exc),
+            )
+        except _AppServerRequiredMcpAuthError as exc:
+            if self._is_cancelled(job_id):
+                return
+            self._set_state(
+                job_id,
+                status=JobStatus.FAILED,
+                error=str(exc),
+                provider_session_id=thread_id,
+                phase="Blocked",
+                latest_activity="A required MCP integration needs authentication.",
             )
         except Exception as exc:  # pragma: no cover - defensive path
             if self._is_cancelled(job_id):
@@ -1071,6 +1124,7 @@ class LocalExecutionProvider(ExecutionProvider):
         mark_turn_completed: Callable[[], None],
         final_agent_message_item_ids: set[str],
         non_final_agent_message_item_ids: set[str],
+        required_mcp_server_ids: set[str],
     ) -> str:
         payload = self._await_app_server_response(
             process,
@@ -1082,6 +1136,7 @@ class LocalExecutionProvider(ExecutionProvider):
             mark_turn_completed=mark_turn_completed,
             final_agent_message_item_ids=final_agent_message_item_ids,
             non_final_agent_message_item_ids=non_final_agent_message_item_ids,
+            required_mcp_server_ids=required_mcp_server_ids,
         )
         result = payload.get("result")
         if not isinstance(result, dict):
@@ -1112,6 +1167,7 @@ class LocalExecutionProvider(ExecutionProvider):
         mark_turn_completed: Callable[[], None],
         final_agent_message_item_ids: set[str],
         non_final_agent_message_item_ids: set[str],
+        required_mcp_server_ids: set[str],
     ) -> dict[str, object]:
         while True:
             payload = self._read_app_server_payload(process)
@@ -1134,6 +1190,7 @@ class LocalExecutionProvider(ExecutionProvider):
                 mark_turn_completed=mark_turn_completed,
                 final_agent_message_item_ids=final_agent_message_item_ids,
                 non_final_agent_message_item_ids=non_final_agent_message_item_ids,
+                required_mcp_server_ids=required_mcp_server_ids,
             )
 
     def _stream_app_server_notifications(
@@ -1148,6 +1205,7 @@ class LocalExecutionProvider(ExecutionProvider):
         mark_turn_completed: Callable[[], None],
         final_agent_message_item_ids: set[str],
         non_final_agent_message_item_ids: set[str],
+        required_mcp_server_ids: set[str],
         timeout_seconds: int | None = None,
     ) -> None:
         deadline = (
@@ -1179,6 +1237,7 @@ class LocalExecutionProvider(ExecutionProvider):
                 mark_turn_completed=mark_turn_completed,
                 final_agent_message_item_ids=final_agent_message_item_ids,
                 non_final_agent_message_item_ids=non_final_agent_message_item_ids,
+                required_mcp_server_ids=required_mcp_server_ids,
             ):
                 return
 
@@ -1236,9 +1295,28 @@ class LocalExecutionProvider(ExecutionProvider):
         mark_turn_completed: Callable[[], None],
         final_agent_message_item_ids: set[str],
         non_final_agent_message_item_ids: set[str],
+        required_mcp_server_ids: set[str] | None = None,
     ) -> bool:
         method = payload.get("method")
         if not isinstance(method, str):
+            return False
+        required_mcp_server_ids = required_mcp_server_ids or set()
+
+        auth_failure = _mcp_auth_failure_from_app_server_payload(payload)
+        if auth_failure is not None:
+            if _mcp_server_is_required(
+                auth_failure.server_id,
+                required_mcp_server_ids,
+            ):
+                raise _AppServerRequiredMcpAuthError(
+                    _required_mcp_auth_error(auth_failure)
+                )
+            self._set_state(
+                job_id,
+                status=JobStatus.RUNNING,
+                phase="Running tools",
+                latest_activity=_optional_mcp_auth_warning(auth_failure),
+            )
             return False
 
         if method in {"item/started", "item/completed"}:
@@ -1856,3 +1934,176 @@ class LocalExecutionProvider(ExecutionProvider):
 
 class _AppServerRequestError(RuntimeError):
     pass
+
+
+class _AppServerRequiredMcpAuthError(RuntimeError):
+    pass
+
+
+_MCP_AUTH_REQUIRED_MARKERS = (
+    "authrequirederror",
+    "authrequired",
+    "missing_bearer_token",
+    "bearer resource_metadata",
+    "oauth-protected-resource",
+    "oauth required",
+    "authentication required",
+    "authorization required",
+    "missing bearer token",
+)
+
+_MCP_TRANSPORT_AUTH_MARKERS = (
+    "transport channel closed",
+    "worker quit with fatal",
+    "rmcp::transport::worker",
+)
+
+_GOOGLE_CALENDAR_SERVER_ALIASES = frozenset(
+    {
+        "google-calendar",
+        "google_calendar",
+        "googlecalendar",
+        "ludmilo",
+    }
+)
+
+
+def _required_mcp_server_ids(
+    *,
+    message: str,
+    codex_options: CodexRunOptions | None,
+) -> set[str]:
+    required: set[str] = set()
+    if codex_options is not None:
+        required.update(codex_options.normalized().mcp_server_ids)
+
+    normalized_message = message.lower()
+    if (
+        "google calendar" in normalized_message
+        or "google-calendar" in normalized_message
+        or "google_calendar" in normalized_message
+        or "calendar.google.com" in normalized_message
+    ):
+        required.update(_GOOGLE_CALENDAR_SERVER_ALIASES)
+    return {_normalize_mcp_server_id(server_id) for server_id in required if server_id}
+
+
+def _mcp_auth_failure_from_app_server_payload(
+    payload: dict[str, object],
+) -> _McpAuthFailure | None:
+    method = str(payload.get("method") or "")
+    if method not in {
+        "codex/event/mcp_startup_update",
+        "mcpServer/startupStatus/updated",
+    }:
+        return None
+    params = payload.get("params")
+    if not isinstance(params, dict):
+        return None
+
+    server_id: str | None = None
+    detail = ""
+    msg = params.get("msg")
+    if isinstance(msg, dict):
+        server = msg.get("server")
+        if isinstance(server, str) and server.strip():
+            server_id = server.strip()
+        status = msg.get("status")
+        if isinstance(status, dict):
+            raw_error = status.get("error")
+            if raw_error is not None:
+                detail = str(raw_error)
+            state = str(status.get("state") or "")
+            if state and detail:
+                detail = f"{state}: {detail}"
+    else:
+        server = params.get("name") or params.get("server")
+        if isinstance(server, str) and server.strip():
+            server_id = server.strip()
+        raw_error = params.get("error")
+        if raw_error is not None:
+            detail = str(raw_error)
+        status = params.get("status")
+        if status is not None and detail:
+            detail = f"{status}: {detail}"
+
+    if not _is_mcp_auth_required_text(detail):
+        return None
+    if server_id is None:
+        server_id = _infer_mcp_server_id_from_text(detail)
+    return _McpAuthFailure(server_id=server_id, detail=detail)
+
+
+def _mcp_auth_failure_from_text(value: str) -> _McpAuthFailure | None:
+    if not _is_mcp_auth_required_text(value):
+        return None
+    return _McpAuthFailure(
+        server_id=_infer_mcp_server_id_from_text(value),
+        detail=value,
+    )
+
+
+def _is_mcp_auth_required_text(value: str) -> bool:
+    normalized = value.lower()
+    if not any(marker in normalized for marker in _MCP_AUTH_REQUIRED_MARKERS):
+        return False
+    if any(marker in normalized for marker in _MCP_TRANSPORT_AUTH_MARKERS):
+        return True
+    return True
+
+
+def _infer_mcp_server_id_from_text(value: str) -> str | None:
+    normalized = value.lower()
+    if (
+        "google-calendar-mcp-worker" in normalized
+        or "google calendar" in normalized
+        or "google-calendar" in normalized
+        or "calendar.google.com" in normalized
+    ):
+        return "google-calendar"
+    return None
+
+
+def _mcp_server_is_required(
+    server_id: str | None,
+    required_mcp_server_ids: set[str],
+) -> bool:
+    if not server_id:
+        return False
+    normalized = _normalize_mcp_server_id(server_id)
+    if normalized in required_mcp_server_ids:
+        return True
+    if (
+        normalized in _GOOGLE_CALENDAR_SERVER_ALIASES
+        and required_mcp_server_ids.intersection(_GOOGLE_CALENDAR_SERVER_ALIASES)
+    ):
+        return True
+    return False
+
+
+def _optional_mcp_auth_warning(failure: _McpAuthFailure) -> str:
+    label = failure.server_id or "external MCP server"
+    return (
+        f"tool_unavailable/auth_required: optional MCP `{label}` requires "
+        "authentication; continuing without it."
+    )
+
+
+def _required_mcp_auth_error(failure: _McpAuthFailure) -> str:
+    code = _required_mcp_auth_code(failure.server_id)
+    return (
+        f"{code}: Required MCP integration requires authentication. "
+        "Next: authenticate or disable that required integration, then retry "
+        "Domain Factory."
+    )
+
+
+def _required_mcp_auth_code(server_id: str | None) -> str:
+    normalized = _normalize_mcp_server_id(server_id or "")
+    if normalized in _GOOGLE_CALENDAR_SERVER_ALIASES:
+        return "google_calendar_auth_required"
+    return "required_mcp_auth_required"
+
+
+def _normalize_mcp_server_id(value: str) -> str:
+    return value.strip().lower().replace("_", "-")
