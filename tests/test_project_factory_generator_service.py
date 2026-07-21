@@ -1098,6 +1098,99 @@ def test_generated_preview_api_smoke_retries_until_assets_bound(
     assert Handler.health_calls == 2
 
 
+def test_android_preview_release_ignores_domain_factory_specs_dirty_state(
+    tmp_path: Path,
+) -> None:
+    manifest_plan = ProjectFactoryManifestService(
+        projects_root=tmp_path,
+    ).plan_manifest(
+        ProjectFactoryManifestInput(
+            name="Clinica Norte",
+            business_type="medical",
+            primary_goal="Reservar turnos",
+        )
+    )
+    ProjectFactoryGeneratorService().generate(manifest_plan)
+
+    project = tmp_path / "clinica-norte"
+    domain_spec = project / "specs/019-domain-factory-abc123/spec.md"
+    domain_spec.parent.mkdir(parents=True)
+    domain_spec.write_text("# Domain Factory draft\n", encoding="utf-8")
+    assert "?? specs/019-domain-factory-abc123/" in _git(
+        ["status", "--porcelain"],
+        project,
+    ).stdout
+
+    publish_script = (
+        project / "scripts/publish_android_preview_release.sh"
+    ).read_text(encoding="utf-8")
+    function_source = _extract_shell_function(
+        publish_script,
+        "preview_release_blocking_git_status",
+    )
+    completed = subprocess.run(
+        [
+            "bash",
+            "-c",
+            f"{function_source}\npreview_release_blocking_git_status",
+        ],
+        cwd=project,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout == ""
+
+
+def test_android_preview_release_ignores_gradle_kotlin_dirty_state(
+    tmp_path: Path,
+) -> None:
+    manifest_plan = ProjectFactoryManifestService(
+        projects_root=tmp_path,
+    ).plan_manifest(
+        ProjectFactoryManifestInput(
+            name="Clinica Norte",
+            business_type="medical",
+            primary_goal="Reservar turnos",
+        )
+    )
+    ProjectFactoryGeneratorService().generate(manifest_plan)
+
+    project = tmp_path / "clinica-norte"
+    kotlin_state = project / "apps/mobile/android/.kotlin/build-history.bin"
+    kotlin_state.parent.mkdir(parents=True)
+    kotlin_state.write_text("gradle kotlin state\n", encoding="utf-8")
+
+    assert (project / "apps/mobile/android/.gitignore").read_text(
+        encoding="utf-8",
+    ).splitlines() == ["upload-keystore.jks", "key.properties", ".kotlin/"]
+    assert ".kotlin" not in _git(["status", "--porcelain"], project).stdout
+
+    publish_script = (
+        project / "scripts/publish_android_preview_release.sh"
+    ).read_text(encoding="utf-8")
+    function_source = _extract_shell_function(
+        publish_script,
+        "preview_release_blocking_git_status",
+    )
+    completed = subprocess.run(
+        [
+            "bash",
+            "-c",
+            f"{function_source}\npreview_release_blocking_git_status",
+        ],
+        cwd=project,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout == ""
+
+
 def test_generated_initial_preview_validation_runs_all_flutter_checks(
     tmp_path: Path,
 ) -> None:
@@ -3011,3 +3104,19 @@ def _git(args: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
         capture_output=True,
         check=True,
     )
+
+
+def _extract_shell_function(script: str, name: str) -> str:
+    lines = script.splitlines()
+    start = next(
+        index for index, line in enumerate(lines) if line.startswith(f"{name}()")
+    )
+    selected: list[str] = []
+    depth = 0
+    for line in lines[start:]:
+        selected.append(line)
+        depth += line.count("{")
+        depth -= line.count("}")
+        if selected and depth == 0:
+            return "\n".join(selected)
+    raise AssertionError(f"shell function not closed: {name}")
