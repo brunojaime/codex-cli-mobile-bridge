@@ -29,6 +29,16 @@ from backend.app.domain.repositories.chat_repository import ChatRepository
 
 _DOMAIN_FACTORY_GENERATOR_LABEL = "Domain Factory"
 _DOMAIN_FACTORY_REVIEWER_LABEL = "Domain Reviewer"
+_DOMAIN_FACTORY_UX_STATUS = {
+    "status": "disabled_by_configuration",
+    "message": "UX specialist disabled by configuration.",
+    "reason": (
+        "Automatic Domain Factory UX sequencing is deferred; Domain Factory uses "
+        "the paired Domain Factory generator and Domain Reviewer workflow."
+    ),
+    "automaticDomainFactoryUx": False,
+    "manualCommands": ["/ux", "/ux-full"],
+}
 _MAX_CONTEXT_MARKDOWN_CHARS = 5_000
 _MAX_PROMPT_CHARS = 11_500
 CRITICAL_BASELINE_FILES = (
@@ -294,6 +304,7 @@ class DomainFactoryContext:
             "followUpQuestions": list(DOMAIN_FOLLOW_UP_QUESTIONS),
             "rolePermissionModel": DOMAIN_ROLE_PERMISSION_MODEL,
             "releaseGuardrails": DOMAIN_RELEASE_GUARDRAILS,
+            "uxLaneStatus": dict(_DOMAIN_FACTORY_UX_STATUS),
             "firstSpecSummary": self.first_spec_summary,
             "blockers": [blocker.to_payload() for blocker in self.blockers],
         }
@@ -690,6 +701,8 @@ class DomainFactoryService:
             "sessionId": session.id,
             "reviewerFeedbackBecomesNextGeneratorPrompt": True,
             "agentPreset": "review",
+            "agentOrder": ["domain_generator", "domain_reviewer"],
+            "uxLaneStatus": dict(_DOMAIN_FACTORY_UX_STATUS),
             "updatedAt": _now_iso(),
         }
         workflow_path.write_text(
@@ -701,6 +714,7 @@ class DomainFactoryService:
             {
                 "modeStatus": "implementing",
                 "workflowEvidencePath": str(workflow_path.relative_to(workspace)),
+                "uxLaneStatus": dict(_DOMAIN_FACTORY_UX_STATUS),
                 "updatedAt": _now_iso(),
             }
         )
@@ -973,6 +987,7 @@ class DomainFactoryService:
             "intake": _domain_intake_contract_payload(),
             "rolePermissionModel": DOMAIN_ROLE_PERMISSION_MODEL,
             "releaseGuardrails": DOMAIN_RELEASE_GUARDRAILS,
+            "uxLaneStatus": dict(_DOMAIN_FACTORY_UX_STATUS),
         }
         state_path.write_text(
             json.dumps(payload, indent=2, sort_keys=True) + "\n",
@@ -1185,6 +1200,7 @@ Preview: {context.preview_url or "unknown"}
 Preview API: {context.api_url or "unknown"}
 Baseline commit: {context.baseline_commit or "unknown"}
 SDD run: {spec_root or "pending"}
+UX lane: {_DOMAIN_FACTORY_UX_STATUS["message"]} Manual UX remains available through /ux or /ux-full after the domain brief when needed.
 
 Send the business/domain brief here. You can paste a long description and attach visual references, logo/icon ideas, screenshots, or exact assets.
 

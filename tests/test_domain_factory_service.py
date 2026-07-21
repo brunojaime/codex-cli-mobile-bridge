@@ -40,6 +40,17 @@ def test_start_domain_factory_configures_current_session_and_writes_sdd(
     assert result.session.workspace_path == str(workspace)
     assert result.context.source_app == "clinica-norte"
     assert result.context.api_url == "https://preview.nienfos.com/clinica-norte/api"
+    context_payload = result.context.to_payload()
+    assert context_payload["uxLaneStatus"] == {
+        "status": "disabled_by_configuration",
+        "message": "UX specialist disabled by configuration.",
+        "reason": (
+            "Automatic Domain Factory UX sequencing is deferred; Domain Factory uses "
+            "the paired Domain Factory generator and Domain Reviewer workflow."
+        ),
+        "automaticDomainFactoryUx": False,
+        "manualCommands": ["/ux", "/ux-full"],
+    }
     assert result.state_path == ".codex/factory/domain-factory-state.json"
     assert result.spec_root is not None
 
@@ -52,6 +63,7 @@ def test_start_domain_factory_configures_current_session_and_writes_sdd(
     assert reviewer.label == "Domain Reviewer"
     assert generator.enabled is True
     assert reviewer.enabled is True
+    assert configuration.agents[AgentId.UX].enabled is False
     assert "not creating a new project" in generator.prompt
     assert "Owner/admin must retain access" in generator.prompt
     assert "mock/demo/local/placeholder data" in generator.prompt
@@ -62,6 +74,7 @@ def test_start_domain_factory_configures_current_session_and_writes_sdd(
     assert messages[0].dedupe_key == f"domain-factory:start:{session.id}:{workspace}"
     assert "Domain Factory mode is active" in messages[0].content
     assert "Send the business/domain brief here" in messages[0].content
+    assert "UX specialist disabled by configuration" in messages[0].content
 
     state = json.loads(
         (workspace / ".codex/factory/domain-factory-state.json").read_text(
@@ -71,6 +84,8 @@ def test_start_domain_factory_configures_current_session_and_writes_sdd(
     assert state["sessionId"] == session.id
     assert state["sourceApp"] == "clinica-norte"
     assert state["modeStatus"] == "intake"
+    assert state["uxLaneStatus"]["status"] == "disabled_by_configuration"
+    assert state["uxLaneStatus"]["automaticDomainFactoryUx"] is False
     assert state["guardrails"]["mockDemoRequiresExplicitUserRequest"] is True
     assert state["releaseGuardrails"]["mustNotOverwriteBuild"] == 1
     assert state["rolePermissionModel"]["owner"]["allAccess"] is True
@@ -463,11 +478,14 @@ def test_domain_factory_confirm_implementation_writes_paired_workflow_evidence(
     )
     assert workflow["mode"] == "generator_reviewer_paired"
     assert workflow["reviewerFeedbackBecomesNextGeneratorPrompt"] is True
+    assert workflow["agentOrder"] == ["domain_generator", "domain_reviewer"]
+    assert workflow["uxLaneStatus"]["status"] == "disabled_by_configuration"
     updated = repository.get_session(session.id)
     assert updated is not None
     configuration = updated.agent_configuration.normalized()
     assert configuration.agents[AgentId.GENERATOR].enabled is True
     assert configuration.agents[AgentId.REVIEWER].enabled is True
+    assert configuration.agents[AgentId.UX].enabled is False
     assert configuration.preset.value == "review"
 
 
