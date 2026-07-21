@@ -698,6 +698,7 @@ class LocalExecutionProvider(ExecutionProvider):
                     mark_turn_completed=lambda: turn_completed_setter(),
                     final_agent_message_item_ids=final_agent_message_item_ids,
                     non_final_agent_message_item_ids=non_final_agent_message_item_ids,
+                    required_mcp_server_ids=required_mcp_server_ids,
                 )
             else:
                 self._stream_app_server_notifications(
