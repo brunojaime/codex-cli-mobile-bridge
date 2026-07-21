@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from fastapi.testclient import TestClient
+
 from backend.app.application.services.domain_factory_service import (
     DomainFactoryService,
 )
@@ -12,6 +14,7 @@ from backend.app.domain.entities.agent_configuration import AgentId
 from backend.app.domain.entities.codex_options import CodexRunOptions
 from backend.app.domain.entities.chat_session import ChatSession
 from backend.app.domain.entities.job import JobStatus
+from backend.app.infrastructure.config.settings import Settings
 from backend.app.infrastructure.execution.base import ExecutionProvider
 from backend.app.infrastructure.persistence.in_memory_chat_repository import (
     InMemoryChatRepository,
@@ -184,6 +187,55 @@ def test_domain_factory_context_reports_ux_status_for_legacy_state_without_field
     context = service.build_context(session_id=session.id)
 
     ux_status = context.to_payload()["uxLaneStatus"]
+    assert ux_status["status"] == "disabled_by_configuration"
+    assert ux_status["automaticDomainFactoryUx"] is False
+    assert ux_status["manualCommands"] == ["/ux", "/ux-full"]
+
+
+def test_session_detail_reports_domain_factory_ux_status_from_legacy_state(
+    tmp_path: Path,
+) -> None:
+    workspace = _baseline_workspace(tmp_path)
+    session_workspace = tmp_path / "projects" / "session-shell"
+    session_workspace.mkdir(parents=True)
+    client = TestClient(
+        create_app(
+            Settings(
+                projects_root=str(tmp_path / "projects"),
+                chat_store_backend="memory",
+                codex_command="python3 tests/fixtures/fake_codex.py",
+                codex_use_exec=False,
+                bridge_environment="dev",
+                audio_transcription_backend="auto",
+                speech_synthesis_backend="disabled",
+            )
+        )
+    )
+    session_response = client.post(
+        "/sessions",
+        json={
+            "title": "Legacy Domain",
+            "workspace_path": str(session_workspace),
+        },
+    )
+    assert session_response.status_code == 201
+    session_id = session_response.json()["id"]
+    start_response = client.post(
+        f"/sessions/{session_id}/domain-factory/start",
+        json={"workspace_path": str(workspace)},
+    )
+    assert start_response.status_code == 200
+    state_path = workspace / ".codex/factory/domain-factory-state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state.pop("uxLaneStatus")
+    state_path.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+
+    detail_response = client.get(f"/sessions/{session_id}")
+
+    assert detail_response.status_code == 200
+    payload = detail_response.json()
+    ux_status = payload["domainFactoryContext"]["uxLaneStatus"]
+    assert payload["domainFactoryContext"]["workspacePath"] == str(workspace)
     assert ux_status["status"] == "disabled_by_configuration"
     assert ux_status["automaticDomainFactoryUx"] is False
     assert ux_status["manualCommands"] == ["/ux", "/ux-full"]

@@ -119,6 +119,8 @@ class DomainFactoryBlockedReasonResponse(BaseModel):
 
 
 class DomainFactoryContextResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
     kind: str
     version: int
     status: str
@@ -141,6 +143,7 @@ class DomainFactoryContextResponse(BaseModel):
     domainIntakeFields: list[str] = Field(default_factory=list)
     baselineIntakeFieldsToAvoid: list[str] = Field(default_factory=list)
     firstSpecSummary: str | None = None
+    uxLaneStatus: dict[str, Any] = Field(default_factory=dict)
     blockers: list[DomainFactoryBlockedReasonResponse] = Field(default_factory=list)
 
 
@@ -2949,6 +2952,8 @@ class TranscriptWindowResponse(BaseModel):
 
 
 class SessionDetailResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     id: str
     title: str
     archived_at: datetime | None = None
@@ -2968,6 +2973,10 @@ class SessionDetailResponse(BaseModel):
     auto_reviewer_prompt: str | None = None
     auto_turn_index: int = 0
     reviewer_state: ReviewerLifecycleState = ReviewerLifecycleState.OFF
+    domain_factory_context: DomainFactoryContextResponse | None = Field(
+        default=None,
+        alias="domainFactoryContext",
+    )
     conversation_product: ConversationProductResponse
     topic_description: str | None = None
     current_run: "CurrentRunExecutionResponse | None" = None
@@ -2991,6 +3000,7 @@ class SessionDetailResponse(BaseModel):
         turn_summaries: list[ChatTurnSummary] | None = None,
         jobs_by_id: dict[str, Job] | None = None,
         run_configurations_by_id: dict[str, AgentConfiguration] | None = None,
+        domain_factory_context: dict[str, Any] | None = None,
     ) -> "SessionDetailResponse":
         metadata_messages = metadata_messages or messages
         current_run = derive_current_run_execution(
@@ -3036,6 +3046,11 @@ class SessionDetailResponse(BaseModel):
                 session,
                 messages=metadata_messages,
                 jobs_by_id=jobs_by_id,
+            ),
+            domain_factory_context=(
+                DomainFactoryContextResponse(**domain_factory_context)
+                if domain_factory_context is not None
+                else None
             ),
             conversation_product=ConversationProductResponse.from_domain(
                 derive_conversation_product(

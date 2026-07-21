@@ -5895,6 +5895,7 @@ async def get_session(
     limit: int = Query(default=40, ge=1, le=200),
     transcript: str = Query(default="full"),
     service: MessageService = Depends(get_message_service),
+    container: AppContainer = Depends(get_container),
 ) -> SessionDetailResponse:
     session = service.refresh_session(session_id)
     if session is None:
@@ -5919,6 +5920,15 @@ async def get_session(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    domain_factory_context: dict[str, object] | None = None
+    if refreshed_session.agent_profile_id == "domain-factory":
+        try:
+            domain_factory_context = container.domain_factory_service.build_context(
+                session_id=session_id,
+            ).to_payload()
+        except (RuntimeError, ValueError):
+            domain_factory_context = None
+
     return SessionDetailResponse.from_domain(
         refreshed_session,
         messages=transcript_window.messages,
@@ -5929,6 +5939,7 @@ async def get_session(
         run_configurations_by_id=_run_configurations_by_id_for_session(
             service, session_id
         ),
+        domain_factory_context=domain_factory_context,
     )
 
 

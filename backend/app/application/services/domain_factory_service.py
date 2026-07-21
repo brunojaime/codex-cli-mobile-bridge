@@ -403,9 +403,7 @@ class DomainFactoryService:
         workspace_path: str | None = None,
     ) -> DomainFactoryContext:
         session = self._require_session(session_id)
-        workspace = self._validate_workspace_path(
-            workspace_path or session.workspace_path
-        )
+        workspace = self._resolve_context_workspace(session, workspace_path)
         bridge_manifest = _read_yaml(workspace / "codex-bridge.yaml")
         init_result = _read_json(workspace / ".codex/factory/init-result.json")
         project_manifest = _read_yaml(workspace / ".codex/project.yaml")
@@ -874,6 +872,48 @@ class DomainFactoryService:
         if not workspace.is_dir():
             raise ValueError(f"Workspace path does not exist: {workspace}")
         return workspace
+
+    def _resolve_context_workspace(
+        self,
+        session: ChatSession,
+        workspace_path: str | None,
+    ) -> Path:
+        if workspace_path:
+            return self._validate_workspace_path(workspace_path)
+        state_workspace = self._find_state_workspace_for_session(session.id)
+        if state_workspace is not None:
+            return state_workspace
+        return self._validate_workspace_path(session.workspace_path)
+
+    def _find_state_workspace_for_session(self, session_id: str) -> Path | None:
+        candidates: list[Path] = []
+        session = self._require_session(session_id)
+        if session.workspace_path:
+            candidates.append(Path(session.workspace_path).expanduser().resolve())
+        try:
+            state_paths = sorted(
+                self._projects_root.glob("*/.codex/factory/domain-factory-state.json")
+            )
+        except OSError:
+            state_paths = []
+        candidates.extend(path.parents[2] for path in state_paths)
+        seen: set[Path] = set()
+        for candidate in candidates:
+            if candidate in seen:
+                continue
+            seen.add(candidate)
+            try:
+                candidate.relative_to(self._projects_root)
+            except ValueError:
+                continue
+            if not candidate.is_dir():
+                continue
+            state = _read_json(
+                candidate / ".codex/factory/domain-factory-state.json"
+            )
+            if state.get("sessionId") == session_id:
+                return candidate
+        return None
 
     def _app_update_detail(self, source_app: str | None) -> dict[str, Any]:
         if (
