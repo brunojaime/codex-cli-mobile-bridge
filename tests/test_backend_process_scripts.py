@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shlex
 import subprocess
 from pathlib import Path
@@ -271,6 +272,17 @@ def test_dev_backend_8118_script_contract() -> None:
     assert "CLOUDFLARE_ZONE_ID" in script
     assert "WEB_PREVIEW_APPLY_ENABLED" in script
     assert "WEB_PREVIEW_INVITE_SECRET" in script
+    assert "WEB_PREVIEW_EMAIL_PROVIDER" in script
+    assert "WEB_PREVIEW_EMAIL_FROM" in script
+    assert "WEB_PREVIEW_EMAIL_ENDPOINT" in script
+    assert "WEB_PREVIEW_EMAIL_API_TOKEN" in script
+    assert "WEB_PREVIEW_SMTP_HOST" in script
+    assert "WEB_PREVIEW_SMTP_PORT" in script
+    assert "WEB_PREVIEW_SMTP_USERNAME" in script
+    assert "WEB_PREVIEW_SMTP_PASSWORD" in script
+    assert "WEB_PREVIEW_SMTP_USE_TLS" in script
+    assert "WEB_PREVIEW_SMTP_IMPLICIT_TLS" in script
+    assert "WEB_PREVIEW_SMTP_TIMEOUT_SECONDS" in script
     assert "serve --bg --http=\"${PORT}\"" in script
     assert "restart)" in script
     assert "stop)" in script
@@ -284,10 +296,21 @@ def test_dev_backend_8118_script_does_not_embed_secrets() -> None:
         "ghp_",
         "github_token=",
         "api_key=",
-        "password=",
-        "secret=",
         "bearer ",
         "-----begin",
     ]
     for fragment in forbidden_fragments:
         assert fragment not in lowered
+
+    sensitive_assignments = re.findall(
+        r"(?im)^\s*[A-Z0-9_]*(?:PASSWORD|SECRET|TOKEN|API_KEY)=(.+)$",
+        script,
+    )
+    assert sensitive_assignments
+    for value in sensitive_assignments:
+        stripped = value.strip().rstrip(" \\")
+        assert (
+            stripped.startswith("${")
+            or stripped.startswith('"${')
+            or stripped.startswith('"$(codex_env_value ')
+        )

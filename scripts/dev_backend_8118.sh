@@ -121,7 +121,11 @@ write_runtime_env() {
   local github_owner github_visibility github_branch registration_token
   local cloudflare_api_token cloudflare_dns_token cloudflare_account_id
   local cloudflare_zone_id cloudflare_zone_name web_preview_apply_enabled
-  local web_preview_invite_secret preview_admin_email preview_admin_password
+  local web_preview_invite_secret web_preview_email_provider web_preview_email_from
+  local web_preview_email_endpoint web_preview_email_api_token web_preview_smtp_host
+  local web_preview_smtp_port web_preview_smtp_username web_preview_smtp_password
+  local web_preview_smtp_use_tls web_preview_smtp_implicit_tls
+  local web_preview_smtp_timeout_seconds preview_admin_email preview_admin_password
   local preview_admin_bootstrap_token generated_scripts_bridge_root
   codex_command="$(codex_env_value CODEX_COMMAND "codex")"
   codex_use_exec="$(codex_env_value CODEX_USE_EXEC "true")"
@@ -138,6 +142,17 @@ write_runtime_env() {
   cloudflare_zone_name="$(codex_env_value CLOUDFLARE_ZONE_NAME "nienfos.com")"
   web_preview_apply_enabled="$(codex_env_value WEB_PREVIEW_APPLY_ENABLED "false")"
   web_preview_invite_secret="$(codex_env_value WEB_PREVIEW_INVITE_SECRET "")"
+  web_preview_email_provider="$(codex_env_value WEB_PREVIEW_EMAIL_PROVIDER "manual")"
+  web_preview_email_from="$(codex_env_value WEB_PREVIEW_EMAIL_FROM "")"
+  web_preview_email_endpoint="$(codex_env_value WEB_PREVIEW_EMAIL_ENDPOINT "")"
+  web_preview_email_api_token="$(codex_env_value WEB_PREVIEW_EMAIL_API_TOKEN "")"
+  web_preview_smtp_host="$(codex_env_value WEB_PREVIEW_SMTP_HOST "")"
+  web_preview_smtp_port="$(codex_env_value WEB_PREVIEW_SMTP_PORT "587")"
+  web_preview_smtp_username="$(codex_env_value WEB_PREVIEW_SMTP_USERNAME "")"
+  web_preview_smtp_password="$(codex_env_value WEB_PREVIEW_SMTP_PASSWORD "")"
+  web_preview_smtp_use_tls="$(codex_env_value WEB_PREVIEW_SMTP_USE_TLS "true")"
+  web_preview_smtp_implicit_tls="$(codex_env_value WEB_PREVIEW_SMTP_IMPLICIT_TLS "false")"
+  web_preview_smtp_timeout_seconds="$(codex_env_value WEB_PREVIEW_SMTP_TIMEOUT_SECONDS "10")"
   preview_admin_email="$(codex_env_value PREVIEW_ADMIN_EMAIL "")"
   preview_admin_password="$(codex_env_value PREVIEW_ADMIN_PASSWORD "")"
   preview_admin_bootstrap_token="$(codex_env_value PREVIEW_ADMIN_BOOTSTRAP_TOKEN "")"
@@ -176,6 +191,17 @@ CLOUDFLARE_ZONE_ID=${cloudflare_zone_id}
 CLOUDFLARE_ZONE_NAME=${cloudflare_zone_name}
 WEB_PREVIEW_APPLY_ENABLED=${web_preview_apply_enabled}
 WEB_PREVIEW_INVITE_SECRET=${web_preview_invite_secret}
+WEB_PREVIEW_EMAIL_PROVIDER=${web_preview_email_provider}
+WEB_PREVIEW_EMAIL_FROM=${web_preview_email_from}
+WEB_PREVIEW_EMAIL_ENDPOINT=${web_preview_email_endpoint}
+WEB_PREVIEW_EMAIL_API_TOKEN=${web_preview_email_api_token}
+WEB_PREVIEW_SMTP_HOST=${web_preview_smtp_host}
+WEB_PREVIEW_SMTP_PORT=${web_preview_smtp_port}
+WEB_PREVIEW_SMTP_USERNAME=${web_preview_smtp_username}
+WEB_PREVIEW_SMTP_PASSWORD=${web_preview_smtp_password}
+WEB_PREVIEW_SMTP_USE_TLS=${web_preview_smtp_use_tls}
+WEB_PREVIEW_SMTP_IMPLICIT_TLS=${web_preview_smtp_implicit_tls}
+WEB_PREVIEW_SMTP_TIMEOUT_SECONDS=${web_preview_smtp_timeout_seconds}
 PREVIEW_ADMIN_EMAIL=${preview_admin_email}
 PREVIEW_ADMIN_PASSWORD=${preview_admin_password}
 PREVIEW_ADMIN_BOOTSTRAP_TOKEN=${preview_admin_bootstrap_token}
@@ -240,7 +266,11 @@ start_backend() {
   local github_owner github_visibility github_branch registration_token
   local cloudflare_api_token cloudflare_dns_token cloudflare_account_id
   local cloudflare_zone_id cloudflare_zone_name web_preview_apply_enabled
-  local web_preview_invite_secret preview_admin_email preview_admin_password
+  local web_preview_invite_secret web_preview_email_provider web_preview_email_from
+  local web_preview_email_endpoint web_preview_email_api_token web_preview_smtp_host
+  local web_preview_smtp_port web_preview_smtp_username web_preview_smtp_password
+  local web_preview_smtp_use_tls web_preview_smtp_implicit_tls
+  local web_preview_smtp_timeout_seconds preview_admin_email preview_admin_password
   local preview_admin_bootstrap_token generated_scripts_bridge_root
   codex_command="$(codex_env_value CODEX_COMMAND "codex")"
   codex_use_exec="$(codex_env_value CODEX_USE_EXEC "true")"
@@ -257,6 +287,17 @@ start_backend() {
   cloudflare_zone_name="$(codex_env_value CLOUDFLARE_ZONE_NAME "nienfos.com")"
   web_preview_apply_enabled="$(codex_env_value WEB_PREVIEW_APPLY_ENABLED "false")"
   web_preview_invite_secret="$(codex_env_value WEB_PREVIEW_INVITE_SECRET "")"
+  web_preview_email_provider="$(codex_env_value WEB_PREVIEW_EMAIL_PROVIDER "manual")"
+  web_preview_email_from="$(codex_env_value WEB_PREVIEW_EMAIL_FROM "")"
+  web_preview_email_endpoint="$(codex_env_value WEB_PREVIEW_EMAIL_ENDPOINT "")"
+  web_preview_email_api_token="$(codex_env_value WEB_PREVIEW_EMAIL_API_TOKEN "")"
+  web_preview_smtp_host="$(codex_env_value WEB_PREVIEW_SMTP_HOST "")"
+  web_preview_smtp_port="$(codex_env_value WEB_PREVIEW_SMTP_PORT "587")"
+  web_preview_smtp_username="$(codex_env_value WEB_PREVIEW_SMTP_USERNAME "")"
+  web_preview_smtp_password="$(codex_env_value WEB_PREVIEW_SMTP_PASSWORD "")"
+  web_preview_smtp_use_tls="$(codex_env_value WEB_PREVIEW_SMTP_USE_TLS "true")"
+  web_preview_smtp_implicit_tls="$(codex_env_value WEB_PREVIEW_SMTP_IMPLICIT_TLS "false")"
+  web_preview_smtp_timeout_seconds="$(codex_env_value WEB_PREVIEW_SMTP_TIMEOUT_SECONDS "10")"
   preview_admin_email="$(codex_env_value PREVIEW_ADMIN_EMAIL "")"
   preview_admin_password="$(codex_env_value PREVIEW_ADMIN_PASSWORD "")"
   preview_admin_bootstrap_token="$(codex_env_value PREVIEW_ADMIN_BOOTSTRAP_TOKEN "")"
@@ -297,6 +338,17 @@ start_backend() {
     CLOUDFLARE_ZONE_NAME="${cloudflare_zone_name}" \
     WEB_PREVIEW_APPLY_ENABLED="${web_preview_apply_enabled}" \
     WEB_PREVIEW_INVITE_SECRET="${web_preview_invite_secret}" \
+    WEB_PREVIEW_EMAIL_PROVIDER="${web_preview_email_provider}" \
+    WEB_PREVIEW_EMAIL_FROM="${web_preview_email_from}" \
+    WEB_PREVIEW_EMAIL_ENDPOINT="${web_preview_email_endpoint}" \
+    WEB_PREVIEW_EMAIL_API_TOKEN="${web_preview_email_api_token}" \
+    WEB_PREVIEW_SMTP_HOST="${web_preview_smtp_host}" \
+    WEB_PREVIEW_SMTP_PORT="${web_preview_smtp_port}" \
+    WEB_PREVIEW_SMTP_USERNAME="${web_preview_smtp_username}" \
+    WEB_PREVIEW_SMTP_PASSWORD="${web_preview_smtp_password}" \
+    WEB_PREVIEW_SMTP_USE_TLS="${web_preview_smtp_use_tls}" \
+    WEB_PREVIEW_SMTP_IMPLICIT_TLS="${web_preview_smtp_implicit_tls}" \
+    WEB_PREVIEW_SMTP_TIMEOUT_SECONDS="${web_preview_smtp_timeout_seconds}" \
     PREVIEW_ADMIN_EMAIL="${preview_admin_email}" \
     PREVIEW_ADMIN_PASSWORD="${preview_admin_password}" \
     PREVIEW_ADMIN_BOOTSTRAP_TOKEN="${preview_admin_bootstrap_token}" \
