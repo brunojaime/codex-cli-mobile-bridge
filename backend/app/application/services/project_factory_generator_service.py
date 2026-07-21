@@ -4695,6 +4695,16 @@ path.write_text(text, encoding="utf-8")
 PY
 }}
 
+preview_release_blocking_git_status() {{
+  local line
+  git status --porcelain | while IFS= read -r line; do
+    case "$line" in
+      "?? specs/"*"-domain-factory-"*) continue ;;
+      *) printf '%s\\n' "$line" ;;
+    esac
+  done
+}}
+
 [[ -f apps/mobile/pubspec.yaml ]] || fail_blocked "apps/mobile/pubspec.yaml is required"
 ensure_flutter_android_platform
 bridge_env_require APP_RUNTIME_PROFILE API_RUNTIME API_BASE_URL
@@ -4718,7 +4728,8 @@ scripts/smoke_preview_api.sh
 
 git rev-parse --is-inside-work-tree >/dev/null 2>&1 || fail_blocked "not inside a git repository"
 git rev-parse --verify HEAD >/dev/null 2>&1 || fail_blocked "no git commit exists"
-if [[ -n "$(git status --porcelain)" ]]; then
+blocking_status="$(preview_release_blocking_git_status)"
+if [[ -n "$blocking_status" ]]; then
   git status --short >&2
   fail_blocked "working tree must be clean before tagging the preview release"
 fi

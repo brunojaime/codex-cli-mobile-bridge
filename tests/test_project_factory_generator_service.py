@@ -646,6 +646,8 @@ def test_generator_writes_executable_publish_script(tmp_path: Path) -> None:
     assert 'signingConfig = signingConfigs.getByName("release")' in (
         android_preview_content
     )
+    assert "preview_release_blocking_git_status" in android_preview_content
+    assert '"?? specs/"*"-domain-factory-"*) continue' in android_preview_content
     assert "gh release create" in android_preview_content
     assert "gh release upload" in android_preview_content
     assert "gh run list" in android_preview_content
