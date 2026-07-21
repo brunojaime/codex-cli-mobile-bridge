@@ -164,6 +164,31 @@ runtime_profiles:
     assert result.context.api_url == "https://preview.nienfos.com/clinica-norte/api"
 
 
+def test_domain_factory_context_reports_ux_status_for_legacy_state_without_field(
+    tmp_path: Path,
+) -> None:
+    workspace = _baseline_workspace(tmp_path)
+    repository = _repository(tmp_path)
+    session = _session(workspace)
+    repository.save_session(session)
+    service = DomainFactoryService(
+        projects_root=tmp_path / "projects",
+        chat_repository=repository,
+    )
+    service.start(session_id=session.id)
+    state_path = workspace / ".codex/factory/domain-factory-state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state.pop("uxLaneStatus")
+    state_path.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+
+    context = service.build_context(session_id=session.id)
+
+    ux_status = context.to_payload()["uxLaneStatus"]
+    assert ux_status["status"] == "disabled_by_configuration"
+    assert ux_status["automaticDomainFactoryUx"] is False
+    assert ux_status["manualCommands"] == ["/ux", "/ux-full"]
+
+
 def test_domain_factory_chat_message_creates_contract_preview_without_codex_run(
     tmp_path: Path,
 ) -> None:

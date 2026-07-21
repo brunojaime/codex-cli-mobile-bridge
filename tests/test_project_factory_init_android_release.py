@@ -427,14 +427,30 @@ def test_frontend_baseline_repairs_generated_artifact_gitignore_entries(
         }
     )
     gitignore.write_text(stale + "\n", encoding="utf-8")
+    register_script = project / "scripts/register_installable_app.sh"
+    register_script.write_text("#!/usr/bin/env bash\n# stale script\n", encoding="utf-8")
 
     repaired = service.run_frontend_baseline_phase(job.id)
 
     repaired_gitignore = gitignore.read_text(encoding="utf-8")
+    refreshed_register_script = register_script.read_text(encoding="utf-8")
     assert ".generated-validation/" in repaired_gitignore
     assert "backend/.venv/" in repaired_gitignore
     assert "backend/*.egg-info/" in repaired_gitignore
+    assert "stale script" not in refreshed_register_script
+    assert "BRIDGE_APK_PROXY_TIMEOUT_SECONDS" in refreshed_register_script
     phase = repaired.phase(ProjectFactoryInitPhaseName.FLUTTER_OR_STRATEGY_BASELINE)
+    assert any(
+        evidence.argv
+        == (
+            "project-factory-generator",
+            "refresh-managed-files",
+            "flutter",
+            "clinica-norte",
+        )
+        and "scripts/register_installable_app.sh" in evidence.stdout_summary
+        for evidence in phase.command_evidence
+    )
     assert any(
         evidence.argv
         == (

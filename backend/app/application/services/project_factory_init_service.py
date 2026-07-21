@@ -602,6 +602,29 @@ class ProjectFactoryInitService:
                         completed_at=_now_iso(),
                     )
                 )
+                refreshed = self._refresh_existing_managed_baseline_files(
+                    job,
+                    target=target,
+                    strategy=strategy,
+                )
+                if refreshed:
+                    evidence.append(
+                        ProjectFactoryInitCommandEvidence(
+                            argv=(
+                                "project-factory-generator",
+                                "refresh-managed-files",
+                                strategy,
+                                job.slug,
+                            ),
+                            cwd=str(target),
+                            exit_code=0,
+                            stdout_summary=(
+                                "refreshed managed files: " + ", ".join(refreshed)
+                            ),
+                            started_at=_now_iso(),
+                            completed_at=_now_iso(),
+                        )
+                    )
 
             repaired_ignores = _ensure_generated_artifact_ignores(target)
             if repaired_ignores:
@@ -2887,13 +2910,47 @@ class ProjectFactoryInitService:
                 slug=job.slug,
                 platforms=platforms,
                 frontend_strategy=strategy,
-            )
+            ),
+            allow_existing=True,
         )
         try:
             result = ProjectFactoryGeneratorService().generate(manifest_plan)
         except ProjectFactoryGeneratorError as exc:
             raise ProjectFactoryInitConflictError(str(exc)) from exc
         return result.to_payload()
+
+    def _refresh_existing_managed_baseline_files(
+        self,
+        job: ProjectFactoryInitJob,
+        *,
+        target: Path,
+        strategy: str,
+    ) -> tuple[str, ...]:
+        if self._settings is None:
+            return ()
+        projects_root = target.parent
+        platforms = ("web",) if strategy == "svelte" else ("ios", "android", "web")
+        manifest_plan = ProjectFactoryManifestService(
+            projects_root=projects_root,
+        ).plan_manifest(
+            ProjectFactoryManifestInput(
+                name=job.project_name,
+                business_type="project",
+                primary_goal="Generated deterministic baseline",
+                slug=job.slug,
+                platforms=platforms,
+                frontend_strategy=strategy,
+            ),
+            allow_existing=True,
+        )
+        try:
+            result = ProjectFactoryGeneratorService().refresh_managed_files(
+                manifest_plan,
+                relative_paths=_EXISTING_BASELINE_MANAGED_REFRESH_FILES,
+            )
+        except ProjectFactoryGeneratorError as exc:
+            raise ProjectFactoryInitConflictError(str(exc)) from exc
+        return tuple(item.path for item in result.generated_files)
 
     def _mark_frontend_running(self, job: ProjectFactoryInitJob, message: str) -> None:
         current = self._jobs.get(job.id, job)
@@ -3863,6 +3920,11 @@ _GENERATED_ARTIFACT_GITIGNORE_ENTRIES = (
     ".generated-validation/",
     "backend/.venv/",
     "backend/*.egg-info/",
+)
+
+_EXISTING_BASELINE_MANAGED_REFRESH_FILES = (
+    "scripts/publish_android_preview_release.sh",
+    "scripts/register_installable_app.sh",
 )
 
 
