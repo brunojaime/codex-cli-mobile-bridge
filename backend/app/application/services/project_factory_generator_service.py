@@ -8853,7 +8853,9 @@ def _mobile_files(name: str, slug: str) -> dict[str, str]:
         "apps/mobile/lib/src/screens.dart": _mobile_screens_dart(name),
         "apps/mobile/web/index.html": _mobile_web_index_html(name),
         "apps/mobile/web/manifest.json": _mobile_web_manifest_json(name),
-        "apps/mobile/android/.gitignore": "upload-keystore.jks\nkey.properties\n",
+        "apps/mobile/android/.gitignore": (
+            "upload-keystore.jks\nkey.properties\n.kotlin/\n"
+        ),
         "apps/mobile/android/app/src/main/AndroidManifest.xml": (
             _mobile_android_manifest()
         ),

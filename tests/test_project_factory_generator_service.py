@@ -2348,6 +2348,8 @@ def test_generator_writes_flutter_mobile_v1_template(tmp_path: Path) -> None:
     assert 'android:networkSecurityConfig="@xml/network_security_config"' in (
         android_manifest
     )
+    android_gitignore = (mobile / "android/.gitignore").read_text(encoding="utf-8")
+    assert ".kotlin/" in android_gitignore
     assert (mobile / "android/app/src/main/res/xml/network_security_config.xml").is_file()
     readme = (mobile / "README.md").read_text(encoding="utf-8")
     assert "--dart-define=API_BASE_URL=" in readme
