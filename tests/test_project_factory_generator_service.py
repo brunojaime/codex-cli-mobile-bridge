@@ -6,7 +6,9 @@ import shutil
 import stat
 import subprocess
 import sys
+import threading
 from pathlib import Path
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
@@ -979,6 +981,121 @@ def test_generated_initial_preview_validation_flutter_has_no_optional_bypasses(
     for bypass in forbidden_bypasses:
         assert bypass not in script
     assert "release/initial-preview-validation-report.json" in script
+
+
+def test_generated_preview_api_smoke_retries_until_assets_bound(
+    tmp_path: Path,
+) -> None:
+    manifest_plan = ProjectFactoryManifestService(
+        projects_root=tmp_path,
+    ).plan_manifest(
+        ProjectFactoryManifestInput(
+            name="Clinica Norte",
+            business_type="medical",
+            primary_goal="Reservar turnos",
+        )
+    )
+    ProjectFactoryGeneratorService().generate(manifest_plan)
+
+    smoke_script = (
+        tmp_path / "clinica-norte/scripts/smoke_preview_api.sh"
+    ).read_text(encoding="utf-8")
+    python_source = smoke_script.split("<<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
+
+    class Handler(BaseHTTPRequestHandler):
+        health_calls = 0
+
+        def _write(self, status: int, payload: dict[str, object]) -> None:
+            self.send_response(status)
+            self.send_header("content-type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps(payload).encode())
+
+        def do_GET(self) -> None:  # noqa: N802
+            if self.path == "/health":
+                type(self).health_calls += 1
+                self._write(
+                    200,
+                    {
+                        "runtime": "cloudflare_preview",
+                        "source_app": "clinica-norte",
+                        "d1_bound": True,
+                        "assets_bound": type(self).health_calls >= 2,
+                    },
+                )
+                return
+            if self.path == "/auth/me":
+                self._write(200, {"sourceApp": "clinica-norte"})
+                return
+            if self.path == "/business/records":
+                self._write(
+                    200,
+                    {
+                        "records": [
+                            {
+                                "sourceApp": "clinica-norte",
+                                "appSlug": "clinica-norte",
+                            }
+                        ]
+                    },
+                )
+                return
+            if self.path == "/notifications":
+                self._write(200, {"notifications": []})
+                return
+            if self.path == "/app-updates/current":
+                self._write(
+                    200,
+                    {"releaseChannel": "prerelease", "mockOrDemo": False},
+                )
+                return
+            self._write(404, {"error": "not found"})
+
+        def do_POST(self) -> None:  # noqa: N802
+            if self.path == "/auth/login":
+                self._write(200, {"access_token": "token"})
+                return
+            if self.path == "/business/records":
+                self._write(
+                    201,
+                    {"sourceApp": "clinica-norte", "appSlug": "clinica-norte"},
+                )
+                return
+            self._write(404, {"error": "not found"})
+
+        def log_message(self, *_args: object) -> None:
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                python_source,
+                f"http://127.0.0.1:{server.server_port}",
+                "clinica-norte",
+                "test-agent",
+            ],
+            env={
+                **os.environ,
+                "PREVIEW_ADMIN_EMAIL": "admin@example.test",
+                "PREVIEW_ADMIN_PASSWORD": "password",
+                "PREVIEW_ADMIN_BOOTSTRAP_TOKEN": "",
+            },
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
+
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert "preview api smoke passed" in completed.stdout
+    assert Handler.health_calls == 2
 
 
 def test_generated_initial_preview_validation_runs_all_flutter_checks(
