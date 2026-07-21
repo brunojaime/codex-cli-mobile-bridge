@@ -154,6 +154,7 @@ ProjectFactoryRemotePreflight = Callable[[], Mapping[str, object]]
 
 _VISUAL_UX_SKILL_NAME = "visual-ux-polish"
 _VISUAL_UX_SKILL_ENV = "VISUAL_UX_POLISH_SKILL_PATH"
+_MAX_AUTOMATIC_UX_ITERATIONS = 10
 _VISUAL_UX_REQUIRED_REFERENCES = (
     "references/visual-quality-checklist.md",
     "references/product-category-playbooks.md",
@@ -207,7 +208,8 @@ class ProjectFactoryJobRunner:
         )
         preflight_steps = 1 if remote_publication and self._remote_preflight else 0
         total_steps = (
-            9
+            7
+            + (2 * _MAX_AUTOMATIC_UX_ITERATIONS)
             + preflight_steps
             + publication_steps
             + context.generator_runs
@@ -322,22 +324,10 @@ class ProjectFactoryJobRunner:
                 event_sink=event_sink,
             )
 
-        completed_steps = self._run_cli_step(
+        completed_steps = self._run_ux_lane(
             context=context,
             project_path=project_path,
-            prompt_path=prompt_root / "ux-generator.md",
-            phase="ux_generator",
-            label="Senior UX generator pass",
-            completed_steps=completed_steps,
-            total_steps=total_steps,
-            event_sink=event_sink,
-        )
-        completed_steps = self._run_cli_step(
-            context=context,
-            project_path=project_path,
-            prompt_path=prompt_root / "ux-reviewer.md",
-            phase="ux_reviewer",
-            label="Senior UX reviewer pass",
+            prompt_root=prompt_root,
             completed_steps=completed_steps,
             total_steps=total_steps,
             event_sink=event_sink,
@@ -625,6 +615,30 @@ class ProjectFactoryJobRunner:
         total_steps: int,
         event_sink: ProjectFactoryEventSink,
     ) -> int:
+        completed, _result = self._run_cli_step_result(
+            context=context,
+            project_path=project_path,
+            prompt_path=prompt_path,
+            phase=phase,
+            label=label,
+            completed_steps=completed_steps,
+            total_steps=total_steps,
+            event_sink=event_sink,
+        )
+        return completed
+
+    def _run_cli_step_result(
+        self,
+        *,
+        context: ProjectFactoryRunnerContext,
+        project_path: Path,
+        prompt_path: Path,
+        phase: str,
+        label: str,
+        completed_steps: int,
+        total_steps: int,
+        event_sink: ProjectFactoryEventSink,
+    ) -> tuple[int, ProjectFactoryProcessResult]:
         event_sink(
             _event(
                 phase,
@@ -681,6 +695,105 @@ class ProjectFactoryJobRunner:
                 stdout=result.stdout,
                 stderr=result.stderr,
                 exit_code=result.returncode,
+            )
+        )
+        return completed_steps, result
+
+    def _run_ux_lane(
+        self,
+        *,
+        context: ProjectFactoryRunnerContext,
+        project_path: Path,
+        prompt_root: Path,
+        completed_steps: int,
+        total_steps: int,
+        event_sink: ProjectFactoryEventSink,
+    ) -> int:
+        generator_base = (prompt_root / "ux-generator.md").read_text(encoding="utf-8")
+        reviewer_base = (prompt_root / "ux-reviewer.md").read_text(encoding="utf-8")
+        reviewer_feedback = ""
+        for iteration in range(1, _MAX_AUTOMATIC_UX_ITERATIONS + 1):
+            generator_prompt_path = _ux_iteration_prompt_path(
+                prompt_root,
+                "ux-generator",
+                iteration,
+            )
+            reviewer_prompt_path = _ux_iteration_prompt_path(
+                prompt_root,
+                "ux-reviewer",
+                iteration,
+            )
+            if iteration > 1:
+                generator_prompt_path.write_text(
+                    generator_base
+                    + "\n\n# UX Reviewer Continuation\n\n"
+                    + reviewer_feedback.strip()
+                    + "\n",
+                    encoding="utf-8",
+                )
+                reviewer_prompt_path.write_text(
+                    reviewer_base
+                    + f"\n\nReview UX iteration {iteration}. Return `status=complete` "
+                    "only when the UX gate is ready; otherwise include the next "
+                    "UX-only continuation prompt.\n",
+                    encoding="utf-8",
+                )
+            completed_steps, _generator_result = self._run_cli_step_result(
+                context=context,
+                project_path=project_path,
+                prompt_path=generator_prompt_path,
+                phase="ux_generator",
+                label=(
+                    "Senior UX generator pass "
+                    f"{iteration} of {_MAX_AUTOMATIC_UX_ITERATIONS}"
+                ),
+                completed_steps=completed_steps,
+                total_steps=total_steps,
+                event_sink=event_sink,
+            )
+            completed_steps, reviewer_result = self._run_cli_step_result(
+                context=context,
+                project_path=project_path,
+                prompt_path=reviewer_prompt_path,
+                phase="ux_reviewer",
+                label=(
+                    "Senior UX reviewer pass "
+                    f"{iteration} of {_MAX_AUTOMATIC_UX_ITERATIONS}"
+                ),
+                completed_steps=completed_steps,
+                total_steps=total_steps,
+                event_sink=event_sink,
+            )
+            reviewer_feedback = _ux_reviewer_feedback(
+                project_path=project_path,
+                result=reviewer_result,
+            )
+            if _ux_reviewer_is_complete(reviewer_feedback):
+                skipped_steps = (
+                    _MAX_AUTOMATIC_UX_ITERATIONS - iteration
+                ) * 2
+                completed_steps += skipped_steps
+                event_sink(
+                    _event(
+                        "ux_lane",
+                        "completed",
+                        (
+                            "Automatic UX lane completed after "
+                            f"{iteration} of {_MAX_AUTOMATIC_UX_ITERATIONS} pass(es)."
+                        ),
+                        _progress(completed_steps, total_steps),
+                    )
+                )
+                return completed_steps
+        event_sink(
+            _event(
+                "ux_lane",
+                "completed",
+                (
+                    "Automatic UX lane reached the maximum "
+                    f"{_MAX_AUTOMATIC_UX_ITERATIONS} pass(es)."
+                ),
+                _progress(completed_steps, total_steps),
             )
         )
         return completed_steps
@@ -913,9 +1026,20 @@ Review only the UX Generator changes and evidence. Check visual quality,
 interaction clarity, accessibility, responsive fit, screenshots/UAT evidence,
 and scope discipline. Do not request functional/backend/business-logic changes.
 
+This automatic UX lane can run up to 10 generator/reviewer passes. You own the
+stop decision. Return complete as soon as the UX is good enough for this stage;
+do not spend all 10 passes unless material UX issues remain.
+
 If more UX-only work is needed, write `.codex/ux/ux-reviewer-report.md` with the
 required follow-up. If the UX is professional and validated, write the same file
 with a stop decision and the evidence reviewed.
+
+End your response, and the report when possible, with this machine-readable
+decision:
+
+```json
+{"status":"complete|continue|blocked","summary":"short UX readiness summary","continuation_prompt":"next UX-only prompt when status is continue","release_gate":"pass|fail"}
+```
 """,
             encoding="utf-8",
         )
@@ -924,6 +1048,69 @@ with a stop decision and the evidence reviewed.
 def _codex_argv(command: str, prompt: str) -> tuple[str, ...]:
     base = tuple(shlex.split(command.strip() or "codex"))
     return (*base, "exec", "--skip-git-repo-check", "--color", "never", prompt)
+
+
+def _ux_iteration_prompt_path(prompt_root: Path, stem: str, iteration: int) -> Path:
+    if iteration == 1:
+        return prompt_root / f"{stem}.md"
+    return prompt_root / f"{stem}-{iteration:02d}.md"
+
+
+def _ux_reviewer_feedback(
+    *,
+    project_path: Path,
+    result: ProjectFactoryProcessResult,
+) -> str:
+    report_path = project_path / ".codex" / "ux" / "ux-reviewer-report.md"
+    report = ""
+    if report_path.exists():
+        report = report_path.read_text(encoding="utf-8")
+    return "\n\n".join(
+        item.strip()
+        for item in (result.stdout, result.stderr, report)
+        if item and item.strip()
+    )
+
+
+def _ux_reviewer_is_complete(feedback: str) -> bool:
+    normalized = feedback.strip()
+    if not normalized:
+        return False
+    for payload in _json_objects_from_text(normalized):
+        status = str(payload.get("status") or "").strip().lower()
+        release_gate = str(payload.get("release_gate") or "").strip().lower()
+        if status in {"complete", "completed", "approved"}:
+            return True
+        if status == "ready" and release_gate in {"pass", "passed", "ready"}:
+            return True
+    lowered = normalized.lower()
+    complete_markers = (
+        "status: complete",
+        "status=complete",
+        '"status": "complete"',
+        "'status': 'complete'",
+        "ux gate: pass",
+        "release_gate: pass",
+        "release gate: pass",
+    )
+    return any(marker in lowered for marker in complete_markers)
+
+
+def _json_objects_from_text(text: str) -> tuple[dict[str, object], ...]:
+    candidates = [text]
+    first = text.find("{")
+    last = text.rfind("}")
+    if first >= 0 and last > first:
+        candidates.append(text[first : last + 1])
+    parsed: list[dict[str, object]] = []
+    for candidate in candidates:
+        try:
+            payload = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict):
+            parsed.append(payload)
+    return tuple(parsed)
 
 
 def _load_visual_ux_skill_context(

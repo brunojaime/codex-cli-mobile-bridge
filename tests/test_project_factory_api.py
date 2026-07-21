@@ -690,6 +690,7 @@ def test_project_factory_generate_creates_local_project_foundation(tmp_path: Pat
         "ux_generator",
         "ux_reviewer",
         "ux_reviewer",
+        "ux_lane",
         "finalize_validation",
         "finalize_validation",
         "publish_finalize",

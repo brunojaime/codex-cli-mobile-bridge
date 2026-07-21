@@ -38,8 +38,8 @@ Implemented now:
   `.codex/ux/pre-project-ux-brief.md` before downstream planning/generation;
 - downstream planning, generator, reviewer, and UX prompts explicitly require
   reading `.codex/ux/pre-project-ux-brief.md`;
-- Project Factory runner adds one post-factory `ux_generator` prompt step and
-  one `ux_reviewer` prompt step;
+- Project Factory runner adds a post-factory `ux_generator -> ux_reviewer`
+  loop with a maximum of 10 passes and reviewer-controlled early stop;
 - Project Factory runner writes `.codex/ux/evidence-index.json` listing UX
   artifacts produced under `.codex/ux/`.
 
@@ -89,9 +89,10 @@ New Project has exactly two automatic UX interventions:
    - Must not touch functionality.
    - Target architecture: reviewer decides whether another UX generator pass is
      required.
-   - Current MVP: backend Project Factory runs one UX generator step and one UX
-     reviewer step only. Manual `/ux-full` uses the existing chat
-     generator/reviewer loop and 15-turn budget.
+   - Current MVP: backend Project Factory runs up to 10 UX generator/reviewer
+     passes and stops early when the UX reviewer returns `complete`. Manual
+     `/ux-full` uses the existing chat generator/reviewer loop and 15-turn
+     budget.
    - When this pass completes, the automatic New Project task stops. No
      additional automatic Domain Factory or release phase is started by this UX
      lane.

@@ -15,8 +15,8 @@ deferred.
       reviewer stop guidance.
 - [x] T036 Add pre-Project-Factory lightweight UX planning pass that creates UX
       direction without code changes.
-- [x] T037 Add post-Project-Factory automatic one-pass UX generator and UX
-      reviewer prompts. Backend multi-iteration reviewer routing is deferred.
+- [x] T037 Add post-Project-Factory automatic UX generator and UX reviewer
+      prompts with up to 10 passes and reviewer-controlled early stop.
 - [x] T038 Add `/ux` slash command for manual generator-only UX pass in the
       current project.
 - [x] T039 Add `/ux-full` slash command for manual UX generator/reviewer loop
@@ -54,7 +54,8 @@ deferred.
 - [ ] T040 Add reviewer-controlled stop handling for `/ux-full`, including
       early complete, continue, blocked, and iteration-limit states.
       MVP status: manual `/ux-full` uses the existing chat reviewer
-      continue/complete loop with 15-turn budget. UX-specific blocked/lifecycle
+      continue/complete loop with 15-turn budget. Automatic Project Factory UX
+      now has a 10-pass reviewer-controlled stop; UX-specific blocked/lifecycle
       states are deferred.
 
 ## Deferred Target Architecture

@@ -69,6 +69,7 @@ def test_project_factory_runner_success_writes_prompts_and_runs_pairs(
         "reviewer_pass",
         "ux_generator",
         "ux_reviewer",
+        "ux_lane",
         "finalize_validation",
         "publish_finalize",
         "local_git_commit",
@@ -123,6 +124,51 @@ def test_project_factory_runner_prompts_load_skill_and_consume_ux_brief(
     assert "Required visual-ux-polish Skill Context" in ux_generator
     assert "references/visual-quality-checklist.md" in ux_generator
     assert "references/visual-validation-protocol.md" in ux_reviewer
+
+
+def test_project_factory_runner_ux_lane_stops_when_reviewer_completes(
+    tmp_path: Path,
+) -> None:
+    process_runner = _IteratingUxProcessRunner(complete_after=3)
+    runner = _runner(tmp_path, process_runner)
+    events: list[dict[str, object]] = []
+
+    result = runner.run(
+        _context(tmp_path, generator_runs=0, reviewer_runs=0),
+        event_sink=events.append,
+    )
+
+    prompt_root = Path(result.generation_result.target_path) / ".codex/factory/prompts"
+    assert process_runner.ux_generator_calls == 3
+    assert process_runner.ux_reviewer_calls == 3
+    assert (prompt_root / "ux-generator-02.md").is_file()
+    assert (prompt_root / "ux-reviewer-03.md").is_file()
+    assert not (prompt_root / "ux-generator-04.md").exists()
+    assert [event for event in events if event["phase"] == "ux_lane"][-1][
+        "message"
+    ] == "Automatic UX lane completed after 3 of 10 pass(es)."
+
+
+def test_project_factory_runner_ux_lane_stops_at_ten_passes(
+    tmp_path: Path,
+) -> None:
+    process_runner = _IteratingUxProcessRunner(complete_after=99)
+    runner = _runner(tmp_path, process_runner)
+    events: list[dict[str, object]] = []
+
+    result = runner.run(
+        _context(tmp_path, generator_runs=0, reviewer_runs=0),
+        event_sink=events.append,
+    )
+
+    prompt_root = Path(result.generation_result.target_path) / ".codex/factory/prompts"
+    assert process_runner.ux_generator_calls == 10
+    assert process_runner.ux_reviewer_calls == 10
+    assert (prompt_root / "ux-generator-10.md").is_file()
+    assert not (prompt_root / "ux-generator-11.md").exists()
+    assert [event for event in events if event["phase"] == "ux_lane"][-1][
+        "message"
+    ] == "Automatic UX lane reached the maximum 10 pass(es)."
 
 
 def test_visual_ux_skill_default_loader_uses_configured_runtime_path(
@@ -639,6 +685,55 @@ class _FakeProcessRunner:
                 "# UX reviewer report\n\nstatus: complete\n",
                 encoding="utf-8",
             )
+
+
+class _IteratingUxProcessRunner(_FakeProcessRunner):
+    def __init__(self, *, complete_after: int):
+        super().__init__()
+        self.complete_after = complete_after
+        self.ux_generator_calls = 0
+        self.ux_reviewer_calls = 0
+
+    def run(self, *, argv, cwd, env, timeout_seconds):
+        prompt = str(argv[-1]) if argv else ""
+        if "Senior UX Generator" in prompt:
+            self.ux_generator_calls += 1
+        if "Senior UX Reviewer" in prompt:
+            self.ux_reviewer_calls += 1
+        self.calls.append(tuple(argv))
+        if self.timeout_call == len(self.calls):
+            raise subprocess.TimeoutExpired(argv, timeout_seconds)
+        if self.fail_call == len(self.calls):
+            return ProjectFactoryProcessResult(
+                returncode=self.fail_returncode,
+                stdout="partial",
+                stderr="failed",
+            )
+        self._write_ux_artifacts(argv=tuple(argv), cwd=cwd)
+        if "Senior UX Reviewer" in prompt:
+            status = (
+                "complete"
+                if self.ux_reviewer_calls >= self.complete_after
+                else "continue"
+            )
+            ux_root = cwd / ".codex" / "ux"
+            ux_root.mkdir(parents=True, exist_ok=True)
+            ux_root.joinpath("ux-reviewer-report.md").write_text(
+                f"# UX reviewer report\n\nstatus: {status}\n",
+                encoding="utf-8",
+            )
+            return ProjectFactoryProcessResult(
+                returncode=0,
+                stdout=(
+                    '{"status":"'
+                    + status
+                    + '","summary":"UX review","continuation_prompt":"Improve spacing.","release_gate":"'
+                    + ("pass" if status == "complete" else "fail")
+                    + '"}'
+                ),
+                stderr="",
+            )
+        return ProjectFactoryProcessResult(returncode=0, stdout="ok", stderr="")
 
 
 class _MissingScriptProcessRunner(_FakeProcessRunner):
