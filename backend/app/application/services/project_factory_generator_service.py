@@ -167,6 +167,51 @@ class ProjectFactoryGeneratorService:
             message="Local project foundation generated.",
         )
 
+    def refresh_managed_files(
+        self,
+        manifest_plan: ProjectFactoryManifestPlan,
+        *,
+        relative_paths: Sequence[str],
+    ) -> ProjectFactoryGenerationResult:
+        if not manifest_plan.ok or not manifest_plan.target_path:
+            raise ProjectFactoryGeneratorError(
+                "Manifest plan must be valid before refreshing managed files."
+            )
+        target = Path(manifest_plan.target_path).expanduser().resolve()
+        if not target.exists():
+            raise ProjectFactoryGeneratorError(
+                f"Target project does not exist: {target}"
+            )
+
+        files = _project_files(manifest_plan.manifest)
+        written: list[ProjectFactoryGeneratedFile] = []
+        for relative_path in relative_paths:
+            content = files.get(relative_path)
+            if content is None:
+                continue
+            path = target / relative_path
+            existing = path.read_text(encoding="utf-8") if path.exists() else None
+            if existing == content:
+                continue
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content, encoding="utf-8")
+            if relative_path.startswith("scripts/") and relative_path.endswith(".sh"):
+                path.chmod(0o755)
+            written.append(
+                ProjectFactoryGeneratedFile(
+                    path=relative_path,
+                    size_bytes=path.stat().st_size,
+                )
+            )
+        return ProjectFactoryGenerationResult(
+            ok=True,
+            status="ready",
+            target_path=str(target),
+            generated_files=tuple(sorted(written, key=lambda item: item.path)),
+            git_status={},
+            message="Managed Project Factory files refreshed.",
+        )
+
 
 def _project_files(manifest: dict[str, Any]) -> dict[str, str]:
     name = str(manifest["name"])
@@ -3890,17 +3935,33 @@ print(detail.get("apkUrl") or "")
 PY
 )"
 if [[ -n "$apk_url" ]]; then
-  if curl -fsSI "$apk_url" >/dev/null; then
-    :
-  elif [[ "$BRIDGE_PUBLIC_URL" != "$BRIDGE_URL" && ( "$apk_url" == "$BRIDGE_PUBLIC_URL" || "$apk_url" == "$BRIDGE_PUBLIC_URL/"* ) ]]; then
+  apk_proxy_timeout="${{BRIDGE_APK_PROXY_TIMEOUT_SECONDS:-60}}"
+  apk_proxy_poll="${{BRIDGE_APK_PROXY_POLL_SECONDS:-3}}"
+  apk_proxy_deadline=$((SECONDS + apk_proxy_timeout))
+  apk_proxy_verified=""
+  local_apk_url=""
+  if [[ "$BRIDGE_PUBLIC_URL" != "$BRIDGE_URL" && ( "$apk_url" == "$BRIDGE_PUBLIC_URL" || "$apk_url" == "$BRIDGE_PUBLIC_URL/"* ) ]]; then
     local_apk_url="$BRIDGE_URL${{apk_url#"$BRIDGE_PUBLIC_URL"}}"
-    curl -fsSI "${{bridge_detail_headers[@]}}" "$local_apk_url" >/dev/null || {{
-      echo "Bridge APK proxy did not respond for $apk_url or local bridge fallback $local_apk_url" >&2
-      exit 2
-    }}
+  fi
+  while (( SECONDS <= apk_proxy_deadline )); do
+    if [[ -n "$local_apk_url" ]] && curl -fsSI "${{bridge_detail_headers[@]}}" "$local_apk_url" >/dev/null; then
+      apk_proxy_verified="local"
+      break
+    fi
+    if curl -fsSI "$apk_url" >/dev/null; then
+      apk_proxy_verified="public"
+      break
+    fi
+    sleep "$apk_proxy_poll"
+  done
+  if [[ "$apk_proxy_verified" == "local" ]]; then
     echo "Bridge APK proxy verified through local bridge transport for public APK URL: $apk_url"
-  else
-    echo "Bridge APK proxy did not respond for $apk_url" >&2
+  elif [[ "$apk_proxy_verified" != "public" ]]; then
+    if [[ -n "$local_apk_url" ]]; then
+      echo "Bridge APK proxy did not respond within ${{apk_proxy_timeout}}s for $apk_url or local bridge fallback $local_apk_url" >&2
+    else
+      echo "Bridge APK proxy did not respond within ${{apk_proxy_timeout}}s for $apk_url" >&2
+    fi
     exit 2
   fi
 fi

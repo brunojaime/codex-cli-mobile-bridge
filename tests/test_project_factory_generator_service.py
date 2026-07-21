@@ -2329,6 +2329,7 @@ def test_generated_project_registers_installable_app_contract(
     assert 'Authorization: Bearer $BRIDGE_REGISTRATION_TOKEN' in content
     assert 'installable-apps/$SOURCE_APP' in content
     assert "curl -fsSI" in content
+    assert "apk_proxy_deadline" in content
     assert 'local_apk_url="$BRIDGE_URL${apk_url#"$BRIDGE_PUBLIC_URL"}"' in content
     assert "Bridge APK proxy verified through local bridge transport" in content
     assert "REQUIRE_INSTALLABLE_APK" in content
@@ -2473,8 +2474,144 @@ def test_generated_register_installable_app_script_posts_preview_metadata(
     calls = curl_calls.read_text(encoding="utf-8")
     assert "Host: bridge.test" in calls
     assert "X-Forwarded-Proto: https" in calls
-    assert "https://bridge.test/apk" in calls
     assert "http://localhost:8000/apk" in calls
+    assert "https://bridge.test/apk" not in calls
+
+
+def test_generator_refreshes_managed_factory_scripts(
+    tmp_path: Path,
+) -> None:
+    manifest_plan = ProjectFactoryManifestService(
+        projects_root=tmp_path,
+    ).plan_manifest(
+        ProjectFactoryManifestInput(
+            name="Clinica Norte",
+            business_type="medical",
+            primary_goal="Reservar turnos",
+        )
+    )
+    service = ProjectFactoryGeneratorService()
+    service.generate(manifest_plan)
+
+    project = tmp_path / "clinica-norte"
+    script = project / "scripts/register_installable_app.sh"
+    script.write_text("#!/usr/bin/env bash\necho stale\n", encoding="utf-8")
+    script.chmod(0o644)
+    existing_plan = ProjectFactoryManifestService(
+        projects_root=tmp_path,
+    ).plan_manifest(
+        ProjectFactoryManifestInput(
+            name="Clinica Norte",
+            business_type="medical",
+            primary_goal="Reservar turnos",
+        ),
+        allow_existing=True,
+    )
+
+    result = service.refresh_managed_files(
+        existing_plan,
+        relative_paths=("scripts/register_installable_app.sh",),
+    )
+
+    assert [item.path for item in result.generated_files] == [
+        "scripts/register_installable_app.sh"
+    ]
+    content = script.read_text(encoding="utf-8")
+    assert "apk_proxy_deadline" in content
+    assert "echo stale" not in content
+    assert script.stat().st_mode & stat.S_IXUSR
+
+
+def test_generated_register_installable_app_script_retries_apk_proxy_fallback(
+    tmp_path: Path,
+) -> None:
+    manifest_plan = ProjectFactoryManifestService(
+        projects_root=tmp_path,
+    ).plan_manifest(
+        ProjectFactoryManifestInput(
+            name="Clinica Norte",
+            business_type="medical",
+            primary_goal="Reservar turnos",
+        )
+    )
+    ProjectFactoryGeneratorService().generate(manifest_plan)
+
+    project = tmp_path / "clinica-norte"
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    _write_fake_github_access_tools(fake_bin)
+    curl_calls = tmp_path / "curl-calls.txt"
+    fallback_attempts = tmp_path / "fallback-attempts.txt"
+    fake_curl = fake_bin / "curl"
+    fake_curl.write_text(
+        "#!/usr/bin/env bash\n"
+        "printf '%s\\n' \"$*\" >> \"$CURL_CALLS_FILE\"\n"
+        "args=\"$*\"\n"
+        "if [[ \"$args\" == *'https://bridge.test/apk'* ]]; then\n"
+        "  echo 'Could not resolve host: bridge.test' >&2\n"
+        "  exit 6\n"
+        "fi\n"
+        "if [[ \"$args\" == *'http://localhost:8000/apk'* ]]; then\n"
+        "  count=0\n"
+        "  [[ -f \"$FALLBACK_ATTEMPTS_FILE\" ]] && count=\"$(cat \"$FALLBACK_ATTEMPTS_FILE\")\"\n"
+        "  count=$((count + 1))\n"
+        "  printf '%s' \"$count\" > \"$FALLBACK_ATTEMPTS_FILE\"\n"
+        "  if [[ \"$count\" -lt 2 ]]; then\n"
+        "    echo 'The requested URL returned error: 404' >&2\n"
+        "    exit 22\n"
+        "  fi\n"
+        "  exit 0\n"
+        "fi\n"
+        "if [[ \"$args\" == *'-I'* ]]; then exit 0; fi\n"
+        "if [[ \"$args\" == *'/installable-apps/clinica-norte'* ]]; then\n"
+        "  cat <<'JSON'\n"
+        '{"sourceApp":"clinica-norte","displayName":"Clinica Norte Preview",'
+        '"releaseChannel":"prerelease","releaseTagPattern":"android-preview-v*",'
+        '"releaseTag":"android-preview-v0.1.0-build.1","available":true,'
+        '"latestAssetName":"clinica-norte.apk",'
+        '"previewUrl":"https://preview.nienfos.com/clinica-norte",'
+        '"runtimeProfile":"preview","productionReady":false,'
+        '"mockOrDemo":false,"apkUrl":"https://bridge.test/apk",'
+        '"sha256":"' + ("1" * 64) + '","latestBuild":{"releaseTag":"android-preview-v0.1.0-build.1"},'
+        '"installStatusHint":"available"}\n'
+        "JSON\n"
+        "  exit 0\n"
+        "fi\n"
+        "cat <<'JSON'\n"
+        '{"sourceApp":"clinica-norte","displayName":"Clinica Norte Preview"}\n'
+        "JSON\n",
+        encoding="utf-8",
+    )
+    fake_curl.chmod(0o755)
+
+    completed = subprocess.run(
+        ["scripts/register_installable_app.sh"],
+        cwd=project,
+        env={
+            **os.environ,
+            "PATH": f"{fake_bin}:{os.environ['PATH']}",
+            "BRIDGE_URL": "http://localhost:8000",
+            "BRIDGE_PUBLIC_URL": "https://bridge.test",
+            "BRIDGE_REGISTRATION_TOKEN": "token",
+            "GITHUB_REPO": "brunojaime/clinica-norte",
+            "APP_RELEASE_TAG": "android-preview-v0.1.0-build.1",
+            "BRIDGE_APK_PROXY_TIMEOUT_SECONDS": "5",
+            "BRIDGE_APK_PROXY_POLL_SECONDS": "0",
+            "CODEX_MOBILE_BRIDGE_ROOT": str(tmp_path / "empty-bridge-root"),
+            "CURL_CALLS_FILE": str(curl_calls),
+            "FALLBACK_ATTEMPTS_FILE": str(fallback_attempts),
+        },
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert fallback_attempts.read_text(encoding="utf-8") == "2"
+    assert (
+        "Bridge APK proxy verified through local bridge transport for public APK URL: "
+        "https://bridge.test/apk"
+    ) in completed.stdout
 
 
 def test_generated_flutter_mock_seed_selector_is_mock_profile_only(
