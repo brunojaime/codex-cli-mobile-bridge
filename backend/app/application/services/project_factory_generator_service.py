@@ -4413,7 +4413,23 @@ def retry_request(method: str, path: str, payload: dict | None = None, token: st
         time.sleep(delay)
     return last
 
-status, health = retry_request("GET", "/health")
+def preview_health_ready(status: int, health: dict) -> bool:
+    return (
+        status == 200
+        and health.get("runtime") == "cloudflare_preview"
+        and health.get("source_app") == source_app
+        and health.get("d1_bound") is True
+        and health.get("assets_bound") is True
+    )
+
+health_status, health = 0, {{"error": "not attempted"}}
+for delay in (0.5, 1.0, 2.0, 3.0, 5.0, 8.0):
+    health_status, health = request("GET", "/health")
+    if preview_health_ready(health_status, health):
+        break
+    time.sleep(delay)
+
+status = health_status
 if status != 200 or health.get("runtime") != "cloudflare_preview" or health.get("source_app") != source_app:
     raise SystemExit(f"health failed: {{status}} {{health}}")
 if not health.get("d1_bound"):

@@ -614,8 +614,16 @@ def test_generator_writes_executable_publish_script(tmp_path: Path) -> None:
     assert android_preview_script.is_file()
     assert android_preview_script.stat().st_mode & stat.S_IXUSR
     android_preview_content = android_preview_script.read_text(encoding="utf-8")
+    smoke_preview_content = (
+        tmp_path / "clinica-norte/scripts/smoke_preview_api.sh"
+    ).read_text(encoding="utf-8")
     assert "flutter is required to create the missing Android platform" in (
         android_preview_content
+    )
+    assert "preview_health_ready" in smoke_preview_content
+    assert "health.get(\"assets_bound\") is True" in smoke_preview_content
+    assert "for delay in (0.5, 1.0, 2.0, 3.0, 5.0, 8.0)" in (
+        smoke_preview_content
     )
     assert "android-preview-v${version//+/-build.}" in android_preview_content
     assert "scripts/smoke_preview_api.sh" in android_preview_content
