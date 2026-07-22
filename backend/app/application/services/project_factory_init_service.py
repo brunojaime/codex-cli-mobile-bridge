@@ -67,6 +67,12 @@ from backend.app.domain.entities.project_factory_init import (
     ProjectFactoryInitRemoteResourceType,
     _phases_in_current_order,
 )
+from backend.app.domain.entities.agent_configuration import (
+    AgentId,
+    AgentTriggerSource,
+    AgentType,
+    AgentVisibilityMode,
+)
 from backend.app.domain.entities.chat_message import (
     ChatMessage,
     ChatMessageAuthorType,
@@ -456,6 +462,12 @@ class ProjectFactoryInitService:
                     cwd=target,
                 )
                 generator_evidence.append(self._evidence(generator_result))
+                self._attach_automatic_ux_message(
+                    job,
+                    role="generator",
+                    iteration=iteration,
+                    result=generator_result,
+                )
                 if generator_result.exit_code != 0:
                     return self.block_phase(
                         job.id,
@@ -478,6 +490,12 @@ class ProjectFactoryInitService:
                     cwd=target,
                 )
                 reviewer_evidence.append(self._evidence(reviewer_result))
+                self._attach_automatic_ux_message(
+                    job,
+                    role="reviewer",
+                    iteration=iteration,
+                    result=reviewer_result,
+                )
                 if reviewer_result.exit_code != 0:
                     job = self.complete_phase(
                         job.id,
@@ -3513,6 +3531,64 @@ class ProjectFactoryInitService:
         except Exception:
             return None
 
+    def _attach_automatic_ux_message(
+        self,
+        job: ProjectFactoryInitJob,
+        *,
+        role: str,
+        iteration: int,
+        result: ProjectFactoryInitCommandResult,
+    ) -> str | None:
+        if self._chat_repository is None or not job.relationships.chat_session_id:
+            return None
+        session_id = job.relationships.chat_session_id
+        label = "UX Generator" if role == "generator" else "UX Reviewer"
+        message_status = (
+            ChatMessageStatus.COMPLETED
+            if result.exit_code == 0
+            else ChatMessageStatus.FAILED
+        )
+        content = _automatic_ux_chat_content(
+            label=label,
+            iteration=iteration,
+            result=result,
+        )
+        try:
+            if self._chat_repository.get_session(session_id) is None:
+                return None
+            dedupe_key = f"project-factory-init-ux:{job.id}:{role}:{iteration}"
+            message = ChatMessage(
+                id=f"pf-init-ux-{role}-{job.id}-{iteration}",
+                session_id=session_id,
+                role=ChatMessageRole.ASSISTANT,
+                author_type=ChatMessageAuthorType.ASSISTANT,
+                content=content,
+                status=message_status,
+                dedupe_key=dedupe_key,
+                agent_id=AgentId.UX,
+                agent_type=AgentType.UX,
+                agent_label=label,
+                visibility=AgentVisibilityMode.VISIBLE,
+                trigger_source=AgentTriggerSource.SYSTEM,
+                run_id=job.id,
+            )
+            reserved = self._chat_repository.reserve_message(message)
+            if (
+                reserved.content != content
+                or reserved.status != message_status
+                or reserved.agent_label != label
+            ):
+                reserved.sync(
+                    content=content,
+                    status=message_status,
+                    agent_label=label,
+                )
+                reserved.updated_at = datetime.now(UTC)
+                self._chat_repository.save_message(reserved)
+            return reserved.id
+        except Exception:
+            return None
+
     def _run(
         self, argv: tuple[str, ...], *, cwd: Path
     ) -> ProjectFactoryInitCommandResult:
@@ -5402,6 +5478,26 @@ def _automatic_ux_reviewer_feedback(
         item.strip()
         for item in (result.stdout, result.stderr, report)
         if item and item.strip()
+    )
+
+
+def _automatic_ux_chat_content(
+    *,
+    label: str,
+    iteration: int,
+    result: ProjectFactoryInitCommandResult,
+) -> str:
+    status = "completed" if result.exit_code == 0 else "failed"
+    body_parts = [
+        part.strip()
+        for part in (result.stdout, result.stderr)
+        if part and part.strip()
+    ]
+    body = "\n\n".join(body_parts) or "No textual output was captured."
+    return (
+        f"# {label} pass {iteration}\n\n"
+        f"Status: {status}\n\n"
+        f"{body.strip()}\n"
     )
 
 

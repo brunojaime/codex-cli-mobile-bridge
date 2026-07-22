@@ -771,7 +771,7 @@ class _AssistantHeader extends StatelessWidget {
           child: Text(
             agentLabel.toUpperCase(),
             style: TextStyle(
-              color: _agentHeaderColor(message.agentId),
+              color: _agentHeaderColor(message.agentId, label: agentLabel),
               fontSize: 11,
               fontWeight: FontWeight.w700,
             ),
@@ -881,7 +881,14 @@ class _ActivityStatusStrip extends StatelessWidget {
   }
 }
 
-Color _agentHeaderColor(AgentId agentId) {
+Color _agentHeaderColor(AgentId agentId, {String? label}) {
+  final normalizedLabel = label?.trim().toLowerCase();
+  if (normalizedLabel == 'ux generator') {
+    return const Color(0xFF7DE7FF);
+  }
+  if (normalizedLabel == 'ux reviewer') {
+    return const Color(0xFFFFD28A);
+  }
   return switch (agentId) {
     AgentId.summary => const Color(0xFFAED3FF),
     AgentId.reviewer => const Color(0xFFD98B1D),

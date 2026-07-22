@@ -10,6 +10,7 @@ from backend.app.application.services.project_factory_init_service import (
     ProjectFactoryInitConflictError,
     ProjectFactoryInitService,
 )
+from backend.app.domain.entities.chat_session import ChatSession
 from backend.app.domain.entities.project_factory_init import (
     ProjectFactoryInitArtifact,
     ProjectFactoryInitBlocker,
@@ -22,6 +23,9 @@ from backend.app.domain.entities.project_factory_init import (
     ProjectFactoryInitRemoteResourceType,
 )
 from backend.app.infrastructure.config.settings import Settings
+from backend.app.infrastructure.persistence.in_memory_chat_repository import (
+    InMemoryChatRepository,
+)
 
 
 def test_init_service_creates_idempotent_draft_chat_job(tmp_path: Path) -> None:
@@ -110,6 +114,15 @@ def test_init_service_run_pipeline_generates_workspace_ux_and_blocked_context(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     command_runner = _FakeInitCommandRunner(ux_complete_after=2)
+    repository = InMemoryChatRepository(projects_root=str(tmp_path))
+    repository.save_session(
+        ChatSession(
+            id="chat-1",
+            title="Clinica Norte",
+            workspace_path=str(tmp_path / "clinica-norte"),
+            workspace_name="clinica-norte",
+        )
+    )
     monkeypatch.setenv(
         "VISUAL_UX_POLISH_SKILL_PATH",
         str(_visual_ux_skill_fixture(tmp_path)),
@@ -117,6 +130,7 @@ def test_init_service_run_pipeline_generates_workspace_ux_and_blocked_context(
     service = ProjectFactoryInitService(
         state_root=tmp_path / ".state",
         command_runner=command_runner,
+        chat_repository=repository,
         settings=Settings(
             projects_root=str(tmp_path),
             project_factory_state_dir=str(tmp_path / ".state"),
@@ -157,6 +171,19 @@ def test_init_service_run_pipeline_generates_workspace_ux_and_blocked_context(
     assert (
         workspace / ".codex/ux/evidence-index.json"
     ).is_file()
+    ux_messages = [
+        message for message in repository.list_messages("chat-1")
+        if message.agent_label in {"UX Generator", "UX Reviewer"}
+    ]
+    assert [message.agent_label for message in ux_messages] == [
+        "UX Generator",
+        "UX Reviewer",
+        "UX Generator",
+        "UX Reviewer",
+    ]
+    assert all(message.run_id == completed.id for message in ux_messages)
+    assert "UX Generator pass 1" in ux_messages[0].content
+    assert "UX Reviewer pass 2" in ux_messages[-1].content
     assert (
         completed.phase(ProjectFactoryInitPhaseName.LOCAL_GIT_COMMIT).status
         == ProjectFactoryInitPhaseStatus.COMPLETED
