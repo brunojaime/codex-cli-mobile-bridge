@@ -6,6 +6,7 @@ import pytest
 
 from backend.app.application.services.project_factory_init_service import (
     INIT_PHASES,
+    ProjectFactoryInitCommandResult,
     ProjectFactoryInitConflictError,
     ProjectFactoryInitService,
 )
@@ -104,17 +105,25 @@ def test_init_service_phase_completion_is_idempotent_and_persisted(
     assert loaded.phases[0].command_evidence[0].argv == ("gh", "auth", "status")
 
 
-def test_init_service_run_pipeline_generates_workspace_and_blocked_context(
+def test_init_service_run_pipeline_generates_workspace_ux_and_blocked_context(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    command_runner = _FakeInitCommandRunner(ux_complete_after=2)
+    monkeypatch.setenv(
+        "VISUAL_UX_POLISH_SKILL_PATH",
+        str(_visual_ux_skill_fixture(tmp_path)),
+    )
     service = ProjectFactoryInitService(
         state_root=tmp_path / ".state",
+        command_runner=command_runner,
         settings=Settings(
             projects_root=str(tmp_path),
             project_factory_state_dir=str(tmp_path / ".state"),
             chat_store_backend="memory",
             audio_transcription_backend="disabled",
             speech_synthesis_backend="disabled",
+            codex_command="fake-codex",
         ),
     )
     job = service.start_or_resume(
@@ -136,6 +145,19 @@ def test_init_service_run_pipeline_generates_workspace_and_blocked_context(
         == ProjectFactoryInitPhaseStatus.COMPLETED
     )
     assert (
+        completed.phase(ProjectFactoryInitPhaseName.UX_GENERATOR).status
+        == ProjectFactoryInitPhaseStatus.COMPLETED
+    )
+    assert (
+        completed.phase(ProjectFactoryInitPhaseName.UX_REVIEWER).status
+        == ProjectFactoryInitPhaseStatus.COMPLETED
+    )
+    assert command_runner.ux_generator_calls == 2
+    assert command_runner.ux_reviewer_calls == 2
+    assert (
+        workspace / ".codex/ux/evidence-index.json"
+    ).is_file()
+    assert (
         completed.phase(ProjectFactoryInitPhaseName.LOCAL_GIT_COMMIT).status
         == ProjectFactoryInitPhaseStatus.COMPLETED
     )
@@ -151,6 +173,52 @@ def test_init_service_run_pipeline_generates_workspace_and_blocked_context(
         completed.completion_state
         == ProjectFactoryInitCompletionState.BLOCKED_WITH_CONTEXT
     )
+    phase_names = [phase.name for phase in completed.phases]
+    assert phase_names.index(ProjectFactoryInitPhaseName.UX_REVIEWER) < phase_names.index(
+        ProjectFactoryInitPhaseName.LOCAL_VALIDATION
+    )
+
+
+def test_init_service_automatic_ux_blocks_when_reviewer_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    command_runner = _FakeInitCommandRunner(fail_ux_reviewer=True)
+    monkeypatch.setenv(
+        "VISUAL_UX_POLISH_SKILL_PATH",
+        str(_visual_ux_skill_fixture(tmp_path)),
+    )
+    service = ProjectFactoryInitService(
+        state_root=tmp_path / ".state",
+        command_runner=command_runner,
+        settings=Settings(
+            projects_root=str(tmp_path),
+            project_factory_state_dir=str(tmp_path / ".state"),
+            chat_store_backend="memory",
+            audio_transcription_backend="disabled",
+            speech_synthesis_backend="disabled",
+            codex_command="fake-codex",
+        ),
+    )
+    job = service.start_or_resume(
+        draft_id="draft-1",
+        chat_session_id="chat-1",
+        project_name="Clinica Norte",
+        slug="clinica-norte",
+        frontend_strategy="flutter",
+    )
+    job = service.run_frontend_baseline_phase(job.id)
+
+    blocked = service.run_automatic_ux_phases(job.id)
+
+    assert (
+        blocked.phase(ProjectFactoryInitPhaseName.UX_GENERATOR).status
+        == ProjectFactoryInitPhaseStatus.COMPLETED
+    )
+    reviewer = blocked.phase(ProjectFactoryInitPhaseName.UX_REVIEWER)
+    assert reviewer.status == ProjectFactoryInitPhaseStatus.BLOCKED
+    assert reviewer.blockers[0].code == "automatic_ux_reviewer_failed"
+    assert "reviewer failed" in reviewer.blockers[0].message.lower()
 
 
 def test_init_service_blocked_with_context_and_remote_context_payload(
@@ -253,3 +321,103 @@ def test_init_service_rejects_unknown_phase(tmp_path: Path) -> None:
 
     with pytest.raises(ProjectFactoryInitConflictError):
         service.begin_phase(job.id, "not_a_phase")
+
+
+class _FakeInitCommandRunner:
+    def __init__(
+        self,
+        *,
+        ux_complete_after: int = 1,
+        fail_ux_reviewer: bool = False,
+    ) -> None:
+        self.ux_complete_after = ux_complete_after
+        self.fail_ux_reviewer = fail_ux_reviewer
+        self.ux_generator_calls = 0
+        self.ux_reviewer_calls = 0
+        self.commands: list[tuple[str, ...]] = []
+
+    def run(
+        self,
+        argv: tuple[str, ...],
+        *,
+        cwd: str | Path | None = None,
+        env: dict[str, str] | None = None,
+        timeout_seconds: float = 0,
+    ):
+        del timeout_seconds
+        self.commands.append(argv)
+        cwd_path = Path(cwd or ".")
+        prompt = argv[-1] if argv else ""
+        if "Automatic New Project UX Generator" in prompt:
+            self.ux_generator_calls += 1
+            ux_dir = cwd_path / ".codex/ux"
+            ux_dir.mkdir(parents=True, exist_ok=True)
+            (ux_dir / "ux-generator-report.md").write_text(
+                f"# UX generator report\n\npass {self.ux_generator_calls}\n",
+                encoding="utf-8",
+            )
+            return ProjectFactoryInitCommandResult(
+                argv=argv,
+                cwd=str(cwd_path),
+                exit_code=0,
+                stdout="UX generator ok",
+                env=env,
+            )
+        if "Automatic New Project UX Reviewer" in prompt:
+            self.ux_reviewer_calls += 1
+            if self.fail_ux_reviewer:
+                return ProjectFactoryInitCommandResult(
+                    argv=argv,
+                    cwd=str(cwd_path),
+                    exit_code=1,
+                    stderr="reviewer failed",
+                    env=env,
+                )
+            status = (
+                "complete"
+                if self.ux_reviewer_calls >= self.ux_complete_after
+                else "continue"
+            )
+            ux_dir = cwd_path / ".codex/ux"
+            ux_dir.mkdir(parents=True, exist_ok=True)
+            (ux_dir / "ux-reviewer-report.md").write_text(
+                "# UX reviewer report\n\n"
+                + f"status: {status}\nrelease_gate: pass\n",
+                encoding="utf-8",
+            )
+            return ProjectFactoryInitCommandResult(
+                argv=argv,
+                cwd=str(cwd_path),
+                exit_code=0,
+                stdout=f"status: {status}\nrelease_gate: pass",
+                env=env,
+            )
+        stdout = "true" if argv[:2] == ("git", "rev-parse") else "ok"
+        return ProjectFactoryInitCommandResult(
+            argv=argv,
+            cwd=str(cwd_path),
+            exit_code=0,
+            stdout=stdout,
+            env=env,
+        )
+
+
+def _visual_ux_skill_fixture(tmp_path: Path) -> Path:
+    root = tmp_path / "skills/visual-ux-polish"
+    references = root / "references"
+    references.mkdir(parents=True)
+    root.joinpath("SKILL.md").write_text(
+        "# Visual UX Polish\n\nUse this skill for professional UX polish.\n",
+        encoding="utf-8",
+    )
+    for relative_path in (
+        "visual-quality-checklist.md",
+        "product-category-playbooks.md",
+        "visual-validation-protocol.md",
+        "accessibility-performance-polish.md",
+    ):
+        references.joinpath(relative_path).write_text(
+            f"# {relative_path}\n\nFixture reference.\n",
+            encoding="utf-8",
+        )
+    return root / "SKILL.md"

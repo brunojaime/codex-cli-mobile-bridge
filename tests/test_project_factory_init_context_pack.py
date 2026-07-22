@@ -164,6 +164,8 @@ def test_context_pack_treats_queued_github_repo_as_pending_not_blocked(
         ProjectFactoryInitPhaseName.INIT_PREFLIGHT,
         ProjectFactoryInitPhaseName.DRAFT_AND_SLUG,
         ProjectFactoryInitPhaseName.BASELINE_SCAFFOLD,
+        ProjectFactoryInitPhaseName.UX_GENERATOR,
+        ProjectFactoryInitPhaseName.UX_REVIEWER,
         ProjectFactoryInitPhaseName.LOCAL_VALIDATION,
         ProjectFactoryInitPhaseName.LOCAL_GIT_COMMIT,
     ):

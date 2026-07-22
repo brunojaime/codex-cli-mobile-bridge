@@ -40,6 +40,8 @@ class ProjectFactoryInitPhaseName(StrEnum):
     DRAFT_AND_SLUG = "draft_and_slug"
     BASELINE_SCAFFOLD = "baseline_scaffold"
     FLUTTER_OR_STRATEGY_BASELINE = "flutter_or_strategy_baseline"
+    UX_GENERATOR = "ux_generator"
+    UX_REVIEWER = "ux_reviewer"
     LOCAL_VALIDATION = "local_validation"
     LOCAL_GIT_COMMIT = "local_git_commit"
     GITHUB_REPOSITORY = "github_repository"
@@ -78,6 +80,8 @@ INIT_PHASE_ORDER: tuple[ProjectFactoryInitPhaseName, ...] = (
     ProjectFactoryInitPhaseName.DRAFT_AND_SLUG,
     ProjectFactoryInitPhaseName.BASELINE_SCAFFOLD,
     ProjectFactoryInitPhaseName.FLUTTER_OR_STRATEGY_BASELINE,
+    ProjectFactoryInitPhaseName.UX_GENERATOR,
+    ProjectFactoryInitPhaseName.UX_REVIEWER,
     ProjectFactoryInitPhaseName.LOCAL_VALIDATION,
     ProjectFactoryInitPhaseName.LOCAL_GIT_COMMIT,
     ProjectFactoryInitPhaseName.GITHUB_REPOSITORY,
@@ -98,6 +102,8 @@ INIT_PHASE_IDEMPOTENCY_RULES: dict[
     ProjectFactoryInitPhaseName.DRAFT_AND_SLUG: ProjectFactoryInitIdempotencyRule.CREATE_OR_VERIFY,
     ProjectFactoryInitPhaseName.BASELINE_SCAFFOLD: ProjectFactoryInitIdempotencyRule.GENERATED_OVERWRITE,
     ProjectFactoryInitPhaseName.FLUTTER_OR_STRATEGY_BASELINE: ProjectFactoryInitIdempotencyRule.CREATE_OR_VERIFY,
+    ProjectFactoryInitPhaseName.UX_GENERATOR: ProjectFactoryInitIdempotencyRule.RERUN_SAFE_COMMAND,
+    ProjectFactoryInitPhaseName.UX_REVIEWER: ProjectFactoryInitIdempotencyRule.RERUN_SAFE_COMMAND,
     ProjectFactoryInitPhaseName.LOCAL_VALIDATION: ProjectFactoryInitIdempotencyRule.RERUN_SAFE_COMMAND,
     ProjectFactoryInitPhaseName.LOCAL_GIT_COMMIT: ProjectFactoryInitIdempotencyRule.CREATE_OR_VERIFY,
     ProjectFactoryInitPhaseName.GITHUB_REPOSITORY: ProjectFactoryInitIdempotencyRule.CREATE_OR_VERIFY,
@@ -381,6 +387,36 @@ class ProjectFactoryInitPhase:
         )
 
 
+def _phases_in_current_order(
+    phases: tuple[ProjectFactoryInitPhase, ...],
+) -> tuple[ProjectFactoryInitPhase, ...]:
+    by_name = {phase.name: phase for phase in phases}
+    ordered: list[ProjectFactoryInitPhase] = []
+    for index, name in enumerate(INIT_PHASE_ORDER):
+        existing = by_name.get(name)
+        if existing is not None:
+            ordered.append(existing)
+            continue
+        later_phases = (
+            by_name.get(later_name) for later_name in INIT_PHASE_ORDER[index + 1 :]
+        )
+        later_started = any(
+            phase is not None and phase.status != ProjectFactoryInitPhaseStatus.QUEUED
+            for phase in later_phases
+        )
+        if later_started:
+            ordered.append(
+                ProjectFactoryInitPhase(
+                    name=name,
+                    status=ProjectFactoryInitPhaseStatus.SKIPPED,
+                    message="Phase added after this init job had already advanced.",
+                )
+            )
+        else:
+            ordered.append(ProjectFactoryInitPhase(name=name))
+    return tuple(ordered)
+
+
 @dataclass(frozen=True, slots=True)
 class ProjectFactoryInitJob:
     id: str
@@ -434,9 +470,13 @@ class ProjectFactoryInitJob:
         raise KeyError(name.value)
 
     def with_phase(self, updated_phase: ProjectFactoryInitPhase) -> "ProjectFactoryInitJob":
-        phases = tuple(
-            updated_phase if phase.name == updated_phase.name else phase
-            for phase in self.phases
+        phases = _phases_in_current_order(
+            tuple(
+                updated_phase if phase.name == updated_phase.name else phase
+                for phase in self.phases
+            )
+            if any(phase.name == updated_phase.name for phase in self.phases)
+            else (*self.phases, updated_phase)
         )
         return ProjectFactoryInitJob(
             id=self.id,
@@ -505,9 +545,11 @@ class ProjectFactoryInitJob:
             project_name=str(payload["projectName"]),
             slug=str(payload["slug"]),
             frontend_strategy=str(payload["frontendStrategy"]),
-            phases=tuple(
-                ProjectFactoryInitPhase.from_payload(_expect_mapping(item))
-                for item in _expect_list(payload.get("phases"))
+            phases=_phases_in_current_order(
+                tuple(
+                    ProjectFactoryInitPhase.from_payload(_expect_mapping(item))
+                    for item in _expect_list(payload.get("phases"))
+                )
             ),
             remote_resources=tuple(
                 ProjectFactoryInitRemoteResource.from_payload(_expect_mapping(item))

@@ -1084,13 +1084,26 @@ def _ux_reviewer_is_complete(feedback: str) -> bool:
         if status == "ready" and release_gate in {"pass", "passed", "ready"}:
             return True
     lowered = normalized.lower()
+    continue_markers = (
+        "status: continue",
+        "status=continue",
+        '"status": "continue"',
+        '"status":"continue"',
+        "'status': 'continue'",
+        "'status':'continue'",
+    )
+    if any(marker in lowered for marker in continue_markers):
+        return False
     complete_markers = (
         "status: complete",
         "status=complete",
         '"status": "complete"',
+        '"status":"complete"',
         "'status': 'complete'",
+        "'status':'complete'",
         "ux gate: pass",
         "release_gate: pass",
+        '"release_gate":"pass"',
         "release gate: pass",
     )
     return any(marker in lowered for marker in complete_markers)

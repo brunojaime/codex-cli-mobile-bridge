@@ -26,6 +26,8 @@ def test_init_phase_order_is_stable_and_complete() -> None:
         "draft_and_slug",
         "baseline_scaffold",
         "flutter_or_strategy_baseline",
+        "ux_generator",
+        "ux_reviewer",
         "local_validation",
         "local_git_commit",
         "github_repository",

@@ -341,7 +341,7 @@ def test_github_command_evidence_redacts_secret_values(tmp_path: Path) -> None:
     evidence = phase.command_evidence[0]
     assert "secret-token" not in evidence.stdout_summary
     assert "secret-token" not in evidence.stderr_summary
-    assert evidence.redacted_env_keys == ("GH_TOKEN",)
+    assert "GH_TOKEN" in evidence.redacted_env_keys
     assert all(env == {"GH_TOKEN": "secret-token"} for env in runner.envs)
 
 

@@ -26,6 +26,15 @@ from backend.app.application.services.project_factory_generator_service import (
     ProjectFactoryGeneratorError,
     ProjectFactoryGeneratorService,
 )
+from backend.app.application.services.project_factory_job_runner import (
+    _MAX_AUTOMATIC_UX_ITERATIONS,
+    _codex_argv,
+    _load_visual_ux_skill_context,
+    _ux_iteration_prompt_path,
+    _ux_reviewer_is_complete,
+    _write_ux_evidence_index,
+    ProjectFactoryUxSkillUnavailableError,
+)
 from backend.app.application.services.project_factory_manifest_service import (
     FRONTEND_STRATEGIES,
     ProjectFactoryManifestInput,
@@ -56,6 +65,7 @@ from backend.app.domain.entities.project_factory_init import (
     ProjectFactoryInitRelationships,
     ProjectFactoryInitRemoteResource,
     ProjectFactoryInitRemoteResourceType,
+    _phases_in_current_order,
 )
 from backend.app.domain.entities.chat_message import (
     ChatMessage,
@@ -299,6 +309,8 @@ class ProjectFactoryInitService:
             )
             job = self.run_frontend_baseline_phase(job.id)
             if not _has_blocking_phase(job):
+                job = self.run_automatic_ux_phases(job.id)
+            if not _has_blocking_phase(job):
                 job = self.complete_phase(
                     job.id,
                     ProjectFactoryInitPhaseName.LOCAL_VALIDATION.value,
@@ -326,6 +338,213 @@ class ProjectFactoryInitService:
                 return self.run_llm_context_pack_phase(failed.id)
             except Exception:
                 return failed
+
+    def run_automatic_ux_phases(
+        self,
+        init_job_id: str,
+        *,
+        project_path: str | Path | None = None,
+    ) -> ProjectFactoryInitJob:
+        """Run the New Project UX generator/reviewer lane before validation."""
+
+        with self._lock:
+            job = self._require_job(init_job_id)
+            generator_phase = job.phase(ProjectFactoryInitPhaseName.UX_GENERATOR)
+            reviewer_phase = job.phase(ProjectFactoryInitPhaseName.UX_REVIEWER)
+            if (
+                generator_phase.status == ProjectFactoryInitPhaseStatus.COMPLETED
+                and reviewer_phase.status == ProjectFactoryInitPhaseStatus.COMPLETED
+            ):
+                return job
+
+            target = self._frontend_target_path(job, project_path)
+            if not target.exists():
+                return self.block_phase(
+                    job.id,
+                    ProjectFactoryInitPhaseName.UX_GENERATOR.value,
+                    blocker=_automatic_ux_blocker(
+                        phase=ProjectFactoryInitPhaseName.UX_GENERATOR,
+                        code="automatic_ux_workspace_missing",
+                        message="Automatic UX cannot run because the generated workspace is missing.",
+                        next_action="Restore the generated workspace, then rerun deterministic init.",
+                    ),
+                    context_available=False,
+                )
+
+            try:
+                visual_ux_skill_context = _load_visual_ux_skill_context(None)
+            except ProjectFactoryUxSkillUnavailableError as exc:
+                return self.block_phase(
+                    job.id,
+                    ProjectFactoryInitPhaseName.UX_GENERATOR.value,
+                    blocker=_automatic_ux_blocker(
+                        phase=ProjectFactoryInitPhaseName.UX_GENERATOR,
+                        code="automatic_ux_skill_missing",
+                        message="Automatic UX requires the visual-ux-polish skill.",
+                        next_action=(
+                            "Install or restore the visual-ux-polish skill on the "
+                            "bridge host, then rerun deterministic init."
+                        ),
+                        detail=str(exc),
+                    ),
+                    context_available=True,
+                )
+
+            prompt_root = target / ".codex" / "factory" / "prompts"
+            prompt_root.mkdir(parents=True, exist_ok=True)
+            generator_base, reviewer_base = _automatic_ux_prompts(
+                job,
+                target=target,
+                visual_ux_prompt_section=visual_ux_skill_context.prompt_section,
+            )
+            (prompt_root / "ux-generator.md").write_text(
+                generator_base,
+                encoding="utf-8",
+            )
+            (prompt_root / "ux-reviewer.md").write_text(
+                reviewer_base,
+                encoding="utf-8",
+            )
+
+            job = self.begin_phase(
+                job.id,
+                ProjectFactoryInitPhaseName.UX_GENERATOR.value,
+                message=(
+                    "Running automatic UX generator and reviewer lane before "
+                    "validation and release."
+                ),
+            )
+            generator_evidence: list[ProjectFactoryInitCommandEvidence] = []
+            reviewer_evidence: list[ProjectFactoryInitCommandEvidence] = []
+            reviewer_feedback = ""
+            completed_iterations = 0
+            completed_by_reviewer = False
+            codex_command = self._settings.codex_command if self._settings else "codex"
+
+            for iteration in range(1, _MAX_AUTOMATIC_UX_ITERATIONS + 1):
+                generator_prompt_path = _ux_iteration_prompt_path(
+                    prompt_root,
+                    "ux-generator",
+                    iteration,
+                )
+                reviewer_prompt_path = _ux_iteration_prompt_path(
+                    prompt_root,
+                    "ux-reviewer",
+                    iteration,
+                )
+                if iteration > 1:
+                    generator_prompt_path.write_text(
+                        generator_base
+                        + "\n\n# UX Reviewer Continuation\n\n"
+                        + reviewer_feedback.strip()
+                        + "\n",
+                        encoding="utf-8",
+                    )
+                    reviewer_prompt_path.write_text(
+                        reviewer_base
+                        + f"\n\nReview UX iteration {iteration}. Return `status=complete` "
+                        "only when the UX gate is ready; otherwise include the next "
+                        "UX-only continuation prompt.\n",
+                        encoding="utf-8",
+                    )
+
+                generator_result = self._run(
+                    _codex_argv(
+                        codex_command,
+                        generator_prompt_path.read_text(encoding="utf-8"),
+                    ),
+                    cwd=target,
+                )
+                generator_evidence.append(self._evidence(generator_result))
+                if generator_result.exit_code != 0:
+                    return self.block_phase(
+                        job.id,
+                        ProjectFactoryInitPhaseName.UX_GENERATOR.value,
+                        blocker=_automatic_ux_command_blocker(
+                            phase=ProjectFactoryInitPhaseName.UX_GENERATOR,
+                            code="automatic_ux_generator_failed",
+                            message="Automatic UX generator failed.",
+                            result=generator_result,
+                        ),
+                        context_available=True,
+                        command_evidence=tuple(generator_evidence),
+                    )
+
+                reviewer_result = self._run(
+                    _codex_argv(
+                        codex_command,
+                        reviewer_prompt_path.read_text(encoding="utf-8"),
+                    ),
+                    cwd=target,
+                )
+                reviewer_evidence.append(self._evidence(reviewer_result))
+                if reviewer_result.exit_code != 0:
+                    job = self.complete_phase(
+                        job.id,
+                        ProjectFactoryInitPhaseName.UX_GENERATOR.value,
+                        message=(
+                            "Automatic UX generator completed before reviewer failure."
+                        ),
+                        command_evidence=tuple(generator_evidence),
+                    )
+                    return self.block_phase(
+                        job.id,
+                        ProjectFactoryInitPhaseName.UX_REVIEWER.value,
+                        blocker=_automatic_ux_command_blocker(
+                            phase=ProjectFactoryInitPhaseName.UX_REVIEWER,
+                            code="automatic_ux_reviewer_failed",
+                            message="Automatic UX reviewer failed.",
+                            result=reviewer_result,
+                        ),
+                        context_available=True,
+                        command_evidence=tuple(reviewer_evidence),
+                    )
+
+                completed_iterations = iteration
+                reviewer_feedback = _automatic_ux_reviewer_feedback(
+                    target=target,
+                    result=reviewer_result,
+                )
+                if _ux_reviewer_is_complete(reviewer_feedback):
+                    completed_by_reviewer = True
+                    break
+
+            _write_ux_evidence_index(target)
+            artifacts = (
+                ProjectFactoryInitArtifact(
+                    kind="automatic_ux_evidence",
+                    path=str(target / ".codex/ux/evidence-index.json"),
+                    metadata={
+                        "iterations": completed_iterations,
+                        "maxIterations": _MAX_AUTOMATIC_UX_ITERATIONS,
+                        "completedByReviewer": completed_by_reviewer,
+                    },
+                ),
+            )
+            job = self.complete_phase(
+                job.id,
+                ProjectFactoryInitPhaseName.UX_GENERATOR.value,
+                message=(
+                    "Automatic UX generator completed after "
+                    f"{completed_iterations} of {_MAX_AUTOMATIC_UX_ITERATIONS} pass(es)."
+                ),
+                artifacts=artifacts,
+                command_evidence=tuple(generator_evidence),
+            )
+            reviewer_message = (
+                "Automatic UX reviewer completed after "
+                f"{completed_iterations} of {_MAX_AUTOMATIC_UX_ITERATIONS} pass(es)."
+                if completed_by_reviewer
+                else "Automatic UX reviewer reached the maximum "
+                f"{_MAX_AUTOMATIC_UX_ITERATIONS} pass(es)."
+            )
+            return self.complete_phase(
+                job.id,
+                ProjectFactoryInitPhaseName.UX_REVIEWER.value,
+                message=reviewer_message,
+                artifacts=artifacts,
+                command_evidence=tuple(reviewer_evidence),
+            )
 
     def queue_retry(self, init_job_id: str) -> ProjectFactoryInitJob:
         """Prepare a blocked deterministic init job for another pipeline pass."""
@@ -4527,11 +4746,14 @@ def _legacy_job_from_payload(payload: dict[str, object]) -> ProjectFactoryInitJo
             payload.get("generatedWorkspacePath") or payload.get("workspacePath")
         ),
     )
-    phases = tuple(
-        _legacy_phase_from_payload(_expect_mapping(item))
-        for item in payload.get("phases", [])
-        if isinstance(item, dict)
-    ) or tuple(ProjectFactoryInitPhase(name=phase) for phase in INIT_PHASE_ORDER)
+    phases = _phases_in_current_order(
+        tuple(
+            _legacy_phase_from_payload(_expect_mapping(item))
+            for item in payload.get("phases", [])
+            if isinstance(item, dict)
+        )
+        or tuple(ProjectFactoryInitPhase(name=phase) for phase in INIT_PHASE_ORDER)
+    )
     job = ProjectFactoryInitJob(
         id=str(payload["initJobId"]),
         relationships=relationships,
@@ -5095,6 +5317,131 @@ def _task_alignment_blocker(
         phase=ProjectFactoryInitPhaseName.WORKBENCH_AND_FEEDBACK_VERIFICATION,
         next_action="Fix git publish access for the generated workspace, then rerun deterministic init.",
         command=command,
+    )
+
+
+def _automatic_ux_prompts(
+    job: ProjectFactoryInitJob,
+    *,
+    target: Path,
+    visual_ux_prompt_section: str,
+) -> tuple[str, str]:
+    preview_url = f"https://preview.nienfos.com/{job.slug}"
+    preview_api = f"{preview_url}/api"
+    base = f"""You are working inside a newly generated Project Factory baseline.
+
+Workspace: `{target}`
+Project: `{job.project_name}`
+Source app: `{job.slug}`
+Frontend strategy: `{job.frontend_strategy}`
+Preview URL: `{preview_url}`
+Preview API: `{preview_api}`
+
+Hard constraints:
+- Do not recreate the project, GitHub repository, Cloudflare resources, Android
+  release wiring, Bridge installable registration, Workbench metadata, feedback,
+  updater, auth, RBAC, persistence, or backend contracts.
+- Do not enable mock/demo mode, seeded demo data, localhost API URLs, or
+  placeholder runtime URLs.
+- Keep changes scoped to visible UX, user-facing copy, layout, responsive fit,
+  accessibility, and frontend polish.
+- Save concise evidence under `.codex/ux/`.
+"""
+    generator_prompt = (
+        base
+        + visual_ux_prompt_section
+        + """
+# Automatic New Project UX Generator
+
+This is the automatic post-baseline UX pass for New Project. Improve the
+generated UI so the first installable preview is useful and professional for
+the requested product category. Inspect the existing app, benchmark comparable
+professional products when helpful, and validate the primary responsive/mobile
+journeys when the app can run.
+
+If reviewer feedback is provided below in a later iteration, address only that
+UX feedback. Write `.codex/ux/ux-generator-report.md` with what changed,
+validation performed, and any remaining UX concerns.
+"""
+    )
+    reviewer_prompt = (
+        base
+        + visual_ux_prompt_section
+        + """
+# Automatic New Project UX Reviewer
+
+Review only the UX generator changes and evidence. Check hierarchy, layout,
+spacing, typography, contrast, responsive/mobile fit, empty/loading/error
+states, accessibility, and scope discipline. Do not ask for backend, auth,
+schema, release, or business-logic changes.
+
+This automatic UX lane can run up to 10 generator/reviewer passes. Stop early
+when the UI is good enough for the first installable preview. If more UX-only
+work is required, write `.codex/ux/ux-reviewer-report.md` with the exact next
+prompt for the UX generator.
+
+End your response, and the report when possible, with this machine-readable
+decision:
+
+```json
+{"status":"complete|continue|blocked","summary":"short UX readiness summary","continuation_prompt":"next UX-only prompt when status is continue","release_gate":"pass|fail"}
+```
+"""
+    )
+    return generator_prompt, reviewer_prompt
+
+
+def _automatic_ux_reviewer_feedback(
+    *,
+    target: Path,
+    result: ProjectFactoryInitCommandResult,
+) -> str:
+    report_path = target / ".codex/ux/ux-reviewer-report.md"
+    report = report_path.read_text(encoding="utf-8") if report_path.exists() else ""
+    return "\n\n".join(
+        item.strip()
+        for item in (result.stdout, result.stderr, report)
+        if item and item.strip()
+    )
+
+
+def _automatic_ux_blocker(
+    *,
+    phase: ProjectFactoryInitPhaseName,
+    code: str,
+    message: str,
+    next_action: str,
+    detail: str = "",
+) -> ProjectFactoryInitBlocker:
+    full_message = f"{message} Detail: {detail}" if detail else message
+    return ProjectFactoryInitBlocker(
+        code=code,
+        message=full_message,
+        phase=phase,
+        next_action=next_action,
+        command=("project-factory", "init", "retry"),
+    )
+
+
+def _automatic_ux_command_blocker(
+    *,
+    phase: ProjectFactoryInitPhaseName,
+    code: str,
+    message: str,
+    result: ProjectFactoryInitCommandResult,
+) -> ProjectFactoryInitBlocker:
+    detail = _summarize_output(
+        "\n".join(part for part in (result.stdout, result.stderr) if part),
+        (),
+    )
+    return _automatic_ux_blocker(
+        phase=phase,
+        code=code,
+        message=message,
+        next_action=(
+            "Fix the automatic UX agent/tooling issue, then rerun deterministic init."
+        ),
+        detail=detail,
     )
 
 
