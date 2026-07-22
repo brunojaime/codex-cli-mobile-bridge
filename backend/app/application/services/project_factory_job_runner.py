@@ -208,7 +208,7 @@ class ProjectFactoryJobRunner:
         )
         preflight_steps = 1 if remote_publication and self._remote_preflight else 0
         total_steps = (
-            7
+            9
             + (2 * _MAX_AUTOMATIC_UX_ITERATIONS)
             + preflight_steps
             + publication_steps
@@ -272,8 +272,28 @@ class ProjectFactoryJobRunner:
             context=context,
             project_path=project_path,
             prompt_path=prompt_root / "ux-brief.md",
-            phase="ux_brief",
-            label="Lightweight UX brief",
+            phase="ux_baseline_generator",
+            label="Early UX generator pass 1 of 2",
+            completed_steps=completed_steps,
+            total_steps=total_steps,
+            event_sink=event_sink,
+        )
+        completed_steps = self._run_cli_step(
+            context=context,
+            project_path=project_path,
+            prompt_path=prompt_root / "ux-brief-reviewer.md",
+            phase="ux_baseline_reviewer",
+            label="Early UX reviewer pass 1 of 1",
+            completed_steps=completed_steps,
+            total_steps=total_steps,
+            event_sink=event_sink,
+        )
+        completed_steps = self._run_cli_step(
+            context=context,
+            project_path=project_path,
+            prompt_path=prompt_root / "ux-brief-generator-02.md",
+            phase="ux_baseline_generator",
+            label="Early UX generator pass 2 of 2",
             completed_steps=completed_steps,
             total_steps=total_steps,
             event_sink=event_sink,
@@ -962,9 +982,11 @@ Required UX brief input:
             + """
 # Lightweight UX Brief
 
+# Early UX Generator Pass 1
+
 The visual-ux-polish skill above is loaded and required.
 
-This is the pre-Project-Factory UX intervention. Do not edit product code,
+This is the first early UX intervention. Do not edit product code,
 backend code, auth, RBAC, persistence, release wiring, or generated
 functionality. Create `.codex/ux/pre-project-ux-brief.md` only.
 
@@ -973,6 +995,47 @@ clear UX direction for the factory generator: audience, first-use intent,
 information architecture, navigation model, primary screens, empty/loading/error
 states, visual tone, accessibility constraints, mobile/desktop expectations,
 benchmark notes, and UX acceptance criteria.
+""",
+            encoding="utf-8",
+        )
+        (prompt_root / "ux-brief-reviewer.md").write_text(
+            base
+            + visual_ux_skill_context.prompt_section
+            + ux_brief_contract
+            + """
+# Early UX Reviewer Pass 1
+
+The visual-ux-polish skill above is loaded and required.
+
+Review `.codex/ux/pre-project-ux-brief.md` against the user's product/domain
+brief. Do not edit product code, backend code, auth, RBAC, persistence, release
+wiring, or generated functionality. Write `.codex/ux/pre-project-ux-review.md`
+with concrete look-and-feel corrections for the second UX Generator pass.
+
+Focus on whether the brief gives clear enough visual direction for the later
+Domain Factory Generator/Domain Reviewer implementation pair.
+""",
+            encoding="utf-8",
+        )
+        (prompt_root / "ux-brief-generator-02.md").write_text(
+            base
+            + visual_ux_skill_context.prompt_section
+            + ux_brief_contract
+            + """
+# Lightweight UX Brief
+
+# Early UX Generator Pass 2
+
+The visual-ux-polish skill above is loaded and required.
+
+Read `.codex/ux/pre-project-ux-brief.md` and
+`.codex/ux/pre-project-ux-review.md`, then update
+`.codex/ux/pre-project-ux-brief.md` into the final early UX baseline for the
+Domain Factory Generator/Domain Reviewer pair.
+
+Do not edit product code, backend code, auth, RBAC, persistence, release wiring,
+or generated functionality. This pass only improves the look-and-feel direction
+that the domain implementation must consume.
 """,
             encoding="utf-8",
         )

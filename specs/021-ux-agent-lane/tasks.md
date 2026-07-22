@@ -122,3 +122,7 @@ deferred.
 - [x] T042 Add focused backend regression coverage for Domain Factory UX
       workflow reporting, no separate functional generator stage, and
       reviewer-controlled final UX max-pass metadata.
+- [x] T043 Update the Project Factory runner harness so the early UX baseline
+      actually executes as UX Generator, UX Reviewer, UX Generator before
+      downstream generator/reviewer implementation, then final UX polish runs
+      with the existing 10-pass reviewer-controlled cap.

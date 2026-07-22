@@ -43,6 +43,8 @@ def test_project_factory_runner_success_writes_prompts_and_runs_pairs(
     assert project.is_dir()
     assert (project / ".codex/factory/prompts/research-planning.md").is_file()
     assert (project / ".codex/factory/prompts/ux-brief.md").is_file()
+    assert (project / ".codex/factory/prompts/ux-brief-reviewer.md").is_file()
+    assert (project / ".codex/factory/prompts/ux-brief-generator-02.md").is_file()
     assert (project / ".codex/factory/prompts/generator-01.md").is_file()
     assert (project / ".codex/factory/prompts/reviewer-02.md").is_file()
     assert (project / ".codex/factory/prompts/ux-generator.md").is_file()
@@ -50,18 +52,23 @@ def test_project_factory_runner_success_writes_prompts_and_runs_pairs(
     assert (project / ".codex/factory/prompts/finalize-validation.md").is_file()
     assert (project / ".codex/factory/prompts/publish-finalize.md").is_file()
     assert (project / ".codex/ux/pre-project-ux-brief.md").is_file()
+    assert (project / ".codex/ux/pre-project-ux-review.md").is_file()
     assert (project / ".codex/ux/evidence-index.json").is_file()
-    assert len(process_runner.calls) == 11
+    assert len(process_runner.calls) == 13
     assert "Lightweight UX Brief" in process_runner.calls[0][-1]
-    assert "Generator pass 1:" in process_runner.calls[2][-1]
-    assert "Reviewer pass 1:" in process_runner.calls[3][-1]
-    assert "Generator pass 2:" in process_runner.calls[4][-1]
-    assert "Reviewer pass 2:" in process_runner.calls[5][-1]
-    assert "Senior UX Generator" in process_runner.calls[6][-1]
-    assert "Senior UX Reviewer" in process_runner.calls[7][-1]
+    assert "Early UX Reviewer Pass 1" in process_runner.calls[1][-1]
+    assert "Early UX Generator Pass 2" in process_runner.calls[2][-1]
+    assert "Generator pass 1:" in process_runner.calls[4][-1]
+    assert "Reviewer pass 1:" in process_runner.calls[5][-1]
+    assert "Generator pass 2:" in process_runner.calls[6][-1]
+    assert "Reviewer pass 2:" in process_runner.calls[7][-1]
+    assert "Senior UX Generator" in process_runner.calls[8][-1]
+    assert "Senior UX Reviewer" in process_runner.calls[9][-1]
     assert [event["phase"] for event in events if event["status"] == "completed"] == [
         "scaffold",
-        "ux_brief",
+        "ux_baseline_generator",
+        "ux_baseline_reviewer",
+        "ux_baseline_generator",
         "research_planning",
         "generator_pass",
         "reviewer_pass",
@@ -115,15 +122,30 @@ def test_project_factory_runner_prompts_load_skill_and_consume_ux_brief(
     prompt_root = Path(result.generation_result.target_path) / ".codex/factory/prompts"
     research = (prompt_root / "research-planning.md").read_text(encoding="utf-8")
     generator = (prompt_root / "generator-01.md").read_text(encoding="utf-8")
+    early_reviewer = (prompt_root / "ux-brief-reviewer.md").read_text(
+        encoding="utf-8"
+    )
+    early_generator_02 = (prompt_root / "ux-brief-generator-02.md").read_text(
+        encoding="utf-8"
+    )
     ux_generator = (prompt_root / "ux-generator.md").read_text(encoding="utf-8")
     ux_reviewer = (prompt_root / "ux-reviewer.md").read_text(encoding="utf-8")
 
-    for prompt in (research, generator, ux_generator, ux_reviewer):
+    for prompt in (
+        research,
+        generator,
+        early_reviewer,
+        early_generator_02,
+        ux_generator,
+        ux_reviewer,
+    ):
         assert "Required UX brief input" in prompt
         assert ".codex/ux/pre-project-ux-brief.md" in prompt
     assert "Required visual-ux-polish Skill Context" in ux_generator
     assert "references/visual-quality-checklist.md" in ux_generator
     assert "references/visual-validation-protocol.md" in ux_reviewer
+    assert "Early UX Reviewer Pass 1" in early_reviewer
+    assert "Early UX Generator Pass 2" in early_generator_02
 
 
 def test_project_factory_runner_ux_lane_stops_when_reviewer_completes(
@@ -329,7 +351,7 @@ def test_project_factory_runner_remote_publication_can_rerun_satisfied_phases(
 def test_project_factory_runner_remote_publication_reports_blocked_phase(
     tmp_path: Path,
 ) -> None:
-    process_runner = _FakeProcessRunner(fail_call=8, fail_returncode=2)
+    process_runner = _FakeProcessRunner(fail_call=10, fail_returncode=2)
     runner = _runner(tmp_path, process_runner)
     events: list[dict[str, object]] = []
 
@@ -352,7 +374,7 @@ def test_project_factory_runner_remote_publication_reports_blocked_phase(
 def test_project_factory_runner_remote_publication_requires_generated_validation(
     tmp_path: Path,
 ) -> None:
-    process_runner = _FakeProcessRunner(fail_call=5, fail_returncode=9)
+    process_runner = _FakeProcessRunner(fail_call=7, fail_returncode=9)
     runner = _runner(tmp_path, process_runner)
     events: list[dict[str, object]] = []
 
@@ -542,7 +564,7 @@ def test_project_factory_runner_can_execute_generated_validation(
 def test_project_factory_runner_reports_generated_validation_failure(
     tmp_path: Path,
 ) -> None:
-    process_runner = _FakeProcessRunner(fail_call=5)
+    process_runner = _FakeProcessRunner(fail_call=7)
     runner = _runner(tmp_path, process_runner)
     events: list[dict[str, object]] = []
 
@@ -566,7 +588,7 @@ def test_project_factory_runner_reports_generated_validation_failure(
 def test_project_factory_runner_failure_keeps_project_and_reports_error(
     tmp_path: Path,
 ) -> None:
-    process_runner = _FakeProcessRunner(fail_call=3)
+    process_runner = _FakeProcessRunner(fail_call=5)
     runner = _runner(tmp_path, process_runner)
     events: list[dict[str, object]] = []
 
@@ -599,7 +621,7 @@ def test_project_factory_runner_rejects_unpaired_run_counts(tmp_path: Path) -> N
 def test_project_factory_runner_blocks_when_remote_publication_fails(
     tmp_path: Path,
 ) -> None:
-    process_runner = _FakeProcessRunner(fail_call=8)
+    process_runner = _FakeProcessRunner(fail_call=10)
     runner = _runner(tmp_path, process_runner)
     events: list[dict[str, object]] = []
 
@@ -633,7 +655,7 @@ def test_project_factory_runner_timeout_reports_failed_phase(tmp_path: Path) -> 
         )
 
     failed = [event for event in events if event["status"] == "failed"]
-    assert failed[0]["phase"] == "ux_brief"
+    assert failed[0]["phase"] == "ux_baseline_generator"
     assert "timed out" in failed[0]["message"]
 
 
@@ -671,6 +693,12 @@ class _FakeProcessRunner:
             ux_root.mkdir(parents=True, exist_ok=True)
             ux_root.joinpath("pre-project-ux-brief.md").write_text(
                 "# Pre-project UX brief\n\nUse concise professional UX direction.\n",
+                encoding="utf-8",
+            )
+        if "Early UX Reviewer Pass 1" in prompt:
+            ux_root.mkdir(parents=True, exist_ok=True)
+            ux_root.joinpath("pre-project-ux-review.md").write_text(
+                "# Pre-project UX review\n\nTighten the visual direction.\n",
                 encoding="utf-8",
             )
         if "Senior UX Generator" in prompt:

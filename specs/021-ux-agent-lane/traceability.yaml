@@ -42,6 +42,7 @@ requirements:
       - T037
       - T041
       - T042
+      - T043
     acceptance:
       - New Project runs lightweight UX before Project Factory baseline generation.
       - Project Factory baseline completion can run UX generator/reviewer.
@@ -60,6 +61,9 @@ requirements:
         implementation and ux_generator -> ux_reviewer final polish after it.
       - Domain Factory workflow evidence records fullAgentOrder and confirms no
         separate functional generator stage exists beyond domain_generator.
+      - Project Factory runner tests prove the early UX baseline executes as
+        ux_generator -> ux_reviewer -> ux_generator before implementation, and
+        final UX remains capped at 10 reviewer-controlled passes.
     deferred:
       - First-class generator_reviewer_ux workflow option.
       - Automatic backend UX reviewer JSON parsing and continuation routing.

@@ -46,6 +46,9 @@ Implemented now:
   the agreed domain UX sequence:
   `ux_generator -> ux_reviewer -> ux_generator -> domain_generator ->
   domain_reviewer -> ux_generator -> ux_reviewer`.
+- Project Factory runner executes the early UX baseline as
+  `UX Generator -> UX Reviewer -> UX Generator` before downstream planning and
+  generator/reviewer implementation prompts consume the UX brief.
 
 Deferred:
 
@@ -436,8 +439,10 @@ Validation for this spec does not require running a live throwaway project. It
 must verify implementation wiring instead:
 
 - Domain Factory context reports `automaticDomainFactoryUx=true`.
-- Domain Factory state and intake contract expose the early UX baseline,
-  domain implementation, and final UX polish stages.
+- Domain Factory state and intake contract expose the early UX baseline, domain
+  implementation, and final UX polish stages.
+- The Project Factory runner harness executes the early UX baseline order before
+  implementation and then the final UX generator/reviewer loop after it.
 - Workflow evidence exposes the explicit full agent order and keeps
   `domain_generator -> domain_reviewer` as the only functional implementation
   pair.
