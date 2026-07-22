@@ -30,15 +30,60 @@ from backend.app.domain.repositories.chat_repository import ChatRepository
 _DOMAIN_FACTORY_GENERATOR_LABEL = "Domain Factory"
 _DOMAIN_FACTORY_REVIEWER_LABEL = "Domain Reviewer"
 _DOMAIN_FACTORY_UX_STATUS = {
-    "status": "disabled_by_configuration",
-    "message": "UX specialist disabled by configuration.",
+    "status": "workflow_configured",
+    "message": "Domain Factory UX workflow is configured.",
     "reason": (
-        "Automatic Domain Factory UX sequencing is deferred; Domain Factory uses "
-        "the paired Domain Factory generator and Domain Reviewer workflow."
+        "UX runs from the user's domain brief before Domain Factory implementation "
+        "sets the visual baseline, then runs again after the paired Domain Factory "
+        "generator/reviewer workflow for final polish."
     ),
-    "automaticDomainFactoryUx": False,
+    "automaticDomainFactoryUx": True,
+    "requiresDomainBrief": True,
+    "earlyUxBaseline": {
+        "status": "pending_domain_brief",
+        "agentOrder": ["ux_generator", "ux_reviewer", "ux_generator"],
+        "runsAfter": "project_factory_contract_and_domain_brief",
+        "runsBefore": "domain_factory_implementation",
+        "purpose": (
+            "Define look and feel, visual tone, navigation expectations, screen "
+            "density, component direction, empty states, and accessibility criteria "
+            "from the user's domain brief."
+        ),
+        "canEditCode": False,
+    },
+    "domainImplementation": {
+        "agentOrder": ["domain_generator", "domain_reviewer"],
+        "mode": "generator_reviewer_paired",
+        "reviewerFeedbackBecomesNextGeneratorPrompt": True,
+        "note": (
+            "Domain Factory implementation is the functional generator/reviewer "
+            "loop; there is no separate extra functional generator stage."
+        ),
+    },
+    "finalUxPolish": {
+        "status": "pending_domain_implementation",
+        "agentOrder": ["ux_generator", "ux_reviewer"],
+        "maxIterations": 10,
+        "reviewerControlledStop": True,
+        "runsAfter": "domain_factory_generator_reviewer_ready",
+        "purpose": (
+            "Polish the implemented app visually while preserving domain behavior, "
+            "backend contracts, auth, RBAC, persistence, release wiring, and real "
+            "runtime configuration."
+        ),
+        "canEditCode": True,
+    },
     "manualCommands": ["/ux", "/ux-full"],
 }
+_DOMAIN_FACTORY_FULL_AGENT_ORDER = [
+    "ux_generator",
+    "ux_reviewer",
+    "ux_generator",
+    "domain_generator",
+    "domain_reviewer",
+    "ux_generator",
+    "ux_reviewer",
+]
 _MAX_CONTEXT_MARKDOWN_CHARS = 5_000
 _MAX_PROMPT_CHARS = 11_500
 CRITICAL_BASELINE_FILES = (
@@ -699,6 +744,17 @@ class DomainFactoryService:
             "sessionId": session.id,
             "reviewerFeedbackBecomesNextGeneratorPrompt": True,
             "agentPreset": "review",
+            "stageOrder": [
+                "early_ux_baseline",
+                "domain_factory_implementation",
+                "final_ux_polish",
+            ],
+            "fullAgentOrder": list(_DOMAIN_FACTORY_FULL_AGENT_ORDER),
+            "earlyUxBaseline": dict(_DOMAIN_FACTORY_UX_STATUS["earlyUxBaseline"]),
+            "domainImplementation": dict(
+                _DOMAIN_FACTORY_UX_STATUS["domainImplementation"]
+            ),
+            "finalUxPolish": dict(_DOMAIN_FACTORY_UX_STATUS["finalUxPolish"]),
             "agentOrder": ["domain_generator", "domain_reviewer"],
             "uxLaneStatus": dict(_DOMAIN_FACTORY_UX_STATUS),
             "updatedAt": _now_iso(),
@@ -1167,6 +1223,9 @@ Baseline context:
 
 Rules:
 - Consume the baseline context before editing.
+- Consume the configured UX workflow. The early UX baseline is derived from the
+  user's domain brief before this paired Domain Factory implementation stage;
+  preserve that look-and-feel direction while implementing domain behavior.
 - Implement business/domain behavior on top of the initialized baseline.
 - Do not recreate New Project deterministic init, GitHub setup, Cloudflare preview setup, D1 baseline identity, Bridge installable setup, Workbench setup, or the initial preview release.
 - Preserve generic auth, the RBAC engine, the admin shell, updater plumbing, Bridge plumbing, and Workbench plumbing.
@@ -1240,7 +1299,7 @@ Preview: {context.preview_url or "unknown"}
 Preview API: {context.api_url or "unknown"}
 Baseline commit: {context.baseline_commit or "unknown"}
 SDD run: {spec_root or "pending"}
-UX lane: {_DOMAIN_FACTORY_UX_STATUS["message"]} Manual UX remains available through /ux or /ux-full after the domain brief when needed.
+UX lane: {_DOMAIN_FACTORY_UX_STATUS["message"]} The early UX baseline runs from the domain brief before implementation, and final UX polish runs after the paired Domain Factory generator/reviewer workflow. Manual UX remains available through /ux or /ux-full when needed.
 
 Send the business/domain brief here. You can paste a long description and attach visual references, logo/icon ideas, screenshots, or exact assets.
 
@@ -2095,6 +2154,22 @@ def _domain_intake_contract_payload() -> dict[str, Any]:
             "afterIntakeReady": True,
             "generatorReviewerMode": "paired",
             "reviewerFeedbackBecomesNextGeneratorPrompt": True,
+            "agentOrder": ["domain_generator", "domain_reviewer"],
+            "noSeparateFunctionalGeneratorStage": True,
+        },
+        "uxWorkflow": {
+            "automaticDomainFactoryUx": True,
+            "stageOrder": [
+                "early_ux_baseline",
+                "domain_factory_implementation",
+                "final_ux_polish",
+            ],
+            "fullAgentOrder": list(_DOMAIN_FACTORY_FULL_AGENT_ORDER),
+            "earlyUxBaseline": dict(_DOMAIN_FACTORY_UX_STATUS["earlyUxBaseline"]),
+            "domainImplementation": dict(
+                _DOMAIN_FACTORY_UX_STATUS["domainImplementation"]
+            ),
+            "finalUxPolish": dict(_DOMAIN_FACTORY_UX_STATUS["finalUxPolish"]),
         },
         "mediaPersistence": {
             "status": "pending_user_attachments",

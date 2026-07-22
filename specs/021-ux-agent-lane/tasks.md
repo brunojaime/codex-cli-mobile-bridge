@@ -17,6 +17,10 @@ deferred.
       direction without code changes.
 - [x] T037 Add post-Project-Factory automatic UX generator and UX reviewer
       prompts with up to 10 passes and reviewer-controlled early stop.
+- [x] T041 Document and expose the Domain Factory UX workflow order:
+      early UX Generator/Reviewer/Generator from the domain brief, paired
+      Domain Factory Generator/Domain Reviewer implementation, then final UX
+      Generator/Reviewer polish up to 10 passes.
 - [x] T038 Add `/ux` slash command for manual generator-only UX pass in the
       current project.
 - [x] T039 Add `/ux-full` slash command for manual UX generator/reviewer loop
@@ -68,8 +72,12 @@ deferred.
       accepted without breaking generator/reviewer/summary requirements.
 - [ ] T005 Add an agent preset or workflow option for
       `generator_reviewer_ux` lane sequencing.
-- [ ] T006 Add deterministic lane sequencing for
-      `domain_generator -> domain_reviewer -> ux_generator -> ux_reviewer`.
+- [ ] T006 Add deterministic execution for the full Domain Factory UX sequence:
+      `ux_generator -> ux_reviewer -> ux_generator -> domain_generator ->
+      domain_reviewer -> ux_generator -> ux_reviewer`.
+      MVP status: Domain Factory state, intake contracts, prompts, and workflow
+      evidence now expose this order and validation contract; first-class
+      automatic execution remains deferred.
 - [ ] T007 Add deterministic lane sequencing for
       `baseline_generator -> baseline_reviewer -> ux_generator -> ux_reviewer`.
 - [ ] T008 Define UX scope allow/deny path rules for generated Flutter/web
@@ -111,3 +119,6 @@ deferred.
       have the old advisory `ux` specialist only.
 - [ ] T035 Validate that existing solo, review, triad, supervisor, and Domain
       Factory workflows still run without UX lane when not selected.
+- [x] T042 Add focused backend regression coverage for Domain Factory UX
+      workflow reporting, no separate functional generator stage, and
+      reviewer-controlled final UX max-pass metadata.

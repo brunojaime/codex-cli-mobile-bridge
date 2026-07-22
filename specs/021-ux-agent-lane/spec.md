@@ -42,6 +42,10 @@ Implemented now:
   loop with a maximum of 10 passes and reviewer-controlled early stop;
 - Project Factory runner writes `.codex/ux/evidence-index.json` listing UX
   artifacts produced under `.codex/ux/`.
+- Domain Factory state, intake contracts, prompts, and workflow evidence expose
+  the agreed domain UX sequence:
+  `ux_generator -> ux_reviewer -> ux_generator -> domain_generator ->
+  domain_reviewer -> ux_generator -> ux_reviewer`.
 
 Deferred:
 
@@ -50,7 +54,6 @@ Deferred:
 - backend Project Factory reviewer JSON parsing/continue routing for multiple
   automatic UX iterations;
 - attached UX evidence in session projections or Workbench UI;
-- Domain Factory automatic UX sequencing;
 - release gates that fail on unresolved UX findings.
 
 ## Product Outcome
@@ -62,8 +65,12 @@ instead of a raw functional baseline:
   Factory generates the baseline;
 - baseline screens receive a strong UX generator/reviewer pass after Project
   Factory finishes;
-- later Domain Factory or existing-project UX work happens only through manual
-  slash commands;
+- Domain Factory receives UX direction from the user's first domain brief before
+  the paired domain generator/reviewer implementation starts;
+- the paired Domain Factory generator/reviewer workflow is the functional
+  implementation loop; there is no separate extra functional generator stage;
+- after Domain Factory implementation, UX generator/reviewer can polish the real
+  app visually while preserving domain behavior and release/runtime contracts;
 - release readiness includes UX evidence, not only tests and backend smoke;
 - benchmark findings, screenshots, and UX reviewer feedback are visible to both
   UX agents and preserved as run evidence;
@@ -97,8 +104,38 @@ New Project has exactly two automatic UX interventions:
      additional automatic Domain Factory or release phase is started by this UX
      lane.
 
-Long-running UX work after that point is manual and must be triggered by slash
-commands.
+Domain Factory has the following automatic target sequence once the user has
+provided the business/domain brief:
+
+```text
+Project Factory contract and domain brief
+-> UX Generator
+-> UX Reviewer
+-> UX Generator
+-> Domain Factory Generator
+-> Domain Reviewer
+-> UX Generator <-> UX Reviewer, up to 10 passes
+-> validation / preview / APK / Bridge
+```
+
+The first UX sequence is a direction-setting baseline. It reads the user's
+domain brief and defines look and feel, visual tone, navigation expectations,
+component direction, density, empty states, and accessibility criteria before
+domain implementation starts. It does not introduce another functional
+implementation agent.
+
+The Domain Factory implementation stage is the existing paired
+`domain_generator -> domain_reviewer` workflow. That pair owns both domain
+modeling and functional implementation.
+
+The final UX sequence runs after the app exists. It may change visible UI code,
+copy, layout, responsive behavior, interaction states, and UX evidence, but must
+preserve backend behavior, auth, RBAC, persistence, release wiring, updater
+configuration, and real preview runtime paths. The reviewer may stop before the
+10-pass limit when the visual result is good enough.
+
+Long-running UX work outside this automatic sequence remains available through
+manual slash commands.
 
 ## Research Basis
 
@@ -372,6 +409,42 @@ responsive layout, theme, copy, and perceived product quality.
 
 This is the final automatic stage of the New Project creation task. When
 `ux_reviewer` returns `complete`, the task is done.
+
+### Domain Factory UX Sequence
+
+Domain Factory does not add a second functional generator after the domain
+modeling step. Its implementation mode is already the paired
+`domain_generator -> domain_reviewer` workflow.
+
+The automatic Domain Factory UX sequence is:
+
+```text
+domain brief captured
+-> UX Generator
+-> UX Reviewer
+-> UX Generator
+-> Domain Factory Generator
+-> Domain Reviewer
+-> UX Generator <-> UX Reviewer, max 10 passes
+```
+
+The early UX baseline must be based on the user's actual domain brief, not on a
+generic scaffold. Domain Factory generator and reviewer prompts must carry that
+UX direction forward while they implement and review the functional domain.
+
+Validation for this spec does not require running a live throwaway project. It
+must verify implementation wiring instead:
+
+- Domain Factory context reports `automaticDomainFactoryUx=true`.
+- Domain Factory state and intake contract expose the early UX baseline,
+  domain implementation, and final UX polish stages.
+- Workflow evidence exposes the explicit full agent order and keeps
+  `domain_generator -> domain_reviewer` as the only functional implementation
+  pair.
+- No `functional_generator`, extra app generator stage, or misleading
+  `disabled_by_configuration` UX state appears in Domain Factory status.
+- Domain generator prompt requires consuming the configured UX workflow.
+- Final UX polish is capped at 10 passes with reviewer-controlled early stop.
 
 ### Manual Slash UX Passes
 

@@ -40,18 +40,28 @@ requirements:
       - T023
       - T036
       - T037
+      - T041
+      - T042
     acceptance:
       - New Project runs lightweight UX before Project Factory baseline generation.
       - Project Factory baseline completion can run UX generator/reviewer.
+      - Domain Factory reports the agreed UX sequence from the user's domain
+        brief before paired domain implementation and final UX polish after it.
+      - Domain Factory keeps domain_generator -> domain_reviewer as the only
+        functional implementation pair.
       - Automatic New Project work stops after the post-baseline UX pass.
       - UX reviewer can continue or block the lane.
     shipped_mvp:
       - Project Factory runs a pre-planning UX brief step.
       - Planning/generator/reviewer prompts require .codex/ux/pre-project-ux-brief.md.
       - Project Factory runs one automatic UX generator step and one UX reviewer step after the baseline.
+      - Domain Factory state, intake contract, workflow evidence, and prompts
+        expose ux_generator -> ux_reviewer -> ux_generator before domain
+        implementation and ux_generator -> ux_reviewer final polish after it.
+      - Domain Factory workflow evidence records fullAgentOrder and confirms no
+        separate functional generator stage exists beyond domain_generator.
     deferred:
       - First-class generator_reviewer_ux workflow option.
-      - Domain Factory UX sequencing.
       - Automatic backend UX reviewer JSON parsing and continuation routing.
       - UX lifecycle states in run/session projections.
   manual_slash_commands:
