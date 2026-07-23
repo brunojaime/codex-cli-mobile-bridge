@@ -10,6 +10,7 @@ from pathlib import Path
 from secrets import token_urlsafe
 import shlex
 import shutil
+import signal
 import subprocess
 from threading import RLock
 from typing import Protocol
@@ -116,6 +117,7 @@ _CLOUDFLARE_PROVISION_PHASE = ProjectFactoryInitPhaseName.CLOUDFLARE_PREVIEW_PRO
 _CLOUDFLARE_DEPLOY_PHASE = ProjectFactoryInitPhaseName.CLOUDFLARE_PREVIEW_DEPLOY
 _PREVIEW_SMOKE_PHASE = ProjectFactoryInitPhaseName.PREVIEW_SMOKE
 _FRONTEND_BASELINE_PHASE = ProjectFactoryInitPhaseName.FLUTTER_OR_STRATEGY_BASELINE
+_AUTOMATIC_UX_COMMAND_TIMEOUT_SECONDS = 300.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -152,22 +154,25 @@ class SubprocessProjectFactoryInitCommandRunner:
     ) -> ProjectFactoryInitCommandResult:
         started_at = _now_iso()
         try:
-            completed = subprocess.run(
+            process = subprocess.Popen(
                 list(argv),
                 cwd=str(cwd) if cwd is not None else None,
                 env={**os.environ, **env} if env else None,
-                check=False,
-                capture_output=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 stdin=subprocess.DEVNULL,
                 text=True,
-                timeout=timeout_seconds if timeout_seconds > 0 else None,
+                start_new_session=True,
+            )
+            stdout, stderr = process.communicate(
+                timeout=timeout_seconds if timeout_seconds > 0 else None
             )
             return ProjectFactoryInitCommandResult(
                 argv=argv,
                 cwd=str(cwd) if cwd is not None else None,
-                exit_code=completed.returncode,
-                stdout=completed.stdout,
-                stderr=completed.stderr,
+                exit_code=process.returncode,
+                stdout=stdout,
+                stderr=stderr,
                 started_at=started_at,
                 completed_at=_now_iso(),
                 env=env,
@@ -183,12 +188,27 @@ class SubprocessProjectFactoryInitCommandRunner:
                 env=env,
             )
         except subprocess.TimeoutExpired as exc:
+            try:
+                os.killpg(process.pid, signal.SIGTERM)
+            except (NameError, ProcessLookupError, PermissionError):
+                pass
+            try:
+                stdout, stderr = process.communicate(timeout=5)
+            except (NameError, subprocess.TimeoutExpired):
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except (NameError, ProcessLookupError, PermissionError):
+                    pass
+                try:
+                    stdout, stderr = process.communicate(timeout=5)
+                except Exception:
+                    stdout, stderr = "", ""
             return ProjectFactoryInitCommandResult(
                 argv=argv,
                 cwd=str(cwd) if cwd is not None else None,
                 exit_code=124,
-                stdout=str(exc.stdout or ""),
-                stderr=str(exc.stderr or "Command timed out."),
+                stdout=str(stdout or exc.stdout or ""),
+                stderr=str(stderr or exc.stderr or "Command timed out."),
                 started_at=started_at,
                 completed_at=_now_iso(),
                 env=env,
@@ -463,16 +483,21 @@ class ProjectFactoryInitService:
                         encoding="utf-8",
                     )
 
+                generator_report_path = (
+                    target / ".codex" / "ux" / "ux-generator-report.md"
+                )
                 generator_result = self._run(
-                    _codex_argv(
+                    _codex_argv_with_output_report(
                         codex_command,
                         _automatic_ux_prompt_file_instruction(
                             generator_prompt_path,
                             cwd=target,
                         ),
+                        report_path=generator_report_path,
                         exec_args=codex_exec_args,
                     ),
                     cwd=target,
+                    timeout_seconds=_AUTOMATIC_UX_COMMAND_TIMEOUT_SECONDS,
                 )
                 generator_evidence.append(self._evidence(generator_result))
                 self._attach_automatic_ux_message(
@@ -499,16 +524,21 @@ class ProjectFactoryInitService:
                         command_evidence=tuple(generator_evidence),
                     )
 
+                reviewer_report_path = (
+                    target / ".codex" / "ux" / "ux-reviewer-report.md"
+                )
                 reviewer_result = self._run(
-                    _codex_argv(
+                    _codex_argv_with_output_report(
                         codex_command,
                         _automatic_ux_prompt_file_instruction(
                             reviewer_prompt_path,
                             cwd=target,
                         ),
+                        report_path=reviewer_report_path,
                         exec_args=codex_exec_args,
                     ),
                     cwd=target,
+                    timeout_seconds=_AUTOMATIC_UX_COMMAND_TIMEOUT_SECONDS,
                 )
                 reviewer_evidence.append(self._evidence(reviewer_result))
                 self._attach_automatic_ux_message(
@@ -3671,13 +3701,21 @@ class ProjectFactoryInitService:
             return None
 
     def _run(
-        self, argv: tuple[str, ...], *, cwd: Path
+        self,
+        argv: tuple[str, ...],
+        *,
+        cwd: Path,
+        timeout_seconds: float | None = None,
     ) -> ProjectFactoryInitCommandResult:
         return self._command_runner.run(
             argv,
             cwd=cwd,
             env=dict(self._command_env),
-            timeout_seconds=self._command_timeout_seconds,
+            timeout_seconds=(
+                timeout_seconds
+                if timeout_seconds is not None
+                else self._command_timeout_seconds
+            ),
         )
 
     def _run_env(
@@ -5698,6 +5736,19 @@ def _automatic_ux_prompt_file_instruction(prompt_path: Path, *, cwd: Path) -> st
         "Do not ask for the prompt contents. Open the file, execute its "
         "instructions exactly, and write the requested `.codex/ux/` evidence."
     )
+
+
+def _codex_argv_with_output_report(
+    command: str,
+    prompt: str,
+    *,
+    report_path: Path,
+    exec_args: str | None = None,
+) -> tuple[str, ...]:
+    argv = _codex_argv(command, prompt, exec_args=exec_args)
+    if not argv:
+        return argv
+    return (*argv[:-1], "--output-last-message", str(report_path), argv[-1])
 
 
 def _automatic_ux_result_failed(

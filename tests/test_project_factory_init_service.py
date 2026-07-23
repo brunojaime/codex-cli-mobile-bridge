@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
@@ -47,12 +46,20 @@ def test_subprocess_runner_uses_devnull_stdin_for_noninteractive_exec(
 ) -> None:
     captured: dict[str, object] = {}
 
-    def fake_run(argv: list[str], **kwargs: object) -> SimpleNamespace:
+    class FakeProcess:
+        pid = 12345
+        returncode = 0
+
+        def communicate(self, *, timeout: float | None = None) -> tuple[str, str]:
+            captured["communicate_timeout"] = timeout
+            return "ok", ""
+
+    def fake_popen(argv: list[str], **kwargs: object) -> FakeProcess:
         captured["argv"] = argv
         captured.update(kwargs)
-        return SimpleNamespace(returncode=0, stdout="ok", stderr="")
+        return FakeProcess()
 
-    monkeypatch.setattr(init_service_module.subprocess, "run", fake_run)
+    monkeypatch.setattr(init_service_module.subprocess, "Popen", fake_popen)
 
     result = SubprocessProjectFactoryInitCommandRunner().run(
         ("codex", "exec", "Read `.codex/factory/prompts/ux-generator.md`."),
@@ -62,8 +69,11 @@ def test_subprocess_runner_uses_devnull_stdin_for_noninteractive_exec(
 
     assert result.exit_code == 0
     assert captured["stdin"] == init_service_module.subprocess.DEVNULL
+    assert captured["stdout"] == init_service_module.subprocess.PIPE
+    assert captured["stderr"] == init_service_module.subprocess.PIPE
     assert captured["text"] is True
-    assert captured["capture_output"] is True
+    assert captured["start_new_session"] is True
+    assert captured["communicate_timeout"] == 30
 
 
 def test_init_service_creates_idempotent_draft_chat_job(tmp_path: Path) -> None:
@@ -762,6 +772,15 @@ def test_init_service_passes_large_automatic_ux_prompt_by_file_not_argv(
     assert ux_commands
     assert all(len(command[-1]) < 500 for command in ux_commands)
     assert all("large-context" not in command[-1] for command in ux_commands)
+    assert all("--output-last-message" in command for command in ux_commands)
+    assert any(
+        str(workspace / ".codex/ux/ux-generator-report.md") in command
+        for command in ux_commands
+    )
+    assert any(
+        str(workspace / ".codex/ux/ux-reviewer-report.md") in command
+        for command in ux_commands
+    )
     assert command_runner.ux_generator_calls == 1
     assert command_runner.ux_reviewer_calls == 1
     assert (
